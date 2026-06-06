@@ -1,33 +1,7 @@
-import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { type ChangeEntry, materialiseChange } from "./changes.js";
 import { isIgnored } from "./ignore.js";
-
-// Walk vfs_dirents from `inode` up to ROOT_INODE, gathering the path
-// segments along the way. Returns null when the inode is unreachable
-// (orphan after a partially-applied rm; should not happen inside a
-// healthy DB but the caller treats null as "skip this entry").
-function pathOf(db: Database, inode: number): string | null {
-  if (inode === ROOT_INODE) return "/";
-  const segments: string[] = [];
-  let current = inode;
-  // Bound the walk: a million levels deep is well past any real FS;
-  // anything beyond that is corruption and should not loop forever.
-  for (let i = 0; i < 1_000_000; i++) {
-    const row = db.one<{ parent_inode: number; name: string }>(
-      "SELECT parent_inode, name FROM vfs_dirents WHERE child_inode = ?",
-      current,
-    );
-    if (row === undefined) return null;
-    segments.push(row.name);
-    if (row.parent_inode === ROOT_INODE) {
-      segments.reverse();
-      return `/${segments.join("/")}`;
-    }
-    current = row.parent_inode;
-  }
-  return null;
-}
+import { pathOf } from "./paths.js";
 
 // Yield one ChangeEntry per path touched since `sinceRev`. Per-path
 // coalescing: five rewrites of the same path between watermarks

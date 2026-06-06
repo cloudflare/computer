@@ -7,7 +7,10 @@ import {
   getReadOnlyMountRoots,
   invalidateReadOnlyMountCache,
 } from "./mount-guard.js";
+import { rename } from "./rename.js";
+import { resolveInode } from "./resolve.js";
 import { rm } from "./rm.js";
+import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import { writeFile, writeFileSync } from "./writeFile.js";
 
@@ -238,6 +241,78 @@ describe("rm under a read-only mount", () => {
       stageMount(db, "/workspace/rw", "read-write");
 
       expect(() => rm(db, "/workspace/rw/hi.txt", {})).not.toThrow();
+    });
+  });
+
+  it("rejects rm through a symlinked parent that resolves into a read-only mount", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", { recursive: true }, () => 0);
+      writeFileSync(db, "/mnt/file.txt", new Uint8Array([1]), {}, () => 0);
+      symlink(db, "/mnt", "/link", () => 0);
+      stageMount(db, "/mnt", "read-only");
+      const before = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => rm(db, "/link/file.txt", {})).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+
+      expect(resolveInode(db, "/mnt/file.txt")).not.toBeNull();
+      expect(db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'")).toBe(before);
+    });
+  });
+
+  it("rejects recursive rm of a directory inside a read-only mount via a symlinked parent", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt/dir", { recursive: true }, () => 0);
+      writeFileSync(db, "/mnt/dir/file.txt", new Uint8Array([1]), {}, () => 0);
+      symlink(db, "/mnt", "/link", () => 0);
+      stageMount(db, "/mnt", "read-only");
+      const before = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => rm(db, "/link/dir", { recursive: true })).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+
+      expect(resolveInode(db, "/mnt/dir/file.txt")).not.toBeNull();
+      expect(db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'")).toBe(before);
+    });
+  });
+});
+
+describe("rename under a read-only mount", () => {
+  it("rejects rename from a symlinked parent that resolves into a read-only mount", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", { recursive: true }, () => 0);
+      writeFileSync(db, "/mnt/file.txt", new Uint8Array([1]), {}, () => 0);
+      symlink(db, "/mnt", "/link", () => 0);
+      stageMount(db, "/mnt", "read-only");
+      const before = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => rename(db, "/link/file.txt", "/moved.txt")).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+
+      expect(resolveInode(db, "/mnt/file.txt")).not.toBeNull();
+      expect(resolveInode(db, "/moved.txt")).toBeNull();
+      expect(db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'")).toBe(before);
+    });
+  });
+
+  it("rejects rename to a symlinked parent that resolves into a read-only mount", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", { recursive: true }, () => 0);
+      writeFileSync(db, "/src.txt", new Uint8Array([1]), {}, () => 0);
+      symlink(db, "/mnt", "/link", () => 0);
+      stageMount(db, "/mnt", "read-only");
+      const before = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => rename(db, "/src.txt", "/link/file.txt")).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+
+      expect(resolveInode(db, "/src.txt")).not.toBeNull();
+      expect(resolveInode(db, "/mnt/file.txt")).toBeNull();
+      expect(db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'")).toBe(before);
     });
   });
 });

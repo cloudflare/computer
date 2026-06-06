@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { mkdir } from "../fs/mkdir.js";
 import { rm } from "../fs/rm.js";
+import { symlink } from "../fs/symlink.js";
 import { withDB } from "../fs/with-db.js";
 import { writeFile } from "../fs/writeFile.js";
 import { coalesceChanges } from "./coalesce.js";
@@ -54,6 +55,28 @@ describe("coalesceChanges", () => {
       const entries = await drain(coalesceChanges(db, 0));
       const gone = entries.find((e) => e.path === "/gone.txt");
       expect(gone).toEqual({ kind: "delete", rev: expect.any(Number), path: "/gone.txt" });
+    });
+  });
+
+  it("emits resolved delete paths for removes through intermediate symlinks", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 1);
+      await writeFile(db, "/real/file.txt", "x", {}, () => 2);
+      symlink(db, "/real", "/link", () => 3);
+
+      rm(db, "/link/file.txt", {});
+
+      const entries = await drain(coalesceChanges(db, 0));
+      expect(entries).toContainEqual({
+        kind: "delete",
+        rev: expect.any(Number),
+        path: "/real/file.txt",
+      });
+      expect(entries).not.toContainEqual({
+        kind: "delete",
+        rev: expect.any(Number),
+        path: "/link/file.txt",
+      });
     });
   });
 

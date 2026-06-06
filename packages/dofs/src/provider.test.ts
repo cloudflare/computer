@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { withDB } from "./fs/with-db.js";
 import { SQLiteWorkspaceProvider } from "./provider.js";
+import type { Database } from "./storage.js";
+import type { ChangeEntry } from "./sync/changes.js";
+import { coalesceChanges } from "./sync/coalesce.js";
 
 // Each provider test gets a fresh DB via withDB, which the workers
 // runner aliases to a DO-backed implementation. The provider holds
@@ -8,6 +11,22 @@ import { SQLiteWorkspaceProvider } from "./provider.js";
 // withDB callback and let the storage handle teardown.
 async function withProvider<T>(fn: (p: SQLiteWorkspaceProvider) => T | Promise<T>): Promise<T> {
   return withDB((db) => fn(new SQLiteWorkspaceProvider(db, { now: () => 1000 })));
+}
+
+async function withProviderAndDB<T>(
+  fn: (p: SQLiteWorkspaceProvider, db: Database) => T | Promise<T>,
+): Promise<T> {
+  return withDB((db) => fn(new SQLiteWorkspaceProvider(db, { now: () => 1000 }), db));
+}
+
+async function drainChanges(db: Database, sinceRev: number): Promise<ChangeEntry[]> {
+  const out: ChangeEntry[] = [];
+  for await (const entry of coalesceChanges(db, sinceRev)) out.push(entry);
+  return out;
+}
+
+function kindPath(entries: ChangeEntry[]): Array<[ChangeEntry["kind"], string]> {
+  return entries.map((entry) => [entry.kind, entry.path]).sort((a, b) => a[1].localeCompare(b[1]));
 }
 
 describe("SQLiteWorkspaceProvider — capability flags", () => {
@@ -142,6 +161,18 @@ describe("SQLiteWorkspaceProvider — implemented methods", () => {
     });
   });
 
+  it("unlinkSync removes a symlink without deleting its target", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/target", "content");
+      p.symlinkSync("/target", "/link");
+
+      p.unlinkSync("/link");
+
+      expect(p.existsSync("/link")).toBe(false);
+      expect(p.readFileSync("/target", "utf8")).toBe("content");
+    });
+  });
+
   it("rmdirSync removes an empty directory", async () => {
     await withProvider((p) => {
       p.mkdirSync("/a", {});
@@ -202,6 +233,119 @@ describe("SQLiteWorkspaceProvider — implemented methods", () => {
 });
 
 describe("SQLiteWorkspaceProvider — renameSync overwrite matrix", () => {
+  it("records rename as an old-path delete and new-path live entry", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.writeFileSync("/src", "new");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/src", "/dst");
+
+      const entries = await drainChanges(db, cursor);
+      expect(kindPath(entries)).toEqual([
+        ["file", "/dst"],
+        ["delete", "/src"],
+      ]);
+    });
+  });
+
+  it("records directory rename for the whole moved subtree", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/src", {});
+      p.writeFileSync("/src/a.txt", "a");
+      p.mkdirSync("/src/sub", {});
+      p.writeFileSync("/src/sub/b.txt", "b");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/src", "/dst");
+
+      const entries = await drainChanges(db, cursor);
+      expect(kindPath(entries)).toEqual([
+        ["dir", "/dst"],
+        ["file", "/dst/a.txt"],
+        ["dir", "/dst/sub"],
+        ["file", "/dst/sub/b.txt"],
+        ["delete", "/src"],
+        ["delete", "/src/a.txt"],
+        ["delete", "/src/sub"],
+        ["delete", "/src/sub/b.txt"],
+      ]);
+    });
+  });
+
+  it("records rename tombstones at the resolved old file path", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/real", {});
+      p.writeFileSync("/real/file.txt", "x");
+      p.symlinkSync("/real", "/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/link/file.txt", "/dst.txt");
+
+      const entries = await drainChanges(db, cursor);
+      expect(kindPath(entries)).toEqual([
+        ["file", "/dst.txt"],
+        ["delete", "/real/file.txt"],
+      ]);
+    });
+  });
+
+  it("records directory rename tombstones at the resolved old subtree paths", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/real", {});
+      p.mkdirSync("/real/dir", {});
+      p.writeFileSync("/real/dir/a.txt", "a");
+      p.mkdirSync("/real/dir/sub", {});
+      p.writeFileSync("/real/dir/sub/b.txt", "b");
+      p.symlinkSync("/real", "/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/link/dir", "/dst");
+
+      const entries = await drainChanges(db, cursor);
+      expect(kindPath(entries)).toEqual([
+        ["dir", "/dst"],
+        ["file", "/dst/a.txt"],
+        ["dir", "/dst/sub"],
+        ["file", "/dst/sub/b.txt"],
+        ["delete", "/real/dir"],
+        ["delete", "/real/dir/a.txt"],
+        ["delete", "/real/dir/sub"],
+        ["delete", "/real/dir/sub/b.txt"],
+      ]);
+    });
+  });
+
+  it("same-inode rename through a symlinked file path is a no-op", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/real", {});
+      p.writeFileSync("/real/file.txt", "x");
+      p.symlinkSync("/real", "/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/real/file.txt", "/link/file.txt");
+
+      expect(p.readFileSync("/real/file.txt", "utf8")).toBe("x");
+      expect(p.readFileSync("/link/file.txt", "utf8")).toBe("x");
+      expect(await drainChanges(db, cursor)).toEqual([]);
+    });
+  });
+
+  it("same-inode rename through a symlinked directory path is a no-op", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/real", {});
+      p.mkdirSync("/real/dir", {});
+      p.writeFileSync("/real/dir/a.txt", "a");
+      p.symlinkSync("/real", "/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/real/dir", "/link/dir");
+
+      expect(p.readFileSync("/real/dir/a.txt", "utf8")).toBe("a");
+      expect(p.readFileSync("/link/dir/a.txt", "utf8")).toBe("a");
+      expect(await drainChanges(db, cursor)).toEqual([]);
+    });
+  });
+
   it("file → existing file overwrites atomically", async () => {
     await withProvider((p) => {
       p.writeFileSync("/src", "new");
@@ -237,9 +381,151 @@ describe("SQLiteWorkspaceProvider — renameSync overwrite matrix", () => {
     });
   });
 
+  it.each([
+    {
+      name: "file → existing symlink",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/target", "x");
+        p.writeFileSync("/src", "new");
+        p.symlinkSync("/target", "/dst");
+      },
+      assertRenamed(p: SQLiteWorkspaceProvider) {
+        expect(p.existsSync("/src")).toBe(false);
+        expect(p.lstatSync("/dst").isFile()).toBe(true);
+        expect(p.readFileSync("/dst", "utf8")).toBe("new");
+        expect(p.readFileSync("/target", "utf8")).toBe("x");
+      },
+    },
+    {
+      name: "symlink → existing file",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/target", "x");
+        p.symlinkSync("/target", "/src");
+        p.writeFileSync("/dst", "old");
+      },
+      assertRenamed(p: SQLiteWorkspaceProvider) {
+        expect(p.existsSync("/src")).toBe(false);
+        expect(p.lstatSync("/dst").isSymbolicLink()).toBe(true);
+        expect(p.readlinkSync("/dst")).toBe("/target");
+      },
+    },
+    {
+      name: "symlink → existing symlink",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/target", "x");
+        p.writeFileSync("/other", "y");
+        p.symlinkSync("/target", "/src");
+        p.symlinkSync("/other", "/dst");
+      },
+      assertRenamed(p: SQLiteWorkspaceProvider) {
+        expect(p.existsSync("/src")).toBe(false);
+        expect(p.lstatSync("/dst").isSymbolicLink()).toBe(true);
+        expect(p.readlinkSync("/dst")).toBe("/target");
+      },
+    },
+  ])("$name overwrites atomically", async ({ setup, assertRenamed }) => {
+    await withProvider((p) => {
+      setup(p);
+      p.renameSync("/src", "/dst");
+      assertRenamed(p);
+    });
+  });
+
+  it.each([
+    {
+      name: "file → existing empty dir",
+      code: "EISDIR",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/src", "new");
+        p.mkdirSync("/dst", {});
+      },
+      assertUnchanged(p: SQLiteWorkspaceProvider) {
+        expect(p.readFileSync("/src", "utf8")).toBe("new");
+        expect(p.statSync("/dst").isDirectory()).toBe(true);
+      },
+    },
+    {
+      name: "symlink → existing empty dir",
+      code: "EISDIR",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/target", "x");
+        p.symlinkSync("/target", "/src");
+        p.mkdirSync("/dst", {});
+      },
+      assertUnchanged(p: SQLiteWorkspaceProvider) {
+        expect(p.readlinkSync("/src")).toBe("/target");
+        expect(p.statSync("/dst").isDirectory()).toBe(true);
+      },
+    },
+    {
+      name: "dir → existing file",
+      code: "ENOTDIR",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.mkdirSync("/src", {});
+        p.writeFileSync("/dst", "old");
+      },
+      assertUnchanged(p: SQLiteWorkspaceProvider) {
+        expect(p.statSync("/src").isDirectory()).toBe(true);
+        expect(p.readFileSync("/dst", "utf8")).toBe("old");
+      },
+    },
+    {
+      name: "dir → existing symlink",
+      code: "ENOTDIR",
+      setup(p: SQLiteWorkspaceProvider) {
+        p.writeFileSync("/target", "x");
+        p.mkdirSync("/src", {});
+        p.symlinkSync("/target", "/dst");
+      },
+      assertUnchanged(p: SQLiteWorkspaceProvider) {
+        expect(p.statSync("/src").isDirectory()).toBe(true);
+        expect(p.readlinkSync("/dst")).toBe("/target");
+      },
+    },
+  ])("$name rejects without recording sync changes", async ({ code, setup, assertUnchanged }) => {
+    await withProviderAndDB(async (p, db) => {
+      setup(p);
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => p.renameSync("/src", "/dst")).toThrowError(expect.objectContaining({ code }));
+
+      assertUnchanged(p);
+      expect(await drainChanges(db, cursor)).toEqual([]);
+    });
+  });
+
   it("source missing throws ENOENT", async () => {
     await withProvider((p) => {
       expect(() => p.renameSync("/missing", "/dst")).toThrowError(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+    });
+  });
+
+  it("same-path rename validates the source before no-op", async () => {
+    await withProvider((p) => {
+      expect(() => p.renameSync("/missing", "/missing")).toThrowError(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+    });
+  });
+
+  it("same-path rename of an existing file is a no-op", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.writeFileSync("/src", "x");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/src", "/src");
+
+      expect(p.readFileSync("/src", "utf8")).toBe("x");
+      expect(await drainChanges(db, cursor)).toEqual([]);
+    });
+  });
+
+  it("rename of a file into itself as a parent does not report directory self-move", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/file", "x");
+      expect(() => p.renameSync("/file", "/file/child")).toThrowError(
         expect.objectContaining({ code: "ENOENT" }),
       );
     });
@@ -263,11 +549,62 @@ describe("SQLiteWorkspaceProvider — renameSync overwrite matrix", () => {
     });
   });
 
-  // TODO: renaming a symlink should move the link itself, not the
-  // target. Today renameSync uses resolveInode() with the default
-  // followSymlinks: true, so a rename on a symlink actually moves the
-  // pointed-at file. Pin this once renameSync grows an
-  // lresolveInode-style call (see provider.ts:248).
+  it("rename of a symlink moves the link itself", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/target", "x");
+      p.symlinkSync("/target", "/link");
+      p.renameSync("/link", "/moved");
+      expect(p.existsSync("/target")).toBe(true);
+      expect(p.readlinkSync("/moved")).toBe("/target");
+      expect(p.existsSync("/link")).toBe(false);
+    });
+  });
+
+  it("rename of a directory into its own subtree throws EINVAL", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/src", {});
+      p.mkdirSync("/src/sub", {});
+      expect(() => p.renameSync("/src", "/src/sub/dst")).toThrowError(
+        expect.objectContaining({ code: "EINVAL" }),
+      );
+    });
+  });
+
+  it("rename of a directory through a symlink into its own subtree throws EINVAL", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/src", {});
+      p.mkdirSync("/src/sub", {});
+      p.symlinkSync("/src/sub", "/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      expect(() => p.renameSync("/src", "/link/dst")).toThrowError(
+        expect.objectContaining({ code: "EINVAL" }),
+      );
+
+      expect(p.statSync("/src/sub").isDirectory()).toBe(true);
+      expect(p.readlinkSync("/link")).toBe("/src/sub");
+      expect(await drainChanges(db, cursor)).toEqual([]);
+    });
+  });
+
+  it("rename of a directory through a symlink out of its subtree succeeds", async () => {
+    await withProviderAndDB(async (p, db) => {
+      p.mkdirSync("/src", {});
+      p.mkdirSync("/other", {});
+      // /src/link points outside the source subtree, so the destination
+      // /src/link/dst resolves to /other/dst even though the literal path
+      // is lexically under /src. The self-move guard is inode-based and
+      // must allow this move rather than reject it on a textual prefix.
+      p.symlinkSync("/other", "/src/link");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/src", "/src/link/dst");
+
+      expect(p.statSync("/other/dst").isDirectory()).toBe(true);
+      expect(p.existsSync("/src")).toBe(false);
+      expect(await drainChanges(db, cursor)).not.toEqual([]);
+    });
+  });
 });
 
 describe("SQLiteWorkspaceProvider — unimplemented surface (stubs)", () => {

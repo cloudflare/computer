@@ -83,6 +83,28 @@ A typical `exec()` round-trip:
 step 1 is "this single change", steps 3–6 are skipped. `workspace.push()`
 runs step 1 on demand; `workspace.pull()` runs steps 4–6.
 
+Renames are local inode moves, but the sync wire has no rename opcode.
+The wire stays final-state based — live entries plus tombstones — so
+apply remains idempotent and does not need operation-order replay. The
+cost is that a directory rename stamps every moved inode with one new
+revision and records tombstones for the old paths in one synchronous
+transaction. Large directory renames are therefore O(subtree) in local
+writes and wire entries, with no separate cap beyond the caller's own
+workload. Parent directory mtimes are not changed by rename, which
+differs from POSIX `rename(2)` but keeps parent directory metadata out
+of content sync.
+
+Directory entries carry mode and mtime. New directories are created
+with the incoming mtime, but idempotence for an existing directory is
+mode-only. That keeps mtime drift on matching directories from
+becoming sync traffic.
+
+When an upstream file, directory, or symlink lands where the receiver
+has a different node type, the receiver removes the local node tree and
+applies the upstream entry. This is last-writer-wins conflict handling:
+it converges the tree, but local-only children under the conflicting
+path are discarded without separate tombstones.
+
 ### Chunking
 
 Files are split at a fixed `CHUNK_SIZE` (512 KiB). Chunk boundaries are

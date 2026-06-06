@@ -3,7 +3,10 @@ import { readOnlyRootFor } from "../fs/mount-guard.js";
 import { resolveInode } from "../fs/resolve.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
+import { unlinkDirent } from "../fs/unlink.js";
 import { writeFile, writeFileSync } from "../fs/writeFile.js";
+import { canonicalizePath } from "../path.js";
+import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
@@ -74,10 +77,134 @@ export interface ApplyOptions {
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_MAX_PATHS = 1024;
 
+type NodeType = "file" | "dir" | "symlink";
+
 function hex(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.byteLength; i++) s += bytes[i].toString(16).padStart(2, "0");
   return s;
+}
+
+function removeReplaceableFinalEntry(
+  db: Database,
+  path: string,
+  incomingKind: "file" | "symlink",
+): void {
+  const existing = resolveInode(db, path, { followSymlinks: false });
+  if (existing === null) return;
+  if (incomingKind === "file" && existing.type === "file") return;
+
+  removeInodeTreeAtPath(db, path, existing.inode, existing.type);
+}
+
+// Structural conflict cleanup for upstream applies. This removes
+// the local shape without recording tombstones because the incoming
+// entry is the authoritative state for this path.
+function removeInodeTreeAtPath(db: Database, path: string, inode: number, type: NodeType): void {
+  const root = direntForPath(db, path, inode);
+  const stack: Array<{
+    path: string;
+    parentInode: number;
+    name: string;
+    inode: number;
+    type: NodeType;
+    expanded: boolean;
+  }> = [
+    {
+      path,
+      parentInode: root.parentInode,
+      name: root.name,
+      inode,
+      type,
+      expanded: false,
+    },
+  ];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) break;
+
+    if (current.type === "dir" && !current.expanded) {
+      const children = db.all<{ name: string; child_inode: number; type: NodeType }>(
+        `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type
+           FROM vfs_dirents d
+           JOIN vfs_nodes n ON n.inode = d.child_inode
+          WHERE d.parent_inode = ?`,
+        current.inode,
+      );
+      stack.push({ ...current, expanded: true });
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i];
+        const childPath = current.path === "/" ? `/${child.name}` : `${current.path}/${child.name}`;
+        stack.push({
+          path: childPath,
+          parentInode: current.inode,
+          name: child.name,
+          inode: child.child_inode,
+          type: child.type,
+          expanded: false,
+        });
+      }
+      continue;
+    }
+
+    // Unlink this one name and reap the inode only when its last link
+    // disappears, so a sibling hardlink (inside or outside the subtree)
+    // keeps the file alive. (parent, name) is unique, so this removes
+    // exactly the dirent the walk is visiting.
+    unlinkDirent(db, current.parentInode, current.name, current.inode, current.type);
+  }
+}
+
+function direntForPath(
+  db: Database,
+  path: string,
+  inode: number,
+): { parentInode: number; name: string } {
+  const { parts, path: canonical } = canonicalizePath(path);
+  if (parts.length === 0) {
+    throw new Error(`applyChanges: cannot structurally replace root ${canonical}`);
+  }
+  const name = parts[parts.length - 1];
+  const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
+  const parent = resolveInode(db, parentPath, { followSymlinks: false });
+  if (parent === null || parent.type !== "dir") {
+    throw new Error(`applyChanges: parent missing for structural replacement ${canonical}`);
+  }
+  const child = db.scalar<number>(
+    "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+    parent.inode,
+    name,
+  );
+  if (child !== inode) {
+    throw new Error(`applyChanges: dirent mismatch for structural replacement ${canonical}`);
+  }
+  return { parentInode: parent.inode, name };
+}
+
+function applyDirectoryEntry(db: Database, entry: Extract<ChangeEntry, { kind: "dir" }>): void {
+  const mode = entry.mode & 0o7777;
+  const existing = resolveInode(db, entry.path, { followSymlinks: false });
+  if (existing === null) {
+    mkdir(db, entry.path, { mode, recursive: true }, () => entry.mtime);
+    return;
+  }
+  if (existing.type !== "dir") {
+    removeInodeTreeAtPath(db, entry.path, existing.inode, existing.type);
+    mkdir(db, entry.path, { mode, recursive: true }, () => entry.mtime);
+    return;
+  }
+
+  db.transactionSync(() => {
+    const rev = incrementRev(db);
+    db.run(
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ? WHERE inode = ?",
+      mode,
+      entry.mtime,
+      rev,
+      existing.inode,
+    );
+  });
 }
 
 // Drive a ChangeEntry stream against `db`, batching writes so peak
@@ -150,13 +277,14 @@ export async function applyChanges(
       continue;
     }
     if (entry.kind === "dir") {
-      mkdir(db, entry.path, { mode: entry.mode, recursive: true }, () => entry.mtime);
+      applyDirectoryEntry(db, entry);
       applied++;
       pathsInBatch++;
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
     if (entry.kind === "symlink") {
+      removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
       pathsInBatch++;
@@ -190,6 +318,7 @@ export async function applyChanges(
       buf.set(p, off);
       off += p.byteLength;
     }
+    removeReplaceableFinalEntry(db, entry.path, "file");
     await writeFile(db, entry.path, buf, { mode: entry.mode }, () => entry.mtime);
     applied++;
     bytesInBatch += total;
@@ -226,7 +355,12 @@ export async function applyChanges(
   // In the unsafe case we leave pushRev alone. The next pushOnce
   // drains both the unpushed locals and the apply's own bumps;
   // the receiver's alreadyApplied() check suppresses the latter.
-  // One redundant round-trip per apply, bounded.
+  // Normal loopback suppression still catches the common case by
+  // advancing pushRev after the upstream apply. When pending local
+  // writes make that unsafe, the apply's rev bumps may be sent back
+  // once, but the origin sees matching live state in alreadyApplied()
+  // and drops them without another bump. That makes directory-entry
+  // re-application a bounded echo rather than an unbounded ping-pong.
   if (options.source === "upstream") {
     const revAfter = currentRev(db);
     const existing = readWatermark(db, "pushRev", options.backend);
@@ -291,13 +425,14 @@ export function applyChangesSync(
       continue;
     }
     if (entry.kind === "dir") {
-      mkdir(db, entry.path, { mode: entry.mode, recursive: true }, () => entry.mtime);
+      applyDirectoryEntry(db, entry);
       applied++;
       pathsInBatch++;
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
     if (entry.kind === "symlink") {
+      removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
       pathsInBatch++;
@@ -328,6 +463,7 @@ export function applyChangesSync(
       buf.set(p, off);
       off += p.byteLength;
     }
+    removeReplaceableFinalEntry(db, entry.path, "file");
     writeFileSync(db, entry.path, buf, { mode: entry.mode }, () => entry.mtime);
     applied++;
     bytesInBatch += total;
@@ -354,12 +490,8 @@ export function applyChangesSync(
 }
 
 // Compare an entry against the local node graph. Returns true when
-// the entry would be a no-op apply: the manifest hash (files),
-// mode + symlink target (symlinks), or mode (dirs) already matches.
-// We deliberately skip mtime comparison — mtime is metadata
-// the source decides on, and re-applying it would still bump the
-// local rev counter for nothing. Receivers see eventual mtime
-// drift between peers; the wire stays quiet.
+// the entry would be a no-op apply: the manifest hash (files), mode
+// (dirs), or mode + symlink target (symlinks) already matches.
 function alreadyApplied(db: Database, entry: Exclude<ChangeEntry, { kind: "delete" }>): boolean {
   const live = resolveInode(db, entry.path, { followSymlinks: false });
   if (live === null) return false;
@@ -375,7 +507,7 @@ function alreadyApplied(db: Database, entry: Exclude<ChangeEntry, { kind: "delet
     return uint8Equal(row.manifest_hash, wanted);
   }
   if (entry.kind === "dir") {
-    return live.type === "dir" && (live.mode & 0o7777) === (entry.mode & 0o7777);
+    return live.type === "dir" && directoryMetadataMatches(live, entry);
   }
   // symlink
   return (
@@ -383,6 +515,13 @@ function alreadyApplied(db: Database, entry: Exclude<ChangeEntry, { kind: "delet
     live.linkTarget === entry.target &&
     (live.mode & 0o7777) === (entry.mode & 0o7777)
   );
+}
+
+function directoryMetadataMatches(
+  live: { mode: number },
+  entry: Extract<ChangeEntry, { kind: "dir" }>,
+): boolean {
+  return (live.mode & 0o7777) === (entry.mode & 0o7777);
 }
 
 function uint8Equal(a: Uint8Array, b: Uint8Array): boolean {

@@ -15,6 +15,7 @@ import { mkdir as mkdirImpl } from "./fs/mkdir.js";
 import { readdir as readdirImpl } from "./fs/readdir.js";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile.js";
 import { readlink as readlinkImpl } from "./fs/readlink.js";
+import { rename as renameImpl } from "./fs/rename.js";
 import { resolveInode } from "./fs/resolve.js";
 import { rm as rmImpl } from "./fs/rm.js";
 import { stat as statImpl } from "./fs/stat.js";
@@ -317,105 +318,27 @@ export class SQLiteWorkspaceProvider {
   }
 
   renameSync(oldPath: string, newPath: string): void {
-    // The FS module doesn't expose rename as a standalone operation
-    // yet; we lean on the existing schema-level pieces here. When
-    // rename grows up (cross-directory, overwriting an existing file,
-    // ...) it should move into fs/rename.ts with its own tests.
+    // Commit any still-pending creates at either end before the rename
+    // touches dirents: the source needs a real inode to move, and a
+    // pending buffer at the destination would otherwise slip past
+    // rename's dirent-based existence check and lose bytes on release.
     flushPendingByPath(this.db, oldPath, this.now);
     flushPendingByPath(this.db, newPath, this.now);
-    const node = resolveInode(this.db, oldPath);
-    if (node === null) {
-      throw createWorkspaceError("ENOENT", `no such path: ${oldPath}`, oldPath);
-    }
-    const { parts: oldParts, path: oldCanonical } = canonicalizePath(oldPath);
-    const oldName = oldParts[oldParts.length - 1];
-    const oldParentPath = oldParts.length === 1 ? "/" : `/${oldParts.slice(0, -1).join("/")}`;
-    const oldParent = resolveInode(this.db, oldParentPath, { followSymlinks: false });
-    if (oldParent === null || oldParent.type !== "dir") {
-      throw createWorkspaceError(
-        "ENOENT",
-        `parent directory missing: ${oldCanonical}`,
-        oldCanonical,
+    // Capture the destination inode before the rename so we can evict
+    // its write-buffer cache entry if the rename displaced and reaped
+    // it. Without this, a release on an open destination would commit
+    // chunks against a dead inode (0-row UPDATE, silent data loss).
+    const displaced = resolveInode(this.db, newPath, { followSymlinks: false });
+    renameImpl(this.db, oldPath, newPath);
+    if (displaced !== null) {
+      const stillAlive = this.db.scalar<number>(
+        "SELECT inode FROM vfs_nodes WHERE inode = ?",
+        displaced.inode,
       );
-    }
-    const { parts, path: newCanonical } = canonicalizePath(newPath);
-    if (oldCanonical === newCanonical) return;
-    if (parts.length === 0) {
-      throw createWorkspaceError("EINVAL", "cannot rename onto root", newCanonical);
-    }
-    const newName = parts[parts.length - 1];
-    const newParentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
-    const newParent = resolveInode(this.db, newParentPath);
-    if (newParent === null || newParent.type !== "dir") {
-      throw createWorkspaceError(
-        "ENOENT",
-        `parent directory missing: ${newCanonical}`,
-        newCanonical,
-      );
-    }
-    this.db.transactionSync(() => {
-      // If the destination already exists, displace it before linking
-      // the source dirent. POSIX rename(2) is atomic and overwrites a
-      // regular file or empty directory at the target. We follow the
-      // same semantics: an existing file at newPath is unlinked, and
-      // its inode (and chunks / blobs) are reaped via the existing
-      // gc() safety window.
-      const existing = this.db.one<{ child_inode: number; type: string }>(
-        `SELECT d.child_inode AS child_inode, n.type AS type
-         FROM vfs_dirents d JOIN vfs_nodes n ON n.inode = d.child_inode
-         WHERE d.parent_inode = ? AND d.name = ?`,
-        newParent.inode,
-        newName,
-      );
-      const destinationAlreadyNamesSource = existing?.child_inode === node.inode;
-      if (existing !== undefined && !destinationAlreadyNamesSource) {
-        // Refuse to overwrite a non-empty directory or replace a
-        // directory with a file (Linux rename semantics).
-        if (existing.type === "dir") {
-          const childCount = this.db.scalar<number>(
-            "SELECT COUNT(*) FROM vfs_dirents WHERE parent_inode = ?",
-            existing.child_inode,
-          );
-          if ((childCount ?? 0) > 0) {
-            throw createWorkspaceError("ENOTEMPTY", `not empty: ${newCanonical}`, newCanonical);
-          }
-        }
-        // Unlink only the displaced destination name. If other
-        // hardlinks still reference the displaced file inode, keep its
-        // chunks and node alive.
-        this.db.run(
-          "DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-          newParent.inode,
-          newName,
-        );
-        const remaining = this.db.scalar<number>(
-          "SELECT COUNT(*) FROM vfs_dirents WHERE child_inode = ?",
-          existing.child_inode,
-        );
-        if ((remaining ?? 0) === 0) {
-          this.db.run("DELETE FROM vfs_chunks WHERE inode = ?", existing.child_inode);
-          this.db.run("DELETE FROM vfs_nodes WHERE inode = ?", existing.child_inode);
-          // The displaced inode is gone from SQL. Any open write
-          // buffer keyed by it would otherwise hold bytes pointed at
-          // a dead inode; release would then commit chunks against a
-          // missing row (0-row UPDATE, silent data loss).
-          deleteWriteBuffer(this.db, existing.child_inode);
-        }
+      if (stillAlive === undefined) {
+        deleteWriteBuffer(this.db, displaced.inode);
       }
-      this.db.run(
-        "DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-        oldParent.inode,
-        oldName,
-      );
-      if (!destinationAlreadyNamesSource) {
-        this.db.run(
-          "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-          newParent.inode,
-          newName,
-          node.inode,
-        );
-      }
-    });
+    }
   }
 
   // -- Default implementations ---------------------------------------

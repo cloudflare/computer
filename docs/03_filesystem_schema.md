@@ -14,8 +14,10 @@ ultimately hits one of these tables. All tables are prefixed with
 collide with application-owned tables in the same DO storage.
 
 Paths are resolved through an inode-style indirection (`vfs_dirents`
-→ `vfs_nodes`), so renames are O(1) regardless of subtree size and
-hardlinks fall out for free.
+→ `vfs_nodes`), so the local namespace move in a rename is O(1) and
+hardlinks fall out for free. Directory rename sync still walks the
+moved subtree because the wire represents the move as live entries at
+the new paths plus tombstones at the old paths.
 
 ## Tables
 

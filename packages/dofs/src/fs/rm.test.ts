@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Database } from "../storage.js";
 import { mkdir } from "./mkdir.js";
 import { readdir } from "./readdir.js";
+import { readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 import { rm } from "./rm.js";
 import { symlink } from "./symlink.js";
@@ -38,6 +39,23 @@ describe("rm", () => {
       await writeFile(db, "/a.txt", "hi", {}, () => 0);
       rm(db, "/a.txt", {});
       expect(listChanges(db)).toEqual([expect.objectContaining({ path: "/a.txt", op: "delete" })]);
+    });
+  });
+
+  it("records tombstones at the resolved path through intermediate symlinks", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 0);
+      await writeFile(db, "/real/file.txt", "content", {}, () => 0);
+      symlink(db, "/real", "/link", () => 0);
+
+      rm(db, "/link/file.txt", {});
+
+      expect(listChanges(db)).toContainEqual(
+        expect.objectContaining({ path: "/real/file.txt", op: "delete" }),
+      );
+      expect(listChanges(db)).not.toContainEqual(
+        expect.objectContaining({ path: "/link/file.txt", op: "delete" }),
+      );
     });
   });
 
@@ -83,6 +101,16 @@ describe("rm", () => {
 
       expect(resolveInode(db, "/d", { followSymlinks: false })).toBeNull();
       expect(resolveInode(db, "/outside.txt")).not.toBeNull();
+    });
+  });
+
+  it("removes a dangling symlink", async () => {
+    await withDB((db) => {
+      symlink(db, "/missing", "/dangling", () => 0);
+
+      rm(db, "/dangling", {});
+
+      expect(resolveInode(db, "/dangling", { followSymlinks: false })).toBeNull();
     });
   });
 
@@ -143,6 +171,19 @@ describe("rm", () => {
     });
   });
 
+  it("recursive removes a symlink to a directory without deleting its target", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/target/sub", { recursive: true }, () => 0);
+      await writeFile(db, "/target/sub/file.txt", "content", {}, () => 0);
+      symlink(db, "/target", "/link", () => 0);
+
+      rm(db, "/link", { recursive: true });
+
+      expect(resolveInode(db, "/link", { followSymlinks: false })).toBeNull();
+      expect(await readFile(db, "/target/sub/file.txt", "utf8")).toBe("content");
+    });
+  });
+
   it("recursive records one tombstone per removed path", async () => {
     await withDB(async (db) => {
       mkdir(db, "/d", {}, () => 0);
@@ -153,6 +194,25 @@ describe("rm", () => {
         .map((r) => r.path)
         .sort();
       expect(paths).toEqual(["/d", "/d/a", "/d/b"]);
+    });
+  });
+
+  it("recursive records resolved subtree tombstones through intermediate symlinks", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real/dir", { recursive: true }, () => 0);
+      await writeFile(db, "/real/dir/a", "x", {}, () => 0);
+      await writeFile(db, "/real/dir/b", "y", {}, () => 0);
+      symlink(db, "/real", "/link", () => 0);
+
+      rm(db, "/link/dir", { recursive: true });
+
+      const paths = listChanges(db)
+        .map((r) => r.path)
+        .sort();
+      expect(paths).toEqual(expect.arrayContaining(["/real/dir", "/real/dir/a", "/real/dir/b"]));
+      expect(paths).not.toEqual(
+        expect.arrayContaining(["/link/dir", "/link/dir/a", "/link/dir/b"]),
+      );
     });
   });
 

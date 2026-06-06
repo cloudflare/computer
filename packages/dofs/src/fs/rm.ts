@@ -3,8 +3,10 @@ import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
 import { recordDelete } from "../sync/changes.js";
+import { pathOf } from "../sync/paths.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
+import { unlinkDirent } from "./unlink.js";
 
 export interface RmOptions {
   recursive?: boolean;
@@ -92,15 +94,34 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       }
     }
 
+    // Resolve the entry's real path from its parent rather than from
+    // the inode: a hardlinked file has several names, and pathOf would
+    // pick an arbitrary one. Following symlinks on the parent lets a
+    // request through a symlinked directory land on the real container
+    // while still removing exactly the requested name.
+    const name = parts[parts.length - 1];
+    const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
+    const parent = resolveInode(db, parentPath);
+    if (parent === null || parent.type !== "dir") {
+      throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
+    }
+    const parentReal = pathOf(db, parent.inode);
+    if (parentReal === null) {
+      throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
+    }
+    const realPath = parentReal === "/" ? `/${name}` : `${parentReal}/${name}`;
+    assertNotReadOnly(db, realPath);
+
     const rev = incrementRev(db);
 
-    if (node.type === "file" || !recursive) {
+    if (node.type !== "dir" || !recursive) {
       // Single entry removal — file, symlink, or empty directory. A
       // file inode may have multiple dirents (hardlinks), so remove
       // only the requested name and reap chunks/node after the final
-      // link disappears.
-      removeEntry(db, canonical, node.inode, node.type);
-      recordDelete(db, rev, canonical);
+      // link disappears. The tombstone is recorded at the resolved
+      // real path so sync sees the move-aware location.
+      removeEntry(db, realPath, node.inode, node.type);
+      recordDelete(db, rev, realPath);
       return;
     }
 
@@ -108,7 +129,7 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     // sees an empty parent by the time we get to it. File entries may
     // be hardlinked outside this subtree, so delete by path rather
     // than by child inode.
-    for (const entry of walkPostOrder(db, node.inode, canonical)) {
+    for (const entry of walkPostOrder(db, node.inode, realPath)) {
       removeEntry(db, entry.path, entry.inode, entry.type);
       recordDelete(db, rev, entry.path);
     }
@@ -129,15 +150,5 @@ function removeEntry(
     throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
   }
 
-  db.run("DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?", parent.inode, name);
-  const remaining = db.scalar<number>(
-    "SELECT COUNT(*) FROM vfs_dirents WHERE child_inode = ?",
-    inode,
-  );
-  if ((remaining ?? 0) > 0) return;
-
-  if (type === "file") {
-    db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
-  }
-  db.run("DELETE FROM vfs_nodes WHERE inode = ?", inode);
+  unlinkDirent(db, parent.inode, name, inode, type);
 }

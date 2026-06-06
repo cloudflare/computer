@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 
+import { link } from "../fs/link.js";
 import { mkdir } from "../fs/mkdir.js";
 import { invalidateReadOnlyMountCache } from "../fs/mount-guard.js";
 import { readFile } from "../fs/readFile.js";
+import { readlink } from "../fs/readlink.js";
+import { rename } from "../fs/rename.js";
 import { resolveInode } from "../fs/resolve.js";
+import { rm } from "../fs/rm.js";
+import { symlink } from "../fs/symlink.js";
 import { withDB, withTwoDBs } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
+import { writeFile, writeFileSync } from "../fs/writeFile.js";
 import { applyChanges, applyChangesSync } from "./apply.js";
 import type { ChangeEntry } from "./changes.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchObjects } from "./fetch.js";
-import { writeWatermark } from "./watermarks.js";
+import { currentRev, writeWatermark } from "./watermarks.js";
 
 async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -22,6 +27,10 @@ function hex(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.byteLength; i++) s += bytes[i].toString(16).padStart(2, "0");
   return s;
+}
+
+function deepChildPath(depth: number): string {
+  return `/dst/${Array.from({ length: depth }, () => "d").join("/")}/old.txt`;
 }
 
 async function collectObjects(
@@ -109,6 +118,448 @@ describe("applyChanges", () => {
         for (let i = 0; i < 10; i++) {
           expect(await readFile(b, `/f${i}.txt`, "utf8")).toBe(`payload ${i}`);
         }
+      },
+    );
+  });
+
+  it("applies a file rename over an existing file", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/src", "new", {}, () => 1);
+        await writeFile(a, "/dst", "old", {}, () => 2);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/src", "new", {}, () => 1);
+        await writeFile(b, "/dst", "old", {}, () => 2);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src")).toBeNull();
+        expect(await readFile(b, "/dst", "utf8")).toBe("new");
+      },
+    );
+  });
+
+  it("applies a directory rename over an existing empty directory", async () => {
+    await withTwoDBs(
+      async (a) => {
+        mkdir(a, "/src", { mode: 0o700, recursive: true }, () => 1);
+        await writeFile(a, "/src/inside", "x", {}, () => 2);
+        mkdir(a, "/dst", { mode: 0o755 }, () => 3);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        mkdir(b, "/src", { mode: 0o700, recursive: true }, () => 1);
+        await writeFile(b, "/src/inside", "x", {}, () => 2);
+        mkdir(b, "/dst", { mode: 0o755 }, () => 3);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src")).toBeNull();
+        expect(resolveInode(b, "/dst", { followSymlinks: false })).toMatchObject({
+          type: "dir",
+          mode: 0o700,
+          mtime: 1,
+        });
+        expect(await readFile(b, "/dst/inside", "utf8")).toBe("x");
+      },
+    );
+  });
+
+  it("applyChangesSync updates existing directory metadata", async () => {
+    await withDB((db) => {
+      mkdir(db, "/dst", { mode: 0o755 }, () => 3);
+
+      applyChangesSync(
+        db,
+        [{ kind: "dir", rev: 99, path: "/dst", mode: 0o700, mtime: 1 }],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })).toMatchObject({
+        type: "dir",
+        mode: 0o700,
+        mtime: 1,
+      });
+    });
+  });
+
+  it("does not update existing directory mtime for upstream entries with matching mode", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dst", { mode: 0o700 }, () => 3);
+
+      await applyChanges(
+        db,
+        [{ kind: "dir", rev: 99, path: "/dst", mode: 0o700, mtime: 1 }],
+        new Map(),
+        { source: "upstream" },
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })).toMatchObject({
+        type: "dir",
+        mode: 0o700,
+        mtime: 3,
+      });
+    });
+  });
+
+  it("applies a file rename over an existing symlink", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/target", "target", {}, () => 1);
+        await writeFile(a, "/src", "new", {}, () => 2);
+        symlink(a, "/target", "/dst", () => 3);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/target", "target", {}, () => 1);
+        await writeFile(b, "/src", "new", {}, () => 2);
+        symlink(b, "/target", "/dst", () => 3);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src")).toBeNull();
+        expect(resolveInode(b, "/dst", { followSymlinks: false })?.type).toBe("file");
+        expect(await readFile(b, "/dst", "utf8")).toBe("new");
+        expect(await readFile(b, "/target", "utf8")).toBe("target");
+      },
+    );
+  });
+
+  it("applies a symlink rename over an existing file", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/target", "target", {}, () => 1);
+        symlink(a, "/target", "/src", () => 2);
+        await writeFile(a, "/dst", "old", {}, () => 3);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/target", "target", {}, () => 1);
+        symlink(b, "/target", "/src", () => 2);
+        await writeFile(b, "/dst", "old", {}, () => 3);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src", { followSymlinks: false })).toBeNull();
+        expect(resolveInode(b, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(b, "/dst")).toBe("/target");
+        expect(await readFile(b, "/target", "utf8")).toBe("target");
+      },
+    );
+  });
+
+  it("applies a symlink rename over an existing symlink", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/target", "target", {}, () => 1);
+        await writeFile(a, "/other", "other", {}, () => 2);
+        symlink(a, "/target", "/src", () => 3);
+        symlink(a, "/other", "/dst", () => 4);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/target", "target", {}, () => 1);
+        await writeFile(b, "/other", "other", {}, () => 2);
+        symlink(b, "/target", "/src", () => 3);
+        symlink(b, "/other", "/dst", () => 4);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src", { followSymlinks: false })).toBeNull();
+        expect(resolveInode(b, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(b, "/dst")).toBe("/target");
+        expect(await readFile(b, "/target", "utf8")).toBe("target");
+        expect(await readFile(b, "/other", "utf8")).toBe("other");
+      },
+    );
+  });
+
+  it("applies a directory rename containing a symlink without deleting its target", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/target", "target", {}, () => 1);
+        mkdir(a, "/src", {}, () => 2);
+        symlink(a, "/target", "/src/link", () => 3);
+        const cursor = currentRev(a);
+
+        rename(a, "/src", "/dst");
+
+        const entries = await drain(coalesceChanges(a, cursor));
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/target", "target", {}, () => 1);
+        mkdir(b, "/src", {}, () => 2);
+        symlink(b, "/target", "/src/link", () => 3);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/src/link", { followSymlinks: false })).toBeNull();
+        expect(resolveInode(b, "/dst/link", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(b, "/dst/link")).toBe("/target");
+        expect(await readFile(b, "/target", "utf8")).toBe("target");
+      },
+    );
+  });
+
+  it("applies a file over an existing directory subtree", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dst/sub", { recursive: true }, () => 1);
+      await writeFile(db, "/dst/sub/old.txt", "old", {}, () => 2);
+
+      await applyChanges(
+        db,
+        [
+          {
+            kind: "file",
+            rev: 99,
+            path: "/dst",
+            mode: 0o644,
+            mtime: 3,
+            size: 0,
+            chunks: [],
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("file");
+      expect(resolveInode(db, "/dst/sub/old.txt")).toBeNull();
+    });
+  });
+
+  it("applies a file over a deeply nested existing directory subtree", async () => {
+    await withDB(async (db) => {
+      const oldPath = deepChildPath(12_000);
+      mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
+      await writeFile(db, oldPath, "old", {}, () => 2);
+
+      await applyChanges(
+        db,
+        [
+          {
+            kind: "file",
+            rev: 99,
+            path: "/dst",
+            mode: 0o644,
+            mtime: 3,
+            size: 0,
+            chunks: [],
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("file");
+      expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
+    });
+  });
+
+  it("applies a symlink over an existing directory subtree", async () => {
+    await withDB((db) => {
+      mkdir(db, "/dst/sub", { recursive: true }, () => 1);
+      writeFileSync(db, "/dst/sub/old.txt", new Uint8Array(), {}, () => 2);
+
+      applyChangesSync(
+        db,
+        [
+          {
+            kind: "symlink",
+            rev: 99,
+            path: "/dst",
+            mode: 0o777,
+            mtime: 3,
+            target: "/target",
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+      expect(readlink(db, "/dst")).toBe("/target");
+      expect(resolveInode(db, "/dst/sub/old.txt")).toBeNull();
+    });
+  });
+
+  it("applies a symlink over one hardlink without removing sibling hardlinks", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/dst", "shared", {}, () => 1);
+      link(db, "/dst", "/other");
+
+      await applyChanges(
+        db,
+        [
+          {
+            kind: "symlink",
+            rev: 99,
+            path: "/dst",
+            mode: 0o777,
+            mtime: 2,
+            target: "/target",
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+      expect(readlink(db, "/dst")).toBe("/target");
+      expect(await readFile(db, "/other", "utf8")).toBe("shared");
+    });
+  });
+
+  it("applies a directory over one hardlink without removing sibling hardlinks", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/dst", "shared", {}, () => 1);
+      link(db, "/dst", "/other");
+
+      await applyChanges(
+        db,
+        [{ kind: "dir", rev: 99, path: "/dst", mode: 0o755, mtime: 2 }],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("dir");
+      expect(await readFile(db, "/other", "utf8")).toBe("shared");
+    });
+  });
+
+  it("applies a file over a directory whose subtree hardlinks a file outside it", async () => {
+    await withDB(async (db) => {
+      await mkdir(db, "/dir", { mode: 0o755 }, () => 1);
+      await writeFile(db, "/dir/inner", "shared", {}, () => 1);
+      // /outside is a second name for /dir/inner; replacing /dir must
+      // walk the subtree by name and keep /outside alive.
+      link(db, "/dir/inner", "/outside");
+
+      await applyChanges(
+        db,
+        [
+          {
+            kind: "file",
+            rev: 99,
+            path: "/dir",
+            mode: 0o644,
+            mtime: 2,
+            size: 0,
+            chunks: [],
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dir", { followSymlinks: false })?.type).toBe("file");
+      expect(resolveInode(db, "/dir/inner", { followSymlinks: false })).toBeNull();
+      expect(await readFile(db, "/outside", "utf8")).toBe("shared");
+    });
+  });
+
+  it("applyChangesSync applies a symlink over a deeply nested existing directory subtree", async () => {
+    await withDB((db) => {
+      const oldPath = deepChildPath(12_000);
+      mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
+      writeFileSync(db, oldPath, new Uint8Array(), {}, () => 2);
+
+      applyChangesSync(
+        db,
+        [
+          {
+            kind: "symlink",
+            rev: 99,
+            path: "/dst",
+            mode: 0o777,
+            mtime: 3,
+            target: "/target",
+          },
+        ],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+      expect(readlink(db, "/dst")).toBe("/target");
+      expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
+    });
+  });
+
+  it("applies a directory over an existing file", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/dst", "old", {}, () => 1);
+
+      await applyChanges(
+        db,
+        [{ kind: "dir", rev: 99, path: "/dst", mode: 0o755, mtime: 2 }],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })).toMatchObject({
+        type: "dir",
+        mode: 0o755,
+        mtime: 2,
+      });
+    });
+  });
+
+  it("applies a directory over an existing symlink", async () => {
+    await withDB((db) => {
+      symlink(db, "/target", "/dst", () => 1);
+
+      applyChangesSync(
+        db,
+        [{ kind: "dir", rev: 99, path: "/dst", mode: 0o755, mtime: 2 }],
+        new Map(),
+      );
+
+      expect(resolveInode(db, "/dst", { followSymlinks: false })).toMatchObject({
+        type: "dir",
+        mode: 0o755,
+        mtime: 2,
+      });
+    });
+  });
+
+  it("applies a coalesced file-to-directory replacement", async () => {
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/dst", "old", {}, () => 1);
+        const cursor = currentRev(a);
+        rm(a, "/dst", { force: true });
+        mkdir(a, "/dst", {}, () => 2);
+        const entries = await drain(coalesceChanges(a, cursor));
+        expect(entries).toEqual([expect.objectContaining({ kind: "dir", path: "/dst" })]);
+        return { entries, objects: await collectObjects(a, entries) };
+      },
+      async (b, { entries, objects }) => {
+        await writeFile(b, "/dst", "old", {}, () => 1);
+
+        await applyChanges(b, entries, objects);
+
+        expect(resolveInode(b, "/dst", { followSymlinks: false })?.type).toBe("dir");
       },
     );
   });
