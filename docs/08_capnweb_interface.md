@@ -58,34 +58,42 @@ interface SyncRPC {
   // not inline: the DO sends ChangeEntry records with chunk hashes,
   // the receiver calls back via hasObjects / pushObjects for the
   // missing subset. Returns the receiver's new rev plus the
-  // appliedPushRev it stamped for this batch.
+  // appliedPushCursor it stamped for this batch.
   push(input: {
     senderRev: number;
     changes:   ReadableStream<ChangeEntry>;
-  }): Promise<{ rev: number; appliedPushRev: number }>;
-
-  // Container ← DO. Stream every ChangeEntry with rev > sinceRev,
-  // alongside the receiver's currentRev (cursor the puller advances
-  // fetchRev to) and appliedPushRev (cross-side invariant check on
-  // the pull path, mirroring the push response). Per-file entries
-  // carry (hash, size) chunk lists; no bytes inline.
-  fetchChanges(input: {
-    sinceRev?: number;
-    ignore?:   string[];
   }): Promise<{
-    currentRev:     number;
-    appliedPushRev: number;
+    rev:               number;
+    appliedPushCursor: { rev: number; path: string | null };
+  }>;
+
+  // Container ← DO. Stream every ChangeEntry after `after`, ordered
+  // by rev then path. The cursor is a resume point, not a snapshot
+  // handle: path=null means every change committed at or before that
+  // rev has been offered; a cursor with path set resumes after that
+  // path inside the same rev. A path rewritten after the stream opens
+  // is deferred to a later cursor rather than frozen at this rev (see
+  // docs/02). `currentCursor` is the receiver's currentRev at stream
+  // open with path=null, and `appliedPushCursor` is the receiver's
+  // cursor for sender changes it has applied. Per-file entries carry
+  // (hash, size) chunk lists; no bytes inline.
+  fetchChanges(input: {
+    after?:  { rev: number; path: string | null };
+    ignore?: string[];
+  }): Promise<{
+    currentCursor:  { rev: number; path: string | null };
+    appliedPushCursor: { rev: number; path: string | null };
     stream:         ReadableStream<ChangeEntry>;
   }>;
 
   // Diagnostic surface for soak tests, dashboards, and the agent
   // when it wants to wait for the wire to drain. pushRev /
-  // fetchRev only move when the receiver is acting as a sync
-  // peer; otherwise they sit at 0.
+  // fetchCursor only move when the receiver is acting as a sync
+  // peer; otherwise they sit at 0 / { rev: 0, path: null }.
   watermarks(): Promise<{
     currentRev: number;
     pushRev:    number;
-    fetchRev:   number;
+    fetchCursor: { rev: number; path: string | null };
   }>;
 
   // Materialise a single path as a ChangeEntry without driving
@@ -116,26 +124,32 @@ interface SyncRPC {
 }
 ```
 
+The durable object and `wsd` are deployed as a matched pair. This
+interface has no version negotiation, so request and response shape
+changes are hard wire breaks and require lockstep rollout.
+
 `ChangeEntry` is defined in `packages/dofs/src/sync/changes.ts`. Schema
 column references match [03. Filesystem Schema](./03_filesystem_schema.md).
 
 #### Rev-0 baseline (no separate snapshot)
 
 There is no dedicated `snapshot()` RPC. A fresh DO with no watermark
-calls `fetchChanges({ sinceRev: 0 })`, which streams every live entry
-plus any tombstones the receiver has retained. Treating the baseline as
-a degenerate fetch keeps the wire shape minimal: the same pull path
-covers both cold-start replication and incremental catch-up.
+calls `fetchChanges({ after: { rev: 0, path: null } })`, which streams
+every live entry plus any tombstones the receiver has retained.
+Treating the baseline as a degenerate fetch keeps the wire shape
+minimal: the same pull path covers both cold-start replication and
+incremental catch-up.
 
 #### Push semantics: peer vs external
 
 `push` distinguishes two callers via `senderRev`:
 
 - **`senderRev > 0` — sync peer.** The sender is replicating its own
-  log forward. The receiver advances `fetchRev` to `senderRev` once
-  the batch settles, echoes it back as `appliedPushRev`, and uses
-  that value to silence the loopback (the next `fetchChanges` from
-  the peer won't replay these entries back at it).
+  log forward. The receiver advances its fetch cursor to
+  `{ rev: senderRev, path: null }` once the batch settles, echoes it
+  back as `appliedPushCursor`, and uses that value to silence the
+  loopback (the next `fetchChanges` from the peer won't replay these
+  entries back at it).
 - **`senderRev === 0` — external orchestrator.** The sender doesn't
   have a rev space of its own (an agent, a CI script, a one-shot
   writer). The receiver applies the batch as ordinary local writes,
@@ -199,19 +213,19 @@ ends:
   streaming `ChangeEntry` records, the container calls `hasObjects` on
   the chunk hashes referenced, the DO follows up with `pushObjects`
   (itself a stream) for the missing subset, the container applies the
-  batch and returns `{ rev, appliedPushRev }`.
-- **Fetch (container → DO).** The DO calls `fetchChanges({ sinceRev })`,
-  which returns `{ currentRev, appliedPushRev, stream }` in one round-
-  trip. `currentRev` is the target watermark; `appliedPushRev`
+  batch and returns `{ rev, appliedPushCursor }`.
+- **Fetch (container → DO).** The DO calls `fetchChanges({ after })`,
+  which returns `{ currentCursor, appliedPushCursor, stream }` in one round-
+  trip. `currentCursor` is the target cursor; `appliedPushCursor`
   carries the cross-side invariant (the puller asserts it covers
-  the local `pushRev` before draining). The DO then streams
+  `{ rev: pushRev, path: null }` before draining). The DO then streams
   `ChangeEntry` records, accumulates chunk hashes, calls `hasObjects`
   on itself (cheap, local) to find what it already has, then calls
   `fetchObjects` for the rest.
 
 | Aspect | Value |
 | --- | --- |
-| Round-trips per fetch | 1 streaming `fetchChanges` (carries `currentRev` + `appliedPushRev` + entry stream) + 1 `hasObjects` per batch + 1 streaming `fetchObjects` per batch (only if any hashes are missing) |
+| Round-trips per fetch | 1 streaming `fetchChanges` (carries `currentCursor` + `appliedPushCursor` + entry stream) + 1 `hasObjects` per batch + 1 streaming `fetchObjects` per batch (only if any hashes are missing) |
 | Round-trips per push | 1 streaming `push` (carries `senderRev`) + 1 `hasObjects` (server-driven) + 1 streaming `pushObjects` (only if any hashes are missing) |
 | Bytes inline in `ChangeEntry` | None — entries carry chunk hashes only |
 | Object transfer shape | `ReadableStream<{ hash, bytes }>` in both directions |

@@ -38,12 +38,12 @@ export interface Env {
 function fakeBackend(): WorkspaceBackend {
   const sync: SyncRPC = {
     async push() {
-      return { rev: 0, appliedPushRev: 0 };
+      return { rev: 0, appliedPushCursor: { rev: 0, path: null } };
     },
     async fetchChanges() {
       return {
-        currentRev: 0,
-        appliedPushRev: 0,
+        currentCursor: { rev: 0, path: null },
+        appliedPushCursor: { rev: 0, path: null },
         stream: new ReadableStream<ChangeEntry>({
           start(c) {
             c.close();
@@ -55,7 +55,7 @@ function fakeBackend(): WorkspaceBackend {
       return null;
     },
     async watermarks() {
-      return { currentRev: 0, pushRev: 0, fetchRev: 0 };
+      return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
     },
     async hasObjects() {
       return [];

@@ -1,18 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import { assertAppliedPushRev } from "./invariant.js";
+import { assertAppliedPushCursor } from "./invariant.js";
 
-describe("assertAppliedPushRev", () => {
-  it("passes when applied >= pushed", () => {
-    expect(() => assertAppliedPushRev(10, 10)).not.toThrow();
-    expect(() => assertAppliedPushRev(11, 10)).not.toThrow();
+describe("assertAppliedPushCursor", () => {
+  it("passes when applied covers pushed", () => {
+    expect(() =>
+      assertAppliedPushCursor({ rev: 10, path: null }, { rev: 10, path: null }),
+    ).not.toThrow();
+    expect(() =>
+      assertAppliedPushCursor({ rev: 11, path: "/partial.txt" }, { rev: 10, path: null }),
+    ).not.toThrow();
   });
 
   it("passes at zero", () => {
-    expect(() => assertAppliedPushRev(0, 0)).not.toThrow();
+    expect(() =>
+      assertAppliedPushCursor({ rev: 0, path: null }, { rev: 0, path: null }),
+    ).not.toThrow();
   });
 
-  it("throws when the container is behind the DO's push watermark", () => {
-    expect(() => assertAppliedPushRev(5, 10)).toThrowError(/appliedPushRev.*5.*pushRev.*10/i);
+  it("throws when the receiver only partially applied the pushed rev", () => {
+    expect(() =>
+      assertAppliedPushCursor({ rev: 10, path: "/partial.txt" }, { rev: 10, path: null }),
+    ).toThrowError(/appliedPushCursor.*pushCursor/i);
+  });
+
+  it("throws when the receiver is behind the sender's push cursor", () => {
+    expect(() =>
+      assertAppliedPushCursor({ rev: 5, path: null }, { rev: 10, path: null }),
+    ).toThrowError(/appliedPushCursor.*pushCursor/i);
   });
 });

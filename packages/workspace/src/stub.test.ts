@@ -44,12 +44,12 @@ function composite(
 function fakeSync(): import("@cloudflare/workspace-rpc").SyncRPC {
   return {
     async push() {
-      return { rev: 0, appliedPushRev: 0 };
+      return { rev: 0, appliedPushCursor: { rev: 0, path: null } };
     },
     async fetchChanges() {
       return {
-        currentRev: 0,
-        appliedPushRev: 0,
+        currentCursor: { rev: 0, path: null },
+        appliedPushCursor: { rev: 0, path: null },
         stream: new ReadableStream<import("@cloudflare/dofs").ChangeEntry>({
           start(c) {
             c.close();
@@ -61,7 +61,7 @@ function fakeSync(): import("@cloudflare/workspace-rpc").SyncRPC {
       return null;
     },
     async watermarks() {
-      return { currentRev: 0, pushRev: 0, fetchRev: 0 };
+      return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
     },
     async hasObjects() {
       return [];

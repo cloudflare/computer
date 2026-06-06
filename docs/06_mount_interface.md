@@ -284,7 +284,7 @@ This is deliberate, not an oversight:
 - R2 and GitHub have no monotonic rev clock. Treating them as peers
   would force per-tick polling and a diff against a remembered
   snapshot.
-- The protocol's invariants — `appliedPushRev`, watermark
+- The protocol's invariants — `appliedPushCursor`, watermark
   reconciliation, tombstones — assume one peer. They don't generalize
   to N peers without a real CRDT / LWW story.
 - The "container always wins" conflict policy is a deliberate

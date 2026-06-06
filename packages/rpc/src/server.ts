@@ -6,16 +6,20 @@
 
 import {
   applyChangesSync,
+  type ChangeCursor,
   type ChangeEntry,
   coalesceChanges,
+  compareChangeCursors,
   currentRev,
   type Database,
   DEFAULT_IGNORE,
   fetchObjects,
   hasObjects,
   materialiseChange,
+  readFetchCursor,
   readWatermark,
   stageBlob,
+  writeFetchCursor,
 } from "@cloudflare/dofs";
 import { newWebSocketRpcSession, nodeHttpBatchRpcResponse, RpcTarget } from "capnweb";
 
@@ -93,7 +97,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
   async push(input: {
     senderRev: number;
     changes: ReadableStream<ChangeEntry>;
-  }): Promise<{ rev: number; appliedPushRev: number }> {
+  }): Promise<{ rev: number; appliedPushCursor: ChangeCursor }> {
     const entries: ChangeEntry[] = [];
     const reader = input.changes.getReader();
     try {
@@ -106,7 +110,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       reader.releaseLock();
     }
     // senderRev > 0 — the caller is a sync peer with its
-    // own rev space; advance fetchRev to that point and let
+    // own rev space; advance the fetch cursor to that point and let
     // loopback suppression silence the outbound push so we
     // don't ping-pong the same entries back.
     //
@@ -125,8 +129,13 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     this.db.transactionSync(() => {
       applyChangesSync(this.db, entries, new Map(), {
         source: isPeer ? "upstream" : "local",
-        ...(isPeer ? { advanceFetchRev: input.senderRev } : {}),
       });
+      if (isPeer) {
+        const nextCursor = { rev: input.senderRev, path: null };
+        if (compareChangeCursors(nextCursor, readFetchCursor(this.db)) > 0) {
+          writeFetchCursor(this.db, nextCursor);
+        }
+      }
     });
     if (this.options.afterApply !== undefined && entries.length > 0) {
       try {
@@ -140,13 +149,13 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     }
     return {
       rev: currentRev(this.db),
-      appliedPushRev: input.senderRev,
+      appliedPushCursor: { rev: input.senderRev, path: null },
     };
   }
 
-  async fetchChanges(input: { sinceRev?: number; ignore?: string[] }): Promise<{
-    currentRev: number;
-    appliedPushRev: number;
+  async fetchChanges(input: { after?: ChangeCursor; ignore?: string[] }): Promise<{
+    currentCursor: ChangeCursor;
+    appliedPushCursor: ChangeCursor;
     stream: ReadableStream<ChangeEntry>;
   }> {
     if (this.options.beforeFetch !== undefined) {
@@ -159,16 +168,17 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
         console.warn("[SyncRPCServer] beforeFetch hook failed:", err);
       }
     }
-    const sinceRev = input.sinceRev ?? 0;
+    const after = input.after ?? { rev: 0, path: null };
     const ignore =
       input.ignore ?? (this.options.ignore.length > 0 ? this.options.ignore : DEFAULT_IGNORE);
-    // appliedPushRev == fetchRev on the receiver: every senderRev > 0
-    // push advances fetchRev to senderRev on apply, so fetchRev is
-    // the largest senderRev the receiver has fully applied.
+    const snapshotRev = currentRev(this.db);
+    const currentCursor = { rev: snapshotRev, path: null };
     return {
-      currentRev: currentRev(this.db),
-      appliedPushRev: readWatermark(this.db, "fetchRev"),
-      stream: iterableToReadableStream(coalesceChanges(this.db, sinceRev, { ignore })),
+      currentCursor,
+      appliedPushCursor: readFetchCursor(this.db),
+      stream: iterableToReadableStream(
+        coalesceChanges(this.db, after, { ignore, through: currentCursor }),
+      ),
     };
   }
 
@@ -176,11 +186,11 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     return materialiseChange(this.db, path);
   }
 
-  async watermarks(): Promise<{ currentRev: number; pushRev: number; fetchRev: number }> {
+  async watermarks(): Promise<{ currentRev: number; pushRev: number; fetchCursor: ChangeCursor }> {
     return {
       currentRev: currentRev(this.db),
       pushRev: readWatermark(this.db, "pushRev"),
-      fetchRev: readWatermark(this.db, "fetchRev"),
+      fetchCursor: readFetchCursor(this.db),
     };
   }
 

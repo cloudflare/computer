@@ -70,10 +70,9 @@ positional read primitive can read it directly instead of running
 `SUM(size) FROM vfs_chunks` on every call. Every write path stamps
 it alongside `mode`/`mtime`/`rev`.
 
-The `vfs_nodes_by_rev` index supports `coalesceChanges`'s
-`WHERE rev > sinceRev` scan over live inodes, which the sync protocol
-calls once per pull to enumerate everything modified since the last
-fetch watermark.
+The `vfs_nodes_by_rev` index supports `coalesceChanges`'s cursor scan
+over live inodes, which the sync protocol calls once per pull to
+enumerate everything modified after the last fetch cursor.
 
 There is no `ignored` column: ignored paths are entirely invisible to
 the DO-side filesystem API (see
@@ -217,6 +216,23 @@ CREATE TABLE _vfs_watermark (
 Stores `pushRev` and `fetchRev` (see
 [02. Sync Protocol](./02_sync_protocol.md#watermarks)). Survives DO
 restarts so reconnects resume cleanly.
+
+### `_vfs_fetch_cursor` — fetch path tie-breaker
+
+```sql
+CREATE TABLE _vfs_fetch_cursor (
+  k    TEXT PRIMARY KEY CHECK(k = 'fetch'),
+  path TEXT
+);
+```
+
+Stores the path component for the fetch cursor. The numeric rev remains
+in `_vfs_watermark.fetchRev`; `path = NULL` means every change committed
+at or before that rev has been offered to the receiver, and a non-null
+`path` resumes within `fetchRev`. The cursor is a resume point, not a
+point-in-time snapshot: a path rewritten after a fetch opens is deferred
+to a later cursor rather than frozen at `fetchRev`. See
+[02. Sync Protocol](./02_sync_protocol.md) for the full contract.
 
 ### `_vfs_mounts` — mount index state
 

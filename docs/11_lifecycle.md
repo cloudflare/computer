@@ -44,7 +44,7 @@ The 1:1 mapping is load-bearing for several reasons:
 
 - The container's WebSocket peer is unambiguous — there is at most one
   capnweb session per DO at any time.
-- The DO's persisted watermarks (`pushRev`, `fetchRev`) speak to a
+- The DO's persisted watermarks (`pushRev`, fetch cursor) speak to a
   single counterparty.
 - Hibernation enablement (see below) becomes tractable because the DO
   doesn't have to multiplex multiple WS peers.
@@ -79,9 +79,9 @@ an incarnation boundary. What survives is:
 
 - The SQLite store backing `Workspace.fs` — every committed `writeFile`,
   `mkdir`, `rm`, `symlink` is durable.
-- The `_vfs_watermark` row, which holds `pushRev` (last DO-side rev
-  successfully pushed to the container) and `fetchRev` (last
-  container-side rev the DO has fetched). These are written via the
+- The sync watermark rows, which hold `pushRev` (last DO-side rev
+  successfully pushed to the container) and the fetch cursor (last
+  container-side cursor the DO has fetched). These are written via the
   same SQLite transaction as the data they describe, so they cannot
   drift out of sync with the store.
 
@@ -186,14 +186,15 @@ Because the rev counters drive every operation, a torn RPC is safe
 to retry against a fresh session. Specifically:
 
 - **`pushOnce`.** `pushRev` is written only after
-  `assertAppliedPushRev` succeeds. A torn push leaves `pushRev` at
+  `assertAppliedPushCursor` succeeds. A torn push leaves `pushRev` at
   the previous value; the next push replays the same batch.
   `applyChanges` on the receiver is idempotent.
-- **`pullOnce`.** `fetchRev` advances per committed batch to the max
-  `rev` the batch carried. A torn pull leaves `fetchRev` at the last
-  per-batch checkpoint; the next pull re-fetches only the entries
-  past that point. `applyChanges`'s `alreadyApplied` check drops any
-  duplicates the resume happens to overlap with.
+- **`pullOnce`.** The fetch cursor advances per committed batch to the
+  last streamed entry's `(rev, path)`. A torn pull leaves the cursor at
+  the last per-batch checkpoint; the next pull re-fetches only entries
+  past that point, including within the same rev. `applyChanges`'s
+  `alreadyApplied` check drops any duplicates the resume happens to
+  overlap with.
 - **`exec.events`.** Each event carries a monotonic `seq` per exec
   id. The client reattaches via `getExec({ id, after: seq })`.
 
@@ -334,11 +335,11 @@ Two things have to change for capnweb + hibernation to work:
      wake as a fresh session. The peer must retry any in-flight RPC.
      This is the same semantics as a transport reset, which the
      protocol already handles via the rev cursors.
-   - **Sync streams: nothing to store.** `pushRev` and `fetchRev`
-     are already written to `_vfs_watermark` inside the same SQLite
-     transaction as the data they describe. On wake, the next
-     `pushOnce` / `pullOnce` reads them from durable storage and
-     resumes. No attachment write is required.
+   - **Sync streams: nothing to store.** `pushRev` and the durable
+     fetch cursor are already written to SQLite alongside the data
+     they describe. On wake, the next `pushOnce` / `pullOnce` reads
+     them from durable storage and resumes. No attachment write is
+     required.
    - **Exec streams: store `{ [id]: seq }` per in-flight exec.**
      The `WorkspaceShell` driver inside the DO is the only place
      that knows where the consumer got to in the event stream.

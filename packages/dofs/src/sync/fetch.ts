@@ -2,6 +2,7 @@ import type { Database } from "../storage.js";
 import type { ChangeEntry } from "./changes.js";
 import { coalesceChanges } from "./coalesce.js";
 import { pushObjects } from "./push.js";
+import type { ChangeCursor } from "./watermarks.js";
 
 // The fetch wire is the mirror of the push wire: same SQL,
 // opposite direction. The DO calls fetchChanges / fetchObjects on
@@ -10,10 +11,10 @@ import { pushObjects } from "./push.js";
 
 export function fetchChanges(
   db: Database,
-  sinceRev: number,
+  after: ChangeCursor | number,
   options: { ignore?: string[] } = {},
 ): AsyncIterable<ChangeEntry> {
-  return coalesceChanges(db, sinceRev, options);
+  return coalesceChanges(db, after, options);
 }
 
 export function fetchObjects(

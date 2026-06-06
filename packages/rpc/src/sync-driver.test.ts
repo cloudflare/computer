@@ -3,9 +3,11 @@ import {
   currentRev,
   Database,
   initializeSchema,
+  readFetchCursor,
   readWatermark,
   SQLiteWorkspaceProvider,
   stageBlob,
+  writeFetchCursor,
   writeWatermark,
 } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
@@ -31,6 +33,55 @@ function fileEntries(db: Database): string[] {
   return db
     .all<{ name: string }>("SELECT name FROM vfs_dirents WHERE parent_inode = 1 ORDER BY name")
     .map((r) => r.name);
+}
+
+async function drainStream<T>(stream: ReadableStream<T>): Promise<T[]> {
+  const out: T[] = [];
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return out;
+}
+
+// Wrap a SyncRPC so the fetchChanges result carries a tracked
+// [Symbol.dispose]. pullOnce owns that envelope and must dispose it on
+// every exit, including the throwing paths. Options inject the two
+// failure modes: a lying appliedPushCursor (trips the cross-side
+// invariant before the stream is read) and an empty hasObjects (forces
+// applyChanges to throw on a missing object mid-stream).
+function trackFetchDisposal(
+  rpc: SyncRPC,
+  opts: { lowerCursor?: boolean; failHasObjects?: boolean } = {},
+): { rpc: SyncRPC; disposeCount: () => number } {
+  let disposeCount = 0;
+  const wrapped = new Proxy(rpc as object, {
+    get(target, prop, receiver) {
+      if (prop === "fetchChanges") {
+        return async (...args: Parameters<SyncRPC["fetchChanges"]>) => {
+          const real = await Reflect.get(target, prop, receiver).call(target, ...args);
+          return {
+            ...real,
+            ...(opts.lowerCursor ? { appliedPushCursor: { rev: 0, path: null } } : {}),
+            [Symbol.dispose]() {
+              disposeCount += 1;
+            },
+          };
+        };
+      }
+      if (prop === "hasObjects" && opts.failHasObjects) {
+        return async () => [];
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as SyncRPC;
+  return { rpc: wrapped, disposeCount: () => disposeCount };
 }
 
 describe("sync driver — pullOnce", () => {
@@ -335,6 +386,130 @@ describe("SyncRPC server — beforeFetch hook", () => {
   });
 });
 
+describe("SyncRPC server — fetchChanges snapshots", () => {
+  it("bounds the returned stream to the advertised currentCursor", async () => {
+    const upstream = makePeer();
+    try {
+      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      provider.writeFileSync("/before.txt", "before");
+
+      const originalAll = upstream.db.all.bind(upstream.db);
+      let rewrote = false;
+      upstream.db.all = ((query: string, ...bindings: unknown[]) => {
+        if (!rewrote && query.startsWith("SELECT inode, rev FROM vfs_nodes WHERE rev > ?")) {
+          rewrote = true;
+          provider.writeFileSync("/after.txt", "after");
+        }
+        return originalAll(query, ...bindings);
+      }) as typeof upstream.db.all;
+
+      const result = await upstream.rpc.fetchChanges({ after: { rev: 0, path: null } });
+      const advertisedCursor = result.currentCursor;
+
+      const entries = await drainStream(result.stream);
+      expect(rewrote).toBe(true);
+      expect(result.currentCursor).toEqual(advertisedCursor);
+      expect(entries.map((entry) => entry.path)).toContain("/before.txt");
+      expect(entries.map((entry) => entry.path)).not.toContain("/after.txt");
+      expect(advertisedCursor.rev).toBeLessThan(currentRev(upstream.db));
+    } finally {
+      upstream.close();
+    }
+  });
+
+  it("pullOnce persists only the advertised snapshot cursor", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      providerA.writeFileSync("/before.txt", "before");
+
+      let advertisedCursor: { rev: number; path: string | null } | undefined;
+      const wrapped = new Proxy(upstream.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchChanges") {
+            return async (...args: Parameters<SyncRPC["fetchChanges"]>) => {
+              const result = await Reflect.get(target, prop, receiver).call(target, ...args);
+              advertisedCursor = result.currentCursor;
+              providerA.writeFileSync("/after.txt", "after");
+              return result;
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as typeof upstream.rpc;
+
+      await pullOnce(downstream.db, wrapped);
+
+      expect(advertisedCursor).toBeDefined();
+      expect(fileEntries(downstream.db)).toContain("before.txt");
+      expect(fileEntries(downstream.db)).not.toContain("after.txt");
+      expect(readFetchCursor(downstream.db)).toEqual(advertisedCursor);
+      expect(readFetchCursor(downstream.db).rev).toBeLessThan(currentRev(upstream.db));
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+});
+
+describe("sync driver — pullOnce envelope disposal", () => {
+  it("disposes the fetchChanges envelope when the cross-side invariant trips", async () => {
+    const remote = makePeer();
+    try {
+      const local = new Database(new SQLiteTestStorage());
+      initializeSchema(local, () => 1000);
+      // Local claims to have pushed rev 42; the wrapper echoes back a
+      // rev-0 cursor, so assertAppliedPushCursor throws before the
+      // stream is ever read.
+      writeWatermark(local, "pushRev", 42);
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/seed.txt", "x");
+
+      const tracked = trackFetchDisposal(remote.rpc, { lowerCursor: true });
+      await expect(pullOnce(local, tracked.rpc)).rejects.toThrow(/cross-side invariant violated/i);
+      expect(tracked.disposeCount()).toBe(1);
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("disposes the fetchChanges envelope when applyChanges throws mid-stream", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/seed.txt", "needs-bytes");
+
+      // hasObjects lies (returns nothing), so pullOnce stages no blob
+      // bytes and applyChanges throws on the missing object.
+      const tracked = trackFetchDisposal(remote.rpc, { failHasObjects: true });
+      await expect(pullOnce(local.db, tracked.rpc)).rejects.toThrow(/missing object/i);
+      expect(tracked.disposeCount()).toBe(1);
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("disposes the fetchChanges envelope on the happy path", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/seed.txt", "x");
+
+      const tracked = trackFetchDisposal(remote.rpc);
+      await pullOnce(local.db, tracked.rpc);
+      expect(tracked.disposeCount()).toBe(1);
+      expect(fileEntries(local.db)).toContain("seed.txt");
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+});
+
 describe("sync driver — bidirectional convergence", () => {
   it("two peers writing in parallel converge after a few ticks", async () => {
     const a = makePeer();
@@ -406,21 +581,21 @@ describe("sync driver — bidirectional convergence", () => {
 });
 
 describe("sync driver — cross-side invariant", () => {
-  it("pushOnce throws when the remote echoes back a lower appliedPushRev", async () => {
+  it("pushOnce throws when the remote echoes back a lower appliedPushCursor", async () => {
     const a = makePeer();
     const b = makePeer();
     try {
       const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
       providerA.writeFileSync("/x.txt", "x");
 
-      // Wrap B's rpc to lie about appliedPushRev. Simulates a
+      // Wrap B's rpc to lie about appliedPushCursor. Simulates a
       // regression in the suppress-dirty-tracking apply path.
       const lyingRpc = new Proxy(b.rpc as object, {
         get(target, prop, receiver) {
           if (prop === "push") {
             return async (input: { senderRev: number; changes: ReadableStream<unknown> }) => {
               const real = await Reflect.get(target, prop, receiver).call(target, input);
-              return { ...real, appliedPushRev: 0 };
+              return { ...real, appliedPushCursor: { rev: 0, path: null } };
             };
           }
           return Reflect.get(target, prop, receiver);
@@ -434,10 +609,10 @@ describe("sync driver — cross-side invariant", () => {
     }
   });
 
-  it("pullOnce throws when fetchChanges echoes back a lower appliedPushRev", async () => {
+  it("pullOnce throws when fetchChanges echoes back a lower appliedPushCursor", async () => {
     // Symmetric to the push case. fetchChanges returns the remote's
-    // appliedPushRev alongside the entry stream; the DO asserts
-    // appliedPushRev >= pushRev before draining, so a regression in
+    // appliedPushCursor alongside the entry stream; the DO asserts
+    // appliedPushCursor covers pushRev before draining, so a regression in
     // the remote's apply path that loses applied state trips the
     // invariant on the next pull instead of corrupting fetchRev.
     const remote = makePeer();
@@ -455,9 +630,9 @@ describe("sync driver — cross-side invariant", () => {
       const lyingRpc = new Proxy(remote.rpc as object, {
         get(target, prop, receiver) {
           if (prop === "fetchChanges") {
-            return (input: { sinceRev?: number; ignore?: string[] }) => {
+            return (input: Parameters<SyncRPC["fetchChanges"]>[0]) => {
               const real = Reflect.get(target, prop, receiver).call(target, input);
-              return { ...real, appliedPushRev: 0 };
+              return { ...real, appliedPushCursor: { rev: 0, path: null } };
             };
           }
           return Reflect.get(target, prop, receiver);
@@ -465,6 +640,50 @@ describe("sync driver — cross-side invariant", () => {
       }) as typeof remote.rpc;
 
       await expect(pullOnce(local, lyingRpc)).rejects.toThrow(/cross-side invariant violated/i);
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("fetchChanges reports applied push progress as a cursor", async () => {
+    const remote = makePeer();
+    try {
+      writeFetchCursor(remote.db, { rev: 42, path: "/partial.txt" });
+
+      const result = await remote.rpc.fetchChanges({ after: { rev: 0, path: null } });
+
+      expect(result.appliedPushCursor).toEqual({ rev: 42, path: "/partial.txt" });
+      await result.stream.cancel();
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("pullOnce rejects when the remote only partially applied local pushRev", async () => {
+    const remote = makePeer();
+    try {
+      const local = new Database(new SQLiteTestStorage());
+      initializeSchema(local, () => 1000);
+      writeWatermark(local, "pushRev", 42);
+      writeFetchCursor(remote.db, { rev: 42, path: "/partial.txt" });
+
+      await expect(pullOnce(local, remote.rpc)).rejects.toThrow(/cross-side invariant violated/i);
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("pullOnce accepts a partial remote cursor after local pushRev", async () => {
+    const remote = makePeer();
+    try {
+      const local = new Database(new SQLiteTestStorage());
+      initializeSchema(local, () => 1000);
+      writeWatermark(local, "pushRev", 42);
+      writeFetchCursor(remote.db, { rev: 43, path: "/partial.txt" });
+
+      const result = await pullOnce(local, remote.rpc);
+
+      expect(result).toEqual({ applied: 0, skipped: [] });
     } finally {
       remote.close();
     }
@@ -562,6 +781,114 @@ describe("sync driver — streaming pullOnce", () => {
       b.close();
     }
   });
+
+  it("does not let an older overlapping pull move the fetch cursor backward", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      const providerB = new SQLiteWorkspaceProvider(downstream.db, { now: () => 1 });
+      for (let i = 0; i < 300; i++) {
+        providerA.writeFileSync(`/f${i.toString().padStart(3, "0")}.txt`, `old ${i}`);
+      }
+
+      let releaseOldHasObjects: (() => void) | undefined;
+      let oldHasObjectsEntered: (() => void) | undefined;
+      const oldHasObjectsStarted = new Promise<void>((resolve) => {
+        oldHasObjectsEntered = resolve;
+      });
+      const oldHasObjectsGate = new Promise<void>((resolve) => {
+        releaseOldHasObjects = resolve;
+      });
+      const sampledCursorBeforeSecondOldBatch: Array<{ rev: number; path: string | null }> = [];
+      let oldHasObjectsCalls = 0;
+      const olderRpc = new Proxy(upstream.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "hasObjects") {
+            return async (hashes: Uint8Array[]) => {
+              oldHasObjectsCalls++;
+              if (oldHasObjectsCalls === 1) {
+                oldHasObjectsEntered?.();
+                await oldHasObjectsGate;
+              } else {
+                sampledCursorBeforeSecondOldBatch.push(readFetchCursor(downstream.db));
+              }
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as typeof upstream.rpc;
+
+      const olderPull = pullOnce(downstream.db, olderRpc);
+      await oldHasObjectsStarted;
+
+      providerA.writeFileSync("/newer.txt", "newer");
+      const newestCursor = { rev: currentRev(upstream.db), path: null };
+      const newerPull = await pullOnce(downstream.db, upstream.rpc);
+      expect(newerPull.applied).toBe(301);
+      expect(readFetchCursor(downstream.db)).toEqual(newestCursor);
+
+      releaseOldHasObjects?.();
+      const olderPullResult = await olderPull;
+
+      expect(olderPullResult.applied).toBe(0);
+      expect(providerB.readFileSync("/newer.txt", "utf8")).toBe("newer");
+      expect(sampledCursorBeforeSecondOldBatch).toEqual([newestCursor]);
+      expect(readFetchCursor(downstream.db)).toEqual(newestCursor);
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+
+  it("resumes inside one large same-rev rename after a failed batch", async () => {
+    const a = makePeer();
+    const b = makePeer();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
+      const providerB = new SQLiteWorkspaceProvider(b.db, { now: () => 1 });
+      providerA.mkdirSync("/src", {});
+      for (let i = 0; i < 300; i++) {
+        providerA.writeFileSync(`/src/f${i.toString().padStart(3, "0")}.txt`, `content ${i}`);
+      }
+
+      await pullOnce(b.db, a.rpc);
+      expect(providerB.readFileSync("/src/f299.txt", "utf8")).toBe("content 299");
+
+      providerA.renameSync("/src", "/dst");
+      const renameRev = currentRev(a.db);
+      let hasObjectsCalls = 0;
+      const flaky = new Proxy(a.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "hasObjects") {
+            return async (hashes: Uint8Array[]) => {
+              hasObjectsCalls++;
+              if (hasObjectsCalls === 2) {
+                throw new Error("injected pull failure after first batch");
+              }
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as typeof a.rpc;
+
+      await expect(pullOnce(b.db, flaky)).rejects.toThrow(/injected pull failure/);
+      expect(readFetchCursor(b.db)).toMatchObject({ rev: renameRev });
+      expect(readFetchCursor(b.db).path).not.toBeNull();
+
+      const retried = await pullOnce(b.db, a.rpc);
+      expect(retried.applied).toBeGreaterThan(0);
+      expect(providerB.existsSync("/src")).toBe(false);
+      expect(providerB.readFileSync("/dst/f000.txt", "utf8")).toBe("content 0");
+      expect(providerB.readFileSync("/dst/f299.txt", "utf8")).toBe("content 299");
+      expect(readFetchCursor(b.db)).toEqual({ rev: renameRev, path: null });
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
 });
 
 describe("sync driver — push atomicity", () => {
@@ -626,7 +953,7 @@ describe("sync driver — reconcileWatermarks", () => {
   // container lifetimes; the container's watermarks are
   // process-lifetime in today's wsd. After a container restart with
   // no new DO-side writes, pushOnce's localRev <= sincePush
-  // early-return means the assertAppliedPushRev check never runs and
+  // early-return means the assertAppliedPushCursor check never runs and
   // the container's empty FUSE mount is invisible to the DO. The
   // reconcile catches the mismatch by comparing the local cursors
   // against the remote's watermarks(), resetting fetchRev to 0 when
@@ -654,7 +981,7 @@ describe("sync driver — reconcileWatermarks", () => {
     const remote = makePeer();
     try {
       // Local pushRev = 17, but the remote is fresh: its pushRev,
-      // which doubles as appliedPushRev on the wire, is 0.
+      // which is echoed as appliedPushCursor on the wire, is 0/null.
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
       writeWatermark(local, "fetchRev", 0);

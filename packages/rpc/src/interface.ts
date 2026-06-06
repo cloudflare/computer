@@ -17,39 +17,37 @@
 // WorkspaceRPC, so the wire stub exposes one stable surface while
 // the two halves stay internally separable.
 
-import type { ChangeEntry } from "@cloudflare/dofs";
+import type { ChangeCursor, ChangeEntry } from "@cloudflare/dofs";
 
 export interface SyncRPC {
   // DO → container. Stream a coalesced batch of changes. Bytes are
   // not inline: the DO sends ChangeEntry records with chunk hashes,
   // the container calls back via hasObjects / asks for the missing
   // bytes through pushObjects. `senderRev` is the sender's
-  // currentRev at the moment it captured the batch — the
-  // receiver advances its fetchRev to this value after the apply
-  // settles, and echoes it back as `appliedPushRev` so the sender
-  // can assert applied ≥ pushed on every response.
+  // currentRev at the moment it captured the batch. The receiver
+  // advances its fetch cursor to this completed rev after the apply
+  // settles, and echoes that cursor back as `appliedPushCursor` so
+  // the sender can assert applied covers pushed on every response.
   push(input: { senderRev: number; changes: ReadableStream<ChangeEntry> }): Promise<{
     rev: number;
-    appliedPushRev: number;
+    appliedPushCursor: ChangeCursor;
   }>;
 
-  // Container ← DO. Stream every ChangeEntry with rev > sinceRev,
-  // alongside two scalars used to drive the pull:
+  // Container ← DO. Stream every ChangeEntry after the supplied cursor,
+  // alongside cursors used to drive the pull:
   //
-  //   currentRev     — the receiver's currentRev captured at the
-  //                     start of the stream. The puller advances
-  //                     fetchRev no further than this on any pull
-  //                     so the watermark stays consistent with what
-  //                     the stream actually carried.
-  //   appliedPushRev — the largest senderRev the receiver has
-  //                     fully applied. The puller asserts
-  //                     appliedPushRev >= local.pushRev before
-  //                     draining, mirroring the same check on push.
+  //   currentCursor  — the receiver's currentRev captured at the
+  //                     start of the stream, with path=null to mark
+  //                     the whole rev complete after a clean drain.
+  //   appliedPushCursor — the receiver's cursor for sender changes
+  //                       it has applied. The puller asserts this
+  //                       covers local pushRev before draining,
+  //                       mirroring the same check on push.
   //
   // Per-file entries carry (hash, size) chunk lists; no bytes inline.
-  fetchChanges(input: { sinceRev?: number; ignore?: string[] }): Promise<{
-    currentRev: number;
-    appliedPushRev: number;
+  fetchChanges(input: { after?: ChangeCursor; ignore?: string[] }): Promise<{
+    currentCursor: ChangeCursor;
+    appliedPushCursor: ChangeCursor;
     stream: ReadableStream<ChangeEntry>;
   }>;
 
@@ -60,11 +58,12 @@ export interface SyncRPC {
   //
   //   currentRev  — latest rev stamped on any local mutation.
   //   pushRev     — highest rev already shipped to the upstream.
-  //   fetchRev    — highest upstream rev applied locally.
+  //   fetchCursor — upstream fetch cursor, including same-rev path
+  //                 progress.
   //
-  // pushRev / fetchRev only move when the receiver is acting as
+  // pushRev / fetchCursor only move when the receiver is acting as
   // a sync peer. Otherwise they sit at 0.
-  watermarks(): Promise<{ currentRev: number; pushRev: number; fetchRev: number }>;
+  watermarks(): Promise<{ currentRev: number; pushRev: number; fetchCursor: ChangeCursor }>;
 
   // Materialise the receiver's view of a single path as a
   // ChangeEntry. Returns null when the path doesn't exist and

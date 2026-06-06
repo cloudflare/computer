@@ -15,7 +15,7 @@ import { applyChanges, applyChangesSync } from "./apply.js";
 import type { ChangeEntry } from "./changes.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchObjects } from "./fetch.js";
-import { currentRev, writeWatermark } from "./watermarks.js";
+import { currentRev } from "./watermarks.js";
 
 async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -71,33 +71,6 @@ describe("applyChanges", () => {
         expect(await readFile(b, "/b.txt", "utf8")).toBe("beta");
       },
     );
-  });
-
-  it("advances fetchRev to the largest applied rev", async () => {
-    await withTwoDBs(
-      async (a) => {
-        await writeFile(a, "/x.txt", "x", {}, () => 1);
-        const entries = await drain(coalesceChanges(a, 0));
-        return { entries, objects: await collectObjects(a, entries) };
-      },
-      async (b, { entries, objects }) => {
-        await applyChanges(b, entries, objects, { advanceFetchRev: 5 });
-        const got = await import("./watermarks.js").then((m) => m.readWatermark(b, "fetchRev"));
-        expect(got).toBe(5);
-      },
-    );
-  });
-
-  it("does not regress fetchRev on partial replay", async () => {
-    await withDB(async (db) => {
-      // Pretend a previous apply pass advanced fetchRev to 10.
-      writeWatermark(db, "fetchRev", 10);
-      await applyChanges(db, [], new Map(), { advanceFetchRev: 3 });
-      const got = await import("./watermarks.js").then((m) => m.readWatermark(db, "fetchRev"));
-      // The helper takes the max of current and requested, never
-      // moves backwards.
-      expect(got).toBe(10);
-    });
   });
 
   it("commits in batches capped by byte budget", async () => {

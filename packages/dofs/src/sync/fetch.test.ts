@@ -38,6 +38,17 @@ describe("fetch wire", () => {
     });
   });
 
+  it("fetchChanges resumes from a rev/path cursor", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "alpha", {}, () => 1);
+      await writeFile(db, "/b.txt", "beta", {}, () => 2);
+      const entries = await drain(fetchChanges(db, { rev: 0, path: null }));
+      const first = entries[0];
+      const resumed = await drain(fetchChanges(db, { rev: first.rev, path: first.path }));
+      expect(resumed).toEqual(entries.slice(1));
+    });
+  });
+
   it("fetchObjects yields each hash exactly once", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "shared", {}, () => 1);

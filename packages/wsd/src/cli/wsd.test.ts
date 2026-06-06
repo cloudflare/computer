@@ -116,7 +116,10 @@ test("/ws serves a capnweb WorkspaceRPC session", async (_ctx) => {
     // hasObjects against a fresh DB returns the empty subset.
     expect(await client.sync.hasObjects([])).toEqual([]);
     // fetchChanges streams zero entries against a fresh DB.
-    const { stream } = await client.sync.fetchChanges({ sinceRev: 0, ignore: [] });
+    const { stream } = await client.sync.fetchChanges({
+      after: { rev: 0, path: null },
+      ignore: [],
+    });
     const reader = stream.getReader();
     const entries = [];
     while (true) {

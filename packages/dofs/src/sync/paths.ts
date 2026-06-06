@@ -24,3 +24,23 @@ export function pathOf(db: Database, inode: number): string | null {
   }
   return null;
 }
+
+// Every path that currently names `inode`. A file may carry several
+// hardlink names; pathOf collapses them to one arbitrary name, which
+// is wrong for the change stream — every name has to reach the wire so
+// the receiver materialises each. Directories cannot be hardlinked, so
+// each parent walk is unambiguous.
+export function pathsOf(db: Database, inode: number): string[] {
+  if (inode === ROOT_INODE) return ["/"];
+  const dirents = db.all<{ parent_inode: number; name: string }>(
+    "SELECT parent_inode, name FROM vfs_dirents WHERE child_inode = ?",
+    inode,
+  );
+  const paths: string[] = [];
+  for (const { parent_inode, name } of dirents) {
+    const parent = pathOf(db, parent_inode);
+    if (parent === null) continue;
+    paths.push(parent === "/" ? `/${name}` : `${parent}/${name}`);
+  }
+  return paths;
+}

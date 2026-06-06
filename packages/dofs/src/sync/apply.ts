@@ -50,11 +50,6 @@ export interface ApplyOptions {
   maxBytesPerBatch?: number;
   // Soft cap on entries per batch. Default 1024 paths.
   maxPathsPerBatch?: number;
-  // After the stream drains, advance fetchRev to this value if it's
-  // higher than the current persisted value. Callers pass the
-  // sender's currentRev so the next pull resumes from the right
-  // cursor. Never regresses the watermark.
-  advanceFetchRev?: number;
   // Where the entries came from. 'local' (default) treats the apply
   // path like any other mutation: writeFile/mkdir/etc bump vfs_meta.rev
   // and the push loop later ships those new revs upstream. 'upstream'
@@ -326,16 +321,6 @@ export async function applyChanges(
     if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
 
-  // Advance fetchRev only after the stream drains so a crash
-  // mid-apply leaves the watermark behind and the next pull
-  // re-fetches anything not yet committed.
-  if (options.advanceFetchRev !== undefined) {
-    const current = readWatermark(db, "fetchRev", options.backend);
-    if (options.advanceFetchRev > current) {
-      writeWatermark(db, "fetchRev", options.advanceFetchRev, options.backend);
-    }
-  }
-
   // Loopback suppression: when this apply pass reflects entries
   // from upstream, the writeFile/mkdir/symlink/rm calls inside
   // bumped vfs_meta.rev. Without this advance, the next push tick
@@ -471,13 +456,6 @@ export function applyChangesSync(
     if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
 
-  if (options.advanceFetchRev !== undefined) {
-    const current = readWatermark(db, "fetchRev", options.backend);
-    if (options.advanceFetchRev > current) {
-      writeWatermark(db, "fetchRev", options.advanceFetchRev, options.backend);
-    }
-  }
-
   if (options.source === "upstream") {
     const revAfter = currentRev(db);
     const existing = readWatermark(db, "pushRev", options.backend);
@@ -507,7 +485,7 @@ function alreadyApplied(db: Database, entry: Exclude<ChangeEntry, { kind: "delet
     return uint8Equal(row.manifest_hash, wanted);
   }
   if (entry.kind === "dir") {
-    return live.type === "dir" && directoryMetadataMatches(live, entry);
+    return live.type === "dir" && (live.mode & 0o7777) === (entry.mode & 0o7777);
   }
   // symlink
   return (
@@ -515,13 +493,6 @@ function alreadyApplied(db: Database, entry: Exclude<ChangeEntry, { kind: "delet
     live.linkTarget === entry.target &&
     (live.mode & 0o7777) === (entry.mode & 0o7777)
   );
-}
-
-function directoryMetadataMatches(
-  live: { mode: number },
-  entry: Extract<ChangeEntry, { kind: "dir" }>,
-): boolean {
-  return (live.mode & 0o7777) === (entry.mode & 0o7777);
 }
 
 function uint8Equal(a: Uint8Array, b: Uint8Array): boolean {

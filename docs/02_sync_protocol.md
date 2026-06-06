@@ -38,7 +38,12 @@ A typical `exec()` round-trip:
 1. **Push.** The DO streams every `ChangeEntry` with a higher
    revision than the container has seen, **coalesced to one entry
    per path** (the latest state wins — five rewrites of the same
-   path between execs cost one entry on the wire, not five). Bytes
+   path between execs cost one entry on the wire, not five). A
+   hardlinked inode carries several names: `coalesceChanges` emits
+   one entry **per name**, so every path materialises on the
+   receiver. Hardlink identity is not preserved across the wire —
+   each name becomes an independent file with the same content, not
+   a shared inode. Bytes
    are not inline; entries carry chunk hashes only. The **sender**
    (the DO) calls `remote.hasObjects(...)` on the referenced hashes
    and follows up with `remote.pushObjects(missing)` for the subset
@@ -54,10 +59,10 @@ A typical `exec()` round-trip:
    [06. Mount Interface](./06_mount_interface.md).
 3. **Exec.** The command runs. FUSE writes are captured by the
    in-container VFS as they happen, each stamped with a fresh revision.
-4. **Fetch.** The DO calls `fetchChanges({ sinceRev: fetchRev })`. The
-   container streams `ChangeEntry` records — one per touched path,
-   per-file entries carrying `chunks: (hash, size)[]`. No bytes
-   inline.
+4. **Fetch.** The DO calls `fetchChanges({ after: fetchCursor })`.
+   The container streams `ChangeEntry` records after that `(rev, path)`
+   cursor — one per touched path, per-file entries carrying
+   `chunks: (hash, size)[]`. No bytes inline.
 5. **Diff.** The DO reads up to `PULL_BATCH_SIZE` (256) entries from the
    stream, unions the chunk hashes referenced by that batch, probes
    its own `vfs_blobs` for which it already has, and calls
@@ -69,13 +74,13 @@ A typical `exec()` round-trip:
    `transactionSync` inside `writeFile`/`mkdir`/`rm`/`symlink` is the
    real durability boundary. The driver then loops back to step 5 for
    the next batch.
-   `fetchRev` is advanced **per committed batch** to the max `rev`
-   any entry in that batch carried. `coalesceChanges` emits entries
-   in ascending rev order so this checkpoint is safe — everything
-   below `batchMaxRev` has been applied. A crash mid-pull resumes
-   from the last per-batch advance, so re-fetched work is bounded
-   by `PULL_BATCH_SIZE` (256) entries, not the whole stream. The
-   receiver's `alreadyApplied` check inside `applyChanges` still
+   The fetch cursor is advanced **per committed batch** to the last
+   streamed entry's `(rev, path)`. `coalesceChanges` emits entries in
+   ascending `rev`, then ascending `path`, so this checkpoint is safe
+   even when one rev contains more than one batch. A crash mid-pull
+   resumes from the last per-batch advance, so re-fetched work is
+   bounded by `PULL_BATCH_SIZE` (256) entries, not the whole stream.
+   The receiver's `alreadyApplied` check inside `applyChanges` still
    drops already-applied entries on the floor so re-apply is
    idempotent and cheap.
 
@@ -105,6 +110,70 @@ applies the upstream entry. This is last-writer-wins conflict handling:
 it converges the tree, but local-only children under the conflicting
 path are discarded without separate tombstones.
 
+## Alternatives considered
+
+Representing a rename as a full-subtree restamp produces one wire entry
+per subtree item at a single revision. Two cheaper encodings were
+considered and rejected.
+
+### A rename opcode
+
+A dedicated `rename` entry carrying `{ fromPath, toPath, inode }` would
+collapse a directory move to one wire row. It was rejected because it is
+an operation, while the rest of the protocol is state-based:
+`materialiseChange` resolves each entry to the path's current state at
+fetch time, the receiver reconciles against its own live state, and
+`alreadyApplied` makes re-apply idempotent without ordered replay.
+
+An opcode breaks that model in three ways. It is relative to the
+receiver's prior state: `relink(from -> to)` is meaningless to a peer
+that never held `from`, so a cold-start peer pulling from rev 0 has
+nothing to relink. The pull path is deliberately receiver-history
+agnostic: the producer answers "changes after cursor X" by
+materialising current state and knows nothing about what a given
+receiver has seen, so it cannot decide when an opcode is safe to emit.
+And making the opcode idempotent against final state requires
+re-deriving the same state reconciliation the opcode was meant to avoid,
+while still not solving cold start. The per-subtree cost is the price of
+keeping one state-based representation that bootstraps, converges, and
+replays under a single rule.
+
+### Chunking a rename across revisions
+
+A scalar fetch watermark can only resume at revision boundaries, so a
+large rename at one rev forces a crash to replay the whole rev. One way
+to bound that without a path cursor is to split a single rename across
+many revisions, so a scalar watermark resumes at a chunk boundary.
+
+This was rejected because it weakens an invariant the protocol relies
+on: `rev` is bumped atomically once per mutation (see
+[03. Filesystem Schema](./03_filesystem_schema.md)), so every `rev`
+value names one committed point in the mutation log. Chunking would
+mint intermediate revisions that never committed as a whole, leaving
+most `rev` values describing tree states that never existed.
+
+The `(rev, path)` fetch cursor avoids that. `path` is an orthogonal
+second coordinate that records resume progress within a rev. A rename
+still stamps exactly one revision across its subtree, while a crash can
+resume mid-rev. Resumability is bought without minting phantom
+revisions.
+
+**What a cursor guarantees.** A `(rev, path)` cursor is a *resume
+point*, not a snapshot handle. `{rev, path: null}` means "every change
+committed at or before `rev` has been offered to the receiver"; a
+non-null `path` means "offered up to `path` within `rev`." It is
+deliberately not a point-in-time snapshot read: `coalesceChanges`
+materialises each path's *current* state at stream time, because the
+store keeps no content history. A path that is rewritten or deleted
+again after a snapshot opens has its live rev pushed past the
+advertised `currentCursor`, so that entry is dropped from the current
+stream and redelivered under a later cursor. The receiver's tree at
+cursor `{5, null}` therefore need not byte-match the rev-5 snapshot for
+a path that raced ahead — but convergence holds, because the rev that
+caused the drop is greater than `currentCursor.rev`, so the next pull
+re-scans and delivers the path's then-current state. The cursor never
+advances past the rev that would redeliver an omitted path.
+
 ### Chunking
 
 Files are split at a fixed `CHUNK_SIZE` (512 KiB). Chunk boundaries are
@@ -127,10 +196,10 @@ one name.
 | Watermark | Owner | Meaning |
 | --- | --- | --- |
 | `pushRev` | DO | Last DO-side `rev` successfully pushed to the container. |
-| `fetchRev` | DO | Last container-side `rev` the DO has fetched. |
+| `fetchCursor` | DO | Last container-side cursor the DO has fetched; `path = null` means every change committed at or before that rev has been offered (a resume point, not a point-in-time snapshot — see above). |
 | `currentRev` | DO | Latest `rev` stamped on a DO-side mutation. |
 | `currentRev` | Container | Latest `rev` stamped on a container-side mutation. |
-| `appliedPushRev` | Container | Largest DO `rev` the container has fully applied. Echoed on every **push** response. |
+| `appliedPushCursor` | Container | DO-side cursor the container has applied. Echoed on every **push** and **fetchChanges** response. |
 
 The DO watermarks live in the `_vfs_watermark` table so they survive DO
 restarts. The container's watermarks live in the same `Database`
@@ -144,15 +213,14 @@ fresh receiver).
 ### Cross-side invariant
 
 After every successful `push` **and** every `fetchChanges`, the
-response carries the receiver's current `appliedPushRev` (the
-largest `senderRev` it has fully applied). The DO asserts
-`appliedPushRev >= pushRev` before continuing. The two sides never
-share a single clock, but echoing the largest applied rev makes the
-"receiver is caught up with our pushes" invariant inspectable on
-the wire instead of load-bearing in-process state. A regression in
-the post-apply `pushRev` advancement path (see step 1 above) trips
-the assertion on the next push or pull rather than corrupting data
-silently.
+response carries the receiver's current `appliedPushCursor`. The DO
+asserts that cursor covers its local `{ rev: pushRev, path: null }`
+before continuing. The two sides never share a single clock, but
+echoing the applied cursor makes the "receiver is caught up with our
+pushes" invariant inspectable on the wire instead of load-bearing
+in-process state. A regression in the post-apply cursor advancement
+path trips the assertion on the next push or pull rather than
+corrupting data silently.
 
 ## Wire shape
 
@@ -161,10 +229,14 @@ records, both probe with `hasObjects`, both transfer bytes by hash.
 Naming follows git's vocabulary — the DO *pushes* entries and
 objects to the container, and *fetches* entries and objects back.
 
+The DO and `wsd` are deployed as a matched pair. The protocol has no
+version negotiation, so changes to request or response shapes are hard
+wire breaks and require lockstep rollout.
+
 | RPC | Direction | Returns | Notes |
 | --- | --- | --- | --- |
-| `push({ senderRev, changes })` | DO → container | `{ rev, appliedPushRev }` | Streams a coalesced batch of `ChangeEntry` via the `changes` `ReadableStream`. The sender then calls `hasObjects` on the referenced hashes and follows up with `pushObjects` for the missing subset. See the `senderRev` branches below. |
-| `fetchChanges({ sinceRev?, ignore? })` | container → DO | `Promise<{ currentRev, appliedPushRev, stream: ReadableStream<ChangeEntry> }>` | Streams one entry per touched path. For files, `chunks: (hash, size)[]` (no bytes inline); for dirs, metadata; for deletes, a tombstone. `currentRev` is the receiver's rev at stream open; the puller advances `fetchRev` no further than this. `appliedPushRev` carries the cross-side invariant check on the pull path. |
+| `push({ senderRev, changes })` | DO → container | `{ rev, appliedPushCursor }` | Streams a coalesced batch of `ChangeEntry` via the `changes` `ReadableStream`. The sender then calls `hasObjects` on the referenced hashes and follows up with `pushObjects` for the missing subset. See the `senderRev` branches below. |
+| `fetchChanges({ after?, ignore? })` | container → DO | `Promise<{ currentCursor, appliedPushCursor, stream: ReadableStream<ChangeEntry> }>` | Streams one entry per touched path after `after`, ordered by `rev` then `path`. For files, `chunks: (hash, size)[]` (no bytes inline); for dirs, metadata; for deletes, a tombstone. `currentCursor` is `{ rev: currentRev, path: null }` at stream open; the puller writes it after a clean drain. `appliedPushCursor` carries the cross-side invariant check on the pull path. |
 | `hasObjects(hashes[])` | sender probes receiver | `Uint8Array[]` | Returns the subset of the input the receiver already holds. The git `have` line, batched. |
 | `fetchObjects(hashes[])` | container → DO | `ReadableStream<{ hash, bytes }>` | Streams chunk bytes by hash. The git `want`/pack response on the fetch path. |
 | `pushObjects(objects)` | DO → container | `void` | Streams chunk bytes by hash. The push-direction mirror of `fetchObjects`. |
@@ -177,7 +249,8 @@ load-test rationale):
 
 - **`senderRev > 0` — sync peer.** A DO calling its container counterpart
   (or vice versa). The receiver applies the batch as `upstream`,
-  advances its own `fetchRev` to `senderRev`, and on the *sender's*
+  advances its own fetch cursor to `{ rev: senderRev, path: null }`,
+  and on the *sender's*
   side `pushRev` is advanced past the rev just shipped (gated on no
   interleaved local writes — see step 1 above).
 - **`senderRev === 0` — external writer / fresh receiver.** Used by
@@ -197,7 +270,7 @@ edited file) shows up exactly once on the wire. See
 - **Container restart mid-exec.** The DO's connection detects the
   closed WebSocket and self-destructs. The next call transparently
   rebuilds against the still-running `wsd` (or restarts it if needed).
-  `pushRev` and `fetchRev` mean the catch-up is incremental, modulo
+  `pushRev` and the fetch cursor mean the catch-up is incremental, modulo
   whatever the container's deployment chose for its DB lifetime.
 - **Container crash mid-apply.** `push` is atomic from the DO's
   perspective on the receiver: the server wraps the whole batch in a
@@ -209,11 +282,12 @@ edited file) shows up exactly once on the wire. See
   applied so far; the receiver never sees a partial push. The pull
   path keeps the per-mutation model because the streaming batches
   can't hold a synchronous transaction across network I/O.
-- **DO restart mid-pull.** `fetchRev` advances per committed batch
-  to the max `rev` the batch carried, so a restart mid-pull resumes
-  from the last per-batch checkpoint. Wasted work is bounded by
-  `PULL_BATCH_SIZE` entries (256), not the whole stream. End state is
-  correct either way — apply is idempotent.
+- **DO restart mid-pull.** The fetch cursor advances per committed
+  batch to the last entry's `(rev, path)`, so a restart mid-pull
+  resumes from the last per-batch checkpoint, including within a
+  single large rev. Wasted work is bounded by `PULL_BATCH_SIZE`
+  entries (256), not the whole stream. End state is correct either
+  way — apply is idempotent.
 - **DO restart.** Watermarks are persisted, so the new DO instance
   picks up where the old one left off. The container keeps `wsd`
   alive across the gap.

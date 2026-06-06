@@ -43,12 +43,19 @@ export type { CoalesceOptions } from "./sync/coalesce.js";
 export { coalesceChanges } from "./sync/coalesce.js";
 export { fetchChanges, fetchObjects, hasObjects } from "./sync/fetch.js";
 export { DEFAULT_IGNORE, isIgnored } from "./sync/ignore.js";
-export { assertAppliedPushRev } from "./sync/invariant.js";
+export { assertAppliedPushCursor } from "./sync/invariant.js";
 export type { ManifestChunk } from "./sync/manifests.js";
 export { buildManifest, MANIFEST_VERSION } from "./sync/manifests.js";
 export { pushObjects } from "./sync/push.js";
-export type { WatermarkKey } from "./sync/watermarks.js";
-export { currentRev, readWatermark, writeWatermark } from "./sync/watermarks.js";
+export type { ChangeCursor, WatermarkKey } from "./sync/watermarks.js";
+export {
+  compareChangeCursors,
+  currentRev,
+  readFetchCursor,
+  readWatermark,
+  writeFetchCursor,
+  writeWatermark,
+} from "./sync/watermarks.js";
 export type { ExecutedStatement } from "./testing-recording.js";
 // RecordingStorage is workerd-safe (pure JS). SQLiteTestStorage
 // wraps node:sqlite and must be imported from

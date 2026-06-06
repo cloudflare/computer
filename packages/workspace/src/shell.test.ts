@@ -113,7 +113,7 @@ function fakeRpc(options: FakeRpcOptions = {}): FakeRpc {
       return null;
     },
     async watermarks() {
-      return { currentRev: 0, pushRev: 0, fetchRev: 0 };
+      return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
     },
     async hasObjects() {
       return [];

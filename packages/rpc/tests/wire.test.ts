@@ -2,13 +2,16 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import {
+  assertAppliedPushCursor,
   type ChangeEntry,
   coalesceChanges,
   Database,
   fetchObjects,
   initializeSchema,
   ROOT_INODE,
+  readFetchCursor,
   SQLiteWorkspaceProvider,
+  writeFetchCursor,
 } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,7 +67,7 @@ describe("SyncRPC over a real WebSocket", () => {
 
     const client = createSyncClient({ url: harness.url });
     try {
-      const { stream } = await client.fetchChanges({ sinceRev: 0, ignore: [] });
+      const { stream } = await client.fetchChanges({ after: { rev: 0, path: null }, ignore: [] });
       const entries: ChangeEntry[] = [];
       const reader = stream.getReader();
       try {
@@ -157,7 +160,7 @@ describe("SyncRPC push convergence", () => {
         const entries: ChangeEntry[] = [];
         const hashes: Uint8Array[] = [];
         const seenHash = new Set<string>();
-        for await (const e of coalesceChanges(senderDb, 0)) {
+        for await (const e of coalesceChanges(senderDb, { rev: 0, path: null })) {
           entries.push(e);
           if (e.kind === "file") {
             for (const c of e.chunks) {
@@ -361,8 +364,6 @@ describe("WireError propagation", () => {
   });
 });
 
-import { assertAppliedPushRev } from "@cloudflare/dofs";
-
 describe("cross-side invariant", () => {
   let harness: Harness | undefined;
   afterEach(async () => {
@@ -370,7 +371,7 @@ describe("cross-side invariant", () => {
     harness = undefined;
   });
 
-  it("push returns a {rev, appliedPushRev} that satisfies appliedPushRev >= 0", async () => {
+  it("push returns an appliedPushCursor that covers senderRev", async () => {
     harness = await startHarness();
     const client = createSyncClient({ url: harness.url });
     try {
@@ -380,12 +381,13 @@ describe("cross-side invariant", () => {
         },
       });
       const result = await client.push({ senderRev: 0, changes: empty });
-      expect(result.appliedPushRev).toBeGreaterThanOrEqual(0);
-      // The DO would pass result.appliedPushRev as `applied`
-      // and its own pushRev counter as `pushed`. With the
-      // container reporting >= 0 and the DO holding 0 at this
-      // point, the invariant holds.
-      expect(() => assertAppliedPushRev(result.appliedPushRev, 0)).not.toThrow();
+      expect(result.appliedPushCursor).toEqual({ rev: 0, path: null });
+      // The durable object would pass result.appliedPushCursor as
+      // `applied` and its own push cursor as `pushed`. With both at
+      // zero, the invariant holds.
+      expect(() =>
+        assertAppliedPushCursor(result.appliedPushCursor, { rev: 0, path: null }),
+      ).not.toThrow();
     } finally {
       await client.close();
     }
@@ -496,12 +498,12 @@ describe("push semantics — external vs sync peer", () => {
       // outbound sync loop (a wsd with UPSTREAM_URL set) would
       // see the new entry on the next tick.
       expect(readWatermark(harness.db, "pushRev")).toBe(0);
-      // fetchRev was NOT advanced either — the sender has
+      // The fetch cursor was NOT advanced either — the sender has
       // no rev space.
       expect(readWatermark(harness.db, "fetchRev")).toBe(0);
       // The entry is in the coalesce stream.
       const drained: { path: string }[] = [];
-      for await (const e of coalesceChanges(harness.db, 0)) drained.push(e);
+      for await (const e of coalesceChanges(harness.db, { rev: 0, path: null })) drained.push(e);
       expect(drained.some((e) => e.path === "/external.txt")).toBe(true);
     } finally {
       await client.close();
@@ -551,8 +553,37 @@ describe("push semantics — external vs sync peer", () => {
       // entries back to the peer.
       const cur = currentRev(harness.db);
       expect(readWatermark(harness.db, "pushRev")).toBe(cur);
-      // fetchRev was advanced to senderRev.
-      expect(readWatermark(harness.db, "fetchRev")).toBe(42);
+      // The fetch cursor was advanced to senderRev.
+      expect(readFetchCursor(harness.db)).toEqual({ rev: 42, path: null });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("push with senderRev>0 advances the fetch cursor monotonically", async () => {
+    harness = await startHarness();
+    const client = createSyncClient({ url: harness.url });
+    try {
+      writeFetchCursor(harness.db, { rev: 10, path: "/partial.txt" });
+      await client.push({
+        senderRev: 10,
+        changes: new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
+      });
+      expect(readFetchCursor(harness.db)).toEqual({ rev: 10, path: null });
+
+      await client.push({
+        senderRev: 3,
+        changes: new ReadableStream({
+          start(c) {
+            c.close();
+          },
+        }),
+      });
+      expect(readFetchCursor(harness.db)).toEqual({ rev: 10, path: null });
     } finally {
       await client.close();
     }

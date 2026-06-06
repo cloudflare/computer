@@ -34,6 +34,17 @@ export const SYNC_STATEMENTS = [
     v       INTEGER NOT NULL,
     PRIMARY KEY (k, backend)
   )`,
+  // The fetch cursor's same-rev `path` component, keyed by
+  // (k, backend) so each backend resumes a partially-drained rev
+  // independently. The rev component lives in _vfs_watermark under
+  // 'fetchRev'; this table only holds the in-rev path. `backend`
+  // mirrors _vfs_watermark and defaults to 'default'.
+  `CREATE TABLE IF NOT EXISTS _vfs_fetch_cursor (
+    k       TEXT    NOT NULL CHECK(k = 'fetch'),
+    backend TEXT    NOT NULL DEFAULT 'default',
+    path    TEXT,
+    PRIMARY KEY (k, backend)
+  )`,
   // The `mode` column was added at schema v2; `schema/migrations.ts`
   // owns the ALTER for existing databases. Keep the CHECK
   // constraint here aligned with the migration's CHECK so fresh

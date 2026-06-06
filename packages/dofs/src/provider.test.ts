@@ -19,9 +19,9 @@ async function withProviderAndDB<T>(
   return withDB((db) => fn(new SQLiteWorkspaceProvider(db, { now: () => 1000 }), db));
 }
 
-async function drainChanges(db: Database, sinceRev: number): Promise<ChangeEntry[]> {
+async function drainChanges(db: Database, afterRev: number): Promise<ChangeEntry[]> {
   const out: ChangeEntry[] = [];
-  for await (const entry of coalesceChanges(db, sinceRev)) out.push(entry);
+  for await (const entry of coalesceChanges(db, afterRev)) out.push(entry);
   return out;
 }
 

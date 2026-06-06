@@ -30,8 +30,8 @@ test("createNodeVirtualFileSystem pulls initial state from an upstream SyncRPC",
     async fetchChanges() {
       fetchChangesCalls++;
       return {
-        currentRev: 1,
-        appliedPushRev: 0,
+        currentCursor: { rev: 1, path: null },
+        appliedPushCursor: { rev: 0, path: null },
         stream: new ReadableStream({
           start(c) {
             c.enqueue({
@@ -62,7 +62,7 @@ test("createNodeVirtualFileSystem pulls initial state from an upstream SyncRPC",
       });
     },
     async push() {
-      return { rev: 0, appliedPushRev: 0 };
+      return { rev: 0, appliedPushCursor: { rev: 0, path: null } };
     },
     async pushObjects() {},
   };
