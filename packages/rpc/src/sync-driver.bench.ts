@@ -16,6 +16,7 @@ import {
   currentRev,
   Database,
   initializeSchema,
+  readFetchCursor,
   readWatermark,
   SQLiteWorkspaceProvider,
 } from "@cloudflare/dofs";
@@ -84,7 +85,7 @@ describe("sync driver — push throughput", () => {
         for (let i = 0; i < bytes.byteLength; i += 4096) {
           bytes[i] = (i * 31) & 0xff;
         }
-        provider.writeFileSync("/big.bin", bytes);
+        provider.writeFileSync("/big.bin", Buffer.from(bytes));
         await pushOnce(a.db, b.rpc);
       } finally {
         a.close();
@@ -105,7 +106,7 @@ describe("sync driver — push throughput", () => {
         for (let i = 0; i < bytes.byteLength; i += 4096) {
           bytes[i] = (i * 31) & 0xff;
         }
-        provider.writeFileSync("/big.bin", bytes);
+        provider.writeFileSync("/big.bin", Buffer.from(bytes));
         await pushOnce(a.db, b.rpc);
       } finally {
         a.close();
@@ -199,7 +200,7 @@ describe("sync driver — bidirectional convergence", () => {
         // time. Reading watermarks here adds noise we can
         // tolerate vs. running a no-op closure for the
         // baseline. Sanity assert outside the iteration body:
-        if (readWatermark(b.db, "fetchRev") <= 0) throw new Error("pull didn't advance");
+        if (readFetchCursor(b.db).rev <= 0) throw new Error("pull didn't advance");
         if (currentRev(b.db) <= 0) throw new Error("apply didn't bump rev");
       } finally {
         a.close();

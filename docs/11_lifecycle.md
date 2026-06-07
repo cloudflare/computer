@@ -335,10 +335,12 @@ Two things have to change for capnweb + hibernation to work:
      wake as a fresh session. The peer must retry any in-flight RPC.
      This is the same semantics as a transport reset, which the
      protocol already handles via the rev cursors.
-   - **Sync streams: nothing to store.** `pushRev` and the durable
-     fetch cursor are already written to SQLite alongside the data
-     they describe. On wake, the next `pushOnce` / `pullOnce` reads
-     them from durable storage and resumes. No attachment write is
+   - **Sync streams: nothing to store.** `pushRev` is written to
+     SQLite with the pushed data it describes. The durable fetch
+     cursor is written after each committed pull batch, not in the
+     same transaction as the data apply. On wake, the next `pushOnce`
+     / `pullOnce` reads the durable counters and resumes; any overlap
+     is dropped by the idempotent apply path. No attachment write is
      required.
    - **Exec streams: store `{ [id]: seq }` per in-flight exec.**
      The `WorkspaceShell` driver inside the DO is the only place

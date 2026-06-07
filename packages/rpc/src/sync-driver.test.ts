@@ -756,7 +756,7 @@ describe("sync driver — streaming pullOnce", () => {
         get(target, prop, receiver) {
           if (prop === "hasObjects") {
             return async (hashes: Uint8Array[]) => {
-              sampledRevs.push(readWatermark(b.db, "fetchRev"));
+              sampledRevs.push(readFetchCursor(b.db).rev);
               return Reflect.get(target, prop, receiver).call(target, hashes);
             };
           }
@@ -775,7 +775,7 @@ describe("sync driver — streaming pullOnce", () => {
         expect(sampledRevs[i]).toBeGreaterThan(sampledRevs[i - 1]);
       }
       // End state still matches the remote.
-      expect(readWatermark(b.db, "fetchRev")).toBe(remoteFinalRev);
+      expect(readFetchCursor(b.db).rev).toBe(remoteFinalRev);
     } finally {
       a.close();
       b.close();
@@ -889,6 +889,33 @@ describe("sync driver — streaming pullOnce", () => {
       b.close();
     }
   });
+
+  it("lets a peer push supersede a partial pull cursor", async () => {
+    const a = makePeer();
+    const b = makePeer();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
+      const providerB = new SQLiteWorkspaceProvider(b.db, { now: () => 1 });
+      providerA.writeFileSync("/before-stale-path.txt", "pushed");
+      const pushedRev = currentRev(a.db);
+
+      writeFetchCursor(b.db, { rev: pushedRev, path: "/zzzz" });
+
+      expect(await pushOnce(a.db, b.rpc)).toBeGreaterThan(0);
+      expect(readFetchCursor(b.db)).toEqual({ rev: pushedRev, path: null });
+      expect(providerB.readFileSync("/before-stale-path.txt", "utf8")).toBe("pushed");
+
+      providerA.writeFileSync("/after-push.txt", "pulled later");
+      const pulled = await pullOnce(b.db, a.rpc);
+
+      expect(pulled.applied).toBe(1);
+      expect(providerB.readFileSync("/after-push.txt", "utf8")).toBe("pulled later");
+      expect(readFetchCursor(b.db)).toEqual({ rev: currentRev(a.db), path: null });
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
 });
 
 describe("sync driver — push atomicity", () => {
@@ -966,11 +993,11 @@ describe("sync driver — reconcileWatermarks", () => {
       // (currentRev = 1 from initializeSchema seeding the root).
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
-      writeWatermark(local, "fetchRev", 42);
+      writeFetchCursor(local, { rev: 42, path: null });
       writeWatermark(local, "pushRev", 0);
 
       await reconcileWatermarks(local, remote.rpc);
-      expect(readWatermark(local, "fetchRev")).toBe(0);
+      expect(readFetchCursor(local)).toEqual({ rev: 0, path: null });
       expect(readWatermark(local, "pushRev")).toBe(0);
     } finally {
       remote.close();
@@ -984,7 +1011,7 @@ describe("sync driver — reconcileWatermarks", () => {
       // which is echoed as appliedPushCursor on the wire, is 0/null.
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
-      writeWatermark(local, "fetchRev", 0);
+      writeFetchCursor(local, { rev: 0, path: null });
       writeWatermark(local, "pushRev", 17);
 
       await reconcileWatermarks(local, remote.rpc);
@@ -1004,11 +1031,11 @@ describe("sync driver — reconcileWatermarks", () => {
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
       const remoteCurrent = currentRev(remote.db);
-      writeWatermark(local, "fetchRev", remoteCurrent);
+      writeFetchCursor(local, { rev: remoteCurrent, path: null });
       writeWatermark(local, "pushRev", 0);
 
       await reconcileWatermarks(local, remote.rpc);
-      expect(readWatermark(local, "fetchRev")).toBe(remoteCurrent);
+      expect(readFetchCursor(local)).toEqual({ rev: remoteCurrent, path: null });
       expect(readWatermark(local, "pushRev")).toBe(0);
     } finally {
       remote.close();

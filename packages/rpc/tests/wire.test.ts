@@ -500,7 +500,7 @@ describe("push semantics — external vs sync peer", () => {
       expect(readWatermark(harness.db, "pushRev")).toBe(0);
       // The fetch cursor was NOT advanced either — the sender has
       // no rev space.
-      expect(readWatermark(harness.db, "fetchRev")).toBe(0);
+      expect(readFetchCursor(harness.db)).toEqual({ rev: 0, path: null });
       // The entry is in the coalesce stream.
       const drained: { path: string }[] = [];
       for await (const e of coalesceChanges(harness.db, { rev: 0, path: null })) drained.push(e);
@@ -512,7 +512,9 @@ describe("push semantics — external vs sync peer", () => {
 
   it("push with senderRev>0 (sync peer) advances pushRev to silence loopback", async () => {
     harness = await startHarness();
-    const { currentRev, readWatermark, writeWatermark } = await import("@cloudflare/dofs");
+    const { currentRev, readFetchCursor, readWatermark, writeWatermark } = await import(
+      "@cloudflare/dofs"
+    );
     const client = createSyncClient({ url: harness.url });
     try {
       // Seed pushRev at the current point so the F1 guard

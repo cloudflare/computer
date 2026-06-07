@@ -15,7 +15,6 @@ describe("watermarks", () => {
   it("readWatermark returns 0 for a fresh DB", async () => {
     await withDB(async (db) => {
       expect(readWatermark(db, "pushRev")).toBe(0);
-      expect(readWatermark(db, "fetchRev")).toBe(0);
     });
   });
 
@@ -23,9 +22,6 @@ describe("watermarks", () => {
     await withDB(async (db) => {
       writeWatermark(db, "pushRev", 42);
       expect(readWatermark(db, "pushRev")).toBe(42);
-      expect(readWatermark(db, "fetchRev")).toBe(0);
-      writeWatermark(db, "fetchRev", 7);
-      expect(readWatermark(db, "fetchRev")).toBe(7);
     });
   });
 
@@ -33,20 +29,8 @@ describe("watermarks", () => {
     await withDB(async (db) => {
       expect(readFetchCursor(db)).toEqual({ rev: 0, path: null });
       writeFetchCursor(db, { rev: 12, path: "/dir/file.txt" });
-      expect(readWatermark(db, "fetchRev")).toBe(12);
       expect(readFetchCursor(db)).toEqual({ rev: 12, path: "/dir/file.txt" });
       writeFetchCursor(db, { rev: 13, path: null });
-      expect(readWatermark(db, "fetchRev")).toBe(13);
-      expect(readFetchCursor(db)).toEqual({ rev: 13, path: null });
-    });
-  });
-
-  it("clears a stale fetch cursor path when writing fetchRev directly", async () => {
-    await withDB(async (db) => {
-      writeFetchCursor(db, { rev: 12, path: "/z.txt" });
-
-      writeWatermark(db, "fetchRev", 13);
-
       expect(readFetchCursor(db)).toEqual({ rev: 13, path: null });
     });
   });
@@ -67,23 +51,6 @@ describe("watermarks", () => {
         "forced cursor path failure",
       );
       expect(readFetchCursor(db)).toEqual({ rev: 12, path: null });
-    });
-  });
-
-  it("does not persist an intermediate cursor when a direct fetchRev write fails", async () => {
-    await withDB(async (db) => {
-      writeFetchCursor(db, { rev: 12, path: "/old.txt" });
-
-      const originalRun = db.run.bind(db);
-      db.run = ((query: string, ...bindings: unknown[]) => {
-        if (query.includes("_vfs_fetch_cursor")) {
-          throw new Error("forced cursor path clear failure");
-        }
-        return originalRun(query, ...bindings);
-      }) as typeof db.run;
-
-      expect(() => writeWatermark(db, "fetchRev", 13)).toThrow("forced cursor path clear failure");
-      expect(readFetchCursor(db)).toEqual({ rev: 12, path: "/old.txt" });
     });
   });
 
@@ -136,9 +103,8 @@ describe("watermarks", () => {
   });
 
   it("rejects unknown watermark keys at the type level via the helper signature", () => {
-    // Compile-time only: writeWatermark only accepts the union
-    // "pushRev" | "fetchRev". This test is a placeholder that
-    // documents the contract; the type system catches misuse.
+    // Compile-time only: writeWatermark only accepts "pushRev".
+    // Fetch progress must go through readFetchCursor/writeFetchCursor.
     expect(true).toBe(true);
   });
 

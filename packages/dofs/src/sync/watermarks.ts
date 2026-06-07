@@ -5,20 +5,24 @@ import type { Database } from "../storage.js";
 // own sync cursors. The container's appliedPushRev lives in-memory on
 // the container side; we don't store it here.
 //
-// pushRev   — last DO-side rev successfully pushed to the backend.
-// fetchRev  — last backend-side rev the DO has fetched and applied.
+// pushRev — last DO-side rev successfully pushed to the backend.
 //
-// initializeSchema() seeds both at 0 in _vfs_watermark for the
+// initializeSchema() seeds pushRev at 0 in _vfs_watermark for the
 // default backend. The schema table is the durability surface;
 // readers and writers always go through this module so the SQL
 // stays in one place.
 //
 // `backend` defaults to DEFAULT_BACKEND_ID so older callers that
 // only ran one backend (or ran the package against a schema before
-// per-backend keying landed) keep working unchanged. The v2 → v3
+// per-backend keying landed) keep working unchanged. The v3 → v4
 // schema migration backfills the column on existing rows with the
 // same default.
-export type WatermarkKey = "pushRev" | "fetchRev";
+//
+// Fetch progress is a `{ rev, path }` cursor. Its rev component is
+// still stored in _vfs_watermark for schema compatibility, but callers
+// must use readFetchCursor() / writeFetchCursor() so rev and path stay
+// consistent.
+export type WatermarkKey = "pushRev";
 
 export const DEFAULT_BACKEND_ID = "default";
 
@@ -39,9 +43,19 @@ export function readWatermark(
   );
 }
 
+function readFetchRev(db: Database, backend: string = DEFAULT_BACKEND_ID): number {
+  return (
+    db.scalar<number>(
+      "SELECT v FROM _vfs_watermark WHERE k = ? AND backend = ?",
+      "fetchRev",
+      backend,
+    ) ?? 0
+  );
+}
+
 function writeWatermarkValue(
   db: Database,
-  key: WatermarkKey,
+  key: WatermarkKey | "fetchRev",
   value: number,
   backend: string = DEFAULT_BACKEND_ID,
 ): void {
@@ -74,19 +88,11 @@ export function writeWatermark(
   value: number,
   backend: string = DEFAULT_BACKEND_ID,
 ): void {
-  if (key !== "fetchRev") {
-    writeWatermarkValue(db, key, value, backend);
-    return;
-  }
-
-  db.transactionSync(() => {
-    writeWatermarkValue(db, key, value, backend);
-    writeFetchCursorPath(db, null, backend);
-  });
+  writeWatermarkValue(db, key, value, backend);
 }
 
 export function readFetchCursor(db: Database, backend: string = DEFAULT_BACKEND_ID): ChangeCursor {
-  const rev = readWatermark(db, "fetchRev", backend);
+  const rev = readFetchRev(db, backend);
   if (rev === 0) return { rev: 0, path: null };
   const path = db.scalar<string | null>(
     "SELECT path FROM _vfs_fetch_cursor WHERE k = ? AND backend = ?",

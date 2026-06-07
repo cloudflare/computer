@@ -517,14 +517,17 @@ describe("Workspace backend selection", () => {
     };
     const storage = makeStorage();
     const ws = new Workspace({ storage, backends: [makeBackend("only", sync)] });
-    const { writeWatermark, readWatermark } = await import("@cloudflare/dofs");
+    // Pre-seed local watermarks for the "only" backend.
+    const { readFetchCursor, readWatermark, writeFetchCursor, writeWatermark } = await import(
+      "@cloudflare/dofs"
+    );
     writeWatermark(ws.db, "pushRev", 17, "only");
-    writeWatermark(ws.db, "fetchRev", 42, "only");
+    writeFetchCursor(ws.db, { rev: 42, path: null }, "only");
     // ready() alone no longer dials; ready(id) forces the connect.
     await ws.ready("only");
     expect(watermarksCalls).toBe(1);
     expect(readWatermark(ws.db, "pushRev", "only")).toBe(0);
-    expect(readWatermark(ws.db, "fetchRev", "only")).toBe(0);
+    expect(readFetchCursor(ws.db, "only")).toEqual({ rev: 0, path: null });
   });
 
   it("skips push/pull when the backend declares sync: 'none'", async () => {
