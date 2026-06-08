@@ -72,6 +72,76 @@ describe("SQLiteWorkspaceProvider — implemented methods", () => {
     });
   });
 
+  it("linkSync creates a second path to the same file inode", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hi");
+      p.linkSync("/a.txt", "/b.txt");
+
+      const a = p.statSync("/a.txt");
+      const b = p.statSync("/b.txt");
+      expect(a.ino).toBe(b.ino);
+      expect(a.nlink).toBe(2);
+      expect(b.nlink).toBe(2);
+      expect(p.readFileSync("/b.txt", "utf8")).toBe("hi");
+    });
+  });
+
+  it("writes through one hardlink are visible through the other", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hi");
+      p.linkSync("/a.txt", "/b.txt");
+      p.writeFileSync("/b.txt", "bye");
+
+      expect(p.readFileSync("/a.txt", "utf8")).toBe("bye");
+      expect(p.statSync("/a.txt").nlink).toBe(2);
+      expect(p.statSync("/b.txt").nlink).toBe(2);
+    });
+  });
+
+  it("unlinkSync removes one hardlink without deleting the inode", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hi");
+      p.linkSync("/a.txt", "/b.txt");
+      p.unlinkSync("/a.txt");
+
+      expect(p.existsSync("/a.txt")).toBe(false);
+      expect(p.readFileSync("/b.txt", "utf8")).toBe("hi");
+      expect(p.statSync("/b.txt").nlink).toBe(1);
+    });
+  });
+
+  it("renameSync from one hardlink onto another removes only the source name", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hi");
+      p.linkSync("/a.txt", "/b.txt");
+      p.renameSync("/a.txt", "/b.txt");
+
+      expect(p.existsSync("/a.txt")).toBe(false);
+      expect(p.readFileSync("/b.txt", "utf8")).toBe("hi");
+      expect(p.statSync("/b.txt").nlink).toBe(1);
+    });
+  });
+
+  it("linkSync rejects invalid links", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hi");
+      p.mkdirSync("/dir", {});
+
+      expect(() => p.linkSync("/missing", "/missing-link")).toThrowError(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+      expect(() => p.linkSync("/a.txt", "/a.txt")).toThrowError(
+        expect.objectContaining({ code: "EEXIST" }),
+      );
+      expect(() => p.linkSync("/dir", "/dir-link")).toThrowError(
+        expect.objectContaining({ code: "EPERM" }),
+      );
+      expect(() => p.linkSync("/a.txt", "/missing-parent/b.txt")).toThrowError(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+    });
+  });
+
   it("rmdirSync removes an empty directory", async () => {
     await withProvider((p) => {
       p.mkdirSync("/a", {});

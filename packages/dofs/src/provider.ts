@@ -8,6 +8,7 @@
 // I/O, truncate, symlinks, watch).
 
 import { createWorkspaceError } from "./errors.js";
+import { link as linkImpl } from "./fs/link.js";
 import type { MkdirOptions } from "./fs/mkdir.js";
 import { mkdir as mkdirImpl } from "./fs/mkdir.js";
 import { readdir as readdirImpl } from "./fs/readdir.js";
@@ -170,6 +171,7 @@ export class SQLiteWorkspaceProvider {
       isFile: s.isFile,
       isDirectory: s.isDirectory,
       isSymbolicLink: false,
+      nlink: linkCount(this.db, ino),
     });
   }
 
@@ -199,6 +201,7 @@ export class SQLiteWorkspaceProvider {
       isFile: node.type === "file",
       isDirectory: node.type === "dir",
       isSymbolicLink: isSymlink,
+      nlink: linkCount(this.db, node.inode),
     });
   }
 
@@ -244,6 +247,15 @@ export class SQLiteWorkspaceProvider {
     rmImpl(this.db, path, {});
   }
 
+  link(existingPath: string, newPath: string): Promise<void> {
+    this.linkSync(existingPath, newPath);
+    return Promise.resolve();
+  }
+
+  linkSync(existingPath: string, newPath: string): void {
+    linkImpl(this.db, existingPath, newPath);
+  }
+
   rename(oldPath: string, newPath: string): Promise<void> {
     this.renameSync(oldPath, newPath);
     return Promise.resolve();
@@ -258,7 +270,19 @@ export class SQLiteWorkspaceProvider {
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${oldPath}`, oldPath);
     }
+    const { parts: oldParts, path: oldCanonical } = canonicalizePath(oldPath);
+    const oldName = oldParts[oldParts.length - 1];
+    const oldParentPath = oldParts.length === 1 ? "/" : `/${oldParts.slice(0, -1).join("/")}`;
+    const oldParent = resolveInode(this.db, oldParentPath, { followSymlinks: false });
+    if (oldParent === null || oldParent.type !== "dir") {
+      throw createWorkspaceError(
+        "ENOENT",
+        `parent directory missing: ${oldCanonical}`,
+        oldCanonical,
+      );
+    }
     const { parts, path: newCanonical } = canonicalizePath(newPath);
+    if (oldCanonical === newCanonical) return;
     if (parts.length === 0) {
       throw createWorkspaceError("EINVAL", "cannot rename onto root", newCanonical);
     }
@@ -286,7 +310,8 @@ export class SQLiteWorkspaceProvider {
         newParent.inode,
         newName,
       );
-      if (existing !== undefined && existing.child_inode !== node.inode) {
+      const destinationAlreadyNamesSource = existing?.child_inode === node.inode;
+      if (existing !== undefined && !destinationAlreadyNamesSource) {
         // Refuse to overwrite a non-empty directory or replace a
         // directory with a file (Linux rename semantics).
         if (existing.type === "dir") {
@@ -298,20 +323,36 @@ export class SQLiteWorkspaceProvider {
             throw createWorkspaceError("ENOTEMPTY", `not empty: ${newCanonical}`, newCanonical);
           }
         }
-        // Unlink the displaced inode. vfs_chunks / vfs_blob_bytes
-        // referenced by file chunks become orphaned and gc() reaps
-        // them after the safety window.
-        this.db.run("DELETE FROM vfs_dirents WHERE child_inode = ?", existing.child_inode);
-        this.db.run("DELETE FROM vfs_chunks WHERE inode = ?", existing.child_inode);
-        this.db.run("DELETE FROM vfs_nodes WHERE inode = ?", existing.child_inode);
+        // Unlink only the displaced destination name. If other
+        // hardlinks still reference the displaced file inode, keep its
+        // chunks and node alive.
+        this.db.run(
+          "DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+          newParent.inode,
+          newName,
+        );
+        const remaining = this.db.scalar<number>(
+          "SELECT COUNT(*) FROM vfs_dirents WHERE child_inode = ?",
+          existing.child_inode,
+        );
+        if ((remaining ?? 0) === 0) {
+          this.db.run("DELETE FROM vfs_chunks WHERE inode = ?", existing.child_inode);
+          this.db.run("DELETE FROM vfs_nodes WHERE inode = ?", existing.child_inode);
+        }
       }
-      this.db.run("DELETE FROM vfs_dirents WHERE child_inode = ?", node.inode);
       this.db.run(
-        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-        newParent.inode,
-        newName,
-        node.inode,
+        "DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+        oldParent.inode,
+        oldName,
       );
+      if (!destinationAlreadyNamesSource) {
+        this.db.run(
+          "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
+          newParent.inode,
+          newName,
+          node.inode,
+        );
+      }
     });
   }
 
@@ -641,6 +682,7 @@ interface StatsInputs {
   isFile: boolean;
   isDirectory: boolean;
   isSymbolicLink: boolean;
+  nlink: number;
 }
 
 // POSIX mode-bit constants. Linux FUSE rejects a stat whose mode
@@ -657,12 +699,17 @@ function fileTypeBits(input: StatsInputs): number {
   return 0;
 }
 
+function linkCount(db: Database, inode: number): number {
+  const count = db.scalar<number>("SELECT COUNT(*) FROM vfs_dirents WHERE child_inode = ?", inode);
+  return Math.max(1, count ?? 0);
+}
+
 function wrapStats(input: StatsInputs): VirtualStatsLike {
   const mtime = new Date(input.mtimeMs);
   return {
     dev: 0,
     mode: (input.mode & 0o7777) | fileTypeBits(input),
-    nlink: 1,
+    nlink: input.nlink,
     uid: 0,
     gid: 0,
     rdev: 0,

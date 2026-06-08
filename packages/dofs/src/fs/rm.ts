@@ -95,26 +95,47 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     const rev = incrementRev(db);
 
     if (node.type === "file" || !recursive) {
-      // Single inode removal — file, or empty directory.
-      removeInode(db, node.inode, node.type);
+      // Single entry removal — file, symlink, or empty directory. A
+      // file inode may have multiple dirents (hardlinks), so remove
+      // only the requested name and reap chunks/node after the final
+      // link disappears.
+      removeEntry(db, canonical, node.inode, node.type);
       recordDelete(db, rev, canonical);
       return;
     }
 
     // Recursive directory removal. Walk leaves first so each delete
-    // sees an empty parent by the time we get to it.
+    // sees an empty parent by the time we get to it. File entries may
+    // be hardlinked outside this subtree, so delete by path rather
+    // than by child inode.
     for (const entry of walkPostOrder(db, node.inode, canonical)) {
-      removeInode(db, entry.inode, entry.type);
+      removeEntry(db, entry.path, entry.inode, entry.type);
       recordDelete(db, rev, entry.path);
     }
   });
 }
 
-function removeInode(db: Database, inode: number, type: "file" | "dir" | "symlink"): void {
-  // Drop the dirent referencing this inode. There should be exactly one
-  // (no hardlinks yet); if zero, we're deleting the root which we've
-  // already refused.
-  db.run("DELETE FROM vfs_dirents WHERE child_inode = ?", inode);
+function removeEntry(
+  db: Database,
+  path: string,
+  inode: number,
+  type: "file" | "dir" | "symlink",
+): void {
+  const { parts, path: canonical } = canonicalizePath(path);
+  const name = parts[parts.length - 1];
+  const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
+  const parent = resolveInode(db, parentPath, { followSymlinks: false });
+  if (parent === null || parent.type !== "dir") {
+    throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
+  }
+
+  db.run("DELETE FROM vfs_dirents WHERE parent_inode = ? AND name = ?", parent.inode, name);
+  const remaining = db.scalar<number>(
+    "SELECT COUNT(*) FROM vfs_dirents WHERE child_inode = ?",
+    inode,
+  );
+  if ((remaining ?? 0) > 0) return;
+
   if (type === "file") {
     db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
   }
