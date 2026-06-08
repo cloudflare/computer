@@ -146,7 +146,7 @@ describe("writeFile under a read-only mount", () => {
       // No throw; the bytes land in vfs_nodes.
       writeFileSync(db, "/workspace/rw/ok.txt", new TextEncoder().encode("hi"), {}, () => 0);
       const inode = db.scalar<number>(
-        "SELECT inode FROM vfs_nodes WHERE manifest_hash IS NOT NULL",
+        "SELECT inode FROM vfs_nodes WHERE inline_data IS NOT NULL OR manifest_hash IS NOT NULL",
       );
       expect(inode).toBeDefined();
     });

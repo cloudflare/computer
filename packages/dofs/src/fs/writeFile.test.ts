@@ -5,7 +5,7 @@ import type { Database } from "../storage.js";
 import { mkdir } from "./mkdir.js";
 import { resolveInode } from "./resolve.js";
 import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFile, writeFileRangesSync } from "./writeFile.js";
+import { CHUNK_SIZE, writeFile, writeFileRangesSync, writeFileSync } from "./writeFile.js";
 
 // Reassemble a file's bytes by stitching its chunk rows together.
 // A deliberately minimal helper so writeFile tests can stand alone
@@ -14,6 +14,11 @@ function readBack(db: Database, path: string): Uint8Array {
   const node = resolveInode(db, path);
   if (node === null) throw new Error(`no such path: ${path}`);
   if (node.type !== "file") throw new Error(`not a file: ${path}`);
+  const inline = db.one<{ inline_data: Uint8Array | null }>(
+    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+    node.inode,
+  )?.inline_data;
+  if (inline !== undefined && inline !== null) return inline;
   const chunks = db.all<{ hash: Uint8Array; size: number }>(
     "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
     node.inode,
@@ -78,6 +83,28 @@ describe("writeFile", () => {
         "hello.txt",
       );
       expect(chunkCount).toBe(1);
+    });
+  });
+
+  it("writeFileSync stores a small string inline without chunk rows", async () => {
+    await withDB(async (db) => {
+      writeFileSync(db, "/hello.txt", new TextEncoder().encode("hello fuse"), {}, () => 1234);
+
+      const bytes = readBack(db, "/hello.txt");
+      expect(new TextDecoder().decode(bytes)).toBe("hello fuse");
+
+      const row = db.one<{ inline_data: Uint8Array | null; chunk_count: number }>(
+        `SELECT n.inline_data AS inline_data,
+                (SELECT COUNT(*) FROM vfs_chunks WHERE inode = n.inode) AS chunk_count
+           FROM vfs_nodes n
+           JOIN vfs_dirents d ON d.child_inode = n.inode
+          WHERE d.parent_inode = ? AND d.name = ?`,
+        ROOT_INODE,
+        "hello.txt",
+      );
+      expect(row?.inline_data).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(row?.inline_data ?? new Uint8Array())).toBe("hello fuse");
+      expect(row?.chunk_count).toBe(0);
     });
   });
 

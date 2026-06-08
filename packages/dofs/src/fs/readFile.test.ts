@@ -84,11 +84,13 @@ describe("readFile", () => {
 
   it("touches vfs_blobs.last_seen when chunks are read", async () => {
     await withDB(async (db) => {
-      await writeFile(db, "/x.txt", "content", {}, () => 100);
-      const before = db.scalar<number>("SELECT last_seen FROM vfs_blobs");
+      const bytes = new Uint8Array(CHUNK_SIZE + 1);
+      bytes.fill(0x61);
+      await writeFile(db, "/x.txt", bytes, {}, () => 100);
+      const before = db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs");
       expect(before).toBe(100);
       await readFile(db, "/x.txt", "utf8", () => 200);
-      const after = db.scalar<number>("SELECT last_seen FROM vfs_blobs");
+      const after = db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs");
       expect(after).toBe(200);
     });
   });

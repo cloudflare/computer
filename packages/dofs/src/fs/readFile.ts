@@ -11,6 +11,10 @@ interface ChunkRow {
   size: number;
 }
 
+interface InlineRow {
+  inline_data: Uint8Array | null;
+}
+
 // Overloads match docs/04_filesystem_interface.md exactly.
 export function readFile(db: Database, path: string): Promise<ReadableStream<Uint8Array>>;
 export function readFile(
@@ -43,6 +47,20 @@ export async function readFile(
   }
   if (node.type !== "file") {
     throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
+  }
+
+  const inline = db.one<InlineRow>(
+    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+    node.inode,
+  )?.inline_data;
+  if (inline !== undefined && inline !== null) {
+    if (wantString) return new TextDecoder().decode(inline);
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(inline);
+        controller.close();
+      },
+    });
   }
 
   const chunks = db.all<ChunkRow>(

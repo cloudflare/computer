@@ -11,6 +11,7 @@ import { assertNotReadOnly } from "./mount-guard.js";
 // Fixed chunk size. Exported so tests can size inputs precisely
 // without hard-coding the magic number twice.
 export const CHUNK_SIZE = 512 * 1024;
+export const INLINE_FILE_MAX_BYTES = 16 * 1024;
 
 export type WriteFileContent = string | Uint8Array | ReadableStream<Uint8Array>;
 
@@ -110,7 +111,7 @@ export async function writeFile(
     return;
   }
   const bytes = await materialize(content);
-  writeFileSync(db, path, bytes, options, now);
+  writeFileSync(db, path, bytes, options, now, false);
 }
 
 // Streaming write path. Reads the source one source-chunk at a time,
@@ -325,6 +326,7 @@ export function writeFileSync(
   bytes: Uint8Array,
   options: WriteFileOptions,
   now: () => number,
+  inlineAllowed = true,
 ): void {
   const { parts, path: canonical } = canonicalizePath(path);
   if (parts.length === 0) {
@@ -332,8 +334,8 @@ export function writeFileSync(
   }
   assertNotReadOnly(db, canonical);
   const mode = (options.mode ?? 0o644) & 0o7777;
-  const chunks = chunksOf(bytes);
   const mtime = now();
+  const inline = inlineAllowed && bytes.byteLength <= INLINE_FILE_MAX_BYTES;
 
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);
@@ -354,8 +356,8 @@ export function writeFileSync(
         throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
       }
       inode = existing.child_inode;
-      // Replace the chunk list. Orphaned blobs (if any) are cleaned up
-      // by a later gc() pass.
+      // Replace the existing representation. Orphaned blobs (if any)
+      // are cleaned up by a later gc() pass.
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
       db.run(
@@ -376,6 +378,20 @@ export function writeFileSync(
       );
     }
 
+    const rev = incrementRev(db);
+    if (inline) {
+      db.run(
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
+        mode,
+        mtime,
+        rev,
+        bytes,
+        inode,
+      );
+      return;
+    }
+
+    const chunks = chunksOf(bytes);
     // Upsert blobs and write the new chunk list.
     for (let idx = 0; idx < chunks.length; idx++) {
       const chunk = chunks[idx];
@@ -390,9 +406,8 @@ export function writeFileSync(
     }
 
     const manifestHash = buildManifest(db, chunks, mtime);
-    const rev = incrementRev(db);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
       mode,
       mtime,
       rev,
@@ -418,6 +433,7 @@ export function writeFileRangesSync(
   const mode = (options.mode ?? 0o644) & 0o7777;
   const ranges = normalizeRanges(dirtyRanges, bytes.byteLength);
   const mtime = now();
+  const inline = bytes.byteLength <= INLINE_FILE_MAX_BYTES;
 
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);
@@ -459,6 +475,20 @@ export function writeFileRangesSync(
       );
     }
 
+    const rev = incrementRev(db);
+    if (inline) {
+      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+      db.run(
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
+        mode,
+        mtime,
+        rev,
+        bytes,
+        inode,
+      );
+      return;
+    }
+
     const nextChunks: ChunkRef[] = [];
     const chunkCount = Math.ceil(bytes.byteLength / CHUNK_SIZE);
     for (let idx = 0; idx < chunkCount; idx++) {
@@ -480,9 +510,8 @@ export function writeFileRangesSync(
     }
 
     const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
-    const rev = incrementRev(db);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
       mode,
       mtime,
       rev,

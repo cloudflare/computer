@@ -40,8 +40,21 @@ function v1_to_v2_add_mounts_mode(db: Database): void {
   );
 }
 
+// v2 → v3 — add inline_data for tiny regular-file payloads. Existing
+// files keep their chunk rows; only subsequent small writes use the
+// inline path.
+function v2_to_v3_add_inline_data(db: Database): void {
+  const hasColumn = db
+    .all<{ name: string }>("PRAGMA table_info(vfs_nodes)")
+    .some((column) => column.name === "inline_data");
+  if (!hasColumn) {
+    db.run("ALTER TABLE vfs_nodes ADD COLUMN inline_data BLOB");
+  }
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
+  { from: 2, to: 3, migrator: v2_to_v3_add_inline_data },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

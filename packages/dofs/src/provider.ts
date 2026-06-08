@@ -188,10 +188,7 @@ export class SQLiteWorkspaceProvider {
     const size = isSymlink
       ? (node.linkTarget ?? "").length
       : node.type === "file"
-        ? (this.db.scalar<number>(
-            "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
-            node.inode,
-          ) ?? 0)
+        ? fileSize(this.db, node.inode)
         : 0;
     return wrapStats({
       mode: node.mode,
@@ -376,6 +373,16 @@ export class SQLiteWorkspaceProvider {
     if (node.type !== "file") {
       throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
     }
+    const inline = this.db.one<{ inline_data: Uint8Array | null }>(
+      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+      node.inode,
+    )?.inline_data;
+    const encoding = typeof options === "string" ? options : options?.encoding;
+    if (inline !== undefined && inline !== null) {
+      const out = Buffer.from(inline);
+      return encoding ? out.toString(encoding) : out;
+    }
+
     const chunks = this.db.all<{ hash: Uint8Array; size: number }>(
       "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
       node.inode,
@@ -395,7 +402,6 @@ export class SQLiteWorkspaceProvider {
       out.set(row.bytes, offset);
       offset += row.bytes.byteLength;
     }
-    const encoding = typeof options === "string" ? options : options?.encoding;
     return encoding ? out.toString(encoding) : out;
   }
 
@@ -704,6 +710,18 @@ function linkCount(db: Database, inode: number): number {
   return Math.max(1, count ?? 0);
 }
 
+function fileSize(db: Database, inode: number): number {
+  const inlineSize = db.one<{ size: number | null }>(
+    "SELECT length(inline_data) AS size FROM vfs_nodes WHERE inode = ?",
+    inode,
+  )?.size;
+  return (
+    inlineSize ??
+    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ??
+    0
+  );
+}
+
 function wrapStats(input: StatsInputs): VirtualStatsLike {
   const mtime = new Date(input.mtimeMs);
   return {
@@ -881,6 +899,12 @@ function readFileBytesSync(db: Database, path: string): Uint8Array {
   if (node.type !== "file") {
     throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
   }
+  const inline = db.one<{ inline_data: Uint8Array | null }>(
+    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+    node.inode,
+  )?.inline_data;
+  if (inline !== undefined && inline !== null) return inline;
+
   const chunks = db.all<{ hash: Uint8Array; size: number }>(
     "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
     node.inode,
