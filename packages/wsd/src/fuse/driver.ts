@@ -124,12 +124,24 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   };
 
   const handles = new Map<number, string>();
+  const fileOpenCounts = new Map<string, number>();
   let nextHandle = 1;
 
   const openHandle = (path: string): number => {
     const handle = nextHandle++;
     handles.set(handle, path);
     return handle;
+  };
+
+  const openFileHandle = (path: string): number => {
+    fileOpenCounts.set(path, (fileOpenCounts.get(path) ?? 0) + 1);
+    return openHandle(path);
+  };
+
+  const releaseFileHandle = (path: string): void => {
+    const next = (fileOpenCounts.get(path) ?? 1) - 1;
+    if (next <= 0) fileOpenCounts.delete(path);
+    else fileOpenCounts.set(path, next);
   };
 
   // Sidecar metadata. platformatic VFS has no chmod/chown/utimes, so we store
@@ -350,7 +362,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       try {
         const entry = files.get(path);
         if (entry?.pendingCreate === true) {
-          cb(0, openHandle(path));
+          cb(0, openFileHandle(path));
           return;
         }
         const stat = vfs.statSync(toVfs(path));
@@ -359,7 +371,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           return;
         }
 
-        cb(0, openHandle(path));
+        cb(0, openFileHandle(path));
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -402,7 +414,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           mode,
           pendingMtime: new Date(),
         });
-        cb(0, openHandle(path));
+        cb(0, openFileHandle(path));
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -477,12 +489,24 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
 
     release(path, fh, cb) {
       handles.delete(fh);
+      releaseFileHandle(path);
       // Last chance to make the buffered writes durable in the
       // VFS — the kernel won't call write() again on this fh.
       // Multi-open is fine: the next release on a different fh
       // pointing at the same buffer re-spills the same bytes,
       // which writeFileSync handles idempotently.
-      cb(flushEntry(path));
+      const errno = flushEntry(path);
+      if (errno === 0 && (fileOpenCounts.get(path) ?? 0) === 0) {
+        const entry = files.get(path);
+        if (entry !== undefined && !entry.dirty) {
+          for (const [candidatePath, candidateEntry] of files) {
+            if (candidateEntry === entry && (fileOpenCounts.get(candidatePath) ?? 0) === 0) {
+              files.delete(candidatePath);
+            }
+          }
+        }
+      }
+      cb(errno);
     },
 
     releasedir(_path, fh, cb) {

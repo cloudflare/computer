@@ -511,6 +511,32 @@ test("FUSE ops reject a relative mountPoint", async () => {
   expect(() => makeFUSEOps(vfs, "workspace")).toThrow(/absolute/);
 });
 
+test("FUSE release evicts clean file buffers after flush", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.create("/evict.txt", 0o644, cb),
+  );
+  expect(create.errno).toBe(0);
+  const fh = create.result as number;
+  const first = Buffer.from("first");
+  expect(await status((cb) => ops.write("/evict.txt", fh, first, first.byteLength, 0, cb))).toBe(
+    first.byteLength,
+  );
+  expect(await status((cb) => ops.flush("/evict.txt", fh, cb))).toBe(0);
+  expect(await status((cb) => ops.release("/evict.txt", fh, cb))).toBe(0);
+
+  vfs.writeFileSync("/evict.txt", Buffer.from("second"));
+  const open = await callback((cb) => ops.open("/evict.txt", 0, cb));
+  expect(open.errno).toBe(0);
+  const out = Buffer.alloc("second".length);
+  expect(
+    await status((cb) => ops.read("/evict.txt", open.result as number, out, out.byteLength, 0, cb)),
+  ).toBe(out.byteLength);
+  expect(out.toString()).toBe("second");
+});
+
 test("FUSE getattr reflects mtime and size after an external VFS write", async () => {
   // The auto_cache FUSE option asks the kernel to invalidate its
   // page cache for a file when the file's mtime or size changes
