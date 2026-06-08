@@ -317,6 +317,264 @@ function existingChunkRefs(db: Database, inode: number): ChunkRef[] {
   return db.all<ChunkRef>("SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx", inode);
 }
 
+function inlineDataForInode(db: Database, inode: number): Uint8Array | null {
+  return (
+    db.one<{ inline_data: Uint8Array | null }>(
+      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+      inode,
+    )?.inline_data ?? null
+  );
+}
+
+function fileSizeForInode(db: Database, inode: number): number {
+  const inline = inlineDataForInode(db, inode);
+  if (inline !== null) return inline.byteLength;
+  return (
+    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
+  );
+}
+
+function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
+  const inline = inlineDataForInode(db, inode);
+  if (inline !== null) {
+    const start = idx * CHUNK_SIZE;
+    return inline.subarray(start, Math.min(start + CHUNK_SIZE, inline.byteLength));
+  }
+  const chunk = db.one<{ hash: Uint8Array }>(
+    "SELECT hash FROM vfs_chunks WHERE inode = ? AND idx = ?",
+    inode,
+    idx,
+  );
+  if (chunk === undefined) return new Uint8Array();
+  const row = db.one<{ bytes: Uint8Array }>(
+    "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
+    chunk.hash,
+  );
+  if (row === undefined) {
+    throw createWorkspaceError("EIO", "missing blob bytes");
+  }
+  return row.bytes;
+}
+
+function materializePrefix(db: Database, inode: number, size: number): Uint8Array {
+  const out = new Uint8Array(size);
+  let copied = 0;
+  for (let idx = 0; copied < size; idx++) {
+    const chunk = readChunkBytes(db, inode, idx);
+    if (chunk.byteLength > 0) {
+      out.set(chunk.subarray(0, Math.min(chunk.byteLength, size - copied)), copied);
+    }
+    copied += Math.min(CHUNK_SIZE, size - copied);
+  }
+  return out;
+}
+
+function resolveFileInode(db: Database, path: string): { inode: number; mode: number } {
+  const { path: canonical } = canonicalizePath(path);
+  const node = db.one<{ inode: number; type: "file" | "dir"; mode: number }>(
+    `SELECT n.inode AS inode, n.type AS type, n.mode AS mode
+       FROM vfs_nodes n
+      WHERE n.inode = (
+        SELECT child_inode
+          FROM vfs_dirents
+         WHERE parent_inode = ? AND name = ?
+      )`,
+    ...parentAndNameForResolvedPath(db, path),
+  );
+  if (node === undefined) {
+    throw createWorkspaceError("ENOENT", `no such file: ${canonical}`, canonical);
+  }
+  if (node.type !== "file") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
+  }
+  return { inode: node.inode, mode: node.mode };
+}
+
+function parentAndNameForResolvedPath(db: Database, path: string): [number, string] {
+  const { parts, path: canonical } = canonicalizePath(path);
+  if (parts.length === 0) {
+    throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
+  }
+  return [resolveParent(db, parts, canonical), parts[parts.length - 1]];
+}
+
+function writeInlineInode(
+  db: Database,
+  inode: number,
+  bytes: Uint8Array,
+  mode: number,
+  mtime: number,
+): void {
+  db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+  const rev = incrementRev(db);
+  db.run(
+    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
+    mode,
+    mtime,
+    rev,
+    bytes,
+    inode,
+  );
+}
+
+function writeChunkedInode(
+  db: Database,
+  inode: number,
+  size: number,
+  mode: number,
+  mtime: number,
+  buildChunk: (idx: number, start: number, end: number, oldChunk?: ChunkRef) => ChunkRef,
+): void {
+  const oldChunks = existingChunkRefs(db, inode);
+  const nextChunks: ChunkRef[] = [];
+  const chunkCount = Math.ceil(size / CHUNK_SIZE);
+  for (let idx = 0; idx < chunkCount; idx++) {
+    const start = idx * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, size);
+    nextChunks.push(buildChunk(idx, start, end, oldChunks[idx]));
+  }
+  const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
+  const rev = incrementRev(db);
+  db.run(
+    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
+    mode,
+    mtime,
+    rev,
+    manifestHash,
+    inode,
+  );
+}
+
+export function createFileSync(
+  db: Database,
+  path: string,
+  options: WriteFileOptions,
+  now: () => number,
+): void {
+  const { path: canonical } = canonicalizePath(path);
+  assertNotReadOnly(db, canonical);
+  const [parentInode, leafName] = parentAndNameForResolvedPath(db, path);
+  const mode = (options.mode ?? 0o644) & 0o7777;
+  const mtime = now();
+
+  db.transactionSync(() => {
+    const existing = db.one<{ child_inode: number }>(
+      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+      parentInode,
+      leafName,
+    );
+    if (existing !== undefined) {
+      throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+    }
+    db.run(
+      "INSERT INTO vfs_nodes (type, mode, mtime, rev, manifest_hash, inline_data) VALUES ('file', ?, ?, 0, NULL, ?)",
+      mode,
+      mtime,
+      new Uint8Array(),
+    );
+    const inode = db.scalar<number>("SELECT last_insert_rowid()");
+    if (inode === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
+    db.run(
+      "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
+      parentInode,
+      leafName,
+      inode,
+    );
+    const rev = incrementRev(db);
+    db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, inode);
+  });
+}
+
+export function writeRangeSync(
+  db: Database,
+  path: string,
+  bytes: Uint8Array,
+  offset: number,
+  options: WriteFileOptions,
+  now: () => number,
+): number {
+  const { path: canonical } = canonicalizePath(path);
+  assertNotReadOnly(db, canonical);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw createWorkspaceError("EINVAL", `invalid write offset: ${offset}`, canonical);
+  }
+  if (bytes.byteLength === 0) return 0;
+  const mtime = now();
+
+  db.transactionSync(() => {
+    const { inode, mode: existingMode } = resolveFileInode(db, path);
+    const mode = (options.mode ?? existingMode) & 0o7777;
+    const oldSize = fileSizeForInode(db, inode);
+    const writeEnd = offset + bytes.byteLength;
+    const nextSize = Math.max(oldSize, writeEnd);
+
+    if (nextSize <= INLINE_FILE_MAX_BYTES) {
+      const next = materializePrefix(db, inode, nextSize);
+      next.set(bytes, offset);
+      writeInlineInode(db, inode, next, mode, mtime);
+      return;
+    }
+
+    writeChunkedInode(db, inode, nextSize, mode, mtime, (idx, start, end, oldChunk) => {
+      const overlapsWrite = offset < end && start < writeEnd;
+      if (oldChunk !== undefined && oldChunk.size === end - start && !overlapsWrite) {
+        return oldChunk;
+      }
+      const chunkBytes = new Uint8Array(end - start);
+      const existing = readChunkBytes(db, inode, idx);
+      chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
+      if (overlapsWrite) {
+        const copyStart = Math.max(start, offset);
+        const copyEnd = Math.min(end, writeEnd);
+        chunkBytes.set(bytes.subarray(copyStart - offset, copyEnd - offset), copyStart - start);
+      }
+      const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
+      upsertChunkBlob(db, chunk, mtime);
+      return { hash: chunk.hash, size: chunk.size };
+    });
+  });
+
+  return bytes.byteLength;
+}
+
+export function truncateFileSync(
+  db: Database,
+  path: string,
+  size: number,
+  now: () => number,
+): void {
+  const { path: canonical } = canonicalizePath(path);
+  assertNotReadOnly(db, canonical);
+  if (!Number.isInteger(size) || size < 0) {
+    throw createWorkspaceError("EINVAL", `invalid truncate size: ${size}`, canonical);
+  }
+  const mtime = now();
+
+  db.transactionSync(() => {
+    const { inode, mode } = resolveFileInode(db, path);
+    const oldSize = fileSizeForInode(db, inode);
+    if (oldSize === size) return;
+
+    if (size <= INLINE_FILE_MAX_BYTES) {
+      const next = materializePrefix(db, inode, size);
+      writeInlineInode(db, inode, next, mode, mtime);
+      return;
+    }
+
+    writeChunkedInode(db, inode, size, mode, mtime, (idx, start, end, oldChunk) => {
+      if (oldChunk !== undefined && oldChunk.size === end - start) {
+        return oldChunk;
+      }
+      const chunkBytes = new Uint8Array(end - start);
+      const existing = readChunkBytes(db, inode, idx);
+      chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
+      const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
+      upsertChunkBlob(db, chunk, mtime);
+      return { hash: chunk.hash, size: chunk.size };
+    });
+  });
+}
+
 // Synchronous entry point used by the VirtualProvider. Identical SQL
 // to the async path; differs only in that the bytes have already been
 // materialized.
