@@ -156,6 +156,11 @@ run "unlink one keeps other"      -- '
   echo content > a && ln a b
   rm a && [ "$(cat b)" = "content" ]
 '
+run "write through hard link"     -- '
+  echo old > a && ln a b
+  echo new > b
+  [ "$(cat a)" = "new" ]
+'
 
 section "extended attributes"
 if command -v setfattr >/dev/null && command -v getfattr >/dev/null; then
