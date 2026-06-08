@@ -188,6 +188,17 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     ): void;
   }
 
+  interface DirectWriteVfs {
+    createFileSync(path: string, options?: { mode?: number }): void;
+    writeRangeSync(
+      path: string,
+      data: Buffer | Uint8Array,
+      offset: number,
+      options?: { mode?: number },
+    ): number;
+    truncateFileSync(path: string, size: number): void;
+  }
+
   interface FileEntry {
     buf: Buffer; // capacity buffer (may be larger than size)
     size: number; // logical end-of-file
@@ -222,6 +233,12 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   };
   const files = new Map<string, FileEntry>();
   const rangedWriteVfs = vfs as NodeVirtualFileSystem & Partial<RangedWriteVfs>;
+  const directWriteVfs = vfs as NodeVirtualFileSystem &
+    Partial<DirectWriteVfs> & { chmodSync?: (path: string, mode: number) => void };
+  const hasDirectWrites =
+    directWriteVfs.createFileSync !== undefined &&
+    directWriteVfs.writeRangeSync !== undefined &&
+    directWriteVfs.truncateFileSync !== undefined;
   const linkableVfs = vfs as NodeVirtualFileSystem & {
     linkSync?: (existingPath: string, newPath: string) => void;
   };
@@ -436,6 +453,11 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           cb(ERRNO.EEXIST, 0);
           return;
         }
+        if (hasDirectWrites) {
+          directWriteVfs.createFileSync?.(toVfs(path), { mode });
+          cb(0, openFileHandle(path));
+          return;
+        }
         // Defer the VFS inode write until flush/release/fsync. Most create
         // workloads immediately write content, so persisting an empty file here
         // doubles provider work for tiny files.
@@ -496,6 +518,22 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       if (entry === undefined) {
         if (!exists(path)) {
           cb(ERRNO.ENOENT);
+          return;
+        }
+        if (hasDirectWrites) {
+          if (position + length > MAX_FILE_BYTES) {
+            cb(ERRNO.EFBIG);
+            return;
+          }
+          try {
+            cb(
+              directWriteVfs.writeRangeSync?.(toVfs(path), buffer.subarray(0, length), position, {
+                mode: modeFromVfs(path),
+              }) ?? ERRNO.ENOSYS,
+            );
+          } catch (error) {
+            cb(toErrno(error));
+          }
           return;
         }
         try {
@@ -568,6 +606,19 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       }
       let entry = files.get(path);
       if (entry === undefined) {
+        if (hasDirectWrites) {
+          if (size > MAX_FILE_BYTES) {
+            cb(ERRNO.EFBIG);
+            return;
+          }
+          try {
+            directWriteVfs.truncateFileSync?.(toVfs(path), size);
+            cb(0);
+          } catch (error) {
+            cb(toErrno(error));
+          }
+          return;
+        }
         try {
           const data = vfs.readFileSync(toVfs(path));
           entry = {
@@ -704,6 +755,14 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       const entry = files.get(path);
       if (entry !== undefined) entry.mode = mode;
       updateMeta(path, { mode });
+      if (entry === undefined && directWriteVfs.chmodSync !== undefined) {
+        try {
+          directWriteVfs.chmodSync(toVfs(path), mode);
+        } catch (error) {
+          cb(toErrno(error));
+          return;
+        }
+      }
       cb(0);
     },
 

@@ -48,6 +48,17 @@ const fuseNativeOperationNames = [
 
 const notImplementedOperationNames = ["error", "mknod"];
 
+function disableDirectWrites(vfs: unknown): void {
+  const target = vfs as {
+    createFileSync?: unknown;
+    writeRangeSync?: unknown;
+    truncateFileSync?: unknown;
+  };
+  delete target.createFileSync;
+  delete target.writeRangeSync;
+  delete target.truncateFileSync;
+}
+
 test("FUSE ops expose the complete fuse-native operation surface", async () => {
   const ops = makeFUSEOps((await createNodeVirtualFileSystem()).vfs);
 
@@ -316,11 +327,9 @@ test("FUSE rename carries the buffered bytes to the new path", async () => {
 });
 
 test("FUSE getattr size matches what readFileSync would return", async () => {
-  // getattr returns entry.size when the buffer is populated, so
-  // stat-after-write sees the new size even before flush. The VFS
-  // sees the pre-write inode size (0). After flush they have to
-  // agree, otherwise the buffer is silently masking a stale VFS
-  // state that an RPC reader would hit.
+  // Direct writes update the backing VFS immediately, so getattr and
+  // provider stat agree before fsync/release. The old buffered fallback
+  // used to expose a deferred-create window here.
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);
 
@@ -333,15 +342,15 @@ test("FUSE getattr size matches what readFileSync would return", async () => {
   await status((cb: (value: number) => void) =>
     ops.write("/g.txt", fh, payload, payload.byteLength, 0, cb),
   );
-  // Buffer-only state: FUSE getattr leads, VFS has no inode yet. Documents
-  // the intentional deferred-create window between create/write and a flushing op.
+  // Direct-write state: FUSE getattr and backing VFS stat agree before a
+  // flushing op.
   const beforeFlush = await callback((cb: (errno: number, result: unknown) => void) =>
     ops.getattr("/g.txt", cb),
   );
   expect((beforeFlush.result as { size: number }).size).toBe(12);
-  expect(() => vfs.statSync("/g.txt")).toThrow();
+  expect(vfs.statSync("/g.txt").size).toBe(12);
 
-  // After flush both must agree — anything calling stat through
+  // After flush they still agree — anything calling stat through
   // the VFS (RPC, host-side platformatic/vfs) needs the truth.
   expect(await status((cb) => ops.fsync("/g.txt", fh, 0, cb))).toBe(0);
   const afterFlush = await callback((cb: (errno: number, result: unknown) => void) =>
@@ -391,6 +400,7 @@ test("FUSE ops translate kernel-relative paths onto the configured mount point",
 
 test("FUSE clean buffers are not spilled repeatedly", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
+  disableDirectWrites(vfs);
   const ops = makeFUSEOps(vfs);
 
   const create = await callback((cb: (errno: number, result: unknown) => void) =>
@@ -449,6 +459,7 @@ test("FUSE read-only hydrated buffers are not spilled on close", async () => {
 
 test("FUSE flush uses ranged writes when the backing VFS supports them", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
+  disableDirectWrites(vfs);
   const ops = makeFUSEOps(vfs);
 
   const create = await callback((cb: (errno: number, result: unknown) => void) =>
@@ -511,8 +522,29 @@ test("FUSE ops reject a relative mountPoint", async () => {
   expect(() => makeFUSEOps(vfs, "workspace")).toThrow(/absolute/);
 });
 
+test("FUSE direct writes are visible through the VFS before release", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.create("/direct.txt", 0o644, cb),
+  );
+  expect(create.errno).toBe(0);
+  const fh = create.result as number;
+  const payload = Buffer.from("direct");
+  expect(
+    await status((cb) => ops.write("/direct.txt", fh, payload, payload.byteLength, 0, cb)),
+  ).toBe(payload.byteLength);
+
+  expect(vfs.readFileSync("/direct.txt").toString()).toBe("direct");
+  expect(ops.getBufferStats()).toMatchObject({ entries: 0, dirtyEntries: 0, capacityBytes: 0 });
+
+  expect(await status((cb) => ops.release("/direct.txt", fh, cb))).toBe(0);
+});
+
 test("FUSE buffer stats report resident write buffers", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
+  disableDirectWrites(vfs);
   const ops = makeFUSEOps(vfs);
 
   expect(ops.getBufferStats()).toMatchObject({

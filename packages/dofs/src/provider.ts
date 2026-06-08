@@ -33,6 +33,7 @@ import {
   writeRangeSync as writeRangeSyncImpl,
 } from "./fs/writeFile.js";
 import { canonicalizePath } from "./path.js";
+import { incrementRev } from "./rev.js";
 import type { Database } from "./storage.js";
 
 export interface SQLiteWorkspaceProviderOptions {
@@ -464,6 +465,20 @@ export class SQLiteWorkspaceProvider {
 
   truncateFileSync(path: string, len: number): void {
     truncateFileSyncImpl(this.db, path, len, this.now);
+  }
+
+  chmodSync(path: string, mode: number): void {
+    const node = resolveInode(this.db, path, { followSymlinks: false });
+    if (node === null) {
+      throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
+    }
+    const rev = incrementRev(this.db);
+    this.db.run(
+      "UPDATE vfs_nodes SET mode = ?, rev = ? WHERE inode = ?",
+      mode & 0o7777,
+      rev,
+      node.inode,
+    );
   }
 
   appendFile(

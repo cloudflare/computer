@@ -73,6 +73,10 @@ const FORWARDED_METHODS = [
   "writeFile",
   "writeFileSync",
   "writeFileRangesSync",
+  "createFileSync",
+  "writeRangeSync",
+  "truncateFileSync",
+  "chmodSync",
   "appendFile",
   "appendFileSync",
   "exists",
@@ -172,6 +176,46 @@ export async function createNodeVirtualFileSystem(
       (provider as unknown as { linkSync(existingPath: string, newPath: string): void }).linkSync(
         existingPath,
         newPath,
+      ),
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(vfs, "createFileSync", {
+    value: (path: string, options?: { mode?: number }) =>
+      (
+        provider as unknown as { createFileSync(path: string, options?: { mode?: number }): void }
+      ).createFileSync(path, options),
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(vfs, "writeRangeSync", {
+    value: (path: string, data: Buffer | Uint8Array, offset: number, options?: { mode?: number }) =>
+      (
+        provider as unknown as {
+          writeRangeSync(
+            path: string,
+            data: Buffer | Uint8Array,
+            offset: number,
+            options?: { mode?: number },
+          ): number;
+        }
+      ).writeRangeSync(path, data, offset, options),
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(vfs, "truncateFileSync", {
+    value: (path: string, size: number) =>
+      (
+        provider as unknown as { truncateFileSync(path: string, size: number): void }
+      ).truncateFileSync(path, size),
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(vfs, "chmodSync", {
+    value: (path: string, mode: number) =>
+      (provider as unknown as { chmodSync(path: string, mode: number): void }).chmodSync(
+        path,
+        mode,
       ),
     writable: true,
     configurable: true,
