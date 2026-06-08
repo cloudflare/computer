@@ -84,6 +84,7 @@ export interface FuseOps {
   removexattr(path: string, name: string, cb: StatusCallback): void;
   link(source: string, destination: string, cb: StatusCallback): void;
   symlink(target: string, path: string, cb: StatusCallback): void;
+  getBufferStats(): FuseBufferStats;
 }
 
 export interface FuseStat {
@@ -96,6 +97,17 @@ export interface FuseStat {
   gid: number;
   nlink: number;
   ino: number;
+}
+
+export interface FuseBufferStats {
+  entries: number;
+  dirtyEntries: number;
+  pendingCreates: number;
+  capacityBytes: number;
+  logicalBytes: number;
+  dirtyLogicalBytes: number;
+  openHandles: number;
+  openPaths: number;
 }
 
 export interface FuseMount {
@@ -224,6 +236,31 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   const baseName = (path: string): string => posix.basename(path);
   const isPendingCreate = (path: string): boolean => files.get(path)?.pendingCreate === true;
   const exists = (path: string): boolean => isPendingCreate(path) || vfs.existsSync(toVfs(path));
+  const getBufferStats = (): FuseBufferStats => {
+    let dirtyEntries = 0;
+    let pendingCreates = 0;
+    let capacityBytes = 0;
+    let logicalBytes = 0;
+    let dirtyLogicalBytes = 0;
+    for (const entry of files.values()) {
+      if (entry.dirty) dirtyEntries++;
+      if (entry.pendingCreate) pendingCreates++;
+      capacityBytes += entry.buf.byteLength;
+      logicalBytes += entry.size;
+      if (entry.dirty) dirtyLogicalBytes += entry.size;
+    }
+    return {
+      entries: files.size,
+      dirtyEntries,
+      pendingCreates,
+      capacityBytes,
+      logicalBytes,
+      dirtyLogicalBytes,
+      openHandles: handles.size,
+      openPaths: fileOpenCounts.size,
+    };
+  };
+
   const pendingStat = (entry: FileEntry): FuseStat => {
     return {
       // Frozen from create() so consecutive stats of an unchanged
@@ -315,6 +352,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     init(cb) {
       cb?.(0);
     },
+
+    getBufferStats,
 
     error: notImplemented("error"),
 
@@ -783,13 +822,11 @@ export async function mountFuse(options: {
   const traceMode = process.env.WSD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
-  const ops: FuseOps =
+  const { getBufferStats: _getBufferStats, ...fuseOps } = baseOps;
+  const ops =
     tracer === undefined
-      ? baseOps
-      : (wrapFuseOpsWithTracer(
-          baseOps as unknown as Record<string, unknown>,
-          tracer,
-        ) as unknown as FuseOps);
+      ? fuseOps
+      : wrapFuseOpsWithTracer(fuseOps as unknown as Record<string, unknown>, tracer);
   const fuse = new Fuse(options.mountPoint, ops, {
     autoUnmount: true,
     debug: false,

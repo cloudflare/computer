@@ -511,6 +511,47 @@ test("FUSE ops reject a relative mountPoint", async () => {
   expect(() => makeFUSEOps(vfs, "workspace")).toThrow(/absolute/);
 });
 
+test("FUSE buffer stats report resident write buffers", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  expect(ops.getBufferStats()).toMatchObject({
+    entries: 0,
+    dirtyEntries: 0,
+    capacityBytes: 0,
+    logicalBytes: 0,
+  });
+
+  const create = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.create("/stats.txt", 0o644, cb),
+  );
+  expect(create.errno).toBe(0);
+  const fh = create.result as number;
+  const payload = Buffer.from("tracked");
+  expect(
+    await status((cb) => ops.write("/stats.txt", fh, payload, payload.byteLength, 0, cb)),
+  ).toBe(payload.byteLength);
+
+  expect(ops.getBufferStats()).toMatchObject({
+    entries: 1,
+    dirtyEntries: 1,
+    pendingCreates: 1,
+    logicalBytes: payload.byteLength,
+    dirtyLogicalBytes: payload.byteLength,
+    openPaths: 1,
+  });
+  expect(ops.getBufferStats().capacityBytes).toBeGreaterThanOrEqual(payload.byteLength);
+
+  expect(await status((cb) => ops.release("/stats.txt", fh, cb))).toBe(0);
+  expect(ops.getBufferStats()).toMatchObject({
+    entries: 0,
+    dirtyEntries: 0,
+    capacityBytes: 0,
+    logicalBytes: 0,
+    openPaths: 0,
+  });
+});
+
 test("FUSE release evicts clean file buffers after flush", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);
