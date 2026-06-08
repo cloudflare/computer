@@ -484,11 +484,21 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     read(path, _fh, buffer, length, position, cb) {
       let entry = files.get(path);
       if (entry === undefined) {
-        // File was created out-of-band (e.g. before this driver started
-        // tracking it). Lazy-hydrate from the VFS, carrying the
-        // persisted mode forward so a later flush doesn't downgrade it.
         try {
           const data = vfs.readFileSync(toVfs(path));
+          if (hasDirectWrites) {
+            if (position >= data.length) {
+              cb(0);
+              return;
+            }
+            const end = Math.min(position + length, data.length);
+            data.copy(buffer, 0, position, end);
+            cb(end - position);
+            return;
+          }
+          // File was created out-of-band (e.g. before this driver started
+          // tracking it). Lazy-hydrate from the VFS, carrying the
+          // persisted mode forward so a later flush doesn't downgrade it.
           entry = {
             buf: data,
             size: data.length,

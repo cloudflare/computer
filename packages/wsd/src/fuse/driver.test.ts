@@ -522,6 +522,35 @@ test("FUSE ops reject a relative mountPoint", async () => {
   expect(() => makeFUSEOps(vfs, "workspace")).toThrow(/absolute/);
 });
 
+test("FUSE direct reads do not force later writes onto the buffered fallback", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.create("/direct-read-write.txt", 0o644, cb),
+  );
+  expect(create.errno).toBe(0);
+  const fh = create.result as number;
+  const first = Buffer.from("first");
+  expect(
+    await status((cb) => ops.write("/direct-read-write.txt", fh, first, first.byteLength, 0, cb)),
+  ).toBe(first.byteLength);
+
+  const out = Buffer.alloc(first.byteLength);
+  expect(
+    await status((cb) => ops.read("/direct-read-write.txt", fh, out, out.byteLength, 0, cb)),
+  ).toBe(first.byteLength);
+  expect(out.toString()).toBe("first");
+  expect(ops.getBufferStats()).toMatchObject({ entries: 0, dirtyEntries: 0, capacityBytes: 0 });
+
+  const second = Buffer.from("second");
+  expect(
+    await status((cb) => ops.write("/direct-read-write.txt", fh, second, second.byteLength, 0, cb)),
+  ).toBe(second.byteLength);
+  expect(vfs.readFileSync("/direct-read-write.txt").toString()).toBe("second");
+  expect(ops.getBufferStats()).toMatchObject({ entries: 0, dirtyEntries: 0, capacityBytes: 0 });
+});
+
 test("FUSE direct writes are visible through the VFS before release", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);
