@@ -16,11 +16,12 @@ describe("buildFuseOptionString", () => {
     // tools that stat repeatedly (find, ls -l, git status) without
     // letting a stale view linger. negative_timeout at zero keeps
     // "file not found" answers fresh so a just-written file shows
-    // up immediately. big_writes plus 128 KiB max_read and
-    // max_write match the historical sizing that earlier
-    // experiments showed didn't move on bigger values.
+    // up immediately. use_ino lets hardlinks stat as the same inode.
+    // big_writes plus 128 KiB max_read and max_write match the
+    // historical sizing that earlier experiments showed didn't move
+    // on bigger values.
     expect(buildFuseOptionString(empty)).toBe(
-      "big_writes,max_write=131072,max_read=131072,auto_cache,attr_timeout=1,entry_timeout=1,negative_timeout=0,ac_attr_timeout=1",
+      "big_writes,use_ino,max_write=131072,max_read=131072,auto_cache,attr_timeout=1,entry_timeout=1,negative_timeout=0,ac_attr_timeout=1",
     );
   });
 

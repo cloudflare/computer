@@ -15,7 +15,9 @@
 // second so stat-heavy tools (find, ls -l, git status) skip repeated
 // FUSE round-trips. negative_timeout stays at zero so a just-written
 // file shows up immediately to a process that probed before it
-// existed. big_writes plus 128 KiB max_read and max_write match the
+// existed. use_ino tells the kernel to trust the inode numbers
+// returned by getattr, which is required for hardlinks to stat as the
+// same inode. big_writes plus 128 KiB max_read and max_write match the
 // historical sizing; experiments with larger values didn't move the
 // numbers.
 //
@@ -57,7 +59,7 @@ export interface FuseOptionEnv {
  * object, so tests can drive it directly.
  */
 export function buildFuseOptionString(env: FuseOptionEnv): string {
-  const opts: string[] = ["big_writes"];
+  const opts: string[] = ["big_writes", "use_ino"];
 
   const maxWrite = parsePositiveInt(env.WSD_FUSE_MAX_WRITE) ?? DEFAULT_MAX_WRITE;
   const maxRead = parsePositiveInt(env.WSD_FUSE_MAX_READ) ?? DEFAULT_MAX_READ;

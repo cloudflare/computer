@@ -12,6 +12,7 @@ const ERRNO = {
   ENOTDIR: -20,
   EISDIR: -21,
   EINVAL: -22,
+  EPERM: -1,
   EFBIG: -27,
   ENOTEMPTY: -39,
   ENODATA: -61,
@@ -81,7 +82,7 @@ export interface FuseOps {
   getxattr(path: string, name: string, position: number, cb: StatusCallback): void;
   listxattr(path: string, cb: ResultCallback<Buffer>): void;
   removexattr(path: string, name: string, cb: StatusCallback): void;
-  link: NotImplementedOperation;
+  link(source: string, destination: string, cb: StatusCallback): void;
   symlink(target: string, path: string, cb: StatusCallback): void;
 }
 
@@ -94,6 +95,7 @@ export interface FuseStat {
   uid: number;
   gid: number;
   nlink: number;
+  ino: number;
 }
 
 export interface FuseMount {
@@ -196,6 +198,9 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   };
   const files = new Map<string, FileEntry>();
   const rangedWriteVfs = vfs as NodeVirtualFileSystem & Partial<RangedWriteVfs>;
+  const linkableVfs = vfs as NodeVirtualFileSystem & {
+    linkSync?: (existingPath: string, newPath: string) => void;
+  };
   const markDirty = (entry: FileEntry, start: number, end: number): void => {
     entry.dirty = true;
     if (start < end) entry.dirtyRanges.push({ start, end });
@@ -224,6 +229,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       uid: typeof process.getuid === "function" ? process.getuid() : 0,
       gid: typeof process.getgid === "function" ? process.getgid() : 0,
       nlink: 1,
+      ino: 0,
     };
   };
   // Returns true on success, false if `needed` exceeds MAX_FILE_BYTES.
@@ -693,7 +699,27 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       cb(vfs.existsSync(toVfs(path)) ? ERRNO.ENODATA : ERRNO.ENOENT);
     },
 
-    link: notImplemented("link"),
+    link(source, destination, cb) {
+      try {
+        if (linkableVfs.linkSync === undefined) {
+          cb(ERRNO.ENOSYS);
+          return;
+        }
+        const flushErrno = flushEntry(source);
+        if (flushErrno !== 0) {
+          cb(flushErrno);
+          return;
+        }
+        linkableVfs.linkSync(toVfs(source), toVfs(destination));
+        const entry = files.get(source);
+        if (entry !== undefined) files.set(destination, entry);
+        const override = meta.get(source);
+        if (override !== undefined) meta.set(destination, override);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
     symlink(target, path, cb) {
       try {
         // Symlink target text is stored verbatim — applications
@@ -816,6 +842,8 @@ function statNode(stat: {
   ctime: Date;
   size: number;
   mode: number;
+  nlink?: number;
+  ino?: number;
   isDirectory(): boolean;
 }): FuseStat {
   return {
@@ -826,7 +854,8 @@ function statNode(stat: {
     mode: stat.mode,
     uid: typeof process.getuid === "function" ? process.getuid() : 0,
     gid: typeof process.getgid === "function" ? process.getgid() : 0,
-    nlink: stat.isDirectory() ? 2 : 1,
+    nlink: stat.nlink ?? (stat.isDirectory() ? 2 : 1),
+    ino: stat.ino ?? 0,
   };
 }
 
@@ -839,5 +868,6 @@ function toErrno(error: unknown): number {
   if (code === "EISDIR") return ERRNO.EISDIR;
   if (code === "ENOTEMPTY") return ERRNO.ENOTEMPTY;
   if (code === "EINVAL") return ERRNO.EINVAL;
+  if (code === "EPERM") return ERRNO.EPERM;
   return ERRNO.EIO;
 }

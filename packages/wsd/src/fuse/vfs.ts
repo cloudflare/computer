@@ -66,6 +66,8 @@ const FORWARDED_METHODS = [
   "unlinkSync",
   "rename",
   "renameSync",
+  "link",
+  "linkSync",
   "readFile",
   "readFileSync",
   "writeFile",
@@ -159,7 +161,21 @@ export async function createNodeVirtualFileSystem(
     stopSync = startSyncLoop(db, options.upstream);
   }
 
-  const vfs = create(new SQLiteVirtualProvider(db), { moduleHooks: false });
+  const provider = new SQLiteVirtualProvider(db);
+  const vfs = create(provider, { moduleHooks: false });
+  // @platformatic/vfs does not expose hardlink helpers on
+  // VirtualFileSystem, but FUSE needs link(2). Attach the provider
+  // primitive directly so the driver can call it while all ordinary
+  // VFS callers keep using the standard surface.
+  Object.defineProperty(vfs, "linkSync", {
+    value: (existingPath: string, newPath: string) =>
+      (provider as unknown as { linkSync(existingPath: string, newPath: string): void }).linkSync(
+        existingPath,
+        newPath,
+      ),
+    writable: true,
+    configurable: true,
+  });
   return { vfs, db, stopSync };
 }
 

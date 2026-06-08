@@ -46,7 +46,7 @@ const fuseNativeOperationNames = [
   "rmdir",
 ];
 
-const notImplementedOperationNames = ["error", "mknod", "link"];
+const notImplementedOperationNames = ["error", "mknod"];
 
 test("FUSE ops expose the complete fuse-native operation surface", async () => {
   const ops = makeFUSEOps((await createNodeVirtualFileSystem()).vfs);
@@ -619,6 +619,63 @@ test("FUSE create+chmod+flush persists the chmod'd mode in the VFS", async () =>
   expect(await status((cb) => ops.flush("/new.txt", fh, cb))).toBe(0);
 
   expect(vfs.statSync("/new.txt").mode & 0o7777).toBe(0o600);
+});
+
+test("FUSE link creates a second name for the same file inode", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/a.txt", Buffer.from("hi"));
+  const ops = makeFUSEOps(vfs);
+
+  expect(await status((cb) => ops.link("/a.txt", "/b.txt", cb))).toBe(0);
+
+  const a = await callback((cb) => ops.getattr("/a.txt", cb));
+  const b = await callback((cb) => ops.getattr("/b.txt", cb));
+  expect(a.errno).toBe(0);
+  expect(b.errno).toBe(0);
+  expect((a.result as { nlink: number; ino: number }).nlink).toBe(2);
+  expect((b.result as { nlink: number; ino: number }).nlink).toBe(2);
+  expect((a.result as { nlink: number; ino: number }).ino).toBe(
+    (b.result as { nlink: number; ino: number }).ino,
+  );
+
+  const open = await callback((cb) => ops.open("/b.txt", 0, cb));
+  expect(open.errno).toBe(0);
+  const payload = Buffer.from("bye");
+  expect(
+    await status((cb) =>
+      ops.write("/b.txt", open.result as number, payload, payload.byteLength, 0, cb),
+    ),
+  ).toBe(payload.byteLength);
+  expect(await status((cb) => ops.flush("/b.txt", open.result as number, cb))).toBe(0);
+
+  expect(Buffer.from(vfs.readFileSync("/a.txt")).toString("utf8")).toBe("bye");
+});
+
+test("FUSE link flushes a pending-create source before linking", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.create("/src.txt", 0o644, cb),
+  );
+  expect(create.errno).toBe(0);
+  const fh = create.result as number;
+  const payload = Buffer.from("linked");
+  await status((cb) => ops.write("/src.txt", fh, payload, payload.byteLength, 0, cb));
+
+  expect(await status((cb) => ops.link("/src.txt", "/dst.txt", cb))).toBe(0);
+  expect(Buffer.from(vfs.readFileSync("/dst.txt")).toString("utf8")).toBe("linked");
+  expect(vfs.statSync("/src.txt").ino).toBe(vfs.statSync("/dst.txt").ino);
+  expect(vfs.statSync("/src.txt").nlink).toBe(2);
+});
+
+test("FUSE link surfaces POSIX errors", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/a.txt", Buffer.from("hi"));
+  const ops = makeFUSEOps(vfs);
+
+  expect(await status((cb) => ops.link("/missing.txt", "/b.txt", cb))).toBe(-2);
+  expect(await status((cb) => ops.link("/a.txt", "/a.txt", cb))).toBe(-17);
 });
 
 test("FUSE rename of a pending-create file overwrites an existing destination", async () => {
