@@ -406,6 +406,9 @@ function writeInlineInode(
   mtime: number,
 ): void {
   db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+  if (bytes.byteLength > 0) {
+    stageBlob(db, sha256(bytes), bytes, mtime);
+  }
   const rev = incrementRev(db);
   db.run(
     "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",

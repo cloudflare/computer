@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
+import { createFileSync, writeFile, writeRangeSync } from "../fs/writeFile.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchChanges, fetchObjects, hasObjects } from "./fetch.js";
 
@@ -19,6 +19,22 @@ describe("fetch wire", () => {
       const viaCoalesce = await drain(coalesceChanges(db, 0));
       const viaFetch = await drain(fetchChanges(db, 0));
       expect(viaFetch).toEqual(viaCoalesce);
+    });
+  });
+
+  it("fetchChanges and fetchObjects include inline direct writes", async () => {
+    await withDB(async (db) => {
+      createFileSync(db, "/inline.txt", {}, () => 1);
+      writeRangeSync(db, "/inline.txt", new TextEncoder().encode("inline direct"), 0, {}, () => 2);
+
+      const entries = await drain(fetchChanges(db, 0));
+      const file = entries.find((entry) => entry.kind === "file" && entry.path === "/inline.txt");
+      expect(file).toMatchObject({ kind: "file", size: "inline direct".length });
+      expect(file?.kind === "file" ? file.chunks : []).toHaveLength(1);
+      const hash = file?.kind === "file" ? file.chunks[0].hash : new Uint8Array();
+      const objects = await drain(fetchObjects(db, [hash]));
+      expect(objects).toHaveLength(1);
+      expect(new TextDecoder().decode(objects[0].bytes)).toBe("inline direct");
     });
   });
 
