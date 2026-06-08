@@ -1,6 +1,7 @@
 import { createWorkspaceError } from "../errors.js";
 import type { Database } from "../storage.js";
 import { resolveInode } from "./resolve.js";
+import { CHUNK_SIZE } from "./writeFile.js";
 
 export interface ReadFileOptions {
   encoding?: "utf8";
@@ -116,6 +117,76 @@ export async function readFile(
       controller.enqueue(row.bytes);
     },
   });
+}
+
+// Positional read primitive. Slices `inline_data` for inline files and
+// walks only the chunk rows that overlap [offset, offset+length) for
+// chunk-backed files, so the FUSE driver can serve a kernel read
+// without materializing the whole file.
+export function readRangeSync(
+  db: Database,
+  path: string,
+  offset: number,
+  length: number,
+): Uint8Array {
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw createWorkspaceError("EINVAL", `invalid read offset: ${offset}`, path);
+  }
+  if (!Number.isInteger(length) || length < 0) {
+    throw createWorkspaceError("EINVAL", `invalid read length: ${length}`, path);
+  }
+  const node = resolveInode(db, path);
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such file: ${path}`, path);
+  }
+  if (node.type !== "file") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
+  }
+  if (length === 0) return new Uint8Array();
+
+  const inline = db.one<InlineRow>(
+    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+    node.inode,
+  )?.inline_data;
+  if (inline !== undefined && inline !== null) {
+    if (offset >= inline.byteLength) return new Uint8Array();
+    const end = Math.min(offset + length, inline.byteLength);
+    return inline.subarray(offset, end);
+  }
+
+  const totalSize =
+    db.scalar<number>(
+      "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
+      node.inode,
+    ) ?? 0;
+  if (offset >= totalSize) return new Uint8Array();
+  const end = Math.min(offset + length, totalSize);
+  const firstIdx = Math.floor(offset / CHUNK_SIZE);
+  const lastIdx = Math.floor((end - 1) / CHUNK_SIZE);
+  const out = new Uint8Array(end - offset);
+  let written = 0;
+  for (let idx = firstIdx; idx <= lastIdx; idx++) {
+    const start = idx * CHUNK_SIZE;
+    const chunk = db.one<{ hash: Uint8Array }>(
+      "SELECT hash FROM vfs_chunks WHERE inode = ? AND idx = ?",
+      node.inode,
+      idx,
+    );
+    if (chunk === undefined) continue;
+    const row = db.one<{ bytes: Uint8Array }>(
+      "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
+      chunk.hash,
+    );
+    if (row === undefined) {
+      throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
+    }
+    const srcStart = Math.max(0, offset - start);
+    const srcEnd = Math.min(row.bytes.byteLength, end - start);
+    if (srcEnd <= srcStart) continue;
+    out.set(row.bytes.subarray(srcStart, srcEnd), written);
+    written += srcEnd - srcStart;
+  }
+  return written === out.byteLength ? out : out.subarray(0, written);
 }
 
 function touchBlobs(db: Database, chunks: ChunkRow[], at: number): void {
