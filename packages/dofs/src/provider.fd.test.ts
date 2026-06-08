@@ -165,6 +165,22 @@ describe("SQLiteWorkspaceProvider — readSync", () => {
   });
 });
 
+describe("SQLiteWorkspaceProvider — direct range methods", () => {
+  it("exposes direct create, write range, and truncate methods", async () => {
+    await withProvider((p) => {
+      p.createFileSync("/direct.txt", { mode: 0o600 });
+      expect(p.statSync("/direct.txt").mode & 0o777).toBe(0o600);
+
+      expect(p.writeRangeSync("/direct.txt", Buffer.from("abcdef"), 0)).toBe(6);
+      expect(p.writeRangeSync("/direct.txt", Buffer.from("Z"), 3)).toBe(1);
+      expect(p.readFileSync("/direct.txt", "utf8")).toBe("abcZef");
+
+      p.truncateFileSync("/direct.txt", 4);
+      expect(p.readFileSync("/direct.txt", "utf8")).toBe("abcZ");
+    });
+  });
+});
+
 describe("SQLiteWorkspaceProvider — writeSync", () => {
   it("writes at position 0 and updates content", async () => {
     await withProvider((p) => {

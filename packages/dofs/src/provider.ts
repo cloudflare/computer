@@ -25,6 +25,7 @@ import {
   type WatchOptions,
 } from "./fs/watch.js";
 import {
+  createFileSync as createFileSyncImpl,
   truncateFileSync as truncateFileSyncImpl,
   type WriteFileRange,
   writeFileRangesSync as writeFileRangesSyncImpl,
@@ -441,6 +442,28 @@ export class SQLiteWorkspaceProvider {
         ? new TextEncoder().encode(data)
         : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     writeFileRangesSyncImpl(this.db, path, bytes, ranges, { mode }, this.now);
+  }
+
+  createFileSync(path: string, options?: { mode?: number }): void {
+    createFileSyncImpl(this.db, path, { mode: options?.mode }, this.now);
+  }
+
+  writeRangeSync(
+    path: string,
+    data: string | Buffer | Uint8Array,
+    offset: number,
+    options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
+  ): number {
+    const mode = typeof options === "string" ? undefined : options?.mode;
+    const bytes =
+      typeof data === "string"
+        ? new TextEncoder().encode(data)
+        : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    return writeRangeSyncImpl(this.db, path, bytes, offset, { mode }, this.now);
+  }
+
+  truncateFileSync(path: string, len: number): void {
+    truncateFileSyncImpl(this.db, path, len, this.now);
   }
 
   appendFile(
