@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { resolveInode } from "./fs/resolve.js";
 import { withDB } from "./fs/with-db.js";
 import { SQLiteWorkspaceProvider } from "./provider.js";
 
@@ -14,6 +15,17 @@ async function withProvider<T>(fn: (p: SQLiteWorkspaceProvider) => T | Promise<T
 // 512 KiB to match writeFile's CHUNK_SIZE so tests can deliberately
 // straddle chunk boundaries.
 const CHUNK_SIZE = 512 * 1024;
+
+function chunkHashes(p: SQLiteWorkspaceProvider, path: string): Buffer[] {
+  const node = resolveInode(p.db, path);
+  if (node === null) throw new Error(`missing node: ${path}`);
+  return p.db
+    .all<{ hash: Uint8Array }>(
+      "SELECT hash FROM vfs_chunks WHERE inode = ? ORDER BY idx",
+      node.inode,
+    )
+    .map((row) => Buffer.from(row.hash));
+}
 
 describe("SQLiteWorkspaceProvider — file descriptors", () => {
   it("openSync allocates a positive integer", async () => {
@@ -235,6 +247,26 @@ describe("SQLiteWorkspaceProvider — writeSync", () => {
       expect(out[CHUNK_SIZE + 99]).toBe(0x5a);
       // Anything past the overwrite is whatever remained of 'B'.
       // (The original had only 100 B-bytes total, all of which we overwrote.)
+    });
+  });
+
+  it("reuses untouched chunk rows for positional writes", async () => {
+    await withProvider((p) => {
+      const before = new Uint8Array(CHUNK_SIZE * 3);
+      before.fill(1, 0, CHUNK_SIZE);
+      before.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
+      before.fill(3, CHUNK_SIZE * 2);
+      p.writeFileSync("/big", Buffer.from(before));
+      const oldHashes = chunkHashes(p, "/big");
+
+      const fd = p.openSync("/big", "r+") as number;
+      p.writeSync(fd, Buffer.from([9, 9, 9]), 0, 3, CHUNK_SIZE + 10);
+      p.closeSync(fd);
+      const newHashes = chunkHashes(p, "/big");
+
+      expect(newHashes[0].equals(oldHashes[0])).toBe(true);
+      expect(newHashes[1].equals(oldHashes[1])).toBe(false);
+      expect(newHashes[2].equals(oldHashes[2])).toBe(true);
     });
   });
 

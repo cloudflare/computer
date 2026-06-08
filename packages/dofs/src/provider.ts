@@ -25,9 +25,11 @@ import {
   type WatchOptions,
 } from "./fs/watch.js";
 import {
+  truncateFileSync as truncateFileSyncImpl,
   type WriteFileRange,
   writeFileRangesSync as writeFileRangesSyncImpl,
   writeFileSync as writeFileSyncImpl,
+  writeRangeSync as writeRangeSyncImpl,
 } from "./fs/writeFile.js";
 import { canonicalizePath } from "./path.js";
 import type { Database } from "./storage.js";
@@ -555,10 +557,13 @@ export class SQLiteWorkspaceProvider {
     if (!state.writable) {
       throw createWorkspaceError("EBADF", `fd ${fd} is not writable`);
     }
-    const existing = readFileBytesSync(this.db, state.path);
-    const startAt = state.append ? existing.byteLength : (position ?? state.position);
-    const next = spliceBytes(existing, startAt, buffer, offset, length);
-    writeFileSyncImpl(this.db, state.path, next, {}, this.now);
+    const stat = this.statSync(state.path);
+    const startAt = state.append ? stat.size : (position ?? state.position);
+    const view =
+      buffer instanceof Buffer
+        ? new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length)
+        : new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length);
+    writeRangeSyncImpl(this.db, state.path, view, startAt, {}, this.now);
     if (position === null || position === undefined) {
       state.position = startAt + length;
     }
@@ -578,18 +583,7 @@ export class SQLiteWorkspaceProvider {
     if (node.type !== "file") {
       throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
     }
-    const existing = readFileBytesSync(this.db, path);
-    if (existing.byteLength === len) {
-      return;
-    }
-    let next: Uint8Array;
-    if (len < existing.byteLength) {
-      next = existing.subarray(0, len);
-    } else {
-      next = new Uint8Array(len);
-      next.set(existing, 0);
-    }
-    writeFileSyncImpl(this.db, path, next, {}, this.now);
+    truncateFileSyncImpl(this.db, path, len, this.now);
   }
 
   ftruncateSync(fd: number, len: number): void {
@@ -924,23 +918,5 @@ function readFileBytesSync(db: Database, path: string): Uint8Array {
     out.set(row.bytes, pos);
     pos += row.bytes.byteLength;
   }
-  return out;
-}
-
-// Splice `length` bytes from `src[srcOffset..]` into a copy of `dst`
-// at `at`. The result is at least as long as max(dst.length, at + length).
-// Bytes in `[dst.length, at)` are zero-filled (writing past EOF).
-function spliceBytes(
-  dst: Uint8Array,
-  at: number,
-  src: Uint8Array | Buffer,
-  srcOffset: number,
-  length: number,
-): Uint8Array {
-  const newLength = Math.max(dst.byteLength, at + length);
-  const out = new Uint8Array(newLength);
-  out.set(dst, 0);
-  const srcView = src.subarray(srcOffset, srcOffset + length);
-  out.set(srcView, at);
   return out;
 }
