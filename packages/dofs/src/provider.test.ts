@@ -319,6 +319,90 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
       expect(p.existsSync("/gone.txt")).toBe(false);
     });
   });
+
+  it("linkSync flushes a pending-create destination before colliding", async () => {
+    // Pending /dst is committed before link's existence check
+    // runs, so the user sees a normal EEXIST against a real inode
+    // rather than silently losing the pending bytes when the later
+    // release would have tripped its own EEXIST against the link's
+    // dirent.
+    await withProvider((p) => {
+      p.writeFileSync("/src.txt", "src bytes");
+      p.openWriteBufferForCreateSync("/dst.txt", { mode: 0o644 });
+      p.writeRangeSync("/dst.txt", Buffer.from("pending dst"), 0);
+
+      expect(() => p.linkSync("/src.txt", "/dst.txt")).toThrowError(
+        expect.objectContaining({ code: "EEXIST" }),
+      );
+
+      // /dst.txt now exists with the previously-pending bytes; the
+      // release-after-collision finds the inode it expects and is a
+      // no-op rather than a data loss.
+      expect((p.readFileSync("/dst.txt") as Buffer).toString()).toBe("pending dst");
+      expect(() => p.releaseWriteBufferSync("/dst.txt")).not.toThrow();
+      expect((p.readFileSync("/dst.txt") as Buffer).toString()).toBe("pending dst");
+    });
+  });
+
+  it("renameSync overwrite evicts the displaced destination's buffer", async () => {
+    // Open a buffer over an existing /dst, mutate it, then overwrite
+    // /dst via rename. The buffer's inode is gone from SQL after
+    // rename; release must not commit chunks against the dead row
+    // and must not leave a dangling cache entry.
+    await withProvider((p) => {
+      p.writeFileSync("/src.txt", "src bytes");
+      p.writeFileSync("/dst.txt", "dst bytes");
+      const dstInodeBefore = p.statSync("/dst.txt").ino;
+      p.openWriteBufferSync("/dst.txt");
+      p.writeRangeSync("/dst.txt", Buffer.from("dirty"), 0);
+
+      p.renameSync("/src.txt", "/dst.txt");
+
+      // The path now resolves to the renamed source's inode, not
+      // the displaced one. Release is a no-op on the now-gone
+      // displaced inode; the renamed file's bytes are unchanged.
+      expect(p.statSync("/dst.txt").ino).not.toBe(dstInodeBefore);
+      expect((p.readFileSync("/dst.txt") as Buffer).toString()).toBe("src bytes");
+      expect(() => p.releaseWriteBufferSync("/dst.txt")).not.toThrow();
+      expect((p.readFileSync("/dst.txt") as Buffer).toString()).toBe("src bytes");
+    });
+  });
+
+  it("unlinkSync drops the inode-keyed buffer when the last link disappears", async () => {
+    const { getWriteBuffer } = await import("./fs/writeBuffer.js");
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "hello");
+      const inode = p.statSync("/a.txt").ino;
+      p.openWriteBufferSync("/a.txt");
+      p.writeRangeSync("/a.txt", Buffer.from("WORLD"), 0);
+      // Buffer is staged in the inode-keyed cache.
+      expect(getWriteBuffer(p.db, inode)).toBeDefined();
+      p.unlinkSync("/a.txt");
+      // unlink removed the last link, so the inode row is gone and
+      // the buffer must not be cached against the dead inode.
+      expect(p.existsSync("/a.txt")).toBe(false);
+      expect(getWriteBuffer(p.db, inode)).toBeUndefined();
+    });
+  });
+
+  it("unlinkSync keeps the buffer alive when a hardlink remains", async () => {
+    const { getWriteBuffer } = await import("./fs/writeBuffer.js");
+    await withProvider((p) => {
+      p.writeFileSync("/a.txt", "shared");
+      p.linkSync("/a.txt", "/b.txt");
+      const inode = p.statSync("/a.txt").ino;
+      p.openWriteBufferSync("/a.txt");
+      p.writeRangeSync("/a.txt", Buffer.from("UPDATED"), 0);
+      p.unlinkSync("/a.txt");
+      // /b.txt still references the inode; the buffer survives in
+      // the inode-keyed cache and a release through the remaining
+      // name commits the staged bytes.
+      expect(p.existsSync("/b.txt")).toBe(true);
+      expect(getWriteBuffer(p.db, inode)).toBeDefined();
+      p.releaseWriteBufferSync("/b.txt");
+      expect((p.readFileSync("/b.txt") as Buffer).toString()).toBe("UPDATED");
+    });
+  });
 });
 
 describe("SQLiteWorkspaceProvider — cached vfs_nodes.size", () => {

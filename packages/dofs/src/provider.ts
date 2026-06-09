@@ -26,7 +26,11 @@ import {
   type WatchHandle,
   type WatchOptions,
 } from "./fs/watch.js";
-import { getPendingWriteBufferByPath, getWriteBuffer } from "./fs/writeBuffer.js";
+import {
+  deleteWriteBuffer,
+  getPendingWriteBufferByPath,
+  getWriteBuffer,
+} from "./fs/writeBuffer.js";
 import {
   createFileSync as createFileSyncImpl,
   flushPendingByPath,
@@ -272,7 +276,21 @@ export class SQLiteWorkspaceProvider {
     // shape). The buffer's open handles continue to address bytes
     // through the inode-keyed cache.
     flushPendingByPath(this.db, path, this.now);
+    // Capture the target inode before rm runs so we can evict its
+    // write-buffer cache entry if rm removed the last link. Without
+    // this, a release-after-unlink leaves the buffer dangling on a
+    // dead inode and the eventual commit silently affects no rows.
+    const target = resolveInode(this.db, path, { followSymlinks: false });
     rmImpl(this.db, path, {});
+    if (target !== null) {
+      const stillAlive = this.db.scalar<number>(
+        "SELECT inode FROM vfs_nodes WHERE inode = ?",
+        target.inode,
+      );
+      if (stillAlive === undefined) {
+        deleteWriteBuffer(this.db, target.inode);
+      }
+    }
   }
 
   link(existingPath: string, newPath: string): Promise<void> {
@@ -281,10 +299,15 @@ export class SQLiteWorkspaceProvider {
   }
 
   linkSync(existingPath: string, newPath: string): void {
-    // Same shape as unlink: commit a still-pending source before
-    // adding the second dirent, otherwise link has nothing real to
-    // point at.
+    // Commit a still-pending source before adding the second dirent,
+    // otherwise link has nothing real to point at. Also commit a
+    // still-pending destination: link's existence check looks at
+    // dirents, so a pending buffer at newPath wouldn't trip it, and
+    // the eventual release on that pending buffer would re-check the
+    // dirent in commitPendingBuffer, throw EEXIST, drop the entry,
+    // and silently lose the user's bytes.
     flushPendingByPath(this.db, existingPath, this.now);
+    flushPendingByPath(this.db, newPath, this.now);
     linkImpl(this.db, existingPath, newPath);
   }
 
@@ -372,6 +395,11 @@ export class SQLiteWorkspaceProvider {
         if ((remaining ?? 0) === 0) {
           this.db.run("DELETE FROM vfs_chunks WHERE inode = ?", existing.child_inode);
           this.db.run("DELETE FROM vfs_nodes WHERE inode = ?", existing.child_inode);
+          // The displaced inode is gone from SQL. Any open write
+          // buffer keyed by it would otherwise hold bytes pointed at
+          // a dead inode; release would then commit chunks against a
+          // missing row (0-row UPDATE, silent data loss).
+          deleteWriteBuffer(this.db, existing.child_inode);
         }
       }
       this.db.run(
