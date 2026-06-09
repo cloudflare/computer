@@ -41,7 +41,7 @@ export function stat(db: Database, path: string): WorkspaceStatResult {
     // writes; otherwise read the cached size off vfs_nodes that
     // resolveInode just loaded for us, no extra SQL.
     const buffered = getWriteBuffer(db, node.inode);
-    size = buffered !== undefined && buffered.dirty ? buffered.size : node.size;
+    size = buffered?.dirty ? buffered.size : node.size;
   }
 
   return {

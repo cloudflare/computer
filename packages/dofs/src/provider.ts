@@ -449,7 +449,7 @@ export class SQLiteWorkspaceProvider {
     // While a buffer is open for this inode it owns the latest
     // bytes; serve from it instead of the chunk store.
     const buffered = getWriteBuffer(this.db, node.inode);
-    if (buffered !== undefined && buffered.dirty) {
+    if (buffered?.dirty) {
       const snapshot = Buffer.alloc(buffered.size);
       snapshot.set(buffered.buf.subarray(0, buffered.size));
       return encoding ? snapshot.toString(encoding) : snapshot;
@@ -830,7 +830,7 @@ function linkCount(db: Database, inode: number): number {
 
 function fileSize(db: Database, inode: number): number {
   const buffered = getWriteBuffer(db, inode);
-  if (buffered !== undefined && buffered.dirty) {
+  if (buffered?.dirty) {
     return buffered.size;
   }
   return db.scalar<number>("SELECT size FROM vfs_nodes WHERE inode = ?", inode) ?? 0;

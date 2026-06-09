@@ -1,6 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-
-import type { Database } from "../storage.js";
 import { clearBlobCache, getBlobBytes } from "./blobCache.js";
 import { readRangeSync } from "./readFile.js";
 import { withDB } from "./with-db.js";

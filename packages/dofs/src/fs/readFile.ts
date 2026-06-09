@@ -67,7 +67,7 @@ export async function readFile(
   // While a write buffer is open for this inode it is the source of
   // truth. Skip the chunk store and serve the buffered bytes.
   const buffered = getWriteBuffer(db, node.inode);
-  if (buffered !== undefined && buffered.dirty) {
+  if (buffered?.dirty) {
     const snapshot = new Uint8Array(buffered.size);
     snapshot.set(buffered.buf.subarray(0, buffered.size));
     if (wantString) return new TextDecoder().decode(snapshot);
@@ -166,7 +166,7 @@ export function readRangeSync(
   // truth: pending writes have not yet committed to vfs_chunks.
   // Reading from SQLite here would return stale bytes.
   const buffered = getWriteBuffer(db, node.inode);
-  if (buffered !== undefined && buffered.dirty) {
+  if (buffered?.dirty) {
     if (offset >= buffered.size) return new Uint8Array();
     const end = Math.min(offset + length, buffered.size);
     return buffered.buf.subarray(offset, end);
