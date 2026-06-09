@@ -47,6 +47,7 @@ const EXTRA_VFS_METHODS = [
   "chmodSync",
   "readRangeSync",
   "openWriteBufferSync",
+  "openWriteBufferForCreateSync",
   "releaseWriteBufferSync",
 ] as const;
 

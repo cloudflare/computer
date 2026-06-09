@@ -25,9 +25,11 @@ import {
   type WatchHandle,
   type WatchOptions,
 } from "./fs/watch.js";
-import { getWriteBuffer } from "./fs/writeBuffer.js";
+import { getPendingWriteBufferByPath, getWriteBuffer } from "./fs/writeBuffer.js";
 import {
   createFileSync as createFileSyncImpl,
+  flushPendingByPath,
+  openWriteBufferForCreateSync as openWriteBufferForCreateSyncImpl,
   openWriteBufferSync as openWriteBufferSyncImpl,
   releaseWriteBufferSync as releaseWriteBufferSyncImpl,
   truncateFileSync as truncateFileSyncImpl,
@@ -188,6 +190,20 @@ export class SQLiteWorkspaceProvider {
   }
 
   lstatSync(path: string, _options?: { bigint?: boolean }): VirtualStatsLike {
+    const { path: canonical } = canonicalizePath(path);
+    const pending = getPendingWriteBufferByPath(this.db, canonical);
+    if (pending !== undefined && pending.pending !== undefined) {
+      return wrapStats({
+        mode: pending.mode & 0o7777,
+        size: pending.size,
+        mtimeMs: pending.pending.mtime,
+        ino: 0,
+        isFile: true,
+        isDirectory: false,
+        isSymbolicLink: false,
+        nlink: 1,
+      });
+    }
     const node = resolveInode(this.db, path, { followSymlinks: false });
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
@@ -249,6 +265,12 @@ export class SQLiteWorkspaceProvider {
   }
 
   unlinkSync(path: string): void {
+    // If a buffered create is still pending for this path, commit
+    // it first so rm sees a real inode to unlink (and so the
+    // resulting GC sees the orphaned blob, matching the non-buffered
+    // shape). The buffer's open handles continue to address bytes
+    // through the inode-keyed cache.
+    flushPendingByPath(this.db, path, this.now);
     rmImpl(this.db, path, {});
   }
 
@@ -258,6 +280,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   linkSync(existingPath: string, newPath: string): void {
+    // Same shape as unlink: commit a still-pending source before
+    // adding the second dirent, otherwise link has nothing real to
+    // point at.
+    flushPendingByPath(this.db, existingPath, this.now);
     linkImpl(this.db, existingPath, newPath);
   }
 
@@ -271,6 +297,8 @@ export class SQLiteWorkspaceProvider {
     // yet; we lean on the existing schema-level pieces here. When
     // rename grows up (cross-directory, overwriting an existing file,
     // ...) it should move into fs/rename.ts with its own tests.
+    flushPendingByPath(this.db, oldPath, this.now);
+    flushPendingByPath(this.db, newPath, this.now);
     const node = resolveInode(this.db, oldPath);
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${oldPath}`, oldPath);
@@ -374,6 +402,14 @@ export class SQLiteWorkspaceProvider {
     path: string,
     options?: BufferEncoding | { encoding?: BufferEncoding | null } | null,
   ): Buffer | string {
+    const encoding = typeof options === "string" ? options : options?.encoding;
+    const { path: canonical } = canonicalizePath(path);
+    const pending = getPendingWriteBufferByPath(this.db, canonical);
+    if (pending !== undefined) {
+      const snapshot = Buffer.alloc(pending.size);
+      snapshot.set(pending.buf.subarray(0, pending.size));
+      return encoding ? snapshot.toString(encoding) : snapshot;
+    }
     const node = resolveInode(this.db, path);
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such file: ${path}`, path);
@@ -381,7 +417,6 @@ export class SQLiteWorkspaceProvider {
     if (node.type !== "file") {
       throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
     }
-    const encoding = typeof options === "string" ? options : options?.encoding;
     // While a buffer is open for this inode it owns the latest
     // bytes; serve from it instead of the chunk store.
     const buffered = getWriteBuffer(this.db, node.inode);
@@ -474,11 +509,23 @@ export class SQLiteWorkspaceProvider {
     openWriteBufferSyncImpl(this.db, path);
   }
 
+  openWriteBufferForCreateSync(path: string, options?: { mode?: number }): void {
+    openWriteBufferForCreateSyncImpl(this.db, path, { mode: options?.mode }, this.now);
+  }
+
   releaseWriteBufferSync(path: string): void {
     releaseWriteBufferSyncImpl(this.db, path, this.now);
   }
 
   chmodSync(path: string, mode: number): void {
+    const { path: canonical } = canonicalizePath(path);
+    const pending = getPendingWriteBufferByPath(this.db, canonical);
+    if (pending !== undefined) {
+      // Pending-create files don't have a row yet; stash the mode on
+      // the buffer so the eventual INSERT picks it up.
+      pending.mode = mode & 0o7777;
+      return;
+    }
     const node = resolveInode(this.db, path, { followSymlinks: false });
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
@@ -514,6 +561,8 @@ export class SQLiteWorkspaceProvider {
 
   existsSync(path: string): boolean {
     try {
+      const { path: canonical } = canonicalizePath(path);
+      if (getPendingWriteBufferByPath(this.db, canonical) !== undefined) return true;
       return resolveInode(this.db, path) !== null;
     } catch {
       return false;

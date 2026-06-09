@@ -8,9 +8,12 @@ import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import {
+  allocatePendingInode,
   deleteWriteBuffer,
   ensureCapacity as ensureBufferCapacity,
+  getPendingWriteBufferByPath,
   getWriteBuffer,
+  promotePendingToInode,
   setWriteBuffer,
   type WriteBufferEntry,
 } from "./writeBuffer.js";
@@ -489,6 +492,12 @@ export function createFileSync(
 // buffer instead of the SQLite chunk/blob store. Release commits
 // the bytes back to chunks/inline.
 export function openWriteBufferSync(db: Database, path: string): void {
+  const { path: canonical } = canonicalizePath(path);
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    pending.openCount += 1;
+    return;
+  }
   const { inode, mode } = resolveFileInode(db, path);
   const existing = getWriteBuffer(db, inode);
   if (existing !== undefined) {
@@ -504,11 +513,60 @@ export function openWriteBufferSync(db: Database, path: string): void {
   });
 }
 
+// Create a new file lazily: stash a pending-create write buffer
+// keyed by path, without touching SQL until release. createFileSync
+// + openWriteBufferSync + writes + releaseWriteBufferSync would
+// otherwise spend two transactions per file (one INSERT round and
+// one chunk-commit round); this collapses them into a single
+// INSERT-and-chunks transaction at release time.
+//
+// Throws EEXIST if a path already resolves to a live node or to
+// another pending buffer.
+export function openWriteBufferForCreateSync(
+  db: Database,
+  path: string,
+  options: WriteFileOptions,
+  now: () => number,
+): void {
+  const { path: canonical } = canonicalizePath(path);
+  assertNotReadOnly(db, canonical);
+  if (getPendingWriteBufferByPath(db, canonical) !== undefined) {
+    throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+  }
+  const [parentInode, leafName] = parentAndNameForResolvedPath(db, path);
+  const existing = db.one<{ child_inode: number }>(
+    "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+    parentInode,
+    leafName,
+  );
+  if (existing !== undefined) {
+    throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+  }
+  const mode = (options.mode ?? 0o644) & 0o7777;
+  const mtime = now();
+  const pendingInode = allocatePendingInode(db);
+  setWriteBuffer(db, pendingInode, {
+    buf: new Uint8Array(0),
+    size: 0,
+    dirty: true,
+    openCount: 1,
+    mode,
+    pending: { parentInode, leafName, canonicalPath: canonical, pendingInode, mtime },
+  });
+}
+
 // Release one open of an inode's write buffer. When the open count
 // reaches zero, commit the buffered bytes to chunk rows and drop
 // the entry. The committed mode is the buffer's mode at release
-// time so an intermediate chmod survives.
+// time so an intermediate chmod survives. Pending-create entries
+// emit their INSERT + dirent + chunks in the same transaction.
 export function releaseWriteBufferSync(db: Database, path: string, now: () => number): void {
+  const { path: canonical } = canonicalizePath(path);
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    releasePendingBuffer(db, pending, now);
+    return;
+  }
   const node = resolveFileInode(db, path);
   const entry = getWriteBuffer(db, node.inode);
   if (entry === undefined) return;
@@ -553,6 +611,111 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
   deleteWriteBuffer(db, node.inode);
 }
 
+// Commit a pending-create buffer to SQLite. Returns the real inode
+// allocated by the INSERT, or throws. Promotes the cache entry's key
+// from the synthetic pending id to the real inode so subsequent
+// reads/writes through the inode-keyed cache still see the same
+// buffer. Caller owns the lifecycle of the now-promoted entry.
+function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => number): number {
+  if (entry.pending === undefined) {
+    throw createWorkspaceError("EIO", "commitPendingBuffer called on non-pending entry");
+  }
+  const { parentInode, leafName, canonicalPath, pendingInode } = entry.pending;
+  const mtime = now();
+  const mode = entry.mode & 0o7777;
+  const buffered = entry.buf.subarray(0, entry.size);
+
+  let realInode = 0;
+  try {
+    db.transactionSync(() => {
+      // Re-check at commit time: a non-buffered writeFile or another
+      // out-of-band path could have landed between open and release.
+      const collision = db.one<{ child_inode: number }>(
+        "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+        parentInode,
+        leafName,
+      );
+      if (collision !== undefined) {
+        throw createWorkspaceError(
+          "EEXIST",
+          `path exists at commit time: ${canonicalPath}`,
+          canonicalPath,
+        );
+      }
+      const rev = incrementRev(db);
+      const row = db.one<{ inode: number }>(
+        "INSERT INTO vfs_nodes (type, mode, mtime, rev, size, manifest_hash) VALUES ('file', ?, ?, ?, ?, NULL) RETURNING inode",
+        mode,
+        mtime,
+        rev,
+        entry.size,
+      );
+      if (row === undefined) {
+        throw createWorkspaceError("EIO", "failed to allocate inode");
+      }
+      db.run(
+        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
+        parentInode,
+        leafName,
+        row.inode,
+      );
+      if (entry.size > 0) {
+        const inode = row.inode;
+        const chunkCount = Math.ceil(entry.size / CHUNK_SIZE);
+        for (let idx = 0; idx < chunkCount; idx++) {
+          const start = idx * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, entry.size);
+          const chunkBytes = buffered.subarray(start, end);
+          const chunk = {
+            hash: sha256(chunkBytes),
+            bytes: chunkBytes,
+            size: chunkBytes.byteLength,
+          };
+          upsertChunkBlob(db, chunk, mtime);
+          db.run(
+            "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
+            inode,
+            idx,
+            chunk.hash,
+            chunk.size,
+          );
+        }
+      }
+      realInode = row.inode;
+    });
+  } catch (error) {
+    // Transaction rolled back; drop the buffer so the next caller
+    // starts clean.
+    deleteWriteBuffer(db, pendingInode);
+    throw error;
+  }
+  promotePendingToInode(db, pendingInode, realInode);
+  return realInode;
+}
+
+// Commit a pending-create buffer identified by its canonical path,
+// leaving the open count untouched. Used by link, rename, and unlink
+// against a still-open file so the dirent operation sees a real
+// inode. Returns true when a pending buffer was committed.
+export function flushPendingByPath(db: Database, path: string, now: () => number): boolean {
+  const { path: canonical } = canonicalizePath(path);
+  const entry = getPendingWriteBufferByPath(db, canonical);
+  if (entry === undefined || entry.pending === undefined) return false;
+  commitPendingBuffer(db, entry, now);
+  return true;
+}
+
+function releasePendingBuffer(db: Database, entry: WriteBufferEntry, now: () => number): void {
+  if (entry.pending === undefined) return;
+  entry.openCount -= 1;
+  if (entry.openCount > 0) return;
+
+  const inode = commitPendingBuffer(db, entry, now);
+  // File is closed; drop the now-promoted entry. A subsequent open
+  // hits the SQL path and gets a fresh buffer if needed.
+  deleteWriteBuffer(db, inode);
+}
+
 // Hydrate a freshly-opened buffer with the inode's current bytes
 // the first time we mutate it. Avoids paying the read cost when the
 // caller opens a file just to truncate or overwrite it.
@@ -590,6 +753,22 @@ export function writeRangeSync(
   }
   if (bytes.byteLength === 0) return 0;
   const mtime = now();
+
+  // Pending-create files don't have an inode yet; route the write
+  // straight into the path-keyed buffer.
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    const writeEnd = offset + bytes.byteLength;
+    ensureBufferCapacity(pending, writeEnd);
+    if (offset > pending.size) {
+      pending.buf.fill(0, pending.size, offset);
+    }
+    pending.buf.set(bytes, offset);
+    if (writeEnd > pending.size) pending.size = writeEnd;
+    pending.mode = (options.mode ?? pending.mode) & 0o7777;
+    pending.dirty = true;
+    return bytes.byteLength;
+  }
 
   const { inode, mode: existingMode } = resolveFileInode(db, path);
   const mode = (options.mode ?? existingMode) & 0o7777;
@@ -652,6 +831,18 @@ export function truncateFileSync(
     throw createWorkspaceError("EINVAL", `invalid truncate size: ${size}`, canonical);
   }
   const mtime = now();
+
+  // Pending-create files truncate in-place on the path-keyed buffer.
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    if (size > pending.size) {
+      ensureBufferCapacity(pending, size);
+      pending.buf.fill(0, pending.size, size);
+    }
+    pending.size = size;
+    pending.dirty = true;
+    return;
+  }
 
   const { inode, mode } = resolveFileInode(db, path);
   const buffered = getWriteBuffer(db, inode);

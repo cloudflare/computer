@@ -238,6 +238,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       chmodSync?: (path: string, mode: number) => void;
       readRangeSync?: (path: string, offset: number, length: number) => Uint8Array;
       openWriteBufferSync?: (path: string) => void;
+      openWriteBufferForCreateSync?: (path: string, options?: { mode?: number }) => void;
       releaseWriteBufferSync?: (path: string) => void;
     };
   const hasDirectWrites =
@@ -248,6 +249,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     hasDirectWrites &&
     directWriteVfs.openWriteBufferSync !== undefined &&
     directWriteVfs.releaseWriteBufferSync !== undefined;
+  const hasDeferredCreate =
+    hasBufferedWrites && directWriteVfs.openWriteBufferForCreateSync !== undefined;
   const linkableVfs = vfs as NodeVirtualFileSystem & {
     linkSync?: (existingPath: string, newPath: string) => void;
   };
@@ -462,6 +465,13 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       try {
         if (exists(path)) {
           cb(ERRNO.EEXIST, 0);
+          return;
+        }
+        if (hasDeferredCreate) {
+          // Single transaction at release time: defer the inode INSERT
+          // and the chunk commit into one round trip.
+          directWriteVfs.openWriteBufferForCreateSync?.(toVfs(path), { mode });
+          cb(0, openFileHandle(path));
           return;
         }
         if (hasDirectWrites) {

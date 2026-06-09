@@ -29,29 +29,103 @@ export interface WriteBufferEntry {
   // Mode the caller wants persisted on release. Defaults to the
   // inode's existing mode at open time when the caller has none.
   mode: number;
+  // Pending-create state. When set, no inode row exists yet; release
+  // will INSERT the node + dirent + chunks in one transaction. The
+  // synthetic inode id used to key this entry in the cache is stored
+  // here so release can find and remove the entry without scanning
+  // the cache.
+  pending?: {
+    parentInode: number;
+    leafName: string;
+    canonicalPath: string;
+    pendingInode: number;
+    mtime: number;
+  };
 }
 
-const caches = new WeakMap<Database, Map<number, WriteBufferEntry>>();
+interface DatabaseCache {
+  byInode: Map<number, WriteBufferEntry>;
+  byPendingPath: Map<string, WriteBufferEntry>;
+  nextPendingInode: number;
+}
 
-function cacheFor(db: Database): Map<number, WriteBufferEntry> {
+const caches = new WeakMap<Database, DatabaseCache>();
+
+function cacheFor(db: Database): DatabaseCache {
   let cache = caches.get(db);
   if (cache === undefined) {
-    cache = new Map();
+    cache = { byInode: new Map(), byPendingPath: new Map(), nextPendingInode: -1 };
     caches.set(db, cache);
   }
   return cache;
 }
 
 export function getWriteBuffer(db: Database, inode: number): WriteBufferEntry | undefined {
-  return caches.get(db)?.get(inode);
+  return caches.get(db)?.byInode.get(inode);
+}
+
+export function getPendingWriteBufferByPath(
+  db: Database,
+  canonicalPath: string,
+): WriteBufferEntry | undefined {
+  return caches.get(db)?.byPendingPath.get(canonicalPath);
+}
+
+// List pending-create buffers whose parent dirent matches `parentInode`.
+// Used by readdir so freshly-created-but-not-yet-released files show
+// up in directory listings between open and release.
+export function listPendingByParent(db: Database, parentInode: number): WriteBufferEntry[] {
+  const cache = caches.get(db);
+  if (cache === undefined) return [];
+  const out: WriteBufferEntry[] = [];
+  for (const entry of cache.byPendingPath.values()) {
+    if (entry.pending?.parentInode === parentInode) out.push(entry);
+  }
+  return out;
 }
 
 export function setWriteBuffer(db: Database, inode: number, entry: WriteBufferEntry): void {
-  cacheFor(db).set(inode, entry);
+  const cache = cacheFor(db);
+  cache.byInode.set(inode, entry);
+  if (entry.pending !== undefined) {
+    cache.byPendingPath.set(entry.pending.canonicalPath, entry);
+  }
 }
 
 export function deleteWriteBuffer(db: Database, inode: number): void {
-  caches.get(db)?.delete(inode);
+  const cache = caches.get(db);
+  if (cache === undefined) return;
+  const entry = cache.byInode.get(inode);
+  if (entry?.pending !== undefined) {
+    cache.byPendingPath.delete(entry.pending.canonicalPath);
+  }
+  cache.byInode.delete(inode);
+}
+
+// Allocate a synthetic negative inode id for a pending file. The
+// real id is assigned by SQLite when release INSERTs the node row;
+// the synthetic value just lets the buffer cache key entries
+// before that point.
+export function allocatePendingInode(db: Database): number {
+  const cache = cacheFor(db);
+  const next = cache.nextPendingInode;
+  cache.nextPendingInode -= 1;
+  return next;
+}
+
+// Re-key a pending entry to the real inode assigned by SQLite at
+// commit time, dropping the pending-path index.
+export function promotePendingToInode(db: Database, pendingInode: number, realInode: number): void {
+  const cache = caches.get(db);
+  if (cache === undefined) return;
+  const entry = cache.byInode.get(pendingInode);
+  if (entry === undefined) return;
+  if (entry.pending !== undefined) {
+    cache.byPendingPath.delete(entry.pending.canonicalPath);
+    entry.pending = undefined;
+  }
+  cache.byInode.delete(pendingInode);
+  cache.byInode.set(realInode, entry);
 }
 
 export function ensureCapacity(entry: WriteBufferEntry, needed: number): void {

@@ -1,7 +1,8 @@
 import { createWorkspaceError } from "../errors.js";
+import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { resolveInode } from "./resolve.js";
-import { getWriteBuffer } from "./writeBuffer.js";
+import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
 import { CHUNK_SIZE } from "./writeFile.js";
 
 export interface ReadFileOptions {
@@ -36,6 +37,21 @@ export async function readFile(
   const wantString =
     optionsOrEncoding === "utf8" ||
     (typeof optionsOrEncoding === "object" && optionsOrEncoding?.encoding === "utf8");
+
+  // Pending-create files surface through the path-keyed buffer.
+  const { path: canonical } = canonicalizePath(path);
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    const snapshot = new Uint8Array(pending.size);
+    snapshot.set(pending.buf.subarray(0, pending.size));
+    if (wantString) return new TextDecoder().decode(snapshot);
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(snapshot);
+        controller.close();
+      },
+    });
+  }
 
   // Resolve up front so we surface ENOENT/EISDIR before doing any
   // streaming work.
@@ -131,6 +147,16 @@ export function readRangeSync(
   }
   if (!Number.isInteger(length) || length < 0) {
     throw createWorkspaceError("EINVAL", `invalid read length: ${length}`, path);
+  }
+  // Pending-create files have no inode yet. Serve reads from the
+  // path-keyed buffer until release commits the row.
+  const { path: canonical } = canonicalizePath(path);
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined) {
+    if (length === 0) return new Uint8Array();
+    if (offset >= pending.size) return new Uint8Array();
+    const end = Math.min(offset + length, pending.size);
+    return pending.buf.subarray(offset, end);
   }
   const node = resolveInode(db, path);
   if (node === null) {

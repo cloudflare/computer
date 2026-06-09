@@ -2,7 +2,7 @@ import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { resolveInode } from "./resolve.js";
-import { getWriteBuffer } from "./writeBuffer.js";
+import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
 
 export interface WorkspaceStatResult {
   name: string;
@@ -14,7 +14,20 @@ export interface WorkspaceStatResult {
 }
 
 export function stat(db: Database, path: string): WorkspaceStatResult {
-  const { name } = canonicalizePath(path);
+  const { name, path: canonical } = canonicalizePath(path);
+  // Pending-create files have no inode yet; serve the buffer state
+  // so callers between create and release see the file as it stands.
+  const pending = getPendingWriteBufferByPath(db, canonical);
+  if (pending !== undefined && pending.pending !== undefined) {
+    return {
+      name,
+      mode: pending.mode & 0o7777,
+      mtime: pending.pending.mtime,
+      size: pending.size,
+      isFile: true,
+      isDirectory: false,
+    };
+  }
   const node = resolveInode(db, path);
   if (node === null) {
     throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
