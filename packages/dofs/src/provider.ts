@@ -8,6 +8,7 @@
 // I/O, truncate, symlinks, watch).
 
 import { createWorkspaceError } from "./errors.js";
+import { getBlobBytes } from "./fs/blobCache.js";
 import { link as linkImpl } from "./fs/link.js";
 import type { MkdirOptions } from "./fs/mkdir.js";
 import { mkdir as mkdirImpl } from "./fs/mkdir.js";
@@ -434,15 +435,12 @@ export class SQLiteWorkspaceProvider {
     const out = Buffer.alloc(total);
     let offset = 0;
     for (const chunk of chunks) {
-      const row = this.db.one<{ bytes: Uint8Array }>(
-        "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-        chunk.hash,
-      );
-      if (row === undefined) {
+      const bytes = getBlobBytes(this.db, chunk.hash);
+      if (bytes === undefined) {
         throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
       }
-      out.set(row.bytes, offset);
-      offset += row.bytes.byteLength;
+      out.set(bytes, offset);
+      offset += bytes.byteLength;
     }
     return encoding ? out.toString(encoding) : out;
   }

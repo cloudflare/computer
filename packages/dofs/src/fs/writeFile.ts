@@ -6,6 +6,7 @@ import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
+import { getBlobBytes } from "./blobCache.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import {
   allocatePendingInode,
@@ -346,14 +347,11 @@ function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
     idx,
   );
   if (chunk === undefined) return new Uint8Array();
-  const row = db.one<{ bytes: Uint8Array }>(
-    "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-    chunk.hash,
-  );
-  if (row === undefined) {
+  const bytes = getBlobBytes(db, chunk.hash);
+  if (bytes === undefined) {
     throw createWorkspaceError("EIO", "missing blob bytes");
   }
-  return row.bytes;
+  return bytes;
 }
 
 function resolveFileInode(db: Database, path: string): { inode: number; mode: number } {

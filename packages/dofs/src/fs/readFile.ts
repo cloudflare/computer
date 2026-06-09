@@ -1,6 +1,7 @@
 import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
+import { getBlobBytes } from "./blobCache.js";
 import { resolveInode } from "./resolve.js";
 import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
 import { CHUNK_SIZE } from "./writeFile.js";
@@ -92,15 +93,12 @@ export async function readFile(
     let offset = 0;
     const touched = now();
     for (const chunk of chunks) {
-      const row = db.one<{ bytes: Uint8Array }>(
-        "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-        chunk.hash,
-      );
-      if (row === undefined) {
+      const bytes = getBlobBytes(db, chunk.hash);
+      if (bytes === undefined) {
         throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
       }
-      out.set(row.bytes, offset);
-      offset += row.bytes.byteLength;
+      out.set(bytes, offset);
+      offset += bytes.byteLength;
     }
     if (chunks.length > 0) {
       touchBlobs(db, chunks, touched);
@@ -119,16 +117,13 @@ export async function readFile(
         return;
       }
       const chunk = chunks[i++];
-      const row = db.one<{ bytes: Uint8Array }>(
-        "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-        chunk.hash,
-      );
-      if (row === undefined) {
+      const bytes = getBlobBytes(db, chunk.hash);
+      if (bytes === undefined) {
         controller.error(createWorkspaceError("EIO", `missing blob bytes for ${path}`, path));
         return;
       }
       db.run("UPDATE vfs_blobs SET last_seen = ? WHERE hash = ?", now(), chunk.hash);
-      controller.enqueue(row.bytes);
+      controller.enqueue(bytes);
     },
   });
 }
@@ -193,17 +188,14 @@ export function readRangeSync(
       idx,
     );
     if (chunk === undefined) continue;
-    const row = db.one<{ bytes: Uint8Array }>(
-      "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-      chunk.hash,
-    );
-    if (row === undefined) {
+    const bytes = getBlobBytes(db, chunk.hash);
+    if (bytes === undefined) {
       throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
     }
     const srcStart = Math.max(0, offset - start);
-    const srcEnd = Math.min(row.bytes.byteLength, end - start);
+    const srcEnd = Math.min(bytes.byteLength, end - start);
     if (srcEnd <= srcStart) continue;
-    out.set(row.bytes.subarray(srcStart, srcEnd), written);
+    out.set(bytes.subarray(srcStart, srcEnd), written);
     written += srcEnd - srcStart;
   }
   return written === out.byteLength ? out : out.subarray(0, written);
