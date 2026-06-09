@@ -8,115 +8,45 @@ export type NodeVirtualFileSystem = VirtualFileSystem;
 
 // @platformatic/vfs's create() guards on `provider instanceof
 // VirtualProvider` and silently falls back to MemoryProvider when
-// the check fails. dofs's SQLiteWorkspaceProvider can't
-// extend VirtualProvider directly without dragging the node-only
-// @platformatic/vfs dependency into the workerd-targeted package,
-// so we glue them together here.
+// the check fails. dofs's SQLiteWorkspaceProvider can't import
+// @platformatic/vfs (workerd target), so we splice VirtualProvider
+// onto its prototype chain at the wsd boundary. The splice happens
+// only here, never in dofs, so the workerd build stays clean.
 //
-// The subclass forwards every method to the dofs provider
-// instance held in its constructor. We can't use Object.assign or
-// setPrototypeOf at the seam because @platformatic/vfs's
-// VirtualFileSystem reads getters (readonly, supportsSymlinks,
-// supportsWatch) off the provider that the dofs class
-// declares as instance properties; the wrapping pattern lets us
-// pass those through cleanly without re-implementing the data
-// model.
-
-class SQLiteVirtualProvider extends VirtualProvider {
-  private readonly inner: SQLiteWorkspaceProvider;
-
-  constructor(db: Database) {
-    super();
-    this.inner = new SQLiteWorkspaceProvider(db);
+// One-time splice: SQLiteWorkspaceProvider.prototype -> VirtualProvider.prototype.
+// VirtualProvider's no-op default methods stay reachable for anything
+// dofs doesn't override (most of them throw ENOSYS, which is fine).
+let prototypePatched = false;
+function ensureVirtualProviderPrototype(): void {
+  if (prototypePatched) return;
+  const proto = SQLiteWorkspaceProvider.prototype as object;
+  const parent = Object.getPrototypeOf(proto);
+  if (parent === VirtualProvider.prototype) {
+    prototypePatched = true;
+    return;
   }
-
-  // VirtualProvider's static getters return false by default; the
-  // dofs provider declares the real values as instance
-  // properties. Re-expose them on this wrapper.
-  override get readonly(): boolean {
-    return this.inner.readonly;
-  }
-  override get supportsSymlinks(): boolean {
-    return this.inner.supportsSymlinks;
-  }
-  override get supportsWatch(): boolean {
-    return this.inner.supportsWatch;
-  }
+  // Walk to the top of the dofs chain and splice VirtualProvider in
+  // just above Object.prototype. Concretely the dofs class extends
+  // Object directly, so this is a single hop.
+  Object.setPrototypeOf(proto, VirtualProvider.prototype);
+  prototypePatched = true;
 }
 
-// Wire forwarding methods on the prototype. Doing this in a loop
-// outside the class body keeps the (large) method list out of the
-// readable surface. Every method on the dofs provider that
-// VirtualProvider declares is forwarded; the rest still throw the
-// VirtualProvider default ENOSYS.
-const FORWARDED_METHODS = [
-  "open",
-  "openSync",
-  "stat",
-  "statSync",
-  "lstat",
-  "lstatSync",
-  "readdir",
-  "readdirSync",
-  "mkdir",
-  "mkdirSync",
-  "rmdir",
-  "rmdirSync",
-  "unlink",
-  "unlinkSync",
-  "rename",
-  "renameSync",
-  "link",
+// Methods the dofs provider implements that @platformatic/vfs's
+// VirtualFileSystem does not expose. We attach them to the vfs
+// instance after create() so the FUSE driver and tests can call
+// them through `vfs.x(...)` instead of reaching for the provider.
+//
+// Keep this list small: anything @platformatic/vfs already exposes
+// (readFileSync, writeFileSync, statSync, ...) does not belong here.
+const EXTRA_VFS_METHODS = [
   "linkSync",
-  "readFile",
-  "readFileSync",
-  "writeFile",
-  "writeFileSync",
-  "writeFileRangesSync",
   "createFileSync",
   "writeRangeSync",
   "truncateFileSync",
   "chmodSync",
-  "appendFile",
-  "appendFileSync",
-  "exists",
-  "existsSync",
-  "copyFile",
-  "copyFileSync",
-  "internalModuleStat",
-  "realpath",
-  "realpathSync",
-  "access",
-  "accessSync",
-  "readlink",
-  "readlinkSync",
-  "symlink",
-  "symlinkSync",
-  "watch",
-  "watchAsync",
-  "watchFile",
-  "unwatchFile",
-  // Provider-specific fd extensions the @platformatic/vfs router
-  // sometimes pokes at.
-  "closeSync",
-  "readSync",
-  "writeSync",
-  "fstatSync",
-  "truncateSync",
-  "ftruncateSync",
+  "readRangeSync",
 ] as const;
-
-for (const name of FORWARDED_METHODS) {
-  Object.defineProperty(SQLiteVirtualProvider.prototype, name, {
-    value: function (this: SQLiteVirtualProvider, ...args: unknown[]): unknown {
-      // biome-ignore lint/suspicious/noExplicitAny: dispatch table
-      const inner = (this as unknown as { inner: any }).inner;
-      return inner[name](...args);
-    },
-    writable: true,
-    configurable: true,
-  });
-}
 
 export interface CreateOptions {
   // Optional upstream sync surface. When set, the local store
@@ -152,6 +82,7 @@ const SYNC_TICK_MS = 250;
 export async function createNodeVirtualFileSystem(
   options: CreateOptions = {},
 ): Promise<NodeVfsHandle> {
+  ensureVirtualProviderPrototype();
   const storage = new SQLiteTestStorage();
   const db = new Database(storage);
   initializeSchema(db, () => Date.now());
@@ -165,61 +96,24 @@ export async function createNodeVirtualFileSystem(
     stopSync = startSyncLoop(db, options.upstream);
   }
 
-  const provider = new SQLiteVirtualProvider(db);
-  const vfs = create(provider, { moduleHooks: false });
-  // @platformatic/vfs does not expose hardlink helpers on
-  // VirtualFileSystem, but FUSE needs link(2). Attach the provider
-  // primitive directly so the driver can call it while all ordinary
-  // VFS callers keep using the standard surface.
-  Object.defineProperty(vfs, "linkSync", {
-    value: (existingPath: string, newPath: string) =>
-      (provider as unknown as { linkSync(existingPath: string, newPath: string): void }).linkSync(
-        existingPath,
-        newPath,
-      ),
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(vfs, "createFileSync", {
-    value: (path: string, options?: { mode?: number }) =>
-      (
-        provider as unknown as { createFileSync(path: string, options?: { mode?: number }): void }
-      ).createFileSync(path, options),
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(vfs, "writeRangeSync", {
-    value: (path: string, data: Buffer | Uint8Array, offset: number, options?: { mode?: number }) =>
-      (
-        provider as unknown as {
-          writeRangeSync(
-            path: string,
-            data: Buffer | Uint8Array,
-            offset: number,
-            options?: { mode?: number },
-          ): number;
-        }
-      ).writeRangeSync(path, data, offset, options),
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(vfs, "truncateFileSync", {
-    value: (path: string, size: number) =>
-      (
-        provider as unknown as { truncateFileSync(path: string, size: number): void }
-      ).truncateFileSync(path, size),
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(vfs, "chmodSync", {
-    value: (path: string, mode: number) =>
-      (provider as unknown as { chmodSync(path: string, mode: number): void }).chmodSync(
-        path,
-        mode,
-      ),
-    writable: true,
-    configurable: true,
-  });
+  const provider = new SQLiteWorkspaceProvider(db);
+  const vfs = create(provider as unknown as VirtualProvider, { moduleHooks: false });
+  // Forward the extra dofs methods that @platformatic/vfs's
+  // VirtualFileSystem doesn't expose. We bind directly to the
+  // provider — there is no `inner` indirection — so dispatch can't
+  // silently fall off if a method name only exists on one side.
+  // biome-ignore lint/suspicious/noExplicitAny: untyped extension surface
+  const providerAny = provider as any;
+  for (const name of EXTRA_VFS_METHODS) {
+    const fn = providerAny[name];
+    if (typeof fn !== "function") continue;
+    Object.defineProperty(vfs, name, {
+      // biome-ignore lint/suspicious/noExplicitAny: untyped extension surface
+      value: (...args: any[]) => fn.apply(providerAny, args),
+      writable: true,
+      configurable: true,
+    });
+  }
   return { vfs, db, stopSync };
 }
 

@@ -551,6 +551,42 @@ test("FUSE direct reads do not force later writes onto the buffered fallback", a
   expect(ops.getBufferStats()).toMatchObject({ entries: 0, dirtyEntries: 0, capacityBytes: 0 });
 });
 
+test("FUSE direct reads use readRangeSync instead of materializing the whole file", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/range.bin", Buffer.from("hello world"));
+
+  let readFileCalls = 0;
+  const realReadFileSync = vfs.readFileSync.bind(vfs);
+  vfs.readFileSync = (...args: Parameters<typeof vfs.readFileSync>) => {
+    readFileCalls += 1;
+    return realReadFileSync(...args);
+  };
+  let rangeCalls = 0;
+  const rangeAware = vfs as typeof vfs & {
+    readRangeSync: (path: string, offset: number, length: number) => Buffer;
+  };
+  const realReadRangeSync = rangeAware.readRangeSync.bind(rangeAware);
+  rangeAware.readRangeSync = (path: string, offset: number, length: number) => {
+    rangeCalls += 1;
+    return realReadRangeSync(path, offset, length);
+  };
+
+  const ops = makeFUSEOps(vfs);
+  const open = await callback((cb: (errno: number, result: unknown) => void) =>
+    ops.open("/range.bin", 0, cb),
+  );
+  expect(open.errno).toBe(0);
+  const fh = open.result as number;
+
+  const buf = Buffer.alloc(5);
+  expect(await status((cb) => ops.read("/range.bin", fh, buf, buf.byteLength, 6, cb))).toBe(5);
+  expect(buf.toString()).toBe("world");
+  expect(rangeCalls).toBe(1);
+  expect(readFileCalls).toBe(0);
+
+  expect(await status((cb) => ops.release("/range.bin", fh, cb))).toBe(0);
+});
+
 test("FUSE direct writes are visible through the VFS before release", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);

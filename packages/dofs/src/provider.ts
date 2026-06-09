@@ -12,6 +12,7 @@ import { link as linkImpl } from "./fs/link.js";
 import type { MkdirOptions } from "./fs/mkdir.js";
 import { mkdir as mkdirImpl } from "./fs/mkdir.js";
 import { readdir as readdirImpl } from "./fs/readdir.js";
+import { readRangeSync as readRangeSyncImpl } from "./fs/readFile.js";
 import { readlink as readlinkImpl } from "./fs/readlink.js";
 import { resolveInode } from "./fs/resolve.js";
 import { rm as rmImpl } from "./fs/rm.js";
@@ -567,21 +568,21 @@ export class SQLiteWorkspaceProvider {
       throw createWorkspaceError("EBADF", `fd ${fd} is not readable`);
     }
     const startAt = position ?? state.position;
-    const bytes = readFileBytesSync(this.db, state.path);
-    if (startAt >= bytes.byteLength) {
-      return 0;
-    }
-    const end = Math.min(startAt + length, bytes.byteLength);
-    const n = end - startAt;
+    const slice = readRangeSyncImpl(this.db, state.path, startAt, length);
     const view =
       buffer instanceof Buffer
         ? buffer
         : Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    view.set(bytes.subarray(startAt, end), offset);
+    view.set(slice, offset);
     if (position === null || position === undefined) {
-      state.position += n;
+      state.position = startAt + slice.byteLength;
     }
-    return n;
+    return slice.byteLength;
+  }
+
+  readRangeSync(path: string, offset: number, length: number): Buffer {
+    const slice = readRangeSyncImpl(this.db, path, offset, length);
+    return Buffer.from(slice.buffer, slice.byteOffset, slice.byteLength);
   }
 
   writeSync(
@@ -916,45 +917,4 @@ function parseFlags(flags: string): ParsedFlags {
     default:
       throw createWorkspaceError("EINVAL", `unsupported fs flag: ${flags}`);
   }
-}
-
-// Pull a file's full content out of the chunk store into one buffer.
-// Used by the fd-positional code paths because the simplest correct
-// model for writeSync/truncate is "read whole file, splice, write
-// whole file"; the content-addressed write path keeps untouched
-// chunks deduped so this only costs the changed chunks on the wire.
-function readFileBytesSync(db: Database, path: string): Uint8Array {
-  const node = resolveInode(db, path);
-  if (node === null) {
-    throw createWorkspaceError("ENOENT", `no such file: ${path}`, path);
-  }
-  if (node.type !== "file") {
-    throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
-  }
-  const inline = db.one<{ inline_data: Uint8Array | null }>(
-    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-    node.inode,
-  )?.inline_data;
-  if (inline !== undefined && inline !== null) return inline;
-
-  const chunks = db.all<{ hash: Uint8Array; size: number }>(
-    "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
-    node.inode,
-  );
-  let total = 0;
-  for (const c of chunks) total += c.size;
-  const out = new Uint8Array(total);
-  let pos = 0;
-  for (const chunk of chunks) {
-    const row = db.one<{ bytes: Uint8Array }>(
-      "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-      chunk.hash,
-    );
-    if (row === undefined) {
-      throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
-    }
-    out.set(row.bytes, pos);
-    pos += row.bytes.byteLength;
-  }
-  return out;
 }

@@ -234,7 +234,10 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   const files = new Map<string, FileEntry>();
   const rangedWriteVfs = vfs as NodeVirtualFileSystem & Partial<RangedWriteVfs>;
   const directWriteVfs = vfs as NodeVirtualFileSystem &
-    Partial<DirectWriteVfs> & { chmodSync?: (path: string, mode: number) => void };
+    Partial<DirectWriteVfs> & {
+      chmodSync?: (path: string, mode: number) => void;
+      readRangeSync?: (path: string, offset: number, length: number) => Uint8Array;
+    };
   const hasDirectWrites =
     directWriteVfs.createFileSync !== undefined &&
     directWriteVfs.writeRangeSync !== undefined &&
@@ -484,6 +487,20 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     read(path, _fh, buffer, length, position, cb) {
       let entry = files.get(path);
       if (entry === undefined) {
+        if (hasDirectWrites && directWriteVfs.readRangeSync !== undefined) {
+          try {
+            const slice = directWriteVfs.readRangeSync(toVfs(path), position, length);
+            if (slice.byteLength === 0) {
+              cb(0);
+              return;
+            }
+            buffer.set(slice, 0);
+            cb(slice.byteLength);
+          } catch (error) {
+            cb(toErrno(error));
+          }
+          return;
+        }
         try {
           const data = vfs.readFileSync(toVfs(path));
           if (hasDirectWrites) {
