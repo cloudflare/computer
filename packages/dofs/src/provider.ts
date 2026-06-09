@@ -25,6 +25,7 @@ import {
   type WatchHandle,
   type WatchOptions,
 } from "./fs/watch.js";
+import { getWriteBuffer } from "./fs/writeBuffer.js";
 import {
   createFileSync as createFileSyncImpl,
   openWriteBufferSync as openWriteBufferSyncImpl,
@@ -381,6 +382,14 @@ export class SQLiteWorkspaceProvider {
       throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
     }
     const encoding = typeof options === "string" ? options : options?.encoding;
+    // While a buffer is open for this inode it owns the latest
+    // bytes; serve from it instead of the chunk store.
+    const buffered = getWriteBuffer(this.db, node.inode);
+    if (buffered !== undefined && buffered.dirty) {
+      const snapshot = Buffer.alloc(buffered.size);
+      snapshot.set(buffered.buf.subarray(0, buffered.size));
+      return encoding ? snapshot.toString(encoding) : snapshot;
+    }
     const chunks = this.db.all<{ hash: Uint8Array; size: number }>(
       "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
       node.inode,
@@ -745,6 +754,10 @@ function linkCount(db: Database, inode: number): number {
 }
 
 function fileSize(db: Database, inode: number): number {
+  const buffered = getWriteBuffer(db, inode);
+  if (buffered !== undefined && buffered.dirty) {
+    return buffered.size;
+  }
   return (
     db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
   );

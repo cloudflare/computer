@@ -2,6 +2,7 @@ import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { resolveInode } from "./resolve.js";
+import { getWriteBuffer } from "./writeBuffer.js";
 
 export interface WorkspaceStatResult {
   name: string;
@@ -21,12 +22,19 @@ export function stat(db: Database, path: string): WorkspaceStatResult {
 
   const isDirectory = node.type === "dir";
   const isFile = node.type === "file";
-  const size = isFile
-    ? (db.scalar<number>(
-        "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
-        node.inode,
-      ) ?? 0)
-    : 0;
+  let size = 0;
+  if (isFile) {
+    const buffered = getWriteBuffer(db, node.inode);
+    if (buffered !== undefined && buffered.dirty) {
+      size = buffered.size;
+    } else {
+      size =
+        db.scalar<number>(
+          "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
+          node.inode,
+        ) ?? 0;
+    }
+  }
 
   return {
     name,

@@ -237,11 +237,17 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     Partial<DirectWriteVfs> & {
       chmodSync?: (path: string, mode: number) => void;
       readRangeSync?: (path: string, offset: number, length: number) => Uint8Array;
+      openWriteBufferSync?: (path: string) => void;
+      releaseWriteBufferSync?: (path: string) => void;
     };
   const hasDirectWrites =
     directWriteVfs.createFileSync !== undefined &&
     directWriteVfs.writeRangeSync !== undefined &&
     directWriteVfs.truncateFileSync !== undefined;
+  const hasBufferedWrites =
+    hasDirectWrites &&
+    directWriteVfs.openWriteBufferSync !== undefined &&
+    directWriteVfs.releaseWriteBufferSync !== undefined;
   const linkableVfs = vfs as NodeVirtualFileSystem & {
     linkSync?: (existingPath: string, newPath: string) => void;
   };
@@ -429,7 +435,9 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           cb(ERRNO.EISDIR, 0);
           return;
         }
-
+        if (hasBufferedWrites) {
+          directWriteVfs.openWriteBufferSync?.(toVfs(path));
+        }
         cb(0, openFileHandle(path));
       } catch (error) {
         cb(toErrno(error), 0);
@@ -458,6 +466,9 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         }
         if (hasDirectWrites) {
           directWriteVfs.createFileSync?.(toVfs(path), { mode });
+          if (hasBufferedWrites) {
+            directWriteVfs.openWriteBufferSync?.(toVfs(path));
+          }
           cb(0, openFileHandle(path));
           return;
         }
@@ -594,6 +605,15 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     release(path, fh, cb) {
       handles.delete(fh);
       releaseFileHandle(path);
+      if (hasBufferedWrites) {
+        try {
+          directWriteVfs.releaseWriteBufferSync?.(toVfs(path));
+          cb(0);
+        } catch (error) {
+          cb(toErrno(error));
+        }
+        return;
+      }
       // Last chance to make the buffered writes durable in the
       // VFS — the kernel won't call write() again on this fh.
       // Multi-open is fine: the next release on a different fh

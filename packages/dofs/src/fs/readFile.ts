@@ -47,6 +47,21 @@ export async function readFile(
     throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
   }
 
+  // While a write buffer is open for this inode it is the source of
+  // truth. Skip the chunk store and serve the buffered bytes.
+  const buffered = getWriteBuffer(db, node.inode);
+  if (buffered !== undefined && buffered.dirty) {
+    const snapshot = new Uint8Array(buffered.size);
+    snapshot.set(buffered.buf.subarray(0, buffered.size));
+    if (wantString) return new TextDecoder().decode(snapshot);
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(snapshot);
+        controller.close();
+      },
+    });
+  }
+
   const chunks = db.all<ChunkRow>(
     "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
     node.inode,
