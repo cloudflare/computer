@@ -17,9 +17,9 @@
 // file shows up immediately to a process that probed before it
 // existed. use_ino tells the kernel to trust the inode numbers
 // returned by getattr, which is required for hardlinks to stat as the
-// same inode. big_writes plus 128 KiB max_read and max_write match the
-// historical sizing; experiments with larger values didn't move the
-// numbers.
+// same inode. big_writes plus 512 KiB max_read and max_write match
+// the dofs CHUNK_SIZE so a single FUSE read maps to a single chunk
+// fetch instead of four 128 KiB slices of the same blob.
 //
 // Every default is opt-out via the matching WSD_FUSE_* env var.
 // Setting an option to "0", "false", "no", "off", or "" turns it
@@ -29,8 +29,11 @@
 // libfuse 2.9 fails the whole mount with "unknown option" when it sees
 // them. A typo in WSD_FUSE_EXTRA_OPTS shouldn't take the daemon down.
 
-const DEFAULT_MAX_READ = 131072;
-const DEFAULT_MAX_WRITE = 131072;
+// 512 KiB matches the dofs CHUNK_SIZE so a single FUSE read maps to a
+// single chunk fetch. Earlier defaults at 128 KiB issued four reads
+// per chunk and four SQL lookups for the same blob.
+const DEFAULT_MAX_READ = 524288;
+const DEFAULT_MAX_WRITE = 524288;
 const DEFAULT_AUTO_CACHE = true;
 const DEFAULT_ATTR_TIMEOUT = "1";
 const DEFAULT_ENTRY_TIMEOUT = "1";

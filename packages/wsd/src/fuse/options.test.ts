@@ -17,11 +17,10 @@ describe("buildFuseOptionString", () => {
     // letting a stale view linger. negative_timeout at zero keeps
     // "file not found" answers fresh so a just-written file shows
     // up immediately. use_ino lets hardlinks stat as the same inode.
-    // big_writes plus 128 KiB max_read and max_write match the
-    // historical sizing that earlier experiments showed didn't move
-    // on bigger values.
+    // big_writes plus 512 KiB max_read and max_write match the dofs
+    // CHUNK_SIZE so each FUSE read maps to one chunk fetch.
     expect(buildFuseOptionString(empty)).toBe(
-      "big_writes,use_ino,max_write=131072,max_read=131072,auto_cache,attr_timeout=1,entry_timeout=1,negative_timeout=0,ac_attr_timeout=1",
+      "big_writes,use_ino,max_write=524288,max_read=524288,auto_cache,attr_timeout=1,entry_timeout=1,negative_timeout=0,ac_attr_timeout=1",
     );
   });
 
@@ -32,19 +31,19 @@ describe("buildFuseOptionString", () => {
     });
     expect(out).toContain("max_write=1048576");
     expect(out).toContain("max_read=1048576");
-    expect(out).not.toContain("max_write=131072");
+    expect(out).not.toContain("max_write=524288");
   });
 
   test("ignores non-numeric size overrides and falls back to the default", () => {
     const out = buildFuseOptionString({ WSD_FUSE_MAX_READ: "wat" });
-    expect(out).toContain("max_read=131072");
+    expect(out).toContain("max_read=524288");
   });
 
   test("rejects non-positive sizes", () => {
     const a = buildFuseOptionString({ WSD_FUSE_MAX_READ: "0" });
-    expect(a).toContain("max_read=131072");
+    expect(a).toContain("max_read=524288");
     const b = buildFuseOptionString({ WSD_FUSE_MAX_WRITE: "-1" });
-    expect(b).toContain("max_write=131072");
+    expect(b).toContain("max_write=524288");
   });
 
   test("keeps auto_cache when WSD_FUSE_AUTO_CACHE is truthy or unset", () => {
