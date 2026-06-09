@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { Database } from "../storage.js";
 import { readRangeSync } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
+import { stat } from "./stat.js";
 import { withDB } from "./with-db.js";
 import {
   CHUNK_SIZE,
   createFileSync,
+  openWriteBufferForCreateSync,
   openWriteBufferSync,
   releaseWriteBufferSync,
   truncateFileSync,
@@ -141,6 +143,60 @@ describe("buffered write lifecycle", () => {
       releaseWriteBufferSync(db, "/big.bin", () => 1100);
       expect(chunkCount(db, "/big.bin")).toBe(3);
       expect(orphanBlobCount(db)).toBe(0);
+    });
+  });
+});
+
+describe("deferred-create lifecycle", () => {
+  it("holds the file in memory until release commits one transaction", async () => {
+    await withDB(async (db) => {
+      openWriteBufferForCreateSync(db, "/pending.txt", { mode: 0o600 }, () => 1000);
+
+      // No SQL row exists yet but the path is reachable via the
+      // path-keyed pending cache: stat, read, and write all see it.
+      expect(stat(db, "/pending.txt").size).toBe(0);
+      writeRangeSync(db, "/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
+      expect(stat(db, "/pending.txt").size).toBe(5);
+      expect(new TextDecoder().decode(readRangeSync(db, "/pending.txt", 0, 5))).toBe("hello");
+      expect(resolveInode(db, "/pending.txt")).toBeNull();
+      expect(blobCount(db)).toBe(0);
+
+      releaseWriteBufferSync(db, "/pending.txt", () => 1100);
+
+      // Release committed the INSERT, dirent, and chunk rows in one
+      // transaction; the path now resolves to a real inode and the
+      // stat sees the persisted size.
+      const node = resolveInode(db, "/pending.txt");
+      expect(node?.type).toBe("file");
+      expect(node?.mode).toBe(0o600);
+      expect(stat(db, "/pending.txt").size).toBe(5);
+      expect(blobCount(db)).toBe(1);
+      expect(orphanBlobCount(db)).toBe(0);
+    });
+  });
+
+  it("rejects a second openWriteBufferForCreateSync against the same path", async () => {
+    await withDB(async (db) => {
+      openWriteBufferForCreateSync(db, "/dupe.txt", {}, () => 1000);
+      expect(() => openWriteBufferForCreateSync(db, "/dupe.txt", {}, () => 1001)).toThrowError(
+        expect.objectContaining({ code: "EEXIST" }),
+      );
+    });
+  });
+
+  it("surfaces pending files in readdir before release", async () => {
+    await withDB(async (db) => {
+      const { readdir } = await import("./readdir.js");
+      const { mkdir } = await import("./mkdir.js");
+      mkdir(db, "/d", {}, () => 1000);
+      openWriteBufferForCreateSync(db, "/d/pending.txt", {}, () => 1001);
+
+      const names = readdir(db, "/d").map((entry) => entry.name);
+      expect(names).toEqual(["pending.txt"]);
+
+      releaseWriteBufferSync(db, "/d/pending.txt", () => 1100);
+      const after = readdir(db, "/d").map((entry) => entry.name);
+      expect(after).toEqual(["pending.txt"]);
     });
   });
 });

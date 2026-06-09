@@ -283,3 +283,56 @@ describe("SQLiteWorkspaceProvider — unimplemented surface (stubs)", () => {
     });
   });
 });
+
+describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink", () => {
+  it("linkSync commits a pending-create source before adding the second dirent", async () => {
+    await withProvider((p) => {
+      p.openWriteBufferForCreateSync("/src.txt", { mode: 0o644 });
+      p.writeRangeSync("/src.txt", Buffer.from("linked"), 0);
+      p.linkSync("/src.txt", "/dst.txt");
+
+      expect((p.readFileSync("/dst.txt") as Buffer).toString()).toBe("linked");
+      expect(p.statSync("/src.txt").ino).toBe(p.statSync("/dst.txt").ino);
+      expect(p.statSync("/src.txt").nlink).toBe(2);
+
+      p.releaseWriteBufferSync("/src.txt");
+      expect((p.readFileSync("/src.txt") as Buffer).toString()).toBe("linked");
+    });
+  });
+
+  it("renameSync commits a pending-create source before moving the dirent", async () => {
+    await withProvider((p) => {
+      p.openWriteBufferForCreateSync("/from.txt", { mode: 0o644 });
+      p.writeRangeSync("/from.txt", Buffer.from("moved"), 0);
+      p.renameSync("/from.txt", "/to.txt");
+
+      expect((p.readFileSync("/to.txt") as Buffer).toString()).toBe("moved");
+      expect(p.existsSync("/from.txt")).toBe(false);
+    });
+  });
+
+  it("unlinkSync commits then removes a pending-create file", async () => {
+    await withProvider((p) => {
+      p.openWriteBufferForCreateSync("/gone.txt", { mode: 0o644 });
+      p.writeRangeSync("/gone.txt", Buffer.from("bye"), 0);
+      p.unlinkSync("/gone.txt");
+      expect(p.existsSync("/gone.txt")).toBe(false);
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — cached vfs_nodes.size", () => {
+  it("stat reads size from vfs_nodes without summing chunks", async () => {
+    await withProvider((p) => {
+      const payload = Buffer.alloc(123, 0x41);
+      p.writeFileSync("/sized.bin", payload);
+      expect(p.statSync("/sized.bin").size).toBe(123);
+      // Read the column directly to confirm the write path stamps it.
+      const row = p.db.one<{ size: number }>(
+        "SELECT size FROM vfs_nodes WHERE inode = (SELECT child_inode FROM vfs_dirents WHERE name = ?)",
+        "sized.bin",
+      );
+      expect(row?.size).toBe(123);
+    });
+  });
+});

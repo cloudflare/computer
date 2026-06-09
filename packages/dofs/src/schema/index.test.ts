@@ -131,6 +131,80 @@ describe("initializeSchema", () => {
     ).toThrow(/CHECK constraint/);
   });
 
+  it("backfills vfs_nodes.size from chunk sums on the v2 -> v3 upgrade", () => {
+    // Stage a database at the v2 shape: vfs_nodes without the
+    // `size` column, schema_version = 2. The migration adds the
+    // column with a default of 0 and then UPDATEs it from the
+    // SUM of vfs_chunks.size for each file inode.
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+
+    db.transactionSync(() => {
+      db.run(
+        `CREATE TABLE vfs_meta (
+          k TEXT PRIMARY KEY,
+          v INTEGER NOT NULL
+        )`,
+      );
+      db.run(
+        `CREATE TABLE vfs_nodes (
+          inode         INTEGER PRIMARY KEY AUTOINCREMENT,
+          type          TEXT    NOT NULL CHECK(type IN ('file','dir','symlink')),
+          mode          INTEGER NOT NULL DEFAULT 493,
+          mtime         INTEGER NOT NULL,
+          rev           INTEGER NOT NULL DEFAULT 0,
+          mount_root    TEXT,
+          stub_size     INTEGER,
+          manifest_hash BLOB,
+          link_target   TEXT
+        )`,
+      );
+      db.run(
+        `CREATE TABLE vfs_chunks (
+          inode INTEGER NOT NULL,
+          idx   INTEGER NOT NULL,
+          hash  BLOB    NOT NULL,
+          size  INTEGER NOT NULL,
+          PRIMARY KEY (inode, idx)
+        )`,
+      );
+      // A live file with two chunks summing to 7 bytes, a live dir,
+      // and a live file with no chunks (empty file).
+      db.run(
+        `INSERT INTO vfs_nodes (inode, type, mode, mtime, rev) VALUES
+           (1, 'dir', 493, 0, 0),
+           (2, 'file', 420, 0, 0),
+           (3, 'file', 420, 0, 0)`,
+      );
+      db.run(
+        "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
+        2,
+        0,
+        new Uint8Array(32),
+        3,
+      );
+      db.run(
+        "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
+        2,
+        1,
+        new Uint8Array(32),
+        4,
+      );
+      db.run("INSERT INTO vfs_meta (k, v) VALUES (?, ?)", "schema_version", 2);
+    });
+
+    initializeSchema(db, () => 0);
+
+    const sizes = db.all<{ inode: number; size: number }>(
+      "SELECT inode, size FROM vfs_nodes ORDER BY inode",
+    );
+    expect(sizes).toEqual([
+      { inode: 1, size: 0 },
+      { inode: 2, size: 7 },
+      { inode: 3, size: 0 },
+    ]);
+  });
+
   it("is idempotent across repeat calls", () => {
     const storage = new SQLiteTestStorage();
     const db = new Database(storage);
