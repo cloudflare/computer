@@ -40,6 +40,7 @@ describe("resolveInode", () => {
           type: "dir",
           mode: 0o755,
           mtime: 0,
+          size: 0,
         });
       },
       { now: () => 0 },
@@ -54,6 +55,7 @@ describe("resolveInode", () => {
         type: "file",
         mode: 0o644,
         mtime: 99,
+        size: 0,
       });
     });
   });
@@ -68,6 +70,7 @@ describe("resolveInode", () => {
         type: "file",
         mode: 0o644,
         mtime: 7,
+        size: 0,
       });
     });
   });

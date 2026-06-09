@@ -40,8 +40,29 @@ function v1_to_v2_add_mounts_mode(db: Database): void {
   );
 }
 
+// v2 → v3 — denormalise file size onto vfs_nodes so stat doesn't
+// have to SUM the chunk rows on every call. The column is
+// backfilled from existing vfs_chunks; later writes maintain it.
+function v2_to_v3_add_size_column(db: Database): void {
+  const hasColumn = db
+    .all<{ name: string }>("PRAGMA table_info(vfs_nodes)")
+    .some((column) => column.name === "size");
+  if (!hasColumn) {
+    db.run("ALTER TABLE vfs_nodes ADD COLUMN size INTEGER NOT NULL DEFAULT 0");
+  }
+  db.run(
+    `UPDATE vfs_nodes
+        SET size = COALESCE(
+          (SELECT SUM(size) FROM vfs_chunks WHERE vfs_chunks.inode = vfs_nodes.inode),
+          0
+        )
+      WHERE type = 'file'`,
+  );
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
+  { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

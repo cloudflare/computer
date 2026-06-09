@@ -3,7 +3,7 @@
 
 // See `schema/migrations.ts` for the migration list; `sync.ts`
 // carries the fresh-install DDL.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [
@@ -20,7 +20,8 @@ export const CORE_STATEMENTS = [
     mount_root    TEXT,
     stub_size     INTEGER,
     manifest_hash BLOB,
-    link_target   TEXT
+    link_target   TEXT,
+    size          INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS vfs_dirents (
     parent_inode INTEGER NOT NULL,

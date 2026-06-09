@@ -237,11 +237,14 @@ async function writeFileStreaming(
     }
     const manifestHash = buildManifest(db, chunkRefs, mtime);
     const rev = incrementRev(db);
+    let totalSize = 0;
+    for (const ref of chunkRefs) totalSize += ref.size;
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
       mode,
       mtime,
       rev,
+      totalSize,
       manifestHash,
       inode,
     );
@@ -330,9 +333,7 @@ function existingChunkRefs(db: Database, inode: number): ChunkRef[] {
 }
 
 function fileSizeForInode(db: Database, inode: number): number {
-  return (
-    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
-  );
+  return db.scalar<number>("SELECT size FROM vfs_nodes WHERE inode = ?", inode) ?? 0;
 }
 
 function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
@@ -433,10 +434,11 @@ function applyChunkedInodeUpdate(
 
   const rev = incrementRev(db);
   db.run(
-    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
+    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = NULL WHERE inode = ?",
     mode,
     mtime,
     rev,
+    size,
     inode,
   );
 }
@@ -529,7 +531,7 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", node.inode);
       const rev = incrementRev(db);
       db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
         mode,
         mtime,
         rev,
@@ -673,7 +675,7 @@ export function truncateFileSync(
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
       const rev = incrementRev(db);
       db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
         mode,
         mtime,
         rev,
@@ -765,10 +767,11 @@ export function writeFileSync(
 
     const manifestHash = buildManifest(db, chunks, mtime);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
       mode,
       mtime,
       rev,
+      bytes.byteLength,
       manifestHash,
       inode,
     );
@@ -845,10 +848,11 @@ export function writeFileRangesSync(
 
     const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
       mode,
       mtime,
       rev,
+      bytes.byteLength,
       manifestHash,
       inode,
     );

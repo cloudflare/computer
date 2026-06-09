@@ -24,16 +24,11 @@ export function stat(db: Database, path: string): WorkspaceStatResult {
   const isFile = node.type === "file";
   let size = 0;
   if (isFile) {
+    // Prefer the in-memory buffer when an open file has unflushed
+    // writes; otherwise read the cached size off vfs_nodes that
+    // resolveInode just loaded for us, no extra SQL.
     const buffered = getWriteBuffer(db, node.inode);
-    if (buffered !== undefined && buffered.dirty) {
-      size = buffered.size;
-    } else {
-      size =
-        db.scalar<number>(
-          "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
-          node.inode,
-        ) ?? 0;
-    }
+    size = buffered !== undefined && buffered.dirty ? buffered.size : node.size;
   }
 
   return {

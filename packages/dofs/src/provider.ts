@@ -758,9 +758,7 @@ function fileSize(db: Database, inode: number): number {
   if (buffered !== undefined && buffered.dirty) {
     return buffered.size;
   }
-  return (
-    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
-  );
+  return db.scalar<number>("SELECT size FROM vfs_nodes WHERE inode = ?", inode) ?? 0;
 }
 
 function wrapStats(input: StatsInputs): VirtualStatsLike {

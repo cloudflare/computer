@@ -8,6 +8,11 @@ export interface ResolvedInode {
   type: "file" | "dir" | "symlink";
   mode: number;
   mtime: number;
+  // Cached file size from vfs_nodes.size. Always 0 for directories
+  // and symlinks; for files this matches SUM(vfs_chunks.size) for
+  // the inode. Stat callers consume it directly instead of doing a
+  // separate aggregate query.
+  size: number;
   // Populated only when type === "symlink". Higher layers (readlink,
   // lstat) consume this; resolveInode follows it transparently unless
   // the caller asks otherwise.
@@ -26,6 +31,7 @@ interface NodeRow {
   type: "file" | "dir" | "symlink";
   mode: number;
   mtime: number;
+  size: number;
   link_target: string | null;
 }
 
@@ -104,6 +110,7 @@ function resolveParts(
         type: resolved.type,
         mode: resolved.mode,
         mtime: resolved.mtime,
+        size: resolved.size,
         link_target: resolved.linkTarget ?? null,
       };
       continue;
@@ -116,13 +123,14 @@ function resolveParts(
     type: current.type,
     mode: current.mode,
     mtime: current.mtime,
+    size: current.size,
     linkTarget: current.link_target ?? undefined,
   };
 }
 
 function readNode(db: Database, inode: number): NodeRow | null {
   const row = db.one<NodeRow>(
-    "SELECT inode, type, mode, mtime, link_target FROM vfs_nodes WHERE inode = ?",
+    "SELECT inode, type, mode, mtime, size, link_target FROM vfs_nodes WHERE inode = ?",
     inode,
   );
   return row ?? null;

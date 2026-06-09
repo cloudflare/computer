@@ -151,11 +151,8 @@ export function readRangeSync(
     return buffered.buf.subarray(offset, end);
   }
 
-  const totalSize =
-    db.scalar<number>(
-      "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
-      node.inode,
-    ) ?? 0;
+  // node.size is the cached value resolveInode just loaded.
+  const totalSize = node.size;
   if (offset >= totalSize) return new Uint8Array();
   const end = Math.min(offset + length, totalSize);
   const firstIdx = Math.floor(offset / CHUNK_SIZE);
