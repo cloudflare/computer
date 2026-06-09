@@ -199,4 +199,75 @@ describe("deferred-create lifecycle", () => {
       expect(after).toEqual(["pending.txt"]);
     });
   });
+
+  it("defers commit until the matching release count is reached", async () => {
+    await withDB(async (db) => {
+      createFileSync(db, "/multi.txt", {}, () => 1000);
+      writeRangeSync(db, "/multi.txt", bytesOf("seed"), 0, {}, () => 1001);
+      // Establish the on-disk shape we'll observe against.
+      const seedBlobs = blobCount(db);
+      const seedChunks = chunkCount(db, "/multi.txt");
+
+      // Two opens of the same path share a single inode-keyed entry.
+      openWriteBufferSync(db, "/multi.txt");
+      openWriteBufferSync(db, "/multi.txt");
+      writeRangeSync(db, "/multi.txt", bytesOf("DIRTY"), 0, {}, () => 1002);
+
+      // First release decrements but does not commit — chunk/blob
+      // shape unchanged.
+      releaseWriteBufferSync(db, "/multi.txt", () => 1003);
+      expect(blobCount(db)).toBe(seedBlobs);
+      expect(chunkCount(db, "/multi.txt")).toBe(seedChunks);
+
+      // Second release commits. Reading back through the chunk
+      // store sees the dirty bytes.
+      releaseWriteBufferSync(db, "/multi.txt", () => 1004);
+      const final = readRangeSync(db, "/multi.txt", 0, 5);
+      expect(new TextDecoder().decode(final)).toBe("DIRTY");
+
+      // A fresh open after release starts a clean buffer; an
+      // immediate release without writes is a no-op.
+      openWriteBufferSync(db, "/multi.txt");
+      releaseWriteBufferSync(db, "/multi.txt", () => 1005);
+      // No corruption: file content still matches.
+      const stable = readRangeSync(db, "/multi.txt", 0, 5);
+      expect(new TextDecoder().decode(stable)).toBe("DIRTY");
+    });
+  });
+
+  it("flushPendingByPath promotes the buffer without consuming the open count", async () => {
+    const { flushPendingByPath } = await import("./writeFile.js");
+    await withDB(async (db) => {
+      openWriteBufferForCreateSync(db, "/promote.txt", {}, () => 1000);
+      writeRangeSync(db, "/promote.txt", bytesOf("before"), 0, {}, () => 1001);
+      expect(resolveInode(db, "/promote.txt")).toBeNull();
+
+      // Promote the pending entry without releasing it.
+      const committed = flushPendingByPath(db, "/promote.txt", () => 1002);
+      expect(committed).toBe(true);
+
+      // The path now resolves; the open buffer survived the
+      // promotion under the real inode key.
+      const node = resolveInode(db, "/promote.txt");
+      expect(node?.type).toBe("file");
+      expect(chunkCount(db, "/promote.txt")).toBeGreaterThan(0);
+
+      // Further writes route through the inode-keyed cache. The
+      // matching release commits the final bytes over the
+      // promoted state.
+      writeRangeSync(db, "/promote.txt", bytesOf("after-x"), 0, {}, () => 1003);
+      releaseWriteBufferSync(db, "/promote.txt", () => 1004);
+      const final = readRangeSync(db, "/promote.txt", 0, 7);
+      expect(new TextDecoder().decode(final)).toBe("after-x");
+    });
+  });
+
+  it("flushPendingByPath returns false when no pending buffer is open", async () => {
+    const { flushPendingByPath } = await import("./writeFile.js");
+    await withDB(async (db) => {
+      createFileSync(db, "/already.txt", {}, () => 1000);
+      expect(flushPendingByPath(db, "/already.txt", () => 1001)).toBe(false);
+      expect(flushPendingByPath(db, "/missing.txt", () => 1002)).toBe(false);
+    });
+  });
 });

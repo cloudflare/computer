@@ -141,6 +141,48 @@ test("/api serves a capnweb HTTP-batch WorkspaceRPC session", async (_ctx) => {
   expect(await stub.sync.hasObjects([])).toEqual([]);
 });
 
+test("/__wsd/stats returns DOFS table sizes and process memory", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "wsd-stats-"));
+  await startWsd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const stats = await request(`http://127.0.0.1:${port}/__wsd/stats`);
+  expect(stats.statusCode).toBe(200);
+  expect(stats.headers["content-type"]).toMatch(/application\/json/);
+
+  const body = JSON.parse(stats.body);
+  // DOFS table counts and blob byte totals. The root inode always
+  // exists, so vfs_nodes_count is at least 1; everything else is
+  // a non-negative count. Asserting Number.isFinite catches a
+  // handler that returned NaN, and the non-negative bound catches
+  // a future regression that returned -1 from a malformed read.
+  const counts = [
+    "vfs_nodes_count",
+    "vfs_dirents_count",
+    "vfs_chunks_count",
+    "vfs_blobs_count",
+    "vfs_blob_bytes_total",
+    "vfs_blobs_orphan",
+    "vfs_blob_bytes_orphan",
+  ] as const;
+  for (const key of counts) {
+    expect(typeof body[key], key).toBe("number");
+    expect(Number.isFinite(body[key]), key).toBe(true);
+    expect(body[key], key).toBeGreaterThanOrEqual(0);
+  }
+  expect(body.vfs_nodes_count).toBeGreaterThanOrEqual(1);
+
+  // Process memory snapshot. RSS and heap_total are strictly
+  // positive in any live process; the rest are non-negative.
+  expect(body.rss).toBeGreaterThan(0);
+  expect(body.heap_total).toBeGreaterThan(0);
+  for (const key of ["heap_used", "external", "array_buffers"] as const) {
+    expect(typeof body[key], key).toBe("number");
+    expect(Number.isFinite(body[key]), key).toBe(true);
+    expect(body[key], key).toBeGreaterThanOrEqual(0);
+  }
+});
+
 test("wsd exposes file IO through the userspace shim when FUSE_MOUNT=shim", async (_ctx) => {
   // No FUSE backend required — the shim runs in user space and is
   // explicitly opt-in via FUSE_MOUNT=shim. Mirrors the real-FUSE

@@ -28,6 +28,75 @@ describe("blobCache", () => {
     });
   });
 
+  it("evicts the least-recently-used entry once 17 distinct hashes are cached", async () => {
+    await withDB(async (db) => {
+      // Stage 17 files with distinct content so each one gets a
+      // unique blob hash. The cache holds 16; the 17th fetch must
+      // evict the least-recently-used, which is the first hash.
+      const hashes: Uint8Array[] = [];
+      for (let i = 0; i < 17; i++) {
+        const path = `/distinct-${i}.bin`;
+        writeFileSync(db, path, new TextEncoder().encode(`payload-${i}`), {}, () => 1);
+        const row = db.one<{ hash: Uint8Array }>(
+          "SELECT hash FROM vfs_chunks WHERE inode = (SELECT child_inode FROM vfs_dirents WHERE name = ?)",
+          `distinct-${i}.bin`,
+        );
+        hashes.push(row?.hash as Uint8Array);
+      }
+      clearBlobCache(db);
+
+      // First 16 fetches populate the cache.
+      for (let i = 0; i < 16; i++) getBlobBytes(db, hashes[i]);
+      // 17th fetch evicts the LRU (entry 0); spy to confirm the
+      // 18th fetch of hash 0 is a fresh SQL lookup, but hash 16 is
+      // cached and the 18th fetch of hash 1 (still the LRU) hits
+      // SQL too.
+      getBlobBytes(db, hashes[16]);
+
+      const spy = vi.spyOn(db, "one");
+      getBlobBytes(db, hashes[0]); // evicted, must hit SQL
+      getBlobBytes(db, hashes[16]); // hot, must NOT hit SQL
+      const lookups = spy.mock.calls.filter(
+        ([query]) => typeof query === "string" && query.includes("vfs_blob_bytes"),
+      ).length;
+      spy.mockRestore();
+
+      expect(lookups).toBe(1);
+    });
+  });
+
+  it("moves a touched entry to most-recent so it survives eviction", async () => {
+    await withDB(async (db) => {
+      const hashes: Uint8Array[] = [];
+      for (let i = 0; i < 17; i++) {
+        const path = `/touched-${i}.bin`;
+        writeFileSync(db, path, new TextEncoder().encode(`touched-${i}`), {}, () => 1);
+        const row = db.one<{ hash: Uint8Array }>(
+          "SELECT hash FROM vfs_chunks WHERE inode = (SELECT child_inode FROM vfs_dirents WHERE name = ?)",
+          `touched-${i}.bin`,
+        );
+        hashes.push(row?.hash as Uint8Array);
+      }
+      clearBlobCache(db);
+
+      for (let i = 0; i < 16; i++) getBlobBytes(db, hashes[i]);
+      // Touch hash 0 so it becomes most-recent.
+      getBlobBytes(db, hashes[0]);
+      // The 17th fetch should now evict hash 1, not hash 0.
+      getBlobBytes(db, hashes[16]);
+
+      const spy = vi.spyOn(db, "one");
+      getBlobBytes(db, hashes[0]); // touched, still cached
+      getBlobBytes(db, hashes[1]); // evicted, must hit SQL
+      const lookups = spy.mock.calls.filter(
+        ([query]) => typeof query === "string" && query.includes("vfs_blob_bytes"),
+      ).length;
+      spy.mockRestore();
+
+      expect(lookups).toBe(1);
+    });
+  });
+
   it("readRangeSync avoids repeating vfs_blob_bytes lookups on sequential reads", async () => {
     await withDB(async (db) => {
       // 4 MiB of repeated content → one dedup'd blob in the store.

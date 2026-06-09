@@ -406,17 +406,68 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
 });
 
 describe("SQLiteWorkspaceProvider — cached vfs_nodes.size", () => {
-  it("stat reads size from vfs_nodes without summing chunks", async () => {
+  function readSize(p: SQLiteWorkspaceProvider, name: string): number | undefined {
+    return p.db.one<{ size: number }>(
+      "SELECT size FROM vfs_nodes WHERE inode = (SELECT child_inode FROM vfs_dirents WHERE name = ?)",
+      name,
+    )?.size;
+  }
+
+  it("writeFileSync stamps size on first write and on overwrite", async () => {
     await withProvider((p) => {
-      const payload = Buffer.alloc(123, 0x41);
-      p.writeFileSync("/sized.bin", payload);
+      p.writeFileSync("/sized.bin", Buffer.alloc(123, 0x41));
       expect(p.statSync("/sized.bin").size).toBe(123);
-      // Read the column directly to confirm the write path stamps it.
-      const row = p.db.one<{ size: number }>(
-        "SELECT size FROM vfs_nodes WHERE inode = (SELECT child_inode FROM vfs_dirents WHERE name = ?)",
-        "sized.bin",
-      );
-      expect(row?.size).toBe(123);
+      expect(readSize(p, "sized.bin")).toBe(123);
+
+      p.writeFileSync("/sized.bin", Buffer.alloc(7, 0x42));
+      expect(p.statSync("/sized.bin").size).toBe(7);
+      expect(readSize(p, "sized.bin")).toBe(7);
+    });
+  });
+
+  it("writeRangeSync extends the cached size on growth", async () => {
+    await withProvider((p) => {
+      p.createFileSync("/range.bin", { mode: 0o644 });
+      p.writeRangeSync("/range.bin", Buffer.from("hello"), 0);
+      expect(readSize(p, "range.bin")).toBe(5);
+      p.writeRangeSync("/range.bin", Buffer.from("!!"), 10);
+      expect(p.statSync("/range.bin").size).toBe(12);
+      expect(readSize(p, "range.bin")).toBe(12);
+    });
+  });
+
+  it("truncateFileSync updates the cached size on grow and shrink", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/trunc.bin", Buffer.alloc(100, 0x55));
+      expect(readSize(p, "trunc.bin")).toBe(100);
+
+      p.truncateFileSync("/trunc.bin", 250);
+      expect(p.statSync("/trunc.bin").size).toBe(250);
+      expect(readSize(p, "trunc.bin")).toBe(250);
+
+      p.truncateFileSync("/trunc.bin", 0);
+      expect(p.statSync("/trunc.bin").size).toBe(0);
+      expect(readSize(p, "trunc.bin")).toBe(0);
+    });
+  });
+
+  it("buffered release stamps the cached size of the committed bytes", async () => {
+    await withProvider((p) => {
+      p.openWriteBufferForCreateSync("/buffered.bin", { mode: 0o644 });
+      p.writeRangeSync("/buffered.bin", Buffer.from("buffered-write"), 0);
+      expect(readSize(p, "buffered.bin")).toBeUndefined();
+      p.releaseWriteBufferSync("/buffered.bin");
+      expect(p.statSync("/buffered.bin").size).toBe(14);
+      expect(readSize(p, "buffered.bin")).toBe(14);
+    });
+  });
+
+  it("async writeFile stamps size from the buffered bytes", async () => {
+    await withProvider(async (p) => {
+      const payload = Buffer.from("async payload");
+      await p.writeFile("/streamed.bin", payload);
+      expect(p.statSync("/streamed.bin").size).toBe(payload.byteLength);
+      expect(readSize(p, "streamed.bin")).toBe(payload.byteLength);
     });
   });
 });
