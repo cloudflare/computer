@@ -38,6 +38,26 @@ async function readBytes(db: Database, path: string): Promise<Uint8Array> {
   return out;
 }
 
+function chunkRowIds(db: Database, path: string): Array<{ idx: number; rowid: number }> {
+  const node = resolveInode(db, path);
+  if (node === null) throw new Error(`missing node: ${path}`);
+  return db.all<{ idx: number; rowid: number }>(
+    "SELECT idx, rowid FROM vfs_chunks WHERE inode = ? ORDER BY idx",
+    node.inode,
+  );
+}
+
+function manifestHash(db: Database, path: string): Uint8Array | null {
+  const node = resolveInode(db, path);
+  if (node === null) throw new Error(`missing node: ${path}`);
+  return (
+    db.one<{ manifest_hash: Uint8Array | null }>(
+      "SELECT manifest_hash FROM vfs_nodes WHERE inode = ?",
+      node.inode,
+    )?.manifest_hash ?? null
+  );
+}
+
 function chunkRows(
   db: Database,
   path: string,
@@ -131,6 +151,37 @@ describe("direct range writes", () => {
 
       expect(new TextDecoder().decode(await readBytes(db, "/a.txt"))).toBe("shared");
       expect(resolveInode(db, "/a.txt")?.inode).toBe(resolveInode(db, "/b.txt")?.inode);
+    });
+  });
+
+  it("keeps untouched chunk rowids stable across a small range write", async () => {
+    await withDB(async (db) => {
+      const original = new Uint8Array(CHUNK_SIZE * 3);
+      original.fill(1, 0, CHUNK_SIZE);
+      original.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
+      original.fill(3, CHUNK_SIZE * 2, CHUNK_SIZE * 3);
+      writeFileSync(db, "/large.bin", original, {}, () => 1000);
+      const beforeIds = chunkRowIds(db, "/large.bin");
+
+      writeRangeSync(db, "/large.bin", new Uint8Array([7]), CHUNK_SIZE + 10, {}, () => 1001);
+      const afterIds = chunkRowIds(db, "/large.bin");
+
+      expect(afterIds[0].rowid).toBe(beforeIds[0].rowid);
+      expect(afterIds[2].rowid).toBe(beforeIds[2].rowid);
+      expect(afterIds[1].rowid).not.toBe(beforeIds[1].rowid);
+    });
+  });
+
+  it("invalidates the manifest hash after a direct range write", async () => {
+    await withDB(async (db) => {
+      const original = new Uint8Array(CHUNK_SIZE * 2);
+      original.fill(1, 0, CHUNK_SIZE);
+      original.fill(2, CHUNK_SIZE);
+      writeFileSync(db, "/large.bin", original, {}, () => 1000);
+      expect(manifestHash(db, "/large.bin")).not.toBe(null);
+
+      writeRangeSync(db, "/large.bin", new Uint8Array([5]), 10, {}, () => 1001);
+      expect(manifestHash(db, "/large.bin")).toBe(null);
     });
   });
 

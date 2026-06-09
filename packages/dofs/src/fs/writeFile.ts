@@ -420,30 +420,68 @@ function writeInlineInode(
   );
 }
 
-function writeChunkedInode(
+// Update an inode's chunk-backed representation in place. Iterates over
+// the full chunk grid but only touches `vfs_chunks` rows whose contents
+// or size actually changed, so untouched chunk rows keep their
+// rowids and the surrounding rows do not churn. The manifest is
+// invalidated rather than recomputed; sync rebuilds it lazily.
+function applyChunkedInodeUpdate(
   db: Database,
   inode: number,
   size: number,
   mode: number,
   mtime: number,
-  buildChunk: (idx: number, start: number, end: number, oldChunk?: ChunkRef) => ChunkRef,
+  isTouched: (idx: number, start: number, end: number) => boolean,
+  buildChunkBytes: (idx: number, start: number, end: number, existing: Uint8Array) => Uint8Array,
 ): void {
   const oldChunks = existingChunkRefs(db, inode);
-  const nextChunks: ChunkRef[] = [];
+  const oldInline = inlineDataForInode(db, inode);
   const chunkCount = Math.ceil(size / CHUNK_SIZE);
+  const oldChunkCount = oldChunks.length;
+
   for (let idx = 0; idx < chunkCount; idx++) {
     const start = idx * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, size);
-    nextChunks.push(buildChunk(idx, start, end, oldChunks[idx]));
+    const intendedSize = end - start;
+    const old = oldChunks[idx];
+    const touched = isTouched(idx, start, end);
+    // Stable chunk: existed before with the same logical size and the
+    // caller did not flag it as touched. Skip without issuing SQL so
+    // its rowid stays put.
+    if (old !== undefined && old.size === intendedSize && !touched) continue;
+
+    const existingBytes =
+      oldInline !== null
+        ? oldInline.subarray(start, Math.min(start + CHUNK_SIZE, oldInline.byteLength))
+        : old !== undefined
+          ? readChunkBytes(db, inode, idx)
+          : new Uint8Array();
+    const chunkBytes = buildChunkBytes(idx, start, end, existingBytes);
+    if (chunkBytes.byteLength !== intendedSize) {
+      throw createWorkspaceError("EIO", "chunk builder returned wrong size");
+    }
+    const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
+    upsertChunkBlob(db, chunk, mtime);
+    db.run(
+      "INSERT OR REPLACE INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
+      inode,
+      idx,
+      chunk.hash,
+      chunk.size,
+    );
   }
-  const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
+
+  // Drop any old chunks past the new end of file (shrink case).
+  if (oldChunkCount > chunkCount) {
+    db.run("DELETE FROM vfs_chunks WHERE inode = ? AND idx >= ?", inode, chunkCount);
+  }
+
   const rev = incrementRev(db);
   db.run(
-    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
+    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = NULL WHERE inode = ?",
     mode,
     mtime,
     rev,
-    manifestHash,
     inode,
   );
 }
@@ -518,23 +556,24 @@ export function writeRangeSync(
       return;
     }
 
-    writeChunkedInode(db, inode, nextSize, mode, mtime, (idx, start, end, oldChunk) => {
-      const overlapsWrite = offset < end && start < writeEnd;
-      if (oldChunk !== undefined && oldChunk.size === end - start && !overlapsWrite) {
-        return oldChunk;
-      }
-      const chunkBytes = new Uint8Array(end - start);
-      const existing = readChunkBytes(db, inode, idx);
-      chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
-      if (overlapsWrite) {
-        const copyStart = Math.max(start, offset);
-        const copyEnd = Math.min(end, writeEnd);
-        chunkBytes.set(bytes.subarray(copyStart - offset, copyEnd - offset), copyStart - start);
-      }
-      const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
-      upsertChunkBlob(db, chunk, mtime);
-      return { hash: chunk.hash, size: chunk.size };
-    });
+    applyChunkedInodeUpdate(
+      db,
+      inode,
+      nextSize,
+      mode,
+      mtime,
+      (_idx, start, end) => offset < end && start < writeEnd,
+      (_idx, start, end, existing) => {
+        const chunkBytes = new Uint8Array(end - start);
+        chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
+        if (offset < end && start < writeEnd) {
+          const copyStart = Math.max(start, offset);
+          const copyEnd = Math.min(end, writeEnd);
+          chunkBytes.set(bytes.subarray(copyStart - offset, copyEnd - offset), copyStart - start);
+        }
+        return chunkBytes;
+      },
+    );
   });
 
   return bytes.byteLength;
@@ -564,17 +603,19 @@ export function truncateFileSync(
       return;
     }
 
-    writeChunkedInode(db, inode, size, mode, mtime, (idx, start, end, oldChunk) => {
-      if (oldChunk !== undefined && oldChunk.size === end - start) {
-        return oldChunk;
-      }
-      const chunkBytes = new Uint8Array(end - start);
-      const existing = readChunkBytes(db, inode, idx);
-      chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
-      const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
-      upsertChunkBlob(db, chunk, mtime);
-      return { hash: chunk.hash, size: chunk.size };
-    });
+    applyChunkedInodeUpdate(
+      db,
+      inode,
+      size,
+      mode,
+      mtime,
+      () => false,
+      (_idx, start, end, existing) => {
+        const chunkBytes = new Uint8Array(end - start);
+        chunkBytes.set(existing.subarray(0, Math.min(existing.byteLength, chunkBytes.byteLength)));
+        return chunkBytes;
+      },
+    );
   });
 }
 
