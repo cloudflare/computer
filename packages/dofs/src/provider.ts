@@ -27,6 +27,8 @@ import {
 } from "./fs/watch.js";
 import {
   createFileSync as createFileSyncImpl,
+  openWriteBufferSync as openWriteBufferSyncImpl,
+  releaseWriteBufferSync as releaseWriteBufferSyncImpl,
   truncateFileSync as truncateFileSyncImpl,
   type WriteFileRange,
   writeFileRangesSync as writeFileRangesSyncImpl,
@@ -378,16 +380,7 @@ export class SQLiteWorkspaceProvider {
     if (node.type !== "file") {
       throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
     }
-    const inline = this.db.one<{ inline_data: Uint8Array | null }>(
-      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-      node.inode,
-    )?.inline_data;
     const encoding = typeof options === "string" ? options : options?.encoding;
-    if (inline !== undefined && inline !== null) {
-      const out = Buffer.from(inline);
-      return encoding ? out.toString(encoding) : out;
-    }
-
     const chunks = this.db.all<{ hash: Uint8Array; size: number }>(
       "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
       node.inode,
@@ -466,6 +459,14 @@ export class SQLiteWorkspaceProvider {
 
   truncateFileSync(path: string, len: number): void {
     truncateFileSyncImpl(this.db, path, len, this.now);
+  }
+
+  openWriteBufferSync(path: string): void {
+    openWriteBufferSyncImpl(this.db, path);
+  }
+
+  releaseWriteBufferSync(path: string): void {
+    releaseWriteBufferSyncImpl(this.db, path, this.now);
   }
 
   chmodSync(path: string, mode: number): void {
@@ -744,14 +745,8 @@ function linkCount(db: Database, inode: number): number {
 }
 
 function fileSize(db: Database, inode: number): number {
-  const inlineSize = db.one<{ size: number | null }>(
-    "SELECT length(inline_data) AS size FROM vfs_nodes WHERE inode = ?",
-    inode,
-  )?.size;
   return (
-    inlineSize ??
-    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ??
-    0
+    db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
   );
 }
 

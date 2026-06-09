@@ -70,31 +70,19 @@ function chunkRows(
   );
 }
 
-function inlineData(db: Database, path: string): Uint8Array | null {
-  const node = resolveInode(db, path);
-  if (node === null) throw new Error(`missing node: ${path}`);
-  return (
-    db.one<{ inline_data: Uint8Array | null }>(
-      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-      node.inode,
-    )?.inline_data ?? null
-  );
-}
-
 describe("direct range writes", () => {
-  it("creates an empty inline file", async () => {
+  it("creates an empty file with no chunk rows", async () => {
     await withDB(async (db) => {
       createFileSync(db, "/empty.txt", { mode: 0o600 }, () => 1000);
 
       const node = resolveInode(db, "/empty.txt");
       expect(node?.type).toBe("file");
       expect(node?.mode).toBe(0o600);
-      expect(inlineData(db, "/empty.txt")).toEqual(new Uint8Array());
       expect(chunkRows(db, "/empty.txt")).toEqual([]);
     });
   });
 
-  it("writes small ranges into inline_data", async () => {
+  it("writes small ranges and stores them as a single chunk", async () => {
     await withDB(async (db) => {
       createFileSync(db, "/small.txt", {}, () => 1000);
 
@@ -102,10 +90,7 @@ describe("direct range writes", () => {
       expect(writeRangeSync(db, "/small.txt", bytesOf("y"), 4, {}, () => 1002)).toBe(1);
 
       expect(new TextDecoder().decode(await readBytes(db, "/small.txt"))).toBe("helly");
-      expect(new TextDecoder().decode(inlineData(db, "/small.txt") ?? new Uint8Array())).toBe(
-        "helly",
-      );
-      expect(chunkRows(db, "/small.txt")).toEqual([]);
+      expect(chunkRows(db, "/small.txt")).toHaveLength(1);
     });
   });
 

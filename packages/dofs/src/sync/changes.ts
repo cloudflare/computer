@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { resolveInode } from "../fs/resolve.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
@@ -21,12 +20,6 @@ export function recordDelete(db: Database, rev: number, path: string): void {
 // tombstones. The puller uses it as a per-entry cursor so it can
 // advance fetchRev per committed batch instead of waiting for the
 // whole stream to drain.
-function sha256(bytes: Uint8Array): Uint8Array {
-  const hash = createHash("sha256");
-  hash.update(bytes);
-  return new Uint8Array(hash.digest());
-}
-
 export type ChangeEntry =
   | {
       kind: "file";
@@ -80,22 +73,12 @@ export function materialiseChange(db: Database, path: string): ChangeEntry | nul
     }
     // file: collect chunk rows in index order. Each row carries hash
     // and size so the receiver can probe hasObjects without a
-    // separate manifest lookup. Inline files do not have chunk rows;
-    // synthesize the single wire chunk from inline_data so sync still
-    // ships their bytes. Empty files produce zero rows and size 0.
-    const inline = db.one<{ inline_data: Uint8Array | null }>(
-      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
+    // separate manifest lookup. An empty file has zero chunk rows
+    // and reports size 0.
+    const chunks = db.all<{ hash: Uint8Array; size: number }>(
+      "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
       live.inode,
-    )?.inline_data;
-    const chunks =
-      inline !== undefined && inline !== null
-        ? inline.byteLength === 0
-          ? []
-          : [{ hash: sha256(inline), size: inline.byteLength }]
-        : db.all<{ hash: Uint8Array; size: number }>(
-            "SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
-            live.inode,
-          );
+    );
     let size = 0;
     for (const c of chunks) size += c.size;
     return {

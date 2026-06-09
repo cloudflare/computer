@@ -1,6 +1,7 @@
 import { createWorkspaceError } from "../errors.js";
 import type { Database } from "../storage.js";
 import { resolveInode } from "./resolve.js";
+import { getWriteBuffer } from "./writeBuffer.js";
 import { CHUNK_SIZE } from "./writeFile.js";
 
 export interface ReadFileOptions {
@@ -10,10 +11,6 @@ export interface ReadFileOptions {
 interface ChunkRow {
   hash: Uint8Array;
   size: number;
-}
-
-interface InlineRow {
-  inline_data: Uint8Array | null;
 }
 
 // Overloads match docs/04_filesystem_interface.md exactly.
@@ -48,20 +45,6 @@ export async function readFile(
   }
   if (node.type !== "file") {
     throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
-  }
-
-  const inline = db.one<InlineRow>(
-    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-    node.inode,
-  )?.inline_data;
-  if (inline !== undefined && inline !== null) {
-    if (wantString) return new TextDecoder().decode(inline);
-    return new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(inline);
-        controller.close();
-      },
-    });
   }
 
   const chunks = db.all<ChunkRow>(
@@ -119,10 +102,9 @@ export async function readFile(
   });
 }
 
-// Positional read primitive. Slices `inline_data` for inline files and
-// walks only the chunk rows that overlap [offset, offset+length) for
-// chunk-backed files, so the FUSE driver can serve a kernel read
-// without materializing the whole file.
+// Positional read primitive. Walks only the chunk rows that overlap
+// [offset, offset+length), so the FUSE driver can serve a kernel
+// read without materializing the whole file.
 export function readRangeSync(
   db: Database,
   path: string,
@@ -144,14 +126,14 @@ export function readRangeSync(
   }
   if (length === 0) return new Uint8Array();
 
-  const inline = db.one<InlineRow>(
-    "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-    node.inode,
-  )?.inline_data;
-  if (inline !== undefined && inline !== null) {
-    if (offset >= inline.byteLength) return new Uint8Array();
-    const end = Math.min(offset + length, inline.byteLength);
-    return inline.subarray(offset, end);
+  // If a write buffer is open for this inode, it is the source of
+  // truth: pending writes have not yet committed to vfs_chunks.
+  // Reading from SQLite here would return stale bytes.
+  const buffered = getWriteBuffer(db, node.inode);
+  if (buffered !== undefined && buffered.dirty) {
+    if (offset >= buffered.size) return new Uint8Array();
+    const end = Math.min(offset + length, buffered.size);
+    return buffered.buf.subarray(offset, end);
   }
 
   const totalSize =

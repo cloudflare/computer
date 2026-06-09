@@ -46,6 +46,8 @@ const EXTRA_VFS_METHODS = [
   "truncateFileSync",
   "chmodSync",
   "readRangeSync",
+  "openWriteBufferSync",
+  "releaseWriteBufferSync",
 ] as const;
 
 export interface CreateOptions {

@@ -126,8 +126,6 @@ function collectDbStats(db: Database): Record<string, unknown> {
       db.scalar<number>(
         "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM vfs_blob_bytes bb WHERE NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = bb.hash)",
       ) ?? 0;
-    out.vfs_inline_bytes_total =
-      db.scalar<number>("SELECT COALESCE(SUM(LENGTH(inline_data)), 0) FROM vfs_nodes") ?? 0;
   } catch (error) {
     out.error = (error as Error).message;
   }

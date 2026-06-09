@@ -21,19 +21,11 @@ export function stat(db: Database, path: string): WorkspaceStatResult {
 
   const isDirectory = node.type === "dir";
   const isFile = node.type === "file";
-  const inlineSize = isFile
-    ? db.one<{ size: number | null }>(
-        "SELECT length(inline_data) AS size FROM vfs_nodes WHERE inode = ?",
-        node.inode,
-      )?.size
-    : undefined;
   const size = isFile
-    ? (inlineSize ??
-      db.scalar<number>(
+    ? (db.scalar<number>(
         "SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?",
         node.inode,
-      ) ??
-      0)
+      ) ?? 0)
     : 0;
 
   return {

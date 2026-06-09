@@ -7,11 +7,17 @@ import type { Database } from "../storage.js";
 import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
 import { assertNotReadOnly } from "./mount-guard.js";
+import {
+  deleteWriteBuffer,
+  ensureCapacity as ensureBufferCapacity,
+  getWriteBuffer,
+  setWriteBuffer,
+  type WriteBufferEntry,
+} from "./writeBuffer.js";
 
 // Fixed chunk size. Exported so tests can size inputs precisely
 // without hard-coding the magic number twice.
 export const CHUNK_SIZE = 512 * 1024;
-export const INLINE_FILE_MAX_BYTES = 16 * 1024;
 
 export type WriteFileContent = string | Uint8Array | ReadableStream<Uint8Array>;
 
@@ -111,7 +117,7 @@ export async function writeFile(
     return;
   }
   const bytes = await materialize(content);
-  writeFileSync(db, path, bytes, options, now, false);
+  writeFileSync(db, path, bytes, options, now);
 }
 
 // Streaming write path. Reads the source one source-chunk at a time,
@@ -317,29 +323,13 @@ function existingChunkRefs(db: Database, inode: number): ChunkRef[] {
   return db.all<ChunkRef>("SELECT hash, size FROM vfs_chunks WHERE inode = ? ORDER BY idx", inode);
 }
 
-function inlineDataForInode(db: Database, inode: number): Uint8Array | null {
-  return (
-    db.one<{ inline_data: Uint8Array | null }>(
-      "SELECT inline_data FROM vfs_nodes WHERE inode = ?",
-      inode,
-    )?.inline_data ?? null
-  );
-}
-
 function fileSizeForInode(db: Database, inode: number): number {
-  const inline = inlineDataForInode(db, inode);
-  if (inline !== null) return inline.byteLength;
   return (
     db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_chunks WHERE inode = ?", inode) ?? 0
   );
 }
 
 function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
-  const inline = inlineDataForInode(db, inode);
-  if (inline !== null) {
-    const start = idx * CHUNK_SIZE;
-    return inline.subarray(start, Math.min(start + CHUNK_SIZE, inline.byteLength));
-  }
   const chunk = db.one<{ hash: Uint8Array }>(
     "SELECT hash FROM vfs_chunks WHERE inode = ? AND idx = ?",
     inode,
@@ -354,19 +344,6 @@ function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
     throw createWorkspaceError("EIO", "missing blob bytes");
   }
   return row.bytes;
-}
-
-function materializePrefix(db: Database, inode: number, size: number): Uint8Array {
-  const out = new Uint8Array(size);
-  let copied = 0;
-  for (let idx = 0; copied < size; idx++) {
-    const chunk = readChunkBytes(db, inode, idx);
-    if (chunk.byteLength > 0) {
-      out.set(chunk.subarray(0, Math.min(chunk.byteLength, size - copied)), copied);
-    }
-    copied += Math.min(CHUNK_SIZE, size - copied);
-  }
-  return out;
 }
 
 function resolveFileInode(db: Database, path: string): { inode: number; mode: number } {
@@ -398,28 +375,6 @@ function parentAndNameForResolvedPath(db: Database, path: string): [number, stri
   return [resolveParent(db, parts, canonical), parts[parts.length - 1]];
 }
 
-function writeInlineInode(
-  db: Database,
-  inode: number,
-  bytes: Uint8Array,
-  mode: number,
-  mtime: number,
-): void {
-  db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
-  if (bytes.byteLength > 0) {
-    stageBlob(db, sha256(bytes), bytes, mtime);
-  }
-  const rev = incrementRev(db);
-  db.run(
-    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
-    mode,
-    mtime,
-    rev,
-    bytes,
-    inode,
-  );
-}
-
 // Update an inode's chunk-backed representation in place. Iterates over
 // the full chunk grid but only touches `vfs_chunks` rows whose contents
 // or size actually changed, so untouched chunk rows keep their
@@ -435,7 +390,6 @@ function applyChunkedInodeUpdate(
   buildChunkBytes: (idx: number, start: number, end: number, existing: Uint8Array) => Uint8Array,
 ): void {
   const oldChunks = existingChunkRefs(db, inode);
-  const oldInline = inlineDataForInode(db, inode);
   const chunkCount = Math.ceil(size / CHUNK_SIZE);
   const oldChunkCount = oldChunks.length;
 
@@ -450,12 +404,7 @@ function applyChunkedInodeUpdate(
     // its rowid stays put.
     if (old !== undefined && old.size === intendedSize && !touched) continue;
 
-    const existingBytes =
-      oldInline !== null
-        ? oldInline.subarray(start, Math.min(start + CHUNK_SIZE, oldInline.byteLength))
-        : old !== undefined
-          ? readChunkBytes(db, inode, idx)
-          : new Uint8Array();
+    const existingBytes = old !== undefined ? readChunkBytes(db, inode, idx) : new Uint8Array();
     const chunkBytes = buildChunkBytes(idx, start, end, existingBytes);
     if (chunkBytes.byteLength !== intendedSize) {
       throw createWorkspaceError("EIO", "chunk builder returned wrong size");
@@ -478,7 +427,7 @@ function applyChunkedInodeUpdate(
 
   const rev = incrementRev(db);
   db.run(
-    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = NULL WHERE inode = ?",
+    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
     mode,
     mtime,
     rev,
@@ -508,10 +457,9 @@ export function createFileSync(
       throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
     }
     db.run(
-      "INSERT INTO vfs_nodes (type, mode, mtime, rev, manifest_hash, inline_data) VALUES ('file', ?, ?, 0, NULL, ?)",
+      "INSERT INTO vfs_nodes (type, mode, mtime, rev, manifest_hash) VALUES ('file', ?, ?, 0, NULL)",
       mode,
       mtime,
-      new Uint8Array(),
     );
     const inode = db.scalar<number>("SELECT last_insert_rowid()");
     if (inode === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
@@ -524,6 +472,97 @@ export function createFileSync(
     const rev = incrementRev(db);
     db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, inode);
   });
+}
+
+// Open a write buffer for an existing file. Subsequent writes,
+// truncates, and reads against the same Database operate on the
+// buffer instead of the SQLite chunk/blob store. Release commits
+// the bytes back to chunks/inline.
+export function openWriteBufferSync(db: Database, path: string): void {
+  const { inode, mode } = resolveFileInode(db, path);
+  const existing = getWriteBuffer(db, inode);
+  if (existing !== undefined) {
+    existing.openCount += 1;
+    return;
+  }
+  setWriteBuffer(db, inode, {
+    buf: new Uint8Array(0),
+    size: 0,
+    dirty: false,
+    openCount: 1,
+    mode,
+  });
+}
+
+// Release one open of an inode's write buffer. When the open count
+// reaches zero, commit the buffered bytes to chunk rows and drop
+// the entry. The committed mode is the buffer's mode at release
+// time so an intermediate chmod survives.
+export function releaseWriteBufferSync(db: Database, path: string, now: () => number): void {
+  const node = resolveFileInode(db, path);
+  const entry = getWriteBuffer(db, node.inode);
+  if (entry === undefined) return;
+  entry.openCount -= 1;
+  if (entry.openCount > 0) return;
+
+  if (!entry.dirty) {
+    deleteWriteBuffer(db, node.inode);
+    return;
+  }
+
+  const mtime = now();
+  const mode = entry.mode & 0o7777;
+  const buffered = entry.buf.subarray(0, entry.size);
+
+  db.transactionSync(() => {
+    if (entry.size === 0) {
+      // An empty file owns no chunk rows; clear any old ones the
+      // buffer would otherwise have replaced and bump metadata.
+      db.run("DELETE FROM vfs_chunks WHERE inode = ?", node.inode);
+      const rev = incrementRev(db);
+      db.run(
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
+        mode,
+        mtime,
+        rev,
+        node.inode,
+      );
+      return;
+    }
+    applyChunkedInodeUpdate(
+      db,
+      node.inode,
+      entry.size,
+      mode,
+      mtime,
+      (_idx, start, end) => start < entry.size && end > 0,
+      (_idx, start, end) => buffered.subarray(start, Math.min(end, entry.size)),
+    );
+  });
+
+  deleteWriteBuffer(db, node.inode);
+}
+
+// Hydrate a freshly-opened buffer with the inode's current bytes
+// the first time we mutate it. Avoids paying the read cost when the
+// caller opens a file just to truncate or overwrite it.
+function hydrateBufferIfNeeded(db: Database, inode: number, entry: WriteBufferEntry): void {
+  if (entry.dirty) return;
+  const existingSize = fileSizeForInode(db, inode);
+  if (existingSize === 0) {
+    entry.dirty = true;
+    return;
+  }
+  ensureBufferCapacity(entry, existingSize);
+  let copied = 0;
+  for (let idx = 0; copied < existingSize; idx++) {
+    const chunk = readChunkBytes(db, inode, idx);
+    if (chunk.byteLength === 0) break;
+    entry.buf.set(chunk, copied);
+    copied += chunk.byteLength;
+  }
+  entry.size = existingSize;
+  entry.dirty = true;
 }
 
 export function writeRangeSync(
@@ -542,19 +581,31 @@ export function writeRangeSync(
   if (bytes.byteLength === 0) return 0;
   const mtime = now();
 
+  const { inode, mode: existingMode } = resolveFileInode(db, path);
+  const mode = (options.mode ?? existingMode) & 0o7777;
+  const buffered = getWriteBuffer(db, inode);
+
+  // Buffered path: mutate the in-memory bytes and defer storage
+  // writes until release. Reads through the same Database see the
+  // buffer's current bytes via readRangeSync's buffer check.
+  if (buffered !== undefined) {
+    hydrateBufferIfNeeded(db, inode, buffered);
+    const writeEnd = offset + bytes.byteLength;
+    ensureBufferCapacity(buffered, writeEnd);
+    if (offset > buffered.size) {
+      buffered.buf.fill(0, buffered.size, offset);
+    }
+    buffered.buf.set(bytes, offset);
+    if (writeEnd > buffered.size) buffered.size = writeEnd;
+    buffered.mode = mode;
+    buffered.dirty = true;
+    return bytes.byteLength;
+  }
+
   db.transactionSync(() => {
-    const { inode, mode: existingMode } = resolveFileInode(db, path);
-    const mode = (options.mode ?? existingMode) & 0o7777;
     const oldSize = fileSizeForInode(db, inode);
     const writeEnd = offset + bytes.byteLength;
     const nextSize = Math.max(oldSize, writeEnd);
-
-    if (nextSize <= INLINE_FILE_MAX_BYTES) {
-      const next = materializePrefix(db, inode, nextSize);
-      next.set(bytes, offset);
-      writeInlineInode(db, inode, next, mode, mtime);
-      return;
-    }
 
     applyChunkedInodeUpdate(
       db,
@@ -592,14 +643,34 @@ export function truncateFileSync(
   }
   const mtime = now();
 
+  const { inode, mode } = resolveFileInode(db, path);
+  const buffered = getWriteBuffer(db, inode);
+
+  if (buffered !== undefined) {
+    hydrateBufferIfNeeded(db, inode, buffered);
+    if (size > buffered.size) {
+      ensureBufferCapacity(buffered, size);
+      buffered.buf.fill(0, buffered.size, size);
+    }
+    buffered.size = size;
+    buffered.dirty = true;
+    return;
+  }
+
   db.transactionSync(() => {
-    const { inode, mode } = resolveFileInode(db, path);
     const oldSize = fileSizeForInode(db, inode);
     if (oldSize === size) return;
 
-    if (size <= INLINE_FILE_MAX_BYTES) {
-      const next = materializePrefix(db, inode, size);
-      writeInlineInode(db, inode, next, mode, mtime);
+    if (size === 0) {
+      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+      const rev = incrementRev(db);
+      db.run(
+        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL WHERE inode = ?",
+        mode,
+        mtime,
+        rev,
+        inode,
+      );
       return;
     }
 
@@ -628,7 +699,6 @@ export function writeFileSync(
   bytes: Uint8Array,
   options: WriteFileOptions,
   now: () => number,
-  inlineAllowed = true,
 ): void {
   const { parts, path: canonical } = canonicalizePath(path);
   if (parts.length === 0) {
@@ -637,7 +707,6 @@ export function writeFileSync(
   assertNotReadOnly(db, canonical);
   const mode = (options.mode ?? 0o644) & 0o7777;
   const mtime = now();
-  const inline = inlineAllowed && bytes.byteLength <= INLINE_FILE_MAX_BYTES;
 
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);
@@ -681,18 +750,6 @@ export function writeFileSync(
     }
 
     const rev = incrementRev(db);
-    if (inline) {
-      db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
-        mode,
-        mtime,
-        rev,
-        bytes,
-        inode,
-      );
-      return;
-    }
-
     const chunks = chunksOf(bytes);
     // Upsert blobs and write the new chunk list.
     for (let idx = 0; idx < chunks.length; idx++) {
@@ -709,7 +766,7 @@ export function writeFileSync(
 
     const manifestHash = buildManifest(db, chunks, mtime);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
       mode,
       mtime,
       rev,
@@ -735,8 +792,6 @@ export function writeFileRangesSync(
   const mode = (options.mode ?? 0o644) & 0o7777;
   const ranges = normalizeRanges(dirtyRanges, bytes.byteLength);
   const mtime = now();
-  const inline = bytes.byteLength <= INLINE_FILE_MAX_BYTES;
-
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);
     const leafName = parts[parts.length - 1];
@@ -778,19 +833,6 @@ export function writeFileRangesSync(
     }
 
     const rev = incrementRev(db);
-    if (inline) {
-      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
-      db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = NULL, inline_data = ? WHERE inode = ?",
-        mode,
-        mtime,
-        rev,
-        bytes,
-        inode,
-      );
-      return;
-    }
-
     const nextChunks: ChunkRef[] = [];
     const chunkCount = Math.ceil(bytes.byteLength / CHUNK_SIZE);
     for (let idx = 0; idx < chunkCount; idx++) {
@@ -813,7 +855,7 @@ export function writeFileRangesSync(
 
     const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
     db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ?, inline_data = NULL WHERE inode = ?",
+      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, manifest_hash = ? WHERE inode = ?",
       mode,
       mtime,
       rev,

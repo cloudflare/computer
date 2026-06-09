@@ -1,10 +1,9 @@
 // Filesystem-side tables. These hold the inode graph and the
 // content-addressed blob store. See docs/03_filesystem_schema.md.
 
-// Bumped to 3 when `vfs_nodes.inline_data` landed for tiny files.
 // See `schema/migrations.ts` for the migration list; `sync.ts`
 // carries the fresh-install DDL.
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 2;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [
@@ -21,8 +20,7 @@ export const CORE_STATEMENTS = [
     mount_root    TEXT,
     stub_size     INTEGER,
     manifest_hash BLOB,
-    link_target   TEXT,
-    inline_data   BLOB
+    link_target   TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS vfs_dirents (
     parent_inode INTEGER NOT NULL,
