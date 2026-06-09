@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { isAbsolute } from "node:path";
+import type { Database } from "@cloudflare/dofs";
 import { createWorkspaceClient, type WorkspaceClient } from "@cloudflare/workspace-rpc/client";
 import { isStubTrackingEnabled, stubSnapshot } from "@cloudflare/workspace-rpc/debug";
 import {
@@ -104,6 +105,41 @@ interface WSDInfo {
   port: number;
 }
 
+// Snapshot DOFS table sizes and process memory so an external caller
+// can watch growth without attaching a debugger. Used by the
+// /__wsd/stats endpoint while diagnosing the npm install OOM.
+function collectDbStats(db: Database): Record<string, unknown> {
+  // biome-ignore lint/suspicious/noExplicitAny: small ad-hoc shape
+  const out: Record<string, any> = {};
+  try {
+    out.vfs_nodes_count = db.scalar<number>("SELECT COUNT(*) FROM vfs_nodes") ?? 0;
+    out.vfs_dirents_count = db.scalar<number>("SELECT COUNT(*) FROM vfs_dirents") ?? 0;
+    out.vfs_chunks_count = db.scalar<number>("SELECT COUNT(*) FROM vfs_chunks") ?? 0;
+    out.vfs_blobs_count = db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs") ?? 0;
+    out.vfs_blob_bytes_total =
+      db.scalar<number>("SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM vfs_blob_bytes") ?? 0;
+    out.vfs_blobs_orphan =
+      db.scalar<number>(
+        "SELECT COUNT(*) FROM vfs_blobs b WHERE NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = b.hash)",
+      ) ?? 0;
+    out.vfs_blob_bytes_orphan =
+      db.scalar<number>(
+        "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM vfs_blob_bytes bb WHERE NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = bb.hash)",
+      ) ?? 0;
+    out.vfs_inline_bytes_total =
+      db.scalar<number>("SELECT COALESCE(SUM(LENGTH(inline_data)), 0) FROM vfs_nodes") ?? 0;
+  } catch (error) {
+    out.error = (error as Error).message;
+  }
+  const mem = process.memoryUsage();
+  out.rss = mem.rss;
+  out.heap_used = mem.heapUsed;
+  out.heap_total = mem.heapTotal;
+  out.external = mem.external;
+  out.array_buffers = mem.arrayBuffers;
+  return out;
+}
+
 interface HTTPHandle {
   server: Server;
   // Tear down the WebSocketServer alongside the HTTP server.
@@ -113,6 +149,7 @@ interface HTTPHandle {
 function createHTTPServer(
   info: WSDInfo,
   rpc: ReturnType<typeof createWorkspaceServer>,
+  getStats?: () => Record<string, unknown>,
 ): HTTPHandle {
   // Holds the current outbound capnweb session opened via /connect.
   // Re-POSTing /connect (e.g. after a DO hibernate + new incarnation)
@@ -186,6 +223,15 @@ function createHTTPServer(
         return;
       }
       const body = request.method === "HEAD" ? "" : JSON.stringify(stubSnapshot());
+      send(response, 200, body, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      return;
+    }
+
+    if (path === "/__wsd/stats") {
+      const stats = getStats?.() ?? {};
+      const body = request.method === "HEAD" ? "" : JSON.stringify(stats);
       send(response, 200, body, {
         "content-type": "application/json; charset=utf-8",
       });
@@ -481,7 +527,7 @@ async function main(): Promise<void> {
         }
       : {}),
   });
-  const http = createHTTPServer(info, rpc);
+  const http = createHTTPServer(info, rpc, () => collectDbStats(db));
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
