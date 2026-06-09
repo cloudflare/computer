@@ -217,16 +217,7 @@ async function writeFileStreaming(
       inode = existing.child_inode;
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
-      db.run(
-        "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('file', ?, ?, 0)",
-        mode,
-        mtime,
-      );
-      const allocated = db.scalar<number>("SELECT last_insert_rowid()");
-      if (allocated === undefined) {
-        throw createWorkspaceError("EIO", "failed to allocate inode");
-      }
-      inode = allocated;
+      inode = insertFileNode(db, mode, mtime);
       db.run(
         "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
         parentInode,
@@ -255,6 +246,21 @@ async function writeFileStreaming(
       inode,
     );
   });
+}
+
+// Allocate a fresh file inode row with the supplied mode and mtime,
+// using SQLite's RETURNING so the new rowid comes back in the same
+// statement instead of through a follow-up SELECT last_insert_rowid().
+function insertFileNode(db: Database, mode: number, mtime: number): number {
+  const row = db.one<{ inode: number }>(
+    "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('file', ?, ?, 0) RETURNING inode",
+    mode,
+    mtime,
+  );
+  if (row === undefined) {
+    throw createWorkspaceError("EIO", "failed to allocate inode");
+  }
+  return row.inode;
 }
 
 function upsertChunkBlob(db: Database, chunk: PreparedChunk, lastSeen: number): void {
@@ -456,21 +462,23 @@ export function createFileSync(
     if (existing !== undefined) {
       throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
     }
-    db.run(
-      "INSERT INTO vfs_nodes (type, mode, mtime, rev, manifest_hash) VALUES ('file', ?, ?, 0, NULL)",
+    const rev = incrementRev(db);
+    // INSERT with RETURNING folds the last_insert_rowid lookup into
+    // the same statement, and computing rev up front lets us write
+    // the node row with its final stamp in one shot.
+    const row = db.one<{ inode: number }>(
+      "INSERT INTO vfs_nodes (type, mode, mtime, rev, manifest_hash) VALUES ('file', ?, ?, ?, NULL) RETURNING inode",
       mode,
       mtime,
+      rev,
     );
-    const inode = db.scalar<number>("SELECT last_insert_rowid()");
-    if (inode === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
+    if (row === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
     db.run(
       "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
       parentInode,
       leafName,
-      inode,
+      row.inode,
     );
-    const rev = incrementRev(db);
-    db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, inode);
   });
 }
 
@@ -731,16 +739,7 @@ export function writeFileSync(
       // are cleaned up by a later gc() pass.
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
-      db.run(
-        "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('file', ?, ?, 0)",
-        mode,
-        mtime,
-      );
-      const allocated = db.scalar<number>("SELECT last_insert_rowid()");
-      if (allocated === undefined) {
-        throw createWorkspaceError("EIO", "failed to allocate inode");
-      }
-      inode = allocated;
+      inode = insertFileNode(db, mode, mtime);
       db.run(
         "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
         parentInode,
@@ -814,16 +813,7 @@ export function writeFileRangesSync(
       inode = existing.child_inode;
       oldChunks = existingChunkRefs(db, inode);
     } else {
-      db.run(
-        "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('file', ?, ?, 0)",
-        mode,
-        mtime,
-      );
-      const allocated = db.scalar<number>("SELECT last_insert_rowid()");
-      if (allocated === undefined) {
-        throw createWorkspaceError("EIO", "failed to allocate inode");
-      }
-      inode = allocated;
+      inode = insertFileNode(db, mode, mtime);
       db.run(
         "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
         parentInode,

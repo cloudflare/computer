@@ -52,17 +52,18 @@ export function symlink(db: Database, target: string, path: string, now: () => n
 
     const rev = incrementRev(db);
     const mtime = now();
-    db.run(
-      "INSERT INTO vfs_nodes (type, mode, mtime, rev, link_target) VALUES ('symlink', ?, ?, ?, ?)",
+    // RETURNING folds the rowid read into the INSERT.
+    const row = db.one<{ inode: number }>(
+      "INSERT INTO vfs_nodes (type, mode, mtime, rev, link_target) VALUES ('symlink', ?, ?, ?, ?) RETURNING inode",
       0o777,
       mtime,
       rev,
       target,
     );
-    const inode = db.scalar<number>("SELECT last_insert_rowid()");
-    if (inode === undefined) {
+    if (row === undefined) {
       throw createWorkspaceError("EIO", "failed to allocate inode");
     }
+    const inode = row.inode;
     db.run(
       "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
       parentInode,

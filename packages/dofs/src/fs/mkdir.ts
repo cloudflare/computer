@@ -46,16 +46,17 @@ function createDir(
   mtime: number,
   rev: number,
 ): number {
-  db.run(
-    "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('dir', ?, ?, ?)",
+  // RETURNING folds the rowid read into the INSERT.
+  const row = db.one<{ inode: number }>(
+    "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('dir', ?, ?, ?) RETURNING inode",
     mode,
     mtime,
     rev,
   );
-  const inode = db.scalar<number>("SELECT last_insert_rowid()");
-  if (inode === undefined) {
+  if (row === undefined) {
     throw createWorkspaceError("EIO", "failed to allocate inode");
   }
+  const inode = row.inode;
   db.run(
     "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
     parentInode,

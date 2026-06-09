@@ -9,10 +9,13 @@ import type { Database } from "./storage.js";
 // otherwise race with concurrent mutations. The DO single-writer model
 // makes that unlikely in practice, but the contract is "wrap me".
 export function incrementRev(db: Database): number {
-  db.run("UPDATE vfs_meta SET v = v + 1 WHERE k = 'rev'");
-  const next = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = ?", "rev");
-  if (next === undefined) {
+  // RETURNING folds the read into the same statement so each mutation
+  // pays one round-trip instead of two. SQLite has supported it since
+  // 3.35; both node:sqlite and Cloudflare DO SqlStorage are on newer
+  // versions.
+  const row = db.one<{ v: number }>("UPDATE vfs_meta SET v = v + 1 WHERE k = 'rev' RETURNING v");
+  if (row === undefined) {
     throw new Error("vfs_meta.rev row missing; was initializeSchema run?");
   }
-  return next;
+  return row.v;
 }
