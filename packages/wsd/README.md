@@ -26,6 +26,7 @@ Current endpoints:
 
 - `GET /health` returns `200 OK` with `ok\n` once the HTTP server is up (it does not currently block on FUSE readiness).
 - `GET /__wsd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
+- `GET /__wsd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, and process resident memory. Useful for watching how the store grows under load.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
 - `POST /api` is a capnweb HTTP-batch RPC endpoint backed by `@cloudflare/workspace-rpc`. Non-POST methods return `405`.
 - `GET /ws` upgrades to a WebSocket carrying the same capnweb RPC surface. This is the container's primary sync carrier.
@@ -41,33 +42,46 @@ Current filesystem support:
 - Optional host/DO synchronization: when `UPSTREAM_URL` is set, `wsd` opens a `SyncClient` from `@cloudflare/workspace-rpc/client` against that URL and runs the sync loop in the background.
 - No on-disk persistence yet — the in-memory VFS is rebuilt on each start, with sync pulling state back from the upstream when configured.
 
-## FUSE buffer flushing
+## FUSE write model
 
-The FUSE driver in `src/fuse/driver.ts` keeps a per-file in-memory
-buffer (`files` Map) that `write` updates directly. The buffer is
-the FUSE read path's source of truth, so reads stay fast even when
-the backing `@platformatic/vfs` filesystem would otherwise need to
-stream chunks from SQLite.
+The FUSE driver in `src/fuse/driver.ts` is a thin adapter over the
+DOFS provider. The byte owner is DOFS, not the FUSE driver: there
+is no per-file staging buffer inside `wsd` for normal writes.
 
-Writes only become visible through the VFS surface (capnweb sync,
-any host-side `@platformatic/vfs` consumer) once the driver spills
-the buffer:
+When the backing provider advertises the buffered-write surface
+(`openWriteBufferForCreateSync`, `openWriteBufferSync`,
+`releaseWriteBufferSync`), the FUSE op map wires up to it directly:
 
-- `release` — fires when the kernel drops the last reference to an
-  open file. The standard "close-and-forget" path.
-- `flush` — fires on every `close(2)`, before `release`. Catches the
-  case where one process closes its handle while another keeps the
-  file open.
-- `fsync(2)` — explicit user-driven sync.
+- `create` calls `openWriteBufferForCreateSync` on the provider.
+  No SQL runs yet — the new file is held in a path-keyed pending
+  buffer inside DOFS.
+- `open` on an existing file calls `openWriteBufferSync` so subsequent
+  reads and writes route through the same inode-keyed cache.
+- `write` and `truncate` mutate the DOFS write buffer directly.
+- `read` serves from the buffer when one is open and dirty, otherwise
+  from the chunk store via `readRangeSync`.
+- `release` commits the buffer to `vfs_chunks` in one transaction
+  per file and drops the entry. Pending-create entries do the INSERT,
+  dirent, and chunk rows together.
 
-Plain `write` does not spill. A burst of small writes coalesces in
-the buffer and pays the chunk/hash cost once on close.
+Reads and stats during the open window see the buffered bytes. RPC
+or sync callers reading through the VFS surface get the same view
+as the in-flight FUSE writer.
 
-If you're tracking down "file looks empty over RPC" symptoms,
-either the writer skipped `close(2)`/`fsync`, or one of the spill
-ops is broken. The driver's `flushEntry` helper is the single place
-VFS spills happen — a missing call site there is the most likely
-cause.
+When the provider does not expose the buffered surface (legacy
+in-process tests, alternate providers), the driver falls back to the
+old staged path: per-file in-memory `FileEntry` buffer that spills on
+`release` / `flush` / `fsync`. The fallback is exercised by tests
+that explicitly disable the direct-write methods on the VFS.
+
+### `/__wsd/stats` for diagnosis
+
+When a workload is misbehaving — orphan blobs piling up, RSS growing
+faster than expected, dirty buffers stuck — `GET /__wsd/stats` is the
+first port of call. It returns table counts, total and orphan blob
+byte sizes, inline byte totals, and the process's RSS/heap/external
+figures. Poll it during a long-running install or test to watch
+how the store grows.
 
 ## FUSE prerequisites
 
@@ -137,4 +151,4 @@ Standalone binaries are release artifacts, not files published in the npm packag
 npm run build:bin --workspace=@cloudflare/workspace-wsd
 ```
 
-The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets per target. See `PLAN.md` Phase 3 for the full migration notes.
+The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets per target.

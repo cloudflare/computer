@@ -52,7 +52,8 @@ CREATE TABLE vfs_nodes (
   mount_root    TEXT,                                -- nullable; tags mount provenance
   stub_size     INTEGER,                             -- non-null while a lazy stub
   manifest_hash BLOB,                                -- references vfs_manifests.hash
-  link_target   TEXT                                 -- non-null when type = 'symlink'
+  link_target   TEXT,                                -- non-null when type = 'symlink'
+  size          INTEGER NOT NULL DEFAULT 0           -- cached file size, kept in sync on writes
 );
 CREATE INDEX vfs_nodes_by_rev ON vfs_nodes(rev);
 ```
@@ -61,7 +62,11 @@ One row per live inode. `mount_root` records the mount this row
 originated from, used for write-rejection and writable-mount mirroring.
 `stub_size` is non-null while the file is a lazy-mount stub whose
 bytes haven't been fetched yet — `stat()` reports it as the file size
-and the first read fetches the bytes.
+and the first read fetches the bytes. `size` denormalises the
+chunk-sum file size onto the node row so `stat`, `lstat`, and the
+positional read primitive can read it directly instead of running
+`SUM(size) FROM vfs_chunks` on every call. Every write path stamps
+it alongside `mode`/`mtime`/`rev`.
 
 The `vfs_nodes_by_rev` index supports `coalesceChanges`'s
 `WHERE rev > sinceRev` scan over live inodes, which the sync protocol
