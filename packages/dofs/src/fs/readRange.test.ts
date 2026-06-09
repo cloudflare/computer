@@ -5,7 +5,7 @@ import { withDB } from "./with-db.js";
 import { CHUNK_SIZE, writeFileSync } from "./writeFile.js";
 
 describe("readRangeSync", () => {
-  it("reads from inline files at non-zero offset", async () => {
+  it("reads small chunk-backed files at non-zero offset", async () => {
     await withDB((db) => {
       writeFileSync(db, "/inline.txt", new TextEncoder().encode("hello world"), {}, () => 1);
 
@@ -14,7 +14,7 @@ describe("readRangeSync", () => {
     });
   });
 
-  it("clamps the inline read at end of file", async () => {
+  it("clamps the read at end of file", async () => {
     await withDB((db) => {
       writeFileSync(db, "/inline.txt", new TextEncoder().encode("abc"), {}, () => 1);
 

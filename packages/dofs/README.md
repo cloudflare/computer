@@ -47,7 +47,7 @@ export class WorkspaceDO extends DurableObject {
 - All filesystem primitives listed above are implemented and unit-tested.
 - `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) implemented and exported from the package entrypoint; consumed by `@cloudflare/workspace-wsd`.
 - Buffered-write surface for the FUSE driver: `createFileSync`,
-  `writeRangeSync`, `truncateFileSync`, `readRangeSync`,
+  `writeRangeSync`, `truncateFileSync`, `readRangeSync`, `chmodSync`,
   `openWriteBufferSync`, `openWriteBufferForCreateSync`, and
   `releaseWriteBufferSync` on the provider. The driver opens a buffer
   on FUSE create/open, mutates it through subsequent writes and

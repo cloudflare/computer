@@ -22,7 +22,7 @@ describe("fetch wire", () => {
     });
   });
 
-  it("fetchChanges and fetchObjects include inline direct writes", async () => {
+  it("fetchChanges and fetchObjects include small direct writes", async () => {
     await withDB(async (db) => {
       createFileSync(db, "/inline.txt", {}, () => 1);
       writeRangeSync(db, "/inline.txt", new TextEncoder().encode("inline direct"), 0, {}, () => 2);

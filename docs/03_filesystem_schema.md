@@ -238,10 +238,23 @@ DO reload doesn't re-list.
 
 - The root directory is always `inode = 1`, type `dir`, with no
   parent dirent.
-- A `vfs_nodes` row with `type = 'file'` has either:
-  - `stub_size NOT NULL` and no `vfs_chunks` rows (lazy stub), **or**
-  - `manifest_hash NOT NULL`, a matching `vfs_manifests` row, and
-    one `vfs_chunks` row per chunk.
+- A `vfs_nodes` row with `type = 'file'` is in one of two shapes:
+  - **lazy stub**: `stub_size NOT NULL`, no `vfs_chunks` rows. The
+    first read fetches the bytes and migrates the row to the
+    committed shape.
+  - **committed file**: zero or more `vfs_chunks` rows (one per
+    chunk; an empty file has zero). `manifest_hash` is optional.
+    When set, a matching `vfs_manifests` row lists the same chunk
+    hashes and lets sync skip the per-chunk fetch on receivers
+    that already have the manifest. When `NULL`, sync walks
+    `vfs_chunks` directly. The buffered-write path commits chunks
+    with `manifest_hash = NULL`; the legacy whole-file
+    `writeFileSync` path stamps a manifest.
+- For every file row, `vfs_nodes.size = COALESCE(SUM(vfs_chunks.size), 0)`
+  over its `vfs_chunks` rows. Every write path stamps the column
+  in the same `UPDATE` that bumps `mode`/`mtime`/`rev`, so `stat`,
+  `lstat`, and `readRangeSync` can read it directly instead of
+  running the aggregate.
 - Every `vfs_chunks.hash` references an existing `vfs_blobs.hash`.
 - Every `vfs_blobs.hash` has a matching `vfs_blob_bytes` row.
 - Every `vfs_manifests.hash` referenced by

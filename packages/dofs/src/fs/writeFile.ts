@@ -488,7 +488,7 @@ export function createFileSync(
 // Open a write buffer for an existing file. Subsequent writes,
 // truncates, and reads against the same Database operate on the
 // buffer instead of the SQLite chunk/blob store. Release commits
-// the bytes back to chunks/inline.
+// the bytes back to chunks.
 export function openWriteBufferSync(db: Database, path: string): void {
   const { path: canonical } = canonicalizePath(path);
   const pending = getPendingWriteBufferByPath(db, canonical);
@@ -691,10 +691,14 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
   return realInode;
 }
 
-// Commit a pending-create buffer identified by its canonical path,
-// leaving the open count untouched. Used by link, rename, and unlink
-// against a still-open file so the dirent operation sees a real
-// inode. Returns true when a pending buffer was committed.
+/**
+ * @internal
+ * Bridges a pending-create write buffer into the SQL world ahead of a
+ * dirent-mutating provider operation (link, rename, unlink). Leaves
+ * the open count untouched so a still-open handle keeps writing into
+ * the now-promoted buffer. Returns true when a pending buffer was
+ * committed. External callers should never invoke this directly.
+ */
 export function flushPendingByPath(db: Database, path: string, now: () => number): boolean {
   const { path: canonical } = canonicalizePath(path);
   const entry = getPendingWriteBufferByPath(db, canonical);

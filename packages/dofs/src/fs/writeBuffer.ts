@@ -3,7 +3,7 @@
 // Holds per-inode mutable byte buffers between an explicit open and
 // release. While a buffer is open, all reads and writes for that
 // inode go through the buffer rather than the SQLite blob/chunk
-// store. Release commits the bytes to chunks/inline once per file
+// store. Release commits the bytes to chunks once per file
 // and evicts the entry, so per-syscall writes no longer accumulate
 // orphan blob rows in the store.
 //

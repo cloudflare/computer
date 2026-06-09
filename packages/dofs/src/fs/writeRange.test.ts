@@ -94,7 +94,7 @@ describe("direct range writes", () => {
     });
   });
 
-  it("zero-fills sparse inline writes", async () => {
+  it("zero-fills sparse writes", async () => {
     await withDB(async (db) => {
       createFileSync(db, "/sparse.txt", {}, () => 1000);
 
