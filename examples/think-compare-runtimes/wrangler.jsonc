@@ -1,0 +1,109 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "think-compare-runtimes",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-06-04",
+  "compatibility_flags": ["nodejs_compat"],
+  // The Worker is reachable only through this custom domain, gated by
+  // Cloudflare Access. workers_dev and preview_urls are disabled so the
+  // unprotected *.workers.dev URL isn't a back door around Access.
+  "routes": [
+    {
+      "pattern": "think-compare.4g3nts.com",
+      "custom_domain": true
+    }
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "not_found_handling": "single-page-application"
+  },
+  "ai": { "binding": "AI" },
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+  "vars": {
+    "CONTAINER_SLEEP_AFTER": "2m",
+    "SANDBOX_TRANSPORT": "rpc",
+    "WARM_POOL_REFRESH_INTERVAL": "10000",
+    "WARM_POOL_RESET_KEY": "2026-06-05-container-cleanup-v3",
+    "WARM_POOL_TARGET": "4"
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "containers": [
+    {
+      "class_name": "WorkspaceContainerHost",
+      "image": "./Dockerfile.workspace",
+      "instance_type": "standard-1",
+      "max_instances": 10
+    },
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile.sandbox",
+      "instance_type": "standard-1",
+      "max_instances": 10
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CompareRun",
+        "class_name": "CompareRun"
+      },
+      {
+        "name": "Sandbox",
+        "class_name": "Sandbox"
+      },
+      {
+        "name": "SandboxWarmPool",
+        "class_name": "SandboxWarmPool"
+      },
+      {
+        "name": "WorkspaceContainerHost",
+        "class_name": "WorkspaceContainerHost"
+      },
+      {
+        "name": "WorkspaceWarmPool",
+        "class_name": "WorkspaceWarmPool"
+      },
+      {
+        "name": "WorkspaceThinkAgent",
+        "class_name": "WorkspaceThinkAgent"
+      },
+      {
+        "name": "SandboxThinkAgent",
+        "class_name": "SandboxThinkAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CompareRun"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["Sandbox"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["WorkspaceThinkAgent", "SandboxThinkAgent"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["WorkspaceContainerHost", "WorkspaceWarmPool", "SandboxWarmPool"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "upload_source_maps": true
+}

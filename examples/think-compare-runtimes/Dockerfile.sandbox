@@ -1,0 +1,6 @@
+# Sandbox runtime image for the comparison example. This extends
+# the Sandbox SDK base image used by getSandbox(env.Sandbox, ...).
+
+FROM docker.io/cloudflare/sandbox:0.11.0
+
+EXPOSE 8080

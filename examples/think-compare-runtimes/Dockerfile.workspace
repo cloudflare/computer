@@ -1,0 +1,30 @@
+# Workspace runtime image for the comparison example. It runs the
+# wsd daemon so shell commands can see the same /workspace tree that
+# Workspace.fs stores in Durable Object storage.
+#
+# Base image is node:22-trixie-slim so the agent has node + npm
+# available out of the box for in-container verification (e.g. npm
+# install / npm test). It's also Debian-glibc, which is what the wsd
+# SEA binary is built against.
+#
+# FUSE_MOUNT=auto lets wsd use real kernel FUSE when available and
+# fall back to the userspace shim in local development environments
+# that do not expose /dev/fuse.
+
+FROM ghcr.io/cloudflare/workspace-wsd-linux-x64:0.0.0-alpha.7 AS wsd
+
+FROM --platform=linux/amd64 node:22-trixie-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates git fuse3 libfuse2t64 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=wsd /usr/local/bin/wsd /usr/local/bin/wsd
+
+ENV PORT=8080
+ENV MOUNT_POINT=/workspace
+ENV FUSE_MOUNT=auto
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/local/bin/wsd"]

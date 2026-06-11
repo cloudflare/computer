@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development.
+#
+# wrangler dev / vite dev under colima or Docker Desktop does not
+# expose /dev/fuse to Workers Containers. This tells the Workspace
+# container to run wsd with its userspace shim locally. Production
+# leaves this unset so wsd uses real kernel FUSE.
+FUSE_SHIM=1
