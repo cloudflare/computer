@@ -39,10 +39,11 @@
     "README.md"
   ],
   "scripts": {
+    "build:deps": "npm run build --workspace @cloudflare/workspace-rpc",
     "build:shell-bundle": "node ./src/backends/worker/script/build-bundle.mjs",
-    "prebuild": "npm run build:shell-bundle",
+    "prebuild": "npm run build:deps && npm run build:shell-bundle",
     "pretest": "npm run build:shell-bundle",
-    "pretypecheck": "npm run build:shell-bundle",
+    "pretypecheck": "npm run build:deps && npm run build:shell-bundle",
     "prepare": "npm run build:shell-bundle",
     "build": "rolldown -c",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
