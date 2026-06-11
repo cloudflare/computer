@@ -15,7 +15,12 @@ import { handleApiRequest } from "./http";
 import type { RunEventInput } from "./run-events";
 import { getRuntimeAgentHandles } from "./runtime-agent-handles";
 import { startComparisonRun } from "./start-run";
-import { SandboxThinkAgent, WorkspaceProxy, WorkspaceThinkAgent } from "./think/agents";
+import {
+  SandboxThinkAgent,
+  WorkspaceProxy,
+  WorkspaceServiceProxy,
+  WorkspaceThinkAgent,
+} from "./think/agents";
 
 export { Sandbox } from "@cloudflare/sandbox";
 export {
@@ -23,6 +28,7 @@ export {
   SandboxWarmPool,
   WorkspaceContainerHost,
   WorkspaceProxy,
+  WorkspaceServiceProxy,
   WorkspaceThinkAgent,
   WorkspaceWarmPool,
 };
@@ -36,7 +42,7 @@ export interface Env {
   WARM_POOL_REFRESH_INTERVAL?: string;
   WARM_POOL_RESET_KEY?: string;
   WARM_POOL_TARGET?: string;
-  FUSE_SHIM?: string;
+  FUSE_MOUNT?: string;
   Sandbox: DurableObjectNamespace<SandboxDO>;
   SandboxWarmPool: ContainerWarmPoolNamespace;
   WorkspaceContainerHost: DurableObjectNamespace<WorkspaceContainerHost>;
@@ -103,6 +109,17 @@ export class CompareRun extends Server<Env> {
     return this.#events;
   }
 
+  async stopComparison(): Promise<void> {
+    await this.#started;
+    const { workspaceAgent, sandboxAgent } = await getRuntimeAgentHandles({
+      runId: this.name,
+      workspaceNamespace: this.env.WorkspaceThinkAgent,
+      sandboxNamespace: this.env.SandboxThinkAgent,
+    });
+    const agents = await Promise.all([workspaceAgent, sandboxAgent]);
+    await Promise.all(agents.map((agent) => agent.cancelComparison?.()));
+  }
+
   async #startAgents(runId: string): Promise<void> {
     try {
       const { workspaceAgent, sandboxAgent } = await getRuntimeAgentHandles({
@@ -151,11 +168,16 @@ export class CompareRun extends Server<Env> {
 
 export default {
   async fetch(request, env) {
-    const apiResponse = await handleApiRequest(request, () =>
-      startComparisonRun({
-        getRun: (runId) => getServerByName(env.CompareRun, runId),
-      }),
-    );
+    const apiResponse = await handleApiRequest(request, {
+      startRun: () =>
+        startComparisonRun({
+          getRun: (runId) => getServerByName(env.CompareRun, runId),
+        }),
+      async stopRun(runId) {
+        const run = (await getServerByName(env.CompareRun, runId)) as unknown as CompareRun;
+        await run.stopComparison();
+      },
+    });
 
     if (apiResponse) {
       return apiResponse;

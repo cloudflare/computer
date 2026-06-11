@@ -26,6 +26,41 @@ describe("applyRunMessage", () => {
     expect(withLiveEvent).toEqual([historyEvent, liveEvent]);
   });
 
+  test("keeps the overall run open while one runtime is still running", () => {
+    const summary = deriveRunSummary([
+      event({
+        sequence: 0,
+        runtime: "both",
+        kind: "run_started",
+        timestamp: "2026-06-04T00:00:00.000Z",
+      }),
+      event({
+        sequence: 1,
+        runtime: "workspace",
+        kind: "runtime_started",
+        timestamp: "2026-06-04T00:00:01.000Z",
+      }),
+      event({
+        sequence: 2,
+        runtime: "sandbox",
+        kind: "runtime_started",
+        timestamp: "2026-06-04T00:00:02.000Z",
+      }),
+      event({
+        sequence: 3,
+        runtime: "sandbox",
+        kind: "runtime_completed",
+        timestamp: "2026-06-04T00:01:34.000Z",
+      }),
+    ]);
+
+    expect(summary.status).toBe("running");
+    expect(summary.completedAt).toBeNull();
+    expect(summary.elapsedMs).toBeNull();
+    expect(summary.runtimes.sandbox.status).toBe("completed");
+    expect(summary.runtimes.workspace.status).toBe("running");
+  });
+
   test("derives per-runtime and overall terminal status", () => {
     const events = [
       event({

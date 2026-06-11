@@ -1,11 +1,17 @@
 import { getSandbox, type Sandbox as SandboxDO } from "@cloudflare/sandbox";
-import { Think } from "@cloudflare/think";
-import { type DurableObjectStorageLike, Workspace, WorkspaceProxy } from "@cloudflare/workspace";
+import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
+import {
+  type DurableObjectStorageLike,
+  Workspace,
+  WorkspaceProxy,
+  WorkspaceServiceProxy,
+  type WorkspaceStub,
+} from "@cloudflare/workspace";
 import { CloudflareContainerBackend } from "@cloudflare/workspace/backends/container";
 import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/workspace/backends/worker";
 import type { ToolSet } from "ai";
 import { getServerByName } from "partyserver";
-import type { RuntimeId } from "../../shared/events";
+import type { ExecutionTarget, RunEventKind, RuntimeId } from "../../shared/events";
 import type { ComparisonFixture, FixtureFile } from "../../shared/fixture";
 import {
   type ContainerWarmPoolHandle,
@@ -37,7 +43,7 @@ import { runRealThinkTurn } from "./real-turn";
 import { type CompareRunEventSink, createRemoteRunEventRecorder } from "./remote-recorder";
 import { createRuntimeThinkTools, type RuntimeThinkToolRecorder } from "./runtime-tools";
 
-export { WorkspaceProxy };
+export { WorkspaceProxy, WorkspaceServiceProxy };
 
 export interface RuntimeThinkAgentEnv {
   AI: Ai;
@@ -47,7 +53,7 @@ export interface RuntimeThinkAgentEnv {
   WorkspaceContainerHost: DurableObjectNamespace<WorkspaceContainerHost>;
   WorkspaceWarmPool: ContainerWarmPoolNamespace;
   CONTAINER_SLEEP_AFTER?: string;
-  FUSE_SHIM?: string;
+  FUSE_MOUNT?: string;
   LOADER: WorkerBackendOptions["loader"];
   WARM_POOL_RESET_KEY?: string;
 }
@@ -58,7 +64,10 @@ interface RunConfig {
 }
 
 abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
+  #activeRecorder: RuntimeThinkToolRecorder | null = null;
+  #messageDelta = "";
   #preparedTools: ToolSet | null = null;
+  #thinkingDelta = "";
 
   override chatRecovery = false;
 
@@ -92,19 +101,33 @@ abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
     await this.runWithRuntime(config, recorder);
   }
 
+  async cancelComparison(): Promise<void> {
+    this.cancelAllChats();
+  }
+
   protected async runThinkTurn(
     adapter: RuntimeAdapter,
     recorder: RuntimeThinkToolRecorder,
     fixture: ComparisonFixture,
   ): Promise<void> {
+    this.#activeRecorder = recorder;
+    this.#messageDelta = "";
+    this.#thinkingDelta = "";
     this.#preparedTools = createRuntimeThinkTools({ adapter, recorder }) as unknown as ToolSet;
 
-    await runRealThinkTurn({
-      adapter,
-      recorder,
-      fixture,
-      invoke: ({ prompt }) => this.invokeThink(prompt),
-    });
+    try {
+      await runRealThinkTurn({
+        adapter,
+        recorder,
+        fixture,
+        invoke: ({ prompt }) => this.invokeThink(prompt),
+      });
+      await this.#flushStreamingDeltas();
+    } finally {
+      this.#activeRecorder = null;
+      this.#messageDelta = "";
+      this.#thinkingDelta = "";
+    }
   }
 
   override getTools(): ToolSet {
@@ -121,6 +144,38 @@ abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
     ]);
 
     return { text: await this.awaitAssistantText(submission.submissionId) };
+  }
+
+  override async onChunk(ctx: ChunkContext): Promise<void> {
+    const chunk = ctx.chunk as { type?: string; text?: unknown; delta?: unknown };
+    const text =
+      typeof chunk.text === "string"
+        ? chunk.text
+        : typeof chunk.delta === "string"
+          ? chunk.delta
+          : "";
+    if (text.length === 0) return;
+
+    if (chunk.type === "reasoning-delta") {
+      this.#thinkingDelta += text;
+      await this.#flushThinkingDeltaIfReady(false);
+      return;
+    }
+
+    if (chunk.type === "text-delta") {
+      this.#messageDelta += text;
+      await this.#flushMessageDeltaIfReady(false);
+    }
+  }
+
+  override async onStepFinish(ctx: StepContext): Promise<void> {
+    await this.#flushStreamingDeltas();
+    const finishReason = (ctx as { finishReason?: unknown }).finishReason;
+    await this.#recordStreamEvent({
+      kind: "agent_step",
+      title: "Think step finished",
+      detail: `finishReason: ${typeof finishReason === "string" ? finishReason : "unknown"}`,
+    });
   }
 
   async awaitAssistantText(submissionId: string): Promise<string> {
@@ -146,6 +201,46 @@ abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
       await scheduler.wait(500);
     }
   }
+
+  async #flushStreamingDeltas(): Promise<void> {
+    await this.#flushThinkingDeltaIfReady(true);
+    await this.#flushMessageDeltaIfReady(true);
+  }
+
+  async #flushThinkingDeltaIfReady(force: boolean): Promise<void> {
+    if (this.#thinkingDelta.length === 0) return;
+    if (!force && this.#thinkingDelta.length < 80) return;
+    const detail = this.#thinkingDelta;
+    this.#thinkingDelta = "";
+    await this.#recordStreamEvent({
+      kind: "agent_thinking_delta",
+      title: "Think reasoning stream",
+      detail,
+    });
+  }
+
+  async #flushMessageDeltaIfReady(force: boolean): Promise<void> {
+    if (this.#messageDelta.length === 0) return;
+    if (!force && this.#messageDelta.length < 80) return;
+    const detail = this.#messageDelta;
+    this.#messageDelta = "";
+    await this.#recordStreamEvent({
+      kind: "agent_message_delta",
+      title: "Think response stream",
+      detail,
+    });
+  }
+
+  async #recordStreamEvent(input: {
+    kind: "agent_message_delta" | "agent_thinking_delta" | "agent_step";
+    title: string;
+    detail: string;
+  }): Promise<void> {
+    await this.#activeRecorder?.record({
+      runtime: this.runtime,
+      ...input,
+    });
+  }
 }
 
 export class WorkspaceThinkAgent extends RuntimeThinkAgent {
@@ -153,6 +248,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
   readonly runtimeLabel = "Workspace";
   readonly #ctx: DurableObjectState;
   #activeBackend: CloudflareContainerBackend | null = null;
+  #activeWorkspace: Workspace | null = null;
 
   constructor(ctx: DurableObjectState, env: RuntimeThinkAgentEnv) {
     super(ctx, env);
@@ -167,12 +263,21 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
     return super.fetch(request);
   }
 
+  async getWorkspace(): Promise<WorkspaceStub> {
+    if (!this.#activeWorkspace) {
+      throw new Error("WorkspaceThinkAgent has no active Workspace session.");
+    }
+    await this.#activeWorkspace.ready();
+    return this.#activeWorkspace.stub();
+  }
+
   protected async runWithRuntime(
     config: RunConfig,
     recorder: RuntimeThinkToolRecorder,
   ): Promise<void> {
-    const session = this.createWorkspaceSession(config);
+    const session = this.createWorkspaceSession(config, recorder);
     this.#activeBackend = session.backend;
+    this.#activeWorkspace = session.workspace;
     try {
       await seedFixture(createWorkspaceFixtureRuntime(session.workspace), config.fixture);
       const adapter = createWorkspaceRuntimeAdapter({
@@ -185,17 +290,40 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
       if (this.#activeBackend === session.backend) {
         this.#activeBackend = null;
       }
+      if (this.#activeWorkspace === session.workspace) {
+        this.#activeWorkspace = null;
+      }
       await session.close();
     }
   }
 
-  private createWorkspaceSession(config: RunConfig): WorkspaceRunSession {
+  private createWorkspaceSession(
+    config: RunConfig,
+    recorder: RuntimeThinkToolRecorder,
+  ): WorkspaceRunSession {
     const workspaceRef = { binding: "WorkspaceThinkAgent", id: this.#ctx.id.toString() };
+    let assignedContainerId: string | null = null;
     const backend = new CloudflareContainerBackend({
       id: "container",
-      container: () => this.getWorkspaceContainerHost(config.runId),
+      container: async () => {
+        const containerId = await getWarmPoolHandle(this.env.WorkspaceWarmPool).getContainer(
+          config.runId,
+        );
+        if (assignedContainerId !== containerId) {
+          assignedContainerId = containerId;
+          await recordContainerLifecycle(recorder, {
+            runtime: this.runtime,
+            kind: "container_acquired",
+            executionTarget: "workspace-container",
+            containerId,
+          });
+        }
+        return this.env.WorkspaceContainerHost.get(
+          this.env.WorkspaceContainerHost.idFromName(containerId),
+        );
+      },
       workspace: workspaceRef,
-      containerEnv: this.env.FUSE_SHIM ? { FUSE_SHIM: this.env.FUSE_SHIM } : undefined,
+      containerEnv: this.env.FUSE_MOUNT ? { FUSE_MOUNT: this.env.FUSE_MOUNT } : undefined,
     });
     const workspace = new Workspace({
       storage: this.#ctx.storage as unknown as DurableObjectStorageLike,
@@ -212,22 +340,30 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
     return {
       backend,
       workspace,
-      close: () => this.closeWorkspaceSession(config.runId, workspace),
+      close: () =>
+        this.closeWorkspaceSession(config.runId, workspace, recorder, () => assignedContainerId),
     };
   }
 
-  private async closeWorkspaceSession(runId: string, workspace: Workspace): Promise<void> {
+  private async closeWorkspaceSession(
+    runId: string,
+    workspace: Workspace,
+    recorder: RuntimeThinkToolRecorder,
+    assignedContainerId: () => string | null,
+  ): Promise<void> {
     await bestEffortCleanup("Workspace session close", () => workspace.close());
-    await bestEffortCleanup("Workspace warm-pool release", () =>
-      getWarmPoolHandle(this.env.WorkspaceWarmPool).releaseContainer(runId),
-    );
-  }
-
-  private async getWorkspaceContainerHost(runId: string) {
-    const containerId = await getWarmPoolHandle(this.env.WorkspaceWarmPool).getContainer(runId);
-    return this.env.WorkspaceContainerHost.get(
-      this.env.WorkspaceContainerHost.idFromName(containerId),
-    );
+    await bestEffortCleanup("Workspace warm-pool release", async () => {
+      await getWarmPoolHandle(this.env.WorkspaceWarmPool).releaseContainer(runId);
+      const containerId = assignedContainerId();
+      if (containerId) {
+        await recordContainerLifecycle(recorder, {
+          runtime: this.runtime,
+          kind: "container_released",
+          executionTarget: "workspace-container",
+          containerId,
+        });
+      }
+    });
   }
 }
 
@@ -239,7 +375,13 @@ export class SandboxThinkAgent extends RuntimeThinkAgent {
     config: RunConfig,
     recorder: RuntimeThinkToolRecorder,
   ): Promise<void> {
-    const { sandbox, session } = await this.createSandboxSession(config.runId);
+    const { containerId, sandbox, session } = await this.createSandboxSession(config.runId);
+    await recordContainerLifecycle(recorder, {
+      runtime: this.runtime,
+      kind: "container_acquired",
+      executionTarget: "sandbox-container",
+      containerId,
+    });
     try {
       await seedFixture(createSandboxFixtureRuntime(session), config.fixture);
       await assertSandboxFixtureVisible(session, config.fixture);
@@ -253,9 +395,15 @@ export class SandboxThinkAgent extends RuntimeThinkAgent {
       await bestEffortCleanup("Sandbox session delete", async () => {
         await sandbox.deleteSession(session.id);
       });
-      await bestEffortCleanup("Sandbox warm-pool release", () =>
-        this.getWarmPool().releaseContainer(config.runId),
-      );
+      await bestEffortCleanup("Sandbox warm-pool release", async () => {
+        await this.getWarmPool().releaseContainer(config.runId);
+        await recordContainerLifecycle(recorder, {
+          runtime: this.runtime,
+          kind: "container_released",
+          executionTarget: "sandbox-container",
+          containerId,
+        });
+      });
     }
   }
 
@@ -265,7 +413,7 @@ export class SandboxThinkAgent extends RuntimeThinkAgent {
       sleepAfter: containerSleepAfter(this.env),
     }) as unknown as SandboxSessionOwner;
     const session = await sandbox.createSession({ id: sandboxSessionId(runId), cwd: "/" });
-    return { sandbox, session };
+    return { containerId, sandbox, session };
   }
 
   private getWarmPool(): ContainerWarmPoolHandle {
@@ -280,6 +428,7 @@ interface WorkspaceRunSession {
 }
 
 interface SandboxRunSession {
+  containerId: string;
   sandbox: SandboxSessionOwner;
   session: SandboxRuntimeSession;
 }
@@ -308,10 +457,6 @@ async function assertSandboxFixtureVisible(
   session: SandboxRuntimeSession,
   fixture: ComparisonFixture,
 ): Promise<void> {
-  for (const file of fixture.files) {
-    await session.readFile(fixturePath(fixture.root, file));
-  }
-
   const command = [
     `test -d ${shellQuote(fixture.root)}`,
     ...fixture.files.map((file) => `test -f ${shellQuote(fixturePath(fixture.root, file))}`),
@@ -335,6 +480,26 @@ function sandboxSessionId(runId: string): string {
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
   return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+async function recordContainerLifecycle(
+  recorder: RuntimeThinkToolRecorder,
+  input: {
+    runtime: RuntimeId;
+    kind: Extract<RunEventKind, "container_acquired" | "container_released">;
+    executionTarget: ExecutionTarget;
+    containerId: string;
+  },
+): Promise<void> {
+  await recorder.record({
+    runtime: input.runtime,
+    kind: input.kind,
+    title: input.kind === "container_acquired" ? "Container assigned" : "Container released",
+    detail: JSON.stringify({
+      executionTarget: input.executionTarget,
+      containerId: input.containerId,
+    }),
+  });
 }
 
 async function bestEffortCleanup(label: string, cleanup: () => Promise<void>): Promise<void> {

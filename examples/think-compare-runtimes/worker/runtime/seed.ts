@@ -11,16 +11,16 @@ export async function seedFixture(
 ): Promise<void> {
   await runtime.mkdir(fixture.root);
 
-  for (const file of fixture.files) {
-    const path = joinPath(fixture.root, file.path);
-    const parent = dirname(path);
+  const files = fixture.files.map((file) => ({
+    ...file,
+    absolutePath: joinPath(fixture.root, file.path),
+  }));
+  const parentDirs = new Set(
+    files.map((file) => dirname(file.absolutePath)).filter((dir) => dir !== fixture.root),
+  );
 
-    if (parent !== fixture.root) {
-      await runtime.mkdir(parent);
-    }
-
-    await runtime.writeFile(path, file.contents);
-  }
+  await Promise.all([...parentDirs].map((dir) => runtime.mkdir(dir)));
+  await Promise.all(files.map((file) => runtime.writeFile(file.absolutePath, file.contents)));
 }
 
 function joinPath(root: string, path: string): string {

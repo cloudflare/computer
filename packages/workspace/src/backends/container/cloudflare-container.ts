@@ -293,9 +293,9 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     let lastError: unknown;
     while (Date.now() < deadline) {
       try {
-        const res = await host
-          .port(this.#options.containerPort)
-          .fetch("http://container/health", { method: "HEAD" });
+        const res = await host.fetchPort(this.#options.containerPort, "http://container/health", {
+          method: "HEAD",
+        });
         void res.body?.cancel();
         return;
       } catch (error) {
@@ -314,7 +314,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     const remaining = Math.max(0, deadline - Date.now());
     let res: Response;
     try {
-      res = await host.port(this.#options.containerPort).fetch("http://container/connect", {
+      res = await host.fetchPort(this.#options.containerPort, "http://container/connect", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

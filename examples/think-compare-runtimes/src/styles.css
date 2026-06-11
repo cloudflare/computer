@@ -4,16 +4,16 @@
 
 @layer base {
   :root {
-    color-scheme: dark;
-    font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
-    background: #0e1013;
+    color-scheme: light;
+    font-family: "Space Grotesk", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    background: #fbfaf6;
   }
 
   body {
     min-width: 320px;
     min-height: 100vh;
     margin: 0;
-    background: #0e1013;
+    background: #fbfaf6;
   }
 
   button {
@@ -25,7 +25,7 @@
   kbd,
   samp,
   .font-mono {
-    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
+    font-family: "Space Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+      Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }

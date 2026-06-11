@@ -56,7 +56,9 @@ export function deriveRunSummary(events: RunEvent[]): RunSummary {
         : "running"
     : "idle";
   const startedAt = runStarted?.timestamp ?? null;
-  const completedAt = runCompleted?.timestamp ?? terminalCompletionTime(runtimes);
+  const completedAt =
+    runCompleted?.timestamp ??
+    (allRuntimesTerminal(runtimes) ? terminalCompletionTime(runtimes) : null);
 
   return {
     status,
@@ -87,6 +89,13 @@ function deriveRuntimeSummary(events: RunEvent[], runtime: RuntimeId): RuntimeRu
     elapsedMs: elapsedMs(startedAt, completedAt),
     error: failed?.detail ?? null,
   };
+}
+
+function allRuntimesTerminal(runtimes: Record<RuntimeId, RuntimeRunSummary>): boolean {
+  return runtimeIds.every((runtime) => {
+    const status = runtimes[runtime].status;
+    return status === "completed" || status === "failed";
+  });
 }
 
 function terminalCompletionTime(runtimes: Record<RuntimeId, RuntimeRunSummary>): string | null {

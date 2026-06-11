@@ -11,7 +11,7 @@ const WORKSPACE_PORT = 8080;
 const WORKSPACE_HEALTH_INTERVAL_MS = 250;
 
 export interface WorkspacePoolEnv extends ContainerPoolConfigEnv {
-  FUSE_SHIM?: string;
+  FUSE_MOUNT?: string;
   WorkspaceContainerHost: DurableObjectNamespace<WorkspaceContainerHost>;
 }
 
@@ -107,7 +107,7 @@ function workspaceContainerEnv(env: WorkspacePoolEnv): Record<string, string> {
   return {
     PORT: String(WORKSPACE_PORT),
     MOUNT_POINT: "/workspace",
-    ...(env.FUSE_SHIM ? { FUSE_SHIM: env.FUSE_SHIM } : {}),
+    ...(env.FUSE_MOUNT ? { FUSE_MOUNT: env.FUSE_MOUNT } : {}),
   };
 }
 

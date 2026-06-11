@@ -12,7 +12,7 @@ describe("createWorkspaceWarmPoolRuntime", () => {
     const calls: string[] = [];
     const host = {
       async startWarmContainer(env: Record<string, string>, inactivityTimeoutMs: number) {
-        calls.push(`start ${env.PORT} ${env.MOUNT_POINT} ${inactivityTimeoutMs}`);
+        calls.push(`start ${env.PORT} ${env.MOUNT_POINT} ${env.FUSE_MOUNT} ${inactivityTimeoutMs}`);
       },
       async destroyWarmContainer() {
         calls.push("destroy");
@@ -30,12 +30,13 @@ describe("createWorkspaceWarmPoolRuntime", () => {
       WorkspaceContainerHost: namespaceFor(host),
       WARM_POOL_REFRESH_INTERVAL: "10000",
       WARM_POOL_TARGET: "2",
+      FUSE_MOUNT: "shim",
     });
 
     await runtime.startContainer("warm-a");
     await expect(runtime.isContainerRunning("warm-a")).resolves.toBe(true);
 
-    expect(calls).toEqual(["start 8080 /workspace 120000", "healthy"]);
+    expect(calls).toEqual(["start 8080 /workspace shim 120000", "healthy"]);
   });
 
   test("retries Workspace container placement while waiting for health", async () => {

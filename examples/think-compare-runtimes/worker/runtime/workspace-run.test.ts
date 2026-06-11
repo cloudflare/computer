@@ -46,29 +46,37 @@ function expectedFixtureEventSummaries(): Array<{
   kind: "tool_call" | "tool_result" | "runtime_note";
   title: string;
 }> {
+  const files = comparisonFixture.files.map((file) => `${comparisonFixture.root}/${file.path}`);
+  const parentDirs = [
+    ...new Set(
+      files
+        .map((path) => path.slice(0, path.lastIndexOf("/")))
+        .filter((directory) => directory !== comparisonFixture.root),
+    ),
+  ];
   const summaries = [
     { runtime: "workspace" as const, kind: "tool_call" as const, title: "mkdir /workspace/repo" },
     { runtime: "workspace" as const, kind: "tool_result" as const, title: "mkdir complete" },
-    ...comparisonFixture.files.flatMap((file) => {
-      const path = `${comparisonFixture.root}/${file.path}`;
-      const directory = path.slice(0, path.lastIndexOf("/"));
-      const events: Array<{
-        runtime: "workspace";
-        kind: "tool_call" | "tool_result";
-        title: string;
-      }> = [];
-      if (directory !== comparisonFixture.root) {
-        events.push(
-          { runtime: "workspace", kind: "tool_call", title: `mkdir ${directory}` },
-          { runtime: "workspace", kind: "tool_result", title: "mkdir complete" },
-        );
-      }
-      events.push(
-        { runtime: "workspace", kind: "tool_call", title: `write ${path}` },
-        { runtime: "workspace", kind: "tool_result", title: "write complete" },
-      );
-      return events;
-    }),
+    ...parentDirs.map((directory) => ({
+      runtime: "workspace" as const,
+      kind: "tool_call" as const,
+      title: `mkdir ${directory}`,
+    })),
+    ...parentDirs.map(() => ({
+      runtime: "workspace" as const,
+      kind: "tool_result" as const,
+      title: "mkdir complete",
+    })),
+    ...files.map((path) => ({
+      runtime: "workspace" as const,
+      kind: "tool_call" as const,
+      title: `write ${path}`,
+    })),
+    ...files.map(() => ({
+      runtime: "workspace" as const,
+      kind: "tool_result" as const,
+      title: "write complete",
+    })),
     {
       runtime: "workspace" as const,
       kind: "runtime_note" as const,

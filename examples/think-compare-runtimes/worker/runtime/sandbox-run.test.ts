@@ -46,30 +46,42 @@ function expectedFixtureEventSummaries(): Array<{
   kind: "tool_call" | "tool_result" | "runtime_note";
   title: string;
 }> {
+  const files = comparisonFixture.files.map((file) => `${comparisonFixture.root}/${file.path}`);
+  const parentDirs = [
+    ...new Set(
+      files
+        .map((path) => path.slice(0, path.lastIndexOf("/")))
+        .filter((directory) => directory !== comparisonFixture.root),
+    ),
+  ];
   const summaries = [
     { runtime: "sandbox" as const, kind: "tool_call" as const, title: "mkdir /workspace/repo" },
     { runtime: "sandbox" as const, kind: "tool_result" as const, title: "mkdir complete" },
-    ...comparisonFixture.files.flatMap((file) => {
-      const path = `${comparisonFixture.root}/${file.path}`;
-      const directory = path.slice(0, path.lastIndexOf("/"));
-      const events: Array<{
-        runtime: "sandbox";
-        kind: "tool_call" | "tool_result";
-        title: string;
-      }> = [];
-      if (directory !== comparisonFixture.root) {
-        events.push(
-          { runtime: "sandbox", kind: "tool_call", title: `mkdir ${directory}` },
-          { runtime: "sandbox", kind: "tool_result", title: "mkdir complete" },
-        );
-      }
-      events.push(
-        { runtime: "sandbox", kind: "tool_call", title: `write ${path}` },
-        { runtime: "sandbox", kind: "tool_result", title: "write complete" },
-      );
-      return events;
-    }),
-    { runtime: "sandbox" as const, kind: "runtime_note" as const, title: "Sandbox fixture seeded" },
+    ...parentDirs.map((directory) => ({
+      runtime: "sandbox" as const,
+      kind: "tool_call" as const,
+      title: `mkdir ${directory}`,
+    })),
+    ...parentDirs.map(() => ({
+      runtime: "sandbox" as const,
+      kind: "tool_result" as const,
+      title: "mkdir complete",
+    })),
+    ...files.map((path) => ({
+      runtime: "sandbox" as const,
+      kind: "tool_call" as const,
+      title: `write ${path}`,
+    })),
+    ...files.map(() => ({
+      runtime: "sandbox" as const,
+      kind: "tool_result" as const,
+      title: "write complete",
+    })),
+    {
+      runtime: "sandbox" as const,
+      kind: "runtime_note" as const,
+      title: "Sandbox fixture seeded",
+    },
   ];
   return summaries.map((summary, sequence) => ({ sequence, ...summary }));
 }

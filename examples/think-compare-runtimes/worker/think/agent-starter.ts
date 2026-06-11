@@ -8,6 +8,7 @@ export interface RuntimeThinkAgentRunInput {
 
 export interface RuntimeThinkAgentHandle {
   runComparison(input: RuntimeThinkAgentRunInput): Promise<void>;
+  cancelComparison?(): Promise<void> | void;
 }
 
 export type RuntimeThinkAgentHandleInput =

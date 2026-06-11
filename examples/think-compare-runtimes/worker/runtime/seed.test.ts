@@ -26,10 +26,10 @@ describe("seedFixture", () => {
       fixture,
     );
 
-    expect(calls).toEqual([
-      "mkdir /workspace/repo",
-      "write /workspace/repo/package.json 3",
+    expect(calls[0]).toBe("mkdir /workspace/repo");
+    expect(calls.slice(1).sort()).toEqual([
       "mkdir /workspace/repo/src",
+      "write /workspace/repo/package.json 3",
       "write /workspace/repo/src/index.ts 11",
     ]);
   });

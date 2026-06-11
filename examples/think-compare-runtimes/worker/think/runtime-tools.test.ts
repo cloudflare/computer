@@ -67,7 +67,7 @@ describe("createRuntimeThinkTools", () => {
       }),
     ).resolves.toEqual({ path: "/workspace/repo/NOTES.md", editsApplied: 1 });
     await expect(
-      executeRuntimeThinkTool(tools, "exec", { command: "node --version", cwd: "/workspace/repo" }),
+      executeRuntimeThinkTool(tools, "exec", { command: "node --version" }),
     ).resolves.toEqual({
       command: "node --version",
       cwd: "/workspace/repo",
@@ -110,6 +110,8 @@ describe("createRuntimeThinkTools", () => {
     expect(
       tools.exec.inputSchema.safeParse({ command: "npm test", timeoutMs: 30_000 }).success,
     ).toBe(true);
+    expect(tools.read.inputSchema.safeParse({ path: "/tmp/outside.txt" }).success).toBe(false);
+    expect(tools.exec.inputSchema.safeParse({ command: "pwd", cwd: "/tmp" }).success).toBe(false);
   });
 
   test("records Think tool errors", async () => {
@@ -138,8 +140,25 @@ describe("createRuntimeThinkTools", () => {
         runtime: "workspace",
         kind: "agent_tool_error",
         title: "Think read error",
-        detail: "missing /workspace/repo/missing.ts",
+        detail:
+          '{"path":"/workspace/repo/missing.ts","error":"missing /workspace/repo/missing.ts"}',
       },
     ]);
+  });
+
+  test("rejects runtime tool paths outside the seeded project", async () => {
+    const recorder = new RunEventRecorder({ runId: "run-abc" });
+    const tools = createRuntimeThinkTools({ adapter: createAdapter(), recorder });
+
+    await expect(
+      executeRuntimeThinkTool(tools, "read", { path: "/tmp/secret.txt" }),
+    ).resolves.toEqual({
+      error: "Path must be under /workspace/repo.",
+    });
+    await expect(
+      executeRuntimeThinkTool(tools, "exec", { command: "pwd", cwd: "/tmp" }),
+    ).resolves.toEqual({
+      error: "Path must be under /workspace/repo.",
+    });
   });
 });

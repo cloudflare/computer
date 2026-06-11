@@ -1,55 +1,40 @@
 import type { RunEvent, RuntimeId } from "../shared/events";
-import { comparisonFixture } from "../shared/fixture";
 import { AutoScrollList } from "./auto-scroll-list";
-import type { ContainerState, RuntimeDashboardModel } from "./dashboard-model";
+import type { RuntimeDashboardModel } from "./dashboard-model";
 import { MarkdownText } from "./markdown-text";
-import { detailFieldsForEvent } from "./run-event-facts";
-import { buildRuntimePanelModel, type RuntimeEvidenceGroup } from "./runtime-panel-model";
-
-type WingMode = "idle" | "boot" | "activity";
+import {
+  type AgentWorkItem,
+  buildRuntimePanelModel,
+  type RuntimePanelModel,
+  type SegmentStatus,
+  type TimelineLane,
+  type TimelineMarker,
+  type TimelineSegment,
+  type TimelineTone,
+} from "./runtime-panel-model";
 
 const runtimeCopy: Record<
   RuntimeId,
   {
-    side: "L" | "R";
-    label: "WORKSPACE" | "SANDBOX";
+    label: "Workspace" | "Sandbox";
     packageName: string;
-    title: string;
-    subtitle: string;
-    accent: string;
   }
 > = {
   workspace: {
-    side: "L",
-    label: "WORKSPACE",
+    label: "Workspace",
     packageName: "@cloudflare/workspace",
-    title: "Durable files + routed exec",
-    subtitle:
-      "Direct file tools use durable storage. Exec routes to the worker shell first, then container for real binaries.",
-    accent: "text-[#F2A93B]",
   },
   sandbox: {
-    side: "R",
-    label: "SANDBOX",
+    label: "Sandbox",
     packageName: "@cloudflare/sandbox",
-    title: "Container filesystem",
-    subtitle: "Same fixture is seeded into the Sandbox filesystem. File tools and exec run there.",
-    accent: "text-[#5BC8A7]",
   },
 };
 
 const statusTone = {
-  idle: "border-[#22272E] bg-[#171A1F] text-[#8A9099]",
-  running: "border-[#F2A93B]/40 bg-[#F2A93B]/10 text-[#F2A93B]",
-  completed: "border-[#5BC8A7]/40 bg-[#5BC8A7]/10 text-[#5BC8A7]",
-  failed: "border-[#E15B5B]/45 bg-[#E15B5B]/10 text-[#E15B5B]",
-};
-
-const containerTone: Record<ContainerState, string> = {
-  off: "text-[#8A9099]",
-  asleep: "text-[#8A9099]",
-  booting: "text-[#5BC8A7]",
-  awake: "text-[#E6E8EA]",
+  idle: "text-[#8F8A81]",
+  running: "text-[#1D4ED8]",
+  completed: "text-[#166534]",
+  failed: "text-[#B42318]",
 };
 
 export function RuntimeWing({
@@ -62,388 +47,366 @@ export function RuntimeWing({
   telemetry: RuntimeDashboardModel;
 }) {
   const copy = runtimeCopy[runtime];
-  const mode = wingMode(runtime, telemetry);
   const panel = buildRuntimePanelModel(events, runtime, telemetry);
 
   return (
     <article
-      aria-label={`${titleCase(runtime)} runtime wing`}
-      className="flex max-h-[calc(100vh-67px)] min-w-0 flex-col overflow-hidden border-[#22272E] border-b lg:border-r lg:last:border-r-0"
+      aria-label={`${copy.label} runtime wing`}
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden border-[#DED8CD] border-b bg-[#FBFAF6] lg:border-r lg:last:border-r-0"
     >
-      <header className="flex min-h-[117px] items-center justify-between gap-6 px-7 py-5">
+      <header className="grid shrink-0 gap-3 px-6 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div className="min-w-0">
-          <p className={`font-mono text-xs tracking-[0.28em] uppercase ${copy.accent}`}>
-            {copy.side} · {copy.label}{" "}
-            <span className="tracking-normal text-[#8A9099] normal-case">{copy.packageName}</span>
-          </p>
-          <h2 className="mt-2 text-[1.75rem] leading-tight font-semibold tracking-[-0.05em] text-[#E6E8EA]">
-            {copy.title}
-          </h2>
-          <p className="mt-2 text-sm text-[#8A9099]">{copy.subtitle}</p>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h2 className="font-semibold text-xl tracking-[-0.06em] text-[#111111]">
+              {copy.label}
+            </h2>
+            <span className="font-mono text-[0.68rem] tracking-[0.22em] text-[#8F8A81] uppercase">
+              {copy.packageName}
+            </span>
+          </div>
         </div>
-        <StatusPill status={telemetry.status} />
+        <span
+          className={`border border-[#DED8CD] bg-white px-3 py-2 font-mono text-[0.68rem] tracking-[0.18em] uppercase ${statusTone[telemetry.status]}`}
+        >
+          ● {panel.statusLine}
+        </span>
       </header>
 
-      <TelemetryStrip telemetry={telemetry} />
-
       {capacityHint(telemetry.error) ? (
-        <div className="mx-7 mt-5 rounded-sm border border-[#E15B5B]/45 bg-[#E15B5B]/10 p-3 text-sm text-[#E15B5B]">
+        <div className="mx-6 shrink-0 border border-[#F4C7C3] bg-[#FFF4F2] p-2 text-sm text-[#B42318]">
           {capacityHint(telemetry.error)}
         </div>
       ) : null}
 
-      {mode === "idle" ? <IdlePanel runtime={runtime} /> : null}
-      {mode === "boot" ? <BootPanel /> : null}
-      {mode === "activity" ? (
-        <ActivityPanel panel={panel} runtime={runtime} telemetry={telemetry} />
-      ) : null}
+      <section className="grid min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] gap-3 overflow-hidden px-6 pt-3 pb-4">
+        <SummaryStrip items={panel.summary} />
+        <SubstrateTimeline model={panel} runtime={runtime} />
+        <AgentWorkStream model={panel} runtime={runtime} />
+      </section>
     </article>
   );
 }
 
-function TelemetryStrip({ telemetry }: { telemetry: RuntimeDashboardModel }) {
-  const cells =
-    telemetry.id === "workspace" ? workspaceTelemetry(telemetry) : sandboxTelemetry(telemetry);
-
+function SummaryStrip({ items }: { items: RuntimePanelModel["summary"] }) {
   return (
-    <dl className="grid grid-cols-4 border-[#22272E] border-y bg-[#131619] px-7 py-4">
-      {cells.map(([label, value], index) => (
-        <div
-          className={index === cells.length - 1 ? "pl-4" : "border-[#22272E] border-r pr-4"}
-          key={label}
-        >
-          <dt className="font-mono text-[0.68rem] tracking-[0.18em] text-[#8A9099] uppercase">
-            {label}
+    <dl
+      className="grid border border-[#DED8CD] bg-white"
+      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+    >
+      {items.map((item) => (
+        <div className="border-[#DED8CD] border-r px-3 py-2 last:border-r-0" key={item.label}>
+          <dt className="font-mono text-[0.65rem] tracking-[0.18em] text-[#8F8A81] uppercase">
+            {item.label}
           </dt>
-          <dd
-            className={`mt-2 font-mono text-2xl font-semibold tracking-[-0.04em] ${label === "Container" ? containerTone[telemetry.container] : "text-[#E6E8EA]"}`}
-          >
-            {label === "Container" ? (
-              <span className="mr-2 text-base text-[#3A4048]">●</span>
-            ) : null}
-            {value}
-          </dd>
+          <dd className="mt-1 font-mono text-lg tracking-[-0.05em] text-[#111111]">{item.value}</dd>
         </div>
       ))}
     </dl>
   );
 }
 
-function workspaceTelemetry(telemetry: RuntimeDashboardModel): Array<[string, string]> {
-  const idle = telemetry.status === "idle";
-  return [
-    ["Files", idle ? "—" : String(telemetry.fileOps)],
-    ["Shell", idle ? "—" : String(telemetry.workerShellExecs)],
-    ["Container", telemetry.container],
-    ["Check", validationLabel(telemetry.validationStatus)],
-  ];
-}
-
-function sandboxTelemetry(telemetry: RuntimeDashboardModel): Array<[string, string]> {
-  const idle = telemetry.status === "idle";
-  return [
-    ["Files", idle ? "—" : String(telemetry.fileOps)],
-    ["Container", idle ? "—" : String(telemetry.containerExecs)],
-    ["Check", validationLabel(telemetry.validationStatus)],
-    ["Elapsed", telemetry.elapsedLabel === "--:--" ? "—" : telemetry.elapsedLabel],
-  ];
-}
-
-function validationLabel(status: RuntimeDashboardModel["validationStatus"]): string {
-  if (status === "not-run") return "—";
-  return status;
-}
-
-function IdlePanel({ runtime }: { runtime: RuntimeId }) {
-  if (runtime === "workspace") {
-    return (
-      <section className="grid gap-4 px-7 py-5">
-        <PanelHeader
-          left="SEED · /workspace/repo"
-          right="◇ planned · seeds into DOFS on run start"
-          tone="text-[#8A9099]"
-        />
-        <CodeBlock>{fixtureTree()}</CodeBlock>
-        <p className="text-sm text-[#8A9099]">
-          On run start, this fixture is written to durable workspace storage before the agent's
-          first tool call. Reads, writes, and edits then run with no container in the loop.
-        </p>
-      </section>
-    );
-  }
-
+function SubstrateTimeline({ model, runtime }: { model: RuntimePanelModel; runtime: RuntimeId }) {
+  const scale = timelineScale(model);
   return (
-    <section className="grid gap-4 px-7 py-5">
-      <PanelHeader left="SEED · /workspace/repo" right="○ waiting · seeds on container boot" />
-      <CodeBlock>{bootPlan(false)}</CodeBlock>
-      <p className="text-sm text-[#8A9099]">
-        No filesystem exists yet. The container boots when the run starts, then receives the same
-        seed before the agent's first tool call.
-      </p>
-    </section>
-  );
-}
-
-function BootPanel() {
-  return (
-    <section className="grid gap-4 px-7 py-5">
-      <PanelHeader left="BOOT · /workspace/repo" right="+1.7s · ETA ~0.4s" tone="text-[#8A9099]" />
-      <CodeBlock>{bootPlan(true)}</CodeBlock>
-      <div className="grid gap-2">
-        <div className="flex justify-between font-mono text-[0.68rem] text-[#8A9099]">
-          <span>container readiness</span>
-          <span>82%</span>
-        </div>
-        <div className="h-1 bg-[#171A1F]">
-          <div className="h-1 w-[82%] bg-[#5BC8A7]" />
-        </div>
+    <section
+      className="shrink-0 border border-[#DED8CD] bg-white px-4 py-4"
+      aria-label={`${runtime} substrate timeline`}
+    >
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3 font-mono text-[0.68rem] tracking-[0.18em] text-[#8F8A81] uppercase">
+        <span>Timeline</span>
+        <span>{model.clock.durationLabel}</span>
       </div>
-      <p className="text-sm text-[#8A9099]">
-        Agent is blocked on container readiness. No tool calls can run until the sandbox finishes
-        seeding.
-      </p>
-    </section>
-  );
-}
-
-function ActivityPanel({
-  panel,
-  runtime,
-  telemetry,
-}: {
-  panel: ReturnType<typeof buildRuntimePanelModel>;
-  runtime: RuntimeId;
-  telemetry: RuntimeDashboardModel;
-}) {
-  const groups = panel.evidenceGroups;
-  const headerRight =
-    telemetry.status === "completed"
-      ? "finished cleanly"
-      : `${groups.length} groups · ${telemetry.toolCalls} tool calls`;
-
-  return (
-    <section className="flex min-h-0 flex-1 flex-col gap-4 px-7 py-5">
-      <PanelHeader
-        left="ACTIVITY · ROUTING + EVIDENCE"
-        right={headerRight}
-        tone={telemetry.status === "completed" ? "text-[#5BC8A7]" : "text-[#8A9099]"}
-      />
-      <AutoScrollList
-        ariaLabel={`${titleCase(runtime)} activity stream`}
-        className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto pr-2"
-        watchKey={lastEventSequence(telemetry.events)}
-      >
-        <li>
-          <RoutingSummary rows={panel.routingRows} />
-        </li>
-        {groups.length === 0 ? (
-          <li className="text-sm text-[#8A9099]">Awaiting agent activity.</li>
-        ) : (
-          groups.map((group, index) => (
-            <EvidenceItem group={group} index={index + 1} key={group.id} runtime={runtime} />
-          ))
-        )}
-      </AutoScrollList>
-    </section>
-  );
-}
-
-function RoutingSummary({
-  rows,
-}: {
-  rows: ReturnType<typeof buildRuntimePanelModel>["routingRows"];
-}) {
-  return (
-    <section className="rounded-sm border border-[#22272E] bg-[#101317] px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-mono text-[0.68rem] tracking-[0.2em] text-[#8A9099] uppercase">
-          Routing summary
-        </h3>
-        <span className="font-mono text-[0.68rem] text-[#3A4048]">live from events</span>
-      </div>
-      <dl className="mt-3 grid gap-2 text-sm">
-        {rows.map(({ label, value }) => (
-          <div className="grid grid-cols-[132px_minmax(0,1fr)] gap-3" key={label}>
-            <dt className="font-mono text-[#8A9099]">{label}</dt>
-            <dd className="text-[#E6E8EA]">
-              {label} → {value}
-            </dd>
-          </div>
+      <TimelineLegend />
+      <div className="grid gap-5">
+        {model.lanes.map((lane) => (
+          <TimelineLaneView key={lane.id} lane={lane} scale={scale} />
         ))}
-      </dl>
+      </div>
+      <div className="mt-4 flex justify-between border-[#EEE9E0] border-t pt-2 font-mono text-[0.65rem] text-[#B6B0A6]">
+        <span>0:00</span>
+        <span>{scale.durationMs > 0 ? formatMs(scale.durationMs) : "waiting"}</span>
+      </div>
     </section>
   );
 }
 
-function EvidenceItem({
-  group,
-  index,
-  runtime,
-}: {
-  group: RuntimeEvidenceGroup;
-  index: number;
-  runtime: RuntimeId;
-}) {
-  const copy = runtimeCopy[runtime];
-  const tone = evidenceTone(group.tone, copy.accent);
-  const finalMessage = group.events.find((event) => event.kind === "agent_message");
-
+function TimelineLaneView({ lane, scale }: { lane: TimelineLane; scale: TimelineScale }) {
   return (
-    <li className="grid grid-cols-[28px_minmax(0,1fr)] gap-3">
-      <div className={`relative font-mono text-xs ${tone.marker}`}>
-        {String(index).padStart(2, "0")}
-        <span className="absolute top-6 left-3 h-[calc(100%-0.5rem)] w-px bg-[#22272E]" />
+    <div className="grid gap-2 md:grid-cols-[158px_minmax(0,1fr)] md:items-center">
+      <div className="flex items-center gap-2 font-mono text-[0.68rem] tracking-[0.14em] text-[#4A453D] uppercase">
+        <span className={`h-1.5 w-5 ${toneClass(lane.tone)}`} />
+        {lane.label}
       </div>
-      <article className={`min-w-0 rounded-sm border px-4 py-3 ${tone.card}`}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3
-            className={`font-mono text-xs font-semibold tracking-[0.12em] uppercase ${tone.title}`}
-          >
-            {group.title}
-          </h3>
-          <span className="font-mono text-[0.68rem] text-[#8A9099]">
-            {group.events.length} event{group.events.length === 1 ? "" : "s"}
+      <div className="relative h-7 border-[#EEE9E0] border-l bg-[#FBFAF6]">
+        {lane.segments.map((segment) => (
+          <Segment key={segment.id} scale={scale} segment={segment} tone={lane.tone} />
+        ))}
+        {lane.markers.map((marker) => (
+          <Marker key={marker.id} marker={marker} scale={scale} tone={lane.tone} />
+        ))}
+        {lane.segments.length === 0 && lane.markers.length === 0 ? (
+          <span className="absolute top-1/2 left-3 -translate-y-1/2 font-mono text-[0.65rem] text-[#C7C0B6] uppercase">
+            no activity
           </span>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-[#E6E8EA]">{group.summary}</p>
-        {finalMessage ? <MarkdownText text={finalMessage.detail} /> : null}
-        {group.events.length > 0 && !finalMessage ? (
-          <details className="mt-3 border-[#22272E] border-t pt-3">
-            <summary className="cursor-pointer font-mono text-[0.68rem] tracking-[0.16em] text-[#8A9099] uppercase">
-              Raw events
-            </summary>
-            <ol className="mt-3 grid gap-3">
-              {group.events.map((event) => (
-                <RawEvent event={event} key={event.id} />
-              ))}
-            </ol>
-          </details>
         ) : null}
-      </article>
-    </li>
-  );
-}
-
-function RawEvent({ event }: { event: RunEvent }) {
-  const fields = detailFieldsForEvent(event);
-
-  return (
-    <li className="rounded-sm border border-[#22272E] bg-[#171A1F] px-3 py-2">
-      <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-        <span className="text-[#8A9099]">{event.kind.replaceAll("_", " · ")}</span>
-        <span className="text-[#3A4048]">#{event.sequence}</span>
       </div>
-      <p className="mt-2 text-sm text-[#C9CDD2]">{event.title}</p>
-      {fields.length > 0 ? (
-        <dl className="mt-2 grid gap-1 font-mono text-xs">
-          {fields.map((field) => (
-            <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3" key={field.label}>
-              <dt className="text-[#8A9099]">{field.label}</dt>
-              <dd className="overflow-x-auto whitespace-pre-wrap text-[#E6E8EA]">{field.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="mt-2 whitespace-pre-wrap text-sm text-[#C9CDD2]">{event.detail}</p>
-      )}
-    </li>
-  );
-}
-
-function PanelHeader({
-  left,
-  right,
-  tone = "text-[#8A9099]",
-}: {
-  left: string;
-  right: string;
-  tone?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 font-mono text-[0.68rem] tracking-[0.2em] uppercase">
-      <span className="text-[#8A9099]">{left}</span>
-      <span className={tone}>{right}</span>
     </div>
   );
 }
 
-function CodeBlock({ children }: { children: string }) {
+function Segment({
+  scale,
+  segment,
+  tone,
+}: {
+  scale: TimelineScale;
+  segment: TimelineSegment;
+  tone: TimelineTone;
+}) {
+  const left = positionPct(segment.startMs, scale);
+  const width = Math.max(positionPct(segment.endMs, scale) - left, 2.5);
   return (
-    <pre className="overflow-x-auto rounded-sm border border-[#22272E] bg-[#171A1F] px-4 py-4 font-mono text-sm leading-7 text-[#C9CDD2]">
-      {children}
-    </pre>
+    <div
+      aria-label={`${segment.label} ${formatMs(segment.startMs - scale.startMs)} to ${formatMs(segment.endMs - scale.startMs)}`}
+      className={`absolute top-1/2 h-5 -translate-y-1/2 ${segmentClass(segment.status, tone)}`}
+      role="img"
+      style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
+      title={segment.label}
+    >
+      <span className="sr-only">{segment.label}</span>
+    </div>
   );
 }
 
-function StatusPill({ status }: { status: RuntimeDashboardModel["status"] }) {
-  const label = status === "completed" ? "done" : status;
+function Marker({
+  marker,
+  scale,
+  tone,
+}: {
+  marker: TimelineMarker;
+  scale: TimelineScale;
+  tone: TimelineTone;
+}) {
   return (
     <span
-      className={`border px-3 py-2 font-mono text-[0.68rem] tracking-[0.18em] uppercase ${statusTone[status]}`}
-    >
-      ● {label}
+      aria-label={marker.label}
+      className={`absolute top-1/2 h-5 w-1.5 -translate-y-1/2 ${marker.status === "failed" ? "bg-[#B42318]" : toneClass(tone)}`}
+      role="img"
+      style={{ left: `${positionPct(marker.atMs, scale)}%` }}
+      title={marker.label}
+    />
+  );
+}
+
+function TimelineLegend() {
+  return (
+    <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[0.62rem] tracking-[0.12em] text-[#8F8A81] uppercase">
+      <LegendSwatch className="bg-[#1D4ED8]" label="VFS" />
+      <LegendSwatch className="bg-[#7C3AED]" label="dynamic worker" />
+      <LegendSwatch className="bg-[#F4C98F] opacity-55" label="container assigned" />
+      <LegendSwatch className="bg-[#D97706]" label="command running" />
+      <LegendSwatch
+        className="bg-[repeating-linear-gradient(45deg,#F4C98F_0,#F4C98F_3px,transparent_3px,transparent_7px)] opacity-55"
+        label="sleep tail"
+      />
+      <LegendSwatch className="bg-[#166534]" label="check passed" />
+      <LegendSwatch className="bg-[#B42318]" label="failed" />
+    </div>
+  );
+}
+
+function LegendSwatch({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className={`h-1.5 w-4 ${className}`} />
+      {label}
     </span>
   );
 }
 
-function wingMode(runtime: RuntimeId, telemetry: RuntimeDashboardModel): WingMode {
-  if (telemetry.status === "idle") return "idle";
-  if (runtime === "sandbox" && telemetry.container === "booting") return "boot";
-  return "activity";
+function AgentWorkStream({ model, runtime }: { model: RuntimePanelModel; runtime: RuntimeId }) {
+  const items = model.workItems;
+  return (
+    <section className="relative flex min-h-0 flex-col overflow-hidden border-[#DED8CD] border-t pt-3 pb-2">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h3 className="font-mono text-[0.68rem] tracking-[0.18em] text-[#8F8A81] uppercase">
+          Agent work
+        </h3>
+        <span className="font-mono text-[0.65rem] tracking-[0.14em] text-[#B6B0A6] uppercase">
+          {items.length} activities
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-[#8F8A81]">Waiting for the agent to start.</p>
+      ) : (
+        <div className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:top-0 before:right-0 before:left-0 before:z-10 before:h-8 before:bg-gradient-to-b before:from-[#FBFAF6] before:to-transparent">
+          <AutoScrollList
+            ariaLabel={`${runtime} agent work stream`}
+            className="flex h-full min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain pr-2 pt-4 pb-3"
+            watchKey={workStreamWatchKey(items)}
+          >
+            {items.map((item) => (
+              <AgentWorkRow item={item} key={item.id} />
+            ))}
+          </AutoScrollList>
+        </div>
+      )}
+    </section>
+  );
 }
 
-function fixtureTree(): string {
-  const srcFiles = comparisonFixture.files
-    .filter((file) => file.path.startsWith("src/"))
-    .map((file) => `  ${file.path.slice(4)}`);
-  const testFiles = comparisonFixture.files
-    .filter((file) => file.path.includes("test"))
-    .map((file) => `  ${file.path.replace(/^src\//, "")}`);
-  const rootFiles = comparisonFixture.files
-    .filter((file) => !file.path.startsWith("src/") && !file.path.includes("test"))
-    .map((file) => file.path);
+function AgentWorkRow({ item }: { item: AgentWorkItem }) {
+  if (item.presentation === "terminal") {
+    return <TerminalWorkRow item={item} />;
+  }
 
-  return [`▾ src/`, ...srcFiles, `▾ test/`, ...testFiles, ...rootFiles].join("\n");
+  if (item.presentation === "compact") {
+    return <CompactWorkRow item={item} />;
+  }
+
+  return (
+    <li className={`border-l-2 py-2 pl-3 ${workToneClass(item)}`}>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="font-mono text-[0.65rem] tracking-[0.16em] uppercase">{item.label}</span>
+      </div>
+      <div className={`mt-1 text-sm leading-6 ${markdownToneClass(item)}`}>
+        <MarkdownText text={item.text} />
+      </div>
+    </li>
+  );
 }
 
-function bootPlan(active: boolean): string {
-  if (active) {
-    return [
-      "✓  pull image · cloudflare/sandbox:0.11.0        cached · 0.0s",
-      "✓  cold-start container                         1.4s",
-      "▸  writing files into /workspace/repo           5 of 7",
-      "○  await tool calls from agent                  —",
-    ].join("\n");
-  }
-
-  return [
-    "01  pull image · cloudflare/sandbox:0.11.0        ~ cached",
-    "02  cold-start container                         ~ 1.5s",
-    "03  write files into /workspace/repo              ~ seed bytes",
-    "04  await tool calls from agent                  —",
-  ].join("\n");
+function CompactWorkRow({ item }: { item: AgentWorkItem }) {
+  return (
+    <li className="flex items-baseline gap-3 py-1 text-sm leading-5">
+      <span
+        className={`font-mono text-[0.65rem] tracking-[0.16em] uppercase ${compactToneClass(item)}`}
+      >
+        {item.label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[#4A453D]">{item.text}</span>
+    </li>
+  );
 }
 
-function evidenceTone(tone: RuntimeEvidenceGroup["tone"], accent: string) {
-  if (tone === "success") {
-    return {
-      marker: "text-[#5BC8A7]",
-      title: "text-[#5BC8A7]",
-      card: "border-[#5BC8A7]/35 bg-[#5BC8A7]/5",
-    };
+function TerminalWorkRow({ item }: { item: AgentWorkItem }) {
+  return (
+    <li className="py-1.5 text-sm leading-5">
+      <div className="flex flex-wrap items-baseline gap-2 font-mono text-[0.62rem] tracking-[0.14em] uppercase">
+        <span className={compactToneClass(item)}>{item.label}</span>
+        {item.executionTarget ? (
+          <span className="text-[#8F8A81]">{executionTargetCopy(item.executionTarget)}</span>
+        ) : null}
+        {typeof item.exitCode === "number" ? (
+          <span className={item.exitCode === 0 ? "text-[#166534]" : "text-[#B42318]"}>
+            exit {item.exitCode}
+          </span>
+        ) : null}
+      </div>
+      <code className="mt-1 block truncate font-mono text-[0.78rem] text-[#24211D]">
+        $ {item.command ?? item.text}
+      </code>
+      {item.stdout || item.stderr ? <CommandOutput item={item} /> : null}
+    </li>
+  );
+}
+
+function CommandOutput({ item }: { item: AgentWorkItem }) {
+  const output = [
+    item.stdout ? `stdout\n${item.stdout}` : null,
+    item.stderr ? `stderr\n${item.stderr}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return (
+    <details className="mt-1 text-[#4A453D]">
+      <summary className="cursor-pointer font-mono text-[0.62rem] tracking-[0.14em] text-[#8F8A81] uppercase">
+        output
+      </summary>
+      <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap border-[#EEE9E0] border-l pl-3 font-mono text-[0.72rem] leading-5">
+        {output.length > 1200 ? `${output.slice(0, 1200)}\n…` : output}
+      </pre>
+    </details>
+  );
+}
+
+function workStreamWatchKey(items: AgentWorkItem[]): string {
+  const textLength = items.reduce(
+    (total, item) =>
+      total + item.text.length + (item.stdout?.length ?? 0) + (item.stderr?.length ?? 0),
+    0,
+  );
+  return `${items.length}:${textLength}`;
+}
+
+function workToneClass(item: AgentWorkItem): string {
+  if (item.tone === "error") return "border-[#B42318] text-[#B42318]";
+  if (item.kind === "thinking") return "border-[#DED8CD] text-[#8F8A81]";
+  if (item.tone === "success") return "border-[#166534] text-[#166534]";
+  return "border-[#1D4ED8] text-[#1D4ED8]";
+}
+
+function markdownToneClass(item: AgentWorkItem): string {
+  if (item.tone === "error") return "text-[#B42318]";
+  if (item.kind === "thinking") return "text-[#6F6A62] opacity-75";
+  return "text-[#24211D]";
+}
+
+function compactToneClass(item: AgentWorkItem): string {
+  if (item.tone === "error") return "text-[#B42318]";
+  if (item.tone === "success") return "text-[#166534]";
+  if (item.kind === "exec") return "text-[#9A5B00]";
+  return "text-[#8F8A81]";
+}
+
+function executionTargetCopy(target: NonNullable<AgentWorkItem["executionTarget"]>): string {
+  if (target === "worker-shell") return "dynamic worker";
+  if (target === "workspace-container") return "workspace container";
+  return "sandbox container";
+}
+
+interface TimelineScale {
+  startMs: number;
+  endMs: number;
+  durationMs: number;
+}
+
+function timelineScale(model: RuntimePanelModel): TimelineScale {
+  const startMs = model.clock.startMs ?? model.clock.endMs ?? 0;
+  const segmentEndMs = model.lanes.flatMap((lane) => lane.segments.map((segment) => segment.endMs));
+  const markerMs = model.lanes.flatMap((lane) => lane.markers.map((marker) => marker.atMs));
+  const endMs = Math.max(model.clock.endMs ?? startMs, startMs, ...segmentEndMs, ...markerMs);
+  return { startMs, endMs, durationMs: endMs - startMs };
+}
+
+function positionPct(timestamp: number, scale: TimelineScale): number {
+  if (scale.durationMs <= 0) return 0;
+  return Math.max(0, Math.min(100, ((timestamp - scale.startMs) / scale.durationMs) * 100));
+}
+
+function formatMs(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function toneClass(tone: TimelineTone): string {
+  if (tone === "container") return "bg-[#D97706]";
+  if (tone === "dynamic-worker") return "bg-[#7C3AED]";
+  if (tone === "error") return "bg-[#B42318]";
+  if (tone === "agent") return "bg-[#111111]";
+  return "bg-[#1D4ED8]";
+}
+
+function segmentClass(status: SegmentStatus, tone: TimelineTone): string {
+  if (status === "failed") return "bg-[#B42318]";
+  if (status === "passed") return "bg-[#166534]";
+  if (status === "lease") return "bg-[#F4C98F] opacity-55";
+  if (status === "residual") {
+    return "bg-[repeating-linear-gradient(45deg,#F4C98F_0,#F4C98F_3px,transparent_3px,transparent_7px)] opacity-55";
   }
-  if (tone === "error") {
-    return {
-      marker: "text-[#E15B5B]",
-      title: "text-[#E15B5B]",
-      card: "border-[#E15B5B]/45 bg-[#E15B5B]/10",
-    };
-  }
-  return {
-    marker: accent,
-    title: accent,
-    card: "border-[#22272E] bg-[#101317]",
-  };
+  return toneClass(tone);
 }
 
 function capacityHint(error: string | null): string | null {
@@ -451,12 +414,4 @@ function capacityHint(error: string | null): string | null {
   return error.includes("Capacity temporarily exceeded")
     ? "Upstream model capacity; retry later."
     : null;
-}
-
-function lastEventSequence(events: RunEvent[]): number {
-  return events.at(-1)?.sequence ?? 0;
-}
-
-function titleCase(value: RuntimeId): string {
-  return value === "workspace" ? "Workspace" : "Sandbox";
 }

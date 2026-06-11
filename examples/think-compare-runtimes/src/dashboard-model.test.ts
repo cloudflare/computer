@@ -129,6 +129,38 @@ describe("buildDashboardModel", () => {
     expect(model.runtimes.sandbox.container).toBe("awake");
   });
 
+  test("uses the latest validation result", () => {
+    const model = buildDashboardModel(
+      [
+        event({
+          sequence: 0,
+          runtime: "sandbox",
+          kind: "agent_tool_result",
+          title: "Think exec result",
+          detail: JSON.stringify({
+            command: "npm run check",
+            executionTarget: "sandbox-container",
+            exitCode: 1,
+          }),
+        }),
+        event({
+          sequence: 1,
+          runtime: "sandbox",
+          kind: "agent_tool_result",
+          title: "Think exec result",
+          detail: JSON.stringify({
+            command: "npm run check",
+            executionTarget: "sandbox-container",
+            exitCode: 0,
+          }),
+        }),
+      ],
+      "2026-06-04T00:01:00.000Z",
+    );
+
+    expect(model.runtimes.sandbox.validationStatus).toBe("passed");
+  });
+
   test("uses terminal timestamps for completed runs", () => {
     const model = buildDashboardModel(
       [

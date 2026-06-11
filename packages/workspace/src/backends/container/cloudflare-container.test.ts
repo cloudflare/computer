@@ -43,25 +43,24 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.interceptedHost = host;
       state.interceptedWorkspace = ref;
     },
-    port(port) {
-      return {
-        async fetch(input, init) {
-          const request = input instanceof Request ? input : new Request(input, init);
-          const url = new URL(request.url);
-          calls.push({ name: "port", args: [port, url.pathname, request.method] });
-          if (url.pathname === "/health") {
-            if (!healthy) throw new Error("connection refused");
-            return new Response(null, { status: 200 });
-          }
-          if (url.pathname === "/connect") {
-            if (connectStatus !== 200) {
-              return new Response(`/connect ${connectStatus}`, { status: connectStatus });
-            }
-            return new Response(JSON.stringify({ ok: true }), { status: 200 });
-          }
-          throw new Error(`unexpected port path: ${url.pathname}`);
-        },
-      } as unknown as Fetcher;
+    async fetchPort(port, input, init) {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      calls.push({ name: "fetchPort", args: [port, url.pathname, request.method] });
+      if (url.pathname === "/health") {
+        if (!healthy) throw new Error("connection refused");
+        return new Response(null, { status: 200 });
+      }
+      if (url.pathname === "/connect") {
+        if (connectStatus !== 200) {
+          return new Response(`/connect ${connectStatus}`, { status: connectStatus });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      throw new Error(`unexpected port path: ${url.pathname}`);
+    },
+    port() {
+      throw new Error("cross-boundary Fetchers should not be used by CloudflareContainerBackend");
     },
   };
   return state;

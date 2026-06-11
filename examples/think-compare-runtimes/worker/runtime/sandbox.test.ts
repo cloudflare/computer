@@ -79,15 +79,21 @@ describe("createSandboxFixtureRuntime", () => {
 });
 
 function expectedSeedCalls(): Array<{ type: "mkdir" | "write"; path: string; contents?: string }> {
+  const files = comparisonFixture.files.map((file) => ({
+    ...file,
+    path: `${comparisonFixture.root}/${file.path}`,
+  }));
+  const parentDirs = [
+    ...new Set(
+      files
+        .map((file) => file.path.slice(0, file.path.lastIndexOf("/")))
+        .filter((directory) => directory !== comparisonFixture.root),
+    ),
+  ];
+
   return [
     { type: "mkdir", path: comparisonFixture.root },
-    ...comparisonFixture.files.flatMap((file) => {
-      const path = `${comparisonFixture.root}/${file.path}`;
-      const directory = path.slice(0, path.lastIndexOf("/"));
-      const calls: Array<{ type: "mkdir" | "write"; path: string; contents?: string }> = [];
-      if (directory !== comparisonFixture.root) calls.push({ type: "mkdir", path: directory });
-      calls.push({ type: "write", path, contents: file.contents });
-      return calls;
-    }),
+    ...parentDirs.map((directory) => ({ type: "mkdir" as const, path: directory })),
+    ...files.map((file) => ({ type: "write" as const, path: file.path, contents: file.contents })),
   ];
 }

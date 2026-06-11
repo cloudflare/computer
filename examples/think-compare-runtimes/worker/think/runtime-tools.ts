@@ -14,17 +14,21 @@ type RuntimeThinkTool = {
 
 type RuntimeThinkToolSet = Record<RuntimeThinkToolName, RuntimeThinkTool>;
 
+const projectRoot = "/workspace/repo";
+
+const projectPathSchema = z.string().refine(isProjectPath, `Path must be under ${projectRoot}.`);
+
 const readInputSchema = z.object({
-  path: z.string().describe("Absolute path under /workspace/repo to read."),
+  path: projectPathSchema.describe("Absolute path under /workspace/repo to read."),
 });
 
 const writeInputSchema = z.object({
-  path: z.string().describe("Absolute path under /workspace/repo to create or overwrite."),
+  path: projectPathSchema.describe("Absolute path under /workspace/repo to create or overwrite."),
   contents: z.string().describe("Complete file contents to write. This replaces the whole file."),
 });
 
 const editInputSchema = z.object({
-  path: z.string().describe("Absolute path under /workspace/repo to edit."),
+  path: projectPathSchema.describe("Absolute path under /workspace/repo to edit."),
   edits: z
     .array(
       z.object({
@@ -39,11 +43,10 @@ const editInputSchema = z.object({
 });
 
 const execInputSchema = z.object({
-  command: z.string().describe("Shell command to run."),
-  cwd: z
-    .string()
+  command: z.string().min(1).describe("Shell command to run."),
+  cwd: projectPathSchema
     .optional()
-    .describe("Working directory for the command. Use /workspace/repo for project commands."),
+    .describe("Working directory for the command. Defaults to /workspace/repo."),
   timeoutMs: z.number().int().positive().optional().describe("Command timeout in milliseconds."),
 });
 
@@ -106,9 +109,10 @@ export function createRuntimeThinkTools({
       description: descriptions.exec,
       inputSchema: execInputSchema,
       execute: async (input) => {
-        const { command, cwd, timeoutMs } = execInputSchema.parse(input);
+        const { command, cwd: parsedCwd, timeoutMs } = execInputSchema.parse(input);
+        const cwd = parsedCwd ?? projectRoot;
         const result = await adapter.exec(command, { cwd, timeoutMs });
-        return { command, cwd: cwd ?? null, ...result };
+        return { command, cwd, ...result };
       },
     }),
   };
@@ -160,17 +164,34 @@ function createRuntimeThinkTool({
         });
         return result;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = formatToolError(error);
         await recorder.record({
           runtime,
           kind: "agent_tool_error",
           title: `Think ${name} error`,
-          detail: message,
+          detail: stringifyErrorForEvent(inputSchema, input, message),
         });
         return { error: message };
       }
     },
   };
+}
+
+function isProjectPath(path: string): boolean {
+  return path === projectRoot || path.startsWith(`${projectRoot}/`);
+}
+
+function formatToolError(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return error.issues.map((issue) => issue.message).join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stringifyErrorForEvent(inputSchema: z.ZodType, input: unknown, error: string): string {
+  const parsed = inputSchema.safeParse(input);
+  if (!parsed.success || typeof parsed.data !== "object" || parsed.data === null) return error;
+  return stringifyForEvent({ ...(parsed.data as Record<string, unknown>), error });
 }
 
 function stringifyForEvent(value: unknown): string {

@@ -29,31 +29,31 @@ export function MarkdownText({ text }: { text: string }) {
 function Heading2(props: ComponentProps<"h2"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
-    <h2 className="mt-3 text-base font-semibold tracking-[-0.02em] text-[#E6E8EA]" {...rest} />
+    <h2 className="mt-3 text-base font-semibold tracking-[-0.02em] text-[#111111]" {...rest} />
   );
 }
 
 function Heading3(props: ComponentProps<"h3"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
-  return <h3 className="mt-2 text-sm font-semibold tracking-[-0.01em] text-[#E6E8EA]" {...rest} />;
+  return <h3 className="mt-2 text-sm font-semibold tracking-[-0.01em] text-[#111111]" {...rest} />;
 }
 
 function Paragraph(props: ComponentProps<"p"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
-  return <p className="mt-2 text-sm leading-6 text-[#C9CDD2]" {...rest} />;
+  return <p className="mt-2 text-sm leading-6 text-[#24211D]" {...rest} />;
 }
 
 function OrderedList(props: ComponentProps<"ol"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
-    <ol className="mt-2 ml-5 grid list-decimal gap-1 text-sm leading-6 text-[#C9CDD2]" {...rest} />
+    <ol className="mt-2 ml-5 grid list-decimal gap-1 text-sm leading-6 text-[#24211D]" {...rest} />
   );
 }
 
 function UnorderedList(props: ComponentProps<"ul"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
-    <ul className="mt-2 ml-5 grid list-disc gap-1 text-sm leading-6 text-[#C9CDD2]" {...rest} />
+    <ul className="mt-2 ml-5 grid list-disc gap-1 text-sm leading-6 text-[#24211D]" {...rest} />
   );
 }
 
@@ -64,14 +64,14 @@ function ListItem(props: ComponentProps<"li"> & { node?: unknown }) {
 
 function Strong(props: ComponentProps<"strong"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
-  return <strong className="font-semibold text-[#E6E8EA]" {...rest} />;
+  return <strong className="font-semibold text-[#111111]" {...rest} />;
 }
 
 function Link(props: ComponentProps<"a"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
     <a
-      className="text-[#5BC8A7] underline decoration-[#5BC8A7]/40 underline-offset-4"
+      className="text-[#1D4ED8] underline decoration-[#1D4ED8]/40 underline-offset-4"
       rel="noreferrer"
       target="_blank"
       {...rest}
@@ -82,8 +82,8 @@ function Link(props: ComponentProps<"a"> & { node?: unknown }) {
 function Table(props: ComponentProps<"table"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
-    <div className="mt-3 overflow-x-auto rounded-sm border border-[#22272E]">
-      <table className="min-w-full border-collapse text-left text-sm text-[#C9CDD2]" {...rest} />
+    <div className="mt-3 overflow-x-auto border border-[#E5E0D6]">
+      <table className="min-w-full border-collapse text-left text-sm text-[#24211D]" {...rest} />
     </div>
   );
 }
@@ -106,7 +106,7 @@ function Code({
   }
 
   return (
-    <code className="rounded bg-[#22272E] px-1 py-0.5 font-mono text-[#E6E8EA]" {...props}>
+    <code className="bg-[#EEEAE2] px-1 py-0.5 font-mono text-[#111111]" {...props}>
       {children}
     </code>
   );

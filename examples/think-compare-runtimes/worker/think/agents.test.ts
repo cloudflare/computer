@@ -51,8 +51,12 @@ vi.mock("@cloudflare/workspace", () => ({
 
     async close() {}
     async ready() {}
+    stub() {
+      return { kind: "workspace-stub" };
+    }
   },
   WorkspaceProxy: class {},
+  WorkspaceServiceProxy: class {},
 }));
 
 vi.mock("@cloudflare/workspace/backends/container", () => ({
@@ -96,6 +100,7 @@ vi.mock("./real-turn", () => ({
 vi.mock("../container-pools", () => ({
   containerSleepAfter: (env: { CONTAINER_SLEEP_AFTER?: string }) =>
     env.CONTAINER_SLEEP_AFTER ?? "2m",
+  containerSleepAfterMs: () => 120_000,
   getWarmPoolHandle: () => ({
     async getContainer() {
       return "sandbox-physical-1";
@@ -106,14 +111,160 @@ vi.mock("../container-pools", () => ({
   }),
 }));
 
-import { type RuntimeThinkAgentEnv, SandboxThinkAgent, WorkspaceThinkAgent } from "./agents";
+import {
+  type RuntimeThinkAgentEnv,
+  SandboxThinkAgent,
+  WorkspaceProxy,
+  WorkspaceServiceProxy,
+  WorkspaceThinkAgent,
+} from "./agents";
 
 describe("WorkspaceThinkAgent", () => {
+  test("exports both proxies used by Workspace backends", () => {
+    expect(WorkspaceProxy).toBeDefined();
+    expect(WorkspaceServiceProxy).toBeDefined();
+  });
+
   beforeEach(() => {
     containerBackendOptions.length = 0;
     workerBackendOptions.length = 0;
     workspaceOptions.length = 0;
     runRealThinkTurn.mockReset();
+  });
+
+  test("streams Think text and reasoning chunks while a turn is running", async () => {
+    const recorded: Array<{ kind: string; title: string; detail: string }> = [];
+    const agent = new TestWorkspaceThinkAgent(
+      {
+        id: { toString: () => "workspace-agent-id" },
+        storage: {},
+      } as DurableObjectState,
+      {
+        AI: {} as Ai,
+        CompareRun: {} as DurableObjectNamespace,
+        WorkspaceContainerHost: {
+          get: () => ({}),
+          idFromName: (name: string) => name,
+        } as unknown as DurableObjectNamespace,
+        WorkspaceWarmPool: {} as DurableObjectNamespace,
+        LOADER: {},
+      } as unknown as RuntimeThinkAgentEnv,
+    );
+    runRealThinkTurn.mockImplementation(async () => {
+      await agent.onChunk({ chunk: { type: "reasoning-delta", text: "Checking files" } } as never);
+      await agent.onChunk({ chunk: { type: "text-delta", text: "I updated" } } as never);
+      await agent.onStepFinish({ finishReason: "tool-calls" } as never);
+    });
+
+    await agent.runWithRecorder(
+      { runId: "run-1", fixture: { root: "/workspace/repo", task: "", files: [] } },
+      {
+        record(input) {
+          recorded.push({ kind: input.kind, title: input.title, detail: input.detail });
+          return {} as never;
+        },
+      },
+    );
+
+    expect(recorded).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "agent_thinking_delta",
+          title: "Think reasoning stream",
+          detail: "Checking files",
+        },
+        {
+          kind: "agent_message_delta",
+          title: "Think response stream",
+          detail: "I updated",
+        },
+        {
+          kind: "agent_step",
+          title: "Think step finished",
+          detail: "finishReason: tool-calls",
+        },
+      ]),
+    );
+  });
+
+  test("exposes the active Workspace stub for worker shell loopbacks", async () => {
+    const agent = new TestWorkspaceThinkAgent(
+      {
+        id: { toString: () => "workspace-agent-id" },
+        storage: {},
+      } as DurableObjectState,
+      {
+        AI: {} as Ai,
+        CompareRun: {} as DurableObjectNamespace,
+        WorkspaceContainerHost: {
+          get: () => ({}),
+          idFromName: (name: string) => name,
+        } as unknown as DurableObjectNamespace,
+        WorkspaceWarmPool: {} as DurableObjectNamespace,
+        LOADER: {},
+      } as unknown as RuntimeThinkAgentEnv,
+    );
+    runRealThinkTurn.mockImplementation(async () => {
+      await expect(agent.getWorkspace()).resolves.toEqual({ kind: "workspace-stub" });
+    });
+
+    await agent.run({ runId: "run-1", fixture: { root: "/workspace/repo", task: "", files: [] } });
+    await expect(agent.getWorkspace()).rejects.toThrow("no active Workspace session");
+  });
+
+  test("records Workspace container assignment lifecycle when the container backend is used", async () => {
+    const recorded: Array<{ kind: string; detail: string }> = [];
+    runRealThinkTurn.mockImplementation(async () => {
+      const container = containerBackendOptions[0]?.container as
+        | (() => Promise<unknown>)
+        | undefined;
+      await container?.();
+    });
+    const agent = new TestWorkspaceThinkAgent(
+      {
+        id: { toString: () => "workspace-agent-id" },
+        storage: {},
+      } as DurableObjectState,
+      {
+        AI: {} as Ai,
+        CompareRun: {} as DurableObjectNamespace,
+        WorkspaceContainerHost: {
+          get: (id: string) => ({ id }),
+          idFromName: (name: string) => name,
+        } as unknown as DurableObjectNamespace,
+        WorkspaceWarmPool: {} as DurableObjectNamespace,
+        LOADER: {},
+      } as unknown as RuntimeThinkAgentEnv,
+    );
+
+    await agent.runWithRecorder(
+      { runId: "run-1", fixture: { root: "/workspace/repo", task: "", files: [] } },
+      {
+        record(input) {
+          recorded.push({ kind: input.kind, detail: input.detail });
+          return {} as never;
+        },
+      },
+    );
+
+    expect(recorded).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "container_acquired",
+          detail: JSON.stringify({
+            executionTarget: "workspace-container",
+            containerId: "sandbox-physical-1",
+          }),
+        },
+        {
+          kind: "container_released",
+          detail: JSON.stringify({
+            executionTarget: "workspace-container",
+            containerId: "sandbox-physical-1",
+          }),
+        },
+      ]),
+    );
   });
 
   test("constructs a Workspace with worker shell and container backends", async () => {
@@ -244,7 +395,6 @@ describe("SandboxThinkAgent", () => {
       "createSession run-1-sandbox-agent /",
       "session mkdir /workspace/repo",
       "session write /workspace/repo/package.json",
-      "session read /workspace/repo/package.json",
       "session exec test -d /workspace/repo && test -f /workspace/repo/package.json undefined",
       "session read /workspace/repo/package.json",
       "session exec pwd /workspace/repo",
@@ -294,6 +444,64 @@ describe("SandboxThinkAgent", () => {
       }),
     ).rejects.toThrow("Sandbox fixture seed is not visible to exec");
     expect(runRealThinkTurn).not.toHaveBeenCalled();
+  });
+
+  test("records Sandbox container assignment lifecycle", async () => {
+    const recorded: Array<{ kind: string; detail: string }> = [];
+    getSandbox.mockReturnValue({
+      async createSession() {
+        return {
+          id: "run-1-sandbox-agent",
+          async mkdir() {},
+          async writeFile() {},
+          async readFile() {
+            return { content: "" };
+          },
+          async exec() {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        };
+      },
+      async deleteSession() {},
+    });
+    const agent = new TestSandboxThinkAgent(
+      {} as DurableObjectState,
+      {
+        AI: {} as Ai,
+        CompareRun: {} as DurableObjectNamespace,
+        Sandbox: {} as DurableObjectNamespace,
+        SandboxWarmPool: {} as DurableObjectNamespace,
+      } as unknown as RuntimeThinkAgentEnv,
+    );
+
+    await agent.runWithRecorder(
+      { runId: "run-1", fixture: { root: "/workspace/repo", task: "", files: [] } },
+      {
+        record(input) {
+          recorded.push({ kind: input.kind, detail: input.detail });
+          return {} as never;
+        },
+      },
+    );
+
+    expect(recorded).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "container_acquired",
+          detail: JSON.stringify({
+            executionTarget: "sandbox-container",
+            containerId: "sandbox-physical-1",
+          }),
+        },
+        {
+          kind: "container_released",
+          detail: JSON.stringify({
+            executionTarget: "sandbox-container",
+            containerId: "sandbox-physical-1",
+          }),
+        },
+      ]),
+    );
   });
 
   test("releases Sandbox warm-pool assignments during runtime cleanup", async () => {
@@ -363,6 +571,13 @@ class TestWorkspaceThinkAgent extends WorkspaceThinkAgent {
       record: () => ({}) as never,
     });
   }
+
+  runWithRecorder(
+    config: Parameters<WorkspaceThinkAgent["runComparison"]>[0],
+    recorder: Parameters<WorkspaceThinkAgent["runThinkTurn"]>[1],
+  ) {
+    return this.runWithRuntime(config, recorder);
+  }
 }
 
 class TestSandboxThinkAgent extends SandboxThinkAgent {
@@ -370,5 +585,12 @@ class TestSandboxThinkAgent extends SandboxThinkAgent {
     return this.runWithRuntime(config, {
       record: () => ({}) as never,
     });
+  }
+
+  runWithRecorder(
+    config: Parameters<SandboxThinkAgent["runComparison"]>[0],
+    recorder: Parameters<SandboxThinkAgent["runThinkTurn"]>[1],
+  ) {
+    return this.runWithRuntime(config, recorder);
   }
 }

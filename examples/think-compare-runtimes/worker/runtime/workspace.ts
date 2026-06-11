@@ -81,8 +81,133 @@ function toWorkspaceExecOptions(
   };
 }
 
+const workerShellCommands = new Set([
+  "cat",
+  "cd",
+  "echo",
+  "find",
+  "grep",
+  "head",
+  "ls",
+  "pwd",
+  "sed",
+  "tail",
+  "test",
+  "true",
+  "wc",
+]);
+
+const containerCommands = new Set(["node", "npm", "npx", "pnpm", "tsc", "vitest", "yarn"]);
+
 function workspaceBackendForCommand(command: string): "container" | "shell" {
-  return /(^|\s)(npm|node|npx|pnpm|yarn|vitest|tsc)(\s|$)/.test(command) ? "container" : "shell";
+  const executables = shellExecutables(command);
+  if (executables.length === 0) return "shell";
+  return executables.every((executable) => workerShellCommands.has(executable))
+    ? "shell"
+    : "container";
+}
+
+function shellExecutables(command: string): string[] {
+  return shellSegments(command).flatMap((segment) => {
+    const executable = firstExecutable(segment);
+    return executable ? [executable] : [];
+  });
+}
+
+function shellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      current += char;
+      quote = char;
+      continue;
+    }
+    if (char === ";" || char === "|" || char === "&") {
+      const trimmed = current.trim();
+      if (trimmed) segments.push(trimmed);
+      current = "";
+      if ((char === "|" || char === "&") && command[index + 1] === char) index++;
+      continue;
+    }
+    current += char;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) segments.push(trimmed);
+  return segments;
+}
+
+function firstExecutable(segment: string): string | null {
+  for (const token of shellWords(segment)) {
+    if (isEnvironmentAssignment(token)) continue;
+    if (containerCommands.has(token)) return token;
+    if (token.startsWith("./") || token.startsWith("../") || token.startsWith("/")) return token;
+    return token;
+  }
+  return null;
+}
+
+function shellWords(segment: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+
+  for (const char of segment) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        words.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (current) words.push(current);
+  return words;
+}
+
+function isEnvironmentAssignment(token: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
 }
 
 function workspaceExecutionTarget(backend: "container" | "shell") {

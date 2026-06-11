@@ -14,7 +14,7 @@ export const comparisonFixture: ComparisonFixture = {
   task: [
     "Add documentation for Smart Request Policies.",
     "Use the feature brief, style guide, existing Workers docs, and examples to create a new Workers docs page, update the docs navigation, add a Worker example, and update the README.",
-    "Write the docs changes first; when the content is complete, run the available docs validation command if useful and summarize what changed and how you verified it.",
+    "Write the docs changes first; when the content is complete, run the available docs validation command and summarize what changed and how you verified it.",
   ].join(" "),
   files: [
     {

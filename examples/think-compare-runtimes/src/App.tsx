@@ -1,5 +1,5 @@
 import { usePartySocket } from "partysocket/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RunEvent } from "../shared/events";
 import { buildDashboardModel } from "./dashboard-model";
 import { applyRunMessage, type RunMessage } from "./run-state";
@@ -20,6 +20,7 @@ export function App() {
   const [startState, setStartState] = useState<StartState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [nowIso, setNowIso] = useState(() => new Date().toISOString());
+  const activeRunIdRef = useRef<string | null>(null);
 
   usePartySocket({
     party: "compare-run",
@@ -27,13 +28,23 @@ export function App() {
     enabled: runId !== null,
     onMessage(message) {
       const parsed = JSON.parse(String(message.data)) as RunMessage;
+      const activeRunId = activeRunIdRef.current;
+      if (!activeRunId || !messageBelongsToRun(parsed, activeRunId)) return;
       setEvents((current) => applyRunMessage(current, parsed));
     },
   });
 
   const dashboard = useMemo(() => buildDashboardModel(events, nowIso), [events, nowIso]);
   const runLabel = runStatusLabel(startState, dashboard.run.status, dashboard.run.elapsedLabel);
-  const actionLabel = runId ? dashboard.run.actionLabel : "START RUN";
+  const actionLabel =
+    startState === "starting"
+      ? "STARTING"
+      : startState === "running" && dashboard.run.status === "running"
+        ? "STOP RUN"
+        : runId
+          ? dashboard.run.actionLabel
+          : "START RUN";
+  const startDisabled = startState === "starting";
 
   useEffect(() => {
     if (dashboard.run.status !== "running" && startState !== "running") return;
@@ -46,7 +57,18 @@ export function App() {
     return () => clearInterval(timer);
   }, [dashboard.run.status, startState]);
 
+  async function handleRunAction() {
+    if (startState === "running" && dashboard.run.status === "running") {
+      stopRun();
+      return;
+    }
+    await startRun();
+  }
+
   async function startRun() {
+    activeRunIdRef.current = null;
+    setRunId(null);
+    setEvents([]);
     setStartState("starting");
     setError(null);
     setNowIso(new Date().toISOString());
@@ -59,6 +81,7 @@ export function App() {
       }
 
       const session = (await response.json()) as RunSessionResponse;
+      activeRunIdRef.current = session.runId;
       setRunId(session.runId);
       setEvents(session.events);
       setStartState("running");
@@ -68,21 +91,32 @@ export function App() {
     }
   }
 
+  function stopRun() {
+    const stoppedRunId = activeRunIdRef.current ?? runId;
+    activeRunIdRef.current = null;
+    setRunId(null);
+    setEvents([]);
+    setStartState("idle");
+    setError(null);
+    setNowIso(new Date().toISOString());
+
+    if (stoppedRunId) {
+      void fetch(`/api/runs/${encodeURIComponent(stoppedRunId)}/stop`, { method: "POST" });
+    }
+  }
+
   return (
-    <main className="min-h-screen overflow-hidden bg-[#0E1013] text-[#E6E8EA]">
+    <main className="flex h-screen flex-col overflow-hidden bg-[#FBFAF6] text-[#111111]">
       <TopBar
         actionLabel={actionLabel}
-        disabled={startState === "starting"}
+        disabled={startDisabled}
         error={error}
-        onStart={startRun}
+        onStart={handleRunAction}
         runId={runId}
         runLabel={runLabel}
       />
 
-      <section
-        className="grid min-h-[calc(100vh-67px)] lg:grid-cols-2"
-        aria-label="Runtime comparison"
-      >
+      <section className="grid min-h-0 flex-1 lg:grid-cols-2" aria-label="Runtime comparison">
         <RuntimeWing events={events} runtime="workspace" telemetry={dashboard.runtimes.workspace} />
         <RuntimeWing events={events} runtime="sandbox" telemetry={dashboard.runtimes.sandbox} />
       </section>
@@ -96,4 +130,9 @@ function runStatusLabel(startState: StartState, status: string, elapsedLabel: st
   if (status === "completed") return `DONE · ${elapsedLabel}`;
   if (status === "running") return `RUN · ${elapsedLabel}`;
   return "IDLE";
+}
+
+function messageBelongsToRun(message: RunMessage, runId: string): boolean {
+  if (message.type === "event") return message.event.runId === runId;
+  return message.events.every((event) => event.runId === runId);
 }

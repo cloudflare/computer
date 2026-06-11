@@ -111,9 +111,11 @@ function isFileCall(fact: RunEventFact): boolean {
 }
 
 function validationStatus(facts: RunEventFact[]): ValidationStatus {
-  const validationExecs = execObservationFacts(facts).filter((fact) => fact.validationCommand);
-  if (validationExecs.length === 0) return "not-run";
-  return validationExecs.some((fact) => fact.failed) ? "failed" : "passed";
+  const latestValidation = execObservationFacts(facts)
+    .filter((fact) => fact.validationCommand)
+    .at(-1);
+  if (!latestValidation) return "not-run";
+  return latestValidation.failed ? "failed" : "passed";
 }
 
 function containerState(

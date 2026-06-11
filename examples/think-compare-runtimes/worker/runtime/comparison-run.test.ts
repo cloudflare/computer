@@ -118,11 +118,12 @@ function expectedFixturePaths(): string[] {
 function perRuntimeFixtureSetupEventCount(): number {
   const rootMkdirEvents = 2;
   const seededEvent = 1;
-  const fileEvents = comparisonFixture.files.reduce((count, file) => {
-    const path = `${comparisonFixture.root}/${file.path}`;
-    const directory = path.slice(0, path.lastIndexOf("/"));
-    return count + (directory === comparisonFixture.root ? 2 : 4);
-  }, 0);
+  const files = comparisonFixture.files.map((file) => `${comparisonFixture.root}/${file.path}`);
+  const parentDirs = new Set(
+    files
+      .map((path) => path.slice(0, path.lastIndexOf("/")))
+      .filter((directory) => directory !== comparisonFixture.root),
+  );
 
-  return rootMkdirEvents + fileEvents + seededEvent;
+  return rootMkdirEvents + parentDirs.size * 2 + files.length * 2 + seededEvent;
 }

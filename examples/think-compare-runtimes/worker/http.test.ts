@@ -6,13 +6,18 @@ describe("handleApiRequest", () => {
     const calls: string[] = [];
     const response = await handleApiRequest(
       new Request("https://example.com/api/runs", { method: "POST" }),
-      async () => {
-        calls.push("start");
-        return {
-          runId: "run-abc",
-          socketPath: "/parties/compare-run/run-abc",
-          events: [],
-        };
+      {
+        async startRun() {
+          calls.push("start");
+          return {
+            runId: "run-abc",
+            socketPath: "/parties/compare-run/run-abc",
+            events: [],
+          };
+        },
+        async stopRun() {
+          throw new Error("start route must not stop runs");
+        },
       },
     );
 
@@ -25,11 +30,35 @@ describe("handleApiRequest", () => {
     });
   });
 
+  test("stops a run from POST /api/runs/:runId/stop", async () => {
+    const calls: string[] = [];
+    const response = await handleApiRequest(
+      new Request("https://example.com/api/runs/run-abc/stop", { method: "POST" }),
+      {
+        async startRun() {
+          throw new Error("stop route must not start runs");
+        },
+        async stopRun(runId) {
+          calls.push(runId);
+        },
+      },
+    );
+
+    expect(calls).toEqual(["run-abc"]);
+    expect(response).not.toBeNull();
+    expect(response?.status).toBe(204);
+  });
+
   test("returns null for non-API routes", async () => {
     const response = await handleApiRequest(
       new Request("https://example.com/parties/compare-run/run-abc"),
-      async () => {
-        throw new Error("non-API routes must not start runs");
+      {
+        async startRun() {
+          throw new Error("non-API routes must not start runs");
+        },
+        async stopRun() {
+          throw new Error("non-API routes must not stop runs");
+        },
       },
     );
 

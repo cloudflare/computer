@@ -95,7 +95,13 @@ describe("createWorkspaceFixtureRuntime", () => {
     ]);
   });
 
-  test("exec keeps generic Workspace commands on the worker shell backend", async () => {
+  test.each([
+    "grep -R node docs",
+    "cat package.json | grep npm",
+    "find . -name package.json",
+    "ls docs/workers",
+    "pwd",
+  ])("exec keeps generic Workspace inspection on the worker shell backend: %s", async (command) => {
     const calls: string[] = [];
     const runner = createWorkspaceCommandRunner({
       async ready(backend?: string) {
@@ -103,10 +109,10 @@ describe("createWorkspaceFixtureRuntime", () => {
       },
       shell: {
         async exec(
-          command: string,
+          actualCommand: string,
           options?: { backend?: string; cwd?: string; encoding?: "utf8" },
         ) {
-          calls.push(`${command} ${options?.backend} ${options?.cwd} ${options?.encoding}`);
+          calls.push(`${actualCommand} ${options?.backend} ${options?.cwd} ${options?.encoding}`);
           return {
             async result() {
               return { exitCode: 0, stdout: "workspace\n", stderr: "", pushed: 0, pulled: 0 };
@@ -116,27 +122,70 @@ describe("createWorkspaceFixtureRuntime", () => {
       },
     });
 
-    await expect(runner.exec("grep -R Smart docs", { cwd: "/workspace/repo" })).resolves.toEqual({
+    await expect(runner.exec(command, { cwd: "/workspace/repo" })).resolves.toEqual({
       exitCode: 0,
       stdout: "workspace\n",
       stderr: "",
       executionTarget: "worker-shell",
     });
 
-    expect(calls).toEqual(["ready shell", "grep -R Smart docs shell /workspace/repo utf8"]);
+    expect(calls).toEqual(["ready shell", `${command} shell /workspace/repo utf8`]);
+  });
+
+  test.each([
+    "npm run check",
+    "node scripts/check-docs.mjs",
+    "npx vitest",
+    "tsc --noEmit",
+    "./scripts/check-docs.mjs",
+  ])("exec routes runtime and package commands to the Workspace container backend: %s", async (command) => {
+    const calls: string[] = [];
+    const runner = createWorkspaceCommandRunner({
+      async ready(backend?: string) {
+        calls.push(`ready ${backend ?? "default"}`);
+      },
+      shell: {
+        async exec(
+          actualCommand: string,
+          options?: { backend?: string; cwd?: string; encoding?: "utf8" },
+        ) {
+          calls.push(`${actualCommand} ${options?.backend} ${options?.cwd} ${options?.encoding}`);
+          return {
+            async result() {
+              return { exitCode: 0, stdout: "workspace\n", stderr: "", pushed: 1, pulled: 1 };
+            },
+          };
+        },
+      },
+    });
+
+    await expect(runner.exec(command, { cwd: "/workspace/repo" })).resolves.toMatchObject({
+      exitCode: 0,
+      stdout: "workspace\n",
+      stderr: "",
+      executionTarget: "workspace-container",
+    });
+
+    expect(calls).toEqual(["ready container", `${command} container /workspace/repo utf8`]);
   });
 });
 
 function expectedSeedCalls(): Array<{ type: "mkdir" | "write"; path: string; contents?: string }> {
+  const files = comparisonFixture.files.map((file) => ({
+    ...file,
+    path: `${comparisonFixture.root}/${file.path}`,
+  }));
+  const parentDirs = [
+    ...new Set(
+      files
+        .map((file) => file.path.slice(0, file.path.lastIndexOf("/")))
+        .filter((directory) => directory !== comparisonFixture.root),
+    ),
+  ];
+
   return [
     { type: "mkdir", path: comparisonFixture.root },
-    ...comparisonFixture.files.flatMap((file) => {
-      const path = `${comparisonFixture.root}/${file.path}`;
-      const directory = path.slice(0, path.lastIndexOf("/"));
-      const calls: Array<{ type: "mkdir" | "write"; path: string; contents?: string }> = [];
-      if (directory !== comparisonFixture.root) calls.push({ type: "mkdir", path: directory });
-      calls.push({ type: "write", path, contents: file.contents });
-      return calls;
-    }),
+    ...parentDirs.map((directory) => ({ type: "mkdir" as const, path: directory })),
+    ...files.map((file) => ({ type: "write" as const, path: file.path, contents: file.contents })),
   ];
 }
