@@ -15,14 +15,24 @@ describe("createRuntimeExecTool", () => {
       runner: {
         async exec(command, options) {
           calls.push({ command, cwd: options?.cwd, timeoutMs: options?.timeoutMs });
-          return { exitCode: 0, stdout: "ok\n", stderr: "" };
+          return {
+            exitCode: 0,
+            stdout: "ok\n",
+            stderr: "",
+            executionTarget: "workspace-container",
+          };
         },
       },
     });
 
     await expect(
       exec("npm test -- --runInBand", { cwd: "/workspace/repo", timeoutMs: 30_000 }),
-    ).resolves.toEqual({ exitCode: 0, stdout: "ok\n", stderr: "" });
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "ok\n",
+      stderr: "",
+      executionTarget: "workspace-container",
+    });
 
     expect(calls).toEqual([
       { command: "npm test -- --runInBand", cwd: "/workspace/repo", timeoutMs: 30_000 },

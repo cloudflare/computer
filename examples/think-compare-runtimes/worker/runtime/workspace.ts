@@ -59,7 +59,7 @@ export function createWorkspaceCommandRunner(
       await workspace.ready(backend);
       const handle = await workspace.shell.exec(command, toWorkspaceExecOptions(options, backend));
       const { exitCode, stdout, stderr } = await handle.result();
-      return { exitCode, stdout, stderr };
+      return { exitCode, stdout, stderr, executionTarget: workspaceExecutionTarget(backend) };
     },
   };
 }
@@ -83,4 +83,8 @@ function toWorkspaceExecOptions(
 
 function workspaceBackendForCommand(command: string): "container" | "shell" {
   return /(^|\s)(npm|node|npx|pnpm|yarn|vitest|tsc)(\s|$)/.test(command) ? "container" : "shell";
+}
+
+function workspaceExecutionTarget(backend: "container" | "shell") {
+  return backend === "shell" ? "worker-shell" : "workspace-container";
 }

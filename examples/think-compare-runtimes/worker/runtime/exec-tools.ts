@@ -1,4 +1,4 @@
-import type { RuntimeId } from "../../shared/events";
+import type { ExecutionTarget, RuntimeId } from "../../shared/events";
 import type { RunEventRecorderLike } from "../run-events";
 
 export interface RuntimeExecOptions {
@@ -12,14 +12,18 @@ export interface RuntimeExecResult {
   stderr: string;
 }
 
+export interface RuntimeExecObservation extends RuntimeExecResult {
+  executionTarget: ExecutionTarget;
+}
+
 export interface RuntimeCommandRunner {
-  exec(command: string, options?: RuntimeExecOptions): Promise<RuntimeExecResult>;
+  exec(command: string, options?: RuntimeExecOptions): Promise<RuntimeExecObservation>;
 }
 
 export type RuntimeExecTool = (
   command: string,
   options?: RuntimeExecOptions,
-) => Promise<RuntimeExecResult>;
+) => Promise<RuntimeExecObservation>;
 
 export interface RuntimeExecToolOptions {
   runtime: RuntimeId;

@@ -82,7 +82,12 @@ describe("createWorkspaceFixtureRuntime", () => {
 
     await expect(
       runner.exec("npm run check", { cwd: "/workspace/repo", timeoutMs: 30_000 }),
-    ).resolves.toEqual({ exitCode: 0, stdout: "workspace\n", stderr: "" });
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "workspace\n",
+      stderr: "",
+      executionTarget: "workspace-container",
+    });
     expect(calls).toEqual([
       "ready container",
       "npm run check container /workspace/repo utf8 30000",
@@ -111,7 +116,12 @@ describe("createWorkspaceFixtureRuntime", () => {
       },
     });
 
-    await runner.exec("grep -R Smart docs", { cwd: "/workspace/repo" });
+    await expect(runner.exec("grep -R Smart docs", { cwd: "/workspace/repo" })).resolves.toEqual({
+      exitCode: 0,
+      stdout: "workspace\n",
+      stderr: "",
+      executionTarget: "worker-shell",
+    });
 
     expect(calls).toEqual(["ready shell", "grep -R Smart docs shell /workspace/repo utf8"]);
   });

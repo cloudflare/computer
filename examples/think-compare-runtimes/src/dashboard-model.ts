@@ -1,4 +1,5 @@
 import type { RunEvent, RuntimeId } from "../shared/events";
+import { execObservationFacts, factsForRuntime, type RunEventFact } from "./run-event-facts";
 import { deriveRunSummary, type OverallRunStatus, type RuntimeRunStatus } from "./run-state";
 
 export type ContainerState = "off" | "booting" | "asleep" | "awake";
@@ -33,7 +34,6 @@ const runtimeIds: RuntimeId[] = ["workspace", "sandbox"];
 
 export function buildDashboardModel(events: RunEvent[], nowIso: string | null): DashboardModel {
   const summary = deriveRunSummary(events);
-  const sortedEvents = [...events].sort((left, right) => left.sequence - right.sequence);
 
   return {
     run: {
@@ -47,17 +47,19 @@ export function buildDashboardModel(events: RunEvent[], nowIso: string | null): 
     runtimes: Object.fromEntries(
       runtimeIds.map((runtime) => {
         const runtimeSummary = summary.runtimes[runtime];
-        const runtimeEvents = sortedEvents.filter((event) => event.runtime === runtime);
-        const toolCalls = runtimeEvents.filter(isToolCall).length;
-        const fileOps = runtimeEvents.filter(isFileCall).length;
-        const execEvents = runtimeEvents.filter(isExecCall);
-        const execCalls = execEvents.length;
-        const workerShellExecs = execEvents.filter(
-          (event) => execBackend(event) === "shell",
+        const facts = factsForRuntime(events, runtime, "runtimeOnly");
+        const execs = execObservationFacts(facts);
+        const workerShellExecs = execs.filter(
+          (fact) => fact.executionTarget === "worker-shell",
         ).length;
-        const containerExecs = execEvents.filter(
-          (event) => execBackend(event) === "container",
+        const workspaceContainerExecs = execs.filter(
+          (fact) => fact.executionTarget === "workspace-container",
         ).length;
+        const sandboxContainerExecs = execs.filter(
+          (fact) => fact.executionTarget === "sandbox-container",
+        ).length;
+        const containerExecs =
+          runtime === "workspace" ? workspaceContainerExecs : sandboxContainerExecs;
 
         return [
           runtime,
@@ -68,20 +70,15 @@ export function buildDashboardModel(events: RunEvent[], nowIso: string | null): 
               runtimeSummary.elapsedMs ??
                 runningElapsedMs(runtimeSummary.startedAt, runtimeSummary.completedAt, nowIso),
             ),
-            toolCalls,
-            fileOps,
-            execCalls,
+            toolCalls: facts.filter((fact) => fact.phase === "call" && fact.tool !== null).length,
+            fileOps: facts.filter(isFileCall).length,
+            execCalls: execs.length,
             workerShellExecs,
-            containerExecs: runtime === "workspace" ? containerExecs : execCalls,
-            validationStatus: validationStatus(runtimeEvents),
-            container: containerState(
-              runtime,
-              runtimeSummary.status,
-              runtimeEvents,
-              runtime === "workspace" ? containerExecs : execCalls,
-            ),
+            containerExecs,
+            validationStatus: validationStatus(facts),
+            container: containerState(runtime, runtimeSummary.status, facts, containerExecs),
             error: runtimeSummary.error,
-            events: runtimeEvents,
+            events: facts.map((fact) => fact.event),
           },
         ];
       }),
@@ -107,66 +104,32 @@ export function formatDuration(elapsedMs: number | null): string {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-function isToolCall(event: RunEvent): boolean {
-  return event.kind === "tool_call" || event.kind === "agent_tool_call";
+function isFileCall(fact: RunEventFact): boolean {
+  return (
+    fact.phase === "call" && (fact.tool === "read" || fact.tool === "write" || fact.tool === "edit")
+  );
 }
 
-function isFileCall(event: RunEvent): boolean {
-  if (!isToolCall(event)) return false;
-  const title = event.title.toLowerCase();
-  return title.includes("read") || title.includes("write") || title.includes("edit");
-}
-
-function isExecCall(event: RunEvent): boolean {
-  if (!isToolCall(event)) return false;
-  if (event.title.toLowerCase().includes("exec")) return true;
-  return typeof parsedDetail(event)?.command === "string";
-}
-
-function execBackend(event: RunEvent): string | null {
-  const detail = parsedDetail(event);
-  return typeof detail?.backend === "string" ? detail.backend : null;
-}
-
-function validationStatus(events: RunEvent[]): ValidationStatus {
-  const validationExecs = events.filter((event) => {
-    if (!isExecCall(event)) return false;
-    const command = parsedDetail(event)?.command;
-    return typeof command === "string" && /npm\s+run\s+check/.test(command);
-  });
+function validationStatus(facts: RunEventFact[]): ValidationStatus {
+  const validationExecs = execObservationFacts(facts).filter((fact) => fact.validationCommand);
   if (validationExecs.length === 0) return "not-run";
-
-  const failed = events.some((event) => {
-    if (event.kind === "tool_error" || event.kind === "agent_tool_error") return true;
-    const detail = parsedDetail(event);
-    return typeof detail?.exitCode === "number" && detail.exitCode !== 0;
-  });
-  return failed ? "failed" : "passed";
-}
-
-function parsedDetail(event: RunEvent): Record<string, unknown> | null {
-  try {
-    const detail = JSON.parse(event.detail) as unknown;
-    return detail && typeof detail === "object" ? (detail as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
+  return validationExecs.some((fact) => fact.failed) ? "failed" : "passed";
 }
 
 function containerState(
   runtime: RuntimeId,
   status: RuntimeRunStatus,
-  events: RunEvent[],
-  execCalls: number,
+  facts: RunEventFact[],
+  containerExecs: number,
 ): ContainerState {
   if (runtime === "workspace") {
-    return execCalls > 0 ? "awake" : "asleep";
+    return containerExecs > 0 ? "awake" : "asleep";
   }
 
   if (status === "idle") return "off";
   if (
-    events.some((event) => event.kind === "tool_call" || event.kind === "tool_result") ||
-    execCalls > 0
+    facts.some((fact) => fact.phase === "call" || fact.phase === "result") ||
+    containerExecs > 0
   ) {
     return "awake";
   }

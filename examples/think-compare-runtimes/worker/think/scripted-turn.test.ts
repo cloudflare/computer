@@ -26,7 +26,12 @@ describe("runScriptedThinkToolSmoke", () => {
       },
       runner: {
         async exec(command) {
-          return { exitCode: 0, stdout: `${command}\n`, stderr: "" };
+          return {
+            exitCode: 0,
+            stdout: `${command}\n`,
+            stderr: "",
+            executionTarget: "workspace-container",
+          };
         },
       },
     });

@@ -122,7 +122,7 @@ describe("App", () => {
     expect(within(screen.getByLabelText("Workspace runtime wing")).getByText("Files")).toBeTruthy();
   });
 
-  test("renders telemetry and grouped activity for live runtime events", async () => {
+  test("renders telemetry, routing summary, and grouped evidence for live runtime events", async () => {
     vi.stubGlobal(
       "fetch",
       sessionWithEvents([
@@ -164,11 +164,32 @@ describe("App", () => {
         }),
         event({
           sequence: 5,
-          runtime: "sandbox",
-          kind: "agent_tool_call",
-          title: "Think requested exec",
-          detail: JSON.stringify({ command: "npm test", cwd: "/workspace/repo" }),
+          runtime: "workspace",
+          kind: "agent_tool_result",
+          title: "Think exec result",
+          detail: JSON.stringify({
+            command: "grep -R Smart docs",
+            cwd: "/workspace/repo",
+            executionTarget: "worker-shell",
+            exitCode: 0,
+            stdout: "docs/workers/configuration.md:Smart Request Policies",
+            stderr: "",
+          }),
           timestamp: "2026-06-04T00:00:05.000Z",
+        }),
+        event({
+          sequence: 6,
+          runtime: "sandbox",
+          kind: "agent_tool_result",
+          title: "Think exec result",
+          detail: JSON.stringify({
+            command: "npm run check",
+            cwd: "/workspace/repo",
+            exitCode: 0,
+            stdout: "docs check passed",
+            stderr: "",
+          }),
+          timestamp: "2026-06-04T00:00:06.000Z",
         }),
       ]),
     );
@@ -176,22 +197,32 @@ describe("App", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "START RUN" }));
 
-    await screen.findByText("read called");
+    await screen.findByText("Read source material");
     const workspace = screen.getByLabelText("Workspace runtime wing");
     const sandbox = screen.getByLabelText("Sandbox runtime wing");
 
     expect(within(workspace).getByText("Files")).toBeTruthy();
-    expect(within(workspace).getByText("1")).toBeTruthy();
     expect(within(workspace).getByText("Shell")).toBeTruthy();
-    expect(within(workspace).getByText("0")).toBeTruthy();
+    expect(within(workspace).getAllByText("1").length).toBeGreaterThanOrEqual(2);
     expect(within(workspace).getByText("asleep")).toBeTruthy();
-    expect(within(workspace).getByText("I found the policy helper.")).toBeTruthy();
-    expect(within(workspace).getByText("read called")).toBeTruthy();
+    expect(within(workspace).getByText("Routing summary")).toBeTruthy();
+    expect(within(workspace).getByText("File tools → durable storage")).toBeTruthy();
+    expect(
+      within(workspace).getByText("Exec → worker shell, then container when needed"),
+    ).toBeTruthy();
+    expect(within(workspace).getByText("Read source material")).toBeTruthy();
+    expect(within(workspace).getByText("Used worker shell")).toBeTruthy();
+    expect(within(workspace).getAllByText("grep -R Smart docs").length).toBeGreaterThanOrEqual(1);
+    expect(within(workspace).getByText("Final response")).toBeTruthy();
+    expect(
+      within(workspace).getAllByText("I found the policy helper.").length,
+    ).toBeGreaterThanOrEqual(1);
 
-    expect(within(sandbox).getByText("Container")).toBeTruthy();
+    expect(within(sandbox).getAllByText("Container").length).toBeGreaterThanOrEqual(1);
     expect(within(sandbox).getAllByText("1").length).toBeGreaterThanOrEqual(1);
-    expect(within(sandbox).getByText("Think requested exec")).toBeTruthy();
-    expect(within(sandbox).getByText("npm test")).toBeTruthy();
+    expect(within(sandbox).getByText("File tools + exec → sandbox container")).toBeTruthy();
+    expect(within(sandbox).getByText("Ran container validation")).toBeTruthy();
+    expect(within(sandbox).getByText("npm run check · passed")).toBeTruthy();
   });
 
   test("renders assistant response details as Markdown", async () => {

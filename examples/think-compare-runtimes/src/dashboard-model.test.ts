@@ -60,7 +60,7 @@ describe("buildDashboardModel", () => {
     expect(model.runtimes.sandbox.container).toBe("booting");
   });
 
-  test("counts Workspace exec routing by backend", () => {
+  test("counts Workspace exec routing by execution target", () => {
     const model = buildDashboardModel(
       [
         event({
@@ -88,7 +88,7 @@ describe("buildDashboardModel", () => {
           title: "exec called",
           detail: JSON.stringify({
             command: "grep -R Smart docs",
-            backend: "shell",
+            executionTarget: "worker-shell",
             cwd: "/workspace/repo",
           }),
           timestamp: "2026-06-04T00:00:05.000Z",
@@ -100,7 +100,7 @@ describe("buildDashboardModel", () => {
           title: "exec called",
           detail: JSON.stringify({
             command: "npm run check",
-            backend: "container",
+            executionTarget: "workspace-container",
             cwd: "/workspace/repo",
           }),
           timestamp: "2026-06-04T00:00:06.000Z",

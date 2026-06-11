@@ -68,7 +68,12 @@ describe("createSandboxFixtureRuntime", () => {
 
     await expect(
       runner.exec("npm test", { cwd: "/workspace/repo", timeoutMs: 30_000 }),
-    ).resolves.toEqual({ exitCode: 0, stdout: "sandbox\n", stderr: "" });
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "sandbox\n",
+      stderr: "",
+      executionTarget: "sandbox-container",
+    });
     expect(calls).toEqual(["npm test /workspace/repo 30000"]);
   });
 });

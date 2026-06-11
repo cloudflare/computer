@@ -52,7 +52,7 @@ export function createSandboxCommandRunner(sandbox: SandboxCommandTarget): Runti
         command,
         toSandboxExecOptions(options),
       );
-      return { exitCode, stdout, stderr };
+      return { exitCode, stdout, stderr, executionTarget: "sandbox-container" };
     },
   };
 }

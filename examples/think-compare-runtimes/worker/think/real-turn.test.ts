@@ -21,7 +21,7 @@ describe("runRealThinkTurn", () => {
       },
       runner: {
         async exec() {
-          return { exitCode: 0, stdout: "", stderr: "" };
+          return { exitCode: 0, stdout: "", stderr: "", executionTarget: "workspace-container" };
         },
       },
     });
@@ -75,7 +75,7 @@ describe("runRealThinkTurn", () => {
       },
       runner: {
         async exec() {
-          return { exitCode: 0, stdout: "", stderr: "" };
+          return { exitCode: 0, stdout: "", stderr: "", executionTarget: "workspace-container" };
         },
       },
     });
@@ -124,7 +124,7 @@ describe("runRealThinkTurn", () => {
       },
       runner: {
         async exec() {
-          return { exitCode: 0, stdout: "", stderr: "" };
+          return { exitCode: 0, stdout: "", stderr: "", executionTarget: "workspace-container" };
         },
       },
     });

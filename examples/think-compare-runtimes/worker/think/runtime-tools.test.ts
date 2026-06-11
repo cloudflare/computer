@@ -34,6 +34,7 @@ function createAdapter(): RuntimeAdapter {
         exitCode: 0,
         stdout: `${command} ${options?.cwd ?? ""}`.trim(),
         stderr: "",
+        executionTarget: "workspace-container",
       };
     },
   };
@@ -73,6 +74,7 @@ describe("createRuntimeThinkTools", () => {
       exitCode: 0,
       stdout: "node --version /workspace/repo",
       stderr: "",
+      executionTarget: "workspace-container",
     });
 
     expect(recorder.events().map(({ runtime, kind, title }) => ({ runtime, kind, title }))).toEqual(

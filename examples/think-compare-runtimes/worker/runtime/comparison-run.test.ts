@@ -50,6 +50,7 @@ describe("runFixtureComparison", () => {
             exitCode: 0,
             stdout: `workspace ${command}\n`,
             stderr: "",
+            executionTarget: "workspace-container",
           };
         },
       },
@@ -60,6 +61,7 @@ describe("runFixtureComparison", () => {
             exitCode: 0,
             stdout: `sandbox ${command}\n`,
             stderr: "",
+            executionTarget: "sandbox-container",
           };
         },
       },
