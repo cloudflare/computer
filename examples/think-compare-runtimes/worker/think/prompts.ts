@@ -30,6 +30,12 @@ export function createTaskPrompt(fixture: ComparisonFixture): string {
     "",
     "Locate related Workers docs and examples before drafting the new page.",
     "",
+    "Seeded project files:",
+    ...fixture.files.map((file) => `- ${root}/${file.path}`),
+    "",
+    "These files are already present at run start; do not recreate the baseline project.",
+    "If a listing appears inconsistent with this manifest, verify by reading known paths and report the inconsistency instead of creating substitute files.",
+    "",
     "Acceptance criteria:",
     `- Create ${root}/docs/workers/smart-request-policies.md.`,
     "- Start the new page with YAML frontmatter containing `title`, `description`, and `lastUpdated`.",
@@ -55,7 +61,7 @@ export function createRuntimeToolDescriptions(runtime: RuntimeId): RuntimeToolDe
       write:
         "Create or overwrite a text file with Workspace file tools. Use an absolute path under /workspace/repo. This replaces the whole file, so use it for new files or full-file rewrites.",
       edit: "Apply exact text replacements with Workspace file tools. Use an absolute path under /workspace/repo. Each oldText must match exactly one current region in the file; read the file first if you need exact text.",
-      exec: "Run a shell command through the Workspace environment. grep, find, ls, cat, pwd, head, tail, sed, and wc route to the worker shell for fast text inspection. npm, node, npx, pnpm, yarn, vitest, tsc, and executable project scripts route to the workspace container for package/runtime work. cwd defaults to /workspace/repo and must stay under /workspace/repo. If validation fails, repair the files and rerun the command. After validation passes, summarize the work instead of making extra edits.",
+      exec: "Run a shell command through the Workspace environment. grep, find, ls, cat, pwd, head, tail, sed, and wc route to the worker shell for fast text inspection. npm, node, npx, pnpm, yarn, vitest, tsc, and executable project scripts route to the workspace container for package/runtime work. cwd defaults to /workspace/repo and must stay under /workspace/repo. If discovery commands disagree with successful reads of seeded files, verify known paths and report a visibility issue instead. If validation fails, repair the files and rerun the command. After validation passes, summarize the work instead of making extra edits.",
     };
   }
 
@@ -64,7 +70,7 @@ export function createRuntimeToolDescriptions(runtime: RuntimeId): RuntimeToolDe
     write:
       "Create or overwrite a text file in the Sandbox filesystem. Use an absolute path under /workspace/repo. This replaces the whole file, so use it for new files or full-file rewrites.",
     edit: "Apply exact text replacements to a file in the Sandbox filesystem. Use an absolute path under /workspace/repo. Each oldText must match exactly one current region in the file; read the file first if you need exact text.",
-    exec: "Run a shell command inside the Sandbox container. Use this freely for search, listing, project inspection, package scripts, tests, and other shell-native workflows. cwd defaults to /workspace/repo and must stay under /workspace/repo. If validation fails, repair the files and rerun the command.",
+    exec: "Run a shell command inside the Sandbox container. Use this freely for search, listing, project inspection, package scripts, tests, and other shell-native workflows. cwd defaults to /workspace/repo and must stay under /workspace/repo. Do not bootstrap replacement project files if seeded fixture paths are already readable; verify known paths and report a visibility issue instead. If validation fails, repair the files and rerun the command.",
   };
 }
 
@@ -83,6 +89,10 @@ function sharedCodingPrompt(): string {
     "- Keep changes minimal and focused on the task.",
     "- Treat validation failures as actionable repair checklists, then rerun validation when possible.",
     "- After validation passes, stop editing and summarize the completed work.",
+    "- The fixture files are already seeded before you start.",
+    "- Tool results are facts; reasoning is provisional.",
+    "- Do not claim a directory is empty or missing unless a tool result shows that.",
+    "- If expected fixture files appear missing, report a runtime visibility issue instead of bootstrapping replacement project files.",
   ].join("\n");
 }
 

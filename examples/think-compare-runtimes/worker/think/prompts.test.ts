@@ -26,6 +26,14 @@ describe("runtime Think prompts", () => {
       expect(prompt).toContain(
         "After validation passes, stop editing and summarize the completed work.",
       );
+      expect(prompt).toContain("The fixture files are already seeded before you start.");
+      expect(prompt).toContain("Tool results are facts; reasoning is provisional.");
+      expect(prompt).toContain(
+        "Do not claim a directory is empty or missing unless a tool result shows that.",
+      );
+      expect(prompt).toContain(
+        "If expected fixture files appear missing, report a runtime visibility issue instead of bootstrapping replacement project files.",
+      );
     }
   });
 
@@ -58,8 +66,16 @@ describe("runtime Think prompts", () => {
     expect(prompt).toContain(
       "Locate related Workers docs and examples before drafting the new page.",
     );
-    expect(prompt).not.toContain("Known project files:");
-    expect(prompt).not.toContain("- /workspace/repo/package.json");
+    expect(prompt).toContain("Seeded project files:");
+    for (const file of comparisonFixture.files) {
+      expect(prompt).toContain(`- /workspace/repo/${file.path}`);
+    }
+    expect(prompt).toContain(
+      "These files are already present at run start; do not recreate the baseline project.",
+    );
+    expect(prompt).toContain(
+      "If a listing appears inconsistent with this manifest, verify by reading known paths and report the inconsistency instead of creating substitute files.",
+    );
     expect(prompt).toContain("Acceptance criteria:");
     expect(prompt).toContain("Create /workspace/repo/docs/workers/smart-request-policies.md.");
     expect(prompt).toContain("Include the exact header name `x-bypass-token`.");
@@ -87,11 +103,17 @@ describe("runtime Think prompts", () => {
     expect(workspace.exec).toContain(
       "After validation passes, summarize the work instead of making extra edits",
     );
+    expect(workspace.exec).toContain(
+      "If discovery commands disagree with successful reads of seeded files, verify known paths and report a visibility issue",
+    );
     expect(sandbox.read).toContain("Sandbox filesystem");
     expect(sandbox.read).toContain("absolute path under /workspace/repo");
     expect(sandbox.exec).toContain(
       "Use this freely for search, listing, project inspection, package scripts, tests",
     );
     expect(sandbox.exec).toContain("If validation fails, repair the files and rerun the command");
+    expect(sandbox.exec).toContain(
+      "Do not bootstrap replacement project files if seeded fixture paths are already readable",
+    );
   });
 });
