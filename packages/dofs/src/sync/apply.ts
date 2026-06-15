@@ -7,7 +7,7 @@ import { writeFile, writeFileSync } from "../fs/writeFile.js";
 import type { Database } from "../storage.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
-import { currentRev, readWatermark, writeWatermark } from "./watermarks.js";
+import { readWatermark, writeWatermark } from "./watermarks.js";
 
 // One container-side change that landed under a read-only mount and
 // was therefore skipped rather than applied. Callers (the workspace
@@ -53,14 +53,15 @@ export interface ApplyOptions {
   // cursor. Never regresses the watermark.
   advanceFetchRev?: number;
   // Where the entries came from. 'local' (default) treats the apply
-  // path like any other mutation: writeFile/mkdir/etc bump vfs_meta.rev
-  // and the push loop later ships those new revs upstream. 'upstream'
-  // means the entries came from a remote push or fetch; the apply
-  // still bumps rev (so readers see fresh data) but we advance pushRev
-  // to match, so the push loop knows everything in this range is
-  // already on the wire. Without this flag, applying an upstream
-  // entry would generate a push-back on the next tick and the two
-  // sides would ping-pong forever.
+  // path like any other mutation: writeFile/mkdir/etc bump
+  // vfs_meta.rev and the push loop later ships those new revs
+  // upstream. 'upstream' is informational: the apply still bumps
+  // rev so readers see fresh data, and the next pushOnce ships
+  // those rev bumps back to the sender. Loop convergence is the
+  // receiver's job — the apply path on the original sender uses
+  // alreadyApplied() to drop the redundant entries without bumping
+  // rev further, bounding the echo at one extra round trip per
+  // upstream apply.
   source?: "local" | "upstream";
   // Backend id whose watermark row this apply should touch. The
   // DO hosts independent sync cursors per backend; threading the
@@ -98,10 +99,6 @@ export async function applyChanges(
   objects: Map<string, Uint8Array>,
   options: ApplyOptions = {},
 ): Promise<ApplyResult> {
-  // Snapshot rev before we touch anything. Used by the loopback-
-  // suppression at the bottom to decide whether it's safe to
-  // advance pushRev past the entries this apply produced.
-  const revBeforeApply = currentRev(db);
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
 
@@ -207,34 +204,21 @@ export async function applyChanges(
     }
   }
 
-  // Loopback suppression: when this apply pass reflects entries
-  // from upstream, the writeFile/mkdir/symlink/rm calls inside
-  // bumped vfs_meta.rev. Without this advance, the next push tick
-  // would see those rev bumps as fresh local changes and push them
-  // back to upstream, which would apply them and bump again, and
-  // so on.
+  // Loopback suppression used to advance pushRev locally after an
+  // upstream apply so the next push tick wouldn't re-ship the rev
+  // bumps the apply produced. That optimization is unsound: it
+  // moves the *local* pushRev past entries the remote does not
+  // know we have shipped, while the remote's fetchRev (echoed back
+  // as appliedPushRev on every fetchChanges) stays where it was.
+  // The cross-side invariant check in pullOnce then trips on the
+  // very next pull and the post-drain pullOnce in the exec bracket
+  // swallows the error, leaving every subsequent container-side
+  // write invisible to the host until something reconciles.
   //
-  // Subtle: we can only advance pushRev when it already covered
-  // every rev that existed *before* this apply. If the caller had
-  // unpushed local writes sitting between (existing, revBeforeApply],
-  // advancing pushRev past them would strand them — the next
-  // pushOnce would skip them as already-shipped. That was F1: a
-  // pull whose entries were all idempotent-skipped still bumped
-  // pushRev up to currentRev, masking local writes that hadn't
-  // shipped yet.
-  //
-  // In the unsafe case we leave pushRev alone. The next pushOnce
-  // drains both the unpushed locals and the apply's own bumps;
-  // the receiver's alreadyApplied() check suppresses the latter.
-  // One redundant round-trip per apply, bounded.
-  if (options.source === "upstream") {
-    const revAfter = currentRev(db);
-    const existing = readWatermark(db, "pushRev", options.backend);
-    if (existing >= revBeforeApply && revAfter > existing) {
-      writeWatermark(db, "pushRev", revAfter, options.backend);
-    }
-  }
-
+  // The bounded "redundant round-trip" the old comment promised is
+  // still bounded, and the receiver's alreadyApplied() check still
+  // suppresses the entries on the next pushOnce. We just pay one
+  // extra push per upstream apply to keep the two sides in lockstep.
   return { applied, skipped };
 }
 
@@ -252,7 +236,6 @@ export function applyChangesSync(
   objects: Map<string, Uint8Array>,
   options: ApplyOptions = {},
 ): ApplyResult {
-  const revBeforeApply = currentRev(db);
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
 
@@ -342,13 +325,10 @@ export function applyChangesSync(
     }
   }
 
-  if (options.source === "upstream") {
-    const revAfter = currentRev(db);
-    const existing = readWatermark(db, "pushRev", options.backend);
-    if (existing >= revBeforeApply && revAfter > existing) {
-      writeWatermark(db, "pushRev", revAfter, options.backend);
-    }
-  }
+  // See applyChanges() for why pushRev no longer advances locally
+  // on upstream applies. The receiver's alreadyApplied() check
+  // suppresses the redundant entries on the next pushOnce; one
+  // extra push per apply keeps the cross-side invariant intact.
 
   return { applied, skipped };
 }

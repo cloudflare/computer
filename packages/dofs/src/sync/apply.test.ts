@@ -123,7 +123,7 @@ describe("applyChanges", () => {
 });
 
 describe("applyChanges loopback suppression", () => {
-  it("advances pushRev to currentRev when source=upstream", async () => {
+  it("does not advance pushRev locally on upstream apply", async () => {
     await withDB(async (db) => {
       // Pre-existing local state: a write the container already
       // pushed. pushRev sits at currentRev.
@@ -133,10 +133,13 @@ describe("applyChanges loopback suppression", () => {
       const beforePushRev = readWatermark(db, "pushRev");
       expect(beforePushRev).toBeGreaterThan(0);
 
-      // Apply an entry as if it came from upstream. The local rev
-      // counter bumps (writeFile bumps rev), but the source flag
-      // makes the helper advance pushRev to match — the bump
-      // looks like it was already pushed.
+      // Apply an entry as if it came from upstream. The apply's
+      // writeFile bumps the local rev counter, but pushRev must
+      // *not* advance with it — advancing locally would move our
+      // pushRev past entries the remote does not know we have
+      // shipped, breaking the cross-side invariant on the next
+      // pull. The next pushOnce re-ships these rev bumps and the
+      // receiver's alreadyApplied() check drops them.
       await applyChanges(
         db,
         [
@@ -156,11 +159,8 @@ describe("applyChanges loopback suppression", () => {
 
       const afterCurrent = currentRev(db);
       const afterPushRev = readWatermark(db, "pushRev");
-      // Apply bumped currentRev (the writeFile inside).
       expect(afterCurrent).toBeGreaterThan(beforePushRev);
-      // pushRev caught up so the next coalesceChanges(db, pushRev)
-      // sees nothing.
-      expect(afterPushRev).toBe(afterCurrent);
+      expect(afterPushRev).toBe(beforePushRev);
     });
   });
 
@@ -186,15 +186,18 @@ describe("applyChanges loopback suppression", () => {
     });
   });
 
-  it("upstream entries do not get re-pushed on the next coalesce", async () => {
+  it("upstream entries surface on the next coalesce and rely on receiver-side alreadyApplied", async () => {
     await withDB(async (db) => {
       const { coalesceChanges } = await import("./coalesce.js");
       const { currentRev, readWatermark, writeWatermark } = await import("./watermarks.js");
       // Seed pushRev at the current point.
       writeWatermark(db, "pushRev", currentRev(db));
 
-      // Upstream sends a file. After apply, pushRev should equal
-      // currentRev, so coalesceChanges(db, pushRev) is empty.
+      // Upstream sends a file. After apply, pushRev stays where it
+      // was (the local advance was unsound — see the test above).
+      // The next coalesceChanges(db, pushRev) re-emits the entry;
+      // the receiver's alreadyApplied() check drops it. One extra
+      // round trip per apply, watermarks stay in lockstep.
       await applyChanges(
         db,
         [
@@ -214,7 +217,7 @@ describe("applyChanges loopback suppression", () => {
       const cursor = readWatermark(db, "pushRev");
       const drained = [];
       for await (const e of coalesceChanges(db, cursor)) drained.push(e);
-      expect(drained).toEqual([]);
+      expect(drained.map((e) => e.path)).toContain("/upstream.txt");
     });
   });
 });
@@ -271,12 +274,18 @@ describe("applyChanges loopback suppression — F1", () => {
     });
   });
 
-  it("still advances pushRev when caller had no unpushed locals", async () => {
+  it("leaves pushRev alone even when the caller had no unpushed locals", async () => {
     await withDB(async (db) => {
       const { currentRev, readWatermark, writeWatermark } = await import("./watermarks.js");
-      // pushRev already caught up to currentRev: caller has
-      // no pending local writes.
-      writeWatermark(db, "pushRev", currentRev(db));
+      // pushRev already caught up to currentRev: caller has no
+      // pending local writes. The old apply path advanced pushRev
+      // here as an optimization; we no longer do that because it
+      // desynced our pushRev from the remote's fetchRev (echoed
+      // back as appliedPushRev on the wire). The next pushOnce
+      // re-ships the apply's rev bump and the receiver's
+      // alreadyApplied() check drops it.
+      const before = currentRev(db);
+      writeWatermark(db, "pushRev", before);
       await applyChanges(
         db,
         [
@@ -293,9 +302,9 @@ describe("applyChanges loopback suppression — F1", () => {
         new Map(),
         { source: "upstream" },
       );
-      // Loopback suppression still works in the safe case:
-      // pushRev advances to cover the apply's own rev bump.
-      expect(readWatermark(db, "pushRev")).toBe(currentRev(db));
+      const after = currentRev(db);
+      expect(after).toBeGreaterThan(before);
+      expect(readWatermark(db, "pushRev")).toBe(before);
     });
   });
 });

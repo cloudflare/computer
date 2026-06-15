@@ -508,7 +508,7 @@ describe("push semantics — external vs sync peer", () => {
     }
   });
 
-  it("push with senderRev>0 (sync peer) advances pushRev to silence loopback", async () => {
+  it("push with senderRev>0 (sync peer) leaves pushRev for the next push, advances fetchRev to senderRev", async () => {
     harness = await startHarness();
     const { currentRev, readWatermark, writeWatermark } = await import("@cloudflare/dofs");
     const client = createSyncClient({ url: harness.url });
@@ -546,11 +546,13 @@ describe("push semantics — external vs sync peer", () => {
         }),
       });
 
-      // Loopback suppression kicks in: pushRev was advanced
-      // to currentRev so the receiver doesn't push these
-      // entries back to the peer.
-      const cur = currentRev(harness.db);
-      expect(readWatermark(harness.db, "pushRev")).toBe(cur);
+      // pushRev stays where we seeded it: the receiver does
+      // not advance pushRev locally on upstream apply (that
+      // was unsound — it desynced our pushRev from the wire-
+      // visible fetchRev and broke the cross-side invariant
+      // on the next pull). The next pushOnce ships the
+      // apply's rev bumps and alreadyApplied() drops them.
+      expect(readWatermark(harness.db, "pushRev")).toBe(1);
       // fetchRev was advanced to senderRev.
       expect(readWatermark(harness.db, "fetchRev")).toBe(42);
     } finally {
