@@ -105,10 +105,13 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     } finally {
       reader.releaseLock();
     }
-    // senderRev > 0 — the caller is a sync peer with its
-    // own rev space; advance fetchRev to that point and let
-    // loopback suppression silence the outbound push so we
-    // don't ping-pong the same entries back.
+    // senderRev > 0 — the caller is a sync peer with its own
+    // rev space; advance fetchRev to that point so subsequent
+    // pulls and the cross-side invariant check see the right
+    // appliedPushRev. The apply path's alreadyApplied() check
+    // is what stops the entries from ping-ponging back through
+    // the sender's own coalesce + apply loop on the next round
+    // trip.
     //
     // senderRev === 0 — the caller is an external writer
     // (an orchestrator using the wire as a transport, the

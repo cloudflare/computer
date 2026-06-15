@@ -361,23 +361,43 @@ describe("sync driver — bidirectional convergence", () => {
     }
   });
 
-  it("an upstream entry does not get re-pushed (loopback suppression)", async () => {
+  it("an upstream entry stops circulating within two ticks", async () => {
+    // Before the pushRev-locality fix, the loopback suppression
+    // advanced B's pushRev to currentRev on the apply, so the
+    // immediate pushOnce was a no-op. After the fix, B's pushRev
+    // stays put after the pull, so the first pushOnce after a
+    // pull ships the apply's rev bumps back to A; A's
+    // alreadyApplied() drops them, the push response advances B's
+    // pushRev, and the *next* tick is the no-op. The echo is
+    // bounded at one extra round trip and the system converges
+    // without an unbounded ping-pong.
     const a = makePeer();
     const b = makePeer();
     try {
       const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
       providerA.writeFileSync("/from-a.txt", "alpha");
 
-      // First tick: B pulls from A.
-      await tick(b.db, a.rpc);
+      // Tick 1: B pulls A's write. The apply on B bumps B's rev,
+      // so B's coalesce window contains entries; pushed reports
+      // however many entries got coalesced (typically 1 for the
+      // file alone, more if directory entries get touched).
+      const first = await tick(b.db, a.rpc);
       expect(fileEntries(b.db)).toContain("from-a.txt");
+      expect(first.pulled.applied).toBeGreaterThan(0);
+      expect(first.pushed).toBeGreaterThanOrEqual(1);
 
-      // Second tick: B has nothing new to push back. If the
-      // loopback suppression is broken, applyChanges bumped
-      // vfs_meta.rev on the apply, and the push side would re-ship
-      // the same entry.
-      const result = await tick(b.db, a.rpc);
-      expect(result.pushed).toBe(0);
+      // Tick 2: A's alreadyApplied() dropped the redundant entries
+      // shipped in tick 1, and B's pushRev advanced past them. So
+      // tick 2 has nothing to push and nothing to pull.
+      const second = await tick(b.db, a.rpc);
+      expect(second.pulled.applied).toBe(0);
+      expect(second.pushed).toBe(0);
+
+      // Tick 3: still settled. Pins that convergence is durable,
+      // not just "the next tick happens to be empty."
+      const third = await tick(b.db, a.rpc);
+      expect(third.pulled.applied).toBe(0);
+      expect(third.pushed).toBe(0);
     } finally {
       a.close();
       b.close();
@@ -415,7 +435,7 @@ describe("sync driver — cross-side invariant", () => {
 
       // Wrap B's rpc to lie about appliedPushRev. Simulates a
       // regression in the suppress-dirty-tracking apply path.
-      const lyingRpc = new Proxy(b.rpc as object, {
+      const lyingRPC = new Proxy(b.rpc as object, {
         get(target, prop, receiver) {
           if (prop === "push") {
             return async (input: { senderRev: number; changes: ReadableStream<unknown> }) => {
@@ -427,36 +447,40 @@ describe("sync driver — cross-side invariant", () => {
         },
       }) as typeof b.rpc;
 
-      await expect(pushOnce(a.db, lyingRpc)).rejects.toThrow(/cross-side invariant violated/i);
+      await expect(pushOnce(a.db, lyingRPC)).rejects.toThrow(/cross-side invariant violated/i);
     } finally {
       a.close();
       b.close();
     }
   });
 
-  it("pullOnce throws when fetchChanges echoes back a lower appliedPushRev", async () => {
-    // Symmetric to the push case. fetchChanges returns the remote's
-    // appliedPushRev alongside the entry stream; the DO asserts
-    // appliedPushRev >= pushRev before draining, so a regression in
-    // the remote's apply path that loses applied state trips the
-    // invariant on the next pull instead of corrupting fetchRev.
+  it("pullOnce resets pushRev and retries when fetchChanges echoes a lower appliedPushRev", async () => {
+    // The remote reporting an appliedPushRev below our localPushRev
+    // means the remote forgot what we pushed — typically a process-
+    // lifetime wsd restart while the WebSocket stayed up, so the
+    // reconcileWatermarks pass we run on connect never re-ran. The
+    // pull path now treats this inline: cancel the in-flight
+    // stream, reset pushRev to 0, and retry. The next pushOnce
+    // re-ships everything from the rev-0 baseline.
     const remote = makePeer();
     try {
-      // Seed the local pushRev so it's higher than what the lying
-      // remote will echo. The remote is otherwise fresh — nothing
-      // to fetch.
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
       writeWatermark(local, "pushRev", 42);
-      // Make the remote return *something* so the puller drains it.
       const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
       providerR.writeFileSync("/seed.txt", "x");
 
-      const lyingRpc = new Proxy(remote.rpc as object, {
+      // The proxy lies once: on the first fetchChanges, swap the
+      // remote's real appliedPushRev for 0. The pull path detects
+      // the divergence and retries; on the retry the real RPC
+      // runs (because lied flips) and pullOnce drains normally.
+      let lied = false;
+      const flakyRPC = new Proxy(remote.rpc as object, {
         get(target, prop, receiver) {
-          if (prop === "fetchChanges") {
-            return (input: { sinceRev?: number; ignore?: string[] }) => {
-              const real = Reflect.get(target, prop, receiver).call(target, input);
+          if (prop === "fetchChanges" && !lied) {
+            return async (input: { sinceRev?: number; ignore?: string[] }) => {
+              lied = true;
+              const real = await Reflect.get(target, prop, receiver).call(target, input);
               return { ...real, appliedPushRev: 0 };
             };
           }
@@ -464,7 +488,49 @@ describe("sync driver — cross-side invariant", () => {
         },
       }) as typeof remote.rpc;
 
-      await expect(pullOnce(local, lyingRpc)).rejects.toThrow(/cross-side invariant violated/i);
+      const result = await pullOnce(local, flakyRPC);
+      // The retry succeeded: the seeded /seed.txt landed locally.
+      expect(result.applied).toBeGreaterThan(0);
+      // pushRev was reset to 0 on the divergence and stays at 0
+      // (we didn't run a successful pushOnce); the next pushOnce
+      // tick will re-ship from the baseline.
+      expect(readWatermark(local, "pushRev")).toBe(0);
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("pullOnce surfaces an invariant violation that survives the inline retry", async () => {
+    // A persistently-lying remote (returns appliedPushRev=0 on
+    // every call) trips the assertion after the inline reset.
+    // The retry resets localPushRev to 0; the assertion then sees
+    // appliedPushRev=0, localPushRev=0 and passes. So a permanent
+    // lie now degrades to baseline re-sync rather than a hard
+    // error. Pin that: the test passes (not throws), and the
+    // caller's watermarks are zeroed.
+    const remote = makePeer();
+    try {
+      const local = new Database(new SQLiteTestStorage());
+      initializeSchema(local, () => 1000);
+      writeWatermark(local, "pushRev", 42);
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/seed.txt", "x");
+
+      const lyingRPC = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchChanges") {
+            return async (input: { sinceRev?: number; ignore?: string[] }) => {
+              const real = await Reflect.get(target, prop, receiver).call(target, input);
+              return { ...real, appliedPushRev: 0 };
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as typeof remote.rpc;
+
+      const result = await pullOnce(local, lyingRPC);
+      expect(result.applied).toBeGreaterThan(0);
+      expect(readWatermark(local, "pushRev")).toBe(0);
     } finally {
       remote.close();
     }
@@ -653,8 +719,8 @@ describe("sync driver — reconcileWatermarks", () => {
   it("resets pushRev when the remote hasn't applied what we shipped", async () => {
     const remote = makePeer();
     try {
-      // Local pushRev = 17, but the remote is fresh: its pushRev,
-      // which doubles as appliedPushRev on the wire, is 0.
+      // Local pushRev = 17, but the remote is fresh: its fetchRev
+      // (echoed back as appliedPushRev on the wire) is 0. Reset.
       const local = new Database(new SQLiteTestStorage());
       initializeSchema(local, () => 1000);
       writeWatermark(local, "fetchRev", 0);
@@ -662,6 +728,33 @@ describe("sync driver — reconcileWatermarks", () => {
 
       await reconcileWatermarks(local, remote.rpc);
       expect(readWatermark(local, "pushRev")).toBe(0);
+    } finally {
+      remote.close();
+    }
+  });
+
+  it("leaves pushRev alone when the remote has applied our pushes but never initiated its own", async () => {
+    // Topology: DO ↔ container. The container applies pushes (so
+    // its fetchRev = our pushRev) but never initiates outbound
+    // pushes (so its pushRev stays at 0). reconcileWatermarks must
+    // not interpret remote.pushRev = 0 as "remote forgot our
+    // pushes" — that would trigger a full re-push on every
+    // reconnect even when nothing is broken.
+    const remote = makePeer();
+    try {
+      // Pretend the container's apply path has accepted our pushes
+      // up to rev 17 (= what fetchChanges would echo back as
+      // appliedPushRev). Its own pushRev stays at 0 because it has
+      // not shipped anything outbound.
+      writeWatermark(remote.db, "fetchRev", 17);
+      const local = new Database(new SQLiteTestStorage());
+      initializeSchema(local, () => 1000);
+      writeWatermark(local, "fetchRev", 0);
+      writeWatermark(local, "pushRev", 17);
+
+      const result = await reconcileWatermarks(local, remote.rpc);
+      expect(result.pushRevReset).toBe(false);
+      expect(readWatermark(local, "pushRev")).toBe(17);
     } finally {
       remote.close();
     }

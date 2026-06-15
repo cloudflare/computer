@@ -98,8 +98,27 @@ export async function pullOnce(
   remote: SyncRPC,
   backend?: string,
 ): Promise<ApplyResult> {
+  // Delegate to the inner implementation with retried=false. See
+  // pullOnceImpl for the fetchChanges round trip, invariant check,
+  // reset-and-retry path, and batched apply loop.
   const sinceRev = readWatermark(db, "fetchRev", backend);
   const localPushRev = readWatermark(db, "pushRev", backend);
+  return pullOnceImpl(db, remote, backend, sinceRev, localPushRev, false);
+}
+
+// Inner pullOnce that knows whether it is already a retry. The
+// outer pullOnce always enters with retried=false; on a watermark
+// divergence we reset cursors and recurse once with retried=true.
+// A second divergence after the reset is a real protocol break,
+// not a recoverable race, so we throw to surface it.
+async function pullOnceImpl(
+  db: Database,
+  remote: SyncRPC,
+  backend: string | undefined,
+  sinceRev: number,
+  localPushRev: number,
+  retried: boolean,
+): Promise<ApplyResult> {
   // fetchChanges hands back the remote's currentRev (cursor we
   // advance fetchRev to), its appliedPushRev (cross-side invariant
   // check on the pull path), and the entry stream itself. One
@@ -113,11 +132,61 @@ export async function pullOnce(
   // that disposes the envelope when the stream finishes draining.
   const fetchResult = await remote.fetchChanges({ sinceRev });
   const { currentRev: remoteRev, appliedPushRev } = fetchResult;
-  // Run the cross-side invariant check before touching the stream.
-  // Symmetric to the push response check: the remote must have
-  // applied at least everything we claimed to push. A drop here
-  // means apply lost state on the receiver; tear down and rebuild
-  // rather than corrupt watermarks.
+  // Cross-side watermark divergence. Two shapes are recoverable:
+  //   * appliedPushRev < localPushRev: the remote forgot what we
+  //     pushed (typically a process-lifetime wsd restart while the
+  //     WebSocket survived, so reconcileWatermarks on connect never
+  //     re-ran).
+  //   * remoteRev < sinceRev: the remote's log is shorter than we
+  //     remember — same root cause, different symptom.
+  // Both are the inline equivalent of reconcileWatermarks: reset
+  // the divergent cursor to 0, cancel the in-flight stream, and
+  // retry once. The rev-0 baseline path in fetchChanges + pushOnce
+  // re-ships everything incrementally and the receiver's
+  // alreadyApplied() check absorbs the redundant work.
+  //
+  // A second divergence after a reset is a real protocol break:
+  // surface it via the assertion below rather than loop.
+  if (!retried && (appliedPushRev < localPushRev || remoteRev < sinceRev)) {
+    // Cancel the stream before disposing the envelope. For a real
+    // capnweb envelope the dispose alone is enough to tear down the
+    // backing stub, but the in-process server returns a plain
+    // ReadableStream wired to an async generator; without an
+    // explicit cancel the generator stays advanced (queue size 0
+    // plus high-water mark 1 means pull() has already been called)
+    // and its query results sit in memory until GC. Cancel is
+    // best-effort: a real envelope may have already torn the stream
+    // down before we get here.
+    await fetchResult.stream.cancel().catch(() => {});
+    maybeDispose(fetchResult);
+    // Surface the divergence at debug level so an operator with
+    // log access can spot a persistently broken remote. We do not
+    // throw: a one-shot divergence is normal after a wsd restart
+    // under the same WebSocket, and the inline reset + retry is
+    // the intended recovery. A persistently-lying remote will log
+    // this on every pull, which is the operational signal that
+    // something upstream is wedged.
+    console.debug("[pullOnce] cross-side watermark divergence; resetting and retrying", {
+      backend,
+      appliedPushRev,
+      localPushRev,
+      remoteRev,
+      sinceRev,
+      resetPushRev: appliedPushRev < localPushRev,
+      resetFetchRev: remoteRev < sinceRev,
+    });
+    if (appliedPushRev < localPushRev) {
+      writeWatermark(db, "pushRev", 0, backend);
+    }
+    if (remoteRev < sinceRev) {
+      writeWatermark(db, "fetchRev", 0, backend);
+    }
+    const nextSinceRev = readWatermark(db, "fetchRev", backend);
+    const nextLocalPushRev = readWatermark(db, "pushRev", backend);
+    return pullOnceImpl(db, remote, backend, nextSinceRev, nextLocalPushRev, true);
+  }
+  // After the retry path above, this assertion guards a
+  // divergence that survived a reset. Tear down rather than loop.
   assertAppliedPushRev(appliedPushRev, localPushRev);
   const stream = disposeOnDone(fetchResult.stream, () => maybeDispose(fetchResult));
   if (remoteRev <= sinceRev) {
@@ -351,11 +420,20 @@ export async function reconcileWatermarks(
     fetchRevReset = true;
   }
 
-  // The remote's pushRev is what it last applied from us (when the
-  // remote acts as a sync peer it advances pushRev to the senderRev
-  // on every push). If that's below our local pushRev, the remote
-  // hasn't seen what we claimed to ship — reset and re-push.
-  if (remoteWatermarks.pushRev < localPushRev) {
+  // The remote's fetchRev is the largest senderRev it has applied
+  // from us — every push handler advances fetchRev to the incoming
+  // senderRev, and fetchChanges echoes that value back as
+  // appliedPushRev. If it's below our local pushRev, the remote has
+  // not seen what we claimed to ship; reset our pushRev so the next
+  // pushOnce re-baselines from rev 0.
+  //
+  // We deliberately do NOT compare against remoteWatermarks.pushRev:
+  // that field is the remote's own *outbound* push progress and
+  // stays at 0 in topologies where the remote never initiates a push
+  // (e.g. the container side of a DO↔container backend), which would
+  // make every reconcile spuriously reset pushRev and force a full
+  // re-push on every reconnect.
+  if (remoteWatermarks.fetchRev < localPushRev) {
     writeWatermark(db, "pushRev", 0, backend);
     pushRevReset = true;
   }
