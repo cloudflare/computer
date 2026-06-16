@@ -34,15 +34,20 @@ underlying methods.
 Supported subcommands today:
 
 ```
-add         hash-object   pull          show
-branch      init          push          status
-cat-file    log           remote        symbolic-ref
-checkout    ls-files      rev-parse     tag
-clone       ls-tree       rm            update-ref
-commit      merge         show
-config      fetch
-diff
+add         clone         init          merge         rm
+branch      commit        log           pull          show
+cat-file    config        ls-files      push          stash
+checkout    diff          ls-tree       remote        status
+clean       fetch         reset         rev-parse     switch
+                                        symbolic-ref  tag
+                                        update-ref
 ```
+
+Global options accepted before the subcommand:
+
+- **`-C <path>`** — run the subcommand as though invoked from
+  `<path>`. A relative path joins onto the caller's cwd. A
+  single occurrence is supported; a second `-C` is rejected.
 
 Deliberate omissions, with rationale:
 
@@ -57,55 +62,16 @@ Deliberate omissions, with rationale:
   reachable from the tip tree is still fetched.
 - **`git gc`, `repack`, `prune`, hooks, worktrees, submodules.**
   No `isomorphic-git` surface for any of them.
-- **Tier 2** — stash, `reset --hard|--soft|--mixed`,
-  `cherry-pick`, `revert`, `blame`. Out of scope until a
-  concrete caller needs them; each can land as its own
-  follow-up.
+- **`reset --soft` / `--mixed`, `cherry-pick`, `revert`,
+  `blame`.** Out of scope until a concrete caller needs them;
+  each can land as its own follow-up. `reset` covers path
+  unstaging and `--hard`; the other modes exit 129.
 
 ## Known gaps
 
 The items below are intended to work but currently don't, or
 work in a way that differs from real git in a surprising way.
 Each is something to fix rather than a deliberate omission.
-
-- **`clone` with no destination clones into `cwd` rather than
-  into a subdirectory named after the repo.** Real git derives
-  the destination from the last path segment of the URL when
-  no positional `<dir>` is given (so `git clone
-  https://github.com/owner/repo.git` lands in `./repo`). The
-  workspace CLI resolves the missing positional to `cwd`
-  itself, so the working tree is unpacked alongside whatever
-  else is already there. Workaround: pass an explicit
-  destination.
-
-- **`commit` does not read identity from `user.name` and
-  `user.email` in the local config.** `config user.email
-  "..."` writes to `<dir>/.git/config` and `config user.email`
-  reads it back, but `commit` resolves identity only from
-  explicit `options.author`, then `GIT_AUTHOR_*` /
-  `GIT_COMMITTER_*` env, then the `defaultIdentity` threaded
-  through `createGitClient`. The local config is never
-  consulted. Workaround: pass `--author "Name <email>"`, set
-  the env vars, or configure `defaultGitIdentity` on the
-  `Workspace` constructor.
-
-- **Revision-suffix syntax is not supported.** `HEAD^`,
-  `HEAD~1`, `HEAD~2`, `<branch>^`, and the rest of git's
-  `gitrevisions(7)` walk syntax are not parsed by `rev-parse`
-  or any other subcommand. A literal `HEAD` or a full / short
-  oid is the only accepted spelling. Workaround: resolve the
-  ancestor with `log -n 2 --oneline` and pass the explicit
-  oid.
-
-- **Initial HEAD after `clone` resolves as a detached oid,
-  not a symbolic ref to `refs/heads/<branch>`.**
-  `symbolic-ref HEAD` fails with `ref HEAD is not a symbolic
-  ref` immediately after a clone, even though `branch` shows
-  the cloned branch as current. An explicit `checkout
-  <branch>` rewrites HEAD as a symref and `symbolic-ref`
-  starts working. The underlying `isomorphic-git.clone`
-  writes HEAD this way; the wrapper does not re-attach it.
-  Workaround: `checkout <branch>` once after `clone`.
 
 - **The working tree is shared across branches; `checkout`
   updates HEAD and the index but does not reconcile
@@ -121,10 +87,8 @@ Each is something to fix rather than a deliberate omission.
   `branch -a`, `show --stat`, `hash-object <path>` (the
   file-path form, only `--stdin` is supported), and a wider
   set of long-option flags listed in each command's *Not
-  mapped* block above. Real-git muscle memory invocations
-  like `git log -1` (the `-N` shorthand for `--max-count=N`)
-  are also rejected; use `git log -n 1` instead. The CLI
-  exits 129 with an `unknown option '...'` line on stderr.
+  mapped* block above. The CLI exits 129 with an `unknown
+  option '...'` line on stderr.
 
 - **Symlinks in a cloned tree are checked out as symlinks
   but the target may not resolve.** `clone` materializes
@@ -205,12 +169,17 @@ committer in this order:
    `env` passed to the call (or to `cli({ env })`). The
    shell-side custom command flattens the just-bash env Map
    into this shape automatically.
-3. `defaultIdentity` from `createGitClient` / `new Workspace({
+3. Local repo config `user.name` / `user.email`, as written
+   by `git config user.email "..."`. Only the local
+   `<dir>/.git/config` is consulted; there is no global
+   `~/.gitconfig` fallback.
+4. `defaultIdentity` from `createGitClient` / `new Workspace({
    defaultGitIdentity })`.
 
-If none of the three yields a name and email,
+If none of the four yields a name and email,
 `MissingIdentityError` fires. The CLI surfaces it as `git
-commit: author identity unknown` with exit code 128.
+commit: author identity unknown` with exit code 128. This
+config-after-env order matches real git.
 
 ### Auth (`headers` and `onAuth`)
 
@@ -327,11 +296,13 @@ interface StatusEntry {
 }
 ```
 
-The CLI default is porcelain v2. `--short` produces the
-`XY <path>` short form. The typed surface returns the
-underlying `StatusEntry[]`; format it with
-`formatPorcelainV2` or `formatShort` from
-`@cloudflare/workspace/git`.
+The CLI default is porcelain v2. `--porcelain=v1` (and the
+`1` spelling git also accepts) produces the v1 `XY <path>`
+form with `??` for untracked files; `--short` / `-s` produces
+the short form (` ?` for untracked). The typed surface returns
+the underlying `StatusEntry[]`; format it with
+`formatPorcelainV2`, `formatPorcelainV1`, or `formatShort`
+from `@cloudflare/workspace/git`.
 
 *Not mapped:* `--branch`, `--ignored`, `--untracked-files`,
 the long human-readable form. The structured return is the
@@ -340,24 +311,31 @@ primary surface.
 ### `add`
 
 ```
-git add [-f|--force] <pathspec>...
+git add [-A|--all] [-f|--force] <pathspec>...
 ```
 
 ```ts
 ws.git.add({
   dir?: string,
   paths: string[],
+  all?: boolean,
+  trackedOnly?: boolean,
   force?: boolean,
 }): Promise<void>
 ```
 
 | Flag | TS field |
 |---|---|
+| `-A` / `--all` | `all` |
 | `--force` / `-f` | `force` |
 | `<pathspec>...` (positional) | `paths` |
 
-*Not mapped:* `-A` / `--all`, `--update`, `--intent-to-add`,
-`-p` interactive.
+`-A` stages every change under the repo — new, modified, and
+deleted tracked files — and ignores any pathspec. `trackedOnly`
+(no CLI flag of its own; set by `commit -a`) restricts `all`
+mode to paths already in HEAD, so untracked files are left
+alone. *Not mapped:* `--update`, `--intent-to-add`, `-p`
+interactive.
 
 ### `rm`
 
@@ -379,7 +357,7 @@ the working tree. `--cached` is the only mode supported.
 ### `commit`
 
 ```
-git commit -m <msg> [--amend] [--author="Name <email>"]
+git commit [-a] -m <msg> [--amend] [--author="Name <email>"]
 ```
 
 ```ts
@@ -396,20 +374,25 @@ ws.git.commit({
 | Flag | TS field |
 |---|---|
 | `-m <msg>` / `--message <msg>` | `message` |
+| `-a` | (stages tracked changes first) |
 | `--amend` | `amend` |
 | `--author "Name <email>"` | `author` |
 
-Identity precedence: `options.author` → env → `defaultIdentity`.
-The CLI prints `[<short-oid>] <subject>` on success, matching
-the first line of real git's commit summary.
+Identity precedence: `options.author` → env → local config
+(`user.name` / `user.email`) → `defaultIdentity`. `-a` (and the
+`-am` cluster) stages tracked modifications and deletions —
+never untracked files — before committing; a staging failure
+aborts before the commit runs. The CLI prints `[<short-oid>]
+<subject>` on success, matching the first line of real git's
+commit summary.
 
-*Not mapped:* `-a` / `--all`, `--no-edit`, `--signoff`,
-`--gpg-sign`, `-F <file>`.
+*Not mapped:* `--no-edit`, `--signoff`, `--gpg-sign`,
+`-F <file>`.
 
 ### `log`
 
 ```
-git log [-n <N>] [--oneline] [<ref>]
+git log [-n <N>] [-<N>] [--oneline] [<ref>]
 ```
 
 ```ts
@@ -423,8 +406,12 @@ ws.git.log({
 | Flag | TS field |
 |---|---|
 | `-n <N>` | `depth` |
+| `-<N>` (e.g. `-1`, `-5`) | `depth` |
 | `--oneline` | (CLI formatter) |
 | `<ref>` (positional) | `ref` |
+
+The positional `<ref>` accepts revision suffixes (`HEAD~2`,
+`<branch>^`); they resolve through `rev-parse` before the walk.
 
 The CLI default emits `commit / Author / Date / message`
 blocks; `--oneline` collapses each entry to `<short-oid>
@@ -456,7 +443,7 @@ real git's `show` produces — use `git log` plus `git diff
 ### `rev-parse`
 
 ```
-git rev-parse <ref>
+git rev-parse [--abbrev-ref] [--show-toplevel] <ref>
 ```
 
 ```ts
@@ -464,12 +451,23 @@ ws.git.revParse({
   dir?: string,
   ref: string,
 }): Promise<string>
+
+ws.git.repoRoot({ dir?: string }): Promise<string>
 ```
 
 Resolves a ref (branch, tag, short oid prefix) to its full
-SHA-1. *Not mapped:* the wide flag surface real git's
-`rev-parse` carries (`--show-toplevel`, `--git-dir`,
-`--abbrev-ref`, etc.).
+SHA-1. Revision suffixes from `gitrevisions(7)` are supported:
+`HEAD^`, `HEAD~N`, `<ref>^N`, and chained forms like `HEAD~2^2`.
+`^`/`~N` follow first parents; `^N` selects parent N. Walking
+past the root commit is an error.
+
+| Flag | Behavior |
+|---|---|
+| `--abbrev-ref HEAD` | Print the current branch; fall back to the oid on detached HEAD. |
+| `--show-toplevel` | Print the working-tree root (`repoRoot`); walks up to find `.git`. Exits 128 outside a repo. |
+
+*Not mapped:* `--git-dir`, `--is-inside-work-tree`, and the
+rest of `rev-parse`'s wide flag surface.
 
 ### `symbolic-ref`
 
@@ -562,6 +560,14 @@ ws.git.clone({
 | `<url>` (positional) | `url` |
 | `<dir>` (positional) | `dir` |
 
+When `<dir>` is omitted, the CLI derives it from the last path
+segment of the URL, stripping a trailing `.git` — `git clone
+https://github.com/owner/repo.git` lands in `./repo`, matching
+real git. A URL whose basename can't produce a safe directory
+name exits 129; pass an explicit destination. After clone, HEAD
+is a symbolic ref to the checked-out branch, so `branch
+--show-current` and `symbolic-ref HEAD` work immediately.
+
 Only `https://`, `http://`, and `file://` schemes are
 accepted. *Not mapped:* `--bare`, `--mirror`, `--recurse-
 submodules`, `--filter`, ssh URLs.
@@ -569,7 +575,7 @@ submodules`, `--filter`, ssh URLs.
 ### `diff`
 
 ```
-git diff [<from> [<to>]] [-- <path>...]
+git diff [--stat|--name-only|--name-status] [<from> [<to>]] [-- <path>...]
 ```
 
 ```ts
@@ -579,6 +585,20 @@ ws.git.diff({
   to?: string,
   paths?: string[],
 }): Promise<string>
+
+ws.git.diffSummary({
+  dir?: string,
+  ref?: string,
+  to?: string,
+  paths?: string[],
+}): Promise<DiffSummaryEntry[]>
+
+interface DiffSummaryEntry {
+  path: string;
+  status: "A" | "M" | "D";
+  insertions: number;
+  deletions: number;
+}
 ```
 
 Three modes:
@@ -588,15 +608,24 @@ Three modes:
 - `git diff <from> <to>` — `<from>` vs `<to>` (commit pair).
 
 Paths after `--` filter the output. Matching is exact-or-
-directory-prefix; globs are not supported.
+directory-prefix; globs are not supported. The `<from>` / `<to>`
+refs accept revision suffixes (`HEAD~1`).
 
-*Not mapped:* `--stat`, `--name-only`, `--cached`, `-U <N>`,
-the three-dot form.
+The summary flags share the same change set as the patch:
+
+| Flag | Output |
+|---|---|
+| `--stat` | Per-file `path \| total +++---` bar plus a `N files changed, …` footer. |
+| `--name-only` | One changed path per line. |
+| `--name-status` | `<status>\t<path>` per line. |
+
+*Not mapped:* `--cached`, `-U <N>`, the three-dot form.
 
 ### `branch`
 
 ```
 git branch                           # list
+git branch --show-current            # print the current branch
 git branch <name> [<start-point>]    # create
 git branch -d <name>                 # delete
 git branch --force <name> <start>    # overwrite
@@ -619,7 +648,8 @@ Bare `git branch` lists local branches with the current one
 prefixed `* `. The CLI mode is selected by positional shape:
 zero positionals lists, one creates at HEAD, two creates at
 a start point, `-d` switches to delete (and consumes one or
-more positionals).
+more positionals). `--show-current` prints the checked-out
+branch (nothing on detached HEAD).
 
 ### `tag`
 
@@ -649,6 +679,7 @@ preview.
 
 ```
 git checkout [--force] <ref> [-- <paths>...]
+git checkout -b <new-branch> [<start-point>]
 ```
 
 ```ts
@@ -663,11 +694,24 @@ ws.git.checkout({
 With `paths` set, the working tree updates to match `ref`
 for those paths only; HEAD does not move (matching `git
 checkout <ref> -- <path>`). Without `paths`, HEAD moves to
-`ref`.
+`ref`. `-b` creates a branch (optionally at a start point)
+and switches to it; the branch is created first, so a name
+collision leaves the working tree untouched.
 
-*Not mapped:* `-b` create-and-switch (chain `branch <name>`
-then `checkout <name>`), `--detach`, `--orphan`, `--theirs`,
-`--ours`.
+*Not mapped:* `--detach`, `--orphan`, `--theirs`, `--ours`.
+
+### `switch`
+
+```
+git switch <branch>
+git switch -c <new-branch> [<start-point>]
+```
+
+The modern spelling of `checkout` for branch movement. `git
+switch <branch>` moves HEAD; `-c` is the `checkout -b`
+equivalent. Both delegate to `checkout` / `branch` on the
+typed surface. *Not mapped:* `--detach`, `-C` force-create,
+`--orphan`.
 
 ### `fetch`
 
@@ -883,38 +927,118 @@ A missing key returns `undefined` from `configGet` and exits
 --get`'s behavior. Only the local `<dir>/.git/config` file is
 read or written; global and system configs are not consulted.
 
+### `reset`
+
+```
+git reset [-- <paths>...]            # unstage paths (against HEAD)
+git reset --hard [<ref>]             # restore tracked files to <ref>
+```
+
+```ts
+ws.git.reset({
+  dir?: string,
+  paths?: string[],
+  hard?: boolean,
+  ref?: string,            // default "HEAD"
+}): Promise<void>
+```
+
+Path reset unstages the listed paths back to `ref` and leaves
+the working tree alone (built on `resetIndex`). `--hard`
+force-checks-out `ref`, rewriting both the index and working
+tree. Without `--hard`, bare positionals are treated as
+pathspecs; with `--hard`, a single positional is the ref. The
+ref accepts revision suffixes (`HEAD~1`). *Not mapped:*
+`--soft`, `--mixed` (both exit 129), `--merge`, `--keep`.
+
+### `stash`
+
+```
+git stash [push [-m <msg>]]          # stash tracked changes (bare = push)
+git stash list                       # list entries
+git stash pop                        # restore the latest entry
+```
+
+```ts
+ws.git.stashPush({ dir?: string, message?: string }): Promise<void>
+ws.git.stashList({ dir?: string }): Promise<string[]>
+ws.git.stashPop({ dir?: string, index?: number }): Promise<void>
+```
+
+`push` stashes tracked working-tree changes and restores a
+clean tree; it creates a commit internally, so it needs a
+resolvable identity (see [Identity](#identity)). `list`
+returns `stash@{N}: <message>` entries newest-first. `pop`
+restores the latest entry. *Not mapped:* `apply`, `drop`,
+`clear`, `--include-untracked`, `stash@{N}` selectors on pop.
+
+### `clean`
+
+```
+git clean -f [-d] [-n|--dry-run]
+```
+
+```ts
+ws.git.clean({
+  dir?: string,
+  directories?: boolean,
+  dryRun?: boolean,
+}): Promise<string[]>   // repo-relative paths removed
+```
+
+Removes untracked files under the repo and returns the paths
+removed. Like real git, it refuses to act without `-f` unless
+previewing with `-n` / `--dry-run`, and only descends into
+untracked directories with `-d`. The untracked set is derived
+from a status-matrix walk; ignored-file handling is not
+modeled, so every untracked path is a candidate. *Not mapped:*
+`-x` / `-X` ignore handling, pathspec limiting.
+
 ## Flag-to-option mapping (alphabetical)
 
 | Flag | Subcommand | TS option |
 |---|---|---|
-| `-A` / `--all` | (any list cmd) | *not mapped* |
-| `-a` / `--all` (commit) | `commit` | *not mapped* |
+| `-C <path>` | (global) | rewrites effective cwd |
+| `-A` / `--all` | `add` | `all` |
+| `--abbrev-ref` | `rev-parse` | (via `currentBranch`) |
+| `-a` | `commit` | (stages tracked changes) |
 | `--amend` | `commit` | `amend` |
 | `--author` | `commit` | `author` |
+| `-b <new>` | `checkout` | (create + switch) |
 | `-b <B>` (branch) | `clone`, `init` | `ref` / `defaultBranch` |
 | `--bare` | `init` | `bare` |
 | `--branch <B>` | `clone` | `ref` |
+| `-c <new>` | `switch` | (create + switch) |
 | `--cached` | `rm` | (implicit) |
+| `-d` | `clean` | `directories` |
 | `-d` / `--delete` | `branch`, `tag`, `push` | `branchDelete` / `tagDelete` / `delete` |
 | `--depth <N>` | `clone`, `fetch` | `depth` |
+| `--dry-run` / `-n` | `clean` | `dryRun` |
 | `--ff-only` | `pull`, `merge` | `fastForwardOnly` |
-| `-f` / `--force` | `add`, `branch`, `checkout`, `push`, `update-ref`, `remote add` | `force` |
+| `-f` / `--force` | `add`, `branch`, `checkout`, `clean`, `push`, `update-ref`, `remote add` | `force` |
 | `--get-all` | `config` | `all` |
+| `--hard` | `reset` | `hard` |
 | `--initial-branch` | `init` | `defaultBranch` |
-| `-m <msg>` | `commit`, `merge` | `message` |
+| `-m <msg>` | `commit`, `merge`, `stash push` | `message` |
 | `-n <N>` | `log` | `depth` |
+| `-<N>` (e.g. `-1`) | `log` | `depth` |
+| `--name-only` | `diff` | (via `diffSummary`) |
+| `--name-status` | `diff` | (via `diffSummary`) |
 | `--no-ff` | `pull`, `merge` | `fastForward: false` |
 | `--no-single-branch` | `clone` | `singleBranch: false` |
 | `--no-tags` | `clone`, `fetch` | `noTags` / `tags: false` |
 | `--oneline` | `log` | (formatter) |
-| `--porcelain[=v2]` | `status` | (formatter) |
+| `--porcelain[=v1\|v2]` | `status` | (formatter) |
 | `-p` | `cat-file` | (implicit) |
 | `--prune` | `fetch` | `prune` |
 | `-q` / `--quiet` | `symbolic-ref` | (formatter) |
 | `--ref <r>` | `ls-files` | `ref` |
 | `--short` | `symbolic-ref`, `status` | `fullname: false` / (formatter) |
+| `--show-current` | `branch` | (via `currentBranch`) |
+| `--show-toplevel` | `rev-parse` | (via `repoRoot`) |
 | `-s` | `status` | (formatter) |
 | `--single-branch` | `clone` | `singleBranch` |
+| `--stat` | `diff` | (via `diffSummary`) |
 | `--stdin` | `hash-object` | (implicit) |
 | `--tags` | `clone`, `fetch` | `noTags: false` / `tags: true` |
 | `--unset` | `config` | `value: undefined` |
