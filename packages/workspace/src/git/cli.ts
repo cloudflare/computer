@@ -116,6 +116,8 @@ export async function runGitCli(
       return await runTag(client, rest, input);
     case "checkout":
       return await runCheckout(client, rest, input);
+    case "switch":
+      return await runSwitch(client, rest, input);
     case "fetch":
       return await runFetch(client, rest, input);
     case "push":
@@ -174,6 +176,7 @@ function printHelp(): GitCliResult {
     "   rm            Unstage paths from the index.",
     "   show          Read a single commit.",
     "   status        Describe the working-tree / index / HEAD delta.",
+    "   switch        Switch branches, or create one with -c.",
     "   symbolic-ref  Print the current branch name.",
     "   tag           Create, delete, or list tags.",
     "   update-ref    Write a ref directly.",
@@ -1203,11 +1206,11 @@ async function runCheckout(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git checkout <ref> [-- <paths>...]`. The -b shortcut for
-  // create-and-switch isn't covered here; agents who want it
-  // chain `branch <name> && checkout <name>` themselves.
+  // `git checkout [-b <new>] <ref> [-- <paths>...]`. `-b` creates
+  // a branch (optionally at a start point) and switches to it.
   const parsed = parseFlags(args, {
     force: { kind: "bool", alias: ["f"] },
+    b: { kind: "bool" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git checkout: ${parsed.error}\n`, exitCode: 129 };
@@ -1216,6 +1219,16 @@ async function runCheckout(
   const refArgs =
     sep === -1 ? parsed.positional : args.slice(0, sep).filter((a) => !a.startsWith("-"));
   const pathArgs = sep === -1 ? [] : args.slice(sep + 1);
+  const dir = resolveDir(undefined, input.cwd);
+
+  if (parsed.flags.b === true) {
+    // Create-and-switch. `refArgs` is `<new-branch> [<start>]`.
+    if (refArgs.length === 0) {
+      return { stdout: "", stderr: "git checkout: -b requires a branch name\n", exitCode: 129 };
+    }
+    return createAndSwitch(client, dir, refArgs[0], refArgs[1], "checkout");
+  }
+
   if (refArgs.length === 0) {
     return { stdout: "", stderr: "git checkout: missing <ref>\n", exitCode: 129 };
   }
@@ -1226,7 +1239,6 @@ async function runCheckout(
       exitCode: 129,
     };
   }
-  const dir = resolveDir(undefined, input.cwd);
   try {
     await client.checkout({
       dir,
@@ -1237,6 +1249,77 @@ async function runCheckout(
     return { stdout: "", stderr: "", exitCode: 0 };
   } catch (cause) {
     return mapGitError("checkout", cause);
+  }
+}
+
+// ---------------------------------------------------------------
+// switch
+// ---------------------------------------------------------------
+
+async function runSwitch(
+  client: GitClient,
+  args: string[],
+  input: GitCliInput,
+): Promise<GitCliResult> {
+  // `git switch [-c <new>] <branch> [<start>]`. The modern
+  // spelling of `checkout` for branch movement; `-c` is the
+  // `checkout -b` equivalent.
+  const parsed = parseFlags(args, {
+    c: { kind: "bool" },
+  });
+  if ("error" in parsed) {
+    return { stdout: "", stderr: `git switch: ${parsed.error}\n`, exitCode: 129 };
+  }
+  const dir = resolveDir(undefined, input.cwd);
+
+  if (parsed.flags.c === true) {
+    if (parsed.positional.length === 0) {
+      return { stdout: "", stderr: "git switch: -c requires a branch name\n", exitCode: 129 };
+    }
+    return createAndSwitch(client, dir, parsed.positional[0], parsed.positional[1], "switch");
+  }
+
+  if (parsed.positional.length === 0) {
+    return { stdout: "", stderr: "git switch: missing <branch>\n", exitCode: 129 };
+  }
+  if (parsed.positional.length > 1) {
+    return {
+      stdout: "",
+      stderr: `git switch: unexpected argument '${parsed.positional[1]}'\n`,
+      exitCode: 129,
+    };
+  }
+  try {
+    await client.checkout({ dir, ref: parsed.positional[0] });
+    return { stdout: "", stderr: "", exitCode: 0 };
+  } catch (cause) {
+    return mapGitError("switch", cause);
+  }
+}
+
+/**
+ * Create a branch (optionally at a start point) and move HEAD to
+ * it — the shared core of `checkout -b` and `switch -c`. The
+ * branch is created first; only on success does HEAD move, so a
+ * name collision leaves the working tree untouched.
+ */
+async function createAndSwitch(
+  client: GitClient,
+  dir: string,
+  name: string,
+  startPoint: string | undefined,
+  subcommand: string,
+): Promise<GitCliResult> {
+  try {
+    await client.branch({ dir, name, startPoint, force: false });
+  } catch (cause) {
+    return mapGitError(subcommand, cause);
+  }
+  try {
+    await client.checkout({ dir, ref: name });
+    return { stdout: "", stderr: "", exitCode: 0 };
+  } catch (cause) {
+    return mapGitError(subcommand, cause);
   }
 }
 

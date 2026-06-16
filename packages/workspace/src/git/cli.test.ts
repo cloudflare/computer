@@ -28,6 +28,7 @@ import type { CommitResult, GitCommitOptions } from "./commit.js";
 import type { GitDiffOptions } from "./diff.js";
 import {
   AlreadyInitializedError,
+  GitError,
   MissingIdentityError,
   NotARepositoryError,
   PathspecNotFoundError,
@@ -1338,6 +1339,71 @@ describe("runGitCli — checkout argv parsing", () => {
     const res = await runGitCli(client, { argv: ["checkout"] });
     expect(res.exitCode).toBe(129);
     expect(res.stderr).toContain("missing <ref>");
+  });
+
+  it("checkout -b creates a branch and switches to it", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["checkout", "-b", "feature"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.branch).toEqual([
+      { dir: "/r", name: "feature", startPoint: undefined, force: false },
+    ]);
+    expect(calls.checkout).toEqual([{ dir: "/r", ref: "feature" }]);
+  });
+
+  it("checkout -b <name> <start> creates the branch at the start point", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["checkout", "-b", "feature", "v1"] });
+    expect(calls.branch[0]).toMatchObject({ name: "feature", startPoint: "v1" });
+    expect(calls.checkout[0]).toMatchObject({ ref: "feature" });
+  });
+
+  it("checkout -b requires a branch name", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["checkout", "-b"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("requires a branch name");
+  });
+
+  it("checkout -b does not switch if branch creation fails", async () => {
+    const { client, calls } = fakeClient({
+      async branch() {
+        throw new GitError("EBRANCHFAIL", "branch 'feature' already exists");
+      },
+    });
+    const res = await runGitCli(client, { argv: ["checkout", "-b", "feature"] });
+    expect(res.exitCode).toBe(1);
+    expect(calls.checkout).toEqual([]);
+  });
+});
+
+describe("runGitCli — switch argv parsing", () => {
+  it("switch <branch> moves HEAD", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["switch", "feature"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.checkout).toEqual([{ dir: "/r", ref: "feature" }]);
+  });
+
+  it("switch -c creates a branch and switches to it", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["switch", "-c", "feature"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.branch[0]).toMatchObject({ name: "feature" });
+    expect(calls.checkout[0]).toMatchObject({ ref: "feature" });
+  });
+
+  it("switch -c <name> <start> honors the start point", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["switch", "-c", "feature", "main"] });
+    expect(calls.branch[0]).toMatchObject({ name: "feature", startPoint: "main" });
+  });
+
+  it("switch with no branch is an error", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["switch"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("missing <branch>");
   });
 });
 
