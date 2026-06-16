@@ -610,8 +610,9 @@ class WorkspaceShellRouter {
     const id = this.#resolveId(options.backend) || this.#defaultId;
     const shell = await this.#shellFor(id);
     const { backend: _backend, ...rest } = options;
+    let handle: unknown;
     try {
-      return await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
+      handle = await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
         command,
         rest,
       );
@@ -619,14 +620,16 @@ class WorkspaceShellRouter {
       this.#onError(id, error);
       throw error;
     }
+    return this.#wrapHandle(id, handle);
   }
 
   async get(id: string, options: { backend?: string } & Record<string, unknown> = {}) {
     const backendId = this.#resolveId(options.backend) || this.#defaultId;
     const shell = await this.#shellFor(backendId);
     const { backend: _backend, ...rest } = options;
+    let handle: unknown;
     try {
-      return await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
+      handle = await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
         id,
         rest,
       );
@@ -634,5 +637,39 @@ class WorkspaceShellRouter {
       this.#onError(backendId, error);
       throw error;
     }
+    return this.#wrapHandle(backendId, handle);
+  }
+
+  // Wrap an ExecHandle so a transport-classified rejection from
+  // result() invalidates the cached backend handle. The dispatch-
+  // time catch above only fires when shell.exec()/get() rejects
+  // immediately; in practice a long-running command loses its
+  // transport mid-stream and the rejection surfaces through
+  // result() draining the event stream.
+  //
+  // WorkspaceShell installs .result via defineProperty; we set it
+  // configurable: true so this slot can be redefined. The handle's
+  // stream identity is preserved — callers that consume the
+  // ReadableStream directly are unaffected; only result() routes
+  // through the invalidation path.
+  #wrapHandle(id: string, handle: unknown): unknown {
+    const original = handle as { result?: unknown };
+    if (typeof original.result !== "function") return handle;
+    const onError = this.#onError;
+    const originalResult = original.result.bind(handle) as () => Promise<unknown>;
+    Object.defineProperty(handle, "result", {
+      value: async () => {
+        try {
+          return await originalResult();
+        } catch (error) {
+          onError(id, error);
+          throw error;
+        }
+      },
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+    return handle;
   }
 }

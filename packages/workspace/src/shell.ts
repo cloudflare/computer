@@ -229,12 +229,17 @@ function wrapHandle<E extends ExecEncoding>(
   const exited = watchForExit(forWatcher);
   const stream = pipeEvents<E>(forUser, encoding);
   const handle = stream as ExecHandle<E>;
+  // configurable: true on result/kill lets the Workspace-level
+  // router redefine them to add cross-cutting concerns (transport
+  // failure invalidation on result(); future kill hooks). The id
+  // slot stays non-configurable — nothing should rewrite it.
   Object.defineProperties(handle, {
-    id: { value: id, enumerable: false, writable: false },
+    id: { value: id, enumerable: false, writable: false, configurable: false },
     result: {
       value: () => drainToResult<E>(stream, encoding, sync, pushed),
       enumerable: false,
       writable: false,
+      configurable: true,
     },
     kill: {
       value: async (signal?: KillSignal) => {
@@ -243,6 +248,7 @@ function wrapHandle<E extends ExecEncoding>(
       },
       enumerable: false,
       writable: false,
+      configurable: true,
     },
   });
   return handle;

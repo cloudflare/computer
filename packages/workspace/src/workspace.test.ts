@@ -912,4 +912,50 @@ describe("Workspace transport-failure invalidation", () => {
     await ws.shell.exec("true").catch(() => undefined);
     expect(connects).toBe(2);
   });
+
+  it("shell.exec invalidates the cached handle on a mid-stream transport error", async () => {
+    // The exec dispatch succeeds; the event stream errors later
+    // with a transport-classified failure. This is the realistic
+    // case when a long-running command loses its WebSocket
+    // mid-run — result() rejects with the transport error, and
+    // the wrap around the returned handle must invalidate the
+    // cached backend handle so the next operation reconnects.
+    let connects = 0;
+    const shell: import("@cloudflare/workspace-rpc").ShellRPC = {
+      async exec(input) {
+        const execId = input.id ?? "mid-stream";
+        return {
+          id: execId,
+          events: new ReadableStream<import("@cloudflare/workspace-rpc").ExecEvent>({
+            start(c) {
+              c.error(new WorkspaceTransportError("WebSocket closed mid-stream"));
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        connects++;
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          closed: new Promise<void>(() => {}),
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const handle = await ws.shell.exec("sleep 60");
+    await expect(handle.result()).rejects.toThrow(/WebSocket closed mid-stream/);
+    expect(connects).toBe(1);
+    // Next exec attempt must reconnect.
+    await ws.shell.exec("true").catch(() => undefined);
+    expect(connects).toBe(2);
+  });
 });
