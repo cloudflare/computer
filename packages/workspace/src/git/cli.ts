@@ -601,11 +601,17 @@ async function runCommit(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git commit -m <msg> [--amend] [--author="Name <email>"]`
-  const parsed = parseFlags(args, {
+  // `git commit [-a] -m <msg> [--amend] [--author="Name <email>"]`
+  //
+  // Expand a combined short cluster like `-am` into `-a -m`
+  // first; the generic parser treats `-am` as one unknown short
+  // option. Only the `-a`/`-m` combination matters here.
+  const expanded = expandCommitShortCluster(args);
+  const parsed = parseFlags(expanded, {
     message: { kind: "value", alias: ["m"] },
     amend: { kind: "bool" },
     author: { kind: "value" },
+    all: { kind: "bool", alias: ["a"] },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git commit: ${parsed.error}\n`, exitCode: 129 };
@@ -640,6 +646,12 @@ async function runCommit(
   // Identity resolution happens inside commitWith via the typed
   // surface; mirror the same env shape here.
   try {
+    // `-a` stages tracked modifications and deletions (never
+    // untracked files) before the commit, matching `git commit
+    // -a`. A staging failure aborts before the commit runs.
+    if (parsed.flags.all === true) {
+      await client.add({ dir, paths: [], all: true, trackedOnly: true });
+    }
     const { oid } = await client.commit({
       dir,
       message,
@@ -657,6 +669,26 @@ async function runCommit(
   } catch (cause) {
     return mapGitError("commit", cause);
   }
+}
+
+/**
+ * Expand the `-a`/`-m` short cluster (`-am`) into separate
+ * tokens (`-a -m`). `-m` takes a value, so it must be last in the
+ * cluster — only `-a…m` is expanded, leaving the message value to
+ * follow as the next argv token. `-ma` is left untouched: real
+ * git reads that as `-m` with the value `a`, and the generic
+ * parser handles it.
+ */
+function expandCommitShortCluster(args: string[]): string[] {
+  const out: string[] = [];
+  for (const arg of args) {
+    if (/^-a+m$/.test(arg)) {
+      for (const ch of arg.slice(1)) out.push(`-${ch}`);
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
 }
 
 function parseAuthorString(s: string): { name: string; email: string } | undefined {

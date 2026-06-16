@@ -100,6 +100,35 @@ describe("addWith", () => {
     // Deleted file unstaged from the index: stage=0.
     expect(await statusOf("gone.txt")).toEqual([1, 0, 0]);
   });
+
+  it("all + trackedOnly stages tracked changes but leaves untracked files alone", async () => {
+    await init();
+    await memfs.promises.writeFile(`${DIR}/keep.txt`, "k1\n");
+    await memfs.promises.writeFile(`${DIR}/gone.txt`, "g1\n");
+    await git.add({ fs: memfs, dir: DIR, filepath: "keep.txt" });
+    await git.add({ fs: memfs, dir: DIR, filepath: "gone.txt" });
+    await git.commit({ fs: memfs, dir: DIR, message: "init", author: AUTHOR });
+
+    await memfs.promises.writeFile(`${DIR}/keep.txt`, "k2 changed\n");
+    await memfs.promises.unlink(`${DIR}/gone.txt`);
+    await memfs.promises.writeFile(`${DIR}/new.txt`, "n1\n");
+
+    await addWith({
+      git: git as unknown as IsomorphicGitAddClient,
+      fs: memfs,
+      dir: DIR,
+      paths: [],
+      all: true,
+      trackedOnly: true,
+    });
+
+    // Tracked modification staged.
+    expect(await statusOf("keep.txt")).toEqual([1, 2, 2]);
+    // Tracked deletion staged.
+    expect(await statusOf("gone.txt")).toEqual([1, 0, 0]);
+    // Untracked file left unstaged: head=0, workdir=2, stage=0.
+    expect(await statusOf("new.txt")).toEqual([0, 2, 0]);
+  });
 });
 
 describe("rmWith", () => {

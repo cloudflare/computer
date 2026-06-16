@@ -921,6 +921,39 @@ describe("runGitCli — commit argv parsing", () => {
     expect(calls.commit[0].amend).toBe(true);
   });
 
+  it("-a stages tracked changes before committing", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["commit", "-a", "-m", "x"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.add).toEqual([{ dir: "/r", paths: [], all: true, trackedOnly: true }]);
+    expect(calls.commit).toHaveLength(1);
+  });
+
+  it("-am combines -a and -m", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["commit", "-am", "msg"] });
+    expect(res.exitCode).toBe(0);
+    expect(calls.add[0]).toMatchObject({ all: true, trackedOnly: true });
+    expect(calls.commit[0]).toMatchObject({ message: "msg" });
+  });
+
+  it("commit without -a does not stage", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["commit", "-m", "x"] });
+    expect(calls.add).toEqual([]);
+  });
+
+  it("-a propagates a staging failure and does not commit", async () => {
+    const { client, calls } = fakeClient({
+      async add() {
+        throw new NotARepositoryError("/r");
+      },
+    });
+    const res = await runGitCli(client, { argv: ["commit", "-a", "-m", "x"] });
+    expect(res.exitCode).toBe(128);
+    expect(calls.commit).toEqual([]);
+  });
+
   it("MissingIdentityError maps to exit 128", async () => {
     const { client } = fakeClient({
       async commit() {

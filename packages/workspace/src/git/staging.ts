@@ -60,6 +60,13 @@ export interface GitAddOptions {
    * `remove`, which `add` alone cannot express.
    */
   all?: boolean;
+  /**
+   * Restrict `all` mode to paths already tracked in HEAD — the
+   * `git commit -a` semantics, which stage modifications and
+   * deletions but never add untracked files. Ignored unless
+   * `all` is set.
+   */
+  trackedOnly?: boolean;
 }
 
 export interface AddWithDeps extends GitAddOptions {
@@ -113,6 +120,9 @@ async function addAll(opts: AddWithDeps, dir: string): Promise<void> {
   const toAdd: string[] = [];
   const toRemove: string[] = [];
   for (const [filepath, head, workdir, stage] of matrix) {
+    // `commit -a` semantics: only touch paths already in HEAD,
+    // so untracked files (head === 0) are left alone.
+    if (opts.trackedOnly && head !== 1) continue;
     if (workdir === 0) {
       // Gone from the working tree. Only stage the deletion when
       // it isn't already staged (head present, stage present).
