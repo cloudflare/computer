@@ -2005,6 +2005,9 @@ async function runReset(
   if (parsed.flags.soft === true) {
     return { stdout: "", stderr: "git reset: --soft is not supported\n", exitCode: 129 };
   }
+  if (parsed.flags.mixed === true) {
+    return { stdout: "", stderr: "git reset: --mixed is not supported\n", exitCode: 129 };
+  }
   const sep = args.indexOf("--");
   const positional =
     sep === -1 ? parsed.positional : args.slice(0, sep).filter((a) => !a.startsWith("-"));

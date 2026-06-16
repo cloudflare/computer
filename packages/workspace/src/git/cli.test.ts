@@ -1891,6 +1891,14 @@ describe("runGitCli — reset argv parsing", () => {
     expect(res.exitCode).toBe(129);
     expect(res.stderr).toContain("--soft is not supported");
   });
+
+  it("--mixed is rejected as unsupported", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["reset", "--mixed", "HEAD"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("--mixed is not supported");
+    expect(calls.reset).toEqual([]);
+  });
 });
 
 describe("runGitCli — clean argv parsing", () => {

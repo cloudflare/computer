@@ -176,8 +176,7 @@ async function hardReset(opts: ResetWithDeps, dir: string, ref: string): Promise
     await opts.git.checkout({ fs: opts.fs, dir, ref: branch, force: true, cache: opts.cache });
     return;
   }
-  await opts.git.writeRef({ fs: opts.fs, dir, ref: "HEAD", value: oid, force: true });
-  await opts.git.checkout({ fs: opts.fs, dir, ref: "HEAD", force: true, cache: opts.cache });
+  await opts.git.checkout({ fs: opts.fs, dir, ref: oid, force: true, cache: opts.cache });
 }
 
 async function stagedPaths(opts: ResetWithDeps, dir: string): Promise<string[]> {

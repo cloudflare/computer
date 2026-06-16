@@ -114,6 +114,22 @@ describe("resetWith", () => {
     expect(await statusOf("a.txt")).toEqual([1, 1, 1]);
   });
 
+  it("hard reset works from detached HEAD", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    const second = await commit("a.txt", "v2\n", "second");
+    await git.checkout({ fs: memfs, dir: DIR, ref: second });
+    expect(await git.currentBranch({ fs: memfs, dir: DIR })).toBeUndefined();
+    await memfs.promises.writeFile(`${DIR}/a.txt`, "dirty\n");
+
+    await resetWith({ git: resetClient, fs: memfs, dir: DIR, hard: true, ref: first });
+
+    expect(await git.resolveRef({ fs: memfs, dir: DIR, ref: "HEAD" })).toBe(first);
+    expect(await git.currentBranch({ fs: memfs, dir: DIR })).toBeUndefined();
+    expect(await memfs.promises.readFile(`${DIR}/a.txt`, "utf8")).toBe("v1\n");
+    expect(await statusOf("a.txt")).toEqual([1, 1, 1]);
+  });
+
   it("hard reset throws NotARepositoryError outside a repo", async () => {
     await memfs.promises.mkdir("/loose", { recursive: true });
     await expect(
