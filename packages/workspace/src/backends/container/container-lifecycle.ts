@@ -36,6 +36,13 @@ interface ContainerLifecycleState {
   // never affect the current generation, and a flag set against
   // generation N cannot leak into generation N+1.
   expectedExitGeneration: number | null;
+  // Resolves once the *current* generation's monitor handler has
+  // run to completion. destroyContainerExpectingExit awaits this
+  // so the expected-exit log is emitted before any subsequent
+  // installContainerMonitor bumps the generation out from under
+  // the in-flight handler. Null between generations and before
+  // the first install.
+  currentMonitorSettled: Promise<void> | null;
 }
 
 const LIFECYCLE = new WeakMap<DurableObjectState, ContainerLifecycleState>();
@@ -43,7 +50,12 @@ const LIFECYCLE = new WeakMap<DurableObjectState, ContainerLifecycleState>();
 export function getContainerLifecycle(ctx: DurableObjectState): ContainerLifecycleState {
   let state = LIFECYCLE.get(ctx);
   if (state === undefined) {
-    state = { exit: null, currentGeneration: 0, expectedExitGeneration: null };
+    state = {
+      exit: null,
+      currentGeneration: 0,
+      expectedExitGeneration: null,
+      currentMonitorSettled: null,
+    };
     LIFECYCLE.set(ctx, state);
   }
   return state;
@@ -83,8 +95,13 @@ export function installContainerMonitor(ctx: DurableObjectState, container: Cont
   // Clear any prior exit info — a fresh generation has started.
   state.exit = null;
 
-  const promise = container.monitor();
-  promise.then(
+  const monitorPromise = container.monitor();
+  // currentMonitorSettled tracks the wrapper that runs recordExit,
+  // not the raw monitor promise, so awaiting it guarantees the
+  // exit has been recorded (and logged) before the awaiter
+  // continues. Both branches feed into recordExit which never
+  // throws, so the wrapper itself resolves rather than rejecting.
+  state.currentMonitorSettled = monitorPromise.then(
     () => recordExit(state, generation, undefined),
     (error) => recordExit(state, generation, error),
   );
@@ -108,7 +125,20 @@ export async function destroyContainerExpectingExit(
 ): Promise<void> {
   const state = getContainerLifecycle(ctx);
   state.expectedExitGeneration = state.currentGeneration;
+  // Capture the current generation's monitor wrapper BEFORE the
+  // destroy. A subsequent installContainerMonitor reassigns
+  // currentMonitorSettled, but the capture here pins us to the
+  // one we're waiting on.
+  const settled = state.currentMonitorSettled;
   await container.destroy();
+  // Wait for the destroyed generation's monitor handler to run so
+  // its expected-exit log fires before the caller (e.g.
+  // WorkspaceContainerAPI.restart) installs the next generation's
+  // monitor and bumps currentGeneration out from under it. The
+  // platform settles monitor() asynchronously relative to
+  // destroy(); without this await the next install supersedes the
+  // pending handler and recordExit drops the write as stale.
+  if (settled) await settled;
 }
 
 // Reset state for a ctx. Test-only escape hatch; the production

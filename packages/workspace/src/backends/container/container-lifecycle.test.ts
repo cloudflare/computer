@@ -277,6 +277,87 @@ describe("destroyContainerExpectingExit", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  test("expected-exit log fires for restart even when monitor settles after destroy resolves", async () => {
+    // Production timing: the platform settles container.monitor()
+    // asynchronously relative to container.destroy(). If the
+    // expected-exit log is gated on the monitor handler running
+    // *before* the next generation is installed, the log is
+    // silently dropped. destroyContainerExpectingExit must await
+    // the destroyed generation's monitor handler before
+    // returning so the caller can install the next generation
+    // without superseding the pending log.
+    //
+    // Real timers here — we need setTimeout to actually fire so
+    // the deferred reject straddles a task boundary the way
+    // production does. Restore fake timers at the end so the
+    // surrounding beforeEach/afterEach contract holds.
+    vi.useRealTimers();
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Custom container where destroy() does NOT settle the
+    // monitor synchronously; instead it schedules the rejection
+    // for a later microtask, mirroring the platform's behavior.
+    let monitorReject: ((error: unknown) => void) | null = null;
+    let monitorPromise = new Promise<void>((_, reject) => {
+      monitorReject = reject;
+    });
+    monitorPromise.catch(() => {});
+    const container = {
+      get running() {
+        return true;
+      },
+      start() {
+        // New generation arms a fresh monitor promise.
+        monitorPromise = new Promise<void>((_, reject) => {
+          monitorReject = reject;
+        });
+        monitorPromise.catch(() => {});
+      },
+      async destroy() {
+        // Capture the current rejector; settle it on a macrotask
+        // so the destroy() resolution and the monitor rejection
+        // straddle a task boundary. This mirrors production
+        // timing — the platform's destroy can return before its
+        // monitor() promise settles, and microtask-only ordering
+        // (queueMicrotask, Promise.resolve) would mask the race.
+        const reject = monitorReject;
+        setTimeout(() => {
+          reject?.(new Error("deferred destroy reject"));
+        }, 0);
+      },
+      monitor() {
+        return monitorPromise;
+      },
+    } as unknown as NonNullable<DurableObjectState["container"]>;
+    const ctx = makeContext(container);
+    resetContainerLifecycleForTests(ctx);
+
+    container.start();
+    installContainerMonitor(ctx, container);
+
+    await destroyContainerExpectingExit(ctx, container);
+    // Immediately install the next generation, as restart() does.
+    container.start();
+    installContainerMonitor(ctx, container);
+
+    // Drain any pending tasks (including the macrotask the fake
+    // queued from destroy).
+    await new Promise((r) => setTimeout(r, 0));
+    await Promise.resolve();
+
+    // The destroyed generation's exit must have logged as
+    // expected (info), not as a crash (warn).
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls[0]?.[0]).toMatchObject({
+      message: "workspace.container.exited",
+      expected: true,
+    });
+    expect(warn).not.toHaveBeenCalled();
+
+    vi.useFakeTimers();
+  });
+
   test("a later real crash on a fresh generation logs as unexpected after a failed destroy", async () => {
     // destroy() rejects against generation 1. The expected-exit
     // mark sticks against generation 1. A subsequent start()
