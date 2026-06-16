@@ -2,6 +2,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { WorkspaceTransportError } from "./transport-failure.js";
 import { Workspace } from "./workspace.js";
 
 function makeStorage(): SQLiteTestStorage {
@@ -750,5 +751,165 @@ describe("Workspace mutation serialization", () => {
     expect(read).toBe("hello");
     releasePush?.();
     await push;
+  });
+});
+
+describe("Workspace transport-failure invalidation", () => {
+  // A backend whose RPC throws a transport-like error while its
+  // `closed` promise never resolves used to leave the Workspace
+  // holding a dead handle. The cache must drop the handle on the
+  // way out so the next operation reconnects.
+  function transportFailingBackend(
+    id: string,
+    onConnect: () => void,
+  ): { backend: WorkspaceBackend; failNext: () => void } {
+    let shouldFail = false;
+    const sync: import("@cloudflare/workspace-rpc").SyncRPC = {
+      ...fakeRpc(),
+      async push(input) {
+        if (shouldFail) throw new WorkspaceTransportError("WebSocket closed");
+        const reader = input.changes.getReader();
+        try {
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        return { rev: 0, appliedPushRev: input.senderRev };
+      },
+      async fetchChanges() {
+        if (shouldFail) throw new WorkspaceTransportError("WebSocket closed");
+        return {
+          currentRev: 0,
+          appliedPushRev: 0,
+          stream: new ReadableStream<import("@cloudflare/dofs").ChangeEntry>({
+            start(c) {
+              c.close();
+            },
+          }),
+        };
+      },
+      async watermarks() {
+        return { currentRev: 0, pushRev: 0, fetchRev: 0 };
+      },
+    };
+    const backend: WorkspaceBackend = {
+      id,
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        onConnect();
+        // closed promise stays pending forever — simulating a
+        // wedged transport that never produces a clean signal.
+        return {
+          rpc: composite(sync),
+          closed: new Promise<void>(() => {}),
+          close: async () => {},
+        };
+      },
+    };
+    return {
+      backend,
+      failNext: () => {
+        shouldFail = true;
+      },
+    };
+  }
+
+  it("push() invalidates the cached handle on a transport error", async () => {
+    let connects = 0;
+    const { backend, failNext } = transportFailingBackend("only", () => {
+      connects++;
+    });
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.ready("only");
+    expect(connects).toBe(1);
+
+    await ws.fs.writeFile("/a.txt", "hi");
+    failNext();
+    await expect(ws.push()).rejects.toThrow(/WebSocket closed/);
+
+    // Next operation must reconnect — the bad handle is gone.
+    // Reset the fail flag so the second connect's RPC works.
+    // (failNext flipped a flag on the closure; re-binding is fine
+    // because connect() returns a fresh handle that reads it.)
+    // For this assertion we just need a fresh connect attempt.
+    await ws.push().catch(() => undefined);
+    expect(connects).toBe(2);
+  });
+
+  it("pull() invalidates the cached handle on a transport error", async () => {
+    let connects = 0;
+    const { backend, failNext } = transportFailingBackend("only", () => {
+      connects++;
+    });
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.ready("only");
+    expect(connects).toBe(1);
+    failNext();
+    await expect(ws.pull()).rejects.toThrow(/WebSocket closed/);
+    await ws.pull().catch(() => undefined);
+    expect(connects).toBe(2);
+  });
+
+  it("non-transport errors do not invalidate the cached handle", async () => {
+    let connects = 0;
+    const sync: import("@cloudflare/workspace-rpc").SyncRPC = {
+      ...fakeRpc(),
+      async push() {
+        throw new Error("EROFS: read-only file system");
+      },
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        connects++;
+        return {
+          rpc: composite(sync),
+          closed: new Promise<void>(() => {}),
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.ready("only");
+    expect(connects).toBe(1);
+    await ws.fs.writeFile("/a.txt", "hi");
+    await expect(ws.push()).rejects.toThrow(/EROFS/);
+    // Cache survives a non-transport error.
+    await ws.push().catch(() => undefined);
+    expect(connects).toBe(1);
+  });
+
+  it("shell.exec invalidates the cached handle on a transport error", async () => {
+    let connects = 0;
+    const shell: import("@cloudflare/workspace-rpc").ShellRPC = {
+      async exec() {
+        throw new WorkspaceTransportError("RPC session was shut down");
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        connects++;
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          closed: new Promise<void>(() => {}),
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await expect(ws.shell.exec("true")).rejects.toThrow(/RPC session was shut down/);
+    expect(connects).toBe(1);
+    await ws.shell.exec("true").catch(() => undefined);
+    expect(connects).toBe(2);
   });
 });

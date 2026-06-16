@@ -27,6 +27,7 @@ import type { Mount } from "./mounts/types.js";
 import { noopObserver, type WorkspaceObserver, withSpan } from "./observe.js";
 import { WorkspaceShell } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
+import { isWorkspaceTransportFailure } from "./transport-failure.js";
 
 export interface WorkspaceOptions {
   // Local store backing this Workspace. In a Durable Object, pass
@@ -342,7 +343,9 @@ export class Workspace {
           // keep calling push() unconditionally without paying
           // for it.
           if (handle.sync === "none") return 0;
-          return pushOnce(this.#db, handle.rpc.sync, resolvedId);
+          return this.#runWithInvalidation(resolvedId, handle, () =>
+            pushOnce(this.#db, handle.rpc.sync, resolvedId),
+          );
         },
         (span, outcome) => {
           if (outcome.ok) span.setAttribute("workspace.sync.pushed", outcome.value);
@@ -361,7 +364,9 @@ export class Workspace {
           if (resolvedId === undefined) return { applied: 0, skipped: [] };
           const handle = await this.#handleFor(resolvedId);
           if (handle.sync === "none") return { applied: 0, skipped: [] };
-          return pullOnce(this.#db, handle.rpc.sync, resolvedId);
+          return this.#runWithInvalidation(resolvedId, handle, () =>
+            pullOnce(this.#db, handle.rpc.sync, resolvedId),
+          );
         },
         (span, outcome) => {
           if (!outcome.ok) return;
@@ -370,6 +375,36 @@ export class Workspace {
         },
       ),
     );
+  }
+
+  // Drop a cached handle when an operation fails with a known
+  // transport-level error. Matches by identity — a concurrent
+  // close() / `closed` watcher that already swapped the entry must
+  // not be clobbered. Returns true if the cached entry was the one
+  // we removed.
+  #invalidateHandle(id: string, handle: BackendHandle): boolean {
+    if (this.#handles.get(id) !== handle) return false;
+    this.#handles.delete(id);
+    this.#shells.delete(id);
+    return true;
+  }
+
+  // Wrap an RPC-backed operation so a transport failure invalidates
+  // the cached handle before the error rethrows. Non-transport
+  // errors pass through untouched.
+  async #runWithInvalidation<T>(
+    id: string,
+    handle: BackendHandle,
+    op: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await op();
+    } catch (error) {
+      if (isWorkspaceTransportFailure(error)) {
+        this.#invalidateHandle(id, handle);
+      }
+      throw error;
+    }
   }
 
   // Per-backend mutation FIFO. The shell exec bracket
@@ -527,8 +562,19 @@ export class Workspace {
       this.#defaultBackendId ?? "",
       (id) => this.#shellFor(id),
       (id) => this.#resolveBackendId(id) ?? "",
+      (id, error) => this.#onShellError(id, error),
     );
     return router as unknown as WorkspaceShell;
+  }
+
+  // Invalidate the cached handle for `id` when a shell-routed RPC
+  // fails with a known transport error. Matches the push/pull
+  // invalidation path; identity-checked so a concurrent reconnect
+  // is not clobbered.
+  #onShellError(id: string, error: unknown): void {
+    if (!isWorkspaceTransportFailure(error)) return;
+    const handle = this.#handles.get(id);
+    if (handle !== undefined) this.#invalidateHandle(id, handle);
   }
 }
 
@@ -546,28 +592,47 @@ class WorkspaceShellRouter {
   readonly #defaultId: string;
   readonly #shellFor: (id: string) => Promise<WorkspaceShell>;
   readonly #resolveId: (id: string | undefined) => string;
+  readonly #onError: (id: string, error: unknown) => void;
 
   constructor(
     defaultId: string,
     shellFor: (id: string) => Promise<WorkspaceShell>,
     resolveId: (id: string | undefined) => string,
+    onError: (id: string, error: unknown) => void,
   ) {
     this.#defaultId = defaultId;
     this.#shellFor = shellFor;
     this.#resolveId = resolveId;
+    this.#onError = onError;
   }
 
   async exec(command: string, options: { backend?: string } & Record<string, unknown> = {}) {
     const id = this.#resolveId(options.backend) || this.#defaultId;
     const shell = await this.#shellFor(id);
     const { backend: _backend, ...rest } = options;
-    return (shell.exec as unknown as (c: string, o: typeof rest) => unknown)(command, rest);
+    try {
+      return await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
+        command,
+        rest,
+      );
+    } catch (error) {
+      this.#onError(id, error);
+      throw error;
+    }
   }
 
   async get(id: string, options: { backend?: string } & Record<string, unknown> = {}) {
     const backendId = this.#resolveId(options.backend) || this.#defaultId;
     const shell = await this.#shellFor(backendId);
     const { backend: _backend, ...rest } = options;
-    return (shell.get as unknown as (e: string, o: typeof rest) => unknown)(id, rest);
+    try {
+      return await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
+        id,
+        rest,
+      );
+    } catch (error) {
+      this.#onError(backendId, error);
+      throw error;
+    }
   }
 }
