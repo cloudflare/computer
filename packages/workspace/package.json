@@ -19,6 +19,10 @@
       "types": "./dist/git.d.ts",
       "import": "./dist/git.js"
     },
+    "./assets": {
+      "types": "./dist/assets/index.d.ts",
+      "import": "./dist/assets/index.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
