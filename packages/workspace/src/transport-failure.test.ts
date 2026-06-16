@@ -11,7 +11,13 @@ describe("isWorkspaceTransportFailure", () => {
     expect(
       isWorkspaceTransportFailure(new Error("RPC was canceled because RPC session was shut down")),
     ).toBe(true);
-    expect(isWorkspaceTransportFailure(new Error("the RPC session was closed"))).toBe(true);
+    // capnweb's actual post-shutdown error (verified against
+    // node_modules/capnweb/dist/index.js).
+    expect(
+      isWorkspaceTransportFailure(
+        new Error("Attempted to use RPC stub after it has been disposed."),
+      ),
+    ).toBe(true);
   });
 
   it("recognises WebSocket transport failures", () => {
@@ -42,6 +48,22 @@ describe("isWorkspaceTransportFailure", () => {
     expect(isWorkspaceTransportFailure(new Error("ENOENT: no such file"))).toBe(false);
     expect(isWorkspaceTransportFailure(new Error("command exited with code 1"))).toBe(false);
     expect(isWorkspaceTransportFailure(new Error("permission denied"))).toBe(false);
+  });
+
+  it("recognises WorkspaceTransportError by name when subclass identity is lost", () => {
+    // Simulates what a Workers RPC structured-clone hop produces:
+    // the original WorkspaceTransportError lands on the receiving
+    // side as a plain Error whose name field survived but whose
+    // class identity did not.
+    const cloned = new Error("container exited: OOM killed");
+    cloned.name = "WorkspaceTransportError";
+    expect(isWorkspaceTransportFailure(cloned)).toBe(true);
+  });
+
+  it("recognises the container-exited short-circuit message", () => {
+    // Even when the name is lost (or the error is reconstructed
+    // without it), the message pattern still classifies.
+    expect(isWorkspaceTransportFailure(new Error("container exited: SIGKILL"))).toBe(true);
   });
 
   it("returns false for non-Error values", () => {

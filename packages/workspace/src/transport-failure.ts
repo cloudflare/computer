@@ -45,9 +45,13 @@ export class WorkspaceTransportError extends Error {
 // list — only phrases the workspace stack reliably produces or
 // that capnweb / Cloudflare Workers ws emit on a closed session.
 const TRANSPORT_PATTERNS: RegExp[] = [
-  // capnweb session shutdown / cancellation.
+  // capnweb session shutdown / cancellation. Phrasing checked
+  // against node_modules/capnweb/dist/index.js: the
+  // post-shutdown error is "Attempted to use RPC stub after it
+  // has been disposed." and pre-shutdown cancellation reads as
+  // "RPC was canceled because RPC session was shut down...".
   /rpc session was shut down/i,
-  /rpc session was closed/i,
+  /rpc stub after it has been disposed/i,
   /rpc was canceled/i,
   // WebSocket transport failures.
   /websocket is not open/i,
@@ -59,6 +63,14 @@ const TRANSPORT_PATTERNS: RegExp[] = [
   /econnrefused/i,
   /econnreset/i,
   /network is unreachable/i,
+  // The container backend's fetchPort short-circuit when it has
+  // observed an exit through container.monitor(). Surfaces
+  // through a WorkspaceTransportError same-isolate (handled by
+  // the instanceof check below) and as a plain Error after a
+  // Workers RPC hop (subclass identity is dropped by structured
+  // clone). The .name check covers RPC-side; this pattern
+  // covers errors that don't even carry the original name.
+  /container exited/i,
 ];
 
 export function isWorkspaceTransportFailure(error: unknown): boolean {
@@ -67,6 +79,10 @@ export function isWorkspaceTransportFailure(error: unknown): boolean {
   for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth++) {
     if (current instanceof WorkspaceTransportError) return true;
     if (current instanceof Error) {
+      // .name survives a Workers RPC structured-clone hop even
+      // when the subclass identity does not, so cross-DO callers
+      // still classify a WorkspaceTransportError correctly.
+      if (current.name === "WorkspaceTransportError") return true;
       for (const pattern of TRANSPORT_PATTERNS) {
         if (pattern.test(current.message)) return true;
       }
