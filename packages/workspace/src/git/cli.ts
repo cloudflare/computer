@@ -334,10 +334,12 @@ async function runDiff(
   const [from, to] = refArgs;
   const dir = resolveDir(undefined, input.cwd);
   try {
+    const fromResolved = await resolveRevisionRef(client, dir, from);
+    const toResolved = await resolveRevisionRef(client, dir, to);
     const output = await client.diff({
       dir,
-      ref: from,
-      to,
+      ref: fromResolved,
+      to: toResolved,
       paths: pathArgs.length > 0 ? pathArgs : undefined,
     });
     return { stdout: output, stderr: "", exitCode: 0 };
@@ -642,7 +644,8 @@ async function runLog(
   }
   const dir = resolveDir(undefined, input.cwd);
   try {
-    const commits = await client.log({ dir, ref: parsed.positional[0], depth });
+    const ref = await resolveRevisionRef(client, dir, parsed.positional[0]);
+    const commits = await client.log({ dir, ref, depth });
     const stdout = parsed.flags.oneline ? formatLogOneline(commits) : formatLogFull(commits);
     return { stdout, stderr: "", exitCode: 0 };
   } catch (cause) {
@@ -711,7 +714,8 @@ async function runShow(
   }
   const dir = resolveDir(undefined, input.cwd);
   try {
-    const c = await client.show({ dir, ref });
+    const resolved = (await resolveRevisionRef(client, dir, ref)) ?? ref;
+    const c = await client.show({ dir, ref: resolved });
     return { stdout: formatLogFull([c]), stderr: "", exitCode: 0 };
   } catch (cause) {
     return mapGitError("show", cause);
@@ -1903,6 +1907,29 @@ function repoNameFromUrl(url: string): string | undefined {
   const name = segment.endsWith(".git") ? segment.slice(0, -4) : segment;
   if (name === "" || name === "." || name === "..") return undefined;
   return name;
+}
+
+/** True when `ref` carries a `gitrevisions(7)` ancestry suffix. */
+function hasRevisionSuffix(ref: string): boolean {
+  return /[\^~]/.test(ref);
+}
+
+/**
+ * Resolve a ref that may carry a revision suffix (`HEAD^`,
+ * `HEAD~2`, ...) to a concrete oid via `rev-parse`, which owns
+ * the suffix-walking logic. A plain ref is returned untouched so
+ * the downstream method keeps resolving branch / tag names
+ * itself. Used by subcommands whose typed methods call
+ * `resolveRef` directly and so don't understand the suffix
+ * grammar.
+ */
+async function resolveRevisionRef(
+  client: GitClient,
+  dir: string,
+  ref: string | undefined,
+): Promise<string | undefined> {
+  if (ref === undefined || !hasRevisionSuffix(ref)) return ref;
+  return client.revParse({ dir, ref });
 }
 
 function isSupportedRemoteUrl(url: string): boolean {

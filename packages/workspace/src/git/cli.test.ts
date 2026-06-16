@@ -569,6 +569,14 @@ describe("runGitCli — diff argv parsing", () => {
     expect(calls.diff).toEqual([{ dir: "/r", ref: "v1", to: "v2", paths: undefined }]);
   });
 
+  it("pre-resolves revision suffixes in from/to refs", async () => {
+    let n = 0;
+    const oids = ["a".repeat(40), "b".repeat(40)];
+    const { client, calls } = fakeClient({}, { revParse: () => oids[n++] });
+    await runGitCli(client, { argv: ["diff", "HEAD~2", "HEAD~1"], cwd: "/r" });
+    expect(calls.diff[0]).toMatchObject({ ref: "a".repeat(40), to: "b".repeat(40) });
+  });
+
   it("rejects three or more refs before '--'", async () => {
     const { client } = fakeClient();
     const res = await runGitCli(client, { argv: ["diff", "a", "b", "c"] });
@@ -897,6 +905,13 @@ describe("runGitCli — log argv parsing", () => {
     expect(res.stderr).toContain("-n");
   });
 
+  it("pre-resolves a revision suffix in the positional ref", async () => {
+    const { client, calls } = fakeClient({}, { revParse: () => "e".repeat(40) });
+    await runGitCli(client, { argv: ["log", "HEAD~2"], cwd: "/r" });
+    expect(calls.revParse[0]).toMatchObject({ ref: "HEAD~2" });
+    expect(calls.log[0].ref).toBe("e".repeat(40));
+  });
+
   it("-1 is shorthand for -n 1", async () => {
     const { client, calls } = fakeClient();
     const res = await runGitCli(client, { argv: ["log", "-1", "--oneline"] });
@@ -928,6 +943,13 @@ describe("runGitCli — show / rev-parse / symbolic-ref", () => {
     const { client, calls } = fakeClient();
     await runGitCli(client, { argv: ["show"] });
     expect(calls.show[0].ref).toBe("HEAD");
+  });
+
+  it("show pre-resolves a revision suffix to an oid", async () => {
+    const { client, calls } = fakeClient({}, { revParse: () => "d".repeat(40) });
+    await runGitCli(client, { argv: ["show", "HEAD~1"], cwd: "/r" });
+    expect(calls.revParse[0]).toMatchObject({ dir: "/r", ref: "HEAD~1" });
+    expect(calls.show[0].ref).toBe("d".repeat(40));
   });
 
   it("rev-parse prints the resolved oid", async () => {
