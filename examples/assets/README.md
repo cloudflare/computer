@@ -48,7 +48,9 @@ client ─► Worker POST /prompt
 
 The bucket binding alone can't mint a presigned URL, so the
 presigner needs R2 S3 credentials. Create an R2 API token scoped to
-the bucket, then set the values as secrets:
+the bucket. The credential names are listed in
+[`.dev.vars.example`](.dev.vars.example); copy it to `.dev.vars` to
+fill them in, then set the same values as secrets for production:
 
 ```sh
 wrangler secret put R2_ACCESS_KEY_ID
@@ -93,6 +95,7 @@ cleanup story.
 
 ```
 examples/assets/
-  wrangler.jsonc    Worker + DO + AI + R2 bindings
-  src/index.ts      Worker handler + DO (AssetWorkspace)
+  wrangler.jsonc      Worker + DO + AI + R2 bindings
+  .dev.vars.example   R2 S3 credential names; copy to .dev.vars
+  src/index.ts        Worker handler + DO (AssetWorkspace)
 ```

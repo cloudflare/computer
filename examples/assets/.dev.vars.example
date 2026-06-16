@@ -1,0 +1,14 @@
+# Copy to .dev.vars for local development, or set these as secrets
+# in production with `wrangler secret put <NAME>`.
+#
+# The R2 binding alone can't mint a presigned URL, so the assets
+# client needs R2 S3 credentials. Create an R2 API token scoped to
+# the bucket and fill in the values below.
+#
+# Note: this example is production-only. The image model runs on
+# Cloudflare's network and the presigned link points at R2, so a
+# local dev stack won't produce a working link even with these set.
+
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+CLOUDFLARE_ACCOUNT_ID=
