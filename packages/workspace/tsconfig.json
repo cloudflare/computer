@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "vitest/globals"]
+    "types": ["@cloudflare/workers-types", "vitest/globals", "node"]
   },
   "include": ["src/**/*.ts", "*.ts"]
 }
