@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
-  armContainerMonitor,
   containerExitInfo,
   destroyContainerExpectingExit,
   formatExitReason,
   getContainerLifecycle,
+  installContainerMonitor,
   resetContainerLifecycleForTests,
 } from "./container-lifecycle.js";
 
@@ -100,7 +100,7 @@ function makeContainer(): {
 }
 
 // Lifecycle state is keyed by ctx — a tiny opaque object suffices.
-function makeCtx(container: NonNullable<DurableObjectState["container"]>): DurableObjectState {
+function makeContext(container: NonNullable<DurableObjectState["container"]>): DurableObjectState {
   return { container } as unknown as DurableObjectState;
 }
 
@@ -128,17 +128,17 @@ describe("formatExitReason", () => {
   });
 });
 
-describe("armContainerMonitor", () => {
+describe("installContainerMonitor", () => {
   test("records exit info when the monitor resolves (clean exit)", async () => {
     // container.monitor() resolves only on a clean code-0 exit on
     // the real platform. The lifecycle treats that as 'exited
     // normally' — useful when the workload exits on its own
     // rather than being SIGKILL'd by the runtime.
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     expect(containerExitInfo(ctx)).toBeNull();
     fake.current.resolve();
@@ -154,10 +154,10 @@ describe("armContainerMonitor", () => {
 
   test("records the rejection reason when the monitor rejects", async () => {
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     fake.current.reject(new Error("container crashed"));
     await Promise.resolve();
@@ -170,10 +170,10 @@ describe("armContainerMonitor", () => {
   test("logs at warn level on an unexpected exit", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     fake.current.reject(new Error("OOM killed"));
     await Promise.resolve();
@@ -196,10 +196,10 @@ describe("armContainerMonitor", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     await destroyContainerExpectingExit(ctx, fake.container);
     // Drain the monitor's then-chain.
@@ -223,19 +223,19 @@ describe("armContainerMonitor", () => {
     // new generation has armed must NOT overwrite the new
     // generation's clean exit state.
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
 
     fake.container.start();
     const firstGeneration = fake.current;
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     // Second generation — a new monitor promise is armed in the
-    // fake's start(); armContainerMonitor bumps the lifecycle's
+    // fake's start(); installContainerMonitor bumps the lifecycle's
     // generation counter and attaches a fresh handler against the
     // new promise.
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
     const secondGeneration = fake.current;
 
     expect(containerExitInfo(ctx)).toBeNull();
@@ -258,17 +258,17 @@ describe("destroyContainerExpectingExit", () => {
   test("resets expectingExit so the next generation's crash logs as a crash", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     await destroyContainerExpectingExit(ctx, fake.container);
     await Promise.resolve();
     await Promise.resolve();
     // Arm a fresh monitor for a new container generation.
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
     fake.current.reject(new Error("real crash"));
     await Promise.resolve();
     await Promise.resolve();
@@ -285,10 +285,10 @@ describe("destroyContainerExpectingExit", () => {
     // no longer matches the live one.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
 
     const broken = {
       destroy: async () => {
@@ -299,7 +299,7 @@ describe("destroyContainerExpectingExit", () => {
 
     // Fresh generation, fresh monitor.
     fake.container.start();
-    armContainerMonitor(ctx, fake.container);
+    installContainerMonitor(ctx, fake.container);
     fake.current.reject(new Error("real crash"));
     await Promise.resolve();
     await Promise.resolve();
@@ -311,7 +311,7 @@ describe("destroyContainerExpectingExit", () => {
 describe("getContainerLifecycle", () => {
   test("returns null exit info before any monitor has fired", () => {
     const fake = makeContainer();
-    const ctx = makeCtx(fake.container);
+    const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
     expect(containerExitInfo(ctx)).toBeNull();
     expect(getContainerLifecycle(ctx).exit).toBeNull();
@@ -320,14 +320,14 @@ describe("getContainerLifecycle", () => {
   test("isolates state per ctx via the WeakMap", async () => {
     const a = makeContainer();
     const b = makeContainer();
-    const ctxA = makeCtx(a.container);
-    const ctxB = makeCtx(b.container);
+    const ctxA = makeContext(a.container);
+    const ctxB = makeContext(b.container);
     resetContainerLifecycleForTests(ctxA);
     resetContainerLifecycleForTests(ctxB);
     a.container.start();
-    armContainerMonitor(ctxA, a.container);
+    installContainerMonitor(ctxA, a.container);
     b.container.start();
-    armContainerMonitor(ctxB, b.container);
+    installContainerMonitor(ctxB, b.container);
 
     a.current.reject(new Error("a crashed"));
     await Promise.resolve();

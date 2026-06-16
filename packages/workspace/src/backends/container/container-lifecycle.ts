@@ -24,7 +24,7 @@ interface ContainerLifecycleState {
   // generation must not poison the fresh one's exit state.
   exit: ContainerExitInfo | null;
   // Monotonically incremented every time a new monitor is armed.
-  // The armContainerMonitor closure captures the value at arm
+  // The installContainerMonitor closure captures the value at arm
   // time so a late-resolving old monitor can detect that it has
   // been superseded.
   currentGeneration: number;
@@ -76,7 +76,7 @@ export function formatExitReason(error: unknown): string {
 // generation". If a caller arms twice for the same generation,
 // the worst that happens is two handlers race to write the same
 // exit state — same value, same generation.
-export function armContainerMonitor(ctx: DurableObjectState, container: ContainerHandle): void {
+export function installContainerMonitor(ctx: DurableObjectState, container: ContainerHandle): void {
   const state = getContainerLifecycle(ctx);
   state.currentGeneration += 1;
   const generation = state.currentGeneration;

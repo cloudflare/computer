@@ -21,10 +21,10 @@
 import { RpcTarget } from "cloudflare:workers";
 import { WorkspaceTransportError } from "../../transport-failure.js";
 import {
-  armContainerMonitor,
   type ContainerExitInfo,
   containerExitInfo,
   destroyContainerExpectingExit,
+  installContainerMonitor,
 } from "./container-lifecycle.js";
 
 export type { ContainerExitInfo } from "./container-lifecycle.js";
@@ -123,7 +123,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     } else if (!this.#container.running) {
       this.#container.start({ enableInternet: true, env });
     }
-    armContainerMonitor(this.#ctx, this.#container);
+    installContainerMonitor(this.#ctx, this.#container);
   }
 
   async restart(env: Record<string, string>) {
@@ -140,7 +140,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       // failure.
     }
     this.#container.start({ enableInternet: true, env });
-    armContainerMonitor(this.#ctx, this.#container);
+    installContainerMonitor(this.#ctx, this.#container);
   }
 
   async status() {
