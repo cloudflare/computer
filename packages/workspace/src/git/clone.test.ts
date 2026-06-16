@@ -229,4 +229,38 @@ describe("cloneWith subset checkout (real isomorphic-git + memfs)", () => {
     // `checkout` writes only the requested filepaths to disk.
     await expect(memfs.promises.stat(`${DIR}/drop/file.txt`)).rejects.toThrow();
   });
+
+  it("leaves HEAD as a symbolic ref after checkout", async () => {
+    // Reproduce the post-clone on-disk state: clone writes a
+    // symbolic HEAD pointing at the fetched branch, then leaves
+    // checkout to materialize the tree. Build that state with a
+    // real init + commit (which sets HEAD -> refs/heads/main),
+    // strip the working tree, and drive cloneWith's checkout
+    // phase against it. The checkout must not detach HEAD.
+    await memfs.promises.mkdir(DIR, { recursive: true });
+    await git.init({ fs: memfs, dir: DIR, defaultBranch: "main" });
+    await memfs.promises.writeFile(`${DIR}/README.md`, "readme\n");
+    await git.add({ fs: memfs, dir: DIR, filepath: "README.md" });
+    await git.commit({ fs: memfs, dir: DIR, message: "init", author: AUTHOR });
+    await memfs.promises.rm(`${DIR}/README.md`);
+
+    const fakeClone: IsomorphicGitClient = {
+      clone: vi.fn(async () => {}),
+      checkout: (args) => git.checkout({ ...args, fs: memfs }) as unknown as Promise<void>,
+    };
+
+    await cloneWith({
+      git: fakeClone,
+      http: fakeHttp,
+      fs: memfs,
+      url: "ignored — clone phase is faked",
+      dir: DIR,
+    });
+
+    const head = await memfs.promises.readFile(`${DIR}/.git/HEAD`, "utf8");
+    expect(head.trim()).toBe("ref: refs/heads/main");
+    expect(await git.currentBranch({ fs: memfs, dir: DIR })).toBe("main");
+    // The working tree is still materialized.
+    expect(await memfs.promises.readFile(`${DIR}/README.md`, "utf8")).toBe("readme\n");
+  });
 });

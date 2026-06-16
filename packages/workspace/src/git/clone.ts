@@ -41,6 +41,7 @@ export interface IsomorphicGitClient {
     ref: string;
     filepaths?: string[];
     force?: boolean;
+    noUpdateHead?: boolean;
     cache?: object;
   }): Promise<void>;
 }
@@ -129,12 +130,20 @@ export async function cloneWith(opts: CloneWithDeps): Promise<void> {
   // The working tree is empty after a noCheckout clone, so `force`
   // is safe — nothing real can conflict — and matches caller intent
   // ("populate this workspace from the remote").
+  //
+  // `git.clone` already wrote HEAD as a symbolic ref to the fetched
+  // branch. Checking out `ref: "HEAD"` here would re-resolve it to
+  // an oid and detach HEAD, because isomorphic-git only writes a
+  // symbolic HEAD when the checkout ref expands to `refs/heads/*`.
+  // `noUpdateHead` materializes the working tree without touching
+  // HEAD, preserving the symbolic ref the clone left in place.
   await opts.git.checkout({
     fs: opts.fs,
     dir,
     ref: ref ?? "HEAD",
     filepaths: opts.paths,
     force: true,
+    noUpdateHead: true,
     cache: opts.cache,
   });
 }
