@@ -232,6 +232,7 @@ above, then dive into the area you're working on.
 | [11. Lifecycle](./11_lifecycle.md) | DO incarnations, container lifetime, capnweb session lifecycle, and hibernation. |
 | [12. Worker backend](./12_worker_backend.md) | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
 | [13. Git interface](./13_git_interface.md) | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
+| [14. Assets interface](./14_assets_interface.md) | `share` a workspace file to R2 and get back a presigned URL. |
 
 ## High-level API
 
