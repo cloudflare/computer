@@ -63,5 +63,11 @@
     }
   ],
 
+  "vars": {
+    "R2_ACCESS_KEY_ID": "",
+    "R2_SECRET_ACCESS_KEY": "",
+    "CLOUDFLARE_ACCOUNT_ID": ""
+  },
+
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TriageAgent"] }]
 }
