@@ -944,11 +944,11 @@ ws.git.reset({
 ```
 
 Path reset unstages the listed paths back to `ref` and leaves
-the working tree alone (built on `resetIndex`). `--hard`
-force-checks-out `ref`, rewriting both the index and working
-tree. Without `--hard`, bare positionals are treated as
-pathspecs; with `--hard`, a single positional is the ref. The
-ref accepts revision suffixes (`HEAD~1`). *Not mapped:*
+the working tree alone (built on `resetIndex`). Bare `git reset`
+and `git reset HEAD` unstage all staged paths. `--hard` moves the
+current branch (when HEAD is symbolic) to `ref` and rewrites both
+the index and working tree. With `--hard`, a single positional is
+the ref. Refs accept revision suffixes (`HEAD~1`). *Not mapped:*
 `--soft`, `--mixed` (both exit 129), `--merge`, `--keep`.
 
 ### `stash`

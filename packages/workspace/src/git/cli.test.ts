@@ -693,12 +693,9 @@ describe("runGitCli — diff argv parsing", () => {
     );
     const res = await runGitCli(client, { argv: ["diff", "--stat"] });
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain("a.txt");
-    expect(res.stdout).toContain("b.txt");
-    // Summary footer: total files changed and line counts.
-    expect(res.stdout).toContain("2 files changed");
-    expect(res.stdout).toContain("5 insertions(+)");
-    expect(res.stdout).toContain("1 deletion(-)");
+    expect(res.stdout).toBe(
+      " a.txt |    4 +++-\n b.txt |    2 ++\n 2 files changed, 5 insertions(+), 1 deletion(-)\n",
+    );
   });
 
   it("--stat emits nothing for an empty change set", async () => {
@@ -2136,6 +2133,50 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     expect(branches2.stdout).toBe("* main\n");
   });
 
+  it("switch restores tracked file content from the target branch", async () => {
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      defaultGitIdentity: { name: "Test", email: "test@example.test" },
+    });
+    await ws.ready();
+    const cli = (argv: string[]) => ws.git.cli({ argv, cwd: "/" });
+    await cli(["init"]);
+    await ws.fs.writeFile("/a.txt", "main\n");
+    await cli(["add", "a.txt"]);
+    await cli(["commit", "-m", "main"]);
+
+    await cli(["switch", "-c", "feature"]);
+    await ws.fs.writeFile("/a.txt", "feature\n");
+    await cli(["commit", "-am", "feature"]);
+
+    const switched = await cli(["switch", "main"]);
+    expect(switched.exitCode, switched.stderr).toBe(0);
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("main\n");
+    expect((await cli(["branch", "--show-current"])).stdout).toBe("main\n");
+  });
+
+  it("reset HEAD unstages all staged changes", async () => {
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      defaultGitIdentity: { name: "Test", email: "test@example.test" },
+    });
+    await ws.ready();
+    const cli = (argv: string[]) => ws.git.cli({ argv, cwd: "/" });
+    await cli(["init"]);
+    await ws.fs.writeFile("/a.txt", "one\n");
+    await cli(["add", "a.txt"]);
+    await cli(["commit", "-m", "init"]);
+
+    await ws.fs.writeFile("/a.txt", "two\n");
+    await ws.fs.writeFile("/b.txt", "new\n");
+    await cli(["add", "-A"]);
+    expect((await cli(["status", "--porcelain=v1"])).stdout).toContain("A");
+
+    const reset = await cli(["reset", "HEAD"]);
+    expect(reset.exitCode, reset.stderr).toBe(0);
+    expect((await cli(["status", "--porcelain=v1"])).stdout).toContain("?? b.txt\n");
+  });
+
   it("commit without identity surfaces as exit 128", async () => {
     const ws = new Workspace({ storage: new SQLiteTestStorage() });
     await ws.ready();
@@ -2200,6 +2241,23 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     await cli(["add", "-A"]);
     expect((await cli(["reset", "--hard", "HEAD"])).exitCode).toBe(0);
     expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("one\ntwo\n");
+
+    // reset --hard to an ancestor restores content and keeps HEAD attached.
+    const resetAncestor = await cli(["reset", "--hard", "HEAD~1"]);
+    expect(resetAncestor.exitCode, resetAncestor.stderr).toBe(0);
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("one\n");
+    expect((await cli(["branch", "--show-current"])).stdout).toBe("feature\n");
+
+    // stash pushes a dirty tracked change, lists it, and pops it back.
+    await ws.fs.writeFile("/a.txt", "stashed\n");
+    const stash = await cli(["stash", "push", "-m", "wip"]);
+    expect(stash.exitCode, stash.stderr).toBe(0);
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("one\n");
+    expect((await cli(["stash", "list"])).stdout).toContain("wip");
+    const pop = await cli(["stash", "pop"]);
+    expect(pop.exitCode, pop.stderr).toBe(0);
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("stashed\n");
+    expect((await cli(["reset", "--hard", "HEAD"])).exitCode).toBe(0);
 
     // clean -fd removes untracked junk.
     await ws.fs.writeFile("/junk.txt", "junk\n");

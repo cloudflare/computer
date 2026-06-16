@@ -9,6 +9,7 @@
 // `diff` so both stay optional peer deps.
 
 import type { IsomorphicGitFSClient } from "./adapter.js";
+import type { StatusMatrixRow } from "./status.js";
 
 /**
  * Status-matrix row as emitted by isomorphic-git's `statusMatrix`:
@@ -18,7 +19,7 @@ import type { IsomorphicGitFSClient } from "./adapter.js";
  *   - 2 = differs from HEAD
  *   - 3 = differs from HEAD and stage (rarely meaningful here)
  */
-export type StatusRow = [string, number, number, number];
+export type StatusRow = StatusMatrixRow;
 
 /** Subset of isomorphic-git's API used to compute a working-tree diff. */
 export interface IsomorphicGitDiffClient {
@@ -28,7 +29,7 @@ export interface IsomorphicGitDiffClient {
     dir: string;
     ref?: string;
     cache?: object;
-  }): Promise<StatusRow[]>;
+  }): Promise<StatusMatrixRow[]>;
   readBlob(args: {
     fs: object;
     dir: string;
@@ -36,6 +37,7 @@ export interface IsomorphicGitDiffClient {
     filepath: string;
     cache?: object;
   }): Promise<{ blob: Uint8Array; oid: string }>;
+  listFiles?(args: { fs: object; dir: string; ref?: string }): Promise<string[]>;
 }
 
 /** Signature compatible with the `diff` package's `createPatch`. */
@@ -205,12 +207,8 @@ async function collectRefToRef(
   } catch {
     return [];
   }
-  const fromFiles = new Set(
-    await listFilesAt(opts.git as unknown as IsomorphicGitDiffWithListFiles, opts.fs, dir, from),
-  );
-  const toFiles = new Set(
-    await listFilesAt(opts.git as unknown as IsomorphicGitDiffWithListFiles, opts.fs, dir, to),
-  );
+  const fromFiles = new Set(await listFilesAt(opts.git, opts.fs, dir, from));
+  const toFiles = new Set(await listFilesAt(opts.git, opts.fs, dir, to));
   const union = new Set<string>([...fromFiles, ...toFiles]);
   const pathFilter = makePathFilter(opts.paths);
 
@@ -231,28 +229,30 @@ async function collectRefToRef(
 }
 
 /**
- * Count added / removed content lines in a unified patch. Skips
- * the `+++` / `---` file headers; everything else prefixed `+` or
- * `-` is a content line. Good enough for `--stat`'s numeric
- * column, which is all the CLI needs.
+ * Count added / removed content lines in a unified patch. Only
+ * count lines inside hunks (after an `@@` header) so file headers
+ * are ignored while real content that begins with `+++` / `---`
+ * is still counted. Good enough for `--stat`'s numeric column,
+ * which is all the CLI needs.
  */
 function countChanges(patch: string): { insertions: number; deletions: number } {
   let insertions = 0;
   let deletions = 0;
+  let inHunk = false;
   for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
     if (line.startsWith("+")) insertions++;
     else if (line.startsWith("-")) deletions++;
   }
   return { insertions, deletions };
 }
 
-interface IsomorphicGitDiffWithListFiles extends IsomorphicGitDiffClient {
-  listFiles(args: { fs: object; dir: string; ref?: string }): Promise<string[]>;
-}
-
 async function listFilesAt(
-  git: IsomorphicGitDiffWithListFiles,
+  git: IsomorphicGitDiffClient,
   fs: object,
   dir: string,
   ref: string,

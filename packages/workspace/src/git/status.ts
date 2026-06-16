@@ -21,7 +21,12 @@
 
 import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
 
-export type StatusMatrixRow = [string, number, number, number];
+export type StatusMatrixRow = [
+  filepath: string,
+  headStatus: number,
+  workdirStatus: number,
+  stageStatus: number,
+];
 
 /** Subset of `isomorphic-git`'s API used for `status`. */
 export interface IsomorphicGitStatusClient {

@@ -20,7 +20,7 @@ import {
   NotARepositoryError,
   PathspecNotFoundError,
 } from "./errors.js";
-import type { GitClient, GitIdentity } from "./index.js";
+import type { CommitView, DiffSummaryEntry, GitClient, GitIdentity, StatusEntry } from "./index.js";
 import { formatPorcelainV1, formatPorcelainV2, formatShort } from "./status.js";
 
 export interface GitCliInput {
@@ -385,7 +385,7 @@ async function runDiff(
   }
 }
 
-type DiffSummary = import("./diff.js").DiffSummaryEntry;
+type DiffSummary = DiffSummaryEntry;
 
 /** `--name-only`: one changed path per line. */
 function formatDiffNameOnly(entries: DiffSummary[]): string {
@@ -521,7 +521,7 @@ async function runStatus(
     };
   }
   const dir = resolveDir(undefined, input.cwd);
-  let entries: import("./status.js").StatusEntry[];
+  let entries: StatusEntry[];
   try {
     entries = await client.status({ dir });
   } catch (cause) {
@@ -804,12 +804,12 @@ async function runLog(
   }
 }
 
-function formatLogOneline(commits: import("./reads.js").CommitView[]): string {
+function formatLogOneline(commits: CommitView[]): string {
   if (commits.length === 0) return "";
   return `${commits.map((c) => `${c.oid.slice(0, 7)} ${firstLine(c.message)}`).join("\n")}\n`;
 }
 
-function formatLogFull(commits: import("./reads.js").CommitView[]): string {
+function formatLogFull(commits: CommitView[]): string {
   if (commits.length === 0) return "";
   const blocks: string[] = [];
   for (const c of commits) {
@@ -2012,16 +2012,15 @@ async function runReset(
   const dir = resolveDir(undefined, input.cwd);
   const hard = parsed.flags.hard === true;
 
-  // A leading positional that isn't after `--` is the ref; the
-  // rest (or everything after `--`) are paths.
+  // A leading positional before `--` can be a ref; everything
+  // after `--` is paths. Real git is more context-sensitive than
+  // this subset, but handle the ubiquitous `git reset HEAD`
+  // spelling explicitly so it resets all staged changes instead
+  // of silently treating HEAD as a pathspec.
   let ref: string | undefined;
   let paths = pathArgs;
   if (sep === -1) {
-    // No `--`: a single positional is the ref for `--hard`, or a
-    // pathspec otherwise. Real git is context-sensitive here; for
-    // the supported subset we treat positionals as the ref when
-    // `--hard`, else as paths.
-    if (hard) {
+    if (hard || isResetRefOnly(positional)) {
       ref = positional[0];
     } else {
       paths = positional;
@@ -2042,6 +2041,12 @@ async function runReset(
   } catch (cause) {
     return mapGitError("reset", cause);
   }
+}
+
+function isResetRefOnly(positional: string[]): boolean {
+  if (positional.length !== 1) return false;
+  const value = positional[0];
+  return value === "HEAD" || hasRevisionSuffix(value);
 }
 
 // ---------------------------------------------------------------

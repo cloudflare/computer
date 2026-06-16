@@ -314,4 +314,12 @@ describe("diffSummaryWith (real isomorphic-git + memfs)", () => {
     const entries = await summary({ ref: first, to: second });
     expect(entries).toEqual([{ path: "new.txt", status: "A", insertions: 1, deletions: 0 }]);
   });
+
+  it("counts content lines that begin with diff header prefixes", async () => {
+    await init();
+    await commitFile("patch.txt", "-- old old\n", "v1");
+    await memfs.promises.writeFile(`${DIR}/patch.txt`, "++ new\n");
+    const entries = await summary();
+    expect(entries).toEqual([{ path: "patch.txt", status: "M", insertions: 1, deletions: 1 }]);
+  });
 });

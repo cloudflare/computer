@@ -8,6 +8,7 @@
 // missing.
 
 import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
+import type { StatusMatrixRow } from "./status.js";
 
 // ---------------------------------------------------------------
 // stash
@@ -106,6 +107,16 @@ export interface IsomorphicGitResetClient {
     force?: boolean;
     cache?: object;
   }): Promise<void>;
+  resolveRef(args: { fs: object; dir: string; ref: string }): Promise<string>;
+  writeRef(args: {
+    fs: object;
+    dir: string;
+    ref: string;
+    value: string;
+    force?: boolean;
+  }): Promise<void>;
+  currentBranch(args: { fs: object; dir: string; fullname?: boolean }): Promise<string | undefined>;
+  statusMatrix(args: { fs: object; dir: string; cache?: object }): Promise<StatusMatrixRow[]>;
 }
 
 export interface ResetOptions extends BaseWorktreeOptions {
@@ -135,14 +146,15 @@ export async function resetWith(opts: ResetWithDeps): Promise<void> {
   const ref = opts.ref ?? "HEAD";
   try {
     if (opts.hard) {
-      // Hard reset: force-checkout the ref, which rewrites both
-      // the index and the working tree to match.
-      await opts.git.checkout({ fs: opts.fs, dir, ref, force: true, cache: opts.cache });
+      await hardReset(opts, dir, ref);
       return;
     }
     // Path reset: unstage each path back to `ref` without
-    // touching the working tree.
-    for (const filepath of opts.paths ?? []) {
+    // touching the working tree. When no paths are supplied,
+    // reset every staged entry — the common `git reset` / `git
+    // reset HEAD` behavior.
+    const paths = opts.paths ?? (await stagedPaths(opts, dir));
+    for (const filepath of paths) {
       await opts.git.resetIndex({ fs: opts.fs, dir, filepath, ref, cache: opts.cache });
     }
   } catch (cause) {
@@ -151,17 +163,39 @@ export async function resetWith(opts: ResetWithDeps): Promise<void> {
   }
 }
 
+async function hardReset(opts: ResetWithDeps, dir: string, ref: string): Promise<void> {
+  // Real `git reset --hard <ref>` moves the current branch to the
+  // target commit when HEAD is symbolic, then rewrites the index
+  // and work tree. A plain checkout of a resolved oid would leave
+  // HEAD detached, so update the branch ref first and then
+  // checkout that branch name to materialize the tree.
+  const oid = await opts.git.resolveRef({ fs: opts.fs, dir, ref });
+  const branch = await opts.git.currentBranch({ fs: opts.fs, dir, fullname: true });
+  if (branch) {
+    await opts.git.writeRef({ fs: opts.fs, dir, ref: branch, value: oid, force: true });
+    await opts.git.checkout({ fs: opts.fs, dir, ref: branch, force: true, cache: opts.cache });
+    return;
+  }
+  await opts.git.writeRef({ fs: opts.fs, dir, ref: "HEAD", value: oid, force: true });
+  await opts.git.checkout({ fs: opts.fs, dir, ref: "HEAD", force: true, cache: opts.cache });
+}
+
+async function stagedPaths(opts: ResetWithDeps, dir: string): Promise<string[]> {
+  const matrix = await opts.git.statusMatrix({ fs: opts.fs, dir, cache: opts.cache });
+  const paths: string[] = [];
+  for (const [filepath, head, _workdir, stage] of matrix) {
+    if (stage !== head) paths.push(filepath);
+  }
+  return paths;
+}
+
 // ---------------------------------------------------------------
 // clean
 // ---------------------------------------------------------------
 
 /** Subset of `isomorphic-git`'s API used for `clean`. */
 export interface IsomorphicGitCleanClient {
-  statusMatrix(args: {
-    fs: object;
-    dir: string;
-    cache?: object;
-  }): Promise<Array<[string, number, number, number]>>;
+  statusMatrix(args: { fs: object; dir: string; cache?: object }): Promise<StatusMatrixRow[]>;
 }
 
 /** `fs.promises` surface used to remove paths. */
@@ -198,7 +232,7 @@ export interface CleanWithDeps extends CleanOptions {
  */
 export async function cleanWith(opts: CleanWithDeps): Promise<string[]> {
   const dir = opts.dir ?? "/";
-  let matrix: Array<[string, number, number, number]>;
+  let matrix: StatusMatrixRow[];
   try {
     matrix = await opts.git.statusMatrix({ fs: opts.fs, dir, cache: opts.cache });
   } catch (cause) {

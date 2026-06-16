@@ -11,6 +11,7 @@ import {
   NotARepositoryError,
   PathspecNotFoundError,
 } from "./errors.js";
+import type { StatusMatrixRow } from "./status.js";
 
 /** Subset of `isomorphic-git`'s API used for `add`. */
 export interface IsomorphicGitAddClient {
@@ -22,11 +23,7 @@ export interface IsomorphicGitAddClient {
     force?: boolean;
   }): Promise<void>;
   /** Used by `all` mode to enumerate changed paths. */
-  statusMatrix(args: {
-    fs: object;
-    dir: string;
-    cache?: object;
-  }): Promise<Array<[string, number, number, number]>>;
+  statusMatrix(args: { fs: object; dir: string; cache?: object }): Promise<StatusMatrixRow[]>;
   /** Used by `all` mode to stage deletions. */
   remove(args: { fs: object; dir: string; filepath: string; cache?: object }): Promise<void>;
 }
@@ -109,7 +106,7 @@ export async function addWith(opts: AddWithDeps): Promise<void> {
  * stage]`; `workdir === 0` means the file is gone from disk.
  */
 async function addAll(opts: AddWithDeps, dir: string): Promise<void> {
-  let matrix: Array<[string, number, number, number]>;
+  let matrix: StatusMatrixRow[];
   try {
     matrix = await opts.git.statusMatrix({ fs: opts.fs, dir, cache: opts.cache });
   } catch (cause) {
