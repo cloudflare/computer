@@ -57,6 +57,7 @@ export type {
 } from "./shell.js";
 export { WorkspaceShell } from "./shell.js";
 export {
+  WorkspaceAssetsStub,
   WorkspaceExecHandleStub,
   type WorkspaceExecOptions,
   type WorkspaceExecResult,

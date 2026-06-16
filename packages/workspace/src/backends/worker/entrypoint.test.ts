@@ -314,11 +314,55 @@ describe("ShellWorker", () => {
     });
   });
 
+  describe("`assets` custom command wiring", () => {
+    it("runs `assets publish` end-to-end through real Bash", async () => {
+      const calls: Array<{ path: string; expiresAfter: number }> = [];
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage() as never,
+        backends: [noopBackend()],
+        assets: {
+          async share(path, options) {
+            calls.push({ path, expiresAfter: options.expiresAfter });
+            return "https://example.com/shared.txt";
+          },
+        },
+      });
+      await workspace.ready();
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      const stub = workspace.stub();
+      try {
+        const worker = new ShellWorker(
+          undefined as never,
+          {
+            HOST: {
+              async getWorkspace() {
+                return stub as unknown as FakeWorkspace;
+              },
+            },
+          } as never,
+        );
+        const events = (await drain(
+          (
+            await worker.exec({ command: "assets publish out.txt 30s", cwd: "/workspace" })
+          ).events,
+        )) as { name: string; value: string | number }[];
+        const stdout = events.find((e) => e.name === "stdout");
+        const exit = events.find((e) => e.name === "exit");
+        expect(stdout?.value).toBe("https://example.com/shared.txt\n");
+        expect(exit?.value).toBe(0);
+        expect(calls).toEqual([{ path: "/workspace/out.txt", expiresAfter: 30_000 }]);
+      } finally {
+        stub[Symbol.dispose]();
+        await workspace.close();
+      }
+    });
+  });
+
   // Lightweight structural check that doesn't need a real fs: the
   // protected extraCommands() hook is invoked and its output is
-  // appended after the built-in git command.
+  // appended after the built-in commands.
   describe("`extraCommands` ordering", () => {
-    it("appends extraCommands() output after the built-in git command", async () => {
+    it("appends extraCommands() output after the built-in commands", async () => {
       let seen: import("just-bash").CustomCommand[] = [];
       class WithExtras extends ShellWorker {
         protected override extraCommands(): import("just-bash").CustomCommand[] {
@@ -340,7 +384,7 @@ describe("ShellWorker", () => {
       }
       const worker = TestWithExtras.spy();
       await drain((await worker.exec({ command: "alpha" })).events);
-      expect(seen.map((c) => c.name)).toEqual(["git", "alpha", "beta"]);
+      expect(seen.map((c) => c.name)).toEqual(["git", "assets", "alpha", "beta"]);
     });
   });
 });

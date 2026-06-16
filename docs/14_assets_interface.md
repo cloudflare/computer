@@ -28,6 +28,17 @@ const assets = createAssets({
 });
 ```
 
+To make the worker-backend shell command available, attach the
+client when constructing the `Workspace`:
+
+```ts
+const ws = new Workspace({
+  storage: ctx.storage,
+  backends: [new WorkerBackend(/* ... */)],
+  assets: (ws) => createAssets({ ws, bucket: env.ASSETS, s3: { bucket: "agent-assets" }, env }),
+});
+```
+
 `createAssets` binds the workspace and the bucket once and returns a
 client. The shape mirrors `createGitClient({ ws })`: bind the
 dependencies up front so each `share` call only takes the path and
@@ -114,6 +125,24 @@ R2.
 The R2 binding alone can't mint presigned URLs, which is why the
 credentials are needed on top of it. Create an R2 API token scoped to
 the bucket and supply its keys through the environment.
+
+## Worker-backend shell command
+
+When a `Workspace` is constructed with an assets client, the worker
+backend's just-bash shell exposes:
+
+```sh
+assets publish <path> [<expiry>]
+```
+
+The command writes the share URL to stdout. `<path>` may be absolute
+or relative to the current working directory. `<expiry>` defaults to
+one hour; a bare number is milliseconds, and `ms`, `s`, `m`, and `h`
+suffixes are accepted.
+
+The command still runs the publish on the host Durable Object. The
+Dynamic Worker does not receive the R2 bucket binding or signing
+secrets.
 
 ## Expiry and cleanup
 

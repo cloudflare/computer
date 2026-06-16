@@ -19,6 +19,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { Bash, type CustomCommand } from "just-bash";
 
 import { WorkspaceFsAdapter } from "./adapter.js";
+import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
 import { defineGitCommand, type GitCommandHost } from "./git-command.js";
 
 export interface ExecInput {
@@ -61,11 +62,11 @@ export interface ShellHostFetcher {
 }
 
 // The shape getWorkspace() returns. The shell touches .fs (for
-// the adapter behind every just-bash filesystem call) and .git
-// (for the `git` custom command the shell registers). Workers
-// RPC happens to carry this with [Symbol.dispose]; the shell
-// disposes it after Bash settles.
-export interface HostWorkspaceStub extends GitCommandHost {
+// the adapter behind every just-bash filesystem call), .git (for
+// the `git` custom command), and optionally .assets (for
+// `assets publish`). Workers RPC happens to carry this with
+// [Symbol.dispose]; the shell disposes it after Bash settles.
+export interface HostWorkspaceStub extends GitCommandHost, AssetsCommandHost {
   fs: import("./adapter.js").WorkspaceFs;
   [Symbol.dispose]?: () => void;
 }
@@ -136,7 +137,11 @@ export class ShellWorker<
     // execs get two stubs; no instance field, no race.
     const ws = await this.env.HOST.getWorkspace();
 
-    const customCommands: CustomCommand[] = [defineGitCommand(ws), ...this.extraCommands(ws)];
+    const customCommands: CustomCommand[] = [
+      defineGitCommand(ws),
+      defineAssetsCommand(ws),
+      ...this.extraCommands(ws),
+    ];
 
     let result: { stdout: string; stderr: string; exitCode: number };
     try {

@@ -57,6 +57,7 @@ import type {
 import { trackStub, untrackStub } from "@cloudflare/workspace-rpc/debug";
 import { RpcTarget } from "capnweb";
 
+import type { ShareOptions } from "./assets/index.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
 import type { ExecResult } from "./shell.js";
@@ -285,6 +286,34 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
 // side; their inputs (progress callbacks, `onAuth`) don't
 // cross Workers RPC cleanly, and the CLI path covers every
 // consumer who needs git access through a stub.
+export class WorkspaceAssetsStub extends RpcTarget {
+  readonly #ws: Workspace;
+
+  constructor(ws: Workspace) {
+    super();
+    this.#ws = ws;
+    trackStub(this);
+  }
+
+  [Symbol.dispose](): void {
+    untrackStub(this);
+  }
+
+  publish(path: string, options: Pick<ShareOptions, "expiresAfter">): Promise<string> {
+    return withSpan(
+      this.#ws.observer,
+      "workspace.assets.publish",
+      { "workspace.fs.path": path, "workspace.assets.expires_after_ms": options.expiresAfter },
+      async () => {
+        if (this.#ws.assets === undefined) {
+          throw new Error("Workspace assets are not configured");
+        }
+        return this.#ws.assets.share(path, { expiresAfter: options.expiresAfter });
+      },
+    );
+  }
+}
+
 export class WorkspaceGitStub extends RpcTarget {
   readonly #ws: Workspace;
 
@@ -400,12 +429,14 @@ export class WorkspaceStub extends RpcTarget {
   readonly #fs: WorkspaceFilesystemStub;
   readonly #shell: WorkspaceShellStub;
   readonly #git: WorkspaceGitStub;
+  readonly #assets: WorkspaceAssetsStub | undefined;
 
   constructor(ws: Workspace) {
     super();
     this.#fs = new WorkspaceFilesystemStub(ws);
     this.#shell = new WorkspaceShellStub(ws);
     this.#git = new WorkspaceGitStub(ws);
+    this.#assets = ws.assets === undefined ? undefined : new WorkspaceAssetsStub(ws);
     trackStub(this);
   }
 
@@ -419,6 +450,7 @@ export class WorkspaceStub extends RpcTarget {
     this.#fs[Symbol.dispose]();
     this.#shell[Symbol.dispose]();
     this.#git[Symbol.dispose]();
+    this.#assets?.[Symbol.dispose]();
     untrackStub(this);
   }
 
@@ -432,5 +464,9 @@ export class WorkspaceStub extends RpcTarget {
 
   get git(): WorkspaceGitStub {
     return this.#git;
+  }
+
+  get assets(): WorkspaceAssetsStub | undefined {
+    return this.#assets;
   }
 }

@@ -34,6 +34,7 @@ import {
   WorkspaceServiceProxy,
   type WorkspaceStub,
 } from "@cloudflare/workspace";
+import { createAssets } from "@cloudflare/workspace/assets";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
@@ -194,6 +195,17 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
       mounts: {
         "/workspace/.agents": R2Bucket(env.R2_SKILLS, { prefix: ".agents/" }),
       },
+      ...(env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY
+        ? {
+            assets: (ws: Workspace) =>
+              createAssets({
+                ws,
+                bucket: env.ASSETS,
+                s3: { bucket: "think-example-assets" },
+                env: env as unknown as Record<string, string | undefined>,
+              }),
+          }
+        : {}),
     });
 
     // Hand Think an adapter that satisfies its WorkspaceLike, so the

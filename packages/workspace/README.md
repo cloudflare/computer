@@ -54,7 +54,9 @@ uniform; the counts are just always zero.
   [`docs/13_git_interface.md`](../../docs/13_git_interface.md).
 - `createAssets` (from `@cloudflare/workspace/assets`) — `share` a
   workspace file to an R2 bucket and get back a presigned URL.
-  Binds the workspace and bucket once, like `workspace.git`. See
+  Binds the workspace and bucket once, like `workspace.git`. When
+  attached through `WorkspaceOptions.assets`, the worker backend's
+  shell also exposes `assets publish <path> [<expiry>]`. See
   [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 
 ## Typical DO-side usage

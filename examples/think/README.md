@@ -67,9 +67,12 @@ just emit JSON.
 
 The `share` tool uploads a workspace file to R2 and returns a
 time-limited link, so the agent can hand the user an artifact it
-produced. It is registered only when the R2 credentials below are
-set; without them the agent runs unchanged and the tool is omitted.
-See [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
+produced. The worker backend shell also exposes
+`assets publish <path> [<expiry>]`, which prints the same kind of
+link to stdout from `exec`. Both are registered only when the R2
+credentials below are set; without them the agent runs unchanged and
+the share surfaces are omitted. See
+[`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 
 `exec` is wired to a Workspace with two backends: a `"shell"`
 backend (just-bash in a Dynamic Worker through `env.LOADER`) and
@@ -192,8 +195,8 @@ wrangler secret put R2_SECRET_ACCESS_KEY
 wrangler secret put CLOUDFLARE_ACCOUNT_ID
 ```
 
-Without these the worker still runs; the `share` tool is simply not
-offered to the model.
+Without these the worker still runs; the `share` tool is not offered
+to the model, and `assets publish` is not configured in the shell.
 
 No GitHub auth, no Artifacts. The issue must be on a public
 repository.

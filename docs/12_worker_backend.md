@@ -85,6 +85,29 @@ another workspace's shell.
 `connect()` from inside the shell. The only path out of the
 isolate is back through the host DO over `env.HOST`.
 
+## Built-in custom commands
+
+The worker backend registers two just-bash custom commands on every
+exec:
+
+- `git ...` forwards to the host workspace's `workspace.git.cli(...)`.
+- `assets publish <path> [<expiry>]` forwards to the host
+  workspace's configured assets publisher and prints the share URL
+  to stdout.
+
+`assets publish` accepts an absolute path or a path relative to the
+current working directory. The optional expiry defaults to one hour;
+a bare number is milliseconds, and `ms`, `s`, `m`, and `h` suffixes
+are accepted (`30000`, `30s`, `5m`, `2h`). If the Workspace was not
+constructed with an assets client, the command exits 1 with a clear
+message.
+
+The Dynamic Worker never receives the R2 bucket binding or signing
+secrets. The host Durable Object configures the Workspace with an
+assets client, and the command reaches that host-side capability over
+the same `env.HOST.getWorkspace()` loopback as filesystem and git
+calls.
+
 ## Why a loopback proxy
 
 The natural impulse is to hand the Dynamic Worker the host DO's

@@ -19,6 +19,7 @@ import {
 } from "@cloudflare/dofs";
 import { pullOnce, pushOnce, reconcileWatermarks } from "@cloudflare/workspace-rpc/driver";
 
+import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient, type GitClient, type GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
@@ -71,6 +72,12 @@ export interface WorkspaceOptions {
   // `GIT_COMMITTER_*` env vars supply one. Threaded through to
   // `createGitClient` on first access to `workspace.git`.
   defaultGitIdentity?: GitIdentity;
+
+  // Optional assets publisher used by WorkspaceStub and the worker
+  // backend's `assets publish` shell command. Pass an AssetsClient
+  // directly, or a factory when the publisher needs the Workspace
+  // instance itself (for example, createAssets({ ws, ... })).
+  assets?: AssetsClient | ((ws: Workspace) => AssetsClient);
 }
 
 export class Workspace {
@@ -88,6 +95,7 @@ export class Workspace {
   readonly #now: () => number;
   readonly #sessionId: string;
   readonly #defaultGitIdentity: GitIdentity | undefined;
+  readonly #assets: AssetsClient | undefined;
   // Lazily-constructed git client, cached so the dynamic
   // imports of isomorphic-git / diff land once per Workspace.
   #git: GitClient | undefined;
@@ -148,6 +156,7 @@ export class Workspace {
       fs: this.#fs,
       mounts: this.#mounts,
     });
+    this.#assets = typeof options.assets === "function" ? options.assets(this) : options.assets;
   }
 
   // Force every registered mount to materialize. Idempotent; safe to
@@ -198,6 +207,13 @@ export class Workspace {
   // tag shared objects with their originating session.
   get sessionId(): string {
     return this.#sessionId;
+  }
+
+  // Optional assets publisher. Exposed through WorkspaceStub so
+  // the worker backend's shell can run `assets publish` without
+  // receiving R2 bindings or signing secrets in the Dynamic Worker.
+  get assets(): AssetsClient | undefined {
+    return this.#assets;
   }
 
   // Git facade. Available immediately and does not require a

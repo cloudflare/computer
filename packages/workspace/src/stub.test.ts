@@ -17,6 +17,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import {
+  WorkspaceAssetsStub,
   WorkspaceExecHandleStub,
   WorkspaceFilesystemStub,
   WorkspaceGitStub,
@@ -101,11 +102,14 @@ function snapshotOf(names: string[]): Record<string, number> {
 
 async function withStub<T>(
   fn: (ws: Workspace) => T | Promise<T>,
-  options?: { backend?: WorkspaceBackend },
+  options?: Pick<ConstructorParameters<typeof Workspace>[0], "assets"> & {
+    backend?: WorkspaceBackend;
+  },
 ): Promise<T> {
   const ws = new Workspace({
     storage: new SQLiteTestStorage(),
     backends: [options?.backend ?? backend()],
+    assets: options?.assets,
   });
   try {
     await ws.ready();
@@ -116,7 +120,7 @@ async function withStub<T>(
 }
 
 describe("WorkspaceStub", () => {
-  it("exposes fs, shell, and git as accessor properties (RPC visibility)", async () => {
+  it("exposes fs, shell, git, and optional assets as accessor properties (RPC visibility)", async () => {
     // Plain readonly fields would land as private isolate state on
     // the RPC stub and report "method not implemented". The class
     // uses getters; pin that here by checking the descriptor.
@@ -125,13 +129,37 @@ describe("WorkspaceStub", () => {
       const fsDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "fs");
       const shellDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "shell");
       const gitDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "git");
+      const assetsDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "assets");
       expect(fsDesc?.get).toBeTypeOf("function");
       expect(shellDesc?.get).toBeTypeOf("function");
       expect(gitDesc?.get).toBeTypeOf("function");
+      expect(assetsDesc?.get).toBeTypeOf("function");
       expect(stub.fs).toBeInstanceOf(WorkspaceFilesystemStub);
       expect(stub.shell).toBeInstanceOf(WorkspaceShellStub);
       expect(stub.git).toBeInstanceOf(WorkspaceGitStub);
+      expect(stub.assets).toBeUndefined();
     });
+  });
+
+  it("assets.publish forwards to the configured assets client", async () => {
+    const calls: Array<{ path: string; expiresAfter: number }> = [];
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        expect(stub.assets).toBeInstanceOf(WorkspaceAssetsStub);
+        const url = await stub.assets?.publish("/workspace/out.png", { expiresAfter: 30_000 });
+        expect(url).toBe("https://example.com/out.png");
+        expect(calls).toEqual([{ path: "/workspace/out.png", expiresAfter: 30_000 }]);
+      },
+      {
+        assets: {
+          async share(path, options) {
+            calls.push({ path, expiresAfter: options.expiresAfter });
+            return "https://example.com/out.png";
+          },
+        },
+      },
+    );
   });
 
   it("git.cli forwards through to the underlying Workspace", async () => {
