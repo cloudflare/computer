@@ -2147,6 +2147,69 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     expect(res.stderr).toContain("author identity unknown");
   });
 
+  it("agent edit/commit loop: config identity, -A, commit -am, diff --stat, switch -c", async () => {
+    // Exercises the Phase 1-4 surface end to end through the
+    // shell-facing CLI against a real Workspace, the way an agent
+    // would drive it: configure identity, stage with -A, commit
+    // with -am, inspect with the new flags, branch with switch
+    // -c, then reset / stash / clean.
+    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    await ws.ready();
+    const cli = (argv: string[]) => ws.git.cli({ argv, cwd: "/" });
+
+    await cli(["init"]);
+    // Identity comes from local config, not a default identity.
+    expect((await cli(["config", "user.name", "Agent"])).exitCode).toBe(0);
+    expect((await cli(["config", "user.email", "agent@example.test"])).exitCode).toBe(0);
+
+    // -A stages a brand new file; commit reads the config identity.
+    await ws.fs.writeFile("/a.txt", "one\n");
+    expect((await cli(["add", "-A"])).exitCode).toBe(0);
+    const c1 = await cli(["commit", "-m", "init"]);
+    expect(c1.exitCode, c1.stderr).toBe(0);
+
+    // branch --show-current works on the symbolic HEAD.
+    expect((await cli(["branch", "--show-current"])).stdout).toBe("main\n");
+    // rev-parse --show-toplevel finds the root.
+    expect((await cli(["rev-parse", "--show-toplevel"])).stdout).toBe("/\n");
+
+    // Modify the tracked file and commit with -am in one step.
+    await ws.fs.writeFile("/a.txt", "one\ntwo\n");
+    const c2 = await cli(["commit", "-am", "second"]);
+    expect(c2.exitCode, c2.stderr).toBe(0);
+
+    // diff --stat / --name-only against the previous commit via a
+    // revision suffix.
+    const stat = await cli(["diff", "--stat", "HEAD~1", "HEAD"]);
+    expect(stat.exitCode).toBe(0);
+    expect(stat.stdout).toContain("a.txt");
+    expect(stat.stdout).toContain("1 file changed");
+    const names = await cli(["diff", "--name-only", "HEAD~1", "HEAD"]);
+    expect(names.stdout).toBe("a.txt\n");
+
+    // log -1 --oneline shorthand.
+    const log = await cli(["log", "-1", "--oneline"]);
+    expect(log.stdout.trim()).toMatch(/^[0-9a-f]{7} second$/);
+
+    // switch -c creates and moves onto a new branch.
+    expect((await cli(["switch", "-c", "feature"])).exitCode).toBe(0);
+    expect((await cli(["branch", "--show-current"])).stdout).toBe("feature\n");
+
+    // Stage a change, then reset --hard restores it.
+    await ws.fs.writeFile("/a.txt", "dirty\n");
+    await cli(["add", "-A"]);
+    expect((await cli(["reset", "--hard", "HEAD"])).exitCode).toBe(0);
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("one\ntwo\n");
+
+    // clean -fd removes untracked junk.
+    await ws.fs.writeFile("/junk.txt", "junk\n");
+    const clean = await cli(["clean", "-fd"]);
+    expect(clean.exitCode).toBe(0);
+    expect(clean.stdout).toContain("Removing junk.txt");
+    const statusAfter = await cli(["status", "--porcelain=v1"]);
+    expect(statusAfter.stdout).toBe("");
+  });
+
   it("a clone failure surfaces as exit 1 on stderr", async () => {
     // Force the clone path to fail by pointing at an invalid host;
     // we want to pin that the dispatcher's catch arm produces a
