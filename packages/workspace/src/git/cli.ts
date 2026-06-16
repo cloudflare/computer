@@ -532,19 +532,28 @@ async function runAdd(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git add [--force] <pathspec>...`
+  // `git add [-A|--all] [--force] <pathspec>...`
   const parsed = parseFlags(args, {
     force: { kind: "bool", alias: ["f"] },
+    all: { kind: "bool", alias: ["A"] },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git add: ${parsed.error}\n`, exitCode: 129 };
   }
-  if (parsed.positional.length === 0) {
+  const all = parsed.flags.all === true;
+  // `-A` stages the whole tree and needs no pathspec; without it a
+  // missing pathspec is the same no-op error real git prints.
+  if (!all && parsed.positional.length === 0) {
     return { stdout: "", stderr: "git add: nothing specified, nothing added.\n", exitCode: 129 };
   }
   const dir = resolveDir(undefined, input.cwd);
   try {
-    await client.add({ dir, paths: parsed.positional, force: parsed.flags.force === true });
+    await client.add({
+      dir,
+      paths: all ? [] : parsed.positional,
+      all,
+      force: parsed.flags.force === true,
+    });
   } catch (cause) {
     return mapGitError("add", cause);
   }

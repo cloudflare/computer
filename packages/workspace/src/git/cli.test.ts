@@ -831,7 +831,7 @@ describe("runGitCli — add argv parsing", () => {
   it("passes positional pathspecs through", async () => {
     const { client, calls } = fakeClient();
     await runGitCli(client, { argv: ["add", "a.txt", "b.txt"], cwd: "/r" });
-    expect(calls.add).toEqual([{ dir: "/r", paths: ["a.txt", "b.txt"], force: false }]);
+    expect(calls.add).toEqual([{ dir: "/r", paths: ["a.txt", "b.txt"], all: false, force: false }]);
   });
 
   it("--force / -f flips the option", async () => {

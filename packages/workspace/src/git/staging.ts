@@ -21,6 +21,14 @@ export interface IsomorphicGitAddClient {
     cache?: object;
     force?: boolean;
   }): Promise<void>;
+  /** Used by `all` mode to enumerate changed paths. */
+  statusMatrix(args: {
+    fs: object;
+    dir: string;
+    cache?: object;
+  }): Promise<Array<[string, number, number, number]>>;
+  /** Used by `all` mode to stage deletions. */
+  remove(args: { fs: object; dir: string; filepath: string; cache?: object }): Promise<void>;
 }
 
 /** Subset of `isomorphic-git`'s API used for `rm`. */
@@ -45,6 +53,13 @@ export interface GitAddOptions {
    * override.
    */
   force?: boolean;
+  /**
+   * Stage every change under the repository — new, modified, and
+   * deleted tracked files — the way `git add -A` / `--all` does.
+   * When set, `paths` is ignored. Deletions are staged through
+   * `remove`, which `add` alone cannot express.
+   */
+  all?: boolean;
 }
 
 export interface AddWithDeps extends GitAddOptions {
@@ -55,6 +70,9 @@ export interface AddWithDeps extends GitAddOptions {
 
 export async function addWith(opts: AddWithDeps): Promise<void> {
   const dir = opts.dir ?? "/";
+  if (opts.all) {
+    return addAll(opts, dir);
+  }
   if (opts.paths.length === 0) return;
   try {
     // isomorphic-git 1.27+ accepts an array; older versions only
@@ -72,6 +90,54 @@ export async function addWith(opts: AddWithDeps): Promise<void> {
     if (looksLikePathspecMiss(cause)) {
       throw new PathspecNotFoundError(firstPathspec(opts.paths), { cause });
     }
+    throw new GitError("EADDFAIL", `git add failed: ${errorMessage(cause)}`, { cause });
+  }
+}
+
+/**
+ * Stage every working-tree change. Walks the status matrix and
+ * splits the work: present-but-changed paths go through `add`,
+ * worktree-deleted paths go through `remove` (which `add` cannot
+ * express). The status-matrix tuple is `[path, head, workdir,
+ * stage]`; `workdir === 0` means the file is gone from disk.
+ */
+async function addAll(opts: AddWithDeps, dir: string): Promise<void> {
+  let matrix: Array<[string, number, number, number]>;
+  try {
+    matrix = await opts.git.statusMatrix({ fs: opts.fs, dir, cache: opts.cache });
+  } catch (cause) {
+    if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
+    throw new GitError("EADDFAIL", `git add failed: ${errorMessage(cause)}`, { cause });
+  }
+
+  const toAdd: string[] = [];
+  const toRemove: string[] = [];
+  for (const [filepath, head, workdir, stage] of matrix) {
+    if (workdir === 0) {
+      // Gone from the working tree. Only stage the deletion when
+      // it isn't already staged (head present, stage present).
+      if (head === 1 && stage !== 0) toRemove.push(filepath);
+      continue;
+    }
+    // Present on disk and differs from the staged copy.
+    if (workdir !== 1 || stage !== 1) toAdd.push(filepath);
+  }
+
+  try {
+    if (toAdd.length > 0) {
+      await opts.git.add({
+        fs: opts.fs,
+        dir,
+        filepath: toAdd,
+        cache: opts.cache,
+        force: opts.force,
+      });
+    }
+    for (const filepath of toRemove) {
+      await opts.git.remove({ fs: opts.fs, dir, filepath, cache: opts.cache });
+    }
+  } catch (cause) {
+    if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
     throw new GitError("EADDFAIL", `git add failed: ${errorMessage(cause)}`, { cause });
   }
 }
