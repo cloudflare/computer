@@ -683,6 +683,28 @@ describe("runGitCli — status argv parsing", () => {
     expect(res.stdout).toBe("1 M  a.txt\n");
   });
 
+  it("--porcelain=v1 selects the v1 (XY path) format", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        status: () => [
+          { path: "a.txt", index: "M", worktree: " " },
+          { path: "b.txt", index: " ", worktree: "?" },
+        ],
+      },
+    );
+    const res = await runGitCli(client, { argv: ["status", "--porcelain=v1"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("M  a.txt\n?? b.txt\n");
+  });
+
+  it("--porcelain=v1 emits nothing for a clean tree", async () => {
+    const { client } = fakeClient({}, { status: () => [] });
+    const res = await runGitCli(client, { argv: ["status", "--porcelain=v1"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("");
+  });
+
   it("--porcelain with an unknown value is an error", async () => {
     const { client } = fakeClient();
     const res = await runGitCli(client, { argv: ["status", "--porcelain=v3"] });

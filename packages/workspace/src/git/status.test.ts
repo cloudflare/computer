@@ -7,6 +7,7 @@ import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  formatPorcelainV1,
   formatPorcelainV2,
   formatShort,
   type IsomorphicGitStatusClient,
@@ -143,6 +144,22 @@ describe("formatShort", () => {
       { path: "b.txt", index: " ", worktree: "?" },
     ];
     expect(formatShort(entries)).toBe("M  a.txt\n ? b.txt\n");
+  });
+});
+
+describe("formatPorcelainV1", () => {
+  it("empty list yields empty string", () => {
+    expect(formatPorcelainV1([])).toBe("");
+  });
+
+  it("emits 'XY <path>' lines, with '??' for untracked", () => {
+    const entries: StatusEntry[] = [
+      { path: "a.txt", index: "M", worktree: " " },
+      { path: "b.txt", index: " ", worktree: "?" },
+      { path: "c.txt", index: "A", worktree: "M" },
+      { path: "d.txt", index: " ", worktree: "D" },
+    ];
+    expect(formatPorcelainV1(entries)).toBe("M  a.txt\n?? b.txt\nAM c.txt\n D d.txt\n");
   });
 });
 

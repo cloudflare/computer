@@ -138,6 +138,25 @@ export function formatPorcelainV2(entries: StatusEntry[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Render `entries` as porcelain v1 lines (`XY <path>`). Identical
+ * to `--short` except untracked files use the `??` two-char code
+ * real git's porcelain v1 emits rather than the ` ?` short form,
+ * so a v1 parser sees the shape it expects.
+ */
+export function formatPorcelainV1(entries: StatusEntry[]): string {
+  if (entries.length === 0) return "";
+  const lines: string[] = [];
+  for (const e of entries) {
+    if (e.worktree === "?") {
+      lines.push(`?? ${e.path}`);
+    } else {
+      lines.push(`${e.index}${e.worktree} ${e.path}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 /** Render `entries` as `--short` output. */
 export function formatShort(entries: StatusEntry[]): string {
   if (entries.length === 0) return "";

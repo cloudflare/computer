@@ -21,7 +21,7 @@ import {
   PathspecNotFoundError,
 } from "./errors.js";
 import type { GitClient, GitIdentity } from "./index.js";
-import { formatPorcelainV2, formatShort } from "./status.js";
+import { formatPorcelainV1, formatPorcelainV2, formatShort } from "./status.js";
 
 export interface GitCliInput {
   /** Argv as seen by the shell command. `argv[0]` is the subcommand. */
@@ -411,13 +411,16 @@ async function runStatus(
       exitCode: 129,
     };
   }
-  // Format selection. Default is porcelain v2 — the typed CLI
-  // surface is intentionally machine-readable; the long-form
-  // human output is deferred.
+  // Format selection. The bare default is porcelain v2 — the
+  // typed CLI surface is intentionally machine-readable and the
+  // long-form human output is deferred. `--porcelain=v1` (and the
+  // `1` spelling git also accepts) selects the v1 `XY <path>`
+  // shape that the bulk of tooling parses.
   const porcelain = parsed.flags.porcelain;
   const useShort = parsed.flags.short === true;
-  const v2 = porcelain === undefined || porcelain === true || porcelain === "v2";
-  if (porcelain !== undefined && porcelain !== true && porcelain !== "v2" && porcelain !== "1") {
+  const isV1 = porcelain === "v1" || porcelain === "1";
+  const isV2 = porcelain === undefined || porcelain === true || porcelain === "v2";
+  if (porcelain !== undefined && porcelain !== true && !isV1 && !isV2) {
     return {
       stdout: "",
       stderr: `git status: unsupported --porcelain value '${porcelain}'\n`,
@@ -433,9 +436,9 @@ async function runStatus(
   }
   const stdout = useShort
     ? formatShort(entries)
-    : v2
-      ? formatPorcelainV2(entries)
-      : formatShort(entries);
+    : isV1
+      ? formatPorcelainV1(entries)
+      : formatPorcelainV2(entries);
   return { stdout, stderr: "", exitCode: 0 };
 }
 
