@@ -340,6 +340,52 @@ describe("runGitCli — dispatch", () => {
   });
 });
 
+describe("runGitCli — global -C <path>", () => {
+  it("runs the subcommand with cwd set to an absolute -C path", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, {
+      argv: ["-C", "/repo", "status", "--short"],
+      cwd: "/elsewhere",
+    });
+    expect(res.exitCode).toBe(0);
+    expect(calls.status[0].dir).toBe("/repo");
+  });
+
+  it("resolves a relative -C path against cwd", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["-C", "sub", "status"],
+      cwd: "/work",
+    });
+    expect(calls.status[0].dir).toBe("/work/sub");
+  });
+
+  it("applies -C before a subcommand that takes its own dir default", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["-C", "/repo", "log", "-n", "1", "--oneline"],
+      cwd: "/elsewhere",
+    });
+    expect(calls.log[0].dir).toBe("/repo");
+  });
+
+  it("exits 129 when -C is missing its value", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["-C"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("-C");
+  });
+
+  it("rejects a second -C as unsupported", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, {
+      argv: ["-C", "/a", "-C", "/b", "status"],
+    });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("-C");
+  });
+});
+
 describe("runGitCli — clone argv parsing", () => {
   it("forwards a bare URL, deriving the dir from the URL basename", async () => {
     const { client, calls } = fakeClient();

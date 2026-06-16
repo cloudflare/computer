@@ -61,10 +61,20 @@ export async function runGitCli(
   input: GitCliInput,
   _options: RunGitCliOptions = {},
 ): Promise<GitCliResult> {
-  const argv = input.argv;
+  // Strip leading global options (currently only `-C <path>`)
+  // before the subcommand. Real git accepts these between `git`
+  // and the subcommand; agents lean on `-C` to avoid changing
+  // process cwd. The path rewrites the effective cwd that each
+  // subcommand's `dir` default resolves against.
+  const global = parseGlobalOptions(input.argv, input.cwd);
+  if ("error" in global) {
+    return { stdout: "", stderr: `git: ${global.error}\n`, exitCode: 129 };
+  }
+  const argv = global.argv;
   if (argv.length === 0) {
     return printHelp();
   }
+  input = global.cwd === input.cwd ? input : { ...input, cwd: global.cwd };
   const [sub, ...rest] = argv;
   switch (sub) {
     case "help":
@@ -1680,6 +1690,46 @@ type ParseResult = ParsedFlags | { error: string };
  * fall through as a positional. Real git is laxer on this, but
  * the workspace surface is intentionally narrow.
  */
+interface GlobalOptions {
+  /** Argv with any leading global options removed. */
+  argv: string[];
+  /** Effective cwd after applying `-C`. */
+  cwd: string | undefined;
+}
+
+/**
+ * Pull leading global options off the front of argv. Only
+ * `-C <path>` is supported today: it sets the working directory
+ * the subcommand resolves its `dir` default against, matching
+ * real git's top-level `-C`. A relative path joins onto the
+ * current cwd. A second `-C` is rejected rather than stacked —
+ * agent use only needs one.
+ */
+function parseGlobalOptions(
+  argv: string[],
+  cwd: string | undefined,
+): GlobalOptions | { error: string } {
+  let cwdOut = cwd;
+  let seenC = false;
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "-C") {
+      if (seenC) return { error: "multiple -C options are not supported" };
+      const value = argv[i + 1];
+      if (value === undefined || value === "") {
+        return { error: "option '-C' requires a value" };
+      }
+      cwdOut = value.startsWith("/") ? value : joinPath(cwdOut ?? "/", value);
+      seenC = true;
+      i += 2;
+      continue;
+    }
+    break;
+  }
+  return { argv: argv.slice(i), cwd: cwdOut };
+}
+
 function parseFlags(args: string[], spec: Record<string, FlagSpec>): ParseResult {
   const flags: Record<string, string | boolean> = {};
   const positional: string[] = [];
