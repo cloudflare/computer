@@ -50,6 +50,7 @@ import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import { startHeartbeat } from "../../heartbeat.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
+import { probeWsdHealth } from "./health-probe.js";
 
 // What the backend's `container` factory returns: anything with
 // a getWorkspaceContainer() method — the shape withWorkspaceContainer
@@ -293,10 +294,11 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     let lastError: unknown;
     while (Date.now() < deadline) {
       try {
-        const res = await host.fetchPort(this.#options.containerPort, "http://container/health", {
-          method: "HEAD",
+        await probeWsdHealth(host, {
+          port: this.#options.containerPort,
+          path: "/health",
+          timeoutMs: Math.min(2_000, Math.max(250, deadline - Date.now())),
         });
-        void res.body?.cancel();
         return;
       } catch (error) {
         lastError = error;
