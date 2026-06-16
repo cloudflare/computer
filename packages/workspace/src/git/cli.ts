@@ -308,13 +308,21 @@ async function runDiff(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git diff [<ref> | <from> <to>] [-- <path>...]`. Two refs
-  // before `--` switch to ref-to-ref mode; paths after `--`
-  // filter the output.
-  const parsed = parseFlags(args, {});
+  // `git diff [--stat|--name-only|--name-status] [<ref> | <from>
+  // <to>] [-- <path>...]`. Two refs before `--` switch to
+  // ref-to-ref mode; paths after `--` filter the output. The
+  // summary flags swap the unified patch for a per-file summary.
+  const parsed = parseFlags(args, {
+    stat: { kind: "bool" },
+    "name-only": { kind: "bool" },
+    "name-status": { kind: "bool" },
+  });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git diff: ${parsed.error}\n`, exitCode: 129 };
   }
+  const wantStat = parsed.flags.stat === true;
+  const wantNameOnly = parsed.flags["name-only"] === true;
+  const wantNameStatus = parsed.flags["name-status"] === true;
   // Split positional on '--' — anything after is a path filter.
   // The parser already consumes '--' and treats the rest as
   // positional, so we need to remember where it was. Rebuild
@@ -336,16 +344,87 @@ async function runDiff(
   try {
     const fromResolved = await resolveRevisionRef(client, dir, from);
     const toResolved = await resolveRevisionRef(client, dir, to);
+    const paths = pathArgs.length > 0 ? pathArgs : undefined;
+
+    if (wantStat || wantNameOnly || wantNameStatus) {
+      const summary = await client.diffSummary({
+        dir,
+        ref: fromResolved,
+        to: toResolved,
+        paths,
+      });
+      const stdout = wantNameOnly
+        ? formatDiffNameOnly(summary)
+        : wantNameStatus
+          ? formatDiffNameStatus(summary)
+          : formatDiffStat(summary);
+      return { stdout, stderr: "", exitCode: 0 };
+    }
+
     const output = await client.diff({
       dir,
       ref: fromResolved,
       to: toResolved,
-      paths: pathArgs.length > 0 ? pathArgs : undefined,
+      paths,
     });
     return { stdout: output, stderr: "", exitCode: 0 };
   } catch (cause) {
     return mapGitError("diff", cause);
   }
+}
+
+type DiffSummary = import("./diff.js").DiffSummaryEntry;
+
+/** `--name-only`: one changed path per line. */
+function formatDiffNameOnly(entries: DiffSummary[]): string {
+  if (entries.length === 0) return "";
+  return `${entries.map((e) => e.path).join("\n")}\n`;
+}
+
+/** `--name-status`: `<status>\t<path>` per line. */
+function formatDiffNameStatus(entries: DiffSummary[]): string {
+  if (entries.length === 0) return "";
+  return `${entries.map((e) => `${e.status}\t${e.path}`).join("\n")}\n`;
+}
+
+/**
+ * `--stat`: a per-file line with a `+`/`-` bar plus a summary
+ * footer. The graph is scaled-down only when the widest file's
+ * total exceeds the column budget, mirroring real git closely
+ * enough for a human to read and a script to grep the footer.
+ */
+function formatDiffStat(entries: DiffSummary[]): string {
+  if (entries.length === 0) return "";
+  const nameWidth = Math.max(...entries.map((e) => e.path.length));
+  const maxTotal = Math.max(...entries.map((e) => e.insertions + e.deletions));
+  // Cap the bar at 60 columns the way git's default terminal
+  // width does; scale proportionally when any file exceeds it.
+  const budget = 60;
+  const scale = maxTotal > budget ? budget / maxTotal : 1;
+
+  const lines: string[] = [];
+  let totalIns = 0;
+  let totalDel = 0;
+  for (const e of entries) {
+    totalIns += e.insertions;
+    totalDel += e.deletions;
+    const total = e.insertions + e.deletions;
+    const plus = Math.round(e.insertions * scale);
+    const minus = Math.round(e.deletions * scale);
+    const bar = `${"+".repeat(plus)}${"-".repeat(minus)}`;
+    lines.push(` ${e.path.padEnd(nameWidth)} | ${String(total).padStart(4)} ${bar}`);
+  }
+
+  const fileWord = entries.length === 1 ? "file" : "files";
+  const parts = [`${entries.length} ${fileWord} changed`];
+  if (totalIns > 0) {
+    parts.push(`${totalIns} ${totalIns === 1 ? "insertion(+)" : "insertions(+)"}`);
+  }
+  if (totalDel > 0) {
+    parts.push(`${totalDel} ${totalDel === 1 ? "deletion(-)" : "deletions(-)"}`);
+  }
+  lines.push(` ${parts.join(", ")}`);
+  return `${lines.join("\n")}\n`;
 }
 
 // ---------------------------------------------------------------

@@ -16,7 +16,7 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { diffWith, type IsomorphicGitDiffClient } from "./diff.js";
+import { diffSummaryWith, diffWith, type IsomorphicGitDiffClient } from "./diff.js";
 
 const DIR = "/repo";
 const AUTHOR = { name: "test", email: "test@example.test" };
@@ -257,5 +257,61 @@ describe("diffWith ref-to-ref and path filtering", () => {
     });
     expect(out).toContain("--- src/a.txt");
     expect(out).not.toContain("--- top.txt");
+  });
+});
+
+describe("diffSummaryWith (real isomorphic-git + memfs)", () => {
+  beforeEach(() => vol.reset());
+
+  function summary(opts: { ref?: string; to?: string; paths?: string[] } = {}) {
+    return diffSummaryWith({
+      git: isomorphicGit,
+      fs: memfs,
+      createPatch,
+      readFile: (path) => memfs.promises.readFile(path) as Promise<Uint8Array | string>,
+      dir: DIR,
+      ...opts,
+    });
+  }
+
+  it("returns an empty list for a clean working tree", async () => {
+    await init();
+    await commitFile("a.txt", "hello\n", "init");
+    expect(await summary()).toEqual([]);
+  });
+
+  it("reports a modified file with insertion / deletion counts", async () => {
+    await init();
+    await commitFile("a.txt", "one\ntwo\n", "init");
+    await memfs.promises.writeFile(`${DIR}/a.txt`, "one\ntwo\nthree\n");
+    const entries = await summary();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ path: "a.txt", status: "M", insertions: 1, deletions: 0 });
+  });
+
+  it("reports an added file", async () => {
+    await init();
+    await commitFile("a.txt", "kept\n", "init");
+    await memfs.promises.writeFile(`${DIR}/b.txt`, "new1\nnew2\n");
+    const entries = await summary();
+    expect(entries).toEqual([{ path: "b.txt", status: "A", insertions: 2, deletions: 0 }]);
+  });
+
+  it("reports a deleted file", async () => {
+    await init();
+    await commitFile("gone.txt", "a\nb\n", "init");
+    await memfs.promises.unlink(`${DIR}/gone.txt`);
+    const entries = await summary();
+    expect(entries).toEqual([{ path: "gone.txt", status: "D", insertions: 0, deletions: 2 }]);
+  });
+
+  it("reports added and deleted files between two commits", async () => {
+    await init();
+    const first = await commitFile("keep.txt", "keep\n", "v1");
+    await memfs.promises.writeFile(`${DIR}/new.txt`, "x\n");
+    await git.add({ fs: memfs, dir: DIR, filepath: "new.txt" });
+    const second = await git.commit({ fs: memfs, dir: DIR, message: "add", author: AUTHOR });
+    const entries = await summary({ ref: first, to: second });
+    expect(entries).toEqual([{ path: "new.txt", status: "A", insertions: 1, deletions: 0 }]);
   });
 });

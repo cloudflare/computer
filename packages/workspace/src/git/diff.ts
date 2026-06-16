@@ -90,25 +90,74 @@ export interface DiffWithDeps extends GitDiffOptions {
   cache?: object;
 }
 
+/**
+ * One changed path with both endpoints' text. The shared
+ * collector below produces these; `diffWith` renders them into a
+ * patch and `diffSummaryWith` counts lines off them, so the two
+ * surfaces walk identical change sets.
+ */
+interface DiffEntry {
+  path: string;
+  /** Single-char status: 'A' added, 'M' modified, 'D' deleted. */
+  status: "A" | "M" | "D";
+  /** Text on the "from" side ("" when absent / added). */
+  oldText: string;
+  /** Text on the "to" side ("" when absent / deleted). */
+  newText: string;
+}
+
+/** Per-file change summary for `--stat` / `--name-status`. */
+export interface DiffSummaryEntry {
+  path: string;
+  status: "A" | "M" | "D";
+  insertions: number;
+  deletions: number;
+}
+
 export async function diffWith(opts: DiffWithDeps): Promise<string> {
+  const entries = await collectDiffEntries(opts);
+  const chunks: string[] = [];
+  for (const e of entries) {
+    const patch = opts.createPatch(e.path, e.oldText, e.newText, "", "");
+    if (patch.trim().length > 0) chunks.push(patch);
+  }
+  return chunks.join("\n");
+}
+
+/**
+ * Per-file summary of the same change set `diffWith` renders,
+ * with insertion / deletion line counts derived from the patch.
+ * Backs `git diff --stat` / `--name-only` / `--name-status`.
+ */
+export async function diffSummaryWith(opts: DiffWithDeps): Promise<DiffSummaryEntry[]> {
+  const entries = await collectDiffEntries(opts);
+  return entries.map((e) => {
+    const { insertions, deletions } = countChanges(
+      opts.createPatch(e.path, e.oldText, e.newText, "", ""),
+    );
+    return { path: e.path, status: e.status, insertions, deletions };
+  });
+}
+
+// Shared traversal. Working-tree mode walks the status matrix;
+// ref-to-ref mode walks the union of both trees' files. Both
+// yield `DiffEntry`s with each side's text resolved.
+async function collectDiffEntries(opts: DiffWithDeps): Promise<DiffEntry[]> {
   const dir = opts.dir ?? "/";
   const ref = opts.ref ?? "HEAD";
 
-  // Ref-to-ref diff: both endpoints are committed states, read
-  // through readBlob. The status-matrix walk is the wrong tool
-  // here — it always anchors against the working tree.
   if (opts.to !== undefined) {
-    return diffRefToRef(opts, dir, ref, opts.to);
+    return collectRefToRef(opts, dir, ref, opts.to);
   }
 
   let head: string;
   try {
     head = await opts.git.resolveRef({ fs: opts.fs, dir, ref });
   } catch {
-    // Ref unresolvable (e.g. workspace never cloned). Empty
-    // string is a more useful signal than an exception for the
-    // common "diff after maybe-no-op" call site.
-    return "";
+    // Ref unresolvable (e.g. workspace never cloned). An empty
+    // change set is a more useful signal than an exception for
+    // the common "diff after maybe-no-op" call site.
+    return [];
   }
 
   // Pass `ref` through so the matrix is computed against the
@@ -117,47 +166,45 @@ export async function diffWith(opts: DiffWithDeps): Promise<string> {
   // status walk silently skewed.
   const status = await opts.git.statusMatrix({ fs: opts.fs, dir, ref, cache: opts.cache });
   const pathFilter = makePathFilter(opts.paths);
-  const chunks: string[] = [];
+  const entries: DiffEntry[] = [];
   for (const [filepath, headStatus, workdirStatus] of status) {
     // workdirStatus: 0 absent, 1 == HEAD, 2 differs. Skip
     // unchanged rows up front to avoid the blob/file reads.
     if (workdirStatus === 1) continue;
     if (!pathFilter(filepath)) continue;
 
-    const headText =
+    const oldText =
       headStatus === 1
         ? await readBlobAsText(opts.git, opts.fs, dir, head, filepath, opts.cache)
         : "";
-    const workdirText =
+    const newText =
       workdirStatus === 2 ? await readWorkdirAsText(opts.readFile, dir, filepath) : "";
-    const patch = opts.createPatch(filepath, headText, workdirText, "", "");
-    if (patch.trim().length > 0) chunks.push(patch);
+    // headStatus 0 -> not in the base -> added. workdirStatus 0
+    // -> gone from the working tree -> deleted. Otherwise it's a
+    // content change.
+    const status: DiffEntry["status"] = headStatus === 0 ? "A" : workdirStatus === 0 ? "D" : "M";
+    entries.push({ path: filepath, status, oldText, newText });
   }
-  return chunks.join("\n");
+  return entries;
 }
 
-// Ref-to-ref diff. Walk the union of paths from each side's
-// statusMatrix-against-HEAD output — that gives us a path list
-// that's a superset of both trees — then resolve each path's
-// blob in both commits and emit a patch when they differ.
-async function diffRefToRef(
+// Ref-to-ref collector. Walk the union of both commits' file
+// lists — git's own object database, no working-tree probes —
+// and resolve each path's blob in both commits.
+async function collectRefToRef(
   opts: DiffWithDeps,
   dir: string,
   from: string,
   to: string,
-): Promise<string> {
+): Promise<DiffEntry[]> {
   let fromOid: string;
   let toOid: string;
   try {
     fromOid = await opts.git.resolveRef({ fs: opts.fs, dir, ref: from });
     toOid = await opts.git.resolveRef({ fs: opts.fs, dir, ref: to });
   } catch {
-    return "";
+    return [];
   }
-  // Listing files via listFiles({ref}) keeps the walk inside
-  // git's own object database — no working-tree probes. That's
-  // the contract for ref-to-ref: nothing on disk influences the
-  // result.
   const fromFiles = new Set(
     await listFilesAt(opts.git as unknown as IsomorphicGitDiffWithListFiles, opts.fs, dir, from),
   );
@@ -167,20 +214,37 @@ async function diffRefToRef(
   const union = new Set<string>([...fromFiles, ...toFiles]);
   const pathFilter = makePathFilter(opts.paths);
 
-  const chunks: string[] = [];
+  const entries: DiffEntry[] = [];
   for (const filepath of [...union].sort()) {
     if (!pathFilter(filepath)) continue;
-    const a = fromFiles.has(filepath)
+    const inFrom = fromFiles.has(filepath);
+    const inTo = toFiles.has(filepath);
+    const a = inFrom
       ? await readBlobAsText(opts.git, opts.fs, dir, fromOid, filepath, opts.cache)
       : "";
-    const b = toFiles.has(filepath)
-      ? await readBlobAsText(opts.git, opts.fs, dir, toOid, filepath, opts.cache)
-      : "";
+    const b = inTo ? await readBlobAsText(opts.git, opts.fs, dir, toOid, filepath, opts.cache) : "";
     if (a === b) continue;
-    const patch = opts.createPatch(filepath, a, b, "", "");
-    if (patch.trim().length > 0) chunks.push(patch);
+    const status: DiffEntry["status"] = !inFrom ? "A" : !inTo ? "D" : "M";
+    entries.push({ path: filepath, status, oldText: a, newText: b });
   }
-  return chunks.join("\n");
+  return entries;
+}
+
+/**
+ * Count added / removed content lines in a unified patch. Skips
+ * the `+++` / `---` file headers; everything else prefixed `+` or
+ * `-` is a content line. Good enough for `--stat`'s numeric
+ * column, which is all the CLI needs.
+ */
+function countChanges(patch: string): { insertions: number; deletions: number } {
+  let insertions = 0;
+  let deletions = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) insertions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  return { insertions, deletions };
 }
 
 interface IsomorphicGitDiffWithListFiles extends IsomorphicGitDiffClient {

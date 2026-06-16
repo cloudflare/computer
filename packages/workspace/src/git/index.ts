@@ -33,6 +33,8 @@ import {
 } from "./commit.js";
 import {
   type CreatePatchFn,
+  type DiffSummaryEntry,
+  diffSummaryWith,
   diffWith,
   type GitDiffOptions,
   type IsomorphicGitDiffClient,
@@ -128,7 +130,7 @@ import {
 export type { GitCliInput, GitCliResult } from "./cli.js";
 export type { GitCloneOptions, MessageCallback, ProgressCallback } from "./clone.js";
 export type { CommitResult, GitCommitOptions } from "./commit.js";
-export type { GitDiffOptions, StatusRow } from "./diff.js";
+export type { DiffSummaryEntry, GitDiffOptions, StatusRow } from "./diff.js";
 export {
   AlreadyInitializedError,
   GitError,
@@ -209,6 +211,8 @@ export interface GitClient {
   clone(options: GitCloneOptions): Promise<void>;
   /** Unified diff between a ref (default HEAD) and the working tree. */
   diff(options?: GitDiffOptions): Promise<string>;
+  /** Per-file change summary backing `--stat` / `--name-only` / `--name-status`. */
+  diffSummary(options?: GitDiffOptions): Promise<DiffSummaryEntry[]>;
   /** Initialise a new repository in the bound workspace. */
   init(options?: GitInitOptions): Promise<void>;
   /** Describe the working-tree / index / HEAD delta. */
@@ -361,6 +365,17 @@ export function createGitClient({
     async diff(options = {}) {
       const f = await fs();
       return diffWith({
+        ...options,
+        fs: f,
+        git: await loadGit<IsomorphicGitDiffClient>(),
+        createPatch: await loadDiffPatch(),
+        readFile: readFileFrom(f),
+        cache,
+      });
+    },
+    async diffSummary(options = {}) {
+      const f = await fs();
+      return diffSummaryWith({
         ...options,
         fs: f,
         git: await loadGit<IsomorphicGitDiffClient>(),

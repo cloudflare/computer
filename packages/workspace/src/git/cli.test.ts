@@ -81,6 +81,7 @@ import type { GitStatusOptions, StatusEntry } from "./status.js";
 interface FakeCalls {
   clone: GitCloneOptions[];
   diff: GitDiffOptions[];
+  diffSummary: GitDiffOptions[];
   init: GitInitOptions[];
   status: GitStatusOptions[];
   add: GitAddOptions[];
@@ -122,6 +123,7 @@ function fakeClient(
     show?: () => CommitView;
     revParse?: () => string;
     repoRoot?: () => string;
+    diffSummary?: () => import("./diff.js").DiffSummaryEntry[];
     currentBranch?: () => string | undefined;
     lsFiles?: () => string[];
     lsTree?: () => TreeEntryView[];
@@ -142,6 +144,7 @@ function fakeClient(
   const calls: FakeCalls = {
     clone: [],
     diff: [],
+    diffSummary: [],
     init: [],
     status: [],
     add: [],
@@ -181,6 +184,10 @@ function fakeClient(
     async diff(options = {}) {
       calls.diff.push(options);
       return "";
+    },
+    async diffSummary(options = {}) {
+      calls.diffSummary.push(options);
+      return fakes.diffSummary?.() ?? [];
     },
     async init(options = {}) {
       calls.init.push(options);
@@ -610,6 +617,79 @@ describe("runGitCli — diff argv parsing", () => {
     const res = await runGitCli(client, { argv: ["diff"] });
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain("--- a.txt");
+  });
+
+  it("--name-only lists changed paths, one per line", async () => {
+    const { client, calls } = fakeClient(
+      {},
+      {
+        diffSummary: () => [
+          { path: "a.txt", status: "M", insertions: 1, deletions: 1 },
+          { path: "b.txt", status: "A", insertions: 2, deletions: 0 },
+        ],
+      },
+    );
+    const res = await runGitCli(client, { argv: ["diff", "--name-only"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("a.txt\nb.txt\n");
+    expect(calls.diffSummary[0]).toMatchObject({ dir: "/r" });
+    expect(calls.diff).toEqual([]);
+  });
+
+  it("--name-status prefixes each path with its status", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        diffSummary: () => [
+          { path: "a.txt", status: "M", insertions: 1, deletions: 1 },
+          { path: "gone.txt", status: "D", insertions: 0, deletions: 3 },
+        ],
+      },
+    );
+    const res = await runGitCli(client, { argv: ["diff", "--name-status"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("M\ta.txt\nD\tgone.txt\n");
+  });
+
+  it("--stat summarizes files with insertion/deletion counts", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        diffSummary: () => [
+          { path: "a.txt", status: "M", insertions: 3, deletions: 1 },
+          { path: "b.txt", status: "A", insertions: 2, deletions: 0 },
+        ],
+      },
+    );
+    const res = await runGitCli(client, { argv: ["diff", "--stat"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("a.txt");
+    expect(res.stdout).toContain("b.txt");
+    // Summary footer: total files changed and line counts.
+    expect(res.stdout).toContain("2 files changed");
+    expect(res.stdout).toContain("5 insertions(+)");
+    expect(res.stdout).toContain("1 deletion(-)");
+  });
+
+  it("--stat emits nothing for an empty change set", async () => {
+    const { client } = fakeClient({}, { diffSummary: () => [] });
+    const res = await runGitCli(client, { argv: ["diff", "--stat"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("");
+  });
+
+  it("--name-only works with ref-to-ref and revision suffixes", async () => {
+    let n = 0;
+    const oids = ["a".repeat(40), "b".repeat(40)];
+    const { client, calls } = fakeClient(
+      {},
+      {
+        revParse: () => oids[n++],
+        diffSummary: () => [{ path: "x", status: "M", insertions: 1, deletions: 0 }],
+      },
+    );
+    await runGitCli(client, { argv: ["diff", "--name-only", "HEAD~2", "HEAD~1"], cwd: "/r" });
+    expect(calls.diffSummary[0]).toMatchObject({ ref: "a".repeat(40), to: "b".repeat(40) });
   });
 });
 
