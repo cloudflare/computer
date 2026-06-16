@@ -103,12 +103,17 @@ export class AssetWorkspace extends DurableObject<Env> {
     }
 
     // The model's multipart input shape isn't in the generated Ai
-    // types yet, so call through a minimal typed view of run().
-    const run = this.env.AI.run as unknown as (
-      model: string,
-      input: { multipart: { body: ReadableStream; contentType: string } },
-    ) => Promise<{ image?: string }>;
-    const result = await run(IMAGE_MODEL, { multipart: { body, contentType } });
+    // types yet, so call run() through a minimal typed view of the
+    // binding. Keep the call on env.AI: the binding's run() is a
+    // method that relies on its own `this`, so a detached reference
+    // would throw inside the binding.
+    const ai = this.env.AI as unknown as {
+      run(
+        model: string,
+        input: { multipart: { body: ReadableStream; contentType: string } },
+      ): Promise<{ image?: string }>;
+    };
+    const result = await ai.run(IMAGE_MODEL, { multipart: { body, contentType } });
 
     if (typeof result.image !== "string") {
       throw new Error("image model returned no image");
