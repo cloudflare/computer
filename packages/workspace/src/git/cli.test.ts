@@ -874,6 +874,25 @@ describe("runGitCli — log argv parsing", () => {
     expect(res.exitCode).toBe(129);
     expect(res.stderr).toContain("-n");
   });
+
+  it("-1 is shorthand for -n 1", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["log", "-1", "--oneline"] });
+    expect(res.exitCode).toBe(0);
+    expect(calls.log[0].depth).toBe(1);
+  });
+
+  it("-5 is shorthand for -n 5", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["log", "-5"] });
+    expect(calls.log[0].depth).toBe(5);
+  });
+
+  it("-0 is rejected", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["log", "-0"] });
+    expect(res.exitCode).toBe(129);
+  });
 });
 
 describe("runGitCli — show / rev-parse / symbolic-ref", () => {

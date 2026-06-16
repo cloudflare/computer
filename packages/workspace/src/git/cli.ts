@@ -589,15 +589,34 @@ async function runLog(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git log [-n <N>] [--oneline] [<ref>]`. Default output is
-  // the full commit form; --oneline collapses each entry to a
+  // `git log [-n <N>] [-<N>] [--oneline] [<ref>]`. Default output
+  // is the full commit form; --oneline collapses each entry to a
   // single line.
-  const parsed = parseFlags(args, {
+  //
+  // Rewrite the `-<N>` shorthand (e.g. `-1`, `-5`) to `-n <N>`
+  // before parsing — the generic parser would otherwise reject
+  // `-5` as an unknown short option. `-0` and non-numeric forms
+  // fall through to the `-n` validation below, which rejects
+  // them.
+  let shorthandDepth: string | undefined;
+  const rewritten: string[] = [];
+  for (const arg of args) {
+    const m = /^-(\d+)$/.exec(arg);
+    if (m) {
+      shorthandDepth = m[1];
+      continue;
+    }
+    rewritten.push(arg);
+  }
+  const parsed = parseFlags(rewritten, {
     n: { kind: "value" },
     oneline: { kind: "bool" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git log: ${parsed.error}\n`, exitCode: 129 };
+  }
+  if (shorthandDepth !== undefined && parsed.flags.n === undefined) {
+    parsed.flags.n = shorthandDepth;
   }
   if (parsed.positional.length > 1) {
     return {
