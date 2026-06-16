@@ -14,7 +14,9 @@
 //   });
 //
 // Uploads go through the R2 binding (`bucket.put`); the returned
-// URL is signed for R2's S3-compatible endpoint. The presigned GET
+// URL is signed for R2's S3-compatible endpoint. R2 requires a
+// known-length stream, so the VFS stream is piped through a
+// FixedLengthStream sized from `fs.stat(path)`. The presigned GET
 // uses UNSIGNED-PAYLOAD, so the file body is read exactly once —
 // streamed from the VFS into `put` — and never buffered.
 
@@ -33,10 +35,12 @@ import {
 const MAX_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
 
 // Duck-typed workspace handle. Only the slice the assets module
-// needs: a streaming reader and the session id used to tag objects.
+// needs: size lookup, a streaming reader, and the session id used
+// to tag objects.
 export interface WorkspaceLike {
   readonly sessionId: string;
   readonly fs: {
+    stat(path: string): Promise<{ size: number }>;
     readFile(path: string): Promise<ReadableStream<Uint8Array>>;
   };
 }
@@ -159,6 +163,31 @@ export function resolveS3(s3: S3Config, env: AssetsEnv): ResolvedS3 {
   };
 }
 
+interface FixedLengthBody {
+  readable: ReadableStream<Uint8Array>;
+  pipeDone: Promise<void>;
+  abort(reason: unknown): void;
+}
+
+function fixedLengthBody(source: ReadableStream<Uint8Array>, size: number): FixedLengthBody {
+  if (typeof FixedLengthStream === "undefined") {
+    throw new Error(
+      "share: FixedLengthStream is not available. Run this code in the Cloudflare Workers runtime.",
+    );
+  }
+
+  const fixed = new FixedLengthStream(size);
+  const abort = new AbortController();
+  const pipeDone = source.pipeTo(fixed.writable, { signal: abort.signal });
+  return {
+    readable: fixed.readable,
+    pipeDone,
+    abort(reason: unknown) {
+      abort.abort(reason);
+    },
+  };
+}
+
 export function createAssets(options: CreateAssetsOptions): AssetsClient {
   const { ws, bucket } = options;
   const now = options.now ?? Date.now;
@@ -176,19 +205,27 @@ export function createAssets(options: CreateAssetsOptions): AssetsClient {
       const contentType = opts.contentType ?? contentTypeForPath(path);
       const disposition = contentDisposition(opts.disposition ?? "inline", opts.filename ?? name);
 
-      const body = await ws.fs.readFile(path);
-      await putObject({
-        bucket,
-        key,
-        body,
-        contentType,
-        contentDisposition: disposition,
-        customMetadata: {
-          sourcePath: path,
-          sessionId: ws.sessionId,
-          expiresAt: new Date(now() + expiresIn * 1000).toISOString(),
-        },
-      });
+      const [{ size }, source] = await Promise.all([ws.fs.stat(path), ws.fs.readFile(path)]);
+      const body = fixedLengthBody(source, size);
+      try {
+        await putObject({
+          bucket,
+          key,
+          body: body.readable,
+          contentType,
+          contentDisposition: disposition,
+          customMetadata: {
+            sourcePath: path,
+            sessionId: ws.sessionId,
+            expiresAt: new Date(now() + expiresIn * 1000).toISOString(),
+          },
+        });
+        await body.pipeDone;
+      } catch (error) {
+        body.abort(error);
+        await body.pipeDone.catch(() => undefined);
+        throw error;
+      }
 
       return presignUrl({
         endpoint: s3.endpoint,

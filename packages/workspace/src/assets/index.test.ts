@@ -4,12 +4,31 @@ import { describe, expect, it } from "vitest";
 import { Workspace } from "../workspace.js";
 import { createAssets, resolveS3 } from "./index.js";
 
+const fixedLengthReads = new WeakMap<ReadableStream<Uint8Array>, number>();
+
+// Node's test runner does not provide Workers' FixedLengthStream.
+// Install a tiny stand-in that records the expected length on the
+// readable half so the fake bucket can assert that share() passed a
+// known-length stream to R2.
+class TestFixedLengthStream extends TransformStream<ArrayBuffer | ArrayBufferView, Uint8Array> {
+  constructor(expectedLength: number | bigint) {
+    super();
+    fixedLengthReads.set(this.readable, Number(expectedLength));
+  }
+}
+
+Object.defineProperty(globalThis, "FixedLengthStream", {
+  value: TestFixedLengthStream,
+  configurable: true,
+});
+
 // Captures every put() so tests can assert on the key, the bytes
 // streamed in, and the metadata — without a real R2.
 interface CapturedPut {
   key: string;
   bytes: Uint8Array;
   isStream: boolean;
+  fixedLength?: number;
   httpMetadata?: { contentType?: string; contentDisposition?: string };
   customMetadata?: Record<string, string>;
 }
@@ -26,6 +45,7 @@ function fakeBucket(): { bucket: { put: unknown }; puts: CapturedPut[] } {
       },
     ) {
       const isStream = value instanceof ReadableStream;
+      const fixedLength = fixedLengthReads.get(value);
       const reader = value.getReader();
       const parts: Uint8Array[] = [];
       while (true) {
@@ -46,6 +66,7 @@ function fakeBucket(): { bucket: { put: unknown }; puts: CapturedPut[] } {
         key,
         bytes,
         isStream,
+        fixedLength,
         httpMetadata: options?.httpMetadata,
         customMetadata: options?.customMetadata,
       });
@@ -87,6 +108,7 @@ describe("createAssets.share", () => {
 
     expect(puts).toHaveLength(1);
     expect(puts[0].isStream).toBe(true);
+    expect(puts[0].fixedLength).toBe(7);
     expect(new TextDecoder().decode(puts[0].bytes)).toBe("PNGDATA");
   });
 
