@@ -101,6 +101,25 @@ describe("addWith", () => {
     expect(await statusOf("gone.txt")).toEqual([1, 0, 0]);
   });
 
+  it("all: true unstages a new file that was deleted after staging", async () => {
+    await init();
+    await memfs.promises.writeFile(`${DIR}/new.txt`, "n1\n");
+    await git.add({ fs: memfs, dir: DIR, filepath: "new.txt" });
+    expect(await statusOf("new.txt")).toEqual([0, 2, 2]);
+    await memfs.promises.unlink(`${DIR}/new.txt`);
+    expect(await statusOf("new.txt")).toEqual([0, 0, 3]);
+
+    await addWith({
+      git: git as unknown as IsomorphicGitAddClient,
+      fs: memfs,
+      dir: DIR,
+      paths: [],
+      all: true,
+    });
+
+    expect(await statusOf("new.txt")).toBeUndefined();
+  });
+
   it("all + trackedOnly stages tracked changes but leaves untracked files alone", async () => {
     await init();
     await memfs.promises.writeFile(`${DIR}/keep.txt`, "k1\n");

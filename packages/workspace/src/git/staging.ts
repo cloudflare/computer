@@ -121,9 +121,10 @@ async function addAll(opts: AddWithDeps, dir: string): Promise<void> {
     // so untracked files (head === 0) are left alone.
     if (opts.trackedOnly && head !== 1) continue;
     if (workdir === 0) {
-      // Gone from the working tree. Only stage the deletion when
-      // it isn't already staged (head present, stage present).
-      if (head === 1 && stage !== 0) toRemove.push(filepath);
+      // Gone from the working tree. Remove any staged entry so
+      // the index matches the absence on disk. trackedOnly above
+      // keeps `commit -a` from touching staged-but-untracked paths.
+      if (stage !== 0) toRemove.push(filepath);
       continue;
     }
     // Present on disk and differs from the staged copy.
