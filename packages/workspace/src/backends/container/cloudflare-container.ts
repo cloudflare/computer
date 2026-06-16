@@ -182,6 +182,14 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     const holder = await this.#options.container();
     const host = await holder.getWorkspaceContainer();
 
+    // Pre-flight: surface any prior container exit so a readiness
+    // failure can attribute it back to the crash. host.start()
+    // clears this once the new generation is up, so a successful
+    // dial against a previously-dead container loses the
+    // attribution — which is the right semantics; the prior exit
+    // is only interesting if the new attempt fails too.
+    const priorExit = await host.exitInfo().catch(() => null);
+
     const env = {
       PORT: String(this.#options.containerPort),
       MOUNT_POINT: "/workspace",
@@ -195,7 +203,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     // the upgrade can arrive before the POST resolves.
     this.#armUpgrade();
 
-    await this.#readyWithRestarts(host, env, deadline);
+    await this.#readyWithRestarts(host, env, deadline, priorExit);
     await this.#postConnect(host, deadline);
     const ws = await this.#waitForUpgrade(deadline);
 
@@ -330,6 +338,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     host: IWorkspaceContainerAPI,
     env: Record<string, string>,
     deadline: number,
+    priorExit: { exitedAt: number; reason: string } | null,
   ): Promise<void> {
     const maxAttempts = this.#options.restartAttempts + 1;
     // Split the remaining time across attempts so a failing
@@ -380,6 +389,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
         maxAttempts,
         restarts,
         lastError,
+        priorExit,
       }),
       lastError instanceof Error ? { cause: lastError } : undefined,
     );
@@ -412,13 +422,20 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
   #formatStageError(
     stage: "start" | "health" | "restart" | "connect" | "ws",
-    info: { attempt: number; maxAttempts: number; restarts: number; lastError: unknown },
+    info: {
+      attempt: number;
+      maxAttempts: number;
+      restarts: number;
+      lastError: unknown;
+      priorExit?: { exitedAt: number; reason: string } | null;
+    },
   ): string {
+    const priorExit = info.priorExit ? ` priorExit=${JSON.stringify(info.priorExit.reason)}` : "";
     return (
       `CloudflareContainerBackend(${this.id}): connect failed at ` +
       `stage=${stage} port=${this.#options.containerPort} ` +
       `attempt=${info.attempt}/${info.maxAttempts} restarts=${info.restarts} ` +
-      `timeoutMs=${this.#options.connectTimeoutMs} ` +
+      `timeoutMs=${this.#options.connectTimeoutMs}${priorExit} ` +
       `lastError=${describeError(info.lastError)}`
     );
   }

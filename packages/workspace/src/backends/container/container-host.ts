@@ -19,6 +19,15 @@
 // an RpcTarget so it works the same in-isolate and across RPC.
 
 import { RpcTarget } from "cloudflare:workers";
+import { WorkspaceTransportError } from "../../transport-failure.js";
+import {
+  armContainerMonitor,
+  type ContainerExitInfo,
+  containerExitInfo,
+  destroyContainerExpectingExit,
+} from "./container-lifecycle.js";
+
+export type { ContainerExitInfo } from "./container-lifecycle.js";
 
 // Identifies the Durable Object that owns the Workspace and answers
 // the /ws upgrade. Plain data so it can travel over Workers RPC.
@@ -65,8 +74,17 @@ export interface IWorkspaceContainerAPI {
   // the platform still has a container instance attached; it does
   // not prove that wsd is listening or responsive. Use
   // probeWsdHealth for readiness; use status() only for logs and
-  // tracing.
-  status(): Promise<{ running: boolean }>;
+  // tracing. `exit` is populated from the in-memory monitor()
+  // signal when the most recent container generation exited; it
+  // resets on the next successful start().
+  status(): Promise<{ running: boolean; exit: ContainerExitInfo | null }>;
+
+  // Snapshot of the last container exit reason observed through
+  // monitor(). Null while the current generation is alive (or
+  // before any container has been started). Used by the backend
+  // pre-flight check in connect() to attribute readiness failures
+  // to the prior generation's exit when one is available.
+  exitInfo(): Promise<ContainerExitInfo | null>;
 }
 
 // Concrete implementation. Extends RpcTarget so it travels intact
@@ -87,20 +105,48 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   }
 
   async start(env: Record<string, string>) {
-    if (this.#container.running) return;
-    this.#container.start({ enableInternet: true, env });
+    // If the previous generation died but the runtime still has a
+    // container attached, treat the prior exit as a signal to wipe
+    // the carcass before re-starting. The new generation gets a
+    // clean monitor().
+    const prior = containerExitInfo(this.#ctx);
+    if (prior !== null) {
+      try {
+        await destroyContainerExpectingExit(this.#ctx, this.#container);
+      } catch {
+        // best-effort — the next start() will surface any real
+        // platform-side failure.
+      }
+    }
+    if (!this.#container.running) {
+      this.#container.start({ enableInternet: true, env });
+    }
+    armContainerMonitor(this.#ctx, this.#container);
   }
 
   async restart(env: Record<string, string>) {
     // destroy() resolves once the platform has torn down the
     // attached container. A subsequent start() launches a fresh
     // generation — ports re-bind, the wsd daemon comes up clean.
-    await this.#container.destroy();
+    // destroyContainerExpectingExit flips the lifecycle flag so
+    // the monitor handler logs the exit as intentional.
+    try {
+      await destroyContainerExpectingExit(this.#ctx, this.#container);
+    } catch {
+      // tolerate a flaky destroy — start() below will either
+      // succeed against a fresh generation or surface its own
+      // failure.
+    }
     this.#container.start({ enableInternet: true, env });
+    armContainerMonitor(this.#ctx, this.#container);
   }
 
   async status() {
-    return { running: this.#container.running };
+    return { running: this.#container.running, exit: containerExitInfo(this.#ctx) };
+  }
+
+  async exitInfo(): Promise<ContainerExitInfo | null> {
+    return containerExitInfo(this.#ctx);
   }
 
   async interceptOutboundHttp(host: string, ref: WorkspaceRef) {
@@ -117,6 +163,15 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   }
 
   fetchPort(port: number, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    // Short-circuit if the container is known to have exited.
+    // WorkspaceTransportError is classified by
+    // isWorkspaceTransportFailure, so the Workspace cache drops
+    // the stale handle and the next operation reconnects against
+    // a fresh generation.
+    const exit = containerExitInfo(this.#ctx);
+    if (exit !== null) {
+      throw new WorkspaceTransportError(`container exited: ${exit.reason}`);
+    }
     return this.#container.getTcpPort(port).fetch(input, init);
   }
 

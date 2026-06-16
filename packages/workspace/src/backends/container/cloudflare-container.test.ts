@@ -23,6 +23,9 @@ interface FakeHostOptions {
   healthSequence?: boolean[];
   connectStatus?: number;
   restart?: () => Promise<void>;
+  // Pre-set a prior exit reason so connect()'s pre-flight
+  // exitInfo() check observes it.
+  priorExit?: { exitedAt: number; reason: string } | null;
 }
 
 interface FakeHost {
@@ -32,6 +35,8 @@ interface FakeHost {
   interceptedHost?: string;
   interceptedWorkspace?: WorkspaceRef;
   running: boolean;
+  exit: { exitedAt: number; reason: string } | null;
+  simulateExit(reason: string): void;
 }
 
 function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
@@ -39,7 +44,15 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
   const defaultHealthy = opts.healthy ?? true;
   const connectStatus = opts.connectStatus ?? 200;
   const calls: { name: string; args: unknown[] }[] = [];
-  const state: FakeHost = { calls, running: false } as FakeHost;
+  const state: FakeHost = {
+    calls,
+    running: false,
+    exit: opts.priorExit ?? null,
+    simulateExit(reason: string) {
+      state.exit = { exitedAt: Date.now(), reason };
+      state.running = false;
+    },
+  } as FakeHost;
 
   function nextHealthy(): boolean {
     if (healthSequence && healthSequence.length > 0) {
@@ -53,6 +66,9 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       calls.push({ name: "start", args: [env] });
       state.startEnv = env;
       state.running = true;
+      // A successful start clears any prior exit, matching
+      // WorkspaceContainerAPI.start.
+      state.exit = null;
     },
     async interceptOutboundHttp(host, ref) {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
@@ -84,10 +100,15 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
         await opts.restart();
       }
       state.running = true;
+      state.exit = null;
     },
     async status() {
       calls.push({ name: "status", args: [] });
-      return { running: state.running };
+      return { running: state.running, exit: state.exit };
+    },
+    async exitInfo() {
+      calls.push({ name: "exitInfo", args: [] });
+      return state.exit;
     },
   } as IWorkspaceContainerAPI;
   return state;
@@ -211,6 +232,44 @@ describe("CloudflareContainerBackend", () => {
     });
     const res = await backend.handleFetch(new Request("http://workspace.internal/ws"));
     expect(res.status).toBe(426);
+  });
+
+  test("connect() consults host.exitInfo() before host.start()", async () => {
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+      restartAttempts: 0,
+    });
+    // Doesn't matter that this rejects — we just want to observe
+    // the call order.
+    await backend.connect().catch(() => undefined);
+    const names = fake.calls.map((c) => c.name);
+    const exitIdx = names.indexOf("exitInfo");
+    const startIdx = names.indexOf("start");
+    expect(exitIdx).toBeGreaterThanOrEqual(0);
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    expect(exitIdx).toBeLessThan(startIdx);
+  });
+
+  test("connect() surfaces a prior exit reason in the stage-tagged error", async () => {
+    const fake = makeFakeHost({
+      healthy: false,
+      priorExit: { exitedAt: Date.now() - 5_000, reason: "OOM killed" },
+    });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+      restartAttempts: 0,
+    });
+    const err = await backend.connect().then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(String(err)).toMatch(/stage=health/);
+    expect(String(err)).toMatch(/priorExit="OOM killed"/);
   });
 
   test("connect() restarts the host when initial readiness fails and recovers", async () => {
