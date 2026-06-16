@@ -535,13 +535,16 @@ export class Workspace {
   }
 
   // Per-backend WorkspaceShell, constructed on demand and cached
-  // for the life of the handle.
-  async #shellFor(id: string): Promise<WorkspaceShell> {
-    const cached = this.#shells.get(id);
-    if (cached !== undefined) return cached;
+  // for the life of the handle. Returns both the shell and the
+  // BackendHandle it was built against so the caller can hold the
+  // handle reference for a later identity check; #invalidateHandle
+  // clears both caches together, so a shell pulled from #shells is
+  // always paired with the live handle for that id at the moment
+  // of the lookup.
+  async #shellFor(id: string): Promise<{ shell: WorkspaceShell; handle: BackendHandle }> {
     const handle = await this.#handleFor(id);
-    const existing = this.#shells.get(id);
-    if (existing !== undefined) return existing;
+    const cached = this.#shells.get(id);
+    if (cached !== undefined) return { shell: cached, handle };
     const shell = new WorkspaceShell(
       handle.rpc.shell,
       {
@@ -551,7 +554,7 @@ export class Workspace {
       this.#observer,
     );
     this.#shells.set(id, shell);
-    return shell;
+    return { shell, handle };
   }
 
   // Routed shell facade. Each method picks the right backend per
@@ -562,19 +565,19 @@ export class Workspace {
       this.#defaultBackendId ?? "",
       (id) => this.#shellFor(id),
       (id) => this.#resolveBackendId(id) ?? "",
-      (id, error) => this.#onShellError(id, error),
+      (id, handle, error) => this.#onShellError(id, handle, error),
     );
     return router as unknown as WorkspaceShell;
   }
 
   // Invalidate the cached handle for `id` when a shell-routed RPC
-  // fails with a known transport error. Matches the push/pull
-  // invalidation path; identity-checked so a concurrent reconnect
-  // is not clobbered.
-  #onShellError(id: string, error: unknown): void {
+  // fails with a known transport error. Compares the caller's
+  // captured handle against the live cache entry so a late-failing
+  // operation against an old handle can't clobber a newer one that
+  // a concurrent reconnect already installed.
+  #onShellError(id: string, handle: BackendHandle, error: unknown): void {
     if (!isWorkspaceTransportFailure(error)) return;
-    const handle = this.#handles.get(id);
-    if (handle !== undefined) this.#invalidateHandle(id, handle);
+    this.#invalidateHandle(id, handle);
   }
 }
 
@@ -590,15 +593,15 @@ export class Workspace {
 // type through.
 class WorkspaceShellRouter {
   readonly #defaultId: string;
-  readonly #shellFor: (id: string) => Promise<WorkspaceShell>;
+  readonly #shellFor: (id: string) => Promise<{ shell: WorkspaceShell; handle: BackendHandle }>;
   readonly #resolveId: (id: string | undefined) => string;
-  readonly #onError: (id: string, error: unknown) => void;
+  readonly #onError: (id: string, handle: BackendHandle, error: unknown) => void;
 
   constructor(
     defaultId: string,
-    shellFor: (id: string) => Promise<WorkspaceShell>,
+    shellFor: (id: string) => Promise<{ shell: WorkspaceShell; handle: BackendHandle }>,
     resolveId: (id: string | undefined) => string,
-    onError: (id: string, error: unknown) => void,
+    onError: (id: string, handle: BackendHandle, error: unknown) => void,
   ) {
     this.#defaultId = defaultId;
     this.#shellFor = shellFor;
@@ -608,36 +611,41 @@ class WorkspaceShellRouter {
 
   async exec(command: string, options: { backend?: string } & Record<string, unknown> = {}) {
     const id = this.#resolveId(options.backend) || this.#defaultId;
-    const shell = await this.#shellFor(id);
+    // Capture the BackendHandle here, at dispatch time. A late
+    // failure from this command's stream must invalidate THIS
+    // handle, not whatever the cache holds when the rejection
+    // eventually fires; a concurrent reconnect may have already
+    // swapped in a newer handle that we must not clobber.
+    const { shell, handle: dispatchHandle } = await this.#shellFor(id);
     const { backend: _backend, ...rest } = options;
-    let handle: unknown;
+    let execHandle: unknown;
     try {
-      handle = await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
+      execHandle = await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
         command,
         rest,
       );
     } catch (error) {
-      this.#onError(id, error);
+      this.#onError(id, dispatchHandle, error);
       throw error;
     }
-    return this.#wrapHandle(id, handle);
+    return this.#wrapHandle(id, dispatchHandle, execHandle);
   }
 
   async get(id: string, options: { backend?: string } & Record<string, unknown> = {}) {
     const backendId = this.#resolveId(options.backend) || this.#defaultId;
-    const shell = await this.#shellFor(backendId);
+    const { shell, handle: dispatchHandle } = await this.#shellFor(backendId);
     const { backend: _backend, ...rest } = options;
-    let handle: unknown;
+    let execHandle: unknown;
     try {
-      handle = await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
+      execHandle = await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
         id,
         rest,
       );
     } catch (error) {
-      this.#onError(backendId, error);
+      this.#onError(backendId, dispatchHandle, error);
       throw error;
     }
-    return this.#wrapHandle(backendId, handle);
+    return this.#wrapHandle(backendId, dispatchHandle, execHandle);
   }
 
   // Wrap an ExecHandle so a transport-classified rejection from
@@ -647,22 +655,29 @@ class WorkspaceShellRouter {
   // transport mid-stream and the rejection surfaces through
   // result() draining the event stream.
   //
+  // The handle reference captured here is the one that was active
+  // when the exec was dispatched. By the time result() rejects, a
+  // concurrent reconnect may have replaced the cached entry for
+  // this id with a newer handle; invalidation in #onShellError
+  // checks identity against the dispatch-time handle so the newer
+  // entry survives.
+  //
   // WorkspaceShell installs .result via defineProperty; we set it
   // configurable: true so this slot can be redefined. The handle's
   // stream identity is preserved — callers that consume the
   // ReadableStream directly are unaffected; only result() routes
   // through the invalidation path.
-  #wrapHandle(id: string, handle: unknown): unknown {
-    const original = handle as { result?: unknown };
-    if (typeof original.result !== "function") return handle;
+  #wrapHandle(id: string, dispatchHandle: BackendHandle, execHandle: unknown): unknown {
+    const original = execHandle as { result?: unknown };
+    if (typeof original.result !== "function") return execHandle;
     const onError = this.#onError;
-    const originalResult = original.result.bind(handle) as () => Promise<unknown>;
-    Object.defineProperty(handle, "result", {
+    const originalResult = original.result.bind(execHandle) as () => Promise<unknown>;
+    Object.defineProperty(execHandle, "result", {
       value: async () => {
         try {
           return await originalResult();
         } catch (error) {
-          onError(id, error);
+          onError(id, dispatchHandle, error);
           throw error;
         }
       },
@@ -670,6 +685,6 @@ class WorkspaceShellRouter {
       writable: false,
       configurable: true,
     });
-    return handle;
+    return execHandle;
   }
 }

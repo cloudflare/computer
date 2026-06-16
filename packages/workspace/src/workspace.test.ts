@@ -958,4 +958,98 @@ describe("Workspace transport-failure invalidation", () => {
     await ws.shell.exec("true").catch(() => undefined);
     expect(connects).toBe(2);
   });
+
+  it("a late mid-stream rejection from an old handle does not clobber a newer one", async () => {
+    // Sequence under test:
+    //  1. exec dispatches against connection A. Its event stream
+    //     stays pending.
+    //  2. connection A's `closed` promise fires — the Workspace
+    //     drops its cached handle. Next exec reconnects to B.
+    //  3. connection A's stream finally rejects with a transport
+    //     error (the late settle the production code is defending
+    //     against). The wrap around A's handle must invalidate
+    //     the entry only if it is still A; B must survive, and a
+    //     subsequent operation must NOT trigger a third connect.
+    let connects = 0;
+    let signalClosedA: (() => void) | null = null;
+    // Per-exec stream controllers so each handle's stream can be
+    // settled independently. Indexed by exec call order.
+    const execStreams: ReadableStreamDefaultController<
+      import("@cloudflare/workspace-rpc").ExecEvent
+    >[] = [];
+    const shell: import("@cloudflare/workspace-rpc").ShellRPC = {
+      async exec(input) {
+        const execId = input.id ?? `exec-${execStreams.length}`;
+        return {
+          id: execId,
+          events: new ReadableStream<import("@cloudflare/workspace-rpc").ExecEvent>({
+            start(c) {
+              execStreams.push(c);
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        connects++;
+        const isFirst = connects === 1;
+        const closed = new Promise<void>((resolve) => {
+          if (isFirst) signalClosedA = resolve;
+        });
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          closed,
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+
+    // Dispatch against connection A; its stream stays pending.
+    const handleA = await ws.shell.exec("sleep 60");
+    expect(connects).toBe(1);
+    const streamA = execStreams[0];
+
+    // Connection A's transport closes. The Workspace's `closed`
+    // watcher drops the cached handle on the next microtask.
+    signalClosedA?.();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Next exec forces a fresh connection B.
+    const handleB = await ws.shell.exec("true");
+    expect(connects).toBe(2);
+    const streamB = execStreams[1];
+
+    // NOW connection A's stream finally rejects. handleA.result()
+    // surfaces the rejection, and the wrap around handleA must
+    // identity-check against connection A's BackendHandle. The
+    // cache currently holds connection B; invalidation must be a
+    // no-op.
+    streamA?.error(new WorkspaceTransportError("WebSocket closed mid-stream"));
+    await expect(handleA.result()).rejects.toThrow(/WebSocket closed mid-stream/);
+
+    // The next operation must reuse connection B — i.e. NOT
+    // reconnect again. Without the fix, A's late rejection would
+    // have invalidated B's slot and this third exec would force a
+    // third connect.
+    const handleC = await ws.shell.exec("true");
+    expect(connects).toBe(2);
+    const streamC = execStreams[2];
+
+    // Settle B's and C's streams cleanly so the test doesn't leak
+    // pending readers.
+    streamB?.close();
+    streamC?.close();
+    await Promise.all([
+      handleB.result().catch(() => undefined),
+      handleC.result().catch(() => undefined),
+    ]);
+  });
 });
