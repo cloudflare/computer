@@ -63,6 +63,13 @@ just emit JSON.
 | `edit`          | vendored from `hackspace/fs-tools` |
 | `exec`          | `src/tools/exec.ts`                |
 | `report_update` | `src/tools/report-update.ts`       |
+| `share`         | `src/tools/share.ts` (optional)    |
+
+The `share` tool uploads a workspace file to R2 and returns a
+time-limited link, so the agent can hand the user an artifact it
+produced. It is registered only when the R2 credentials below are
+set; without them the agent runs unchanged and the tool is omitted.
+See [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 
 `exec` is wired to a Workspace with two backends: a `"shell"`
 backend (just-bash in a Dynamic Worker through `env.LOADER`) and
@@ -168,6 +175,25 @@ The worker is configured in [`wrangler.jsonc`](./wrangler.jsonc):
   worker backend through `env.LOADER` and the container backend
   through `this.ctx.container`.
 - `TRIAGE_WORKFLOW` — workflow binding pointing at `TriageWorkflow`.
+- `ASSETS` — R2 bucket the `share` tool uploads to. Create it once
+  before deploying:
+
+  ```sh
+  wrangler r2 bucket create think-example-assets
+  ```
+
+The `share` tool also needs R2 S3 credentials to presign URLs — the
+bucket binding alone can't mint them. Create an R2 API token scoped
+to the bucket and set the values as secrets:
+
+```sh
+wrangler secret put R2_ACCESS_KEY_ID
+wrangler secret put R2_SECRET_ACCESS_KEY
+wrangler secret put CLOUDFLARE_ACCOUNT_ID
+```
+
+Without these the worker still runs; the `share` tool is simply not
+offered to the model.
 
 No GitHub auth, no Artifacts. The issue must be on a public
 repository.

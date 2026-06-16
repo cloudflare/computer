@@ -17,7 +17,7 @@
 //                            ──► createAssets(...).share upload + presign
 //                │
 //                ▼
-//          { path, url, expiresAt }
+//          { path, url }
 //
 // This is a production-only example. The presigner needs R2 S3
 // credentials (set as secrets), and the image model runs on

@@ -186,6 +186,42 @@ describe("createAssets.share", () => {
       /expiresAfter/,
     );
   });
+
+  it("rejects a NaN expiry", async () => {
+    const ws = makeWorkspace();
+    await writeAt(ws, "/workspace/a.png", new Uint8Array([1]));
+    const { bucket } = fakeBucket();
+    const assets = createAssets({ ws, bucket: bucket as never, s3, now: fixedClock });
+
+    await expect(assets.share("/workspace/a.png", { expiresAfter: Number.NaN })).rejects.toThrow(
+      /expiresAfter/,
+    );
+  });
+
+  it("caps the expiry at seven days", async () => {
+    const ws = makeWorkspace();
+    await writeAt(ws, "/workspace/a.png", new Uint8Array([1]));
+    const { bucket } = fakeBucket();
+    const assets = createAssets({ ws, bucket: bucket as never, s3, now: fixedClock });
+
+    // Ask for 30 days; the presigned URL is capped at 7 days
+    // (604800 seconds), the maximum a presigned URL allows.
+    const url = await assets.share("/workspace/a.png", {
+      expiresAfter: 30 * 24 * 60 * 60 * 1000,
+    });
+    expect(new URL(url).searchParams.get("X-Amz-Expires")).toBe("604800");
+  });
+
+  it("rejects a missing file without calling put", async () => {
+    const ws = makeWorkspace();
+    const { bucket, puts } = fakeBucket();
+    const assets = createAssets({ ws, bucket: bucket as never, s3, now: fixedClock });
+
+    await expect(
+      assets.share("/workspace/does-not-exist.png", { expiresAfter: 30_000 }),
+    ).rejects.toThrow();
+    expect(puts).toHaveLength(0);
+  });
 });
 
 describe("resolveS3", () => {
@@ -220,7 +256,21 @@ describe("resolveS3", () => {
     expect(resolved.accessKeyId).toBe("explicit");
   });
 
-  it("throws when a credential cannot be found", () => {
+  it("throws when the access key id cannot be found", () => {
     expect(() => resolveS3({ bucket: "b", endpoint: "https://e" }, {})).toThrow(/access key id/);
+  });
+
+  it("throws when the secret access key cannot be found", () => {
+    expect(() =>
+      resolveS3({ bucket: "b", endpoint: "https://e" }, { R2_ACCESS_KEY_ID: "AK" }),
+    ).toThrow(/secret access key/);
+  });
+
+  it("throws when the endpoint cannot be derived", () => {
+    // Credentials present but no endpoint and no account id to
+    // derive one from.
+    expect(() =>
+      resolveS3({ bucket: "b" }, { R2_ACCESS_KEY_ID: "AK", R2_SECRET_ACCESS_KEY: "SK" }),
+    ).toThrow(/endpoint/);
   });
 });
