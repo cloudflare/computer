@@ -98,6 +98,47 @@ describe("revParseWith", () => {
     const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "main" });
     expect(out).toBe(oid);
   });
+
+  it("resolves HEAD^ to the first parent", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    await commit("a.txt", "v2\n", "second");
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD^" });
+    expect(out).toBe(first);
+  });
+
+  it("resolves HEAD~1 to the first parent", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    await commit("a.txt", "v2\n", "second");
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD~1" });
+    expect(out).toBe(first);
+  });
+
+  it("resolves HEAD~2 two commits back", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    await commit("a.txt", "v2\n", "second");
+    await commit("a.txt", "v3\n", "third");
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD~2" });
+    expect(out).toBe(first);
+  });
+
+  it("resolves a branch name with a suffix", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    await commit("a.txt", "v2\n", "second");
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "main~1" });
+    expect(out).toBe(first);
+  });
+
+  it("throws when walking past the root commit", async () => {
+    await init();
+    await commit("a.txt", "v1\n", "only");
+    await expect(
+      revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD~5" }),
+    ).rejects.toThrow();
+  });
 });
 
 describe("currentBranchWith", () => {

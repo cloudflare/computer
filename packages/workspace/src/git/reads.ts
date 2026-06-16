@@ -179,11 +179,86 @@ export interface RevParseWithDeps extends GitRevParseOptions {
 export async function revParseWith(opts: RevParseWithDeps): Promise<string> {
   const dir = opts.dir ?? "/";
   try {
-    return await opts.git.resolveRef({ fs: opts.fs, dir, ref: opts.ref });
+    const { base, steps } = parseRevision(opts.ref);
+    let oid = await opts.git.resolveRef({ fs: opts.fs, dir, ref: base });
+    for (const step of steps) {
+      oid = await walkParent(opts, dir, oid, step);
+    }
+    return oid;
   } catch (cause) {
+    if (cause instanceof GitError) throw cause;
     if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
     throw new GitError("EREVPARSEFAIL", `git rev-parse failed: ${errorMessage(cause)}`, { cause });
   }
+}
+
+/**
+ * A single ancestry step parsed off a revision spec. `^` and `~N`
+ * both walk toward parents; `n` records which parent (1-based)
+ * each step follows. `~N` expands to N first-parent steps; `^`
+ * is one step toward parent `n` (default 1); `^N` selects parent
+ * N. See gitrevisions(7).
+ */
+interface RevStep {
+  /** 1-based parent index. */
+  n: number;
+}
+
+/**
+ * Split a revision into its base ref and the ancestry walk that
+ * follows. Supports the common `gitrevisions(7)` suffixes:
+ *
+ *   <ref>        -> { base: <ref>, steps: [] }
+ *   <ref>^       -> one step to parent 1
+ *   <ref>^N      -> one step to parent N
+ *   <ref>~N      -> N steps, each to parent 1
+ *
+ * Suffixes chain left to right, so `HEAD~2^2` is two first-parent
+ * steps then a second-parent step.
+ */
+function parseRevision(ref: string): { base: string; steps: RevStep[] } {
+  // Find where the suffix operators begin. A bare oid or ref has
+  // none. We only treat trailing `^`/`~` runs as operators.
+  const match = /^(.*?)((?:[\^~][0-9]*)*)$/.exec(ref);
+  if (!match || match[2] === "") return { base: ref, steps: [] };
+  const base = match[1];
+  const suffix = match[2];
+  const steps: RevStep[] = [];
+  const tokens = suffix.match(/[\^~][0-9]*/g) ?? [];
+  for (const token of tokens) {
+    const op = token[0];
+    const num = token.slice(1);
+    if (op === "~") {
+      // `~` with no number means `~1`. `~N` is N first-parent
+      // hops.
+      const count = num === "" ? 1 : Number.parseInt(num, 10);
+      for (let i = 0; i < count; i++) steps.push({ n: 1 });
+    } else {
+      // `^` with no number means parent 1. `^N` selects parent N.
+      const n = num === "" ? 1 : Number.parseInt(num, 10);
+      // `^0` means the commit itself — no walk.
+      if (n === 0) continue;
+      steps.push({ n });
+    }
+  }
+  return { base, steps };
+}
+
+async function walkParent(
+  opts: RevParseWithDeps,
+  dir: string,
+  oid: string,
+  step: RevStep,
+): Promise<string> {
+  const { commit } = await opts.git.readCommit({ fs: opts.fs, dir, oid });
+  const parent = commit.parent[step.n - 1];
+  if (parent === undefined) {
+    throw new GitError(
+      "EREVPARSEFAIL",
+      `git rev-parse failed: ${oid.slice(0, 7)} has no parent ${step.n}`,
+    );
+  }
+  return parent;
 }
 
 // ---------------------------------------------------------------
