@@ -126,6 +126,21 @@ import {
   type StatusEntry,
   statusWith,
 } from "./status.js";
+import {
+  type BaseWorktreeOptions,
+  type CleanOptions,
+  cleanWith,
+  type IsomorphicGitCleanClient,
+  type IsomorphicGitResetClient,
+  type IsomorphicGitStashClient,
+  type ResetOptions,
+  resetWith,
+  type StashPopOptions,
+  type StashPushOptions,
+  stashListWith,
+  stashPopWith,
+  stashPushWith,
+} from "./worktree.js";
 
 export type { GitCliInput, GitCliResult } from "./cli.js";
 export type { GitCloneOptions, MessageCallback, ProgressCallback } from "./clone.js";
@@ -186,6 +201,13 @@ export type {
 } from "./refs.js";
 export type { GitAddOptions, GitRmOptions } from "./staging.js";
 export type { GitStatusOptions, StatusEntry } from "./status.js";
+export type {
+  BaseWorktreeOptions,
+  CleanOptions,
+  ResetOptions,
+  StashPopOptions,
+  StashPushOptions,
+} from "./worktree.js";
 
 /** Duck-typed workspace handle. Only `.provider()` is required. */
 export interface WorkspaceLike {
@@ -275,6 +297,16 @@ export interface GitClient {
   configGet(options: GitConfigGetOptions): Promise<string | string[] | undefined>;
   /** Write a single config key. */
   configSet(options: GitConfigSetOptions): Promise<void>;
+  /** Stash tracked working-tree changes. */
+  stashPush(options?: StashPushOptions): Promise<void>;
+  /** List stash entries, newest first. */
+  stashList(options?: BaseWorktreeOptions): Promise<string[]>;
+  /** Restore the latest stash entry. */
+  stashPop(options?: StashPopOptions): Promise<void>;
+  /** Unstage paths or hard-reset tracked files to a ref. */
+  reset(options?: ResetOptions): Promise<void>;
+  /** Remove untracked files (and directories with `directories`). */
+  clean(options?: CleanOptions): Promise<string[]>;
   /**
    * Argv-driven entry point. The worker-backend's `git` custom
    * command dispatches through this; in-process callers can use
@@ -615,6 +647,43 @@ export function createGitClient({
         ...options,
         fs: await fs(),
         git: await loadGit<IsomorphicGitPlumbingClient>(),
+      });
+    },
+    async stashPush(options = {}) {
+      return stashPushWith({
+        ...options,
+        fs: await fs(),
+        git: await loadGit<IsomorphicGitStashClient>(),
+      });
+    },
+    async stashList(options = {}) {
+      return stashListWith({
+        ...options,
+        fs: await fs(),
+        git: await loadGit<IsomorphicGitStashClient>(),
+      });
+    },
+    async stashPop(options = {}) {
+      return stashPopWith({
+        ...options,
+        fs: await fs(),
+        git: await loadGit<IsomorphicGitStashClient>(),
+      });
+    },
+    async reset(options = {}) {
+      return resetWith({
+        ...options,
+        fs: await fs(),
+        git: await loadGit<IsomorphicGitResetClient>(),
+        cache,
+      });
+    },
+    async clean(options = {}) {
+      return cleanWith({
+        ...options,
+        fs: await fs(),
+        git: await loadGit<IsomorphicGitCleanClient>(),
+        cache,
       });
     },
     async cli(input) {

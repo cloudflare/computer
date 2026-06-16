@@ -136,6 +136,12 @@ export async function runGitCli(
       return await runUpdateRef(client, rest, input);
     case "config":
       return await runConfig(client, rest, input);
+    case "stash":
+      return await runStash(client, rest, input);
+    case "reset":
+      return await runReset(client, rest, input);
+    case "clean":
+      return await runClean(client, rest, input);
     default:
       return {
         stdout: "",
@@ -158,6 +164,7 @@ function printHelp(): GitCliResult {
     "   branch        Create, delete, or list branches.",
     "   cat-file      Read raw bytes for an object by oid.",
     "   checkout      Move HEAD to a ref, or restore paths.",
+    "   clean         Remove untracked files from the working tree.",
     "   clone         Clone a remote repository into the workspace.",
     "   commit        Write the current index to a new commit.",
     "   config        Read or write a config key.",
@@ -172,9 +179,11 @@ function printHelp(): GitCliResult {
     "   pull          Fetch and merge in one step.",
     "   push          Push local refs to a remote.",
     "   remote        Manage configured remotes.",
+    "   reset         Unstage paths or hard-reset to a ref.",
     "   rev-parse     Resolve a ref to its SHA-1 oid.",
     "   rm            Unstage paths from the index.",
     "   show          Read a single commit.",
+    "   stash         Stash and restore working-tree changes.",
     "   status        Describe the working-tree / index / HEAD delta.",
     "   switch        Switch branches, or create one with -c.",
     "   symbolic-ref  Print the current branch name.",
@@ -682,6 +691,25 @@ async function runCommit(
  * git reads that as `-m` with the value `a`, and the generic
  * parser handles it.
  */
+/**
+ * Expand a cluster of single-char boolean short flags (`-fd` ->
+ * `-f -d`) when every character is in `chars`. Clusters with a
+ * character outside the set are left untouched for the generic
+ * parser to handle or reject. Only safe for flags that take no
+ * value.
+ */
+function expandShortBoolCluster(args: string[], chars: Set<string>): string[] {
+  const out: string[] = [];
+  for (const arg of args) {
+    if (/^-[a-z]{2,}$/i.test(arg) && [...arg.slice(1)].every((c) => chars.has(c))) {
+      for (const ch of arg.slice(1)) out.push(`-${ch}`);
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
 function expandCommitShortCluster(args: string[]): string[] {
   const out: string[] = [];
   for (const arg of args) {
@@ -1896,6 +1924,171 @@ async function runConfig(
     stderr: "git config: usage: git config [--get-all|--add|--unset] <key> [<value>]\n",
     exitCode: 129,
   };
+}
+
+// ---------------------------------------------------------------
+// stash
+// ---------------------------------------------------------------
+
+async function runStash(
+  client: GitClient,
+  args: string[],
+  input: GitCliInput,
+): Promise<GitCliResult> {
+  // `git stash [push [-m <msg>]] | list | pop`. A bare `git
+  // stash` is `push`, matching real git.
+  const [sub, ...rest] = args;
+  const op = sub ?? "push";
+  const dir = resolveDir(undefined, input.cwd);
+
+  switch (op) {
+    case "push": {
+      const parsed = parseFlags(rest, { message: { kind: "value", alias: ["m"] } });
+      if ("error" in parsed) {
+        return { stdout: "", stderr: `git stash: ${parsed.error}\n`, exitCode: 129 };
+      }
+      try {
+        await client.stashPush({ dir, message: parsed.flags.message as string | undefined });
+        return { stdout: "Saved working directory state\n", stderr: "", exitCode: 0 };
+      } catch (cause) {
+        return mapGitError("stash", cause);
+      }
+    }
+    case "list": {
+      try {
+        const entries = await client.stashList({ dir });
+        return {
+          stdout: entries.length === 0 ? "" : `${entries.join("\n")}\n`,
+          stderr: "",
+          exitCode: 0,
+        };
+      } catch (cause) {
+        return mapGitError("stash", cause);
+      }
+    }
+    case "pop": {
+      try {
+        await client.stashPop({ dir });
+        return { stdout: "", stderr: "", exitCode: 0 };
+      } catch (cause) {
+        return mapGitError("stash", cause);
+      }
+    }
+    default:
+      return {
+        stdout: "",
+        stderr: `git stash: unknown subcommand '${op}'\n`,
+        exitCode: 129,
+      };
+  }
+}
+
+// ---------------------------------------------------------------
+// reset
+// ---------------------------------------------------------------
+
+async function runReset(
+  client: GitClient,
+  args: string[],
+  input: GitCliInput,
+): Promise<GitCliResult> {
+  // `git reset [--hard] [<ref>] [-- <paths>...]`. Path reset
+  // unstages; `--hard` restores tracked files to the ref.
+  const parsed = parseFlags(args, {
+    hard: { kind: "bool" },
+    soft: { kind: "bool" },
+    mixed: { kind: "bool" },
+  });
+  if ("error" in parsed) {
+    return { stdout: "", stderr: `git reset: ${parsed.error}\n`, exitCode: 129 };
+  }
+  if (parsed.flags.soft === true) {
+    return { stdout: "", stderr: "git reset: --soft is not supported\n", exitCode: 129 };
+  }
+  const sep = args.indexOf("--");
+  const positional =
+    sep === -1 ? parsed.positional : args.slice(0, sep).filter((a) => !a.startsWith("-"));
+  const pathArgs = sep === -1 ? [] : args.slice(sep + 1);
+  const dir = resolveDir(undefined, input.cwd);
+  const hard = parsed.flags.hard === true;
+
+  // A leading positional that isn't after `--` is the ref; the
+  // rest (or everything after `--`) are paths.
+  let ref: string | undefined;
+  let paths = pathArgs;
+  if (sep === -1) {
+    // No `--`: a single positional is the ref for `--hard`, or a
+    // pathspec otherwise. Real git is context-sensitive here; for
+    // the supported subset we treat positionals as the ref when
+    // `--hard`, else as paths.
+    if (hard) {
+      ref = positional[0];
+    } else {
+      paths = positional;
+    }
+  } else {
+    ref = positional[0];
+  }
+
+  try {
+    const resolvedRef = await resolveRevisionRef(client, dir, ref);
+    await client.reset({
+      dir,
+      hard,
+      ref: resolvedRef,
+      paths: paths.length > 0 ? paths : undefined,
+    });
+    return { stdout: "", stderr: "", exitCode: 0 };
+  } catch (cause) {
+    return mapGitError("reset", cause);
+  }
+}
+
+// ---------------------------------------------------------------
+// clean
+// ---------------------------------------------------------------
+
+async function runClean(
+  client: GitClient,
+  args: string[],
+  input: GitCliInput,
+): Promise<GitCliResult> {
+  // `git clean -f [-d] [-n|--dry-run]`. Real git refuses to act
+  // without `-f`; mirror that so a bare `git clean` is a no-op
+  // error rather than a destructive surprise. The flags are all
+  // boolean, so expand any combined short cluster (`-fd`, `-fdn`)
+  // into separate tokens before parsing.
+  const expanded = expandShortBoolCluster(args, new Set(["f", "d", "n"]));
+  const parsed = parseFlags(expanded, {
+    force: { kind: "bool", alias: ["f"] },
+    d: { kind: "bool" },
+    "dry-run": { kind: "bool", alias: ["n"] },
+  });
+  if ("error" in parsed) {
+    return { stdout: "", stderr: `git clean: ${parsed.error}\n`, exitCode: 129 };
+  }
+  const dryRun = parsed.flags["dry-run"] === true;
+  if (parsed.flags.force !== true && !dryRun) {
+    return {
+      stdout: "",
+      stderr: "git clean: refusing to clean without -f (or use -n to preview)\n",
+      exitCode: 129,
+    };
+  }
+  const dir = resolveDir(undefined, input.cwd);
+  try {
+    const removed = await client.clean({
+      dir,
+      directories: parsed.flags.d === true,
+      dryRun,
+    });
+    if (removed.length === 0) return { stdout: "", stderr: "", exitCode: 0 };
+    const verb = dryRun ? "Would remove" : "Removing";
+    const lines = removed.map((p) => `${verb} ${p}`);
+    return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+  } catch (cause) {
+    return mapGitError("clean", cause);
+  }
 }
 
 // ---------------------------------------------------------------

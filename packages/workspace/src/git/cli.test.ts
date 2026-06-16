@@ -114,6 +114,11 @@ interface FakeCalls {
   updateRef: GitUpdateRefOptions[];
   configGet: GitConfigGetOptions[];
   configSet: GitConfigSetOptions[];
+  stashPush: import("./worktree.js").StashPushOptions[];
+  stashList: import("./worktree.js").BaseWorktreeOptions[];
+  stashPop: import("./worktree.js").StashPopOptions[];
+  reset: import("./worktree.js").ResetOptions[];
+  clean: import("./worktree.js").CleanOptions[];
 }
 
 function fakeClient(
@@ -137,6 +142,8 @@ function fakeClient(
     hashObject?: () => string;
     catFile?: () => CatFileResult;
     configGet?: () => string | string[] | undefined;
+    stashList?: () => string[];
+    clean?: () => string[];
   } = {},
 ): {
   client: GitClient;
@@ -177,6 +184,11 @@ function fakeClient(
     updateRef: [],
     configGet: [],
     configSet: [],
+    stashPush: [],
+    stashList: [],
+    stashPop: [],
+    reset: [],
+    clean: [],
   };
   const client: GitClient = {
     async clone(options) {
@@ -314,6 +326,23 @@ function fakeClient(
     },
     async configSet(options) {
       calls.configSet.push(options);
+    },
+    async stashPush(options = {}) {
+      calls.stashPush.push(options);
+    },
+    async stashList(options = {}) {
+      calls.stashList.push(options);
+      return fakes.stashList?.() ?? [];
+    },
+    async stashPop(options = {}) {
+      calls.stashPop.push(options);
+    },
+    async reset(options = {}) {
+      calls.reset.push(options);
+    },
+    async clean(options = {}) {
+      calls.clean.push(options);
+      return fakes.clean?.() ?? [];
     },
     async cli() {
       throw new Error("not reached in these tests");
@@ -1787,6 +1816,109 @@ describe("runGitCli — config", () => {
     const { client, calls } = fakeClient();
     await runGitCli(client, { argv: ["config", "--unset", "user.email"] });
     expect(calls.configSet[0].value).toBeUndefined();
+  });
+});
+
+describe("runGitCli — stash argv parsing", () => {
+  it("bare stash is a push", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["stash"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.stashPush).toEqual([{ dir: "/r", message: undefined }]);
+  });
+
+  it("stash push -m forwards the message", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["stash", "push", "-m", "wip"], cwd: "/r" });
+    expect(calls.stashPush[0]).toMatchObject({ dir: "/r", message: "wip" });
+  });
+
+  it("stash list prints entries", async () => {
+    const { client } = fakeClient({}, { stashList: () => ["stash@{0}: wip"] });
+    const res = await runGitCli(client, { argv: ["stash", "list"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("stash@{0}: wip\n");
+  });
+
+  it("stash list with no entries prints nothing", async () => {
+    const { client } = fakeClient({}, { stashList: () => [] });
+    const res = await runGitCli(client, { argv: ["stash", "list"] });
+    expect(res.stdout).toBe("");
+  });
+
+  it("stash pop restores the latest entry", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["stash", "pop"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.stashPop).toEqual([{ dir: "/r" }]);
+  });
+
+  it("unknown stash subcommand exits 129", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["stash", "bogus"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("unknown subcommand");
+  });
+});
+
+describe("runGitCli — reset argv parsing", () => {
+  it("path reset unstages the listed paths", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["reset", "--", "a.txt"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.reset[0]).toMatchObject({ dir: "/r", hard: false, paths: ["a.txt"] });
+  });
+
+  it("bare positionals without -- are treated as paths", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, { argv: ["reset", "a.txt", "b.txt"] });
+    expect(calls.reset[0]).toMatchObject({ paths: ["a.txt", "b.txt"], hard: false });
+  });
+
+  it("--hard with a ref hard-resets to it", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["reset", "--hard", "HEAD"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.reset[0]).toMatchObject({ dir: "/r", hard: true, ref: "HEAD" });
+  });
+
+  it("--hard resolves a revision suffix in the ref", async () => {
+    const { client, calls } = fakeClient({}, { revParse: () => "a".repeat(40) });
+    await runGitCli(client, { argv: ["reset", "--hard", "HEAD~1"] });
+    expect(calls.reset[0]).toMatchObject({ hard: true, ref: "a".repeat(40) });
+  });
+
+  it("--soft is rejected as unsupported", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["reset", "--soft", "HEAD"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("--soft is not supported");
+  });
+});
+
+describe("runGitCli — clean argv parsing", () => {
+  it("refuses to run without -f", async () => {
+    const { client, calls } = fakeClient();
+    const res = await runGitCli(client, { argv: ["clean"] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("refusing to clean without -f");
+    expect(calls.clean).toEqual([]);
+  });
+
+  it("-fd removes untracked files and directories", async () => {
+    const { client, calls } = fakeClient({}, { clean: () => ["build", "junk.txt"] });
+    const res = await runGitCli(client, { argv: ["clean", "-fd"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(calls.clean[0]).toMatchObject({ dir: "/r", directories: true, dryRun: false });
+    expect(res.stdout).toBe("Removing build\nRemoving junk.txt\n");
+  });
+
+  it("-n / --dry-run previews without -f", async () => {
+    const { client, calls } = fakeClient({}, { clean: () => ["junk.txt"] });
+    const res = await runGitCli(client, { argv: ["clean", "-n", "-d"] });
+    expect(res.exitCode).toBe(0);
+    expect(calls.clean[0]).toMatchObject({ dryRun: true, directories: true });
+    expect(res.stdout).toBe("Would remove junk.txt\n");
   });
 });
 
