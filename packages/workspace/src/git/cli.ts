@@ -226,7 +226,24 @@ async function runClone(
       exitCode: 1,
     };
   }
-  const dir = resolveDir(dirArg, input.cwd);
+  let dir: string;
+  if (dirArg !== undefined && dirArg !== "") {
+    dir = resolveDir(dirArg, input.cwd);
+  } else {
+    // Real git derives the destination from the last path segment
+    // of the URL when no positional <dir> is given, so `git clone
+    // https://host/owner/repo.git` lands in `./repo` rather than
+    // splattering the working tree into cwd.
+    const name = repoNameFromUrl(url);
+    if (name === undefined) {
+      return {
+        stdout: "",
+        stderr: `git clone: could not derive a directory name from '${url}'. Pass an explicit destination.\n`,
+        exitCode: 129,
+      };
+    }
+    dir = resolveDir(name, input.cwd);
+  }
 
   let depth: number | undefined;
   if (parsed.flags.depth !== undefined) {
@@ -1755,6 +1772,31 @@ function resolveDir(dirArg: string | undefined, cwd: string | undefined): string
 function joinPath(base: string, segment: string): string {
   if (base.endsWith("/")) return `${base}${segment}`;
   return `${base}/${segment}`;
+}
+
+/**
+ * Derive the default clone directory name from a repository URL,
+ * mirroring real git: take the last non-empty path segment and
+ * strip a trailing `.git`. Returns `undefined` when no usable
+ * name can be extracted (e.g. the URL ends in a bare host or a
+ * slash), so the caller can demand an explicit destination.
+ */
+function repoNameFromUrl(url: string): string | undefined {
+  // Trim a query/fragment and trailing slashes before splitting.
+  let s = url.split(/[?#]/, 1)[0];
+  while (s.endsWith("/")) s = s.slice(0, -1);
+  // Drop the scheme + authority so a host with no path doesn't
+  // yield the host name as a repo name.
+  const schemeEnd = s.indexOf("://");
+  const afterScheme = schemeEnd === -1 ? s : s.slice(schemeEnd + 3);
+  const firstSlash = afterScheme.indexOf("/");
+  if (firstSlash === -1) return undefined;
+  const path = afterScheme.slice(firstSlash + 1);
+  const segment = path.split("/").pop();
+  if (segment === undefined || segment === "") return undefined;
+  const name = segment.endsWith(".git") ? segment.slice(0, -4) : segment;
+  if (name === "" || name === "." || name === "..") return undefined;
+  return name;
 }
 
 function isSupportedRemoteUrl(url: string): boolean {

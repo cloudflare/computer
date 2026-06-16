@@ -341,24 +341,61 @@ describe("runGitCli — dispatch", () => {
 });
 
 describe("runGitCli — clone argv parsing", () => {
-  it("forwards a bare URL with default options", async () => {
+  it("forwards a bare URL, deriving the dir from the URL basename", async () => {
     const { client, calls } = fakeClient();
     const res = await runGitCli(client, {
       argv: ["clone", "https://example.test/r.git"],
       cwd: "/work",
     });
     expect(res.exitCode).toBe(0);
-    expect(res.stdout).toContain("Cloning into '/work'");
+    expect(res.stdout).toContain("Cloning into '/work/r'");
     expect(calls.clone).toEqual([
       {
         url: "https://example.test/r.git",
-        dir: "/work",
+        dir: "/work/r",
         ref: undefined,
         depth: undefined,
         singleBranch: undefined,
         noTags: undefined,
       },
     ]);
+  });
+
+  it("derives the dir from the URL basename, stripping a .git suffix", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["clone", "https://github.com/cloudflare/workspace"],
+      cwd: "/workspace",
+    });
+    expect(calls.clone[0].dir).toBe("/workspace/workspace");
+  });
+
+  it("derives the dir from a URL with a trailing slash", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["clone", "https://github.com/cloudflare/workspace/"],
+      cwd: "/workspace",
+    });
+    expect(calls.clone[0].dir).toBe("/workspace/workspace");
+  });
+
+  it("prefers an explicit destination over the derived basename", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["clone", "https://github.com/cloudflare/workspace", "/dst/cf-workspace"],
+      cwd: "/work",
+    });
+    expect(calls.clone[0].dir).toBe("/dst/cf-workspace");
+  });
+
+  it("rejects a URL whose basename cannot produce a safe dir", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, {
+      argv: ["clone", "https://example.test/"],
+      cwd: "/work",
+    });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toContain("could not derive");
   });
 
   it("forwards --depth, --branch (-b), --single-branch, --no-tags", async () => {
