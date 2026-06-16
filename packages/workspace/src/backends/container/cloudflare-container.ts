@@ -342,9 +342,11 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   ): Promise<void> {
     const maxAttempts = this.#options.restartAttempts + 1;
     // Split the remaining time across attempts so a failing
-    // first attempt doesn't starve the restart-retry.
+    // first attempt doesn't starve the restart-retry. Floor at
+    // 250ms so a near-deadline last attempt still has room to
+    // dispatch a probe rather than collapsing to ~1ms.
     const totalBudget = Math.max(0, deadline - Date.now());
-    const perAttemptBudget = Math.max(1, Math.floor(totalBudget / maxAttempts));
+    const perAttemptBudget = Math.max(250, Math.floor(totalBudget / maxAttempts));
     let attempt = 0;
     let restarts = 0;
     let lastError: unknown;

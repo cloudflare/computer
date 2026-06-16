@@ -110,7 +110,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       calls.push({ name: "exitInfo", args: [] });
       return state.exit;
     },
-  } as IWorkspaceContainerAPI;
+  } satisfies IWorkspaceContainerAPI;
   return state;
 }
 
