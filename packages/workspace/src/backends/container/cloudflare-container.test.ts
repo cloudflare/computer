@@ -16,7 +16,13 @@ import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 
 interface FakeHostOptions {
   healthy?: boolean;
+  // Health probe sequence: each connect() reads from the head of
+  // this array. true = answer 200, false = throw "connection
+  // refused". A single `healthy` flag still works for tests that
+  // don't care about transitions.
+  healthSequence?: boolean[];
   connectStatus?: number;
+  restart?: () => Promise<void>;
 }
 
 interface FakeHost {
@@ -25,18 +31,28 @@ interface FakeHost {
   startEnv?: Record<string, string>;
   interceptedHost?: string;
   interceptedWorkspace?: WorkspaceRef;
+  running: boolean;
 }
 
 function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
-  const healthy = opts.healthy ?? true;
+  const healthSequence = opts.healthSequence?.slice();
+  const defaultHealthy = opts.healthy ?? true;
   const connectStatus = opts.connectStatus ?? 200;
   const calls: { name: string; args: unknown[] }[] = [];
-  const state: FakeHost = { calls } as FakeHost;
+  const state: FakeHost = { calls, running: false } as FakeHost;
+
+  function nextHealthy(): boolean {
+    if (healthSequence && healthSequence.length > 0) {
+      return healthSequence.shift() ?? defaultHealthy;
+    }
+    return defaultHealthy;
+  }
 
   state.host = {
     async start(env) {
       calls.push({ name: "start", args: [env] });
       state.startEnv = env;
+      state.running = true;
     },
     async interceptOutboundHttp(host, ref) {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
@@ -48,7 +64,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       const url = new URL(request.url);
       calls.push({ name: "fetchPort", args: [port, url.pathname, request.method] });
       if (url.pathname === "/health") {
-        if (!healthy) throw new Error("connection refused");
+        if (!nextHealthy()) throw new Error("connection refused");
         return new Response(null, { status: 200 });
       }
       if (url.pathname === "/connect") {
@@ -62,7 +78,18 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
     port() {
       throw new Error("cross-boundary Fetchers should not be used by CloudflareContainerBackend");
     },
-  };
+    async restart(env) {
+      calls.push({ name: "restart", args: [env] });
+      if (opts.restart) {
+        await opts.restart();
+      }
+      state.running = true;
+    },
+    async status() {
+      calls.push({ name: "status", args: [] });
+      return { running: state.running };
+    },
+  } as IWorkspaceContainerAPI;
   return state;
 }
 
@@ -75,9 +102,10 @@ describe("CloudflareContainerBackend", () => {
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
+      restartAttempts: 0,
     });
 
-    await expect(backend.connect()).rejects.toThrow(/container port 8080 did not open/);
+    await expect(backend.connect()).rejects.toThrow(/stage=health.*port=8080/);
 
     const names = fake.calls.map((c) => c.name);
     expect(names).toContain("start");
@@ -183,5 +211,76 @@ describe("CloudflareContainerBackend", () => {
     });
     const res = await backend.handleFetch(new Request("http://workspace.internal/ws"));
     expect(res.status).toBe(426);
+  });
+
+  test("connect() restarts the host when initial readiness fails and recovers", async () => {
+    // First attempt drains all probes as failures; restart() runs;
+    // the second attempt's very first probe answers healthy.
+    // connect() still fails at the /ws upgrade (no WebSocketPair
+    // under node) — the point is that readiness recovered after
+    // restart and we reached the /connect POST and /ws upgrade.
+    const fake = makeFakeHost({
+      healthSequence: [
+        // First attempt — enough failures to exhaust the budget.
+        false,
+        false,
+        false,
+        false,
+        false,
+        // Restart, then second attempt: first probe is healthy.
+        true,
+      ],
+    });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 2000,
+      restartAttempts: 1,
+    });
+    await expect(backend.connect()).rejects.toThrow(/stage=ws/);
+    const names = fake.calls.map((c) => c.name);
+    expect(names.filter((n) => n === "start")).toHaveLength(1);
+    expect(names.filter((n) => n === "restart")).toHaveLength(1);
+    // /connect was reached after restart succeeded.
+    const paths = fake.calls.filter((c) => c.name === "fetchPort").map((c) => c.args[1] as string);
+    expect(paths).toContain("/connect");
+  });
+
+  test("connect() surfaces stage='health' when readiness exhausts all attempts", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 800,
+      restartAttempts: 1,
+    });
+    const err = await backend.connect().then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(err).toBeDefined();
+    const msg = String(err);
+    expect(msg).toMatch(/stage=health/);
+    expect(msg).toMatch(/attempts?=2/);
+    expect(msg).toMatch(/port=8080/);
+    // restart was attempted before giving up.
+    expect(fake.calls.some((c) => c.name === "restart")).toBe(true);
+  });
+
+  test("connect() reports stage='health' when restartAttempts=0 and probe never succeeds", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+      restartAttempts: 0,
+    });
+    const err = await backend.connect().then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(String(err)).toMatch(/stage=health/);
+    // No restart attempt.
+    expect(fake.calls.some((c) => c.name === "restart")).toBe(false);
   });
 });

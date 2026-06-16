@@ -101,6 +101,27 @@ export interface CloudflareContainerBackendOptions {
   // timers warm. Default 20_000ms. Set 0 to disable.
   heartbeatIntervalMs?: number;
 
+  // Number of forced restart attempts after startup readiness
+  // fails. The first attempt runs host.start() then probes wsd;
+  // each restart attempt runs host.restart() then probes wsd
+  // again. Defaults to 1 (one restart after the initial start).
+  // Set 0 to disable restart on failed readiness.
+  restartAttempts?: number;
+
+  // Per-probe timeout for the startup health probe. Defaults to
+  // 2 seconds. The shared probeWsdHealth helper aborts the request
+  // when it elapses; the next probe in the loop carries the
+  // remaining readiness budget.
+  healthProbeTimeoutMs?: number;
+
+  // First retry delay after a failed startup probe. Defaults to
+  // 250ms. Subsequent failures double the prior delay, capped at
+  // healthRetryMaxDelayMs.
+  healthRetryInitialDelayMs?: number;
+
+  // Maximum delay between failed startup probes. Defaults to 2s.
+  healthRetryMaxDelayMs?: number;
+
   // Selector this backend is registered under in Workspace.
   // Defaults to "cloudflare-container"; override when the
   // workspace hosts more than one instance of the same backend
@@ -112,6 +133,10 @@ const DEFAULT_EGRESS_HOST = "workspace.internal";
 const DEFAULT_CONTAINER_PORT = 8080;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
+const DEFAULT_RESTART_ATTEMPTS = 1;
+const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
+const DEFAULT_HEALTH_RETRY_INITIAL_DELAY_MS = 250;
+const DEFAULT_HEALTH_RETRY_MAX_DELAY_MS = 2_000;
 
 export class CloudflareContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
@@ -142,6 +167,11 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       containerPort: options.containerPort ?? DEFAULT_CONTAINER_PORT,
       connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       heartbeatIntervalMs: options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+      restartAttempts: options.restartAttempts ?? DEFAULT_RESTART_ATTEMPTS,
+      healthProbeTimeoutMs: options.healthProbeTimeoutMs ?? DEFAULT_HEALTH_PROBE_TIMEOUT_MS,
+      healthRetryInitialDelayMs:
+        options.healthRetryInitialDelayMs ?? DEFAULT_HEALTH_RETRY_INITIAL_DELAY_MS,
+      healthRetryMaxDelayMs: options.healthRetryMaxDelayMs ?? DEFAULT_HEALTH_RETRY_MAX_DELAY_MS,
     };
   }
 
@@ -152,11 +182,12 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     const holder = await this.#options.container();
     const host = await holder.getWorkspaceContainer();
 
-    await host.start({
+    const env = {
       PORT: String(this.#options.containerPort),
       MOUNT_POINT: "/workspace",
       ...this.#options.containerEnv,
-    });
+    };
+    await host.start(env);
     await host.interceptOutboundHttp(this.#options.egressHost, this.#options.workspace);
 
     // Arm the upgrade promise before posting /connect — wsd
@@ -164,7 +195,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     // the upgrade can arrive before the POST resolves.
     this.#armUpgrade();
 
-    await this.#waitForPort(host, deadline);
+    await this.#readyWithRestarts(host, env, deadline);
     await this.#postConnect(host, deadline);
     const ws = await this.#waitForUpgrade(deadline);
 
@@ -290,25 +321,105 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     this.#rejectUpgrade = undefined;
   }
 
-  async #waitForPort(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+  // Drive startup readiness with bounded restart attempts. Each
+  // attempt runs the shared probe in a backoff loop until either
+  // wsd answers, the per-attempt budget elapses, or the overall
+  // connect deadline elapses. On a failed attempt with restarts
+  // remaining, run host.restart(env) and try again.
+  async #readyWithRestarts(
+    host: IWorkspaceContainerAPI,
+    env: Record<string, string>,
+    deadline: number,
+  ): Promise<void> {
+    const maxAttempts = this.#options.restartAttempts + 1;
+    // Split the remaining time across attempts so a failing
+    // first attempt doesn't starve the restart-retry.
+    const totalBudget = Math.max(0, deadline - Date.now());
+    const perAttemptBudget = Math.max(1, Math.floor(totalBudget / maxAttempts));
+    let attempt = 0;
+    let restarts = 0;
+    let lastError: unknown;
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      const attemptDeadline = Math.min(deadline, Date.now() + perAttemptBudget);
+      const ok = await this.#probeUntilHealthy(host, attemptDeadline).then(
+        () => true,
+        (error) => {
+          lastError = error;
+          return false;
+        },
+      );
+      if (ok) return;
+
+      if (attempt < maxAttempts) {
+        try {
+          await host.restart(env);
+          restarts++;
+        } catch (error) {
+          this.#rejectUpgrade?.(error);
+          this.#clearUpgrade();
+          throw new Error(
+            this.#formatStageError("restart", {
+              attempt,
+              maxAttempts,
+              restarts,
+              lastError: error,
+            }),
+            { cause: error },
+          );
+        }
+      }
+    }
+
+    this.#rejectUpgrade?.(new Error("wsd never became healthy"));
+    this.#clearUpgrade();
+    throw new Error(
+      this.#formatStageError("health", {
+        attempt,
+        maxAttempts,
+        restarts,
+        lastError,
+      }),
+      lastError instanceof Error ? { cause: lastError } : undefined,
+    );
+  }
+
+  async #probeUntilHealthy(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+    let delay = this.#options.healthRetryInitialDelayMs;
     let lastError: unknown;
     while (Date.now() < deadline) {
       try {
         await probeWsdHealth(host, {
           port: this.#options.containerPort,
           path: "/health",
-          timeoutMs: Math.min(2_000, Math.max(250, deadline - Date.now())),
+          timeoutMs: Math.min(
+            this.#options.healthProbeTimeoutMs,
+            Math.max(50, deadline - Date.now()),
+          ),
         });
         return;
       } catch (error) {
         lastError = error;
-        await sleep(250);
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        await sleep(Math.min(delay, remaining));
+        delay = Math.min(delay * 2, this.#options.healthRetryMaxDelayMs);
       }
     }
-    this.#rejectUpgrade?.(new Error("port did not open"));
-    this.#clearUpgrade();
-    throw new Error(
-      `CloudflareContainerBackend: container port ${this.#options.containerPort} did not open: ${describeError(lastError)}`,
+    throw lastError ?? new Error("wsd health probe timed out");
+  }
+
+  #formatStageError(
+    stage: "start" | "health" | "restart" | "connect" | "ws",
+    info: { attempt: number; maxAttempts: number; restarts: number; lastError: unknown },
+  ): string {
+    return (
+      `CloudflareContainerBackend(${this.id}): connect failed at ` +
+      `stage=${stage} port=${this.#options.containerPort} ` +
+      `attempt=${info.attempt}/${info.maxAttempts} restarts=${info.restarts} ` +
+      `timeoutMs=${this.#options.connectTimeoutMs} ` +
+      `lastError=${describeError(info.lastError)}`
     );
   }
 
@@ -327,13 +438,18 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     } catch (error) {
       this.#rejectUpgrade?.(error);
       this.#clearUpgrade();
-      throw new Error(`CloudflareContainerBackend: POST /connect failed: ${describeError(error)}`);
+      throw new Error(
+        `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect failed: ${describeError(error)}`,
+        { cause: error },
+      );
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       this.#rejectUpgrade?.(new Error(`/connect ${res.status}`));
       this.#clearUpgrade();
-      throw new Error(`CloudflareContainerBackend: POST /connect returned ${res.status}: ${body}`);
+      throw new Error(
+        `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect returned ${res.status}: ${body}`,
+      );
     }
   }
 
@@ -351,7 +467,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
             () =>
               reject(
                 new Error(
-                  `CloudflareContainerBackend: /ws upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
+                  `CloudflareContainerBackend(${this.id}) [stage=ws]: /ws upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
                 ),
               ),
             remaining,

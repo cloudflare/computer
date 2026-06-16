@@ -35,8 +35,8 @@ export interface WorkspaceRef {
 // the `ws` accessor that withWorkspaceContainer installs.
 export interface IWorkspaceContainerAPI {
   // Idempotent start. Returns once the runtime has accepted the
-  // start command; readiness is verified by the backend polling
-  // /health via port().
+  // start command; readiness is verified by the backend through
+  // probeWsdHealth against port().
   start(env: Record<string, string>): Promise<void>;
 
   // Wire `host` → workspace inside the container's egress table.
@@ -53,6 +53,20 @@ export interface IWorkspaceContainerAPI {
   // Return a Fetcher bound to the named TCP port inside the
   // container for same-isolate callers and advanced integrations.
   port(port: number): Fetcher;
+
+  // Force a fresh container generation when startup readiness
+  // never opens or a lease-time health check has declared the
+  // current generation dead. Implementation: destroy() the
+  // container, then start({ env }). Callers bound the number of
+  // restart attempts — this method does no looping of its own.
+  restart(env: Record<string, string>): Promise<void>;
+
+  // Coarse diagnostic state. The `running` flag reports whether
+  // the platform still has a container instance attached; it does
+  // not prove that wsd is listening or responsive. Use
+  // probeWsdHealth for readiness; use status() only for logs and
+  // tracing.
+  status(): Promise<{ running: boolean }>;
 }
 
 // Concrete implementation. Extends RpcTarget so it travels intact
@@ -75,6 +89,18 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   async start(env: Record<string, string>) {
     if (this.#container.running) return;
     this.#container.start({ enableInternet: true, env });
+  }
+
+  async restart(env: Record<string, string>) {
+    // destroy() resolves once the platform has torn down the
+    // attached container. A subsequent start() launches a fresh
+    // generation — ports re-bind, the wsd daemon comes up clean.
+    await this.#container.destroy();
+    this.#container.start({ enableInternet: true, env });
+  }
+
+  async status() {
+    return { running: this.#container.running };
   }
 
   async interceptOutboundHttp(host: string, ref: WorkspaceRef) {
