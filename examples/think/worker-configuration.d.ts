@@ -3,6 +3,10 @@
 // Runtime types generated with workerd@1.20260529.1 2026-05-26 nodejs_compat
 interface __BaseEnv_Env {
 	R2_SKILLS: R2Bucket;
+	ASSETS: R2Bucket;
+	R2_ACCESS_KEY_ID?: string;
+	R2_SECRET_ACCESS_KEY?: string;
+	CLOUDFLARE_ACCOUNT_ID?: string;
 	LOADER: WorkerLoader;
 	AI: Ai;
 	TriageAgent: DurableObjectNamespace<import("./src/index").TriageAgent>;

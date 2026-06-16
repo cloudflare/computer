@@ -44,6 +44,14 @@
     {
       "binding": "R2_SKILLS",
       "bucket_name": "think-example-skills"
+    },
+    // Bucket the `share` tool uploads to. The presigner also needs
+    // R2 S3 credentials, set as secrets: R2_ACCESS_KEY_ID,
+    // R2_SECRET_ACCESS_KEY, and CLOUDFLARE_ACCOUNT_ID. Without
+    // them the agent runs fine but the `share` tool is omitted.
+    {
+      "binding": "ASSETS",
+      "bucket_name": "think-example-assets"
     }
   ],
 

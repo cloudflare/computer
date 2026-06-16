@@ -51,6 +51,7 @@ import {
   WorkspaceFileStore,
 } from "./tools/fs/index.js";
 import { createReportUpdateTool } from "./tools/report-update.js";
+import { createShareTool } from "./tools/share.js";
 
 // Re-export so the runtime can build loopback bindings the DO
 // uses: WorkspaceProxy carries container egress traffic back to
@@ -522,6 +523,20 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
         defaultBackend: "shell",
       }),
       report_update: createReportUpdateTool({ webhookUrl: ctx.webhookUrl }),
+      // Only offered when R2 S3 credentials are configured; the
+      // bucket binding alone can't mint the presigned URL the tool
+      // returns. Absent credentials, the agent simply has no share
+      // tool rather than one that fails on every call.
+      ...(this.env.R2_ACCESS_KEY_ID && this.env.R2_SECRET_ACCESS_KEY
+        ? {
+            share: createShareTool({
+              workspace: ws,
+              bucket: this.env.ASSETS,
+              s3Bucket: "think-example-assets",
+              env: this.env as unknown as Record<string, string | undefined>,
+            }),
+          }
+        : {}),
     };
   }
 
