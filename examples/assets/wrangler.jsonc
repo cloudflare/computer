@@ -1,0 +1,50 @@
+{
+  // Example: Worker + Durable Object that turns a prompt into an
+  // image with Workers AI, writes it into a Workspace, and returns
+  // a shareable link via @cloudflare/workspace/assets.
+  //
+  // Production-only. The presigner needs R2 S3 credentials set as
+  // secrets (see the README), and the image model runs on
+  // Cloudflare's network, so `wrangler dev` against a local stack
+  // won't produce a working link.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workspace-assets-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Workers AI binding used to run the text-to-image model.
+  "ai": {
+    "binding": "AI"
+  },
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AssetWorkspace",
+        "class_name": "AssetWorkspace"
+      }
+    ]
+  },
+
+  // R2 bucket the generated images are uploaded to. The same bucket
+  // name is passed to the assets client as ASSETS_BUCKET_NAME so the
+  // presigner can build the URL — the binding alone can't report it.
+  "r2_buckets": [
+    {
+      "binding": "ASSETS",
+      "bucket_name": "workspace-assets-example"
+    }
+  ],
+
+  "vars": {
+    "ASSETS_BUCKET_NAME": "workspace-assets-example"
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AssetWorkspace"]
+    }
+  ]
+}
