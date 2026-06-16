@@ -64,7 +64,49 @@ describe("commitWith identity resolution", () => {
     expect(head.author).toMatchObject({ name: "Bob", email: "b@x" });
   });
 
-  it("falls back to defaultIdentity when env is absent", async () => {
+  it("reads user.name / user.email from local config when env is absent", async () => {
+    await init();
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.name", value: "Config User" });
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.email", value: "cfg@x" });
+    await stage("a.txt", "hi\n");
+    await commitWith({ git: isogit, fs: memfs, dir: DIR, message: "init" });
+    const head = await readHead();
+    expect(head.author).toMatchObject({ name: "Config User", email: "cfg@x" });
+  });
+
+  it("prefers env over local config", async () => {
+    await init();
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.name", value: "Config User" });
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.email", value: "cfg@x" });
+    await stage("a.txt", "hi\n");
+    await commitWith({
+      git: isogit,
+      fs: memfs,
+      dir: DIR,
+      message: "init",
+      env: { GIT_AUTHOR_NAME: "Env User", GIT_AUTHOR_EMAIL: "env@x" },
+    });
+    const head = await readHead();
+    expect(head.author).toMatchObject({ name: "Env User", email: "env@x" });
+  });
+
+  it("prefers local config over defaultIdentity", async () => {
+    await init();
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.name", value: "Config User" });
+    await git.setConfig({ fs: memfs, dir: DIR, path: "user.email", value: "cfg@x" });
+    await stage("a.txt", "hi\n");
+    await commitWith({
+      git: isogit,
+      fs: memfs,
+      dir: DIR,
+      message: "init",
+      defaultIdentity: { name: "Default", email: "d@x" },
+    });
+    const head = await readHead();
+    expect(head.author).toMatchObject({ name: "Config User", email: "cfg@x" });
+  });
+
+  it("falls back to defaultIdentity when env and config are absent", async () => {
     await init();
     await stage("a.txt", "hi\n");
     await commitWith({
