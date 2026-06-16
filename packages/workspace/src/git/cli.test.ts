@@ -903,6 +903,28 @@ describe("runGitCli — show / rev-parse / symbolic-ref", () => {
     expect(res.stderr).toContain("missing <ref>");
   });
 
+  it("rev-parse --abbrev-ref HEAD prints the current branch", async () => {
+    const { client, calls } = fakeClient({}, { currentBranch: () => "main" });
+    const res = await runGitCli(client, {
+      argv: ["rev-parse", "--abbrev-ref", "HEAD"],
+      cwd: "/r",
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("main\n");
+    expect(calls.currentBranch[0]).toMatchObject({ dir: "/r" });
+    expect(calls.revParse).toEqual([]);
+  });
+
+  it("rev-parse --abbrev-ref on detached HEAD falls back to the oid", async () => {
+    const { client } = fakeClient(
+      {},
+      { currentBranch: () => undefined, revParse: () => "c".repeat(40) },
+    );
+    const res = await runGitCli(client, { argv: ["rev-parse", "--abbrev-ref", "HEAD"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe(`${"c".repeat(40)}\n`);
+  });
+
   it("symbolic-ref HEAD prints the full ref by default", async () => {
     const { client, calls } = fakeClient({}, { currentBranch: () => "refs/heads/main" });
     const res = await runGitCli(client, { argv: ["symbolic-ref", "HEAD"] });
@@ -1034,6 +1056,22 @@ describe("runGitCli — branch argv parsing", () => {
     const { client, calls } = fakeClient();
     await runGitCli(client, { argv: ["branch", "--force", "feature", "v1"] });
     expect(calls.branch[0].force).toBe(true);
+  });
+
+  it("branch --show-current prints the current branch", async () => {
+    const { client, calls } = fakeClient({}, { currentBranch: () => "main" });
+    const res = await runGitCli(client, { argv: ["branch", "--show-current"], cwd: "/r" });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("main\n");
+    expect(calls.currentBranch[0]).toMatchObject({ dir: "/r" });
+    expect(calls.branchList).toEqual([]);
+  });
+
+  it("branch --show-current prints nothing on detached HEAD", async () => {
+    const { client } = fakeClient({}, { currentBranch: () => undefined });
+    const res = await runGitCli(client, { argv: ["branch", "--show-current"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("");
   });
 });
 

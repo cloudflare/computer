@@ -705,7 +705,9 @@ async function runRevParse(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  const parsed = parseFlags(args, {});
+  const parsed = parseFlags(args, {
+    "abbrev-ref": { kind: "bool" },
+  });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git rev-parse: ${parsed.error}\n`, exitCode: 129 };
   }
@@ -720,8 +722,28 @@ async function runRevParse(
     };
   }
   const dir = resolveDir(undefined, input.cwd);
+  const ref = parsed.positional[0];
+
+  if (parsed.flags["abbrev-ref"] === true) {
+    // `--abbrev-ref HEAD` prints the symbolic branch name. On
+    // detached HEAD real git falls back to printing the resolved
+    // oid, so mirror that rather than erroring.
+    try {
+      if (ref === "HEAD") {
+        const current = await client.currentBranch({ dir });
+        if (current !== undefined) {
+          return { stdout: `${current}\n`, stderr: "", exitCode: 0 };
+        }
+      }
+      const oid = await client.revParse({ dir, ref });
+      return { stdout: `${oid}\n`, stderr: "", exitCode: 0 };
+    } catch (cause) {
+      return mapGitError("rev-parse", cause);
+    }
+  }
+
   try {
-    const oid = await client.revParse({ dir, ref: parsed.positional[0] });
+    const oid = await client.revParse({ dir, ref });
     return { stdout: `${oid}\n`, stderr: "", exitCode: 0 };
   } catch (cause) {
     return mapGitError("rev-parse", cause);
@@ -864,6 +886,7 @@ async function runBranch(
     D: { kind: "bool" },
     delete: { kind: "bool" },
     force: { kind: "bool", alias: ["f"] },
+    "show-current": { kind: "bool" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git branch: ${parsed.error}\n`, exitCode: 129 };
@@ -871,6 +894,17 @@ async function runBranch(
   const wantDelete =
     parsed.flags.d === true || parsed.flags.D === true || parsed.flags.delete === true;
   const dir = resolveDir(undefined, input.cwd);
+
+  if (parsed.flags["show-current"] === true) {
+    // Print the checked-out branch name, or nothing on detached
+    // HEAD — matching real git's `branch --show-current`.
+    try {
+      const current = await client.currentBranch({ dir });
+      return { stdout: current ? `${current}\n` : "", stderr: "", exitCode: 0 };
+    } catch (cause) {
+      return mapGitError("branch", cause);
+    }
+  }
 
   if (wantDelete) {
     if (parsed.positional.length === 0) {
