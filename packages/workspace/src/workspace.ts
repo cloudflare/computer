@@ -86,6 +86,7 @@ export class Workspace {
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
+  readonly #sessionId: string;
   readonly #defaultGitIdentity: GitIdentity | undefined;
   // Lazily-constructed git client, cached so the dynamic
   // imports of isomorphic-git / diff land once per Workspace.
@@ -114,6 +115,7 @@ export class Workspace {
 
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
+    this.#sessionId = options.sessionId ?? "";
     this.#defaultGitIdentity = options.defaultGitIdentity;
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
@@ -188,6 +190,14 @@ export class Workspace {
   // also rejected (and surfaced via Workspace.pull's skipped[]).
   get fs(): WorkspaceFilesystem {
     return this.#fs;
+  }
+
+  // Identifier for this workspace / session, as passed to the
+  // constructor. Empty string when the caller did not supply one.
+  // Forwarded to mount factories and used by the assets module to
+  // tag shared objects with their originating session.
+  get sessionId(): string {
+    return this.#sessionId;
   }
 
   // Git facade. Available immediately and does not require a
