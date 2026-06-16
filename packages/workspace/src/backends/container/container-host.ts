@@ -105,20 +105,22 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   }
 
   async start(env: Record<string, string>) {
-    // If the previous generation died but the runtime still has a
-    // container attached, treat the prior exit as a signal to wipe
-    // the carcass before re-starting. The new generation gets a
-    // clean monitor().
-    const prior = containerExitInfo(this.#ctx);
-    if (prior !== null) {
+    // If a prior generation has died, commit to a fresh one: the
+    // destroy clears any platform-side carcass, and the start that
+    // follows is unconditional. We cannot rely on
+    // this.#container.running to flip to false synchronously after
+    // destroy resolves, so guarding the start against it would let
+    // a stale-running flag skip the re-launch entirely.
+    const priorExit = containerExitInfo(this.#ctx);
+    if (priorExit !== null) {
       try {
         await destroyContainerExpectingExit(this.#ctx, this.#container);
       } catch {
         // best-effort — the next start() will surface any real
         // platform-side failure.
       }
-    }
-    if (!this.#container.running) {
+      this.#container.start({ enableInternet: true, env });
+    } else if (!this.#container.running) {
       this.#container.start({ enableInternet: true, env });
     }
     armContainerMonitor(this.#ctx, this.#container);

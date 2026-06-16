@@ -19,26 +19,31 @@ export interface ContainerExitInfo {
 
 interface ContainerLifecycleState {
   // Populated when the in-flight monitor() resolves or rejects.
+  // Only the monitor whose generation matches `currentGeneration`
+  // is allowed to write here — a stale handler from a previous
+  // generation must not poison the fresh one's exit state.
   exit: ContainerExitInfo | null;
-  // The monitor() promise we attached to the current container
-  // generation. null between generations and before the first
-  // start().
-  monitorArmed: Container | null;
-  // Set just before our own destroy() so the monitor handler
-  // records the exit as intentional and logs at info, not warn.
-  expectingExit: boolean;
+  // Monotonically incremented every time a new monitor is armed.
+  // The armContainerMonitor closure captures the value at arm
+  // time so a late-resolving old monitor can detect that it has
+  // been superseded.
+  currentGeneration: number;
+  // The generation whose monitor is expected to terminate — set
+  // by destroyContainerExpectingExit just before the destroy call.
+  // The monitor handler reads this and, if it matches its own
+  // generation, logs the exit as intentional. Storing the
+  // generation (not a boolean) means a later spurious clear can
+  // never affect the current generation, and a flag set against
+  // generation N cannot leak into generation N+1.
+  expectedExitGeneration: number | null;
 }
-
-// Wrapper type so the test stand-in can be plain object literals
-// without needing the full Container interface to type-check.
-type Container = ContainerHandle;
 
 const LIFECYCLE = new WeakMap<DurableObjectState, ContainerLifecycleState>();
 
 export function getContainerLifecycle(ctx: DurableObjectState): ContainerLifecycleState {
   let state = LIFECYCLE.get(ctx);
   if (state === undefined) {
-    state = { exit: null, monitorArmed: null, expectingExit: false };
+    state = { exit: null, currentGeneration: 0, expectedExitGeneration: null };
     LIFECYCLE.set(ctx, state);
   }
   return state;
@@ -55,47 +60,55 @@ export function formatExitReason(error: unknown): string {
 }
 
 // Arm a monitor() for the currently-attached container generation.
-// Idempotent: a second call for the same generation is a no-op so
-// callers can invoke this on every start() without double-attaching.
+// Every call bumps the generation counter and attaches a fresh
+// .then handler. The handler captures its generation at arm time
+// so a stale monitor that resolves late cannot overwrite a newer
+// generation's exit state.
 //
-// The monitor handler records exit info, logs once, and clears the
-// armed reference so the next start() can re-arm. Both branches
-// (resolve, reject) feed into the same recorder.
-export function armContainerMonitor(ctx: DurableObjectState, container: Container): void {
+// The expected-or-not classification is taken from the live
+// `expectedExitGeneration` slot when the handler runs, which is
+// what destroyContainerExpectingExit writes — reading the slot
+// (not a closure snapshot) lets a destroy() called *after* arm
+// still mark its own generation's exit as intentional.
+//
+// Callers (start, restart) sequence arming after a successful
+// container.start(); the platform contract is "one monitor per
+// generation". If a caller arms twice for the same generation,
+// the worst that happens is two handlers race to write the same
+// exit state — same value, same generation.
+export function armContainerMonitor(ctx: DurableObjectState, container: ContainerHandle): void {
   const state = getContainerLifecycle(ctx);
-  if (state.monitorArmed === container) return;
-  state.monitorArmed = container;
+  state.currentGeneration += 1;
+  const generation = state.currentGeneration;
   // Clear any prior exit info — a fresh generation has started.
   state.exit = null;
 
   const promise = container.monitor();
   promise.then(
-    () => recordExit(state, undefined),
-    (error) => recordExit(state, error),
+    () => recordExit(state, generation, undefined),
+    (error) => recordExit(state, generation, error),
   );
 }
 
-// Tear down the current container generation. Sets expectingExit
-// so the monitor handler logs the resulting exit as intentional.
-// Clears the flag in a finally so a failing destroy() does not
-// leave a stale flag that would mis-classify a later real crash.
+// Tear down the current container generation. Marks the current
+// generation as the one expected to terminate so the monitor
+// handler logs the resulting exit as intentional.
+//
+// The mark is keyed by generation, not by a global boolean, so a
+// destroy() that fires while a different generation is in flight
+// (e.g. a stale destroy attempt against a generation that has
+// already been replaced) cannot mark the wrong generation's exit
+// as intentional. The mark sticks until the next arm; if destroy
+// throws and a fresh generation never gets armed, the mark sits
+// against a generation that no longer matches `currentGeneration`
+// and any later real crash on the new generation logs as a crash.
 export async function destroyContainerExpectingExit(
   ctx: DurableObjectState,
-  container: Container,
+  container: ContainerHandle,
 ): Promise<void> {
   const state = getContainerLifecycle(ctx);
-  state.expectingExit = true;
-  try {
-    await container.destroy();
-  } finally {
-    // The monitor handler observes expectingExit synchronously the
-    // moment destroy() resolves the monitor promise. Clearing here
-    // races the handler — but the handler has already snapshotted
-    // the flag by the time it runs (recordExit reads expectingExit
-    // first), so clearing now is safe.
-    state.expectingExit = false;
-    state.monitorArmed = null;
-  }
+  state.expectedExitGeneration = state.currentGeneration;
+  await container.destroy();
 }
 
 // Reset state for a ctx. Test-only escape hatch; the production
@@ -104,8 +117,17 @@ export function resetContainerLifecycleForTests(ctx: DurableObjectState): void {
   LIFECYCLE.delete(ctx);
 }
 
-function recordExit(state: ContainerLifecycleState, error: unknown): void {
-  const expected = state.expectingExit;
+function recordExit(state: ContainerLifecycleState, generation: number, error: unknown): void {
+  // Drop late writes from superseded monitors. The state object is
+  // shared across generations; only the current one is allowed to
+  // mutate `exit`. Log nothing on a stale exit — the operator
+  // already saw the live generation's exit when it happened.
+  if (generation !== state.currentGeneration) return;
+  const expected = state.expectedExitGeneration === generation;
+  // Consume the expected mark so a later spurious monitor
+  // resolution (e.g. an idempotent arm against the same
+  // generation) does not double-claim the intentional log.
+  if (expected) state.expectedExitGeneration = null;
   const reason = formatExitReason(error);
   const exitedAt = Date.now();
   state.exit = { reason, exitedAt };

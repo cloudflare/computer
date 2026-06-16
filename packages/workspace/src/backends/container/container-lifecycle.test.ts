@@ -11,35 +11,49 @@ import {
 
 // Minimal Container stand-in. The lifecycle module only touches
 // .destroy(), .start(), .running, and .monitor(). A controllable
-// monitor() promise lets the tests drive the exit signal
-// deterministically.
+// per-generation monitor() promise lets the tests drive the exit
+// signal deterministically and aim it at a specific generation.
+//
+// `current` exposes the live generation's controls; `generations`
+// preserves the per-generation tuples so a test can fire the
+// first generation's reject AFTER the second generation has been
+// armed, simulating the platform's behavior when an old monitor's
+// settle frame arrives late.
+interface MonitorControls {
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  promise: Promise<void>;
+}
+
 function makeContainer(): {
   container: NonNullable<DurableObjectState["container"]>;
   starts: number;
   destroys: number;
   monitorCalls: number;
-  resolveMonitor: () => void;
-  rejectMonitor: (error: unknown) => void;
-  monitorPromise: () => Promise<void>;
+  current: MonitorControls;
+  generations: MonitorControls[];
 } {
   let starts = 0;
   let destroys = 0;
   let monitorCalls = 0;
   let running = false;
-  let resolveMonitor!: () => void;
-  let rejectMonitor!: (error: unknown) => void;
-  let monitorPromise: Promise<void>;
+  const generations: MonitorControls[] = [];
 
-  function armPromise() {
-    monitorPromise = new Promise<void>((resolve, reject) => {
-      resolveMonitor = resolve;
-      rejectMonitor = reject;
+  function armPromise(): MonitorControls {
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolve = res;
+      reject = rej;
     });
     // Swallow unhandled rejection noise when the test path leaves
     // the promise pending or rejects without awaiting it.
-    monitorPromise.catch(() => {});
+    promise.catch(() => {});
+    const controls: MonitorControls = { resolve, reject, promise };
+    generations.push(controls);
+    return controls;
   }
-  armPromise();
+  let current = armPromise();
 
   const container = {
     get running() {
@@ -50,17 +64,20 @@ function makeContainer(): {
       running = true;
       // Each start() arms a fresh monitor() that the next monitor()
       // call returns.
-      armPromise();
+      current = armPromise();
     },
     async destroy() {
       destroys++;
       running = false;
-      // destroy() resolves the in-flight monitor() cleanly.
-      resolveMonitor();
+      // The real container.monitor() rejects on destroy() (SIGKILL
+      // surfaces as a non-zero exit). The fake mirrors that
+      // contract so the lifecycle's expected-exit handler is
+      // tested against the platform's actual settle direction.
+      current.reject(new Error("container destroyed"));
     },
     monitor() {
       monitorCalls++;
-      return monitorPromise;
+      return current.promise;
     },
   } as unknown as NonNullable<DurableObjectState["container"]>;
 
@@ -75,9 +92,10 @@ function makeContainer(): {
     get monitorCalls() {
       return monitorCalls;
     },
-    resolveMonitor: () => resolveMonitor(),
-    rejectMonitor: (error: unknown) => rejectMonitor(error),
-    monitorPromise: () => monitorPromise,
+    get current() {
+      return current;
+    },
+    generations,
   } as ReturnType<typeof makeContainer>;
 }
 
@@ -111,7 +129,11 @@ describe("formatExitReason", () => {
 });
 
 describe("armContainerMonitor", () => {
-  test("records exit info when the monitor resolves", async () => {
+  test("records exit info when the monitor resolves (clean exit)", async () => {
+    // container.monitor() resolves only on a clean code-0 exit on
+    // the real platform. The lifecycle treats that as 'exited
+    // normally' — useful when the workload exits on its own
+    // rather than being SIGKILL'd by the runtime.
     const fake = makeContainer();
     const ctx = makeCtx(fake.container);
     resetContainerLifecycleForTests(ctx);
@@ -119,7 +141,7 @@ describe("armContainerMonitor", () => {
     armContainerMonitor(ctx, fake.container);
 
     expect(containerExitInfo(ctx)).toBeNull();
-    fake.resolveMonitor();
+    fake.current.resolve();
     // Microtask drain.
     await Promise.resolve();
     await Promise.resolve();
@@ -137,7 +159,7 @@ describe("armContainerMonitor", () => {
     fake.container.start();
     armContainerMonitor(ctx, fake.container);
 
-    fake.rejectMonitor(new Error("container crashed"));
+    fake.current.reject(new Error("container crashed"));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -153,7 +175,7 @@ describe("armContainerMonitor", () => {
     fake.container.start();
     armContainerMonitor(ctx, fake.container);
 
-    fake.rejectMonitor(new Error("OOM killed"));
+    fake.current.reject(new Error("OOM killed"));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -167,6 +189,10 @@ describe("armContainerMonitor", () => {
   });
 
   test("logs at info level when the exit was expected (after destroyContainerExpectingExit)", async () => {
+    // The platform monitor() rejects on destroy. The lifecycle
+    // snapshots expectingExit at arm time, so even though the
+    // destroy's finally clears the flag synchronously, the
+    // monitor handler that fires later still sees expected:true.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const fake = makeContainer();
@@ -186,22 +212,50 @@ describe("armContainerMonitor", () => {
     expect(arg).toMatchObject({
       message: "workspace.container.exited",
       expected: true,
+      reason: "container destroyed",
     });
   });
 
-  test("does not arm twice for the same container generation", () => {
+  test("a late-rejecting stale monitor does not poison a new generation", async () => {
+    // First generation arms its monitor; we leave it pending.
+    // Second generation arms a new monitor (incrementing the
+    // generation counter). The stale handler firing after the
+    // new generation has armed must NOT overwrite the new
+    // generation's clean exit state.
     const fake = makeContainer();
     const ctx = makeCtx(fake.container);
     resetContainerLifecycleForTests(ctx);
+
+    fake.container.start();
+    const firstGeneration = fake.current;
+    armContainerMonitor(ctx, fake.container);
+
+    // Second generation — a new monitor promise is armed in the
+    // fake's start(); armContainerMonitor bumps the lifecycle's
+    // generation counter and attaches a fresh handler against the
+    // new promise.
     fake.container.start();
     armContainerMonitor(ctx, fake.container);
-    armContainerMonitor(ctx, fake.container);
-    expect(fake.monitorCalls).toBe(1);
+    const secondGeneration = fake.current;
+
+    expect(containerExitInfo(ctx)).toBeNull();
+    // Settle the stale monitor with an error — it must be
+    // ignored because its generation is no longer current.
+    firstGeneration.reject(new Error("old generation died long ago"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(containerExitInfo(ctx)).toBeNull();
+
+    // The current generation's monitor still records normally.
+    secondGeneration.reject(new Error("current generation died"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(containerExitInfo(ctx)?.reason).toBe("current generation died");
   });
 });
 
 describe("destroyContainerExpectingExit", () => {
-  test("clears the expectingExit flag after destroy() resolves", async () => {
+  test("resets expectingExit so the next generation's crash logs as a crash", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = makeContainer();
     const ctx = makeCtx(fake.container);
@@ -215,7 +269,7 @@ describe("destroyContainerExpectingExit", () => {
     // Arm a fresh monitor for a new container generation.
     fake.container.start();
     armContainerMonitor(ctx, fake.container);
-    fake.rejectMonitor(new Error("real crash"));
+    fake.current.reject(new Error("real crash"));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -223,26 +277,34 @@ describe("destroyContainerExpectingExit", () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  test("clears the expectingExit flag even if destroy() throws", async () => {
+  test("a later real crash on a fresh generation logs as unexpected after a failed destroy", async () => {
+    // destroy() rejects against generation 1. The expected-exit
+    // mark sticks against generation 1. A subsequent start()
+    // arms generation 2; a crash on generation 2 must be logged
+    // as unexpected because the mark targets a generation that
+    // no longer matches the live one.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fake = makeContainer();
     const ctx = makeCtx(fake.container);
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
     armContainerMonitor(ctx, fake.container);
+
     const broken = {
       destroy: async () => {
         throw new Error("destroy rejected");
       },
     } as unknown as NonNullable<DurableObjectState["container"]>;
-
     await expect(destroyContainerExpectingExit(ctx, broken)).rejects.toThrow(/destroy rejected/);
 
-    // A later real crash must still log as unexpected.
-    fake.rejectMonitor(new Error("real crash"));
+    // Fresh generation, fresh monitor.
+    fake.container.start();
+    armContainerMonitor(ctx, fake.container);
+    fake.current.reject(new Error("real crash"));
     await Promise.resolve();
     await Promise.resolve();
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toMatchObject({ expected: false });
   });
 });
 
@@ -267,7 +329,7 @@ describe("getContainerLifecycle", () => {
     b.container.start();
     armContainerMonitor(ctxB, b.container);
 
-    a.rejectMonitor(new Error("a crashed"));
+    a.current.reject(new Error("a crashed"));
     await Promise.resolve();
     await Promise.resolve();
 
