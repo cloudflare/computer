@@ -15,6 +15,7 @@ import {
   logWith,
   lsFilesWith,
   lsTreeWith,
+  repoRootWith,
   revParseWith,
   showWith,
 } from "./reads.js";
@@ -155,6 +156,30 @@ describe("currentBranchWith", () => {
     await commit("a.txt", "v1\n", "init");
     expect(await currentBranchWith({ git: isogit, fs: memfs, dir: DIR, fullname: true })).toBe(
       "refs/heads/main",
+    );
+  });
+});
+
+describe("repoRootWith", () => {
+  beforeEach(() => vol.reset());
+
+  it("returns the repo root from the root dir itself", async () => {
+    await init();
+    await commit("a.txt", "v1\n", "init");
+    expect(await repoRootWith({ fs: memfs, dir: DIR })).toBe(DIR);
+  });
+
+  it("finds the repo root from a nested subdirectory", async () => {
+    await init();
+    await commit("a.txt", "v1\n", "init");
+    await memfs.promises.mkdir(`${DIR}/deep/nested`, { recursive: true });
+    expect(await repoRootWith({ fs: memfs, dir: `${DIR}/deep/nested` })).toBe(DIR);
+  });
+
+  it("throws NotARepositoryError outside any repo", async () => {
+    await memfs.promises.mkdir("/loose", { recursive: true });
+    await expect(repoRootWith({ fs: memfs, dir: "/loose" })).rejects.toBeInstanceOf(
+      NotARepositoryError,
     );
   });
 });

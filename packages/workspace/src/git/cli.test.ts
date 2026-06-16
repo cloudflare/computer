@@ -61,6 +61,7 @@ import type {
   GitLogOptions,
   GitLsFilesOptions,
   GitLsTreeOptions,
+  GitRepoRootOptions,
   GitRevParseOptions,
   GitShowOptions,
   TreeEntryView,
@@ -88,6 +89,7 @@ interface FakeCalls {
   log: GitLogOptions[];
   show: GitShowOptions[];
   revParse: GitRevParseOptions[];
+  repoRoot: GitRepoRootOptions[];
   currentBranch: GitCurrentBranchOptions[];
   lsFiles: GitLsFilesOptions[];
   lsTree: GitLsTreeOptions[];
@@ -119,6 +121,7 @@ function fakeClient(
     log?: () => CommitView[];
     show?: () => CommitView;
     revParse?: () => string;
+    repoRoot?: () => string;
     currentBranch?: () => string | undefined;
     lsFiles?: () => string[];
     lsTree?: () => TreeEntryView[];
@@ -147,6 +150,7 @@ function fakeClient(
     log: [],
     show: [],
     revParse: [],
+    repoRoot: [],
     currentBranch: [],
     lsFiles: [],
     lsTree: [],
@@ -215,6 +219,10 @@ function fakeClient(
     async revParse(options) {
       calls.revParse.push(options);
       return fakes.revParse?.() ?? "a".repeat(40);
+    },
+    async repoRoot(options = {}) {
+      calls.repoRoot.push(options);
+      return fakes.repoRoot?.() ?? "/";
     },
     async currentBranch(options = {}) {
       calls.currentBranch.push(options);
@@ -986,6 +994,28 @@ describe("runGitCli — show / rev-parse / symbolic-ref", () => {
     const res = await runGitCli(client, { argv: ["rev-parse", "--abbrev-ref", "HEAD"] });
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toBe(`${"c".repeat(40)}\n`);
+  });
+
+  it("rev-parse --show-toplevel prints the repo root", async () => {
+    const { client, calls } = fakeClient({}, { repoRoot: () => "/work/repo" });
+    const res = await runGitCli(client, {
+      argv: ["rev-parse", "--show-toplevel"],
+      cwd: "/work/repo/sub",
+    });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("/work/repo\n");
+    expect(calls.repoRoot[0]).toMatchObject({ dir: "/work/repo/sub" });
+  });
+
+  it("rev-parse --show-toplevel maps NotARepositoryError to exit 128", async () => {
+    const { client } = fakeClient({
+      async repoRoot() {
+        throw new NotARepositoryError("/loose");
+      },
+    });
+    const res = await runGitCli(client, { argv: ["rev-parse", "--show-toplevel"] });
+    expect(res.exitCode).toBe(128);
+    expect(res.stderr).toContain("not a git repository");
   });
 
   it("symbolic-ref HEAD prints the full ref by default", async () => {

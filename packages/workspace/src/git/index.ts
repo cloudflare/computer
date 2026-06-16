@@ -81,12 +81,14 @@ import {
   type GitLogOptions,
   type GitLsFilesOptions,
   type GitLsTreeOptions,
+  type GitRepoRootOptions,
   type GitRevParseOptions,
   type GitShowOptions,
   type IsomorphicGitReadsClient,
   logWith,
   lsFilesWith,
   lsTreeWith,
+  repoRootWith,
   revParseWith,
   showWith,
   type TreeEntryView,
@@ -166,6 +168,7 @@ export type {
   GitLogOptions,
   GitLsFilesOptions,
   GitLsTreeOptions,
+  GitRepoRootOptions,
   GitRevParseOptions,
   GitShowOptions,
   TreeEntryView,
@@ -222,6 +225,8 @@ export interface GitClient {
   show(options: GitShowOptions): Promise<CommitView>;
   /** Resolve a ref to its SHA-1 oid. */
   revParse(options: GitRevParseOptions): Promise<string>;
+  /** Find the repository root by walking up from `dir`. */
+  repoRoot(options?: GitRepoRootOptions): Promise<string>;
   /** Current branch name, or undefined on detached HEAD. */
   currentBranch(options?: GitCurrentBranchOptions): Promise<string | undefined>;
   /** List files in the index (or at a given ref). */
@@ -426,6 +431,9 @@ export function createGitClient({
         fs: await fs(),
         git: await loadGit<IsomorphicGitReadsClient>(),
       });
+    },
+    async repoRoot(options = {}) {
+      return repoRootWith({ ...options, fs: await fs() });
     },
     async currentBranch(options = {}) {
       return currentBranchWith({

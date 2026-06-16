@@ -733,10 +733,24 @@ async function runRevParse(
 ): Promise<GitCliResult> {
   const parsed = parseFlags(args, {
     "abbrev-ref": { kind: "bool" },
+    "show-toplevel": { kind: "bool" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git rev-parse: ${parsed.error}\n`, exitCode: 129 };
   }
+
+  if (parsed.flags["show-toplevel"] === true) {
+    // Print the working-tree root, walking up from cwd. Takes no
+    // ref, so it short-circuits before the missing-ref check.
+    const dir = resolveDir(undefined, input.cwd);
+    try {
+      const root = await client.repoRoot({ dir });
+      return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+    } catch (cause) {
+      return mapGitError("rev-parse", cause);
+    }
+  }
+
   if (parsed.positional.length === 0) {
     return { stdout: "", stderr: "git rev-parse: missing <ref>\n", exitCode: 129 };
   }

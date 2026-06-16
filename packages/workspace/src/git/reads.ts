@@ -262,6 +262,57 @@ async function walkParent(
 }
 
 // ---------------------------------------------------------------
+// repo-root (rev-parse --show-toplevel)
+// ---------------------------------------------------------------
+
+export interface GitRepoRootOptions extends BaseReadOptions {}
+
+/** Minimal `fs.promises` surface used to probe for `.git`. */
+interface StatFsClient {
+  promises: {
+    stat(path: string): Promise<unknown>;
+  };
+}
+
+export interface RepoRootWithDeps extends GitRepoRootOptions {
+  fs: object;
+}
+
+/**
+ * Walk upward from `dir` until a `.git` entry is found and return
+ * that directory — the equivalent of `git rev-parse
+ * --show-toplevel`. Paths are workspace-absolute and POSIX. Throws
+ * `NotARepositoryError` when the walk reaches the root without
+ * finding a `.git`.
+ */
+export async function repoRootWith(opts: RepoRootWithDeps): Promise<string> {
+  const start = normalizeAbsolute(opts.dir ?? "/");
+  const fs = opts.fs as StatFsClient;
+  let current = start;
+  while (true) {
+    const gitPath = current === "/" ? "/.git" : `${current}/.git`;
+    try {
+      await fs.promises.stat(gitPath);
+      return current;
+    } catch {
+      // Not here; climb one level.
+    }
+    if (current === "/") break;
+    const slash = current.lastIndexOf("/");
+    current = slash <= 0 ? "/" : current.slice(0, slash);
+  }
+  throw new NotARepositoryError(start);
+}
+
+function normalizeAbsolute(p: string): string {
+  // Collapse a trailing slash (except the root) so the parent
+  // walk doesn't stall on `/foo/`.
+  let out = p.startsWith("/") ? p : `/${p}`;
+  while (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1);
+  return out;
+}
+
+// ---------------------------------------------------------------
 // current-branch
 // ---------------------------------------------------------------
 
