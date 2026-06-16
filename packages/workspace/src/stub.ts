@@ -275,17 +275,11 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   }
 }
 
-// Git half. Pure value returns — every method takes JSRPC-
-// friendly inputs (strings, plain objects) and resolves to a
-// plain `{ stdout, stderr, exitCode }`. No nested stubs to
-// dispose; the parent `WorkspaceStub` cascades disposal into
-// this one for symmetry with `fs` / `shell`.
-//
-// Only `cli` is surfaced across the wire. The typed `clone` /
-// `diff` / `log` / etc. methods stay on the durable-object
-// side; their inputs (progress callbacks, `onAuth`) don't
-// cross Workers RPC cleanly, and the CLI path covers every
-// consumer who needs git access through a stub.
+// Assets half. Pure value returns: `publish(path, { expiresAfter })`
+// resolves to the share URL string. The configured assets client
+// lives on the durable-object side where the R2 binding and signing
+// secrets are available; the worker-backend shell only reaches this
+// stub through the `assets publish` custom command.
 export class WorkspaceAssetsStub extends RpcTarget {
   readonly #ws: Workspace;
 
@@ -314,6 +308,17 @@ export class WorkspaceAssetsStub extends RpcTarget {
   }
 }
 
+// Git half. Pure value returns — every method takes JSRPC-
+// friendly inputs (strings, plain objects) and resolves to a
+// plain `{ stdout, stderr, exitCode }`. No nested stubs to
+// dispose; the parent `WorkspaceStub` cascades disposal into
+// this one for symmetry with `fs` / `shell`.
+//
+// Only `cli` is surfaced across the wire. The typed `clone` /
+// `diff` / `log` / etc. methods stay on the durable-object
+// side; their inputs (progress callbacks, `onAuth`) don't
+// cross Workers RPC cleanly, and the CLI path covers every
+// consumer who needs git access through a stub.
 export class WorkspaceGitStub extends RpcTarget {
   readonly #ws: Workspace;
 

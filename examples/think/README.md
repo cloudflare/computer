@@ -195,6 +195,9 @@ wrangler secret put R2_SECRET_ACCESS_KEY
 wrangler secret put CLOUDFLARE_ACCOUNT_ID
 ```
 
+`R2_ENDPOINT` can be set instead of `CLOUDFLARE_ACCOUNT_ID` when
+using a custom S3-compatible endpoint.
+
 Without these the worker still runs; the `share` tool is not offered
 to the model, and `assets publish` is not configured in the shell.
 

@@ -115,6 +115,14 @@ const PHASE_KEY = "triage-phase";
 const REPO_ROOT = "/workspace/repo";
 const MODEL_ID = "@cf/moonshotai/kimi-k2.6";
 
+function hasAssetsConfig(env: Env): boolean {
+  return Boolean(
+    env.R2_ACCESS_KEY_ID &&
+      env.R2_SECRET_ACCESS_KEY &&
+      (env.CLOUDFLARE_ACCOUNT_ID || env.R2_ENDPOINT),
+  );
+}
+
 // Anchor Think's generic before the mixin so withWorkspaceContainer
 // sees a concrete constructor.
 class TriageBase extends Think<Env> {}
@@ -195,7 +203,7 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
       mounts: {
         "/workspace/.agents": R2Bucket(env.R2_SKILLS, { prefix: ".agents/" }),
       },
-      ...(env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY
+      ...(hasAssetsConfig(env)
         ? {
             assets: (ws: Workspace) =>
               createAssets({
@@ -539,7 +547,7 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
       // bucket binding alone can't mint the presigned URL the tool
       // returns. Absent credentials, the agent simply has no share
       // tool rather than one that fails on every call.
-      ...(this.env.R2_ACCESS_KEY_ID && this.env.R2_SECRET_ACCESS_KEY
+      ...(hasAssetsConfig(this.env)
         ? {
             share: createShareTool({
               workspace: ws,

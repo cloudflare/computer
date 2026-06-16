@@ -4,6 +4,10 @@
 interface __BaseEnv_Env {
 	R2_SKILLS: R2Bucket;
 	ASSETS: R2Bucket;
+	R2_ACCESS_KEY_ID?: string;
+	R2_SECRET_ACCESS_KEY?: string;
+	CLOUDFLARE_ACCOUNT_ID?: string;
+	R2_ENDPOINT?: string;
 	LOADER: WorkerLoader;
 	AI: Ai;
 	R2_ACCESS_KEY_ID: "";
