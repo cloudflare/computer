@@ -28,6 +28,60 @@ the file directly when the trigger applies:
 | [`capnweb`](.agents/skills/capnweb/SKILL.md) | Touching anything that crosses the RPC boundary: `packages/rpc`, `packages/workspace`, the `wsd` client, or the Durable Object server. |
 | [`cloudflare`](.agents/skills/cloudflare/SKILL.md) | Index of host-side Cloudflare skills — Workers, Durable Objects, wrangler, sandbox SDK, agents SDK. |
 
+## Environment setup
+
+A fresh container does not have everything the tests need. The traps
+below cost real time if you discover them one failure at a time.
+
+**Native build tools.** `packages/wsd` depends on `fuse-native`, a
+native addon. Building it needs a C toolchain and the libfuse2 headers.
+On Debian or Ubuntu:
+
+```bash
+apt-get install build-essential libfuse-dev
+```
+
+If the `fuse-native` build fails, `npm install` aborts the whole
+install, not just that one package. When you only need the rest of the
+workspace, install with `npm install --ignore-scripts` to skip the
+native build.
+
+**arm64 hosts.** `fuse-native` ships a prebuilt libfuse for x64 only.
+On a Linux arm64 host or container (including a Linux container on
+Apple Silicon, or arm64 CI) the link fails with `file in wrong
+format`. The path below is Debian or Ubuntu arm64; a native macOS host
+uses macFUSE instead and does not hit this. Replace the bundled library
+with the system one and rebuild:
+
+```bash
+cp /usr/lib/aarch64-linux-gnu/libfuse.so.2 \
+   node_modules/fuse-shared-library-linux/libfuse/lib/libfuse.so
+cd node_modules/fuse-native && npx node-gyp rebuild
+```
+
+**Build before you test.** The test scripts don't build the sibling
+packages first. Several suites need build output that is absent in
+a clean checkout: `packages/wsd` imports the sibling `@cloudflare/dofs`
+and `@cloudflare/workspace-rpc` packages from their `dist/`
+directories, `packages/wsd`'s `src/cli/wsd.test.ts` spawns the bundled
+CLI at `dist/cli/wsd.cjs`, and `examples/think-compare-runtimes`
+imports `@cloudflare/workspace/backends/container`, which exists only
+after the `workspace` package is built. Run `npm run build` across the
+workspace before `npm test` on a clean checkout.
+
+**Real FUSE needs privilege.** `packages/wsd`'s `src/cli/wsd.test.ts`
+runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise
+it resolves to the shim and skips. The guard is a bare existence check,
+so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the
+skip and the mount then fails with `EPERM`, turning a clean skip into a
+hard failure. Leave the device absent unless the container is
+privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). The
+`src/exec/runner.fuse.test.ts` suite is separate: it skips unless both
+Docker and the prebuilt `wsd` binary are available, and runs `wsd`
+inside a privileged container. See the
+[`debugging-wsd-fuse`](.agents/skills/debugging-wsd-fuse/SKILL.md) skill
+for the privileged Docker setup.
+
 ## Checks before you finish
 
 Run from the repo root:

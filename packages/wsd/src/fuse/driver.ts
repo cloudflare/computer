@@ -24,6 +24,22 @@ const ERRNO = {
 // typical container memory limits.
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 
+// POSIX st_blocks counts allocation in fixed 512-byte units regardless
+// of the filesystem's logical block size, so consumers like GNU `du`
+// (which reads st_blocks, not st_size) compute usage against this
+// constant. A getattr that omits blocks makes the kernel surface
+// st_blocks=0 and `du` reports zero usage for the whole mount.
+const STAT_BLOCK_SIZE = 512;
+
+// st_blksize is the preferred I/O block size, not the st_blocks unit.
+// Match what statfs advertises (bsize: 4096) and what the backing VFS
+// reports so a fabricated stat stays consistent with a persisted one.
+const PREFERRED_IO_BLOCK_SIZE = 4096;
+
+function blocksForSize(size: number): number {
+  return size <= 0 ? 0 : Math.ceil(size / STAT_BLOCK_SIZE);
+}
+
 type StatusCallback = (errnoOrBytes: number) => void;
 type ResultCallback<T> = (errno: number, result: T) => void;
 type NotImplementedOperation = (...args: unknown[]) => void;
@@ -97,6 +113,8 @@ export interface FuseStat {
   gid: number;
   nlink: number;
   ino: number;
+  blksize: number;
+  blocks: number;
 }
 
 export interface FuseBufferStats {
@@ -308,6 +326,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       gid: typeof process.getgid === "function" ? process.getgid() : 0,
       nlink: 1,
       ino: 0,
+      blksize: PREFERRED_IO_BLOCK_SIZE,
+      blocks: blocksForSize(entry.size),
     };
   };
   // Returns true on success, false if `needed` exceeds MAX_FILE_BYTES.
@@ -404,8 +424,14 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         const entry = files.get(path);
         const stat =
           entry?.pendingCreate === true ? pendingStat(entry) : statNode(vfs.lstatSync(toVfs(path)));
-        // File content lives outside the VFS, so prefer our size.
-        if (entry !== undefined) stat.size = entry.size;
+        // File content lives outside the VFS, so prefer our size. The
+        // buffered size can outrun the persisted inode before a spill,
+        // so recompute block accounting from it to keep st_blocks
+        // coherent with the size the kernel sees.
+        if (entry !== undefined) {
+          stat.size = entry.size;
+          stat.blocks = blocksForSize(entry.size);
+        }
         const override = meta.get(path);
         if (override) {
           if (override.mode !== undefined) {
@@ -1021,6 +1047,8 @@ function statNode(stat: {
   mode: number;
   nlink?: number;
   ino?: number;
+  blksize?: number;
+  blocks?: number;
   isDirectory(): boolean;
 }): FuseStat {
   return {
@@ -1033,6 +1061,11 @@ function statNode(stat: {
     gid: typeof process.getgid === "function" ? process.getgid() : 0,
     nlink: stat.nlink ?? (stat.isDirectory() ? 2 : 1),
     ino: stat.ino ?? 0,
+    // Prefer provider-supplied block accounting when the VFS exposes
+    // it; otherwise derive from size in 512-byte units so `du` and
+    // other st_blocks consumers see real usage.
+    blksize: stat.blksize ?? PREFERRED_IO_BLOCK_SIZE,
+    blocks: stat.blocks ?? blocksForSize(stat.size),
   };
 }
 

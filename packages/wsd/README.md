@@ -135,13 +135,17 @@ Caveats. The shim is dev-only:
 
 ## Tests
 
-Tests live next to the source files and are written in TypeScript. The package test script builds first, then runs Node's experimental TypeScript stripping:
+Tests live next to the source files and are written in TypeScript. Vitest runs them directly:
 
 ```sh
 npm test --workspace=@cloudflare/workspace-wsd
 ```
 
-This package requires Node.js 22+ because `@platformatic/vfs` does, and because the test script uses `--experimental-strip-types`, which is only available on Node 22+ (unflagged on 23.6+).
+The test command does not build first. Some suites need build output that is not there in a clean checkout: the tests import the sibling `@cloudflare/dofs` and `@cloudflare/workspace-rpc` packages from their `dist/` directories, and `src/cli/wsd.test.ts` spawns the bundled CLI at `dist/cli/wsd.cjs`. Run `npm run build` across the workspace before `npm test`, or those tests fail to resolve the imports or exit early with no bundle to spawn.
+
+This package requires Node.js 22+ because `@platformatic/vfs` does.
+
+The two real-FUSE suites gate themselves differently. `src/cli/wsd.test.ts` runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise auto-detection resolves to the shim and the case skips. The guard is a bare existence check, so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the skip and the mount then fails with `EPERM` — leave the device absent unless the container is privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). `src/exec/runner.fuse.test.ts` is separate: it skips unless both Docker and the prebuilt `wsd` binary are available, and runs `wsd` inside a privileged container, so the host's `/dev/fuse` does not matter. See the [`debugging-wsd-fuse`](../../.agents/skills/debugging-wsd-fuse/SKILL.md) skill for the privileged Docker setup.
 
 ## Standalone release artifacts
 

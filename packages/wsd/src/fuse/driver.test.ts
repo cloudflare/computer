@@ -906,3 +906,96 @@ test("FUSE getattr on a pending-create file returns a stable mtime", async () =>
     (first.result as { mtime: Date }).mtime.getTime(),
   );
 });
+
+test("FUSE getattr reports st_blocks so du sees non-zero usage", async () => {
+  // Regression: getattr omitted `blocks`/`blksize`, so the kernel
+  // reported st_blocks=0 for every inode and `du`, which reads
+  // st_blocks rather than st_size, reported zero usage across the
+  // whole mount. POSIX st_blocks counts 512-byte units; a 513-byte
+  // file occupies two of them.
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb) => ops.create("/du.txt", 0o644, cb));
+  expect(create.errno).toBe(0);
+
+  const payload = Buffer.alloc(513, 0x61);
+  expect(
+    await status((cb) =>
+      ops.write("/du.txt", create.result as number, payload, payload.length, 0, cb),
+    ),
+  ).toBe(payload.length);
+  expect(await status((cb) => ops.flush("/du.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.release("/du.txt", create.result as number, cb))).toBe(0);
+
+  const stat = await callback((cb) => ops.getattr("/du.txt", cb));
+  expect(stat.errno).toBe(0);
+  expect(stat.result).toMatchObject({ size: 513, blksize: 4096, blocks: 2 });
+});
+
+test("FUSE getattr reports zero blocks for an empty file", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb) => ops.create("/empty.txt", 0o644, cb));
+  expect(create.errno).toBe(0);
+  expect(await status((cb) => ops.flush("/empty.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.release("/empty.txt", create.result as number, cb))).toBe(0);
+
+  const stat = await callback((cb) => ops.getattr("/empty.txt", cb));
+  expect(stat.errno).toBe(0);
+  expect(stat.result).toMatchObject({ size: 0, blksize: 4096, blocks: 0 });
+});
+
+test("FUSE getattr on a pending-create file reports block metadata", async () => {
+  // The pending-create window stats out of the in-memory buffer, not
+  // the VFS. Its block accounting must match the buffered size so a
+  // `du` before the first flush still sees the bytes.
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb) => ops.create("/pending.txt", 0o644, cb));
+  expect(create.errno).toBe(0);
+
+  const payload = Buffer.alloc(1025, 0x62);
+  expect(
+    await status((cb) =>
+      ops.write("/pending.txt", create.result as number, payload, payload.length, 0, cb),
+    ),
+  ).toBe(payload.length);
+
+  const stat = await callback((cb) => ops.getattr("/pending.txt", cb));
+  expect(stat.errno).toBe(0);
+  expect(stat.result).toMatchObject({ size: 1025, blksize: 4096, blocks: 3 });
+});
+
+test("FUSE getattr block count tracks buffered size before flush", async () => {
+  // With buffered writes the VFS inode still holds the old size while
+  // the FileEntry carries the fresh bytes. getattr overrides size
+  // with the buffered value; blocks must follow so a `du` before the
+  // spill matches the size the kernel sees.
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+
+  const create = await callback((cb) => ops.create("/buf-blocks.txt", 0o644, cb));
+  expect(create.errno).toBe(0);
+  const seed = Buffer.from("seed");
+  expect(
+    await status((cb) =>
+      ops.write("/buf-blocks.txt", create.result as number, seed, seed.length, 0, cb),
+    ),
+  ).toBe(seed.length);
+  expect(await status((cb) => ops.flush("/buf-blocks.txt", create.result as number, cb))).toBe(0);
+
+  // Grow the buffer past a block boundary without flushing.
+  const grow = Buffer.alloc(2000, 0x63);
+  expect(
+    await status((cb) =>
+      ops.write("/buf-blocks.txt", create.result as number, grow, grow.length, 0, cb),
+    ),
+  ).toBe(grow.length);
+
+  const stat = await callback((cb) => ops.getattr("/buf-blocks.txt", cb));
+  expect(stat.errno).toBe(0);
+  expect(stat.result).toMatchObject({ size: 2000, blksize: 4096, blocks: 4 });
+});
