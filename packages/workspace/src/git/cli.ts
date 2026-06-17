@@ -1462,7 +1462,7 @@ async function runPush(
   const looksLikeUrl = first !== undefined && /^[a-z][a-z0-9+.-]*:\/\//.test(first);
   const url = looksLikeUrl ? first : undefined;
   const remote = looksLikeUrl ? undefined : first;
-  const ref = looksLikeUrl ? second : (second ?? undefined);
+  const refspec = parsePushRefspec(looksLikeUrl ? second : (second ?? undefined));
 
   if (url !== undefined && !isSupportedRemoteUrl(url)) {
     return {
@@ -1478,7 +1478,8 @@ async function runPush(
       dir,
       url,
       remote,
-      ref,
+      ref: refspec.ref,
+      remoteRef: refspec.remoteRef,
       force: parsed.flags.force === true,
       delete: parsed.flags.delete === true,
     });
@@ -1490,6 +1491,15 @@ async function runPush(
   } catch (cause) {
     return mapGitError("push", cause);
   }
+}
+
+function parsePushRefspec(ref: string | undefined): { ref?: string; remoteRef?: string } {
+  if (ref === undefined) return {};
+  const colon = ref.indexOf(":");
+  if (colon <= 0 || colon !== ref.lastIndexOf(":") || colon === ref.length - 1) {
+    return { ref };
+  }
+  return { ref: ref.slice(0, colon), remoteRef: ref.slice(colon + 1) };
 }
 
 // ---------------------------------------------------------------

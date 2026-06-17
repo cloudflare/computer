@@ -1497,6 +1497,25 @@ describe("runGitCli — push argv parsing", () => {
     ]);
   });
 
+  it("splits a single-colon refspec for URL pushes", async () => {
+    const { client, calls } = fakeClient();
+    await runGitCli(client, {
+      argv: ["push", "--force", "https://example.test/r.git", "HEAD:main"],
+      cwd: "/r",
+    });
+    expect(calls.push).toEqual([
+      {
+        dir: "/r",
+        url: "https://example.test/r.git",
+        remote: undefined,
+        ref: "HEAD",
+        remoteRef: "main",
+        force: true,
+        delete: false,
+      },
+    ]);
+  });
+
   it("surfaces a non-ok PushResult as exit 1 on stderr", async () => {
     const { client } = fakeClient(
       {},
