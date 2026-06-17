@@ -1,0 +1,20 @@
+{
+  "name": "@example/workspace-artifacts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker that turns examples/worker into a cloneable Cloudflare Artifacts repo through @cloudflare/workspace.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workspace": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.95.0"
+  }
+}

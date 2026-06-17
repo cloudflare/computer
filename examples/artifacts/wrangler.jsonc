@@ -1,0 +1,40 @@
+{
+  // Artifacts example. POST /create { "name": "my-worker" }
+  // generates examples/worker in a Workspace and publishes it to a
+  // Cloudflare Artifacts repo.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workspace-artifacts-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "artifacts": [
+    {
+      "binding": "ARTIFACTS",
+      "namespace": "workspace-artifacts-example",
+      "remote": true
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ArtifactCreator",
+        "class_name": "ArtifactCreator"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ArtifactCreator"]
+    }
+  ]
+}
