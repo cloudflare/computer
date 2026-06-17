@@ -1,0 +1,276 @@
+// Tests for the argv-driven artifacts CLI. These drive the
+// dispatcher through a real ArtifactClient over the in-memory fake
+// binding — no mocks — so the assertions cover the end-to-end shape
+// a shell consumer sees: scoping, JSON output, secret handling, and
+// the exit-code contract (0 ok, 1 op failed, 129 argv-shape error).
+
+import { beforeEach, describe, expect, it } from "vitest";
+import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding.js";
+import { createArtifact } from "./client.js";
+
+function makeClient() {
+  const binding = new FakeArtifactsBinding();
+  const client = createArtifact(binding, "sess1");
+  return { binding, client };
+}
+
+async function run(argv: string[]) {
+  const { client } = makeClient();
+  return client.cli({ argv });
+}
+
+describe("runArtifactsCLI", () => {
+  let binding: FakeArtifactsBinding;
+  let client: ReturnType<typeof createArtifact>;
+
+  beforeEach(() => {
+    ({ binding, client } = makeClient());
+  });
+
+  describe("help", () => {
+    it("prints top-level help for `help` at exit 0", async () => {
+      const res = await client.cli({ argv: ["help"] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toContain("artifacts");
+      expect(res.stdout).toContain("repo");
+      expect(res.stdout).toContain("token");
+    });
+
+    it("treats --help and -h as aliases for help", async () => {
+      const long = await client.cli({ argv: ["--help"] });
+      const short = await client.cli({ argv: ["-h"] });
+      expect(long.exitCode).toBe(0);
+      expect(short.exitCode).toBe(0);
+      expect(long.stdout).toBe(short.stdout);
+    });
+
+    it("prints top-level help and exits non-zero for no args", async () => {
+      const res = await client.cli({ argv: [] });
+      expect(res.exitCode).not.toBe(0);
+      expect(res.stdout).toContain("artifacts");
+    });
+
+    it("prints repo group help for `repo --help`", async () => {
+      const res = await client.cli({ argv: ["repo", "--help"] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toContain("repo create");
+      expect(res.stdout).toContain("repo import");
+      expect(res.stdout).not.toContain("status");
+    });
+
+    it("prints token group help for `token --help`", async () => {
+      const res = await client.cli({ argv: ["token", "--help"] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toContain("token create");
+      expect(res.stdout).toContain("token delete");
+    });
+
+    it("explains session scoping in the top-level help", async () => {
+      const res = await client.cli({ argv: ["help"] });
+      expect(res.stdout.toLowerCase()).toContain("session");
+    });
+  });
+
+  describe("unknown commands", () => {
+    it("rejects an unknown group with exit 1", async () => {
+      const res = await client.cli({ argv: ["bogus"] });
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain("bogus");
+    });
+
+    it("rejects an unknown repo subcommand with exit 1", async () => {
+      const res = await client.cli({ argv: ["repo", "frobnicate"] });
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain("frobnicate");
+    });
+  });
+
+  describe("repo create", () => {
+    it("creates a repo and prints JSON with the local name", async () => {
+      const res = await client.cli({ argv: ["repo", "create", "starter"] });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.name).toBe("starter");
+      expect(json.remote).toContain("sess1__starter.git");
+      expect(binding.repos.has("sess1__starter")).toBe(true);
+    });
+
+    it("forwards --description and --default-branch", async () => {
+      const res = await client.cli({
+        argv: ["repo", "create", "starter", "--description", "hi", "--default-branch", "trunk"],
+      });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.defaultBranch).toBe("trunk");
+      expect(json.description).toBe("hi");
+    });
+
+    it("exits 129 when the name is missing", async () => {
+      const res = await client.cli({ argv: ["repo", "create"] });
+      expect(res.exitCode).toBe(129);
+    });
+
+    it("exits 1 when the repo already exists", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["repo", "create", "starter"] });
+      expect(res.exitCode).toBe(1);
+    });
+  });
+
+  describe("repo get", () => {
+    it("prints JSON metadata for an existing repo", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["repo", "get", "starter"] });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.name).toBe("starter");
+    });
+
+    it("exits 1 when the repo does not exist", async () => {
+      const res = await client.cli({ argv: ["repo", "get", "ghost"] });
+      expect(res.exitCode).toBe(1);
+    });
+  });
+
+  describe("repo list", () => {
+    it("prints a JSON array of the session's repos", async () => {
+      await client.cli({ argv: ["repo", "create", "alpha"] });
+      await client.cli({ argv: ["repo", "create", "beta"] });
+      const res = await client.cli({ argv: ["repo", "list"] });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.map((r: { name: string }) => r.name).sort()).toEqual(["alpha", "beta"]);
+      expect(json[0]).not.toHaveProperty("remote");
+      expect(json[0]).not.toHaveProperty("status");
+      expect(json[0]).toHaveProperty("defaultBranch");
+    });
+
+    it("prints an empty array when the session has no repos", async () => {
+      const res = await client.cli({ argv: ["repo", "list"] });
+      expect(res.exitCode).toBe(0);
+      expect(JSON.parse(res.stdout)).toEqual([]);
+    });
+  });
+
+  describe("repo delete", () => {
+    it("deletes a repo and confirms", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["repo", "delete", "starter"] });
+      expect(res.exitCode).toBe(0);
+      expect(binding.repos.has("sess1__starter")).toBe(false);
+    });
+
+    it("exits 1 when the repo does not exist", async () => {
+      const res = await client.cli({ argv: ["repo", "delete", "ghost"] });
+      expect(res.exitCode).toBe(1);
+    });
+  });
+
+  describe("repo import", () => {
+    it("imports an external remote", async () => {
+      const res = await client.cli({
+        argv: ["repo", "import", "mirror", "--url", "https://github.com/example/repo"],
+      });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.name).toBe("mirror");
+      const info = await binding.get("sess1__mirror");
+      expect(info.source).toBe("https://github.com/example/repo");
+    });
+
+    it("exits 129 when --url is missing", async () => {
+      const res = await client.cli({ argv: ["repo", "import", "mirror"] });
+      expect(res.exitCode).toBe(129);
+    });
+  });
+
+  describe("token create", () => {
+    it("mints a token and prints the plaintext", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({
+        argv: ["token", "create", "starter", "--scope", "read", "--ttl", "3600"],
+      });
+      expect(res.exitCode).toBe(0);
+      const json = JSON.parse(res.stdout);
+      expect(json.scope).toBe("read");
+      expect(json.plaintext).toMatch(/^art_v1_/);
+    });
+
+    it("exits 129 on an invalid scope", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({
+        argv: ["token", "create", "starter", "--scope", "admin"],
+      });
+      expect(res.exitCode).toBe(129);
+    });
+  });
+
+  describe("token list", () => {
+    it("prints token metadata without any plaintext", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["token", "list", "starter"] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).not.toContain("art_v1_");
+      const json = JSON.parse(res.stdout);
+      expect(Array.isArray(json.tokens)).toBe(true);
+    });
+  });
+
+  describe("token get", () => {
+    it("prints a single token's metadata", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const created = JSON.parse(
+        (await client.cli({ argv: ["token", "create", "starter"] })).stdout,
+      );
+      const res = await client.cli({ argv: ["token", "get", "starter", created.id] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).not.toContain("art_v1_");
+      const json = JSON.parse(res.stdout);
+      expect(json.id).toBe(created.id);
+      expect(json).not.toHaveProperty("plaintext");
+    });
+
+    it("exits 1 when the token id is unknown", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["token", "get", "starter", "nope"] });
+      expect(res.exitCode).toBe(1);
+    });
+  });
+
+  describe("token delete", () => {
+    it("revokes a token and confirms", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const created = JSON.parse(
+        (await client.cli({ argv: ["token", "create", "starter"] })).stdout,
+      );
+      const res = await client.cli({ argv: ["token", "delete", "starter", created.id] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).toBe("Revoked token\n");
+    });
+
+    it("does not echo plaintext when revoking by plaintext", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const created = JSON.parse(
+        (await client.cli({ argv: ["token", "create", "starter"] })).stdout,
+      );
+      const res = await client.cli({ argv: ["token", "delete", "starter", created.plaintext] });
+      expect(res.exitCode).toBe(0);
+      expect(res.stdout).not.toContain(created.plaintext);
+      expect(res.stderr).not.toContain(created.plaintext);
+    });
+
+    it("exits 1 when the token cannot be revoked", async () => {
+      await client.cli({ argv: ["repo", "create", "starter"] });
+      const res = await client.cli({ argv: ["token", "delete", "starter", "nope"] });
+      expect(res.exitCode).toBe(1);
+    });
+  });
+
+  describe("invalid names", () => {
+    it("exits 1 when a repo name contains a slash", async () => {
+      const res = await run(["repo", "create", "a/b"]);
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr.toLowerCase()).toContain("invalid");
+    });
+  });
+});

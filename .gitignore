@@ -1,7 +1,10 @@
 node_modules/
 dist/
 PLAN.md
-artifacts/
+# Build output at the repo root only. The @cloudflare/workspace
+# Artifacts source tree (packages/workspace/src/artifacts/) is real,
+# tracked code and must not be caught by this rule.
+/artifacts/
 
 # Generated bundle for the worker backend's ShellWorker. Built
 # by packages/workspace/src/backends/worker/script/build-bundle.mjs

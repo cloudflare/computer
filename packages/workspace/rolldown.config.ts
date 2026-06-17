@@ -25,6 +25,7 @@ export default defineConfig({
   input: {
     index: "src/index.ts",
     git: "src/git/index.ts",
+    "artifacts/index": "src/artifacts/index.ts",
     "assets/index": "src/assets/index.ts",
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker/index": "src/backends/worker/index.ts",

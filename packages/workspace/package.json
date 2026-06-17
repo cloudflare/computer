@@ -23,6 +23,10 @@
       "types": "./dist/assets/index.d.ts",
       "import": "./dist/assets/index.js"
     },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
@@ -81,7 +85,7 @@
   "devDependencies": {
     "@cloudflare/dofs": "*",
     "@cloudflare/vitest-pool-workers": "^0.16.10",
-    "@cloudflare/workers-types": "^4.20250529.0",
+    "@cloudflare/workers-types": "^4.20260616.1",
     "@cloudflare/workspace-rpc": "*",
     "@platformatic/vfs": "^0.4.0",
     "diff": "^9.0.0",

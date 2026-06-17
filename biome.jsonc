@@ -13,7 +13,7 @@
       "!**/node_modules",
       "!**/node_modules.host-backup.*",
       "!**/dist",
-      "!**/artifacts",
+      "!/artifacts",
       "!**/.devbox",
       "!**/.venv",
       "!package-lock.json",
