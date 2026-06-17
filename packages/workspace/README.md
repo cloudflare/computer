@@ -58,6 +58,16 @@ uniform; the counts are just always zero.
   attached through `WorkspaceOptions.assets`, the worker backend's
   shell also exposes `assets publish <path> [<expiry>]`. See
   [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
+- `createArtifact(binding, sessionId)` — a session-scoped facade
+  over the [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/)
+  Workers binding, on the `@cloudflare/workspace/artifacts`
+  subpath. Every repository name is implicitly prefixed with the
+  session id, so one namespace hosts many isolated sessions. Like
+  git, it surfaces both a typed API and an argv CLI
+  (`artifacts.cli({ argv })`); when `Workspace` is configured with
+  an Artifacts binding, the worker backend exposes the same CLI as
+  an `artifacts` custom command. See
+  [`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
 
 ## Typical DO-side usage
 
@@ -147,6 +157,38 @@ Every `workspace.git` operation reads and writes through the
 local store; no backend or shell is required. See the doc
 above for the full method surface, error hierarchy, and CLI
 shape.
+
+## Artifacts
+
+`createArtifact(binding, sessionId)` wraps the Cloudflare
+Artifacts Workers binding in a session-scoped client. Names go
+in and out local; the session id is added as a prefix on the
+way to the namespace and stripped on the way back.
+
+```ts
+import { createArtifact } from "@cloudflare/workspace/artifacts";
+
+const artifacts = createArtifact(env.ARTIFACTS, agentId);
+
+const repo = await artifacts.create("build-cache", {
+  description: "CI artifacts for this agent",
+});
+// repo.name -> "build-cache"; stored as `${agentId}__build-cache`.
+
+const token = await artifacts.createToken("build-cache", "read", 3600);
+// token.plaintext is a git token — a secret, shown once.
+
+const mine = await artifacts.list();
+// Only this session's repos, names unscoped.
+```
+
+The binding (`Artifacts`) and its result shapes are the global
+types from a Workers project's `@cloudflare/workers-types` setup;
+the facade adds session scoping on top rather than redeclaring the
+wire protocol. Pass the binding to `Workspace` as
+`artifacts: { binding: env.ARTIFACTS }` to expose the same surface as
+an in-shell `artifacts` command. See
+[`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
 
 ## Multiple backends per workspace
 

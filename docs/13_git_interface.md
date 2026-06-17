@@ -142,6 +142,8 @@ const { stdout } = await handle.result();
 
 The shell-side `git` is the same dispatcher behind a custom
 command; the just-bash shell never resolves a binary on PATH.
+The sibling [`artifacts` command](./15_artifacts_interface.md)
+follows the same pattern through `workspace.artifacts.cli(...)` when the Workspace is configured with an Artifacts binding.
 
 ## Cross-cutting
 

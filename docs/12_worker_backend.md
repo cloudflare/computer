@@ -192,6 +192,50 @@ handle.
   catches the rejection locally. The noise is cosmetic;
   `exec` still returns the correct result.
 
+## Custom commands
+
+The shell isolate registers built-in `git` and `artifacts` commands
+that forward through the `WorkspaceStub` returned by
+`getWorkspace()`: `git` calls `workspace.git.cli(...)`, and
+`artifacts` calls `workspace.artifacts.cli(...)`. `ShellWorker` still
+exposes an `extraCommands(ws)` hook for layering project-specific
+commands onto the same Bash instance. The hook runs once per `exec`
+with the live host stub the shell already reached, so a command
+shares that stub's lifetime without refetching.
+
+A host durable object wires the Artifacts command by passing the
+binding to `Workspace`:
+
+```ts
+export class MyAgent extends DurableObject<Env> {
+  #workspace: Workspace;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.#workspace = new Workspace({
+      storage: ctx.storage,
+      sessionId: ctx.id.toString(),
+      artifacts: { binding: env.ARTIFACTS },
+      backends: [new WorkerBackend(/* ... */)],
+    });
+  }
+}
+```
+
+With the binding declared in Wrangler:
+
+```jsonc
+{
+  "artifacts": [{ "binding": "ARTIFACTS", "namespace": "default" }]
+}
+```
+
+`artifacts repo list` inside `bash.exec` then forwards to the
+client's `cli(...)`. The shell isolate has no network of its
+own; the binding call lands host-side, the same way
+network-bound `git` subcommands do. See
+[`docs/15_artifacts_interface.md`](./15_artifacts_interface.md).
+
 ## Example
 
 `examples/worker/` is a single wrangler project that mirrors

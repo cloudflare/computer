@@ -45,6 +45,7 @@ The package ships several entrypoints:
 | `@cloudflare/workspace/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the wsd / capnweb sync plumbing. |
 | `@cloudflare/workspace/backends/worker` | `WorkerBackend` and the bundled just-bash shell. The shell ships as a record of code-split modules the Dynamic Worker loads on demand: a ~290 KB entry parsed on cold start, plus ~2.5 MB of chunks that stay cold until a script reaches for them. |
 | `@cloudflare/workspace/git` | Isomorphic-git glue for working with checkouts inside the workspace. |
+| `@cloudflare/workspace/artifacts` | `createArtifact`, a session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
 
 A consumer that only uses the container backend never imports the
 worker subpath, so the just-bash payload tree-shakes away.
@@ -233,6 +234,7 @@ above, then dive into the area you're working on.
 | [12. Worker backend](./12_worker_backend.md) | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
 | [13. Git interface](./13_git_interface.md) | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
 | [14. Assets interface](./14_assets_interface.md) | `share` a workspace file to R2 and get back a presigned URL. |
+| [15. Artifacts interface](./15_artifacts_interface.md) | `createArtifact` and the `artifacts` CLI, a session-scoped facade over the Cloudflare Artifacts binding. |
 
 ## High-level API
 
