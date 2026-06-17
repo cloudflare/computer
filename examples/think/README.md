@@ -201,8 +201,20 @@ using a custom S3-compatible endpoint.
 Without these the worker still runs; the `share` tool is not offered
 to the model, and `assets publish` is not configured in the shell.
 
-No GitHub auth, no Artifacts. The issue must be on a public
-repository.
+- `ARTIFACTS` — optional Cloudflare Artifacts binding, commented out
+  by default. Uncomment the `artifacts` stanza in `wrangler.jsonc`
+  and re-run `wrangler types` to enable it. `TriageAgent` then
+  builds a session-scoped artifacts client so every repository it
+  creates is isolated under the agent's own durable object id. The
+  worker backend exposes the same client as an in-shell `artifacts`
+  command, and the workflow's final step imports the source
+  repository into Artifacts, pushes the agent's changes to a review
+  branch, and includes the Artifacts remote and branch in the terminal
+  webhook message. When the binding is absent, the demo runs unchanged
+  and skips that publication step. See
+  [`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
+
+No GitHub auth. The issue must be on a public repository.
 
 ## Deploying
 

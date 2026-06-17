@@ -36,6 +36,12 @@ import {
 } from "@cloudflare/workspace";
 import { createAssets } from "@cloudflare/workspace/assets";
 import {
+  type ArtifactClient,
+  type ArtifactsCLIInput,
+  type ArtifactsCLIResult,
+  createArtifact,
+} from "@cloudflare/workspace/artifacts";
+import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
 } from "@cloudflare/workspace/backends/container";
@@ -95,6 +101,13 @@ export interface AgentTurnResult {
   text: string;
   /** Empty string on `ok`; populated for `out-of-steps` / `failed`. */
   reason: string;
+}
+
+export interface ArtifactPublication {
+  repo: string;
+  remote: string;
+  branch: string;
+  shareLink: string;
 }
 
 export interface TriageContext {
@@ -246,6 +259,93 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
   async getWorkspace(): Promise<WorkspaceStub> {
     await this.#workspaceFs.ready();
     return this.#workspaceFs.stub();
+  }
+
+  /**
+   * Session-scoped Cloudflare Artifacts client, or null when the
+   * ARTIFACTS binding isn't configured.
+   *
+   * The demo ships with the `artifacts` binding commented out in
+   * wrangler.jsonc, so the binding is absent from the generated
+   * env by default and this returns null. Uncomment the stanza and
+   * re-run `wrangler types` to enable it. When present, every
+   * repository this agent creates is scoped under the agent's own
+   * DO id, so one namespace cleanly isolates one agent's repos from
+   * another's. The session id is the same identity the Workspace
+   * uses, keeping artifact repos and the working tree aligned.
+   *
+   * `Artifacts` is a global type from `@cloudflare/workers-types`;
+   * we read the optional binding off env structurally since the
+   * commented-out stanza keeps it out of the generated `Env`.
+   */
+  #artifacts(): ArtifactClient | null {
+    const binding = (this.env as unknown as { ARTIFACTS?: Artifacts }).ARTIFACTS;
+    if (!binding) return null;
+    return createArtifact(binding, this.ctx.id.toString());
+  }
+
+  /** Worker-backend shell bridge for the in-shell `artifacts` command. */
+  async artifactsCLI(input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    const artifacts = this.#artifacts();
+    if (!artifacts) {
+      return {
+        stdout: "",
+        stderr: "artifacts: ARTIFACTS binding is not configured\n",
+        exitCode: 1,
+      };
+    }
+    return artifacts.cli(input);
+  }
+
+  /**
+   * Persist the working tree as a session-scoped Artifacts repo and
+   * push the current changes to a review branch. Returns null when
+   * Artifacts is not configured or when there is no patch to publish.
+   */
+  async publishArtifact(params: {
+    repoUrl: string;
+    issueNumber: number;
+    patch: string;
+    commitSubject: string;
+    commitBody: string;
+  }): Promise<ArtifactPublication | null> {
+    const artifacts = this.#artifacts();
+    if (!artifacts || params.patch.trim() === "") return null;
+
+    const repoName = artifactRepoName(params.repoUrl, params.issueNumber);
+    const branch = `triage-${params.issueNumber}-${this.ctx.id.toString().slice(0, 8)}`;
+    const imported = await importOrGetArtifact(artifacts, repoName, params.repoUrl);
+    const token =
+      "token" in imported
+        ? imported.token
+        : (await artifacts.createToken(repoName, "write", 3600)).plaintext;
+    await waitForArtifactReady(artifacts, repoName);
+    const pushRemote = authenticatedArtifactRemote(imported.remote, token);
+
+    const commands = [
+      `git config user.name ${shellQuote("Cloudflare Triage Agent")}`,
+      `git config user.email ${shellQuote("triage@example.invalid")}`,
+      `git branch --force ${shellQuote(branch)}`,
+      `git checkout ${shellQuote(branch)}`,
+      "git add .",
+      `git commit -m ${shellQuote(commitMessage(params.commitSubject, params.commitBody))}`,
+      `git push --force ${shellQuote(pushRemote)} ${shellQuote(`HEAD:${branch}`)}`,
+    ];
+    const result = await this.#workspaceFs.shell.exec(commands.join(" && "), {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      backend: "shell",
+    });
+    const finished = await result.result();
+    if (finished.exitCode !== 0) {
+      const output = (finished.stderr || finished.stdout).replaceAll(
+        pushRemote,
+        "<artifact-remote>",
+      );
+      throw new Error(`artifact push failed with exit code ${finished.exitCode}: ${output}`);
+    }
+
+    return { repo: repoName, remote: imported.remote, branch, shareLink: imported.remote };
   }
 
   // ── Workflow control surface ──────────────────────────────────
@@ -449,14 +549,16 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
       "                   `edit` cover.",
       "  - report_update: progress updates back to the user.",
       "",
-      "Git is built into the `shell` backend. Run",
+      "Git and Artifacts are built into the `shell` backend. Run",
       `  exec({ command: "git clone https://github.com/<owner>/<repo> ${REPO_ROOT}", backend: "shell" })`,
       "to populate the working tree, and `git status` / `git diff` /",
       "`git log` against the same backend to inspect it. The clone",
       "runs on the host durable object, so it works despite the",
       "shell isolate having no network of its own; only https://",
       "URLs are supported. Pass --depth=<N> if you need more history",
-      "than the default depth=1.",
+      "than the default depth=1. When the optional ARTIFACTS binding",
+      "is configured, `artifacts repo ...` and `artifacts token ...`",
+      "are also available on the `shell` backend.",
       "",
       "Workflow:",
       `  1. Clone the repo with \`git clone\` via \`exec\` on the`,
@@ -521,10 +623,11 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
               "sed / awk / jq / head / tail / sort / find / file " +
               "inspection, quick text transformations, and `git` " +
               "(clone / status / diff / log / branch / commit) — " +
-              "the shell registers a built-in `git` command that " +
-              "forwards to the host workspace, so network-bound " +
-              "subcommands like `git clone` work even though the " +
-              "isolate itself has no public network. Cannot run " +
+              "the shell registers built-in `git` and optional " +
+              "`artifacts` commands that forward to the host " +
+              "workspace, so network-bound subcommands like " +
+              "`git clone` work even though the isolate itself has " +
+              "no public network. Cannot run " +
               "npm, node, python, or any binary that isn't part of " +
               "just-bash's built-in command set.",
           },
@@ -861,6 +964,73 @@ function collectAssistantText(
     if (text.length > 0) return text;
   }
   return "";
+}
+
+async function importOrGetArtifact(
+  artifacts: ArtifactClient,
+  name: string,
+  url: string,
+): Promise<ArtifactsCreateRepoResult | ArtifactsRepoInfo> {
+  try {
+    return await artifacts.import(name, { url });
+  } catch (cause) {
+    if (isArtifactAlreadyExists(cause)) return artifacts.get(name);
+    throw cause;
+  }
+}
+
+async function waitForArtifactReady(artifacts: ArtifactClient, name: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await artifacts.get(name);
+      return;
+    } catch (cause) {
+      lastError = cause;
+      await sleep(500);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`artifact repo '${name}' is not ready`);
+}
+
+function isArtifactAlreadyExists(cause: unknown): boolean {
+  return (
+    cause instanceof Error &&
+    cause.name === "ArtifactsError" &&
+    (cause as { code?: unknown }).code === "ALREADY_EXISTS"
+  );
+}
+
+function artifactRepoName(repoUrl: string, issueNumber: number): string {
+  try {
+    const url = new URL(repoUrl);
+    const [owner = "repo", rawRepo = "unknown"] = url.pathname
+      .replace(/\.git$/, "")
+      .split("/")
+      .filter(Boolean);
+    return `triage-${safeArtifactNamePart(owner)}-${safeArtifactNamePart(rawRepo)}-${issueNumber}`;
+  } catch {
+    return `triage-repo-unknown-${issueNumber}`;
+  }
+}
+
+function safeArtifactNamePart(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/__+/g, "-");
+}
+
+function authenticatedArtifactRemote(remote: string, token: string): string {
+  const secret = token.split("?expires=", 1)[0];
+  return `https://x:${encodeURIComponent(secret)}@${remote.slice("https://".length)}`;
+}
+
+function commitMessage(subject: string, body: string): string {
+  const trimmedBody = body.trim();
+  return trimmedBody ? `${subject}\n\n${trimmedBody}` : subject;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function sleep(ms: number): Promise<void> {

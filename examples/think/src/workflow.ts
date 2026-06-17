@@ -14,7 +14,8 @@
  *   5. structure         (tool-less `step.prompt` that coerces the
  *                         explore turn's text into the final schema)
  *   6. build-patch       (`git diff HEAD` inside the container)
- *   7. notify-done       (terminal payload, message ends in DONE)
+ *   7. publish-artifact  (optional Artifacts repo + review branch)
+ *   8. notify-done       (terminal payload, message ends in DONE)
  *
  * The explore step swallows budget exhaustion: if the agent ran out
  * of steps or the model stream errored on context overflow, the
@@ -26,7 +27,7 @@
 import { ThinkWorkflow, type ThinkWorkflowStep } from "@cloudflare/think/workflows";
 import type { AgentWorkflowEvent } from "agents/workflows";
 import { z } from "zod";
-import type { AgentTurnResult, TriageAgent } from "./agent.js";
+import type { AgentTurnResult, ArtifactPublication, TriageAgent } from "./agent.js";
 
 export interface TriageWorkflowParams {
   issueUrl: string;
@@ -117,11 +118,25 @@ export class TriageWorkflow extends ThinkWorkflow<TriageAgent, TriageWorkflowPar
       const patch = await step.do("build-patch-partial", async () => {
         return this.agent.gitDiff();
       });
+      const artifact: ArtifactPublication | null = await step.do(
+        "publish-artifact-partial",
+        async () => {
+          const published = await this.agent.publishArtifact({
+            repoUrl: `https://github.com/${issue.repo}.git`,
+            issueNumber: issue.number,
+            patch,
+            commitSubject: `partial: ${exploreResult.status}`,
+            commitBody: exploreResult.reason,
+          });
+          return published ? plainArtifactPublication(published) : null;
+        },
+      );
       await step.do("notify-done-partial", async () => {
         const head = exploreResult.status === "out-of-steps" ? "Budget exhausted" : "Run failed";
         const message = [
           `${head}: ${exploreResult.reason}.`,
           exploreResult.text ? `Partial output:\n${exploreResult.text}` : null,
+          artifactSummary(artifact),
           "DONE",
         ]
           .filter(Boolean)
@@ -161,14 +176,29 @@ export class TriageWorkflow extends ThinkWorkflow<TriageAgent, TriageWorkflowPar
     });
     console.log(`[wf] patch length=${patch.length}`);
 
-    // 6. notify-done — terminal payload with a DONE-suffixed message.
+    // 6. publish-artifact — if Artifacts is configured, import the
+    //    source repository, commit the working tree to a review
+    //    branch, and push it to the artifact repo.
+    const artifact: ArtifactPublication | null = await step.do("publish-artifact", async () => {
+      const published = await this.agent.publishArtifact({
+        repoUrl: `https://github.com/${issue.repo}.git`,
+        issueNumber: issue.number,
+        patch,
+        commitSubject: triage.commitSubject,
+        commitBody: triage.commitBody,
+      });
+      return published ? plainArtifactPublication(published) : null;
+    });
+
+    // 7. notify-done — terminal payload with a DONE-suffixed message.
     await step.do("notify-done", async () => {
       const verb = patch.trim()
         ? "Patch ready"
         : triage.attemptedFix
           ? "Fix attempted, no diff captured"
           : "Findings only";
-      const message = `${verb}: ${triage.commitSubject}. DONE`;
+      const parts = [`${verb}: ${triage.commitSubject}.`, artifactSummary(artifact), "DONE"];
+      const message = parts.filter(Boolean).join("\n\n");
       await this.agent.postWebhook({
         message,
         patch,
@@ -176,6 +206,20 @@ export class TriageWorkflow extends ThinkWorkflow<TriageAgent, TriageWorkflowPar
       });
     });
   }
+}
+
+function plainArtifactPublication(artifact: ArtifactPublication): ArtifactPublication {
+  return {
+    repo: artifact.repo,
+    remote: artifact.remote,
+    branch: artifact.branch,
+    shareLink: artifact.shareLink,
+  };
+}
+
+function artifactSummary(artifact: ArtifactPublication | null): string | null {
+  if (!artifact) return null;
+  return `Artifact: ${artifact.shareLink}\nBranch: ${artifact.branch}`;
 }
 
 // ── GitHub REST helper ─────────────────────────────────────────────

@@ -11,6 +11,14 @@
 
   "ai": { "binding": "AI" },
 
+  // Cloudflare Artifacts binding. Commented out so the demo runs
+  // without an Artifacts namespace by default. Uncomment this
+  // stanza and re-run `wrangler types` to enable
+  // TriageAgent.listArtifacts() and the session-scoped artifacts
+  // client in src/agent.ts. Every repo the agent creates is scoped
+  // under its DO id. See docs/14_artifacts_interface.md.
+  // "artifacts": [{ "binding": "ARTIFACTS", "namespace": "default" }],
+
   // Worker Loader binding. The TriageAgent's Workspace mounts a
   // worker backend (just-bash in a Dynamic Worker) alongside the
   // container backend; the worker backend dials through env.LOADER.
