@@ -130,7 +130,7 @@ export interface WorkerBackendOptions {
   id?: string;
 }
 
-const DEFAULT_COMPAT_DATE = "2026-05-26";
+const DEFAULT_COMPAT_DATE = "2026-06-17";
 const DEFAULT_COMPAT_FLAGS = ["nodejs_compat"];
 
 export class WorkerBackend implements WorkspaceBackend {

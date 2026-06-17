@@ -195,6 +195,41 @@ describe("WorkerBackend", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  it("uses the current compatibility date for dynamic workers", async () => {
+    let observedDate: string | undefined;
+    let observedFlags: string[] | undefined;
+    const fetcher = fakeFetcher(() => ({
+      id: "x",
+      events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+    }));
+    const loader = {
+      get(
+        _name: string,
+        getCode: () => { compatibilityDate?: string; compatibilityFlags?: string[] },
+      ) {
+        const code = getCode();
+        observedDate = code.compatibilityDate;
+        observedFlags = code.compatibilityFlags;
+        return { getEntrypoint: () => fetcher };
+      },
+    };
+    const ctx = {
+      exports: {
+        WorkspaceServiceProxy: () => ({}),
+      },
+    };
+
+    const backend = new WorkerBackend({
+      loader,
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx,
+    });
+    await backend.connect();
+
+    expect(observedDate).toBe("2026-06-17");
+    expect(observedFlags).toEqual(["nodejs_compat"]);
+  });
+
   it("resolves an async fetcher factory once per connect()", async () => {
     // A factory that fetches code from KV before minting the
     // Worker Loader stub will be async. The backend awaits it

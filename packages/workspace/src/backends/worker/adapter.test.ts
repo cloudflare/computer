@@ -9,6 +9,7 @@
 // shows up immediately.
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import { Bash } from "just-bash";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
@@ -123,6 +124,15 @@ describe("WorkspaceFsAdapter — reads", () => {
     expect(s.size).toBe(2);
     expect(s.mtime).toBeInstanceOf(Date);
   });
+
+  it("exposes a virtual /dev/null", async () => {
+    expect(await adapter.readdir("/dev")).toEqual(["null"]);
+    const s = await adapter.stat("/dev/null");
+    expect(s.isFile).toBe(true);
+    expect(s.size).toBe(0);
+    expect(await adapter.readFile("/dev/null")).toBe("");
+    expect(Array.from(await adapter.readFileBuffer("/dev/null"))).toEqual([]);
+  });
 });
 
 describe("WorkspaceFsAdapter — writes", () => {
@@ -180,6 +190,13 @@ describe("WorkspaceFsAdapter — writes", () => {
     await workspace.fs.writeFile("/target", "hi");
     await adapter.symlink("/target", "/link");
     expect(await adapter.readlink("/link")).toBe("/target");
+  });
+
+  it("discards shell redirection writes to /dev/null", async () => {
+    const bash = new Bash({ fs: adapter as never, cwd: "/" });
+    const result = await bash.exec("printf hello >/dev/null && cat /dev/null");
+    expect(result).toMatchObject({ exitCode: 0, stdout: "", stderr: "" });
+    await expect(workspace.fs.stat("/dev/null")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("lstat reports the symlink itself", async () => {

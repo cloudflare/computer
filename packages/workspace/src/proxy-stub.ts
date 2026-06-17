@@ -10,6 +10,8 @@
 // working; the constructor throws so any actual instantiation
 // outside workerd surfaces a clear error.
 
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
+
 export interface WorkspaceProxyProps {
   binding: string;
   id: string;
@@ -33,6 +35,15 @@ export interface WorkspaceServiceProxyProps {
   id: string;
 }
 
+export class ArtifactsCLITarget {
+  constructor() {
+    throw new Error("ArtifactsCLITarget is only available under workerd.");
+  }
+  cli(_input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    throw new Error("ArtifactsCLITarget.cli is only callable under workerd.");
+  }
+}
+
 export class WorkspaceServiceProxy {
   constructor() {
     throw new Error(
@@ -40,5 +51,14 @@ export class WorkspaceServiceProxy {
         "Re-export it from your Worker entrypoint and let the runtime " +
         "construct it via ctx.exports.WorkspaceServiceProxy(...).",
     );
+  }
+  getWorkspace(): Promise<unknown> {
+    throw new Error("WorkspaceServiceProxy.getWorkspace is only callable under workerd.");
+  }
+  getArtifacts(): Promise<ArtifactsCLITarget> {
+    throw new Error("WorkspaceServiceProxy.getArtifacts is only callable under workerd.");
+  }
+  artifactsCLI(_input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    throw new Error("WorkspaceServiceProxy.artifactsCLI is only callable under workerd.");
   }
 }

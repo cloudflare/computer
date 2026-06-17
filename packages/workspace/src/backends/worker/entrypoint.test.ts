@@ -16,7 +16,8 @@
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
+import { FakeArtifactsBinding } from "../../../tests/utilities/fake-artifacts-binding.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index.js";
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import type { WorkspaceStub } from "../../stub.js";
 import { Workspace } from "../../workspace.js";
@@ -68,6 +69,7 @@ interface FakeWorkspace {
     readFile: (path: string, encoding: "utf8") => Promise<string>;
     writeFile: (path: string, body: string | Uint8Array) => Promise<void>;
   };
+  artifacts: { cli(input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> };
   [Symbol.dispose]?: () => void;
 }
 
@@ -77,7 +79,12 @@ interface FakeEnv {
   };
 }
 
-function fakeEnv(opts: { onGetWorkspace?: () => FakeWorkspace } = {}): FakeEnv {
+function fakeEnv(
+  opts: {
+    onGetWorkspace?: () => FakeWorkspace;
+    artifactsCLI?: (input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult>;
+  } = {},
+): FakeEnv {
   return {
     HOST: {
       async getWorkspace(): Promise<FakeWorkspace> {
@@ -88,6 +95,15 @@ function fakeEnv(opts: { onGetWorkspace?: () => FakeWorkspace } = {}): FakeEnv {
                 return "";
               },
               async writeFile() {},
+            },
+            artifacts: {
+              cli:
+                opts.artifactsCLI ??
+                (async () => ({
+                  stdout: "",
+                  stderr: "artifacts: Workspace Artifacts binding is not configured\n",
+                  exitCode: 1,
+                })),
             },
           }
         );
@@ -358,6 +374,44 @@ describe("ShellWorker", () => {
     });
   });
 
+  describe("`artifacts` custom command wiring", () => {
+    it("runs `artifacts repo list` end-to-end through real Bash", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage() as never,
+        backends: [noopBackend()],
+        sessionId: "sess1",
+        artifacts: { binding: new FakeArtifactsBinding() },
+      });
+      await workspace.ready();
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      const stub = workspace.stub();
+      try {
+        const worker = new ShellWorker(
+          undefined as never,
+          {
+            HOST: {
+              async getWorkspace() {
+                return stub as unknown as FakeWorkspace;
+              },
+            },
+          } as never,
+        );
+        const events = (await drain(
+          (
+            await worker.exec({ command: "artifacts repo list", cwd: "/workspace" })
+          ).events,
+        )) as { name: string; value: string | number }[];
+        const stdout = events.find((e) => e.name === "stdout");
+        const exit = events.find((e) => e.name === "exit");
+        expect(stdout?.value).toBe("[]\n");
+        expect(exit?.value).toBe(0);
+      } finally {
+        stub[Symbol.dispose]();
+        await workspace.close();
+      }
+    });
+  });
+
   // Lightweight structural check that doesn't need a real fs: the
   // protected extraCommands() hook is invoked and its output is
   // appended after the built-in commands.
@@ -384,7 +438,7 @@ describe("ShellWorker", () => {
       }
       const worker = TestWithExtras.spy();
       await drain((await worker.exec({ command: "alpha" })).events);
-      expect(seen.map((c) => c.name)).toEqual(["git", "assets", "alpha", "beta"]);
+      expect(seen.map((c) => c.name)).toEqual(["git", "assets", "artifacts", "alpha", "beta"]);
     });
   });
 });

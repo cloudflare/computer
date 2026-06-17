@@ -22,6 +22,7 @@
 // `loader` + `workspace` + `ctx`).
 
 export { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter.js";
+export { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 export { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
 export { type ExecInput, ShellWorker, type ShellWorkerOptions } from "./entrypoint.js";
 export { SHELL_MODULES } from "./generated-bundle.js";

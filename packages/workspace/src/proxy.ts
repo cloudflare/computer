@@ -48,7 +48,9 @@
 // need to live in @cloudflare/workspace — the proxy works for any
 // DO that implements a fetch() handler answering /health and /ws.
 
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
 
 export interface WorkspaceProxyProps {
   // Name of a DurableObjectNamespace binding in env. The proxy
@@ -84,6 +86,19 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
     }
 
     return new Response("not found", { status: 404 });
+  }
+}
+
+export class ArtifactsCLITarget extends RpcTarget {
+  readonly #cli: (input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult>;
+
+  constructor(cli: (input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult>) {
+    super();
+    this.#cli = cli;
+  }
+
+  cli(input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    return this.#cli(input);
   }
 }
 
@@ -137,14 +152,46 @@ export class WorkspaceServiceProxy extends WorkerEntrypoint<unknown, WorkspaceSe
   // is expected to expose this method; both the container
   // and worker example DOs do.
   async getWorkspace(): Promise<unknown> {
+    const stub = this.#hostStub<{ getWorkspace(): Promise<unknown> }>();
+    return stub.getWorkspace();
+  }
+
+  // Optional Artifacts CLI hook used by the worker-backend shell.
+  // Returning a target mirrors getWorkspace(): the dynamic Worker
+  // captures the returned capability once and the command talks to
+  // that target, instead of binding a method directly off HOST.
+  async getArtifacts(): Promise<ArtifactsCLITarget> {
+    const stub = this.#hostStub<{
+      getArtifacts?: () => Promise<ArtifactsCLITarget>;
+      artifactsCLI?: (input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult>;
+    }>();
+    if (typeof stub.getArtifacts === "function") return stub.getArtifacts();
+    if (typeof stub.artifactsCLI === "function") {
+      return new ArtifactsCLITarget(
+        (input) => stub.artifactsCLI?.(input) as Promise<ArtifactsCLIResult>,
+      );
+    }
+    return new ArtifactsCLITarget(async () => ({
+      stdout: "",
+      stderr: "artifacts: host does not expose an Artifacts CLI\n",
+      exitCode: 1,
+    }));
+  }
+
+  // Back-compat direct hook. New shell code calls getArtifacts()
+  // and captures the returned target instead.
+  async artifactsCLI(input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    return (await this.getArtifacts()).cli(input);
+  }
+
+  #hostStub<T extends object>(): Rpc.DurableObjectBranded & T {
     const { binding, id } = this.ctx.props;
     const ns = (this.env as Record<string, unknown>)[binding] as
-      | DurableObjectNamespace<Rpc.DurableObjectBranded & { getWorkspace(): Promise<unknown> }>
+      | DurableObjectNamespace<Rpc.DurableObjectBranded & T>
       | undefined;
     if (!ns) {
       throw new Error(`WorkspaceServiceProxy: env.${binding} is not a DurableObjectNamespace`);
     }
-    const stub = ns.get(ns.idFromString(id));
-    return stub.getWorkspace();
+    return ns.get(ns.idFromString(id)) as unknown as Rpc.DurableObjectBranded & T;
   }
 }

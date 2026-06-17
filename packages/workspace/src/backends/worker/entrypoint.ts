@@ -19,6 +19,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { Bash, type CustomCommand } from "just-bash";
 
 import { WorkspaceFsAdapter } from "./adapter.js";
+import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
 import { defineGitCommand, type GitCommandHost } from "./git-command.js";
 
@@ -68,6 +69,7 @@ export interface ShellHostFetcher {
 // [Symbol.dispose]; the shell disposes it after Bash settles.
 export interface HostWorkspaceStub extends GitCommandHost, AssetsCommandHost {
   fs: import("./adapter.js").WorkspaceFs;
+  artifacts: ArtifactsCommandHost["artifacts"];
   [Symbol.dispose]?: () => void;
 }
 
@@ -140,6 +142,7 @@ export class ShellWorker<
     const customCommands: CustomCommand[] = [
       defineGitCommand(ws),
       defineAssetsCommand(ws),
+      defineArtifactsCommand({ artifacts: ws.artifacts }),
       ...this.extraCommands(ws),
     ];
 

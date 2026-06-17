@@ -19,6 +19,12 @@ import {
 } from "@cloudflare/dofs";
 import { pullOnce, pushOnce, reconcileWatermarks } from "@cloudflare/workspace-rpc/driver";
 
+import {
+  type ArtifactClient,
+  ArtifactError,
+  createArtifact,
+  runArtifactsCLI,
+} from "./artifacts/index.js";
 import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient, type GitClient, type GitIdentity } from "./git/index.js";
@@ -79,6 +85,17 @@ export interface WorkspaceOptions {
   // directly, or a factory when the publisher needs the Workspace
   // instance itself (for example, createAssets({ ws, ... })).
   assets?: AssetsClient | ((ws: Workspace) => AssetsClient);
+
+  // Optional Cloudflare Artifacts binding. When configured,
+  // `workspace.artifacts` is a session-scoped Artifacts client.
+  // The session id defaults to WorkspaceOptions.sessionId; pass
+  // `artifacts.sessionId` to override it. When omitted, accessing
+  // the client is still possible but every operation fails with a
+  // clear configuration error.
+  artifacts?: {
+    binding: Artifacts;
+    sessionId?: string;
+  };
 }
 
 export class Workspace {
@@ -97,6 +114,7 @@ export class Workspace {
   readonly #sessionId: string;
   readonly #defaultGitIdentity: GitIdentity | undefined;
   readonly #assets: AssetsClient | undefined;
+  readonly #artifacts: ArtifactClient;
   // Lazily-constructed git client, cached so the dynamic
   // imports of isomorphic-git / diff land once per Workspace.
   #git: GitClient | undefined;
@@ -126,6 +144,12 @@ export class Workspace {
     this.#now = options.now ?? Date.now;
     this.#sessionId = options.sessionId ?? "";
     this.#defaultGitIdentity = options.defaultGitIdentity;
+    this.#artifacts = options.artifacts
+      ? createArtifact(
+          options.artifacts.binding,
+          options.artifacts.sessionId ?? options.sessionId ?? "",
+        )
+      : createDisabledArtifactsClient();
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
     this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
@@ -234,6 +258,10 @@ export class Workspace {
       });
     }
     return this.#git;
+  }
+
+  get artifacts(): ArtifactClient {
+    return this.#artifacts;
   }
 
   /**
@@ -605,6 +633,27 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     this.#invalidateHandle(id, handle);
   }
+}
+
+function createDisabledArtifactsClient(): ArtifactClient {
+  const fail = () => {
+    throw new ArtifactError("ENOCONFIG", "Workspace Artifacts binding is not configured");
+  };
+  return {
+    sessionId: "",
+    create: fail,
+    get: fail,
+    list: fail,
+    import: fail,
+    delete: fail,
+    createToken: fail,
+    listTokens: fail,
+    getToken: fail,
+    revokeToken: fail,
+    async cli(input) {
+      return runArtifactsCLI(this, input);
+    },
+  } as ArtifactClient;
 }
 
 // Selector wrapper that satisfies the WorkspaceShell surface but

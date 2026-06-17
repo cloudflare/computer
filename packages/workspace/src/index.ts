@@ -41,6 +41,7 @@ export {
   type WorkspaceSpan,
 } from "./observe.js";
 export {
+  ArtifactsCLITarget,
   WorkspaceProxy,
   type WorkspaceProxyProps,
   WorkspaceServiceProxy,

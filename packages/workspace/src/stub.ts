@@ -57,6 +57,15 @@ import type {
 import { trackStub, untrackStub } from "@cloudflare/workspace-rpc/debug";
 import { RpcTarget } from "capnweb";
 
+import type {
+  ArtifactClient,
+  ArtifactImportOptions,
+  ArtifactImportSource,
+  ArtifactRepoSummary,
+  ArtifactScope,
+  ArtifactsCLIInput,
+  ArtifactsCLIResult,
+} from "./artifacts/index.js";
 import type { ShareOptions } from "./assets/index.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
@@ -308,6 +317,71 @@ export class WorkspaceAssetsStub extends RpcTarget {
   }
 }
 
+export class WorkspaceArtifactsStub extends RpcTarget {
+  readonly #artifacts: ArtifactClient;
+
+  constructor(artifacts: ArtifactClient) {
+    super();
+    this.#artifacts = artifacts;
+    trackStub(this);
+  }
+
+  [Symbol.dispose](): void {
+    untrackStub(this);
+  }
+
+  create(
+    name: string,
+    opts?: { readOnly?: boolean; description?: string; setDefaultBranch?: string },
+  ): Promise<ArtifactsCreateRepoResult> {
+    return this.#artifacts.create(name, opts);
+  }
+
+  get(name: string): Promise<ArtifactsRepoInfo> {
+    return this.#artifacts.get(name);
+  }
+
+  list(): Promise<ArtifactRepoSummary[]> {
+    return this.#artifacts.list();
+  }
+
+  import(
+    name: string,
+    source: ArtifactImportSource,
+    opts?: ArtifactImportOptions,
+  ): Promise<ArtifactsCreateRepoResult> {
+    return this.#artifacts.import(name, source, opts);
+  }
+
+  delete(name: string): Promise<boolean> {
+    return this.#artifacts.delete(name);
+  }
+
+  createToken(
+    name: string,
+    scope?: ArtifactScope,
+    ttl?: number,
+  ): Promise<ArtifactsCreateTokenResult> {
+    return this.#artifacts.createToken(name, scope, ttl);
+  }
+
+  listTokens(name: string): Promise<ArtifactsTokenListResult> {
+    return this.#artifacts.listTokens(name);
+  }
+
+  getToken(name: string, id: string): Promise<ArtifactsTokenInfo> {
+    return this.#artifacts.getToken(name, id);
+  }
+
+  revokeToken(name: string, tokenOrId: string): Promise<boolean> {
+    return this.#artifacts.revokeToken(name, tokenOrId);
+  }
+
+  cli(input: ArtifactsCLIInput): Promise<ArtifactsCLIResult> {
+    return this.#artifacts.cli(input);
+  }
+}
+
 // Git half. Pure value returns — every method takes JSRPC-
 // friendly inputs (strings, plain objects) and resolves to a
 // plain `{ stdout, stderr, exitCode }`. No nested stubs to
@@ -435,6 +509,7 @@ export class WorkspaceStub extends RpcTarget {
   readonly #shell: WorkspaceShellStub;
   readonly #git: WorkspaceGitStub;
   readonly #assets: WorkspaceAssetsStub | undefined;
+  readonly #artifacts: WorkspaceArtifactsStub;
 
   constructor(ws: Workspace) {
     super();
@@ -442,6 +517,7 @@ export class WorkspaceStub extends RpcTarget {
     this.#shell = new WorkspaceShellStub(ws);
     this.#git = new WorkspaceGitStub(ws);
     this.#assets = ws.assets === undefined ? undefined : new WorkspaceAssetsStub(ws);
+    this.#artifacts = new WorkspaceArtifactsStub(ws.artifacts);
     trackStub(this);
   }
 
@@ -456,6 +532,7 @@ export class WorkspaceStub extends RpcTarget {
     this.#shell[Symbol.dispose]();
     this.#git[Symbol.dispose]();
     this.#assets?.[Symbol.dispose]();
+    this.#artifacts[Symbol.dispose]();
     untrackStub(this);
   }
 
@@ -473,5 +550,9 @@ export class WorkspaceStub extends RpcTarget {
 
   get assets(): WorkspaceAssetsStub | undefined {
     return this.#assets;
+  }
+
+  get artifacts(): WorkspaceArtifactsStub {
+    return this.#artifacts;
   }
 }

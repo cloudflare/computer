@@ -81,17 +81,20 @@ export class WorkspaceFsAdapter {
   // --- Reads -------------------------------------------------------
 
   async readFile(path: string, _options?: AdapterReadFileOptions): Promise<string> {
+    if (isDevNull(path)) return "";
     // just-bash's readFile is text-by-default. The stub mirrors
     // that with the "utf8" overload; we always reach for it here.
     return this.#fs.readFile(path, "utf8");
   }
 
   async readFileBuffer(path: string): Promise<Uint8Array> {
+    if (isDevNull(path)) return new Uint8Array(0);
     const stream = await this.#fs.readFile(path);
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
   async exists(path: string): Promise<boolean> {
+    if (isVirtualDevPath(path)) return true;
     try {
       await this.#fs.stat(path);
       return true;
@@ -102,19 +105,27 @@ export class WorkspaceFsAdapter {
   }
 
   async stat(path: string): Promise<FsStat> {
+    const virtual = virtualDevStat(path);
+    if (virtual !== undefined) return virtual;
     return mapStat(await this.#fs.stat(path));
   }
 
   async lstat(path: string): Promise<FsStat> {
+    const virtual = virtualDevStat(path);
+    if (virtual !== undefined) return virtual;
     return mapStat(await this.#fs.lstat(path));
   }
 
   async readdir(path: string): Promise<string[]> {
+    if (isDevDir(path)) return ["null"];
     const entries = await this.#fs.readdir(path);
     return entries.map((e) => e.name);
   }
 
   async readdirWithFileTypes(path: string): Promise<DirentEntry[]> {
+    if (isDevDir(path)) {
+      return [{ name: "null", isFile: true, isDirectory: false, isSymbolicLink: false }];
+    }
     const entries = await this.#fs.readdir(path);
     return entries.map((e) => ({
       name: e.name,
@@ -125,16 +136,21 @@ export class WorkspaceFsAdapter {
   }
 
   async readlink(path: string): Promise<string> {
+    if (isVirtualDevPath(path)) {
+      throw createWorkspaceError("EINVAL", "not a symbolic link", path);
+    }
     return this.#fs.readlink(path);
   }
 
   // --- Writes ------------------------------------------------------
 
   async writeFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
+    if (isDevNull(path)) return;
     await this.#fs.writeFile(path, content);
   }
 
   async appendFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
+    if (isDevNull(path)) return;
     let existing: Uint8Array;
     try {
       const stream = await this.#fs.readFile(path);
@@ -151,18 +167,24 @@ export class WorkspaceFsAdapter {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+    if (isDevDir(path)) return;
     await this.#fs.mkdir(path, options);
   }
 
   async rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void> {
+    if (isVirtualDevPath(path)) return;
     await this.#fs.rm(path, options);
   }
 
   async chmod(path: string, mode: number): Promise<void> {
+    if (isVirtualDevPath(path)) return;
     await this.#fs.chmod(path, mode);
   }
 
   async symlink(target: string, linkPath: string): Promise<void> {
+    if (isVirtualDevPath(linkPath)) {
+      throw createWorkspaceError("EEXIST", "file exists", linkPath);
+    }
     await this.#fs.symlink(target, linkPath);
   }
 
@@ -205,9 +227,9 @@ export class WorkspaceFsAdapter {
   getAllPaths(): string[] {
     // Documented as best-effort. just-bash uses this only for glob
     // matching against in-memory roots that the adapter doesn't
-    // know about; returning an empty list is the explicit
-    // fallback the interface allows.
-    return [];
+    // know about. Include virtual device paths so globs can see
+    // the small POSIX compatibility shim this adapter provides.
+    return ["/dev", "/dev/null"];
   }
 
   // --- Known gaps --------------------------------------------------
@@ -243,6 +265,42 @@ function mapStat(s: WorkspaceStatResult): FsStat {
     size: s.size,
     mtime: new Date(s.mtime),
   };
+}
+
+function isDevDir(path: string): boolean {
+  return normalizePath(path) === "/dev";
+}
+
+function isDevNull(path: string): boolean {
+  return normalizePath(path) === "/dev/null";
+}
+
+function isVirtualDevPath(path: string): boolean {
+  return isDevDir(path) || isDevNull(path);
+}
+
+function virtualDevStat(path: string): FsStat | undefined {
+  if (isDevDir(path)) {
+    return {
+      isFile: false,
+      isDirectory: true,
+      isSymbolicLink: false,
+      mode: 0o755,
+      size: 0,
+      mtime: new Date(0),
+    };
+  }
+  if (isDevNull(path)) {
+    return {
+      isFile: true,
+      isDirectory: false,
+      isSymbolicLink: false,
+      mode: 0o666,
+      size: 0,
+      mtime: new Date(0),
+    };
+  }
+  return undefined;
 }
 
 function joinPath(a: string, b: string): string {

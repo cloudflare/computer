@@ -371,6 +371,15 @@ describe("Workspace backend selection", () => {
     });
   });
 
+  describe("workspace.artifacts", () => {
+    it("exists without a binding and fails with a clear command error", async () => {
+      const ws = new Workspace({ storage: makeStorage() });
+      const res = await ws.artifacts.cli({ argv: ["repo", "list"] });
+      expect(res.exitCode).toBe(1);
+      expect(res.stderr).toContain("Workspace Artifacts binding is not configured");
+    });
+  });
+
   describe("without a backend", () => {
     // A Workspace constructed without backends gives callers the
     // local SQLite-backed filesystem on its own. The shell half
