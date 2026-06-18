@@ -25,10 +25,10 @@
     "node": ">=22"
   },
   "dependencies": {
-    "fuse-native": "^2.2.6",
-    "@platformatic/vfs": "^0.4.0",
     "@cloudflare/dofs": "*",
-    "@cloudflare/workspace-rpc": "*"
+    "@cloudflare/workspace-rpc": "*",
+    "@platformatic/vfs": "^0.4.0",
+    "fuse-native": "^2.2.6"
   },
   "devDependencies": {
     "vitest": "^4.1.7"

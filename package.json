@@ -1,6 +1,7 @@
 {
   "name": "@cloudflare/workspace",
   "private": true,
+  "packageManager": "npm",
   "workspaces": [
     "packages/dofs",
     "packages/rpc",
@@ -16,14 +17,15 @@
     "build:docker": "npm run build:docker --workspaces --if-present",
     "build:all": "npm run build && npm run build:bin && npm run build:docker",
     "format": "biome format --write .",
-    "format:check": "biome format .",
-    "check": "biome check ."
+    "check": "biome check . && biome format . && sherif --fail-on-warnings",
+    "check:fix": "biome check . --fix && sherif --fix --select highest"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@types/node": "^25.9.1",
     "esbuild": "^0.28.1",
     "postject": "^1.0.0-alpha.6",
+    "sherif": "^1.11.1",
     "typescript": "^6.0.3"
   }
 }

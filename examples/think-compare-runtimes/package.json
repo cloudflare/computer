@@ -18,6 +18,7 @@
   "dependencies": {
     "@cloudflare/kumo": "^2.4.1",
     "@cloudflare/sandbox": "^0.11.0",
+    "@cloudflare/shell": "^0.3.9",
     "@cloudflare/think": "^0.8.2",
     "@cloudflare/workspace": "*",
     "@cloudflare/workspace-rpc": "*",
@@ -51,6 +52,6 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.7",
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.96.0"
   }
 }
