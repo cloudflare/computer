@@ -34,13 +34,13 @@ import {
   WorkspaceServiceProxy,
   type WorkspaceStub,
 } from "@cloudflare/workspace";
-import { createAssets } from "@cloudflare/workspace/assets";
 import {
   type ArtifactClient,
   type ArtifactsCLIInput,
   type ArtifactsCLIResult,
   createArtifact,
 } from "@cloudflare/workspace/artifacts";
+import { createAssets } from "@cloudflare/workspace/assets";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
