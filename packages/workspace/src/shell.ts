@@ -33,6 +33,7 @@ import type { ApplyResult, SkippedEntry } from "@cloudflare/dofs";
 import type { ExecEvent, ShellRPC } from "@cloudflare/workspace-rpc";
 
 import { noopObserver, type WorkspaceObserver, withSpan } from "./observe.js";
+import { assertNotTemplate } from "./sh.js";
 
 export type ExecEncoding = "utf8" | undefined;
 
@@ -148,6 +149,7 @@ export class WorkspaceShell {
     command: string,
     options: ExecOptions<E> = {},
   ): Promise<ExecHandle<E>> {
+    assertNotTemplate(command);
     // Pre-exec push: ship anything the host wrote since the last
     // push so the spawned command sees it. Failures non-fatal per
     // docs/05 — the command still runs; pushed reports 0.
