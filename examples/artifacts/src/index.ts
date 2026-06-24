@@ -4,16 +4,19 @@
 // examples/worker, rewrites its Worker name, publishes it to a new
 // Cloudflare Artifacts repo, and returns a read-only clone URL.
 // The Worker owns the endpoint logic. The durable object stays
-// minimal: it owns the Workspace, exposes getWorkspace(), and bridges
-// the host Artifacts binding into the worker-backend shell command.
+// minimal: it constructs the Workspace with `this` so the Worker can
+// reach it through getWorkspace(stub), and bridges the host Artifacts
+// binding into the worker-backend shell command.
 
 import { DurableObject } from "cloudflare:workers";
 
 import {
   type DurableObjectStorageLike,
-  Workspace,
+  getWorkspace,
+  sh,
+  type WorkspaceClient,
   WorkspaceServiceProxy,
-  type WorkspaceStub,
+  withWorkspace,
 } from "@cloudflare/workspace";
 import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/workspace/backends/worker";
 
@@ -46,29 +49,24 @@ const EXAMPLE_PATH = "examples/worker";
 const GIT_REMOTE = "origin";
 const SHARE_TOKEN_TTL = "24h";
 
-export class ArtifactCreator extends DurableObject<Env> {
-  readonly #workspace: Workspace;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    const workerBackendOptions: WorkerBackendOptions = {
-      loader: env.LOADER as unknown as WorkerBackendOptions["loader"],
-      workspace: { binding: "ArtifactCreator", id: ctx.id.toString() },
-      ctx,
-    };
-    this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
-      sessionId: ctx.id.toString(),
-      artifacts: { binding: env.ARTIFACTS },
-      backends: [new WorkerBackend(workerBackendOptions)],
-    });
-  }
-
-  async getWorkspace(): Promise<WorkspaceStub> {
-    await this.#workspace.ready();
-    return this.#workspace.stub();
-  }
-}
+// Extending `withWorkspace` gives the durable object a Workspace and
+// the plumbing `getWorkspace` needs, with no hand-written method. The
+// callback runs after `super(...)`, so it can read `self.ctx` /
+// `self.env`.
+export class ArtifactCreator extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
+  const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
+  const workerBackendOptions: WorkerBackendOptions = {
+    loader: env.LOADER as unknown as WorkerBackendOptions["loader"],
+    workspace: { binding: "ArtifactCreator", id: ctx.id.toString() },
+    ctx,
+  };
+  return {
+    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    sessionId: ctx.id.toString(),
+    artifacts: { binding: env.ARTIFACTS },
+    backends: [new WorkerBackend(workerBackendOptions)],
+  };
+}) {}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -125,12 +123,10 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
   }
 
   const stub = env.ArtifactCreator.get(env.ArtifactCreator.idFromName(name));
-  // `wrangler types` exposes returned RpcTarget instances as
-  // Rpc.Stub<T>, which loses the concrete overloads on nested
-  // members. Runtime-wise this is still the WorkspaceStub surface,
-  // so cast once at the boundary and keep the rest of the example
-  // readable.
-  const ws = (await stub.getWorkspace()) as unknown as WorkspaceStub;
+  // `wrangler types` doesn't surface the `__getWorkspaceStub` accessor
+  // the `withWorkspace` mixin installs, so cast once at the boundary
+  // and keep the rest readable.
+  const ws = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
   const sourceDir = `${WORKSPACE_ROOT}/${name}-source`;
   const projectDir = `${WORKSPACE_ROOT}/${name}`;
 
@@ -138,16 +134,16 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
     await exec(
       ws,
       [
-        `rm -rf ${shellQuote(sourceDir)} ${shellQuote(projectDir)}`,
-        `git clone --depth 1 ${shellQuote(SOURCE_REPO)} ${shellQuote(sourceDir)}`,
-        `mkdir -p ${shellQuote(projectDir)}`,
-        `cp -R ${shellQuote(`${sourceDir}/${EXAMPLE_PATH}/.`)} ${shellQuote(projectDir)}`,
-        `sed -i ${shellQuote(`s/"name"[[:space:]]*:[[:space:]]*"[^"]*"/"name": "${name}"/`)} ${shellQuote(`${projectDir}/wrangler.jsonc`)}`,
-        `sed -i ${shellQuote(`s/"name"[[:space:]]*:[[:space:]]*"[^"]*"/"name": "@example\\/${name}"/`)} ${shellQuote(`${projectDir}/package.json`)}`,
-        `git init --initial-branch=main ${shellQuote(projectDir)}`,
-        `cat ${shellQuote(`${projectDir}/.git/HEAD`)} >/dev/null`,
+        sh`rm -rf ${sourceDir} ${projectDir}`,
+        sh`git clone --depth 1 ${SOURCE_REPO} ${sourceDir}`,
+        sh`mkdir -p ${projectDir}`,
+        sh`cp -R ${`${sourceDir}/${EXAMPLE_PATH}/.`} ${projectDir}`,
+        sh`sed -i ${`s/"name"[[:space:]]*:[[:space:]]*"[^"]*"/"name": "${name}"/`} ${`${projectDir}/wrangler.jsonc`}`,
+        sh`sed -i ${`s/"name"[[:space:]]*:[[:space:]]*"[^"]*"/"name": "@example\\/${name}"/`} ${`${projectDir}/package.json`}`,
+        sh`git init --initial-branch=main ${projectDir}`,
+        sh`cat ${`${projectDir}/.git/HEAD`} >/dev/null`,
         "git add .",
-        `git commit -m ${shellQuote(`Create ${name} worker example`)} --author ${shellQuote("Cloudflare Workspace Artifacts Example <workspace-artifacts@example.invalid>")}`,
+        sh`git commit -m ${`Create ${name} worker example`} --author ${"Cloudflare Workspace Artifacts Example <workspace-artifacts@example.invalid>"}`,
       ].join(" && "),
       { cwd: projectDir },
     );
@@ -162,19 +158,12 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
     const created = parseJSON<ArtifactCreateOutput>(
       await exec(
         ws,
-        [
-          "artifacts create",
-          shellQuote(name),
-          `--remote ${GIT_REMOTE}`,
-          "--force",
-          "--default-branch main",
-          `--description ${shellQuote(`Generated from ${SOURCE_REPO}/${EXAMPLE_PATH}`)}`,
-        ].join(" "),
+        sh`artifacts create ${name} --remote ${GIT_REMOTE} --force --default-branch main --description ${`Generated from ${SOURCE_REPO}/${EXAMPLE_PATH}`}`,
         { cwd: projectDir },
       ),
     );
 
-    await exec(ws, `git push --force ${shellQuote(GIT_REMOTE)} HEAD:main`, {
+    await exec(ws, sh`git push --force ${GIT_REMOTE} HEAD:main`, {
       cwd: projectDir,
       secretToRedact: created.credentialedRemote,
     });
@@ -183,7 +172,7 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
     // clone-ready URL, so there is nothing to hand-assemble. The URL
     // carries a live token — redact it from any error output.
     const shareLink = (
-      await exec(ws, `artifacts share ${shellQuote(name)} --scope read --ttl ${SHARE_TOKEN_TTL}`)
+      await exec(ws, sh`artifacts share ${name} --scope read --ttl ${SHARE_TOKEN_TTL}`)
     ).trim();
 
     return Response.json({
@@ -193,7 +182,7 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
       branch: "main",
       projectDir,
       shareLink,
-      cloneCommand: `git clone ${shellQuote(shareLink)} ${shellQuote(name)}`,
+      cloneCommand: sh`git clone ${shareLink} ${name}`,
     } satisfies CreateResult);
   } catch (cause) {
     return errorJSON(cause, isAlreadyExists(cause) ? 409 : 500);
@@ -203,7 +192,7 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
 }
 
 async function exec(
-  ws: WorkspaceStub,
+  ws: WorkspaceClient,
   command: string,
   options: { cwd?: string; secretToRedact?: string } = {},
 ): Promise<string> {
@@ -242,9 +231,4 @@ function errorJSON(error: unknown, status: number): Response {
   const message = error instanceof Error ? error.message : String(error);
   const code = (error as { code?: string }).code;
   return Response.json({ error: message, code }, { status });
-}
-
-function shellQuote(arg: string): string {
-  if (/^[A-Za-z0-9_\-+=:,./@%]+$/.test(arg)) return arg;
-  return `'${arg.replace(/'/g, `'"'"'`)}'`;
 }
