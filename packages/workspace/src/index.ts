@@ -24,6 +24,14 @@ export type {
 export { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 export type { BackendHandle, WorkspaceBackend } from "./backend.js";
 export { TestBackend, type TestBackendOptions } from "./backends/test.js";
+export {
+  getWorkspace,
+  type ShellExecOptions,
+  type WorkspaceClient,
+  type WorkspaceHandle,
+  type WorkspaceShellClient,
+} from "./client.js";
+export { decodeExecEvents, encodeExecEvents } from "./exec-wire.js";
 export { R2Bucket, type R2BucketBinding, type R2BucketOptions } from "./mounts/providers/r2.js";
 export type {
   EagerMount,
@@ -47,6 +55,7 @@ export {
   WorkspaceServiceProxy,
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
+export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
 export type {
   ExecEncoding,
   ExecHandle,
@@ -67,4 +76,10 @@ export {
   WorkspaceShellStub,
   WorkspaceStub,
 } from "./stub.js";
+export {
+  type WithWorkspaceCtor,
+  type WorkspaceLocalHost,
+  type WorkspaceStubHost,
+  withWorkspace,
+} from "./with-workspace.js";
 export { Workspace, type WorkspaceOptions } from "./workspace.js";
