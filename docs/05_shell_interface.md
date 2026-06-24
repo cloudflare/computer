@@ -183,6 +183,79 @@ await run.kill();                  // SIGTERM
 await run.kill("SIGKILL");
 ```
 
+## Building commands safely
+
+`exec` takes one command string, and the container runs it through
+`/bin/sh -c`. Interpolating a value straight into that string is a
+shell-injection risk: a path or branch name like `x; rm -rf /` breaks
+out of its argument.
+
+Reach the Workspace through `getWorkspace` and call `shell.exec` as a
+tagged template. Interpolated values are escaped before the command
+runs. `getWorkspace` takes either the durable object stub from a
+Worker (`getWorkspace(env.MyDO.get(id))`) or the durable object itself
+from inside it (`getWorkspace(this)`); the surface is identical both
+ways:
+
+```ts
+import { getWorkspace } from "@cloudflare/workspace";
+
+using ws = await getWorkspace(env.MyDO.get(id));
+
+const file = "my notes.md";
+const out = await (await ws.shell.exec`cat ${file}`).result(); // cat 'my notes.md'
+```
+
+Strings and numbers are quoted, arrays are quoted element-by-element
+and joined with spaces, and the literal parts of the template (the
+trusted command) are emitted verbatim. The tagged-template form
+defaults to string (`utf8`) output, since a caller reaching for it
+almost always wants text back.
+
+The plain `exec(command, options)` form is unchanged and still
+available. Use it when you need `cwd` or `backend`, and wrap an
+interpolated command in the `sh` tag to escape it:
+
+```ts
+import { sh } from "@cloudflare/workspace";
+
+await ws.shell.exec(sh`cat ${file}`, { cwd: "/workspace" });
+await ws.shell.exec("npm test", { cwd: "/workspace", encoding: "utf8" });
+```
+
+The plain form defaults to `Uint8Array` output; pass
+`{ encoding: "utf8" }` for a string.
+
+`sh` is exported on its own for composing a command string — the
+building block both the tagged-template `exec` and the
+`exec(sh`...`, options)` form use. Its escaping rules: strings and
+numbers are quoted, arrays are quoted element-by-element, and the
+static parts come from `strings.raw` so a backslash you write in the
+template reaches the shell as written. To splice in deliberate shell
+syntax — a pipe, a redirect, a pre-quoted sub-command — wrap the value
+in `{ raw: "..." }` to opt out of escaping for that one value:
+
+```ts
+await ws.shell.exec(sh`ls ${dir} ${{ raw: "| wc -l" }}`);
+```
+
+The single-argument quoter `shellQuote` is exported for cases that
+don't fit a template.
+
+### Why escaping runs caller-side
+
+`sh` collapses a template to a finished string before the call
+because of the RPC boundary. When a Worker calls `exec` through the
+Workspace stub, the command crosses Workers RPC as a value and is run
+on the durable-object side. A `TemplateStringsArray` does not survive
+that trip intact — structured clone keeps the indexed string parts but
+drops the `.raw` property the escaping relies on. So the escaping has
+to happen in the caller, which is what `getWorkspace`'s client does
+for the tagged-template form and what `sh` does explicitly. The
+remote stub's `exec` rejects a raw tagged-template call with a
+`TypeError` rather than run an unescaped command, so the unsafe path
+fails loudly.
+
 ## Working directory
 
 `cwd` is optional and defaults to the workspace root (see

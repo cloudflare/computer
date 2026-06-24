@@ -74,59 +74,54 @@ uniform; the counts are just always zero.
 Container backend:
 
 ```ts
-import { Workspace, WorkspaceProxy } from "@cloudflare/workspace";
+import { withWorkspace, WorkspaceProxy } from "@cloudflare/workspace";
 import { CloudflareContainerBackend, withWorkspaceContainer }
   from "@cloudflare/workspace/backends/container";
 import { DurableObject } from "cloudflare:workers";
 
 export { WorkspaceProxy };
 
-export class ContainerExample extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
-  #workspace = new Workspace({
-    storage: this.ctx.storage,
+// `withWorkspace` constructs the Workspace and installs the plumbing
+// `getWorkspace` needs — no hand-written stub method. The options
+// callback runs after `super(...)`, so it can read `self.ctx`. Compose
+// it with `withWorkspaceContainer` when the durable object also owns
+// the container binding.
+export class ContainerExample extends withWorkspace(
+  withWorkspaceContainer(class extends DurableObject<Env> {}),
+  (self) => ({
+    storage: self.ctx.storage,
     backends: [
       new CloudflareContainerBackend({
-        container: () => this,
-        workspace: { binding: "ContainerExample", id: this.ctx.id.toString() },
+        container: () => self,
+        workspace: { binding: "ContainerExample", id: self.ctx.id.toString() },
       }),
     ],
-  });
-
-  async getWorkspace(): Promise<WorkspaceStub> {
-    await this.#workspace.ready();
-    return this.#workspace.stub();
-  }
-
-  override fetch(req: Request) { return this.#workspace; /* see example */ }
-}
+  }),
+) {}
 ```
 
 Worker backend:
 
 ```ts
-import { Workspace, WorkspaceServiceProxy } from "@cloudflare/workspace";
+import { withWorkspace, WorkspaceServiceProxy } from "@cloudflare/workspace";
 import { WorkerBackend } from "@cloudflare/workspace/backends/worker";
 import { DurableObject } from "cloudflare:workers";
 
 export { WorkspaceServiceProxy };
 
-export class ContainerExample extends DurableObject<Env> {
-  #workspace = new Workspace({
-    storage: this.ctx.storage,
+export class ContainerExample extends withWorkspace(
+  class extends DurableObject<Env> {},
+  (self) => ({
+    storage: self.ctx.storage,
     backends: [
       new WorkerBackend({
-        loader: env.LOADER,
-        workspace: { binding: "ContainerExample", id: this.ctx.id.toString() },
-        ctx,
+        loader: self.env.LOADER,
+        workspace: { binding: "ContainerExample", id: self.ctx.id.toString() },
+        ctx: self.ctx,
       }),
     ],
-  });
-
-  async getWorkspace(): Promise<WorkspaceStub> {
-    await this.#workspace.ready();
-    return this.#workspace.stub();
-  }
-}
+  }),
+) {}
 ```
 
 Filesystem only — no backend, no shell:
@@ -242,19 +237,77 @@ for the caveat.
 ## Worker-side consumption
 
 ```ts
+import { getWorkspace } from "@cloudflare/workspace";
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const id = env.ContainerExample.idFromName("user-123");
-    using ws = await env.ContainerExample.get(id).getWorkspace();
+    using ws = await getWorkspace(env.ContainerExample.get(id));
 
     await ws.fs.writeFile("/notes.md", "hello");
-    using handle = await ws.shell.exec("ls /workspace");
+    using handle = await ws.shell.exec("ls /workspace", { encoding: "utf8" });
     const { exitCode, stdout } = await handle.result();
 
     return new Response(stdout, { status: exitCode === 0 ? 200 : 500 });
   },
 } satisfies ExportedHandler<Env>;
 ```
+
+`getWorkspace(stub)` calls the accessor the `withWorkspace` mixin
+installed on the durable object, then wraps the returned stub in a
+Worker-side client. Called with the durable object itself
+(`getWorkspace(this)`), it returns the same client backed by the
+in-isolate Workspace, so the surface is identical in both places. The
+client mirrors the stub surface (`fs`, `git`, `shell`, `artifacts`,
+`assets`); the only difference is that
+`shell.exec` also accepts a tagged template, covered next.
+
+### Building commands safely
+
+`shell.exec` runs one command string through `/bin/sh -c` in the
+container. Pasting a path or any other value straight into that string
+is a shell-injection risk: a value like `x; rm -rf /` breaks out of its
+argument. Call `exec` as a tagged template and interpolated values are
+escaped for you:
+
+```ts
+const file = "my notes.md";
+const out = await (await ws.shell.exec`cat ${file}`).result(); // cat 'my notes.md'
+```
+
+The tagged-template form defaults to string (`utf8`) output, since a
+caller reaching for it almost always wants text back.
+
+The plain `exec(command, options)` form is unchanged. Use it when you
+need `cwd` or `backend`, and wrap an interpolated command in the `sh`
+tag to escape it:
+
+```ts
+import { sh } from "@cloudflare/workspace";
+
+await ws.shell.exec(sh`cat ${file}`, { cwd: "/workspace" });
+await ws.shell.exec("npm test", { cwd: "/workspace", encoding: "utf8" });
+```
+
+The plain form defaults to `Uint8Array` output; pass
+`{ encoding: "utf8" }` for a string.
+
+`sh` quotes strings and numbers, quotes arrays element-by-element, and
+leaves the static template parts alone — they're the trusted command.
+When you really do mean shell syntax, wrap the value in `{ raw: "..." }`
+to opt out of escaping for that one value:
+
+```ts
+await ws.shell.exec(sh`ls ${dir} ${{ raw: "| wc -l" }}`);
+```
+
+The escaping has to run in the caller, not on the durable-object side:
+when the command crosses Workers RPC, a tagged template's `.raw`
+property doesn't survive structured clone, so the wrapper (and `sh`)
+collapse the template to a finished string before the call. The remote
+stub's `exec` rejects a raw tagged-template call so the unescaped path
+fails loudly. `shellQuote` is exported too, for the rare case where
+you need to quote a single argument outside a template.
 
 ## Observability
 
