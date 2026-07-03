@@ -12,7 +12,7 @@
 //   * statement + row counts, measured against the same backend
 //     wrapped in CountingStorage. Statement counts are deterministic
 //     and are the primary signal — the depth sweep should show
-//     fs.stat = 1 + 2D statements and provider.statSync = 3 + 4D,
+//     fs.stat = 1 + 2D statements and provider.statSync = 2 + 2D,
 //     while the flat-path baseline stays constant (O(1)).
 //
 // Output is a set of tables plus a single-line JSON blob so before/
@@ -495,7 +495,7 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   lines.push(`generated: ${new Date().toISOString()}`);
   lines.push(
     "note: statement counts are deterministic; ns/op is wall-clock under workerd. " +
-      "fs.stat=1+2D, provider.statSync=3+4D, flat-baseline=O(1).",
+      "fs.stat=1+2D, provider.statSync=2+2D, flat-baseline=O(1).",
   );
   lines.push("=".repeat(96));
 
@@ -544,11 +544,15 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   console.log(`\n${lines.join("\n")}\n`);
 
   // Signature gate. Statement counts are deterministic, so the O(depth)
-  // fingerprint doubles as the harness's contract: fs.stat = 1 + 2D,
-  // provider.statSync = 3 + 4D, flat baseline = O(1). Asserted AFTER the
+  // fingerprint doubles as the harness's contract. Asserted AFTER the
   // report is printed so the numbers stay visible even when the gate
   // trips. A deliberate perf change is expected to update these, which
   // is the point — silent drift becomes a failure.
+  //
+  //   fs.stat           = 1 + 2D  — resolveInode: 1 root read plus a
+  //                                 dirent and node read per segment.
+  //   provider.statSync = 2 + 2D  — one resolve plus linkCount.
+  //   flat-baseline     = 1       — a single indexed inode lookup.
   const find = (name: string, depth: number): ReadResult => {
     const row = readResults.find((r) => r.name === name && r.depth === depth);
     if (row === undefined) {
@@ -559,7 +563,7 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   for (const depth of depths) {
     expect(find("fs.stat", depth).statements, `fs.stat depth=${depth}`).toBe(1 + 2 * depth);
     expect(find("provider.statSync", depth).statements, `provider.statSync depth=${depth}`).toBe(
-      3 + 4 * depth,
+      2 + 2 * depth,
     );
     expect(find("flat-baseline(inode)", depth).statements, `flat-baseline depth=${depth}`).toBe(1);
   }

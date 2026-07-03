@@ -176,18 +176,19 @@ export class SQLiteWorkspaceProvider {
   }
 
   statSync(path: string, _options?: { bigint?: boolean }): VirtualStatsLike {
+    // statImpl resolves the path once (following symlinks) and returns
+    // the inode, so nlink comes from the same walk. A pending-create
+    // file reports inode 0, which yields nlink 1.
     const s = statImpl(this.db, path);
-    const node = resolveInode(this.db, path);
-    const ino = node?.inode ?? 0;
     return wrapStats({
       mode: s.mode,
       size: s.size,
       mtimeMs: s.mtime,
-      ino,
+      ino: s.inode,
       isFile: s.isFile,
       isDirectory: s.isDirectory,
       isSymbolicLink: false,
-      nlink: linkCount(this.db, ino),
+      nlink: linkCount(this.db, s.inode),
     });
   }
 
@@ -604,8 +605,19 @@ export class SQLiteWorkspaceProvider {
     if (!state.writable) {
       throw createWorkspaceError("EBADF", `fd ${fd} is not writable`);
     }
-    const stat = this.statSync(state.path);
-    const startAt = state.append ? stat.size : (position ?? state.position);
+    // Append needs the current EOF, so stat only then. A non-append
+    // write of >0 bytes doesn't need it: writeRangeSyncImpl resolves the
+    // path and raises ENOENT/EISDIR. A zero-length write short-circuits
+    // before that resolve, so keep an explicit existence check for it.
+    let startAt: number;
+    if (state.append) {
+      startAt = this.statSync(state.path).size;
+    } else {
+      if (length === 0) {
+        this.statSync(state.path);
+      }
+      startAt = position ?? state.position;
+    }
     const view =
       buffer instanceof Buffer
         ? new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length)

@@ -6,6 +6,10 @@ import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
 
 export interface WorkspaceStatResult {
   name: string;
+  // Inode of the resolved node, or 0 for a pending-create file that
+  // has no inode yet. Exposed so provider stat surfaces can read the
+  // inode from the same resolve instead of walking the path twice.
+  inode: number;
   mode: number;
   mtime: number;
   size: number;
@@ -39,6 +43,9 @@ function statShared(db: Database, path: string, followFinal: boolean): Workspace
   if (pending !== undefined && pending.pending !== undefined) {
     return {
       name,
+      // A pending create has no inode until releaseWriteBufferSync
+      // commits it; report 0, which yields nlink 1 in the provider.
+      inode: 0,
       mode: pending.mode & 0o7777,
       mtime: pending.pending.mtime,
       size: pending.size,
@@ -68,6 +75,7 @@ function statShared(db: Database, path: string, followFinal: boolean): Workspace
 
   return {
     name,
+    inode: node.inode,
     mode: node.mode,
     mtime: node.mtime,
     size,

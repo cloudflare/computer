@@ -20,23 +20,55 @@ interface DirChild {
 }
 
 // Walk a directory subtree post-order so we delete leaves before
-// parents. Yields { path, inode, type } for each node to remove. The
-// caller appends one tombstone per yielded path and clears
-// vfs_chunks for file inodes.
+// parents. Yields each node together with the parent inode and name
+// the walk already knows, so the caller can unlink the dirent by
+// (parent, name) without re-resolving the parent from root. The caller
+// appends one tombstone per yielded path and clears vfs_chunks for
+// file inodes.
 function* walkPostOrder(
   db: Database,
   rootInode: number,
   rootPath: string,
-): Generator<{ path: string; inode: number; type: "file" | "dir" | "symlink" }> {
+  rootParentInode: number,
+  rootName: string,
+): Generator<{
+  path: string;
+  inode: number;
+  type: "file" | "dir" | "symlink";
+  parentInode: number;
+  name: string;
+}> {
   // Stack-based DFS to avoid recursion limits on deep trees.
-  type Frame = { inode: number; path: string; type: "file" | "dir" | "symlink"; expanded: boolean };
-  const stack: Frame[] = [{ inode: rootInode, path: rootPath, type: "dir", expanded: false }];
+  type Frame = {
+    inode: number;
+    path: string;
+    type: "file" | "dir" | "symlink";
+    parentInode: number;
+    name: string;
+    expanded: boolean;
+  };
+  const stack: Frame[] = [
+    {
+      inode: rootInode,
+      path: rootPath,
+      type: "dir",
+      parentInode: rootParentInode,
+      name: rootName,
+      expanded: false,
+    },
+  ];
 
   while (stack.length > 0) {
     const top = stack[stack.length - 1];
     if (top.type !== "dir" || top.expanded) {
       stack.pop();
-      yield { path: top.path, inode: top.inode, type: top.type };
+      yield {
+        path: top.path,
+        inode: top.inode,
+        type: top.type,
+        parentInode: top.parentInode,
+        name: top.name,
+      };
       continue;
     }
     top.expanded = true;
@@ -54,6 +86,8 @@ function* walkPostOrder(
         inode: child.child_inode,
         path: childPath,
         type: child.type,
+        parentInode: top.inode,
+        name: child.name,
         expanded: false,
       });
     }
@@ -118,9 +152,11 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       // Single entry removal — file, symlink, or empty directory. A
       // file inode may have multiple dirents (hardlinks), so remove
       // only the requested name and reap chunks/node after the final
-      // link disappears. The tombstone is recorded at the resolved
-      // real path so sync sees the move-aware location.
-      removeEntry(db, realPath, node.inode, node.type);
+      // link disappears. `parent` is already resolved above, so unlink
+      // by (parent, name) directly rather than re-resolving. The
+      // tombstone is recorded at the resolved real path so sync sees
+      // the move-aware location.
+      unlinkDirent(db, parent.inode, name, node.inode, node.type);
       recordDelete(db, rev, realPath);
       return;
     }
@@ -128,27 +164,11 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     // Recursive directory removal. Walk leaves first so each delete
     // sees an empty parent by the time we get to it. File entries may
     // be hardlinked outside this subtree, so delete by path rather
-    // than by child inode.
-    for (const entry of walkPostOrder(db, node.inode, realPath)) {
-      removeEntry(db, entry.path, entry.inode, entry.type);
+    // than by child inode. The walk carries each node's parent inode
+    // and name, so unlinkDirent needs no per-node re-resolve from root.
+    for (const entry of walkPostOrder(db, node.inode, realPath, parent.inode, name)) {
+      unlinkDirent(db, entry.parentInode, entry.name, entry.inode, entry.type);
       recordDelete(db, rev, entry.path);
     }
   });
-}
-
-function removeEntry(
-  db: Database,
-  path: string,
-  inode: number,
-  type: "file" | "dir" | "symlink",
-): void {
-  const { parts, path: canonical } = canonicalizePath(path);
-  const name = parts[parts.length - 1];
-  const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
-  const parent = resolveInode(db, parentPath, { followSymlinks: false });
-  if (parent === null || parent.type !== "dir") {
-    throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
-  }
-
-  unlinkDirent(db, parent.inode, name, inode, type);
 }
