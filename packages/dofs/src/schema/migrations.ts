@@ -87,10 +87,66 @@ function v3_to_v4_watermark_backend_column(db: Database): void {
   db.run(`DROP TABLE _vfs_watermark_v3`);
 }
 
+// v4 → v5 — rebuild `vfs_dirents` and `vfs_chunks` as WITHOUT ROWID.
+// SQLite can't convert a table to WITHOUT ROWID in place, so for each
+// table: rename it aside, create the WITHOUT ROWID replacement, copy
+// the rows, drop the old table.
+//
+// Both targets are FK-inert (neither is an FK parent or child; the
+// schema's only foreign key is vfs_blob_bytes -> vfs_blobs) and have
+// composite primary keys with no AUTOINCREMENT, so WITHOUT ROWID is
+// legal and sqlite_sequence is untouched. `vfs_blob_bytes` is left
+// alone on purpose — it holds the large blob payloads and the FK.
+//
+// A RENAME carries the table's secondary index along to the temp
+// name, and the following DROP takes the index with it. The baseline
+// `CREATE INDEX IF NOT EXISTS` in initializeSchema already ran, before
+// migrations, and does not re-run — so this migrator must recreate
+// vfs_dirents_by_child and vfs_chunks_by_hash itself, or upgraded
+// databases silently lose them. Keep the CREATE bodies in lockstep
+// with the fresh-install DDL in core.ts.
+function v4_to_v5_without_rowid(db: Database): void {
+  // vfs_dirents
+  db.run(`ALTER TABLE vfs_dirents RENAME TO vfs_dirents_v4`);
+  db.run(
+    `CREATE TABLE vfs_dirents (
+       parent_inode INTEGER NOT NULL,
+       name         TEXT    NOT NULL,
+       child_inode  INTEGER NOT NULL,
+       PRIMARY KEY (parent_inode, name)
+     ) WITHOUT ROWID`,
+  );
+  db.run(
+    `INSERT INTO vfs_dirents (parent_inode, name, child_inode)
+       SELECT parent_inode, name, child_inode FROM vfs_dirents_v4`,
+  );
+  db.run(`DROP TABLE vfs_dirents_v4`);
+  db.run(`CREATE INDEX vfs_dirents_by_child ON vfs_dirents(child_inode)`);
+
+  // vfs_chunks
+  db.run(`ALTER TABLE vfs_chunks RENAME TO vfs_chunks_v4`);
+  db.run(
+    `CREATE TABLE vfs_chunks (
+       inode INTEGER NOT NULL,
+       idx   INTEGER NOT NULL,
+       hash  BLOB    NOT NULL,
+       size  INTEGER NOT NULL,
+       PRIMARY KEY (inode, idx)
+     ) WITHOUT ROWID`,
+  );
+  db.run(
+    `INSERT INTO vfs_chunks (inode, idx, hash, size)
+       SELECT inode, idx, hash, size FROM vfs_chunks_v4`,
+  );
+  db.run(`DROP TABLE vfs_chunks_v4`);
+  db.run(`CREATE INDEX vfs_chunks_by_hash ON vfs_chunks(hash)`);
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
   { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
   { from: 3, to: 4, migrator: v3_to_v4_watermark_backend_column },
+  { from: 4, to: 5, migrator: v4_to_v5_without_rowid },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

@@ -38,15 +38,6 @@ async function readBytes(db: Database, path: string): Promise<Uint8Array> {
   return out;
 }
 
-function chunkRowIds(db: Database, path: string): Array<{ idx: number; rowid: number }> {
-  const node = resolveInode(db, path);
-  if (node === null) throw new Error(`missing node: ${path}`);
-  return db.all<{ idx: number; rowid: number }>(
-    "SELECT idx, rowid FROM vfs_chunks WHERE inode = ? ORDER BY idx",
-    node.inode,
-  );
-}
-
 function manifestHash(db: Database, path: string): Uint8Array | null {
   const node = resolveInode(db, path);
   if (node === null) throw new Error(`missing node: ${path}`);
@@ -139,21 +130,33 @@ describe("direct range writes", () => {
     });
   });
 
-  it("keeps untouched chunk rowids stable across a small range write", async () => {
+  it("skips rewriting untouched chunks on a small range write", async () => {
     await withDB(async (db) => {
       const original = new Uint8Array(CHUNK_SIZE * 3);
       original.fill(1, 0, CHUNK_SIZE);
       original.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
       original.fill(3, CHUNK_SIZE * 2, CHUNK_SIZE * 3);
       writeFileSync(db, "/large.bin", original, {}, () => 1000);
-      const beforeIds = chunkRowIds(db, "/large.bin");
 
+      // Touch only the middle chunk, at a later mtime.
       writeRangeSync(db, "/large.bin", new Uint8Array([7]), CHUNK_SIZE + 10, {}, () => 1001);
-      const afterIds = chunkRowIds(db, "/large.bin");
 
-      expect(afterIds[0].rowid).toBe(beforeIds[0].rowid);
-      expect(afterIds[2].rowid).toBe(beforeIds[2].rowid);
-      expect(afterIds[1].rowid).not.toBe(beforeIds[1].rowid);
+      // applyChunkedInodeUpdate skips SQL entirely for unchanged chunks,
+      // so their blobs are never re-upserted and keep the original
+      // last_seen; only the rewritten middle chunk's blob is stamped with
+      // the new mtime. (vfs_chunks is WITHOUT ROWID, so there is no rowid
+      // to watch. On the write path last_seen is bumped only by
+      // upsertChunkBlob, and this test performs no reads — reads also
+      // touch last_seen — so an unchanged last_seen proves the chunk row
+      // was skipped.)
+      const rows = chunkRows(db, "/large.bin");
+      expect(rows).toHaveLength(3);
+      const lastSeen = (hash: Uint8Array): number | undefined =>
+        db.one<{ last_seen: number }>("SELECT last_seen FROM vfs_blobs WHERE hash = ?", hash)
+          ?.last_seen;
+      expect(lastSeen(rows[0].hash)).toBe(1000);
+      expect(lastSeen(rows[1].hash)).toBe(1001);
+      expect(lastSeen(rows[2].hash)).toBe(1000);
     });
   });
 
