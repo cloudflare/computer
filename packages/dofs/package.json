@@ -18,7 +18,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run",
-    "test:workers": "vitest run --config vitest.config.workers.ts"
+    "test:workers": "vitest run --config vitest.config.workers.ts",
+    "bench": "vitest run --config vitest.config.bench.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.10",
