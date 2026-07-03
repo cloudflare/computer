@@ -4,6 +4,7 @@ import { incrementRev } from "../rev.js";
 import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { assertNotReadOnly } from "./mount-guard.js";
+import { invalidateResolveExact } from "./resolveCache.js";
 
 export interface MkdirOptions {
   recursive?: boolean;
@@ -95,6 +96,9 @@ export function mkdir(db: Database, path: string, options: MkdirOptions, now: ()
           throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
         }
         parentInode = createDir(db, parentInode, name, 0o755, mtime, rev);
+        // A newly created directory is empty, so a cached negative for
+        // its own path is the only stale entry possible; drop it exact.
+        invalidateResolveExact(db, `/${parts.slice(0, i + 1).join("/")}`);
         continue;
       }
       if (existing.type !== "dir") {
@@ -121,5 +125,6 @@ export function mkdir(db: Database, path: string, options: MkdirOptions, now: ()
     }
 
     createDir(db, parentInode, leafName, mode, mtime, rev);
+    invalidateResolveExact(db, canonical);
   });
 }

@@ -6,6 +6,7 @@ import { recordDelete } from "../sync/changes.js";
 import { pathOf } from "../sync/paths.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
+import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache.js";
 import { unlinkDirent } from "./unlink.js";
 
 interface DirChild {
@@ -152,6 +153,18 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
     for (const entry of oldEntries) {
       db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, entry.inode);
       recordDelete(db, rev, entry.path);
+    }
+
+    // Drop cached resolutions for both endpoints. A directory move
+    // changes every descendant's path, so both sides need a subtree
+    // drop; a file/symlink move only touches the two leaf paths. The
+    // destination drop also covers any entry displaced by an overwrite.
+    if (source.type === "dir") {
+      invalidateResolveSubtree(db, oldRealPath);
+      invalidateResolveSubtree(db, newRealPath);
+    } else {
+      invalidateResolveExact(db, oldRealPath);
+      invalidateResolveExact(db, newRealPath);
     }
   });
 }

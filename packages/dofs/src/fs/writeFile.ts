@@ -8,6 +8,7 @@ import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
 import { getBlobBytes } from "./blobCache.js";
 import { assertNotReadOnly } from "./mount-guard.js";
+import { invalidateResolveExact } from "./resolveCache.js";
 import {
   allocatePendingInode,
   deleteWriteBuffer,
@@ -222,12 +223,7 @@ async function writeFileStreaming(
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
       inode = insertFileNode(db, mode, mtime);
-      db.run(
-        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-        parentInode,
-        leafName,
-        inode,
-      );
+      insertFileDirent(db, parentInode, leafName, inode, canonical);
     }
     for (let idx = 0; idx < chunkRefs.length; idx++) {
       const ref = chunkRefs[idx];
@@ -258,6 +254,28 @@ async function writeFileStreaming(
 // Allocate a fresh file inode row with the supplied mode and mtime,
 // using SQLite's RETURNING so the new rowid comes back in the same
 // statement instead of through a follow-up SELECT last_insert_rowid().
+// Link a freshly created file inode into its parent directory and drop
+// any cached negative resolution for the new path. The single choke
+// point for every new-file dirent, so the resolve cache stays correct
+// on create without touching the overwrite path (which reuses the
+// existing inode and dirent, so its resolution is unchanged). A new
+// file is a leaf with no descendants, so exact invalidation suffices.
+function insertFileDirent(
+  db: Database,
+  parentInode: number,
+  leafName: string,
+  childInode: number,
+  canonicalPath: string,
+): void {
+  db.run(
+    "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
+    parentInode,
+    leafName,
+    childInode,
+  );
+  invalidateResolveExact(db, canonicalPath);
+}
+
 function insertFileNode(db: Database, mode: number, mtime: number): number {
   const row = db.one<{ inode: number }>(
     "INSERT INTO vfs_nodes (type, mode, mtime, rev) VALUES ('file', ?, ?, 0) RETURNING inode",
@@ -476,12 +494,7 @@ export function createFileSync(
       rev,
     );
     if (row === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
-    db.run(
-      "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-      parentInode,
-      leafName,
-      row.inode,
-    );
+    insertFileDirent(db, parentInode, leafName, row.inode, canonical);
   });
 }
 
@@ -651,12 +664,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
       if (row === undefined) {
         throw createWorkspaceError("EIO", "failed to allocate inode");
       }
-      db.run(
-        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-        parentInode,
-        leafName,
-        row.inode,
-      );
+      insertFileDirent(db, parentInode, leafName, row.inode, canonicalPath);
       if (entry.size > 0) {
         const inode = row.inode;
         const chunkCount = Math.ceil(entry.size / CHUNK_SIZE);
@@ -935,12 +943,7 @@ export function writeFileSync(
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
       inode = insertFileNode(db, mode, mtime);
-      db.run(
-        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-        parentInode,
-        leafName,
-        inode,
-      );
+      insertFileDirent(db, parentInode, leafName, inode, canonical);
     }
 
     const rev = incrementRev(db);
@@ -1010,12 +1013,7 @@ export function writeFileRangesSync(
       oldChunks = existingChunkRefs(db, inode);
     } else {
       inode = insertFileNode(db, mode, mtime);
-      db.run(
-        "INSERT INTO vfs_dirents (parent_inode, name, child_inode) VALUES (?, ?, ?)",
-        parentInode,
-        leafName,
-        inode,
-      );
+      insertFileDirent(db, parentInode, leafName, inode, canonical);
     }
 
     const rev = incrementRev(db);

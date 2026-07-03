@@ -11,9 +11,9 @@
 //   * ns/op wall-clock, measured against the raw DO SqlStorage.
 //   * statement + row counts, measured against the same backend
 //     wrapped in CountingStorage. Statement counts are deterministic
-//     and are the primary signal — the depth sweep should show
-//     fs.stat = 1 + 2D statements and provider.statSync = 2 + 2D,
-//     while the flat-path baseline stays constant (O(1)).
+//     and are the primary signal — a resolve is one statement
+//     regardless of depth (fs.stat = 1, provider.statSync = 2), and the
+//     cold-vs-warm group isolates the CTE cold walk from the cache hit.
 //
 // Output is a set of tables plus a single-line JSON blob so before/
 // after deltas are easy to capture and diff. Run with:
@@ -26,6 +26,7 @@ import { expect, it } from "vitest";
 import type { TestBindings } from "../../tests/worker.js";
 import { ls } from "../fs/ls.js";
 import { resolveInode } from "../fs/resolve.js";
+import { clearResolveCache } from "../fs/resolveCache.js";
 import { rm } from "../fs/rm.js";
 import { stat } from "../fs/stat.js";
 import { SQLiteWorkspaceProvider } from "../provider.js";
@@ -486,6 +487,54 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
     return { bytes: storage.databaseSize ?? 0, files: 100, logicalMiB: 100 };
   });
 
+  // Group I — cold vs warm resolve: isolate the CTE cold walk from the
+  // cache hit. Cold clears the cache before every timed op (a fresh
+  // single-statement CTE that reads D rows internally); warm leaves it
+  // primed (a single readNode, O(1)). Same fs.stat, shallow and deep.
+  interface ColdWarmResult {
+    name: string;
+    depth: number;
+    coldNsPerOp: number;
+    warmNsPerOp: number;
+  }
+  const coldWarmResults: ColdWarmResult[] = [];
+  for (const depth of [4, 20]) {
+    const measured = await withRealDb((db, provider) => {
+      buildChainFile(provider, depth);
+      const file = chainOf(depth).file;
+      const iters = 4000;
+      const warmup = 200;
+      for (let i = 0; i < warmup; i++) {
+        clearResolveCache(db);
+        stat(db, file);
+      }
+      const cold0 = performance.now();
+      for (let i = 0; i < iters; i++) {
+        clearResolveCache(db);
+        stat(db, file);
+      }
+      const cold1 = performance.now();
+      for (let i = 0; i < warmup; i++) {
+        stat(db, file);
+      }
+      const warm0 = performance.now();
+      for (let i = 0; i < iters; i++) {
+        stat(db, file);
+      }
+      const warm1 = performance.now();
+      return {
+        cold: ((cold1 - cold0) * 1e6) / iters,
+        warm: ((warm1 - warm0) * 1e6) / iters,
+      };
+    });
+    coldWarmResults.push({
+      name: "fs.stat",
+      depth,
+      coldNsPerOp: measured.cold,
+      warmNsPerOp: measured.warm,
+    });
+  }
+
   // --- render report ------------------------------------------------
 
   lines.push("=".repeat(96));
@@ -495,7 +544,8 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   lines.push(`generated: ${new Date().toISOString()}`);
   lines.push(
     "note: statement counts are deterministic; ns/op is wall-clock under workerd. " +
-      "fs.stat=1+2D, provider.statSync=2+2D, flat-baseline=O(1).",
+      "resolve = 1 statement (cold CTE or warm cache), depth-independent. " +
+      "Depth-sweep ns/op below is cache-warm; see COLD-VS-WARM for the CTE cold walk.",
   );
   lines.push("=".repeat(96));
 
@@ -524,6 +574,18 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   }
 
   lines.push("");
+  lines.push("COLD (CTE walk) VS WARM (cached) RESOLVE — fs.stat");
+  lines.push(
+    `${padEnd("operation", 22)}${pad("depth", 6)}${pad("cold ns/op", 12)}${pad("warm ns/op", 12)}`,
+  );
+  lines.push("-".repeat(52));
+  for (const c of coldWarmResults) {
+    lines.push(
+      `${padEnd(c.name, 22)}${pad(c.depth, 6)}${pad(ns(c.coldNsPerOp), 12)}${pad(ns(c.warmNsPerOp), 12)}`,
+    );
+  }
+
+  lines.push("");
   lines.push("DB SIZE / DEDUP GUARD");
   lines.push(
     `100 x 1 MiB identical files -> logical ${dedup.logicalMiB} MiB, on-disk ${(dedup.bytes / (1024 * 1024)).toFixed(2)} MiB (${dedup.bytes} bytes)`,
@@ -536,6 +598,7 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
       backend: "durable-object-sqlstorage",
       reads: readResults,
       mutations: mutationResults,
+      coldWarm: coldWarmResults,
       dedup,
     }),
   );
@@ -549,10 +612,13 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
   // trips. A deliberate perf change is expected to update these, which
   // is the point — silent drift becomes a failure.
   //
-  //   fs.stat           = 1 + 2D  — resolveInode: 1 root read plus a
-  //                                 dirent and node read per segment.
-  //   provider.statSync = 2 + 2D  — one resolve plus linkCount.
-  //   flat-baseline     = 1       — a single indexed inode lookup.
+  //   fs.stat           = 1  — one recursive-CTE resolve.
+  //   provider.statSync = 2  — one resolve plus linkCount.
+  //   flat-baseline     = 1  — a single indexed inode lookup.
+  //
+  // The CTE still reads O(depth) rows internally, but the statement
+  // count — what the DO bills and round-trips — is depth-independent,
+  // and a warm cache hit re-reads just the one node row.
   const find = (name: string, depth: number): ReadResult => {
     const row = readResults.find((r) => r.name === name && r.depth === depth);
     if (row === undefined) {
@@ -561,16 +627,14 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
     return row;
   };
   for (const depth of depths) {
-    expect(find("fs.stat", depth).statements, `fs.stat depth=${depth}`).toBe(1 + 2 * depth);
-    expect(find("provider.statSync", depth).statements, `provider.statSync depth=${depth}`).toBe(
-      2 + 2 * depth,
-    );
+    expect(find("fs.stat", depth).statements, `fs.stat depth=${depth}`).toBe(1);
+    expect(find("provider.statSync", depth).statements, `provider.statSync depth=${depth}`).toBe(2);
     expect(find("flat-baseline(inode)", depth).statements, `flat-baseline depth=${depth}`).toBe(1);
   }
-  // exists: present path resolves fully (1 + 2D); a missing leaf stops at
-  // the final dirent miss (2D).
-  expect(find("exists(present)", 8).statements).toBe(17);
-  expect(find("exists(missing)", 8).statements).toBe(16);
+  // exists resolves in a single CTE statement too, whether the leaf is
+  // present or missing.
+  expect(find("exists(present)", 8).statements).toBe(1);
+  expect(find("exists(missing)", 8).statements).toBe(1);
   // Dedup guarantee: 100 identical 1 MiB files must not balloon the DB.
   expect(dedup.bytes).toBeLessThan(2 * 1024 * 1024);
 });

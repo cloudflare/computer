@@ -4,6 +4,7 @@ import { incrementRev } from "../rev.js";
 import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { assertNotReadOnly } from "./mount-guard.js";
+import { invalidateResolveSubtree } from "./resolveCache.js";
 
 // Create a symlink node. The target is stored as-is — it can be a
 // relative or absolute path, dangling or live. resolveInode follows
@@ -72,5 +73,9 @@ export function symlink(db: Database, target: string, path: string, now: () => n
       leafName,
       inode,
     );
+    // Subtree, not exact: paths *through* the new link (e.g. /s/x when
+    // /s -> a populated dir) now resolve, so any cached negative
+    // beneath the link must be dropped.
+    invalidateResolveSubtree(db, canonical);
   });
 }

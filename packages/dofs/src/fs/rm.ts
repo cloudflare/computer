@@ -6,6 +6,7 @@ import { recordDelete } from "../sync/changes.js";
 import { pathOf } from "../sync/paths.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
+import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache.js";
 import { unlinkDirent } from "./unlink.js";
 
 export interface RmOptions {
@@ -158,6 +159,9 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       // the move-aware location.
       unlinkDirent(db, parent.inode, name, node.inode, node.type);
       recordDelete(db, rev, realPath);
+      // A single removed entry is a file, symlink, or empty directory:
+      // no cached descendants to worry about, so drop it exact.
+      invalidateResolveExact(db, realPath);
       return;
     }
 
@@ -170,5 +174,8 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       unlinkDirent(db, entry.parentInode, entry.name, entry.inode, entry.type);
       recordDelete(db, rev, entry.path);
     }
+    // The whole subtree under realPath is gone; one subtree drop covers
+    // every descendant's cached resolution.
+    invalidateResolveSubtree(db, realPath);
   });
 }

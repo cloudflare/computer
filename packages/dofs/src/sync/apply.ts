@@ -1,6 +1,7 @@
 import { mkdir } from "../fs/mkdir.js";
 import { readOnlyRootFor } from "../fs/mount-guard.js";
 import { resolveInode } from "../fs/resolve.js";
+import { invalidateResolveSubtree } from "../fs/resolveCache.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
 import { unlinkDirent } from "../fs/unlink.js";
@@ -96,6 +97,12 @@ function removeReplaceableFinalEntry(
 // the local shape without recording tombstones because the incoming
 // entry is the authoritative state for this path.
 function removeInodeTreeAtPath(db: Database, path: string, inode: number, type: NodeType): void {
+  // Structural subtree removal that bypasses rm() and calls unlinkDirent
+  // directly, so it must drop cached resolutions itself. One subtree
+  // drop at the root covers every descendant the walk unlinks.
+  // Canonicalize to the exact key readers cache under (every other hook
+  // already passes a canonical path; this one takes an entry path).
+  invalidateResolveSubtree(db, canonicalizePath(path).path);
   const root = direntForPath(db, path, inode);
   const stack: Array<{
     path: string;

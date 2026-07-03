@@ -5,6 +5,7 @@ import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
+import { invalidateResolveExact } from "./resolveCache.js";
 
 function resolveParent(db: Database, parts: string[], canonical: string): number {
   let parentInode = ROOT_INODE;
@@ -76,5 +77,8 @@ export function link(db: Database, existingPath: string, newPath: string): void 
     );
     const rev = incrementRev(db);
     db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, source.inode);
+    // A new hardlink name for an existing file: a leaf with no
+    // descendants, so drop just the (possibly negative) entry for it.
+    invalidateResolveExact(db, canonicalNew);
   });
 }
