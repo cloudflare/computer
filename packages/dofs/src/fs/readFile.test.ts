@@ -82,16 +82,26 @@ describe("readFile", () => {
     });
   });
 
-  it("touches vfs_blobs.last_seen when chunks are read", async () => {
+  it("does not modify vfs_blobs.last_seen when chunks are read", async () => {
     await withDB(async (db) => {
       const bytes = new Uint8Array(CHUNK_SIZE + 1);
       bytes.fill(0x61);
       await writeFile(db, "/x.txt", bytes, {}, () => 100);
-      const before = db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs");
-      expect(before).toBe(100);
-      await readFile(db, "/x.txt", "utf8", () => 200);
-      const after = db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs");
-      expect(after).toBe(200);
+      expect(db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs")).toBe(100);
+
+      // String form reads every chunk and must leave last_seen alone.
+      await readFile(db, "/x.txt", "utf8");
+      expect(db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs")).toBe(100);
+
+      // Stream form: drain it so every chunk is pulled, then confirm
+      // no restamp happened in the pull callback.
+      const stream = await readFile(db, "/x.txt");
+      const reader = stream.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+      expect(db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs")).toBe(100);
     });
   });
 

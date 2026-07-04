@@ -145,10 +145,8 @@ describe("direct range writes", () => {
       // so their blobs are never re-upserted and keep the original
       // last_seen; only the rewritten middle chunk's blob is stamped with
       // the new mtime. (vfs_chunks is WITHOUT ROWID, so there is no rowid
-      // to watch. On the write path last_seen is bumped only by
-      // upsertChunkBlob, and this test performs no reads — reads also
-      // touch last_seen — so an unchanged last_seen proves the chunk row
-      // was skipped.)
+      // to watch. last_seen is bumped only by upsertChunkBlob, so an
+      // unchanged last_seen proves the chunk row was skipped.)
       const rows = chunkRows(db, "/large.bin");
       expect(rows).toHaveLength(3);
       const lastSeen = (hash: Uint8Array): number | undefined =>

@@ -17,23 +17,16 @@ interface ChunkRow {
 
 // Overloads match docs/04_filesystem_interface.md exactly.
 export function readFile(db: Database, path: string): Promise<ReadableStream<Uint8Array>>;
-export function readFile(
-  db: Database,
-  path: string,
-  encoding: "utf8",
-  now?: () => number,
-): Promise<string>;
+export function readFile(db: Database, path: string, encoding: "utf8"): Promise<string>;
 export function readFile(
   db: Database,
   path: string,
   options: ReadFileOptions,
-  now?: () => number,
 ): Promise<string | ReadableStream<Uint8Array>>;
 export async function readFile(
   db: Database,
   path: string,
   optionsOrEncoding?: "utf8" | ReadFileOptions,
-  now: () => number = Date.now,
 ): Promise<string | ReadableStream<Uint8Array>> {
   const wantString =
     optionsOrEncoding === "utf8" ||
@@ -91,7 +84,6 @@ export async function readFile(
     const totalSize = chunks.reduce((acc, c) => acc + c.size, 0);
     const out = new Uint8Array(totalSize);
     let offset = 0;
-    const touched = now();
     for (const chunk of chunks) {
       const bytes = getBlobBytes(db, chunk.hash);
       if (bytes === undefined) {
@@ -100,15 +92,13 @@ export async function readFile(
       out.set(bytes, offset);
       offset += bytes.byteLength;
     }
-    if (chunks.length > 0) {
-      touchBlobs(db, chunks, touched);
-    }
     return new TextDecoder().decode(out);
   }
 
   // Stream form. We enqueue one Uint8Array per chunk, lazily pulled.
-  // last_seen is touched per chunk on read; that's the GC clock signal
-  // documented in 03_filesystem_schema.md.
+  // Reads resolve bytes by hash and never restamp last_seen: a chunk
+  // being read is already linked to a node, so gc's orphan gate keeps
+  // it. last_seen only guards blobs staged but not yet linked.
   let i = 0;
   return new ReadableStream<Uint8Array>({
     pull(controller) {
@@ -122,7 +112,6 @@ export async function readFile(
         controller.error(createWorkspaceError("EIO", `missing blob bytes for ${path}`, path));
         return;
       }
-      db.run("UPDATE vfs_blobs SET last_seen = ? WHERE hash = ?", now(), chunk.hash);
       controller.enqueue(bytes);
     },
   });
@@ -199,25 +188,4 @@ export function readRangeSync(
     written += srcEnd - srcStart;
   }
   return written === out.byteLength ? out : out.subarray(0, written);
-}
-
-function touchBlobs(db: Database, chunks: ChunkRow[], at: number): void {
-  // Dedupe in case the same chunk hash appears multiple times in a
-  // single file — keeps the UPDATE count low without changing semantics.
-  const seen = new Set<string>();
-  for (const chunk of chunks) {
-    const key = bufferKey(chunk.hash);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    db.run("UPDATE vfs_blobs SET last_seen = ? WHERE hash = ?", at, chunk.hash);
-  }
-}
-
-function bufferKey(bytes: Uint8Array): string {
-  // crypto digests are 32 bytes; this is fine.
-  let key = "";
-  for (const byte of bytes) {
-    key += byte.toString(16).padStart(2, "0");
-  }
-  return key;
 }

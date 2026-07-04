@@ -57,7 +57,7 @@ export class WorkspaceFilesystem {
     // Cast through the union overload of the free function;
     // the class's overloads above carry the precise return type
     // for each input shape back to the caller.
-    return readFile(this.db, path, optionsOrEncoding as ReadFileOptions, this.now);
+    return readFile(this.db, path, optionsOrEncoding as ReadFileOptions);
   }
 
   async stat(path: string): Promise<WorkspaceStatResult> {
