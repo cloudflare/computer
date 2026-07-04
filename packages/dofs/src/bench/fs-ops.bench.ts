@@ -331,8 +331,8 @@ it("dofs micro-benchmark (real DO SqlStorage)", async () => {
     );
   }
 
-  // Group D — directory listing: readdir (single dir) vs ls (whole-tree
-  // CTE, which seeds at root).
+  // Group D — directory listing: readdir (single dir) vs ls (resolves
+  // the prefix to its inode, then walks that subtree).
   {
     const width = 200;
     const buildWide: Build = (_db, provider) => {

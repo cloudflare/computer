@@ -6,20 +6,17 @@ interface PathRow {
   path: string;
 }
 
-// Recursive CTE that materializes every file path in the tree, then
-// filters by the requested prefix. Files only (no directory entries)
-// because that's the documented "flat list of file paths" semantics.
+// Recursive CTE that materializes the file paths under one listing
+// root. Files only (no directory entries) because that's the
+// documented "flat list of file paths" semantics.
 //
-// The CTE walks from ROOT_INODE: each row is (inode, path, type). The
-// path is built by concatenating dirent names with '/' separators;
-// root contributes the empty string so its children start with '/'.
-//
-// Prefix matching is exact: '/wsp' must not match '/workspace/x'. We
-// require either path == prefix (file at the exact prefix) or
-// path starts with prefix + '/' (descendants of a directory prefix).
+// The walk is seeded at the listing root's inode: each row is
+// (inode, path, type), built by concatenating dirent names with '/'
+// separators onto the seed path. Scoping the seed to the requested
+// directory keeps the walk O(subtree) instead of O(whole tree).
 const LS_QUERY = `
   WITH RECURSIVE walk(inode, path, type) AS (
-    SELECT inode, '', type FROM vfs_nodes WHERE inode = ?
+    SELECT inode, ?, type FROM vfs_nodes WHERE inode = ?
     UNION ALL
     SELECT n.inode, w.path || '/' || d.name, n.type
       FROM walk w
@@ -28,13 +25,35 @@ const LS_QUERY = `
   )
   SELECT path FROM walk
    WHERE type = 'file'
-     AND (? = '/' OR path = ? OR path LIKE ? || '/%')
    ORDER BY path
 `;
 
+// Walk dirents from the root to `parts` without following symlinks, so
+// the seed matches the CTE's structural view: a symlink component has
+// no dirents and thus lists nothing, and a missing or non-directory
+// component resolves to null (an empty listing). Returns the root
+// inode for an empty path.
+function resolvePrefixInode(db: Database, parts: string[]): number | null {
+  let inode = ROOT_INODE;
+  for (const name of parts) {
+    const child = db.one<{ child_inode: number }>(
+      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+      inode,
+      name,
+    );
+    if (child === undefined) return null;
+    inode = child.child_inode;
+  }
+  return inode;
+}
+
 export function ls(db: Database, prefix: string): string[] {
-  const { path: canonical } = canonicalizePath(prefix);
-  return db
-    .all<PathRow>(LS_QUERY, ROOT_INODE, canonical, canonical, canonical)
-    .map((row) => row.path);
+  const { parts, path: canonical } = canonicalizePath(prefix);
+  const inode = resolvePrefixInode(db, parts);
+  if (inode === null) return [];
+  // Root contributes the empty string so its children start with '/';
+  // a non-root prefix seeds its own path so descendants read as
+  // absolute paths.
+  const seedPath = canonical === "/" ? "" : canonical;
+  return db.all<PathRow>(LS_QUERY, seedPath, inode).map((row) => row.path);
 }

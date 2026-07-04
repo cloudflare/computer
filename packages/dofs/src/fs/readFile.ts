@@ -167,17 +167,20 @@ export function readRangeSync(
   const end = Math.min(offset + length, totalSize);
   const firstIdx = Math.floor(offset / CHUNK_SIZE);
   const lastIdx = Math.floor((end - 1) / CHUNK_SIZE);
+  // Pull every overlapping chunk in one indexed range scan. Missing
+  // indices (a sparse file) simply don't come back, so the assembly
+  // below compacts around the gaps exactly as a per-index walk would.
+  const chunks = db.all<{ idx: number; hash: Uint8Array }>(
+    "SELECT idx, hash FROM vfs_chunks WHERE inode = ? AND idx BETWEEN ? AND ? ORDER BY idx",
+    node.inode,
+    firstIdx,
+    lastIdx,
+  );
   const out = new Uint8Array(end - offset);
   let written = 0;
-  for (let idx = firstIdx; idx <= lastIdx; idx++) {
+  for (const { idx, hash } of chunks) {
     const start = idx * CHUNK_SIZE;
-    const chunk = db.one<{ hash: Uint8Array }>(
-      "SELECT hash FROM vfs_chunks WHERE inode = ? AND idx = ?",
-      node.inode,
-      idx,
-    );
-    if (chunk === undefined) continue;
-    const bytes = getBlobBytes(db, chunk.hash);
+    const bytes = getBlobBytes(db, hash);
     if (bytes === undefined) {
       throw createWorkspaceError("EIO", `missing blob bytes for ${path}`, path);
     }

@@ -98,4 +98,28 @@ describe("hasObjects", () => {
       expect(hasObjects(db, [])).toEqual([]);
     });
   });
+
+  it("preserves input order and duplicates across mixed inputs", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "alpha", {}, () => 1);
+      await writeFile(db, "/b.txt", "beta", {}, () => 2);
+      const entries = await drain(fetchChanges(db, 0));
+      const hashOf = (path: string): Uint8Array => {
+        const e = entries.find((x) => x.kind === "file" && x.path === path);
+        return e?.kind === "file" ? e.chunks[0].hash : new Uint8Array();
+      };
+      const a = hashOf("/a.txt");
+      const b = hashOf("/b.txt");
+      const missing = new Uint8Array(32).fill(0xff);
+
+      // All present, returned in input order.
+      expect(hasObjects(db, [a, b])).toEqual([a, b]);
+      // Mixed: only present hashes, still in input order.
+      expect(hasObjects(db, [missing, b, a])).toEqual([b, a]);
+      // A duplicated present hash keeps every occurrence.
+      expect(hasObjects(db, [a, a, missing])).toEqual([a, a]);
+      // Duplicated absent hashes drop entirely.
+      expect(hasObjects(db, [missing, missing])).toEqual([]);
+    });
+  });
 });

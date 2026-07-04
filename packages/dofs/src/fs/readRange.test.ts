@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { readRangeSync } from "./readFile.js";
+import { resolveInode } from "./resolve.js";
 import { withDB } from "./with-db.js";
 import { CHUNK_SIZE, writeFileSync } from "./writeFile.js";
 
@@ -58,4 +59,77 @@ describe("readRangeSync", () => {
       expect(readRangeSync(db, "/large.bin", CHUNK_SIZE + 1, 10).byteLength).toBe(0);
     });
   });
+
+  it("assembles a read spanning multiple chunks with partial ends", async () => {
+    await withDB((db) => {
+      const original = new Uint8Array(CHUNK_SIZE * 3);
+      original.fill(1, 0, CHUNK_SIZE);
+      original.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
+      original.fill(3, CHUNK_SIZE * 2);
+      writeFileSync(db, "/large.bin", original, {}, () => 1);
+
+      // Start inside chunk 0 and end inside chunk 2, so the range query
+      // returns all three rows and they must assemble in idx order with
+      // correct partial-chunk trimming.
+      const start = CHUNK_SIZE - 3;
+      const len = CHUNK_SIZE + 6;
+      const slice = readRangeSync(db, "/large.bin", start, len);
+      expect(slice.byteLength).toBe(len);
+      expect(equalBytes(slice, original.subarray(start, start + len))).toBe(true);
+    });
+  });
+
+  it("reads an entire multi-chunk file byte-for-byte", async () => {
+    await withDB((db) => {
+      const original = new Uint8Array(CHUNK_SIZE * 2 + 50);
+      for (let i = 0; i < original.byteLength; i++) original[i] = i % 251;
+      writeFileSync(db, "/large.bin", original, {}, () => 1);
+
+      const slice = readRangeSync(db, "/large.bin", 0, original.byteLength);
+      expect(equalBytes(slice, original)).toBe(true);
+    });
+  });
+
+  it("compacts around a missing chunk row rather than zero-filling", async () => {
+    await withDB((db) => {
+      const original = new Uint8Array(CHUNK_SIZE * 3);
+      original.fill(1, 0, CHUNK_SIZE);
+      original.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
+      original.fill(3, CHUNK_SIZE * 2);
+      writeFileSync(db, "/large.bin", original, {}, () => 1);
+      const node = resolveInode(db, "/large.bin");
+      // Drop the middle chunk row (node.size still reports three
+      // chunks). The read elides the gap and returns the present
+      // chunks concatenated, trimmed to what was actually read.
+      db.run("DELETE FROM vfs_chunks WHERE inode = ? AND idx = 1", node?.inode ?? 0);
+
+      const slice = readRangeSync(db, "/large.bin", 0, CHUNK_SIZE * 3);
+      expect(slice.byteLength).toBe(CHUNK_SIZE * 2);
+      expect(slice[0]).toBe(1);
+      expect(slice[CHUNK_SIZE - 1]).toBe(1);
+      expect(slice[CHUNK_SIZE]).toBe(3);
+      expect(slice[CHUNK_SIZE * 2 - 1]).toBe(3);
+    });
+  });
+
+  it("throws EIO when a referenced chunk's blob bytes are gone", async () => {
+    await withDB((db) => {
+      writeFileSync(db, "/inline.txt", new TextEncoder().encode("hello"), {}, () => 1);
+      // vfs_chunks still references the hash, but the bytes are gone
+      // (cascade from vfs_blobs) — a read must surface EIO.
+      db.run("DELETE FROM vfs_blobs");
+
+      expect(() => readRangeSync(db, "/inline.txt", 0, 5)).toThrowError(
+        expect.objectContaining({ code: "EIO" }),
+      );
+    });
+  });
 });
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
