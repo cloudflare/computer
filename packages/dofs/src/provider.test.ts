@@ -315,6 +315,50 @@ describe("SQLiteWorkspaceProvider — renameSync overwrite matrix", () => {
     });
   });
 
+  it("subtree rename writes one tombstone per edge and one rev stamp per inode", async () => {
+    await withProviderAndDB(async (p, db) => {
+      // A nested subtree with a hardlink inside it: the file inode is
+      // reachable by two names, so both edges must be tombstoned while
+      // the single inode is stamped once.
+      p.mkdirSync("/src", {});
+      p.writeFileSync("/src/a.txt", "a");
+      p.mkdirSync("/src/sub", {});
+      p.writeFileSync("/src/sub/b.txt", "b");
+      p.linkSync("/src/a.txt", "/src/sub/a2.txt");
+      const cursor = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+
+      p.renameSync("/src", "/dst");
+
+      // Every edge of the moved subtree, tombstoned at its old path and
+      // sharing the rename's rev.
+      const tombstones = db.all<{ rev: number; path: string; op: string }>(
+        "SELECT rev, path, op FROM vfs_changes WHERE rev > ? ORDER BY path",
+        cursor,
+      );
+      const rev = tombstones[0]?.rev;
+      expect(tombstones).toEqual([
+        { rev, path: "/src", op: "delete" },
+        { rev, path: "/src/a.txt", op: "delete" },
+        { rev, path: "/src/sub", op: "delete" },
+        { rev, path: "/src/sub/a2.txt", op: "delete" },
+        { rev, path: "/src/sub/b.txt", op: "delete" },
+      ]);
+
+      // The shared rev lands on exactly the four subtree inodes (the
+      // hardlinked file counted once) and on nothing else.
+      const stamped = db
+        .all<{ inode: number }>("SELECT inode FROM vfs_nodes WHERE rev = ? ORDER BY inode", rev)
+        .map((r) => r.inode);
+      const expected = [
+        p.statSync("/dst").ino,
+        p.statSync("/dst/a.txt").ino,
+        p.statSync("/dst/sub").ino,
+        p.statSync("/dst/sub/b.txt").ino,
+      ].sort((a, b) => a - b);
+      expect(stamped).toEqual(expected);
+    });
+  });
+
   it("same-inode rename through a symlinked file path is a no-op", async () => {
     await withProviderAndDB(async (p, db) => {
       p.mkdirSync("/real", {});

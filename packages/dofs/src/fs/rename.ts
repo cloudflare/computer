@@ -9,18 +9,6 @@ import { resolveInode } from "./resolve.js";
 import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache.js";
 import { unlinkDirent } from "./unlink.js";
 
-interface DirChild {
-  name: string;
-  child_inode: number;
-  type: NodeType;
-}
-
-interface SubtreeEntry {
-  path: string;
-  inode: number;
-  type: NodeType;
-}
-
 type NodeType = "file" | "dir" | "symlink";
 
 export function rename(db: Database, oldPath: string, newPath: string): void {
@@ -101,17 +89,20 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
       newName,
     );
 
-    const oldEntries =
-      source.type === "dir"
-        ? collectSubtree(db, source.inode, oldRealPath)
-        : [{ path: oldRealPath, inode: source.inode, type: source.type }];
-    if (source.type === "dir") {
-      // Authoritative directory self-move guard. It tests the *resolved*
-      // destination parent inode against the source subtree, so it
-      // catches a symlinked destination that lands inside the source and
-      // allows one that resolves outside it. A textual prefix test on the
-      // unresolved path cannot do either and is intentionally absent.
-      assertDestinationParentOutsideSource(oldEntries, newParent.inode, oldRealPath, newCanonical);
+    // Authoritative directory self-move guard. It tests the *resolved*
+    // destination parent inode against the source subtree, so it catches
+    // a symlinked destination that lands inside the source and allows one
+    // that resolves outside it. A textual prefix test on the unresolved
+    // path could do neither and is intentionally absent.
+    if (
+      source.type === "dir" &&
+      renamedSubtreeContains(db, source.inode, oldRealPath, newParent.inode)
+    ) {
+      throw createWorkspaceError(
+        "EINVAL",
+        `cannot rename a directory into itself: ${oldRealPath}`,
+        newCanonical,
+      );
     }
 
     if (existing !== undefined) {
@@ -149,10 +140,15 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
     // live entries for the moved inode subtree, so stamp only that
     // subtree with the shared rev. Parent directory mtimes are left
     // unchanged on purpose; this diverges from POSIX rename(2), but
-    // avoids treating the old and new parents as content changes.
-    for (const entry of oldEntries) {
-      db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, entry.inode);
-      recordDelete(db, rev, entry.path);
+    // avoids treating the old and new parents as content changes. A
+    // directory move stamps and tombstones its whole subtree in two
+    // set-based statements; a file or symlink touches one inode and
+    // one path.
+    if (source.type === "dir") {
+      stampRenamedSubtree(db, source.inode, oldRealPath, rev);
+    } else {
+      db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, source.inode);
+      recordDelete(db, rev, oldRealPath);
     }
 
     // Drop cached resolutions for both endpoints. A directory move
@@ -183,42 +179,52 @@ function assertCompatibleOverwrite(
   }
 }
 
-function assertDestinationParentOutsideSource(
-  oldEntries: SubtreeEntry[],
-  newParentInode: number,
-  oldCanonical: string,
-  newCanonical: string,
-): void {
-  if (!oldEntries.some((entry) => entry.inode === newParentInode)) return;
+// Recursive walk of a directory subtree seeded at an inode and its
+// path. Descends through directory dirents only, so files and symlinks
+// are leaves and each hardlink name yields its own row (matching the
+// per-component collection it replaces). Bound as a reusable WITH
+// clause whose two placeholders are the seed inode and path; callers
+// append their own projection.
+const SUBTREE_CTE = `WITH RECURSIVE subtree(inode, type, path) AS (
+  SELECT ?, 'dir', ?
+  UNION ALL
+  SELECT n.inode, n.type,
+         CASE WHEN s.path = '/' THEN '/' || d.name ELSE s.path || '/' || d.name END
+    FROM subtree s
+    JOIN vfs_dirents d ON d.parent_inode = s.inode
+    JOIN vfs_nodes n ON n.inode = d.child_inode
+   WHERE s.type = 'dir'
+)`;
 
-  throw createWorkspaceError(
-    "EINVAL",
-    `cannot rename a directory into itself: ${oldCanonical}`,
-    newCanonical,
+function renamedSubtreeContains(
+  db: Database,
+  rootInode: number,
+  rootPath: string,
+  targetInode: number,
+): boolean {
+  const hit = db.one<{ hit: number }>(
+    `${SUBTREE_CTE} SELECT 1 AS hit FROM subtree WHERE inode = ? LIMIT 1`,
+    rootInode,
+    rootPath,
+    targetInode,
   );
+  return hit !== undefined;
 }
 
-function collectSubtree(db: Database, rootInode: number, rootPath: string): SubtreeEntry[] {
-  const entries: SubtreeEntry[] = [{ path: rootPath, inode: rootInode, type: "dir" }];
-  for (let idx = 0; idx < entries.length; idx++) {
-    const entry = entries[idx];
-    if (entry.type !== "dir") continue;
-    const children = db.all<DirChild>(
-      `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type
-         FROM vfs_dirents d
-         JOIN vfs_nodes n ON n.inode = d.child_inode
-        WHERE d.parent_inode = ?
-        ORDER BY d.name`,
-      entry.inode,
-    );
-    for (const child of children) {
-      const childPath = entry.path === "/" ? `/${child.name}` : `${entry.path}/${child.name}`;
-      entries.push({
-        path: childPath,
-        inode: child.child_inode,
-        type: child.type,
-      });
-    }
-  }
-  return entries;
+// Stamp the shared rev on every inode in the moved subtree and record
+// an old-path tombstone for each entry, in two set-based statements
+// over the same walk.
+function stampRenamedSubtree(db: Database, rootInode: number, rootPath: string, rev: number): void {
+  db.run(
+    `${SUBTREE_CTE} UPDATE vfs_nodes SET rev = ? WHERE inode IN (SELECT inode FROM subtree)`,
+    rootInode,
+    rootPath,
+    rev,
+  );
+  db.run(
+    `${SUBTREE_CTE} INSERT INTO vfs_changes (rev, path, op) SELECT ?, path, 'delete' FROM subtree ORDER BY path`,
+    rootInode,
+    rootPath,
+    rev,
+  );
 }
