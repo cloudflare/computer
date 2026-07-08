@@ -88,15 +88,31 @@ function trackFetchDisposal(
 }
 
 describe("sync driver — pullOnce", () => {
-  it("pulls a single entry from upstream", async () => {
+  it("pulls every path by default, including node_modules", async () => {
     const a = makePeer();
     const b = makePeer();
     try {
       const provider = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
       provider.writeFileSync("/hello.txt", "hello");
+      provider.mkdirSync("/node_modules/pkg", { recursive: true });
+      provider.writeFileSync("/node_modules/pkg/index.js", "dependency");
 
-      const applied = await pullOnce(b.db, a.rpc);
-      expect(applied.applied).toBe(1);
+      let requestedIgnore: string[] | undefined;
+      const remote = new Proxy(a.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchChanges") {
+            return (input: Parameters<SyncRPC["fetchChanges"]>[0]) => {
+              requestedIgnore = input.ignore;
+              return Reflect.get(target, prop, receiver).call(target, input);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      const applied = await pullOnce(b.db, remote);
+      expect(requestedIgnore).toEqual([]);
+      expect(applied.applied).toBeGreaterThan(1);
       expect(applied.skipped).toEqual([]);
       expect(fileEntries(b.db)).toContain("hello.txt");
       // Asserting the bytes arrived, not just the dirent. The
@@ -105,6 +121,7 @@ describe("sync driver — pullOnce", () => {
       // empty on the receiver — RPC reads landed HTTP 200 / 0 bytes.
       const providerB = new SQLiteWorkspaceProvider(b.db, { now: () => 1 });
       expect(providerB.readFileSync("/hello.txt", "utf8")).toBe("hello");
+      expect(providerB.readFileSync("/node_modules/pkg/index.js", "utf8")).toBe("dependency");
     } finally {
       a.close();
       b.close();

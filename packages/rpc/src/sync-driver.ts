@@ -103,7 +103,9 @@ async function pullOnceImpl(
   // invariant trip, and any throw inside the batch loop. Disposing the
   // envelope tears down the contained stream stub, releasing the
   // remote iterator.
-  const fetchResult = await remote.fetchChanges({ after });
+  // Pull the complete remote tree. Sending [] explicitly also overrides the
+  // historical wsd default that filtered node_modules when ignore was omitted.
+  const fetchResult = await remote.fetchChanges({ after, ignore: [] });
   try {
     const { currentCursor, appliedPushCursor } = fetchResult;
     // Cross-side watermark divergence. Two shapes are recoverable:

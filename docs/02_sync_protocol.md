@@ -407,7 +407,6 @@ first-class conflict primitives.
 
 ## Ignore lists
 
-
 The `ignore` option hides path segments from the pull. Excluded
 paths are still written and read inside the container — the bytes just
 never cross the wire back to the DO. This is essential for any large
@@ -416,10 +415,9 @@ directory of derived files: `node_modules`, `.next`, `target`,
 push tens of thousands of small files through the sync wire on the
 next pull.
 
-The default is `["node_modules"]`, applied server-side when `ignore` is
-omitted. A caller-supplied list **replaces** the default — it does not
-extend it. Pass `[]` to disable ignoring entirely, or pass your full
-list (including `"node_modules"` if you still want it) to customise.
+No paths are ignored by default. A sync server can configure an ignore list,
+and an individual `fetchChanges` call can replace it. Pass `[]` to override a
+server-level list and request every path.
 
 ### Ignored entries
 

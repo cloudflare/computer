@@ -8,7 +8,7 @@
 // node_modules_old or my_node_modules. Patterns are plain strings,
 // not globs; we can extend to globs later if a real case demands it.
 
-export const DEFAULT_IGNORE = ["node_modules"];
+export const DEFAULT_IGNORE: string[] = [];
 
 export function isIgnored(path: string, patterns: string[]): boolean {
   if (patterns.length === 0) return false;
