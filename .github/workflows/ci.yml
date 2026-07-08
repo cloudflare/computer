@@ -26,6 +26,9 @@ on:
       - "docs/**"
       - ".github/**/*.md"
 
+permissions:
+  contents: read
+
 concurrency:
   # PRs key on the PR number so successive pushes cancel the prior
   # run; pushes to main key on the ref so we never cancel a main
