@@ -137,3 +137,21 @@ jobs:
       # no-op until they do.
       - name: Test
         run: npm test --workspace ${{ matrix.workspace }} --if-present
+
+  preview:
+    name: preview package
+    if: github.event_name == 'pull_request'
+    needs: [package, example]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          filter: tree:0
+
+      - uses: ./.github/actions/install
+
+      - run: npm run build --workspaces --if-present
+
+      - run: npx pkg-pr-new publish --peerDeps ./packages/workspace
