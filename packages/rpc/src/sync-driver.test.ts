@@ -141,6 +141,87 @@ describe("sync driver — pullOnce", () => {
     }
   });
 
+  it("repairs blob metadata without bytes before applying the file", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerRemote = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerRemote.writeFileSync("/repair.txt", "recovered bytes");
+      const blob = remote.db.one<{ hash: Uint8Array; size: number }>(
+        `SELECT c.hash, b.size
+           FROM vfs_chunks c
+           JOIN vfs_blobs b ON b.hash = c.hash
+          LIMIT 1`,
+      );
+      expect(blob).toBeDefined();
+      local.db.run(
+        "INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, ?, ?)",
+        blob?.hash,
+        blob?.size,
+        1,
+      );
+
+      let fetched: Uint8Array[] = [];
+      const wrapped = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchObjects") {
+            return (hashes: Uint8Array[]) => {
+              fetched = hashes;
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      const applied = await pullOnce(local.db, wrapped);
+      const providerLocal = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      expect(applied.applied).toBe(1);
+      expect(fetched).toEqual([blob?.hash]);
+      expect(providerLocal.readFileSync("/repair.txt", "utf8")).toBe("recovered bytes");
+      expect(readFetchCursor(local.db)).toEqual({ rev: currentRev(remote.db), path: null });
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("replaces corrupt blob bytes before applying the file", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerRemote = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerRemote.writeFileSync("/repair.txt", "correct bytes");
+      const blob = remote.db.one<{ hash: Uint8Array; size: number }>(
+        `SELECT c.hash, b.size
+           FROM vfs_chunks c
+           JOIN vfs_blobs b ON b.hash = c.hash
+          LIMIT 1`,
+      );
+      expect(blob).toBeDefined();
+      local.db.run(
+        "INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, ?, ?)",
+        blob?.hash,
+        blob?.size,
+        1,
+      );
+      local.db.run(
+        "INSERT INTO vfs_blob_bytes (hash, bytes) VALUES (?, ?)",
+        blob?.hash,
+        new TextEncoder().encode("bad"),
+      );
+
+      const applied = await pullOnce(local.db, remote.rpc);
+      const providerLocal = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      expect(applied.applied).toBe(1);
+      expect(providerLocal.readFileSync("/repair.txt", "utf8")).toBe("correct bytes");
+      expect(readFetchCursor(local.db)).toEqual({ rev: currentRev(remote.db), path: null });
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
   it("is a no-op when fetchRev equals upstream currentRev", async () => {
     const a = makePeer();
     const b = makePeer();

@@ -37,10 +37,9 @@ function toHex(bytes: Uint8Array): string {
 // index-backed lookups instead of one oversized statement.
 const PROBE_BATCH = 256;
 
-// Subset-test the input hashes against vfs_blobs. Symmetric on both
-// sides: the DO probes the container before pushObjects, and the
-// container probes the DO before fetchObjects, so both sides ship
-// only the bytes the receiver lacks.
+// Subset-test the input hashes against complete local objects. A
+// metadata row alone is not enough: the payload must exist and its
+// byte length must match the advertised blob size.
 //
 // Matches the raw hash blobs through an IN (…) list so the lookup
 // rides the primary-key index. Present hashes are returned in input
@@ -52,7 +51,11 @@ export function hasObjects(db: Database, hashes: Uint8Array[]): Uint8Array[] {
     const window = hashes.slice(i, i + PROBE_BATCH);
     const placeholders = window.map(() => "?").join(", ");
     const rows = db.all<{ hash: Uint8Array }>(
-      `SELECT hash FROM vfs_blobs WHERE hash IN (${placeholders})`,
+      `SELECT b.hash
+         FROM vfs_blobs b
+         JOIN vfs_blob_bytes bb ON bb.hash = b.hash
+        WHERE b.hash IN (${placeholders})
+          AND length(bb.bytes) = b.size`,
       ...window,
     );
     for (const row of rows) present.add(toHex(row.hash));

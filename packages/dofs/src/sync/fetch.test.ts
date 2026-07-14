@@ -86,6 +86,36 @@ describe("hasObjects", () => {
     });
   });
 
+  it("treats blob metadata without bytes as missing", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "alpha", {}, () => 1);
+      const entries = await drain(fetchChanges(db, 0));
+      const known = (
+        entries.find((e) => e.kind === "file") as {
+          chunks: { hash: Uint8Array }[];
+        }
+      ).chunks[0].hash;
+      db.run("DELETE FROM vfs_blob_bytes WHERE hash = ?", known);
+
+      expect(hasObjects(db, [known])).toEqual([]);
+    });
+  });
+
+  it("treats blob bytes with the wrong length as missing", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "alpha", {}, () => 1);
+      const entries = await drain(fetchChanges(db, 0));
+      const known = (
+        entries.find((e) => e.kind === "file") as {
+          chunks: { hash: Uint8Array }[];
+        }
+      ).chunks[0].hash;
+      db.run("UPDATE vfs_blob_bytes SET bytes = ? WHERE hash = ?", new Uint8Array([1]), known);
+
+      expect(hasObjects(db, [known])).toEqual([]);
+    });
+  });
+
   it("returns an empty array when nothing matches", async () => {
     await withDB(async (db) => {
       const zero = new Uint8Array(32);

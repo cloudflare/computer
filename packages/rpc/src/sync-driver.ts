@@ -19,6 +19,7 @@ import {
   compareChangeCursors,
   currentRev,
   type Database,
+  hasObjects,
   readFetchCursor,
   readWatermark,
   type SkippedEntry,
@@ -214,14 +215,10 @@ async function pullOnceImpl(
           const haveSubset = await remote.hasObjects(wantedHashes);
           const remoteHasLocally = new Set<string>();
           for (const h of haveSubset) remoteHasLocally.add(hex(h));
+          const localHave = new Set(hasObjects(db, wantedHashes).map(hex));
           const missing = wantedHashes.filter((h) => {
             const k = hex(h);
-            if (!remoteHasLocally.has(k)) return false;
-            const row = db.one<{ hash: Uint8Array }>(
-              "SELECT hash FROM vfs_blobs WHERE hash = ?",
-              h,
-            );
-            return row === undefined;
+            return remoteHasLocally.has(k) && !localHave.has(k);
           });
           if (missing.length > 0) {
             // Bare ReadableStream return — no envelope to dispose,
