@@ -991,6 +991,55 @@ describe("sync driver — streaming pullOnce", () => {
   });
 });
 
+describe("sync driver — blob-stage recovery", () => {
+  it("keeps the pull pending and resumes after receiver storage recovers", async () => {
+    const upstream = makePeer();
+    const receiver = makePeer();
+    try {
+      const source = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      source.mkdirSync("/repo/dist", { recursive: true });
+      source.mkdirSync("/repo/node_modules/tiny", { recursive: true });
+      source.writeFileSync("/repo/package.json", '{"name":"fixture"}\n');
+      source.writeFileSync("/repo/dist/result.txt", "installed");
+      source.writeFileSync("/repo/node_modules/tiny/index.js", "ignored");
+
+      let injected = false;
+      const failingDb = new Database({
+        sql: {
+          exec: <Row extends object>(query: string, ...bindings: unknown[]) => {
+            if (!injected && query.startsWith("INSERT INTO vfs_blob_bytes")) {
+              injected = true;
+              throw new Error("injected receiver blob storage failure");
+            }
+            return receiver.db.sql.exec<Row>(query, ...bindings);
+          },
+        },
+        transactionSync: (closure) => receiver.db.transactionSync(closure),
+      });
+
+      await expect(pullOnce(failingDb, upstream.rpc)).rejects.toThrow(
+        "injected receiver blob storage failure",
+      );
+      expect(readFetchCursor(receiver.db)).toEqual({ rev: 0, path: null });
+      expect(receiver.db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(0);
+      expect(receiver.db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes")).toBe(0);
+
+      const resumed = await pullOnce(receiver.db, upstream.rpc);
+      const destination = new SQLiteWorkspaceProvider(receiver.db, { now: () => 1 });
+      expect(resumed.applied).toBeGreaterThan(0);
+      expect(destination.readFileSync("/repo/dist/result.txt", "utf8")).toBe("installed");
+      expect(destination.existsSync("/repo/node_modules")).toBe(false);
+      expect(readFetchCursor(receiver.db)).toEqual({
+        rev: currentRev(upstream.db),
+        path: null,
+      });
+    } finally {
+      upstream.close();
+      receiver.close();
+    }
+  });
+});
+
 describe("sync driver — push atomicity", () => {
   it("rolls back the entire batch when applyChanges fails mid-stream", async () => {
     // Construct a push with two file entries: one whose chunk bytes

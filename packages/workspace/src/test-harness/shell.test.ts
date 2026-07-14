@@ -118,10 +118,44 @@ describeIfDocker("Workspace.shell against a real wsd container", () => {
   it("exec result.pulled is 0 for a command that does not touch the VFS", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
+      await ws.pull();
       const handle = await ws.shell.exec("echo cheap", { encoding: "utf8" });
       const result = await handle.result();
       expect(result.exitCode).toBe(0);
       expect(result.pulled).toBe(0);
     });
   });
+
+  it("syncs repository outputs but ignores a generated dependency tree", async () => {
+    await withWorkspace(url, async (ws) => {
+      await ws.ready();
+      await ws.pull();
+      const root = `/workspace/repo-${crypto.randomUUID()}`;
+      await ws.fs.mkdir(`${root}/vendor/tiny`, { recursive: true });
+      await ws.fs.writeFile(
+        `${root}/package.json`,
+        JSON.stringify({
+          name: "sync-recovery-fixture",
+          private: true,
+          dependencies: { tiny: "file:vendor/tiny" },
+        }),
+      );
+      await ws.fs.writeFile(`${root}/vendor/tiny/index.js`, "installed\n");
+
+      const handle = await ws.shell.exec(
+        "mkdir -p node_modules/tiny dist && " +
+          "cp vendor/tiny/index.js node_modules/tiny/index.js && " +
+          "cat node_modules/tiny/index.js > dist/result.txt",
+        { cwd: root, encoding: "utf8" },
+      );
+      const result = await handle.result();
+
+      expect(result.exitCode, JSON.stringify(result)).toBe(0);
+      expect(result.pulled).toBeGreaterThan(0);
+      expect(await ws.fs.readFile(`${root}/dist/result.txt`, "utf8")).toBe("installed\n");
+      await expect(ws.fs.stat(`${root}/node_modules`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    });
+  }, 60_000);
 });

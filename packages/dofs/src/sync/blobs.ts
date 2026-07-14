@@ -14,15 +14,17 @@ import type { Database } from "../storage.js";
 // before calling. The function trusts the caller; a mismatched
 // pair would silently land under the wrong key.
 export function stageBlob(db: Database, hash: Uint8Array, bytes: Uint8Array, now: number): void {
-  db.run(
-    "INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET last_seen = excluded.last_seen",
-    hash,
-    bytes.byteLength,
-    now,
-  );
-  db.run(
-    "INSERT INTO vfs_blob_bytes (hash, bytes) VALUES (?, ?) ON CONFLICT(hash) DO NOTHING",
-    hash,
-    bytes,
-  );
+  db.transactionSync(() => {
+    db.run(
+      "INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET last_seen = excluded.last_seen",
+      hash,
+      bytes.byteLength,
+      now,
+    );
+    db.run(
+      "INSERT INTO vfs_blob_bytes (hash, bytes) VALUES (?, ?) ON CONFLICT(hash) DO NOTHING",
+      hash,
+      bytes,
+    );
+  });
 }

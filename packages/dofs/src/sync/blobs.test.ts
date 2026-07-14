@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { gc } from "../fs/gc.js";
 import { withDB } from "../fs/with-db.js";
 import { writeFile } from "../fs/writeFile.js";
+import { Database } from "../storage.js";
 import { stageBlob } from "./blobs.js";
 
 function sha256(bytes: Uint8Array): Uint8Array {
@@ -26,6 +27,28 @@ describe("stageBlob", () => {
         hash,
       );
       expect(row?.bytes).toEqual(bytes);
+    });
+  });
+
+  it("rolls back metadata and bytes when storing the bytes fails", async () => {
+    await withDB(async (db) => {
+      const bytes = new TextEncoder().encode("payload");
+      const hash = sha256(bytes);
+      const failingDb = new Database({
+        sql: {
+          exec: <Row extends object>(query: string, ...bindings: unknown[]) => {
+            if (query.startsWith("INSERT INTO vfs_blob_bytes")) {
+              throw new Error("injected bytes failure");
+            }
+            return db.sql.exec<Row>(query, ...bindings);
+          },
+        },
+        transactionSync: (closure) => db.transactionSync(closure),
+      });
+
+      expect(() => stageBlob(failingDb, hash, bytes, 1234)).toThrow("injected bytes failure");
+      expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(0);
+      expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes")).toBe(0);
     });
   });
 
