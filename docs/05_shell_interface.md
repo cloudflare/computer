@@ -101,12 +101,23 @@ type ExecEvent<T extends string | Uint8Array = Uint8Array> =
   | { id: string; seq: number; name: "stderr"; value: T }
   | { id: string; seq: number; name: "exit";   value: number };
 
+type ExecSyncResult =
+  | { status: "complete"; applied: number; skipped: SkippedEntry[] }
+  | {
+      status: "pending";
+      applied: number;
+      skipped: SkippedEntry[];
+      error: string;
+    };
+
 interface ExecResult<T extends string | Uint8Array = Uint8Array> {
   exitCode: number;
   stdout:   T;
   stderr:   T;
   pushed:   number;   // VFS changes uploaded before the command
   pulled:   number;   // VFS changes downloaded after the command
+  skipped:  SkippedEntry[];
+  sync:     ExecSyncResult;
 }
 ```
 
@@ -139,8 +150,11 @@ const run = await workspace.shell.exec("zig build", {
   cwd: "/workspace",
   encoding: "utf8",
 });
-const { exitCode, stdout, stderr } = await run.result();
+const { exitCode, stdout, stderr, sync } = await run.result();
 if (exitCode !== 0) throw new Error(stderr);
+if (sync.status === "pending") {
+  console.warn(`command completed, but workspace sync is pending: ${sync.error}`);
+}
 ```
 
 Stream stdout as the command runs:
@@ -283,9 +297,13 @@ no validation. Don't rely on the guard until it lands.
 - For read-write mounts, container-side writes under the mount root
   are mirrored back to the provider after the pull (provider first,
   then VFS).
-- Failed pushes/pulls do not abort the command — `exec()` reports the
-  command's own exit code. Sync errors surface as thrown rejections
-  separately.
+- Failed pushes/pulls do not change the command's exit code. If the
+  post-command pull fails, `result()` still returns the command's exit code,
+  stdout, and stderr. Its `sync` field has `status: "pending"`, zero applied
+  entries, an empty skipped list, and a bounded error string with common
+  credential forms redacted. A successful pull, including a clean no-op, has
+  `status: "complete"`. The existing `pushed`, `pulled`, and `skipped` fields
+  remain available for callers that only need counts.
 
 ## Wire format and backpressure
 

@@ -246,7 +246,10 @@ export default {
 
     await ws.fs.writeFile("/notes.md", "hello");
     using handle = await ws.shell.exec("ls /workspace", { encoding: "utf8" });
-    const { exitCode, stdout } = await handle.result();
+    const { exitCode, stdout, sync } = await handle.result();
+    if (sync.status === "pending") {
+      console.warn("command completed before its filesystem changes synced", sync.error);
+    }
 
     return new Response(stdout, { status: exitCode === 0 ? 200 : 500 });
   },
@@ -349,8 +352,10 @@ The span names the package emits today:
   `WorkspaceStub`. Contains `workspace.sync.push`,
   `workspace.shell.exec.spawn`, and `workspace.sync.pull` as nested
   children. Tagged with `workspace.shell.exit_code`,
-  `workspace.shell.pushed`, `workspace.shell.pulled`, and
-  `workspace.shell.skipped`.
+  `workspace.shell.pushed`, `workspace.shell.pulled`,
+  `workspace.shell.skipped`, and `workspace.shell.sync.status`. Pending
+  pulls also set `workspace.shell.sync.error` to the same bounded,
+  credential-redacted error returned in `ExecResult.sync`.
 - `workspace.fs.<op>` — one per filesystem call routed through the
   stub (`readFile`, `writeFile`, `stat`, `readdir`, `find`, `ls`,
   `grep`, `mkdir`, `rm`). Tagged with `workspace.fs.path` and, where

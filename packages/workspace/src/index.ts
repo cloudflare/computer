@@ -61,6 +61,7 @@ export type {
   ExecHandle,
   ExecOptions,
   ExecResult,
+  ExecSyncResult,
   GetExecOptions,
   KillSignal,
   WorkspaceExecEvent,

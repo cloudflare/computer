@@ -49,7 +49,9 @@
 // ------
 // If the wrapped work throws (or its returned promise rejects), the
 // span records `error.message` and `error.name` as attributes, then
-// re-throws. The runtime decides what "failed span" means on its own
+// re-throws. Error messages are bounded and common credential forms
+// are redacted before they reach an observer. The runtime decides what
+// "failed span" means on its own
 // side — we do not call any explicit `setStatus`-shaped API because the
 // Cloudflare surface does not expose one.
 
@@ -182,7 +184,8 @@ export function withSpan<T>(
 export type SpanOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
 /**
- * Records `error.message` and `error.name` on `span`. Adapters that
+ * Records `error.message` and `error.name` on `span`. Messages are
+ * bounded and common credential forms are redacted. Adapters that
  * want richer error reporting can subscribe to the underlying span
  * system directly; the workspace itself only forwards what the
  * Cloudflare `Span` surface accepts.
@@ -190,8 +193,22 @@ export type SpanOutcome<T> = { ok: true; value: T } | { ok: false; error: unknow
 function recordError(span: WorkspaceSpan, error: unknown): void {
   if (error instanceof Error) {
     span.setAttribute("error.name", error.name);
-    span.setAttribute("error.message", error.message);
-  } else {
-    span.setAttribute("error.message", String(error));
   }
+  span.setAttribute("error.message", safeErrorMessage(error));
+}
+
+const MAX_SAFE_ERROR_LENGTH = 512;
+
+export function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return Array.from(message, (character) =>
+    character < " " || character.charCodeAt(0) === 127 ? " " : character,
+  )
+    .join("")
+    .replace(
+      /\b(authorization|token|api[_-]?key|password|secret|cookie)=([^\s&]+)/gi,
+      "$1=[REDACTED]",
+    )
+    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    .slice(0, MAX_SAFE_ERROR_LENGTH);
 }

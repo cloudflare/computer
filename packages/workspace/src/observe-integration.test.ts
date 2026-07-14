@@ -290,6 +290,8 @@ describe("Workspace observer — shell stub", () => {
     expect(execSpan.attributes["workspace.shell.pushed"]).toBe(0);
     expect(execSpan.attributes["workspace.shell.pulled"]).toBe(0);
     expect(execSpan.attributes["workspace.shell.skipped"]).toBe(0);
+    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("complete");
+    expect(execSpan.attributes["workspace.shell.sync.error"]).toBeUndefined();
 
     // Nesting: the bracket runs push → spawn → pull inside the exec
     // span's callback, so all three appear as children on the recorder.
@@ -297,6 +299,56 @@ describe("Workspace observer — shell stub", () => {
     expect(childNames).toContain("workspace.sync.push");
     expect(childNames).toContain("workspace.shell.exec.spawn");
     expect(childNames).toContain("workspace.sync.pull");
+  });
+
+  it("reports pending sync on the exec span without exposing secrets", async () => {
+    const observer = makeRecorder();
+    const secret = "observer-secret";
+    const sync = fakeSync();
+    sync.fetchChanges = async () => {
+      throw new Error(`WebSocket closed token=${secret}`);
+    };
+    const shellRpc: import("@cloudflare/workspace-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id: "exec-pending",
+          events: new ReadableStream({
+            start(c) {
+              c.enqueue({ id: "exec-pending", seq: 0, name: "exit", value: 0 });
+              c.close();
+            },
+          }),
+        };
+      },
+      async getExec() {
+        throw new Error("not used");
+      },
+      async killExec() {},
+      async disposeExec() {},
+    };
+    const ws = new Workspace({
+      storage: makeStorage(),
+      backends: [
+        {
+          id: "shelled",
+          async connect() {
+            return { rpc: { sync, shell: shellRpc }, close: async () => {} };
+          },
+        },
+      ],
+      observer,
+    });
+    await ws.ready();
+    using handle = await new WorkspaceShellStub(ws).exec("noop");
+    const result = await handle.result();
+    expect(result.sync.status).toBe("pending");
+
+    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
+    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("pending");
+    expect(execSpan.attributes["workspace.shell.sync.error"]).toBe(
+      "WebSocket closed token=[REDACTED]",
+    );
+    expect(JSON.stringify(execSpan.attributes)).not.toContain(secret);
   });
 });
 

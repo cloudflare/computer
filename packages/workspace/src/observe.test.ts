@@ -56,6 +56,20 @@ describe("withSpan", () => {
     expect(recorder.spans[0].attributes).toEqual({ doubled: 14 });
   });
 
+  it("bounds and redacts error messages", async () => {
+    const recorder = makeRecorder();
+    const secret = "trace-secret";
+    await expect(
+      withSpan(recorder, "test.op", {}, async () => {
+        throw new Error(`failed token=${secret} ${"x".repeat(700)}`);
+      }),
+    ).rejects.toThrow(secret);
+    const recorded = recorder.spans[0].attributes["error.message"];
+    expect(recorded.length).toBeLessThanOrEqual(512);
+    expect(recorded).toContain("failed token=[REDACTED]");
+    expect(recorded).not.toContain(secret);
+  });
+
   it("records error name and message and re-throws", async () => {
     const recorder = makeRecorder();
     await expect(

@@ -513,6 +513,14 @@ describe("WorkspaceShell.exec — push/pull bracket", () => {
     expect(result.pushed).toBe(5);
     expect(result.pulled).toBe(7);
     expect(result.skipped).toEqual([]);
+    expect(result.sync).toEqual({ status: "complete", applied: 7, skipped: [] });
+  });
+
+  it("reports a clean no-op pull as complete", async () => {
+    const f = fakeRpc({ events: [exit(1, 0)] });
+    const shell = new WorkspaceShell(f.rpc.shell, makeSync());
+    const result = await (await shell.exec("true")).result();
+    expect(result.sync).toEqual({ status: "complete", applied: 0, skipped: [] });
   });
 
   it("surfaces skipped read-only entries from the post-drain pull", async () => {
@@ -588,23 +596,75 @@ describe("WorkspaceShell.exec — push/pull bracket", () => {
     expect(result.pulled).toBe(3);
   });
 
-  it("falls back to pulled = 0 and skipped = [] when sync.pull() throws", async () => {
+  it("reports a pending sync after a Durable Object storage reset", async () => {
+    const f = fakeRpc({
+      events: [stdout(1, "command output"), stderr(2, "command warning"), exit(3, 23)],
+    });
+    const reset = "Internal error in Durable Object storage write caused object to be reset.";
+    const sync: Sync = {
+      async push() {
+        return 2;
+      },
+      async pull() {
+        throw new Error(reset);
+      },
+    };
+    const shell = new WorkspaceShell(f.rpc.shell, sync);
+    const handle = await shell.exec("noop", { encoding: "utf8" });
+    const result = await handle.result();
+    expect(result).toMatchObject({
+      exitCode: 23,
+      stdout: "command output",
+      stderr: "command warning",
+      pushed: 2,
+      pulled: 0,
+      skipped: [],
+      sync: { status: "pending", applied: 0, skipped: [], error: reset },
+    });
+  });
+
+  it("bounds and redacts pending sync errors", async () => {
+    const f = fakeRpc({ events: [exit(1, 0)] });
+    const secret = "super-secret-value";
+    const sync: Sync = {
+      async push() {
+        return 0;
+      },
+      async pull() {
+        throw new Error(`transport failed token=${secret} ${"x".repeat(700)}`);
+      },
+    };
+    const shell = new WorkspaceShell(f.rpc.shell, sync);
+    const result = await (await shell.exec("noop")).result();
+    expect(result.sync.status).toBe("pending");
+    if (result.sync.status !== "pending") throw new Error("expected pending sync");
+    expect(result.sync.error.length).toBeLessThanOrEqual(512);
+    expect(result.sync.error).toContain("transport failed token=[REDACTED]");
+    expect(result.sync.error).not.toContain(secret);
+  });
+
+  it("reports a pending sync after an ordinary transport error", async () => {
     const f = fakeRpc({ events: [exit(1, 0)] });
     const sync: Sync = {
       async push() {
         return 2;
       },
       async pull() {
-        throw new Error("pull offline");
+        throw new Error("WebSocket closed before pull completed");
       },
     };
     const shell = new WorkspaceShell(f.rpc.shell, sync);
     const handle = await shell.exec("noop");
     const result = await handle.result();
-    expect(result.exitCode).toBe(0);
     expect(result.pushed).toBe(2);
     expect(result.pulled).toBe(0);
     expect(result.skipped).toEqual([]);
+    expect(result.sync).toEqual({
+      status: "pending",
+      applied: 0,
+      skipped: [],
+      error: "WebSocket closed before pull completed",
+    });
   });
 });
 

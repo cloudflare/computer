@@ -32,7 +32,7 @@
 import type { ApplyResult, SkippedEntry } from "@cloudflare/dofs";
 import type { ExecEvent, ShellRPC } from "@cloudflare/workspace-rpc";
 
-import { noopObserver, type WorkspaceObserver, withSpan } from "./observe.js";
+import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { assertNotTemplate } from "./sh.js";
 
 export type ExecEncoding = "utf8" | undefined;
@@ -45,6 +45,10 @@ export type WorkspaceExecEvent<E extends ExecEncoding = undefined> =
   | { id: string; seq: number; name: "stdout"; value: Chunk<E> }
   | { id: string; seq: number; name: "stderr"; value: Chunk<E> }
   | { id: string; seq: number; name: "exit"; value: number };
+
+export type ExecSyncResult =
+  | { status: "complete"; applied: number; skipped: SkippedEntry[] }
+  | { status: "pending"; applied: number; skipped: SkippedEntry[]; error: string };
 
 export interface ExecResult<E extends ExecEncoding = undefined> {
   exitCode: number;
@@ -64,6 +68,9 @@ export interface ExecResult<E extends ExecEncoding = undefined> {
   pushed: number;
   pulled: number;
   skipped: SkippedEntry[];
+  // Structured post-command sync outcome. The legacy pulled and
+  // skipped fields remain available for existing callers.
+  sync: ExecSyncResult;
 }
 
 export type KillSignal = "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
@@ -353,12 +360,14 @@ async function drainToResult<E extends ExecEncoding>(
   // values in that case.
   let pulled = 0;
   let skipped: SkippedEntry[] = [];
+  let syncResult: ExecSyncResult;
   try {
     const result = await sync.pull();
     pulled = result.applied;
     skipped = result.skipped;
-  } catch {
-    // pulled / skipped stay empty
+    syncResult = { status: "complete", applied: pulled, skipped };
+  } catch (error) {
+    syncResult = { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) };
   }
   return {
     exitCode,
@@ -367,6 +376,7 @@ async function drainToResult<E extends ExecEncoding>(
     pushed,
     pulled,
     skipped,
+    sync: syncResult,
   };
 }
 

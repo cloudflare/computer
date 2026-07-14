@@ -337,6 +337,34 @@ describe("WorkspaceStub", () => {
     });
   });
 
+  it("shell result carries the structured sync outcome across Workers RPC", async () => {
+    using handle = new WorkspaceExecHandleStub(
+      Promise.resolve({
+        exitCode: 0,
+        stdout: "done",
+        stderr: "",
+        pushed: 1,
+        pulled: 0,
+        skipped: [],
+        sync: {
+          status: "pending" as const,
+          applied: 0,
+          skipped: [],
+          error: "WebSocket closed before pull completed",
+        },
+      }),
+    );
+    await expect(handle.result()).resolves.toMatchObject({
+      exitCode: 0,
+      sync: {
+        status: "pending",
+        applied: 0,
+        skipped: [],
+        error: "WebSocket closed before pull completed",
+      },
+    });
+  });
+
   it("shell.exec returns an eagerly-spawned handle", async () => {
     // The stub's exec() kicks off the underlying workspace.shell.exec
     // before returning, so the caller's first round trip already has

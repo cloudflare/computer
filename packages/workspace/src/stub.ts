@@ -71,7 +71,7 @@ import { encodeExecEvent } from "./exec-wire.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
 import { assertNotTemplate } from "./sh.js";
-import type { ExecEncoding, ExecHandle, WorkspaceExecEvent } from "./shell.js";
+import type { ExecEncoding, ExecHandle, ExecSyncResult, WorkspaceExecEvent } from "./shell.js";
 import type { Workspace } from "./workspace.js";
 
 export interface WorkspaceExecOptions {
@@ -90,6 +90,7 @@ export interface WorkspaceExecResult<E extends "utf8" | undefined = undefined> {
   exitCode: number;
   stdout: E extends "utf8" ? string : Uint8Array;
   stderr: E extends "utf8" ? string : Uint8Array;
+  sync: ExecSyncResult;
 }
 
 // Filesystem half. A direct proxy onto Workspace.fs — every
@@ -260,6 +261,7 @@ interface ConsumeOutcome {
   pushed: number;
   pulled: number;
   skippedCount: number;
+  sync: ExecSyncResult;
 }
 
 // A deferred the exec span awaits. Resolving it (via result(),
@@ -275,6 +277,16 @@ function makeConsumer(): Consumer {
     resolve = r;
   });
   return { promise, resolve };
+}
+
+function emptyConsumeOutcome(exitCode = -1): ConsumeOutcome {
+  return {
+    exitCode,
+    pushed: 0,
+    pulled: 0,
+    skippedCount: 0,
+    sync: { status: "complete", applied: 0, skipped: [] },
+  };
 }
 
 // Exec handle returned from WorkspaceShellStub.exec. Holds the
@@ -313,7 +325,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
     // stops the command rather than buffering forever.
     if (!this.#consumed) {
       this.#consumed = true;
-      this.#consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
+      this.#consumer.resolve(emptyConsumeOutcome());
       this.#handle
         .then((handle) => handle.cancel?.())
         .catch(() => {
@@ -340,6 +352,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
         pushed: result.pushed,
         pulled: result.pulled,
         skippedCount: result.skipped.length,
+        sync: result.sync,
       });
       // Let the span close before returning so its attributes are set.
       await this.#span.catch(() => {});
@@ -350,9 +363,10 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
         // WorkspaceExecResult shape.
         stdout: result.stdout as WorkspaceExecResult<E>["stdout"],
         stderr: result.stderr as WorkspaceExecResult<E>["stderr"],
+        sync: result.sync,
       };
     } catch (error) {
-      this.#consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
+      this.#consumer.resolve(emptyConsumeOutcome());
       throw error;
     }
   }
@@ -379,18 +393,18 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
               reader.releaseLock();
               reader = undefined;
               controller.close();
-              consumer.resolve({ exitCode, pushed: 0, pulled: 0, skippedCount: 0 });
+              consumer.resolve(emptyConsumeOutcome(exitCode));
               return;
             }
             if (value.name === "exit") exitCode = value.value;
             controller.enqueue(encodeExecEvent(value as WorkspaceExecEvent<ExecEncoding>));
           } catch (error) {
-            consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
+            consumer.resolve(emptyConsumeOutcome());
             controller.error(error);
           }
         },
         cancel: async (reason) => {
-          consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
+          consumer.resolve(emptyConsumeOutcome());
           await reader?.cancel(reason);
           reader?.releaseLock();
           reader = undefined;
@@ -629,6 +643,10 @@ export class WorkspaceShellStub extends RpcTarget {
         span.setAttribute("workspace.shell.pushed", outcome.value.pushed);
         span.setAttribute("workspace.shell.pulled", outcome.value.pulled);
         span.setAttribute("workspace.shell.skipped", outcome.value.skippedCount);
+        span.setAttribute("workspace.shell.sync.status", outcome.value.sync.status);
+        if (outcome.value.sync.status === "pending") {
+          span.setAttribute("workspace.shell.sync.error", outcome.value.sync.error);
+        }
       },
     );
     // If the spawn throws, the span rejects: forward the failure to
