@@ -136,6 +136,7 @@ export interface GetExecOptions<E extends ExecEncoding = undefined> {
 export interface Sync {
   push(): Promise<number>;
   pull(): Promise<ApplyResult>;
+  onPullPending?(error: unknown): Promise<void>;
 }
 
 export class WorkspaceShell {
@@ -368,6 +369,13 @@ async function drainToResult<E extends ExecEncoding>(
     syncResult = { status: "complete", applied: pulled, skipped };
   } catch (error) {
     syncResult = { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) };
+    try {
+      await sync.onPullPending?.(error);
+    } catch {
+      // The command result must remain available even when the host's
+      // durable scheduler is temporarily unavailable. The pending
+      // status keeps the missed pull visible to the caller.
+    }
   }
   return {
     exitCode,

@@ -31,10 +31,44 @@ import { createGitClient, type GitClient, type GitIdentity } from "./git/index.j
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
-import { noopObserver, type WorkspaceObserver, withSpan } from "./observe.js";
+import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { WorkspaceShell } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
 import { isWorkspaceTransportFailure } from "./transport-failure.js";
+
+export interface SyncRetryIntent {
+  backend: string;
+  attempt: number;
+  notBefore: number;
+}
+
+/**
+ * Durable storage boundary for pending post-command pulls.
+ *
+ * The host owns persistence and wake-up because the workspace library
+ * cannot own a Durable Object alarm. Each backend has at most one intent.
+ */
+export interface SyncRetryScheduler {
+  get(backend: string): Promise<SyncRetryIntent | undefined>;
+  schedule(intent: SyncRetryIntent): Promise<void>;
+  clear(backend: string): Promise<void>;
+}
+
+export interface SyncRetryOptions {
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  maxAttempts?: number;
+}
+
+export type WorkspaceRetryPendingSyncResult =
+  | { status: "idle"; backend: string }
+  | { status: "complete"; backend: string; applied: number; skipped: ApplyResult["skipped"] }
+  | { status: "pending"; backend: string; attempt: number; notBefore: number; error: string }
+  | { status: "exhausted"; backend: string; attempt: number; error: string };
+
+const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
+const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
+const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
 
 export interface WorkspaceOptions {
   // Local store backing this Workspace. In a Durable Object, pass
@@ -74,6 +108,12 @@ export interface WorkspaceOptions {
   // adapter subpaths for the Cloudflare runtime and OpenTelemetry.
   observer?: WorkspaceObserver;
 
+  // Optional durable retry boundary for failed post-command pulls.
+  // The host persists one intent per backend and wakes the Durable
+  // Object at intent.notBefore to call retryPendingSync(backend).
+  retryScheduler?: SyncRetryScheduler;
+  retry?: SyncRetryOptions;
+
   // Default identity used by commit-producing git subcommands
   // when neither the call site nor the relevant `GIT_AUTHOR_*` /
   // `GIT_COMMITTER_*` env vars supply one. Threaded through to
@@ -111,6 +151,10 @@ export class Workspace {
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
+  readonly #retryScheduler: SyncRetryScheduler | undefined;
+  readonly #retryInitialDelayMs: number;
+  readonly #retryMaxDelayMs: number;
+  readonly #retryMaxAttempts: number;
   readonly #sessionId: string;
   readonly #defaultGitIdentity: GitIdentity | undefined;
   readonly #assets: AssetsClient | undefined;
@@ -142,6 +186,22 @@ export class Workspace {
 
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
+    this.#retryScheduler = options.retryScheduler;
+    this.#retryInitialDelayMs = positiveRetryOption(
+      options.retry?.initialDelayMs,
+      DEFAULT_RETRY_INITIAL_DELAY_MS,
+      "initialDelayMs",
+    );
+    this.#retryMaxDelayMs = positiveRetryOption(
+      options.retry?.maxDelayMs,
+      DEFAULT_RETRY_MAX_DELAY_MS,
+      "maxDelayMs",
+    );
+    this.#retryMaxAttempts = positiveRetryOption(
+      options.retry?.maxAttempts,
+      DEFAULT_RETRY_MAX_ATTEMPTS,
+      "maxAttempts",
+    );
     this.#sessionId = options.sessionId ?? "";
     this.#defaultGitIdentity = options.defaultGitIdentity;
     this.#artifacts = options.artifacts
@@ -409,26 +469,98 @@ export class Workspace {
   }
 
   pull(id?: string): Promise<ApplyResult> {
-    return this.#serialize(id, (resolvedId) =>
-      withSpan(
-        this.#observer,
-        "workspace.sync.pull",
-        { "workspace.sync.backend": resolvedId },
-        async () => {
-          if (resolvedId === undefined) return { applied: 0, skipped: [] };
-          const handle = await this.#handleFor(resolvedId);
-          if (handle.sync === "none") return { applied: 0, skipped: [] };
-          return this.#runWithInvalidation(resolvedId, handle, () =>
-            pullOnce(this.#db, handle.rpc.sync, resolvedId),
-          );
-        },
-        (span, outcome) => {
-          if (!outcome.ok) return;
-          span.setAttribute("workspace.sync.applied", outcome.value.applied);
-          span.setAttribute("workspace.sync.skipped", outcome.value.skipped.length);
-        },
-      ),
+    return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId));
+  }
+
+  /**
+   * Run a host-scheduled pending pull from its persisted cursor.
+   *
+   * The call shares the backend's mutation FIFO with push, pull, and
+   * command brackets. A successful pull clears the host's durable
+   * intent. A failed pull advances bounded exponential backoff; the
+   * last failed attempt remains stored and is reported as exhausted.
+   */
+  retryPendingSync(id?: string): Promise<WorkspaceRetryPendingSyncResult> {
+    return this.#serialize(id, async (resolvedId) => {
+      if (resolvedId === undefined) {
+        throw new Error("Workspace has no backend configured for pending sync retry");
+      }
+      const scheduler = this.#retryScheduler;
+      if (scheduler === undefined) {
+        throw new Error("Workspace has no retryScheduler configured");
+      }
+      const intent = await scheduler.get(resolvedId);
+      if (intent === undefined) return { status: "idle", backend: resolvedId };
+      if (intent.attempt > this.#retryMaxAttempts) {
+        return {
+          status: "exhausted",
+          backend: resolvedId,
+          attempt: intent.attempt,
+          error: "pending sync retry attempts exhausted",
+        };
+      }
+      try {
+        const result = await this.#pullResolved(resolvedId);
+        await scheduler.clear(resolvedId);
+        return {
+          status: "complete",
+          backend: resolvedId,
+          applied: result.applied,
+          skipped: result.skipped,
+        };
+      } catch (error) {
+        const message = safeErrorMessage(error);
+        if (intent.attempt >= this.#retryMaxAttempts) {
+          return {
+            status: "exhausted",
+            backend: resolvedId,
+            attempt: intent.attempt,
+            error: message,
+          };
+        }
+        const next = this.#retryIntent(resolvedId, intent.attempt + 1);
+        await scheduler.schedule(next);
+        return { status: "pending", ...next, error: message };
+      }
+    });
+  }
+
+  #pullResolved(resolvedId: string | undefined): Promise<ApplyResult> {
+    return withSpan(
+      this.#observer,
+      "workspace.sync.pull",
+      { "workspace.sync.backend": resolvedId },
+      async () => {
+        if (resolvedId === undefined) return { applied: 0, skipped: [] };
+        const handle = await this.#handleFor(resolvedId);
+        if (handle.sync === "none") return { applied: 0, skipped: [] };
+        return this.#runWithInvalidation(resolvedId, handle, () =>
+          pullOnce(this.#db, handle.rpc.sync, resolvedId),
+        );
+      },
+      (span, outcome) => {
+        if (!outcome.ok) return;
+        span.setAttribute("workspace.sync.applied", outcome.value.applied);
+        span.setAttribute("workspace.sync.skipped", outcome.value.skipped.length);
+      },
     );
+  }
+
+  async #schedulePendingSync(id: string): Promise<void> {
+    const scheduler = this.#retryScheduler;
+    if (scheduler === undefined) return;
+    await this.#serialize(id, async (resolvedId) => {
+      if (resolvedId === undefined || (await scheduler.get(resolvedId)) !== undefined) return;
+      await scheduler.schedule(this.#retryIntent(resolvedId, 1));
+    });
+  }
+
+  #retryIntent(backend: string, attempt: number): SyncRetryIntent {
+    const delay = Math.min(
+      this.#retryMaxDelayMs,
+      this.#retryInitialDelayMs * 2 ** Math.max(0, attempt - 1),
+    );
+    return { backend, attempt, notBefore: this.#now() + delay };
   }
 
   // Drop a cached handle when an operation fails with a known
@@ -604,6 +736,7 @@ export class Workspace {
       {
         push: () => this.push(id),
         pull: () => this.pull(id),
+        onPullPending: () => this.#schedulePendingSync(id),
       },
       this.#observer,
     );
@@ -633,6 +766,14 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     this.#invalidateHandle(id, handle);
   }
+}
+
+function positiveRetryOption(value: number | undefined, fallback: number, name: string): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
+    throw new Error(`Workspace retry.${name} must be a positive integer`);
+  }
+  return resolved;
 }
 
 function createDisabledArtifactsClient(): ArtifactClient {
