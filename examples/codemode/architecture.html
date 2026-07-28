@@ -148,6 +148,7 @@
           <rect x="188" y="160" width="120" height="30" rx="7" fill="rgba(51,196,141,0.12)" stroke="#2f6f57"/>
           <text class="sub" x="248" y="180" text-anchor="middle" fill="#5fd6a4">/agent</text>
           <text class="sub" x="56" y="216">deterministic vs. model-driven</text>
+          <text class="sub" x="56" y="232" fill="#5fd6a4">/approvals — the human's answer</text>
 
           <!-- agent loop -->
           <rect class="box" x="380" y="120" width="260" height="120" rx="12" stroke="#2f6f57" />
@@ -227,6 +228,16 @@
             through its stub. It builds an <code>exec</code> tool whose <code>backend</code> parameter
             is an enum; the model picks per call. The workspace has zero dependency on this layer.
             For long runs, the loop would move to its own Durable Object holding a stub.
+          </p>
+        </div>
+        <div class="card">
+          <h3><span class="pill agent">layer 3</span> Approval (human in the loop)</h3>
+          <p class="muted">
+            Commands the policy holds back — every write, and everything on
+            <code>container</code> — <em>do not run</em>. The turn stops with a pending approval and
+            resumes on <code>POST /approvals/&lt;id&gt;</code>. That wait outlives the request, so the
+            paused turn lives in a second Durable Object, <code>AgentSession</code>, which holds no
+            workspace stub and cannot itself run anything.
           </p>
         </div>
       </div>
@@ -320,6 +331,19 @@ return await state.readFile("/workspace/hello.txt");   // → stdout</pre>
             <li>On stop, Worker returns the transcript with <code>toolCalls[].backend</code>.</li>
           </ol>
         </div>
+        <div class="card">
+          <h3>Gated — <code>POST /approvals/&lt;id&gt;</code></h3>
+          <ol class="flow-steps">
+            <li>The policy holds a command back, so the tool never executes it.</li>
+            <li>The turn returns <code>awaiting-approval</code>; Worker stores its history in
+              <code>AgentSession</code>.</li>
+            <li>A human reads <code>GET /approvals</code> and answers one entry.</li>
+            <li>On the last answer, Worker replays the stored history with a
+              <code>tool-approval-response</code> attached.</li>
+            <li>The approved command runs for real; a denied one comes back to the model as
+              <code>execution-denied</code>.</li>
+          </ol>
+        </div>
       </div>
 
       <h2>Key components</h2>
@@ -327,8 +351,11 @@ return await state.readFile("/workspace/hello.txt");   // → stdout</pre>
         <thead><tr><th>File</th><th>Role</th></tr></thead>
         <tbody>
           <tr><td><code>src/index.ts</code></td><td>Worker routes + <code>CodemodeExample</code> DO that owns the Workspace and registers all three backends.</td></tr>
-          <tr><td><code>src/agent.ts</code></td><td>The opt-in model loop; builds the exec tool over the stub and runs one turn.</td></tr>
-          <tr><td><code>src/tools/exec.ts</code></td><td>The exec tool: a <code>backend</code> enum plus per-backend descriptions the model reads.</td></tr>
+          <tr><td><code>src/agent.ts</code></td><td>The opt-in model loop; builds the exec tool over the stub and runs one turn, pausing when the policy holds a command back.</td></tr>
+          <tr><td><code>src/tools/exec.ts</code></td><td>The exec tool: a <code>backend</code> enum plus per-backend descriptions the model reads, and the approval gate.</td></tr>
+          <tr><td><code>src/approval-policy.ts</code></td><td>Which commands need a human: a per-backend rule table, denying by default.</td></tr>
+          <tr><td><code>src/session.ts</code></td><td>The <code>AgentSession</code> DO — where a turn waiting on a human lives.</td></tr>
+          <tr><td><code>src/turn-store.ts</code></td><td>Paused-turn bookkeeping over a storage handle, so it tests against a plain Map.</td></tr>
           <tr><td><code>backends/codemode/codemode-backend.ts</code></td><td>The backend: builds the ShellRPC, runs each snippet in a fresh executor.</td></tr>
           <tr><td><code>backends/codemode/state-provider.ts</code></td><td>The <code>state.*</code> namespace over the live <code>WorkspaceFilesystem</code>.</td></tr>
           <tr><td><code>backends/codemode/exec-events.ts</code></td><td>Pure mapping from a run's result/logs/error to the stdout/stderr/exit event stream.</td></tr>

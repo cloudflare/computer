@@ -11,14 +11,16 @@
 #      surface, closing the loop.
 #
 # Steps 1 through 4 need no model and no container, so they run by
-# default. Two further backends are opt-in because they cost more to
-# stand up:
+# default. The rest are opt-in because they cost more to stand up:
 #
 #   CONTAINERS=1  also read the tree from inside the Cloudflare
 #                 Container (boots wsd on first use; requires
 #                 `wrangler dev --enable-containers`).
 #   AGENT=1       also run one agent turn, which needs the AI
 #                 binding and a model round-trip.
+#   APPROVALS=1   also drive the human-in-the-loop approval flow: ask
+#                 the agent for a write, check that nothing ran while
+#                 it waits, approve, and check that it then did.
 #
 # Run `npm run dev` in another terminal first, then:
 #   ./script/run                          # against http://127.0.0.1:8787
@@ -89,6 +91,61 @@ if [[ "${AGENT:-}" == "1" ]]; then
     -H 'content-type: application/json' \
     -d '{"prompt":"Read the file at /workspace/'"${PATH_VIA_API}"' and tell me its contents."}')
   printf '%s\n' "$agent_out"
+fi
+
+if [[ "${APPROVALS:-}" == "1" ]]; then
+  # A fresh instance, so "the file is not there yet" actually means the
+  # approval held the write back rather than that an earlier run had
+  # not written it.
+  HITL_NAME="${NAME}-hitl-$$"
+  HITL_BASE="${BASE_URL}/c/${HITL_NAME}"
+  HITL_PATH="approved-write.txt"
+
+  step "7. approval: ask for a write on /c/${HITL_NAME}/agent"
+  hitl_out=$(curl -fsS -X POST "${HITL_BASE}/agent" \
+    -H 'content-type: application/json' \
+    -d '{"prompt":"Create the file /workspace/'"${HITL_PATH}"' containing exactly: approved"}')
+  printf '%s\n' "$hitl_out"
+
+  hitl_status=$(JSON="$hitl_out" node -e 'process.stdout.write(JSON.parse(process.env.JSON).status)')
+  [[ "$hitl_status" == "awaiting-approval" ]] \
+    || fail "expected the write to wait for approval, got status '$hitl_status'"
+
+  approval_id=$(JSON="$hitl_out" node -e \
+    'const d=JSON.parse(process.env.JSON); process.stdout.write(d.pendingApprovals[0].approvalId)')
+
+  step "8. approval: nothing ran while it waits"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "${HITL_BASE}/file/workspace/${HITL_PATH}")
+  [[ "$code" == "404" ]] \
+    || fail "the command ran before it was approved (GET returned HTTP $code, expected 404)"
+  printf 'GET /file/workspace/%s -> HTTP 404, as it should be\n' "$HITL_PATH"
+
+  step "9. approval: the queue lists it"
+  queue=$(curl -fsS "${HITL_BASE}/approvals")
+  printf '%s\n' "$queue"
+  echo "$queue" | grep -q "$approval_id" \
+    || fail "the pending approval is missing from GET /approvals"
+
+  step "10. approval: approve it, and the turn resumes"
+  resumed=$(curl -fsS -X POST "${HITL_BASE}/approvals/${approval_id}" \
+    -H 'content-type: application/json' -d '{"approved":true}')
+  printf '%s\n' "$resumed"
+  resumed_status=$(JSON="$resumed" node -e 'process.stdout.write(JSON.parse(process.env.JSON).status)')
+  [[ "$resumed_status" == "completed" ]] \
+    || fail "expected the resumed turn to complete, got status '$resumed_status'"
+
+  step "11. approval: now the file exists"
+  written=$(curl -fsS "${HITL_BASE}/file/workspace/${HITL_PATH}")
+  printf '%s\n' "$written"
+  [[ -n "$written" ]] || fail "the approved command did not write the file"
+
+  step "12. approval: answering twice is refused"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    -X POST "${HITL_BASE}/approvals/${approval_id}" \
+    -H 'content-type: application/json' -d '{"approved":true}')
+  [[ "$code" == "404" ]] \
+    || fail "a second answer to the same approval was accepted (HTTP $code, expected 404)"
+  printf 'second answer -> HTTP 404, so the command cannot run twice\n'
 fi
 
 printf '\nOK — one filesystem, reached through every backend.\n'

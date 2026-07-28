@@ -158,4 +158,12 @@ the container and worker examples, plus a `/c/<name>/agent` route.
 `script/run` is a smoke test that round-trips one file through every
 backend.
 
+That agent layer asks a human before it runs anything that writes, and
+before anything at all on the `container` backend. A held-back command
+does not execute: the turn pauses and resumes through
+`/c/<name>/approvals` once someone answers. The approval policy and the
+paused-turn state both live in the example, not in this backend — the
+backend runs a command and reports the result, as it did before. See
+the example's README for the flow.
+
 Run with `npm run dev --workspace @example/workspace-codemode`.
