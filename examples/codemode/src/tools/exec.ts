@@ -22,6 +22,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 
+import { type ApprovalPolicy, decideApproval } from "../approval-policy.js";
+
 /**
  * Minimal subset of `@cloudflare/workspace` we depend on: a shell
  * facade with `exec(command, { cwd, encoding, backend })` whose
@@ -68,6 +70,36 @@ export interface ExecToolOptions {
   defaultBackend: string;
   /** Truncate captured stdout/stderr above this many bytes. */
   maxBytes?: number;
+  /**
+   * Which commands a human has to approve first. Omit to run
+   * everything the model asks for.
+   *
+   * A gated call does not execute: the AI SDK reports it as an
+   * approval request and ends the turn, so there is no provisional
+   * result and nothing to undo.
+   */
+  policy?: ApprovalPolicy;
+  /**
+   * Called after each execution. The caller uses it to build a
+   * transcript.
+   *
+   * Reading executions from `generateText`'s steps would miss the
+   * interesting one: a command approved by a human runs before the
+   * resumed pass makes its first model call, so it belongs to no step.
+   * Recording here catches every execution regardless of which pass it
+   * happened on.
+   */
+  onExec?: (call: ExecRecord) => void;
+}
+
+/** One command the tool actually ran. */
+export interface ExecRecord {
+  command: string;
+  cwd: string | null;
+  backend: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 const DEFAULT_MAX_BYTES = 64 * 1024; // 64 KiB per stream
@@ -134,6 +166,13 @@ export function createExecTool(opts: ExecToolOptions) {
   return tool({
     description,
     inputSchema,
+    // Must stay a pure function of the input. The AI SDK re-runs it
+    // when a paused turn resumes and downgrades an approved call to a
+    // denial if the answer has changed since the pause.
+    needsApproval: ({ command, backend }) =>
+      opts.policy != null &&
+      decideApproval({ command, backend: backend ?? opts.defaultBackend }, opts.policy)
+        .needsApproval,
     execute: async ({ command, cwd, backend }) => {
       const handle = await opts.workspace.shell.exec(command, {
         cwd,
@@ -141,7 +180,7 @@ export function createExecTool(opts: ExecToolOptions) {
         backend,
       });
       const result = await handle.result();
-      return {
+      const record: ExecRecord = {
         command,
         cwd: cwd ?? null,
         backend: backend ?? opts.defaultBackend,
@@ -149,6 +188,8 @@ export function createExecTool(opts: ExecToolOptions) {
         stdout: truncate(result.stdout, maxBytes),
         stderr: truncate(result.stderr, maxBytes),
       };
+      opts.onExec?.(record);
+      return record;
     },
   });
 }

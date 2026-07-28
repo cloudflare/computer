@@ -49,6 +49,14 @@
       {
         "name": "CodemodeExample",
         "class_name": "CodemodeExample"
+      },
+      // Holds agent turns that paused for human approval. Separate
+      // from the workspace object on purpose: a paused turn has to
+      // outlive the request that started it, and the object that owns
+      // the filesystem has no business holding model state.
+      {
+        "name": "AgentSession",
+        "class_name": "AgentSession"
       }
     ]
   },
@@ -57,6 +65,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["CodemodeExample"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["AgentSession"]
     }
   ]
 }
