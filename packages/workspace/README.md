@@ -68,6 +68,10 @@ uniform; the counts are just always zero.
   an Artifacts binding, the worker backend exposes the same CLI as
   an `artifacts` custom command. See
   [`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
+- `createAITools` (from `@cloudflare/workspace/tools`) — AI SDK
+  tools for agents: `read`, `write`, `edit`, `ls`, optional `exec`,
+  and optional asset sharing. See
+  [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Typical DO-side usage
 

@@ -27,6 +27,10 @@
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
     },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
@@ -68,17 +72,25 @@
   },
   "peerDependencies": {
     "@platformatic/vfs": "*",
+    "ai": "^6.0.196",
     "diff": "^9.0.0",
-    "isomorphic-git": "^1.27.0"
+    "isomorphic-git": "^1.27.0",
+    "zod": "^4.4.3"
   },
   "peerDependenciesMeta": {
     "@platformatic/vfs": {
+      "optional": true
+    },
+    "ai": {
       "optional": true
     },
     "diff": {
       "optional": true
     },
     "isomorphic-git": {
+      "optional": true
+    },
+    "zod": {
       "optional": true
     }
   },
@@ -88,6 +100,7 @@
     "@cloudflare/workers-types": "^4.20260616.1",
     "@cloudflare/workspace-rpc": "*",
     "@platformatic/vfs": "^0.4.0",
+    "ai": "^6.0.196",
     "diff": "^9.0.0",
     "esbuild": "^0.28.1",
     "isomorphic-git": "^1.38.3",
@@ -96,6 +109,7 @@
     "rolldown-plugin-dts": "^0.25.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
-    "wrangler": "^4.96.0"
+    "wrangler": "^4.96.0",
+    "zod": "^4.4.3"
   }
 }
