@@ -691,6 +691,147 @@ return await state.readFile("/workspace/hello.txt");   // → stdout</pre>
         </div>
       </div>
 
+      <h2 id="approval-chain">The approval chain, step by step</h2>
+      <p class="muted">
+        The same gated turn as above, at the level of what each line of code does. Two sides, because
+        a paused turn is two requests with an indefinite gap in the middle: the first discovers the
+        pause and files it, the second answers it and finishes the work.
+      </p>
+
+      <div class="card">
+        <h3 style="margin-top:0">
+          <span class="pill agent">side one</span> The pause — <code>POST /agent</code>
+        </h3>
+        <ol class="flow-steps">
+          <li>
+            The Worker parses <code>{ prompt }</code>, mints a <code>turnId</code>, and gets a
+            workspace stub. Nothing is stored yet.
+          </li>
+          <li>
+            <code>createExecTool</code> closes over the stub, the policy and a fresh
+            <code>onExec</code> array — none of which appear in the model's schema.
+          </li>
+          <li>
+            <code>generateText</code> runs with the budget
+            <code>MAX_STEPS - stepsUsed</code>, so a turn cannot buy itself more steps by pausing.
+          </li>
+          <li>The model proposes <code>exec { command, backend }</code>.</li>
+          <li>
+            Before <code>execute</code>, the SDK evaluates <code>needsApproval</code>. Pure, local,
+            inside the Worker — no Durable Object, no network.
+          </li>
+          <li>
+            It returns true, so the call is excluded from that step's <code>executeTools</code>.
+            <strong>Nothing runs</strong>: no <code>shell.exec</code>, no <code>connect()</code>, no
+            dynamic worker, no container boot.
+          </li>
+          <li>
+            The SDK appends a <code>tool-approval-request</code> part to the step's content — an
+            <code>approvalId</code> plus the original <code>toolCall</code>. A <code>tool-call</code>
+            with no matching <code>tool-result</code>.
+          </li>
+          <li>
+            The loop's continue condition fails and <code>generateText</code> returns normally.
+            Nothing threw.
+          </li>
+          <li>
+            <code>runAgentTurn</code> scans <code>result.steps.at(-1).content</code> for those parts.
+            That scan <em>is</em> how the pause is discovered — after the fact, from data.
+          </li>
+          <li>
+            For each one it asks <code>decideApproval</code> again, purely for the sentence a human
+            should read; the SDK's gate only answered yes or no. Same inputs, same answer.
+          </li>
+          <li>
+            <code>status</code> becomes <code>awaiting-approval</code>, and <code>messages</code>
+            becomes what went in plus <code>lastStep.response.messages</code> — carrying the
+            serialized mark.
+          </li>
+          <li>
+            <code>recordTurn</code> writes the row into <code>AgentSession</code>: history,
+            <code>pending</code>, <code>awaiting</code>, <code>toolCalls</code>,
+            <code>stepsUsed</code>. That object holds no workspace stub and cannot run anything.
+          </li>
+          <li>
+            <code>transcriptJSON</code> replies <code>200 awaiting-approval</code> with
+            <code>pendingApprovals</code>, omitting <code>messages</code> — the model's working state
+            is read from storage on resume, never trusted from a client.
+          </li>
+          <li>
+            The request closes. No timer, no polling, no held connection. The turn exists only as a
+            row, and the Worker is free to die.
+          </li>
+        </ol>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">
+          <span class="pill agent">side two</span> The resume —
+          <code>POST /approvals/&lt;id&gt;</code>
+        </h3>
+        <ol class="flow-steps">
+          <li>
+            A human answers. <code>script/agent</code> prints the <code>y/N</code>; the Worker only
+            ever sees a boolean.
+          </li>
+          <li><code>resolveApproval(id, approved)</code> marks it answered and returns an outcome.</li>
+          <li>
+            Null means the id was never issued <em>or</em> was already answered. Both mean this
+            request changed nothing, so <strong>404</strong> — treating a repeat as fresh would run
+            the command twice.
+          </li>
+          <li>
+            Not ready means other approvals on the turn are outstanding, so <strong>202</strong> and
+            back to idle. One model step can propose several commands, and the resume must carry
+            every answer at once.
+          </li>
+          <li>Ready means this was the last one, so the stored <code>messages</code> come back out.</li>
+          <li>
+            <code>runAgentTurn</code> is called again with <code>resume</code>, and
+            <code>stepsUsed</code> carried forward.
+          </li>
+          <li>
+            The history is replayed with one appended <code>tool</code> message holding every
+            <code>tool-approval-response</code> together — the SDK reads approvals from the last
+            message only.
+          </li>
+          <li>
+            The SDK matches each <code>approvalId</code> to the mark in the history and
+            <strong>re-runs <code>needsApproval</code></strong>. If the answer changed since the
+            pause, the approval is downgraded to a denial. This is why the policy must be pure.
+          </li>
+          <li>
+            Approved calls execute in the SDK's pre-loop <code>executeTools</code>, before the step
+            loop starts.
+          </li>
+          <li>
+            <code>ws.shell.exec()</code> is finally called on the Durable Object — the first time
+            this command touches anything. From here it is the ordinary path: lazy
+            <code>connect()</code>, the dispatchers, <code>evaluate()</code>, the envelope,
+            <code>execEventStream</code>.
+          </li>
+          <li>A denied call comes back to the model as <code>execution-denied</code> instead.</li>
+          <li>
+            <code>onExec</code> records the run. The steps will not: an approved call belongs to the
+            pre-loop and to no step, which is why the transcript is collected through the closure
+            rather than read off <code>result.steps</code>.
+          </li>
+          <li>The loop continues and may propose more commands.</li>
+          <li>
+            <code>recordTurn</code> writes again, accumulating <code>toolCalls</code> across passes so
+            the turn's history stays whole.
+          </li>
+          <li>
+            Completed gives <code>200 completed</code>. Paused again on a different command gives
+            <code>200 awaiting-approval</code>, and back to idle.
+          </li>
+        </ol>
+        <p class="note" style="margin-bottom:0">
+          The whole resume runs inline in the human's POST, so their request is the one that waits on
+          the model.
+        </p>
+      </div>
+
       <h2>Key components</h2>
       <table>
         <thead><tr><th>File</th><th>Role</th></tr></thead>

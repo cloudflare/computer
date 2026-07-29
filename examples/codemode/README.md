@@ -153,6 +153,13 @@ POST /agent {prompt}
                                                             may pause again
 ```
 
+For the same flow at the level of what each line of code does — where
+the gate is evaluated, what the SDK leaves behind when it stops, and
+what the resume has to put back — see
+[the approval chain, step by step](architecture.html#approval-chain).
+It splits the two sides of the pause, since a paused turn is two
+requests with an indefinite gap in the middle.
+
 ### The policy
 
 Approval is a table keyed by backend, because the three backends
