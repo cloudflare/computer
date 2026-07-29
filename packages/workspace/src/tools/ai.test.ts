@@ -367,8 +367,8 @@ describe("createAITools exec tool", () => {
   });
 });
 
-describe("createAITools share tool", () => {
-  it("adds share by default when assets are configured", async () => {
+describe("createAITools publish tool", () => {
+  it("adds publish by default when assets are configured", async () => {
     const calls: Array<{ path: string; expiresAfter: number; prefix?: string }> = [];
     const workspace = {
       fs: makeWorkspace().fs,
@@ -382,27 +382,27 @@ describe("createAITools share tool", () => {
     };
     const tools = createAITools({ workspace });
 
-    expect(tools.share).toBeDefined();
+    expect(tools.publish).toBeDefined();
     await expect(
-      executeTool(tools.share, { path: "/workspace/out/report.html", expiresAfterMs: 1234 }),
+      executeTool(tools.publish, { path: "/workspace/out/report.html", expiresAfterMs: 1234 }),
     ).resolves.toEqual({ ok: true, url: "https://example.test/report.html" });
     expect(calls).toEqual([
       { path: "/workspace/out/report.html", expiresAfter: 1234, prefix: "agent-session-a" },
     ]);
   });
 
-  it("omits share when assets are disabled or readonly is true", () => {
+  it("omits publish when assets are disabled or readonly is true", () => {
     const workspace = {
       fs: makeWorkspace().fs,
       sessionId: "session-a",
       assets: { share: async () => "https://example.test" },
     };
 
-    expect(createAITools({ workspace, assets: false }).share).toBeUndefined();
-    expect(createAITools({ workspace, readonly: true }).share).toBeUndefined();
+    expect(createAITools({ workspace, assets: false }).publish).toBeUndefined();
+    expect(createAITools({ workspace, readonly: true }).publish).toBeUndefined();
   });
 
-  it("returns structured share errors", async () => {
+  it("returns structured publish errors", async () => {
     const workspace = {
       fs: makeWorkspace().fs,
       sessionId: "session-a",
@@ -414,11 +414,11 @@ describe("createAITools share tool", () => {
     };
     const tools = createAITools({ workspace });
 
-    await expect(executeTool(tools.share, { path: "/workspace/out/report.html" })).resolves.toEqual(
-      {
-        ok: false,
-        error: "upload failed",
-      },
-    );
+    await expect(
+      executeTool(tools.publish, { path: "/workspace/out/report.html" }),
+    ).resolves.toEqual({
+      ok: false,
+      error: "upload failed",
+    });
   });
 });

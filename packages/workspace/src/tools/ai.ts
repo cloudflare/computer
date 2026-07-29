@@ -5,10 +5,10 @@ import { createListTool } from "./fs/list.js";
 import { createReadTool, type ReadToolOptions } from "./fs/read.js";
 import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./fs/store.js";
 import { createWriteTool, type WriteToolOptions } from "./fs/write.js";
-import { createShareTool, type ShareWorkspaceLike } from "./share.js";
+import { createPublishTool, type PublishWorkspaceLike } from "./publish.js";
 
 export interface CreateAIToolsOptions {
-  workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<ShareWorkspaceLike>;
+  workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
   readonly?: boolean;
   assets?: boolean;
   read?: Omit<ReadToolOptions, "store">;
@@ -37,7 +37,7 @@ export function createAITools(options: CreateAIToolsOptions): ToolSet {
   }
 
   if (options.assets !== false && options.workspace.assets !== undefined) {
-    tools.share = createShareTool({ workspace: options.workspace as ShareWorkspaceLike });
+    tools.publish = createPublishTool({ workspace: options.workspace as PublishWorkspaceLike });
   }
 
   return tools;

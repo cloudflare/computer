@@ -46,7 +46,7 @@ The package ships several entrypoints:
 | `@cloudflare/workspace/backends/worker` | `WorkerBackend` and the bundled just-bash shell. The shell ships as a record of code-split modules the Dynamic Worker loads on demand: a ~290 KB entry parsed on cold start, plus ~2.5 MB of chunks that stay cold until a script reaches for them. |
 | `@cloudflare/workspace/git` | Isomorphic-git glue for working with checkouts inside the workspace. |
 | `@cloudflare/workspace/artifacts` | `createArtifact`, a session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
-| `@cloudflare/workspace/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional asset sharing. |
+| `@cloudflare/workspace/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
 
 A consumer that only uses the container backend never imports the
 worker subpath, so the just-bash payload tree-shakes away.

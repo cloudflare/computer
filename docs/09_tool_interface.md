@@ -20,10 +20,10 @@ Git access already ships through `workspace.git`, the third major surface on `Wo
 | `createEditTool` | Exact targeted replacements with unified-diff preview. |
 | `createListTool` | One-level directory listing. |
 | `createExecTool` | Run a shell command through a configured Workspace backend. |
-| `createShareTool` | Publish a workspace file through `workspace.assets`. |
+| `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `Workspace.fs` to the file-store shape used by the file tools. |
 
-The fixed tool names from `createAITools()` are `read`, `write`, `edit`, and `ls`. When present, the conditional tool names are also fixed: `exec` for shell commands and `share` for asset publishing.
+The fixed tool names from `createAITools()` are `read`, `write`, `edit`, and `ls`. When present, the conditional tool names are also fixed: `exec` for shell commands and `publish` for asset publishing.
 
 ## Wiring up
 
@@ -95,8 +95,8 @@ createAITools({
 | Option | Default | Notes |
 | --- | --- | --- |
 | `workspace` | required | A `Workspace` or structural equivalent with `fs`, and optionally `shell`, `assets`, and `sessionId`. |
-| `readonly` | `false` | When true, return only `read` and `ls`. This omits mutation tools, `exec`, and `share` even if other options are present. |
-| `assets` | `true` | Set to `false` to omit `share`. When not false, `share` appears only if `workspace.assets` is configured. |
+| `readonly` | `false` | When true, return only `read` and `ls`. This omits mutation tools, `exec`, and `publish` even if other options are present. |
+| `assets` | `true` | Set to `false` to omit `publish`. When not false, `publish` appears only if `workspace.assets` is configured. |
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. Ignored when `readonly` is true. |
 | `edit` | default caps | Options passed to `createEditTool`. Ignored when `readonly` is true. |
@@ -240,10 +240,10 @@ Calls `workspace.shell.exec(command, { cwd, encoding: "utf8", backend })`, waits
 
 Wire this tool up carefully: it executes arbitrary shell commands inside the configured backend. Use `readonly: true` for inspection-only agents, or omit `shell` when command execution is not part of the agent's job.
 
-## `share`
+## `publish`
 
 ```ts
-createShareTool({ workspace });
+createPublishTool({ workspace });
 ```
 
 Schema:
@@ -269,7 +269,7 @@ or:
 
 The default expiry is one hour. The prefix is `agent-${workspace.sessionId}` so generated links are grouped by workspace session.
 
-`createAITools()` includes `share` by default when `readonly` is not true, `assets` is not false, and `workspace.assets` is configured. Pass `assets: false` to hide the tool even when credentials are present.
+`createAITools()` includes `publish` by default when `readonly` is not true, `assets` is not false, and `workspace.assets` is configured. Pass `assets: false` to hide the tool even when credentials are present.
 
 ## `FileStore`
 

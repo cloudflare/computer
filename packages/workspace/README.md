@@ -52,7 +52,7 @@ uniform; the counts are just always zero.
   worker backend's shell exposes the same dispatcher through a
   built-in `git` custom command. See
   [`docs/13_git_interface.md`](../../docs/13_git_interface.md).
-- `createAssets` (from `@cloudflare/workspace/assets`) — `share` a
+- `createAssets` (from `@cloudflare/workspace/assets`) — `publish` a
   workspace file to an R2 bucket and get back a presigned URL.
   Binds the workspace and bucket once, like `workspace.git`. When
   attached through `WorkspaceOptions.assets`, the worker backend's
@@ -70,7 +70,7 @@ uniform; the counts are just always zero.
   [`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
 - `createAITools` (from `@cloudflare/workspace/tools`) — AI SDK
   tools for agents: `read`, `write`, `edit`, `ls`, optional `exec`,
-  and optional asset sharing. See
+  and optional `publish`. See
   [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Typical DO-side usage

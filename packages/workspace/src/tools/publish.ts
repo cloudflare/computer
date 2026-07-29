@@ -2,26 +2,26 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { AssetsClient } from "../assets/index.js";
 
-export interface ShareWorkspaceLike {
+export interface PublishWorkspaceLike {
   readonly sessionId: string;
   readonly assets?: AssetsClient;
 }
 
-export interface ShareToolOptions {
-  workspace: ShareWorkspaceLike;
+export interface PublishToolOptions {
+  workspace: PublishWorkspaceLike;
 }
 
 const DEFAULT_EXPIRY_MS = 60 * 60 * 1000;
 
-export function createShareTool(options: ShareToolOptions) {
+export function createPublishTool(options: PublishToolOptions) {
   const assets = options.workspace.assets;
   if (!assets) {
-    throw new Error("createShareTool: workspace.assets is not configured");
+    throw new Error("createPublishTool: workspace.assets is not configured");
   }
 
   return tool({
     description:
-      "Share a file from the workspace by publishing it through the configured assets publisher and returning a time-limited link. Use this to hand the user an artifact you produced, such as a chart, screenshot, build output, or report.",
+      "Publish a file from the workspace through the configured assets publisher and return a time-limited link. Use this to hand the user an artifact you produced, such as a chart, screenshot, build output, or report.",
     inputSchema: z.object({
       path: z.string().min(1).describe("Absolute workspace path, e.g. /workspace/out/chart.png."),
       expiresAfterMs: z

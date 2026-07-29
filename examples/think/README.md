@@ -62,22 +62,22 @@ just emit JSON.
 | `write`         | `@cloudflare/workspace/tools`                    |
 | `edit`          | `@cloudflare/workspace/tools`                    |
 | `exec`          | `@cloudflare/workspace/tools` (optional shell)   |
-| `share`         | `@cloudflare/workspace/tools` (optional assets)  |
+| `publish`         | `@cloudflare/workspace/tools` (optional assets)  |
 | `report_update` | `src/tools/report-update.ts` (example-specific)  |
 
 The Workspace tools come from `createAITools()` in
 `@cloudflare/workspace/tools`. In the explore phase this example
 includes `read`, `write`, `edit`, and `ls`, opts into `exec` by
-passing shell backend descriptions, and includes `share` only when the
+passing shell backend descriptions, and includes `publish` only when the
 Workspace assets publisher is configured.
 
-The `share` tool uploads a workspace file to R2 and returns a
+The `publish` tool uploads a workspace file to R2 and returns a
 time-limited link, so the agent can hand the user an artifact it
 produced. The worker backend shell also exposes
 `assets publish <path> [<expiry>]`, which prints the same kind of
 link to stdout from `exec`. Both are registered only when the R2
 credentials below are set; without them the agent runs unchanged and
-the share surfaces are omitted. See
+the publish surfaces are omitted. See
 [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 
 `exec` is wired to a Workspace with two backends: a `"shell"`
@@ -184,14 +184,14 @@ The worker is configured in [`wrangler.jsonc`](./wrangler.jsonc):
   worker backend through `env.LOADER` and the container backend
   through `this.ctx.container`.
 - `TRIAGE_WORKFLOW` — workflow binding pointing at `TriageWorkflow`.
-- `ASSETS` — R2 bucket the `share` tool uploads to. Create it once
+- `ASSETS` — R2 bucket the `publish` tool uploads to. Create it once
   before deploying:
 
   ```sh
   wrangler r2 bucket create think-example-assets
   ```
 
-The `share` tool also needs R2 S3 credentials to presign URLs — the
+The `publish` tool also needs R2 S3 credentials to presign URLs — the
 bucket binding alone can't mint them. Create an R2 API token scoped
 to the bucket and set the values as secrets:
 
@@ -204,7 +204,7 @@ wrangler secret put CLOUDFLARE_ACCOUNT_ID
 `R2_ENDPOINT` can be set instead of `CLOUDFLARE_ACCOUNT_ID` when
 using a custom S3-compatible endpoint.
 
-Without these the worker still runs; the `share` tool is not offered
+Without these the worker still runs; the `publish` tool is not offered
 to the model, and `assets publish` is not configured in the shell.
 
 - `ARTIFACTS` — optional Cloudflare Artifacts binding, commented out

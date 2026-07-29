@@ -6,4 +6,4 @@ export { createReadTool, type ReadToolOptions } from "./fs/read.js";
 export { WorkspaceFileStore, type WorkspaceLike } from "./fs/store.js";
 export type { FileStat, FileStore } from "./fs/types.js";
 export { createWriteTool, type WriteToolOptions } from "./fs/write.js";
-export { createShareTool, type ShareToolOptions } from "./share.js";
+export { createPublishTool, type PublishToolOptions } from "./publish.js";
