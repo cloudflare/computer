@@ -27,7 +27,7 @@ These three cover almost every change in this repo:
 
 | Skill | Load when |
 |---|---|
-| [`durable-objects`](https://github.com/cloudflare/skills/tree/main/skills/durable-objects) | Writing or reviewing Durable Object code: RPC methods, SQLite storage, alarms, WebSockets, hibernation. Most work in `packages/dofs` and `packages/workspace` qualifies. |
+| [`durable-objects`](https://github.com/cloudflare/skills/tree/main/skills/durable-objects) | Writing or reviewing Durable Object code: RPC methods, SQLite storage, alarms, WebSockets, hibernation. Most work in `packages/dofs` and `packages/computer` qualifies. |
 | [`workers-best-practices`](https://github.com/cloudflare/skills/tree/main/skills/workers-best-practices) | Writing or reviewing Worker code: streaming, floating promises, global state, bindings, secrets, observability, `wrangler.jsonc` configuration. |
 | [`agents-sdk`](https://github.com/cloudflare/skills/tree/main/skills/agents-sdk) | Building on the Cloudflare Agents SDK: stateful agents, Workflows integration, scheduled tasks, MCP servers. Relevant to [`examples/think`](../../../examples/think). |
 
@@ -39,7 +39,7 @@ Load these when their trigger applies:
 |---|---|
 | [`wrangler`](https://github.com/cloudflare/skills/tree/main/skills/wrangler) | Running `wrangler` commands: deploy, dev, secrets, bindings for KV, R2, D1, Vectorize, Hyperdrive, Queues, Workflows, Containers. |
 | [`cloudflare`](https://github.com/cloudflare/skills/tree/main/skills/cloudflare) | General Cloudflare platform questions outside the more specific skills above — KV, R2, D1, Vectorize, networking, security, infrastructure-as-code. |
-| [`sandbox-sdk`](https://github.com/cloudflare/skills/tree/main/skills/sandbox-sdk) | Building or reviewing sandboxed-execution code paths. Relevant to [`examples/container`](../../../examples/container) and to the `wsd` container model in general. |
+| [`sandbox-sdk`](https://github.com/cloudflare/skills/tree/main/skills/sandbox-sdk) | Building or reviewing sandboxed-execution code paths. Relevant to [`examples/container`](../../../examples/container) and to the `computerd` container model in general. |
 | [`web-perf`](https://github.com/cloudflare/skills/tree/main/skills/web-perf) | Profiling page load, Core Web Vitals, or render-blocking issues. Rarely relevant in this repo, but listed for completeness. |
 | [`cloudflare-email-service`](https://github.com/cloudflare/skills/tree/main/skills/cloudflare-email-service) | Working with Cloudflare Email Routing or the Email Workers binding. Not currently used in this repo. |
 
@@ -50,12 +50,12 @@ Load these when their trigger applies:
   before changing storage shape, RPC methods, or alarm handling.
   Load [`workers-best-practices`](https://github.com/cloudflare/skills/tree/main/skills/workers-best-practices)
   for the surrounding Worker glue.
-- **`packages/workspace`** runs inside the Durable Object and
-  exposes the capnweb `WorkspaceRPC` to `wsd`. Load
+- **`packages/computer`** runs inside the Durable Object and
+  exposes the capnweb `WorkspaceRPC` to `computerd`. Load
   [`durable-objects`](https://github.com/cloudflare/skills/tree/main/skills/durable-objects)
   for the hosting model and the [`capnweb`](../capnweb/SKILL.md)
   skill for the RPC surface itself.
-- **`packages/wsd`** runs in a sandbox container, not in a Worker.
+- **`packages/computerd`** runs in a sandbox container, not in a Worker.
   Load [`sandbox-sdk`](https://github.com/cloudflare/skills/tree/main/skills/sandbox-sdk)
   if you're working on the container boundary; the FUSE and
   HTTP/WebSocket internals are local to the package.

@@ -107,10 +107,10 @@ function workspaceLanes(events: RunEvent[]): TimelineLane[] {
       markers: [],
     },
     {
-      id: "workspace-container",
+      id: "computer-container",
       label: "Container",
       tone: "container",
-      segments: containerSegments(events, "workspace-container"),
+      segments: containerSegments(events, "computer-container"),
       markers: [],
     },
   ];
@@ -573,7 +573,7 @@ function stringDetail(fact: ReturnType<typeof factForEvent>, key: string): strin
 
 function executionTargetLabel(target: ExecutionTarget): string {
   if (target === "worker-shell") return "worker shell";
-  if (target === "workspace-container") return "workspace container";
+  if (target === "computer-container") return "workspace container";
   return "sandbox";
 }
 

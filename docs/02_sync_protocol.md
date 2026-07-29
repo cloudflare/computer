@@ -13,7 +13,7 @@ The workspace keeps two copies of the filesystem tree in sync:
 - **Container side** — a VFS exposed to the sandbox via a FUSE mount at
   the configured workspace root. The container store is the same
   `Database` abstraction used DO-side; whether it persists across
-  container restarts is a deployment choice (today's `wsd` runs against
+  container restarts is a deployment choice (today's `computerd` runs against
   a process-lifetime DB, so a container restart loses local state and
   the next push from the DO re-baselines it).
 
@@ -204,7 +204,7 @@ one name.
 The DO watermarks live in the `_vfs_watermark` table so they survive DO
 restarts. The container's watermarks live in the same `Database`
 abstraction; whether they survive a container restart is a deployment
-choice. Today's `wsd` runs against a process-lifetime DB, so a container
+choice. Today's `computerd` runs against a process-lifetime DB, so a container
 restart loses local watermarks and the next push from the DO is treated
 as an authoritative baseline (the `senderRev === 0` branch below covers
 the symmetric case where an external orchestrator writes against a
@@ -229,7 +229,7 @@ records, both probe with `hasObjects`, both transfer bytes by hash.
 Naming follows git's vocabulary — the DO *pushes* entries and
 objects to the container, and *fetches* entries and objects back.
 
-The DO and `wsd` are deployed as a matched pair. The protocol has no
+The DO and `computerd` are deployed as a matched pair. The protocol has no
 version negotiation, so changes to request or response shapes are hard
 wire breaks and require lockstep rollout.
 
@@ -269,7 +269,7 @@ edited file) shows up exactly once on the wire. See
 
 - **Container restart mid-exec.** The DO's connection detects the
   closed WebSocket and self-destructs. The next call transparently
-  rebuilds against the still-running `wsd` (or restarts it if needed).
+  rebuilds against the still-running `computerd` (or restarts it if needed).
   `pushRev` and the fetch cursor mean the catch-up is incremental, modulo
   whatever the container's deployment chose for its DB lifetime.
 - **Container crash mid-apply.** `push` is atomic from the DO's
@@ -289,7 +289,7 @@ edited file) shows up exactly once on the wire. See
   entries (256), not the whole stream. End state is correct either
   way — apply is idempotent.
 - **DO restart.** Watermarks are persisted, so the new DO instance
-  picks up where the old one left off. The container keeps `wsd`
+  picks up where the old one left off. The container keeps `computerd`
   alive across the gap.
 - **Concurrent mutators.** `Workspace.push()` and `Workspace.pull()`
   go through a per-Workspace tail-promise FIFO. Two concurrent
@@ -307,7 +307,7 @@ edited file) shows up exactly once on the wire. See
 
 A *conflict* arises when two writers both mutate the same path without
 seeing each other's change first. Understanding where conflicts can and
-cannot happen in `@cloudflare/workspace` is essential before reasoning
+cannot happen in `@cloudflare/computer` is essential before reasoning
 about the guarantees the system provides.
 
 ### Within a single Workspace instance (DO)
@@ -328,7 +328,7 @@ same FIFO automatically.
 ### Across two containers sharing one Workspace
 
 This is where conflicts can occur. If two containers (two separate
-`wsd` mounts or two separate `WorkspaceBackend` instances) are wired
+`computerd` mounts or two separate `WorkspaceBackend` instances) are wired
 to the same DO and both write to the same path, the outcome depends
 entirely on sync order:
 

@@ -1,18 +1,18 @@
 {
-  "name": "@example/workspace-worker",
+  "name": "@example/computer-worker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Example Worker + Durable Object that runs just-bash inside a Dynamic Worker via @cloudflare/workspace's WorkerBackend.",
+  "description": "Example Worker + Durable Object that runs just-bash inside a Dynamic Worker via @cloudflare/computer's WorkerBackend.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "seed:r2": "wrangler r2 object put workspace-worker-hello/hello.txt --file ./seed/data/hello.txt --remote",
-    "seed:r2:local": "wrangler r2 object put workspace-worker-hello/hello.txt --file ./seed/data/hello.txt --local"
+    "seed:r2": "wrangler r2 object put computer-worker-hello/hello.txt --file ./seed/data/hello.txt --remote",
+    "seed:r2:local": "wrangler r2 object put computer-worker-hello/hello.txt --file ./seed/data/hello.txt --local"
   },
   "dependencies": {
-    "@cloudflare/workspace": "*"
+    "@cloudflare/computer": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",

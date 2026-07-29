@@ -3,7 +3,7 @@
   // generates examples/worker in a Workspace and publishes it to a
   // Cloudflare Artifacts repo.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "workspace-artifacts-example",
+  "name": "computer-artifacts-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-17",
   "compatibility_flags": ["nodejs_compat"],
@@ -17,7 +17,7 @@
   "artifacts": [
     {
       "binding": "ARTIFACTS",
-      "namespace": "workspace-artifacts-example",
+      "namespace": "computer-artifacts-example",
       "remote": true
     }
   ],

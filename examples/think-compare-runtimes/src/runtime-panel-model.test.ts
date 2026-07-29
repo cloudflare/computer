@@ -53,7 +53,7 @@ describe("buildRuntimePanelModel", () => {
         detail: JSON.stringify({
           command: "npm run check",
           cwd: "/workspace/repo",
-          executionTarget: "workspace-container",
+          executionTarget: "computer-container",
           exitCode: 0,
           stdout: "docs check passed",
           stderr: "",
@@ -114,7 +114,7 @@ describe("buildRuntimePanelModel", () => {
         kind: "exec",
         label: "Ran command",
         command: "npm run check",
-        executionTarget: "workspace-container",
+        executionTarget: "computer-container",
         exitCode: 0,
         presentation: "terminal",
       },
@@ -419,8 +419,8 @@ describe("buildRuntimePanelModel", () => {
         runtime: "workspace",
         kind: "container_acquired" as RunEvent["kind"],
         detail: JSON.stringify({
-          executionTarget: "workspace-container",
-          containerId: "workspace-container-1",
+          executionTarget: "computer-container",
+          containerId: "computer-container-1",
         }),
         timestamp: "2026-06-04T00:00:02.000Z",
       }),
@@ -440,7 +440,7 @@ describe("buildRuntimePanelModel", () => {
         detail: JSON.stringify({
           command: "npm run check",
           cwd: "/workspace/repo",
-          executionTarget: "workspace-container",
+          executionTarget: "computer-container",
           exitCode: 0,
           stdout: "docs check passed",
           stderr: "",
@@ -452,8 +452,8 @@ describe("buildRuntimePanelModel", () => {
         runtime: "workspace",
         kind: "container_released" as RunEvent["kind"],
         detail: JSON.stringify({
-          executionTarget: "workspace-container",
-          containerId: "workspace-container-1",
+          executionTarget: "computer-container",
+          containerId: "computer-container-1",
         }),
         timestamp: "2026-06-04T00:00:12.000Z",
       }),
@@ -462,8 +462,8 @@ describe("buildRuntimePanelModel", () => {
         runtime: "workspace",
         kind: "container_release_scheduled" as RunEvent["kind"],
         detail: JSON.stringify({
-          executionTarget: "workspace-container",
-          containerId: "workspace-container-1",
+          executionTarget: "computer-container",
+          containerId: "computer-container-1",
           sleepAfterMs: 120_000,
         }),
         timestamp: "2026-06-04T00:00:12.000Z",
@@ -472,7 +472,7 @@ describe("buildRuntimePanelModel", () => {
     const telemetry = buildDashboardModel(events, "2026-06-04T00:00:13.000Z").runtimes.workspace;
 
     const model = buildRuntimePanelModel(events, "workspace", telemetry);
-    const containerLane = model.lanes.find((lane) => lane.id === "workspace-container");
+    const containerLane = model.lanes.find((lane) => lane.id === "computer-container");
 
     expect(containerLane?.segments.map((segment) => [segment.label, segment.status])).toEqual([
       ["Container assigned", "lease"],

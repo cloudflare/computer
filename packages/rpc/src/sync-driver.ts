@@ -2,7 +2,7 @@
 // SyncRPC stub and runs pull + push ticks against the wire.
 //
 // Both sides of the prototype use the same driver: the container
-// (wsd) drives an upstream DO stub, and once the DO has a real
+// (computerd) drives an upstream DO stub, and once the DO has a real
 // runtime it'll drive a container stub the same way.
 //
 // The driver doesn't own a timer. The caller decides when to call
@@ -109,7 +109,7 @@ async function pullOnceImpl(
     const { currentCursor, appliedPushCursor } = fetchResult;
     // Cross-side watermark divergence. Two shapes are recoverable:
     //   * appliedPushCursor.rev < localPushRev: the remote forgot
-    //     what we pushed (typically a process-lifetime wsd restart
+    //     what we pushed (typically a process-lifetime computerd restart
     //     while the WebSocket survived, so reconcileWatermarks on
     //     connect never re-ran).
     //   * currentCursor < after: the remote's log is shorter than we
@@ -144,7 +144,7 @@ async function pullOnceImpl(
       await fetchResult.stream.cancel().catch(() => {});
       // Surface the divergence at debug level so an operator with
       // log access can spot a persistently broken remote. We do not
-      // throw: a one-shot divergence is normal after a wsd restart
+      // throw: a one-shot divergence is normal after a computerd restart
       // under the same WebSocket, and the inline reset + retry is
       // the intended recovery. A persistently-lying remote will log
       // this on every pull, which is the operational signal that
@@ -380,7 +380,7 @@ export async function tick(
 // Called on (re)connect, before any push or pull tick.
 //
 // The asymmetry that makes this necessary: the DO's watermarks live
-// in durable storage and survive its incarnations, but today's wsd
+// in durable storage and survive its incarnations, but today's computerd
 // runs against a process-lifetime DB so a container restart wipes
 // the container-side state. Without a check, pushOnce's early-return
 // (`localRev <= sincePush`) skips talking to the container entirely

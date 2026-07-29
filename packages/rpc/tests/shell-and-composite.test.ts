@@ -3,9 +3,9 @@
 // Two surfaces shipped with no direct coverage:
 //
 //   - ShellRpcServer wraps a RunnerLike. The Runner type lives in
-//     @cloudflare/workspace-wsd; rpc only depends on the structural
+//     @cloudflare/computerd; rpc only depends on the structural
 //     RunnerLike interface from server.ts. Tests wire up a fake
-//     RunnerLike rather than dragging wsd into the rpc test graph.
+//     RunnerLike rather than dragging computerd into the rpc test graph.
 //
 //   - createWorkspaceServer / createWorkspaceClient compose sync
 //     and shell over one capnweb session. The composite exposes

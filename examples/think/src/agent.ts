@@ -1,11 +1,11 @@
 /**
  * Assistant — a minimal `@cloudflare/think` chat agent backed by a
- * `@cloudflare/workspace` VFS.
+ * `@cloudflare/computer` VFS.
  *
  * Think gives the Durable Object a streaming chat protocol, message
  * persistence, resumable streams, and the agentic tool loop. This
  * example keeps the surface as small as possible: one agent, one
- * Workspace, the shared `@cloudflare/workspace/tools`, and nothing
+ * Workspace, the shared `@cloudflare/computer/tools`, and nothing
  * task-specific. You talk to it from a terminal (see `cli/chat.mjs`)
  * and it can read, write, and edit files in its workspace and run
  * shell commands through either workspace backend.
@@ -13,18 +13,17 @@
  * Wiring:
  *   - `Think` (via the Durable Object base) hands us the message
  *     store, agentic loop, and chat protocol.
- *   - We own a `@cloudflare/workspace.Workspace` with two backends:
+ *   - We own a `@cloudflare/computer.Workspace` with two backends:
  *     a WorkerBackend (`"shell"`) for fast just-bash text tooling and
  *     a CloudflareContainerBackend (`"container"`) for full Linux
- *     userland through wsd. This mirrors examples/container while
+ *     userland through computerd. This mirrors examples/container while
  *     keeping the chat surface unchanged.
  *   - `useThink: true` adds the string-based compatibility surface
  *     Think expects; the cast promotes it from optional to present.
- *     `workspaceBash` is off because `@cloudflare/workspace/tools`
+ *     `workspaceBash` is off because `@cloudflare/computer/tools`
  *     provides the `exec` tool.
  */
 
-import { Think } from "@cloudflare/think";
 import {
   type DurableObjectStorageLike,
   type ThinkWorkspaceCompatibility,
@@ -32,13 +31,14 @@ import {
   WorkspaceProxy,
   WorkspaceServiceProxy,
   type WorkspaceStub,
-} from "@cloudflare/workspace";
+} from "@cloudflare/computer";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
-} from "@cloudflare/workspace/backends/container";
-import { WorkerBackend } from "@cloudflare/workspace/backends/worker";
-import { createAITools } from "@cloudflare/workspace/tools";
+} from "@cloudflare/computer/backends/container";
+import { WorkerBackend } from "@cloudflare/computer/backends/worker";
+import { createAITools } from "@cloudflare/computer/tools";
+import { Think } from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 
@@ -85,7 +85,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
   /**
    * Think's workspace, owned outright. The first backend in the list
    * is the default, so unqualified exec calls use the fast just-bash
-   * shell. Passing `{ backend: "container" }` routes a call to wsd in
+   * shell. Passing `{ backend: "container" }` routes a call to computerd in
    * the Cloudflare Container.
    */
   override workspace = new Workspace({
@@ -102,7 +102,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
     useThink: true,
   }) as Workspace & ThinkWorkspaceCompatibility;
 
-  /** Forwarded by WorkspaceProxy for wsd's outbound /ws upgrade. */
+  /** Forwarded by WorkspaceProxy for computerd's outbound /ws upgrade. */
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/ws") {
@@ -173,7 +173,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
           },
           container: {
             description:
-              "Cloudflare Container running wsd over capnweb. Full Linux " +
+              "Cloudflare Container running computerd over capnweb. Full Linux " +
               "userland: npm, node, python, package managers, test " +
               "runners, real binaries on $PATH, and public network. Cold " +
               "start is much slower because the container must boot; " +

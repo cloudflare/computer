@@ -1,6 +1,6 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/workspace/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`. The first provider target is the AI SDK because it is the tool layer used by the `agents` SDK and the Think example.
+`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`. The first provider target is the AI SDK because it is the tool layer used by the `agents` SDK and the Think example.
 
 The tools are thin wrappers over the existing `Workspace` surfaces:
 
@@ -28,8 +28,8 @@ The fixed tool names from `createAITools()` are `read`, `write`, `edit`, and `ls
 ## Wiring up
 
 ```ts
-import { Workspace } from "@cloudflare/workspace";
-import { createAITools } from "@cloudflare/workspace/tools";
+import { Workspace } from "@cloudflare/computer";
+import { createAITools } from "@cloudflare/computer/tools";
 
 export class Agent {
   workspace: Workspace;

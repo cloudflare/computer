@@ -1,0 +1,111 @@
+{
+  "name": "@cloudflare/computer",
+  "version": "0.0.0-alpha.13",
+  "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
+  "license": "MIT",
+  "repository": {
+    "directory": "packages/computer",
+    "type": "git",
+    "url": "git+https://github.com/cloudflare/computer.git"
+  },
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./git": {
+      "types": "./dist/git.d.ts",
+      "import": "./dist/git.js"
+    },
+    "./assets": {
+      "types": "./dist/assets/index.d.ts",
+      "import": "./dist/assets/index.js"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts/index.d.ts",
+      "import": "./dist/artifacts/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./backends/container": {
+      "types": "./dist/backends/container/index.d.ts",
+      "import": "./dist/backends/container/index.js"
+    },
+    "./backends/worker": {
+      "types": "./dist/backends/worker/index.d.ts",
+      "import": "./dist/backends/worker/index.js"
+    },
+    "./observe/cloudflare": {
+      "types": "./dist/observe/cloudflare.d.ts",
+      "import": "./dist/observe/cloudflare.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build:deps": "npm run build --workspace @cloudflare/computer-rpc",
+    "build:shell-bundle": "node ./src/backends/worker/script/build-bundle.mjs",
+    "prebuild": "npm run build:deps && npm run build:shell-bundle",
+    "pretest": "npm run build:shell-bundle",
+    "pretypecheck": "npm run build:deps && npm run build:shell-bundle",
+    "prepare": "npm run build:shell-bundle",
+    "build": "rolldown -c",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run && vitest run --config vitest.config.proxy.ts && vitest run --config vitest.config.worker-backend.ts && vitest run --config vitest.config.stub-soak.ts",
+    "test:stub-soak": "vitest run --config vitest.config.stub-soak.ts",
+    "test:worker-backend": "vitest run --config vitest.config.worker-backend.ts",
+    "test:harness": "./test-harness/run-harness.sh",
+    "bench:harness": "./test-harness/run-harness.sh bench",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "capnweb": "^0.8.0",
+    "just-bash": "^3.0.1"
+  },
+  "peerDependencies": {
+    "@platformatic/vfs": "*",
+    "ai": "^6.0.196 || ^7.0.0",
+    "isomorphic-git": "^1.27.0",
+    "zod": "^4.4.3"
+  },
+  "peerDependenciesMeta": {
+    "@platformatic/vfs": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "isomorphic-git": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@cloudflare/computer-rpc": "*",
+    "@cloudflare/dofs": "*",
+    "@cloudflare/vitest-pool-workers": "^0.16.10",
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "@platformatic/vfs": "^0.4.0",
+    "ai": "^7.0.0",
+    "diff": "^9.0.0",
+    "esbuild": "^0.28.1",
+    "isomorphic-git": "^1.38.3",
+    "memfs": "^4.57.6",
+    "rolldown": "^1.0.2",
+    "rolldown-plugin-dts": "^0.25.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.107.1",
+    "zod": "^4.4.3"
+  }
+}

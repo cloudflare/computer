@@ -1,5 +1,5 @@
 # Per-package + per-example check matrix. One job per workspace so a
-# regression in (say) wsd's tests doesn't hide a typecheck failure in
+# regression in (say) computerd's tests doesn't hide a typecheck failure in
 # workspace. Each job is self-contained: install at the repo root,
 # build siblings whose dist/ this package's typecheck depends on,
 # then run biome + typecheck + tests scoped to that package.
@@ -50,16 +50,16 @@ jobs:
             path: packages/dofs
             needs-siblings: false
           - name: rpc
-            workspace: "@cloudflare/workspace-rpc"
+            workspace: "@cloudflare/computer-rpc"
             path: packages/rpc
             needs-siblings: true
-          - name: workspace
-            workspace: "@cloudflare/workspace"
-            path: packages/workspace
+          - name: computer
+            workspace: "@cloudflare/computer"
+            path: packages/computer
             needs-siblings: true
-          - name: wsd
-            workspace: "@cloudflare/workspace-wsd"
-            path: packages/wsd
+          - name: computerd
+            workspace: "@cloudflare/computerd"
+            path: packages/computerd
             needs-siblings: true
             # libfuse2 (libfuse.so.2) is what fuse-native binds to at
             # runtime; fuse3 ships /dev/fuse helpers and the
@@ -78,11 +78,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ${{ matrix.system-deps }}
 
-      # Build every workspace's dist/ unconditionally for now. The
-      # workspace + wsd jobs need dofs + rpc dist, the rpc job needs
+      # Build every npm workspace's dist/ unconditionally for now. The
+      # computer + computerd jobs need dofs + rpc dist, the rpc job needs
       # dofs dist, and the cost of an extra `tsc` pass is small
       # compared to the test runtime. Revisit per-package once
-      # @cloudflare/workspace bundles dofs + rpc internally.
+      # @cloudflare/computer bundles dofs + rpc internally.
       - name: Build all workspaces
         if: matrix.needs-siblings
         run: npm run build --workspaces --if-present
@@ -112,7 +112,7 @@ jobs:
             workspace: "@cloudflare/example-think"
             path: examples/think
           - name: container
-            workspace: "@example/workspace-container"
+            workspace: "@example/computer-container"
             path: examples/container
     steps:
       - uses: actions/checkout@v6
@@ -121,9 +121,9 @@ jobs:
 
       - uses: ./.github/actions/install
 
-      # Examples consume the workspace packages via the
-      # local symlink, so the workspace's dist/ has to exist before
-      # the example's typecheck resolves its imports.
+      # Examples consume the monorepo packages via local symlinks, so
+      # @cloudflare/computer's dist/ has to exist before the example's
+      # typecheck resolves its imports.
       - run: npm run build --workspaces --if-present
 
       - name: Generate worker types
@@ -157,4 +157,4 @@ jobs:
 
       - run: npm run build --workspaces --if-present
 
-      - run: npx pkg-pr-new publish --peerDeps ./packages/workspace
+      - run: npx pkg-pr-new publish --peerDeps ./packages/computer

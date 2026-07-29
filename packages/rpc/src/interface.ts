@@ -1,5 +1,5 @@
 // The wire contract for the workspace sync RPC. The DO side and the
-// container-side workspace-server both implement this interface
+// container-side computerd both implement this interface
 // against a SQLite-backed VFS; the only thing that differs is which
 // direction each method is called from.
 //
@@ -87,7 +87,7 @@ export interface SyncRPC {
   pushObjects(objects: ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>): Promise<void>;
 }
 
-// Process supervision surface. Lives alongside SyncRPC. wsd's
+// Process supervision surface. Lives alongside SyncRPC. computerd's
 // Runner is the concrete implementation today; the interface keeps
 // that dependency out of the wire contract.
 export interface ShellRPC {

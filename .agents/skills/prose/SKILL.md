@@ -116,8 +116,8 @@ Signed-off-by: Name <email@example.com>
 
    The capitalization rule applies to the part **after** the scope
    prefix colon. Lowercase scope prefixes are preserved when they
-   match the project convention: `wsd:`, `rpc:`, `examples/think:`,
-   `wsd, rpc:`, `docs:`.
+   match the project convention: `computerd:`, `rpc:`, `examples/think:`,
+   `computerd, rpc:`, `docs:`.
 
 2. **Blank line** between subject and body. The body is wrapped at
    72 characters per line.
@@ -245,9 +245,9 @@ Set the field to false and document the reasoning inline.
 ### Before
 
 ```
-wsd, rpc: tests for the FUSE_SHIM flush hook
+computerd, rpc: tests for the FUSE_SHIM flush hook
 
-Two complementary test pairs for bc9827b. The wsd side proves the
+Two complementary test pairs for bc9827b. The computerd side proves the
 shim materialises on demand without relying on its 250ms poll ...
 
 shim.test.ts:
@@ -263,14 +263,14 @@ file-name headings), rule 4 (`handy for`), rule 10 (`materialises`).
 ### After
 
 ```
-wsd, rpc: test the FUSE shim flush hook
+computerd, rpc: test the FUSE shim flush hook
 
-Cover the flush hook from both ends. The wsd side proves the shim
+Cover the flush hook from both ends. The computerd side proves the shim
 materializes on demand without relying on its 250ms poll; the rpc
 side proves SyncRPC fires afterApply exactly when it should and
 tolerates a hook that throws.
 
-On the wsd side, flush() materializes pending VFS writes onto disk
+On the computerd side, flush() materializes pending VFS writes onto disk
 before resolving, is idempotent against an unchanged tree, and is
 safe to call on an unmounted shim.
 

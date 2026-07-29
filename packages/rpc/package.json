@@ -1,5 +1,5 @@
 {
-  "name": "@cloudflare/workspace-rpc",
+  "name": "@cloudflare/computer-rpc",
   "version": "0.0.0",
   "private": true,
   "type": "module",

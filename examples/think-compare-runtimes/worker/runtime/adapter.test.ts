@@ -40,7 +40,7 @@ describe("runtime adapters", () => {
       exitCode: 0,
       stdout: "node --version\n",
       stderr: "",
-      executionTarget: "workspace-container",
+      executionTarget: "computer-container",
     });
     expect(files.get("/workspace/repo/src/created.ts")).toBe("created");
     expect(recorder.events().map((event) => event.runtime)).toEqual([

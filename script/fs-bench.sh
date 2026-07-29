@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Benchmark common development tasks against the wsd FUSE mount.
+# Benchmark common development tasks against the computerd FUSE mount.
 # Compares against a tmpfs/native baseline so you can see the overhead.
 #
 # Usage (inside the container):
@@ -12,9 +12,9 @@
 #   RANDOMIZE_TARGETS=1  shuffle target order per rep to avoid cache-order
 #                        bias (default: 1; set to 0 for deterministic order)
 #   OUTPUT_JSON=path     also write a JSON summary to `path`
-#   TRACE_FILE=path      hint: set WSD_FUSE_TRACE=summary and
-#                        WSD_FUSE_TRACE_FILE on the daemon side to capture
-#                        FUSE op stats; this script does not start wsd.
+#   TRACE_FILE=path      hint: set COMPUTERD_FUSE_TRACE=summary and
+#                        COMPUTERD_FUSE_TRACE_FILE on the daemon side to capture
+#                        FUSE op stats; this script does not start computerd.
 #
 # Note: if the workspace mount is owned by another uid the script file
 # may not be executable in place. Run it via `bash ./script/fs-bench.sh`
@@ -82,7 +82,7 @@ shuffle_targets() {
 }
 
 label_for() {
-  if [[ "$1" == "$MOUNT" ]]; then echo "wsd"; else echo "base"; fi
+  if [[ "$1" == "$MOUNT" ]]; then echo "computerd"; else echo "base"; fi
 }
 
 # Run one (scenario, target) pair once, returning wall-clock ns on stdout
@@ -319,18 +319,18 @@ fi
 section "summary"
 if (( ${#TARGETS[@]} > 1 )); then
   printf "  %-30s %12s %12s %12s %12s %10s\n" \
-    "scenario" "wsd mean" "wsd p95" "base mean" "base p95" "ratio"
-  declare -A wsd_mean wsd_p95 base_mean base_p95
+    "scenario" "computerd mean" "computerd p95" "base mean" "base p95" "ratio"
+  declare -A computerd_mean computerd_p95 base_mean base_p95
   for r in "${results[@]}"; do
     IFS='|' read -r name label mean median p95 mn mx count <<<"$r"
-    if [[ "$label" == "wsd" ]]; then
-      wsd_mean[$name]=$mean; wsd_p95[$name]=$p95
+    if [[ "$label" == "computerd" ]]; then
+      computerd_mean[$name]=$mean; computerd_p95[$name]=$p95
     else
       base_mean[$name]=$mean; base_p95[$name]=$p95
     fi
   done
-  for name in "${!wsd_mean[@]}"; do
-    wm="${wsd_mean[$name]}"; wp="${wsd_p95[$name]}"
+  for name in "${!computerd_mean[@]}"; do
+    wm="${computerd_mean[$name]}"; wp="${computerd_p95[$name]}"
     bm="${base_mean[$name]:-0}"; bp="${base_p95[$name]:-0}"
     if [[ "$bm" != "0" ]]; then
       ratio=$(awk -v w="$wm" -v b="$bm" 'BEGIN{printf "%.2fx", w/b}')

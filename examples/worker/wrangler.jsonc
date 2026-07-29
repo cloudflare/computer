@@ -4,9 +4,9 @@
   //
   // Mirrors examples/container beat for beat — same DO class
   // name, same routes, same R2 mount. The only difference is the
-  // shell: a Dynamic Worker instead of a container running wsd.
+  // shell: a Dynamic Worker instead of a container running computerd.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "workspace-worker-example",
+  "name": "computer-worker-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat", "experimental"],
@@ -31,12 +31,12 @@
 
   // R2 bucket mounted into every Workspace at /workspace/r2 via
   // R2Bucket(...). Seed it once with:
-  //   npm run seed:r2 --workspace @example/workspace-worker
+  //   npm run seed:r2 --workspace @example/computer-worker
   // which uploads ./seed/data/hello.txt to the bucket.
   "r2_buckets": [
     {
       "binding": "Bucket",
-      "bucket_name": "workspace-worker-hello"
+      "bucket_name": "computer-worker-hello"
     }
   ],
 

@@ -5,7 +5,7 @@ This example generates a Worker project in a Workspace, publishes it to Cloudfla
 Run it with Wrangler:
 
 ```sh
-npm run dev --workspace @example/workspace-artifacts
+npm run dev --workspace @example/computer-artifacts
 ```
 
 Or deploy it and test against the remote runtime:
@@ -34,7 +34,7 @@ The Worker endpoint owns the orchestration. The durable object stays minimal: it
 
 `POST /create` does the following through `ws.shell.exec(...)`:
 
-1. clones `https://github.com/cloudflare/workspace` into `/workspace/<name>-source`;
+1. clones `https://github.com/cloudflare/computer` into `/workspace/<name>-source`;
 2. copies `/workspace/<name>-source/examples/worker` to `/workspace/<name>`;
 3. rewrites the copied Worker name with `sed`;
 4. initializes and commits the generated project with the shell `git` command;
@@ -48,11 +48,11 @@ A successful response looks like:
 {
   "name": "my-generated-worker",
   "artifactRepo": "my-generated-worker",
-  "remote": "https://<account>.artifacts.cloudflare.net/git/workspace-artifacts-example/<repo>.git",
+  "remote": "https://<account>.artifacts.cloudflare.net/git/computer-artifacts-example/<repo>.git",
   "branch": "main",
   "projectDir": "/workspace/my-generated-worker",
-  "shareLink": "https://x:<token>@<account>.artifacts.cloudflare.net/git/workspace-artifacts-example/<repo>.git",
-  "cloneCommand": "git clone 'https://x:<token>@<account>.artifacts.cloudflare.net/git/workspace-artifacts-example/<repo>.git' my-generated-worker"
+  "shareLink": "https://x:<token>@<account>.artifacts.cloudflare.net/git/computer-artifacts-example/<repo>.git",
+  "cloneCommand": "git clone 'https://x:<token>@<account>.artifacts.cloudflare.net/git/computer-artifacts-example/<repo>.git' my-generated-worker"
 }
 ```
 

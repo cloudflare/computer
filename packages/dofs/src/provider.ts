@@ -528,7 +528,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   internalModuleStat(_path: string): number {
-    // Used by node:vfs module-resolution hooks. The wsd driver doesn't
+    // Used by node:vfs module-resolution hooks. The computerd driver doesn't
     // need it; if this provider is ever mounted via `vfs.mount()` we'll
     // need to return 0 for files, 1 for dirs, -1 for not-found.
     throw notImplemented("internalModuleStat");

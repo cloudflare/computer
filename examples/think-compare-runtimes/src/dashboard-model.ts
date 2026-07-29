@@ -53,7 +53,7 @@ export function buildDashboardModel(events: RunEvent[], nowIso: string | null): 
           (fact) => fact.executionTarget === "worker-shell",
         ).length;
         const workspaceContainerExecs = execs.filter(
-          (fact) => fact.executionTarget === "workspace-container",
+          (fact) => fact.executionTarget === "computer-container",
         ).length;
         const sandboxContainerExecs = execs.filter(
           (fact) => fact.executionTarget === "sandbox-container",

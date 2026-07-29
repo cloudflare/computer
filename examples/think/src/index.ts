@@ -10,7 +10,7 @@
  *
  * The Assistant, WorkspaceProxy, and WorkspaceServiceProxy classes are
  * re-exported so the runtime can resolve them by name: Assistant is
- * the DO binding and container class, WorkspaceProxy carries wsd's
+ * the DO binding and container class, WorkspaceProxy carries computerd's
  * outbound /ws upgrade back to the DO, and WorkspaceServiceProxy is
  * the loopback Fetcher the worker backend hands into its Dynamic
  * Worker so the in-isolate shell can reach back into the host

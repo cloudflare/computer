@@ -1,24 +1,24 @@
 # 07. Injected Service
 
 > [!NOTE]
-> This doc now reflects shipped code in `packages/wsd/` and
-> `packages/workspace/src/backends/`. Items marked **(planned)** are
+> This doc now reflects shipped code in `packages/computerd/` and
+> `packages/computer/src/backends/`. Items marked **(planned)** are
 > deferred work.
 
-The "injected service" is the workspace daemon that runs *inside* the
+The "injected service" is the computer daemon that runs *inside* the
 sandbox container. It owns the FUSE mount, the in-container VFS, the
 exec runner, and the capnweb RPC endpoint the DO talks to.
 
 The package ships it as a single self-contained Node SEA binary —
-**`wsd`** — produced by `packages/wsd/` (npm package
-`@cloudflare/workspace-wsd`, bin name `wsd`). The binary embeds Node,
+**`computerd`** — produced by `packages/computerd/` (npm package
+`@cloudflare/computerd`, bin name `computerd`). The binary embeds Node,
 the `fuse-native` prebuilds, and `libfuse` as SEA assets, so the host
 image does **not** need a Node runtime. Build it with:
 
 ```bash
-npm run build:bin --workspace @cloudflare/workspace-wsd
-# → artifacts/wsd/wsd-linux-x64
-# → artifacts/wsd/wsd-macos-x64
+npm run build:bin --workspace @cloudflare/computerd
+# → artifacts/computerd/computerd-linux-x64
+# → artifacts/computerd/computerd-macos-x64
 ```
 
 `examples/container/Dockerfile` is the canonical recipe for
@@ -45,16 +45,16 @@ staging the binary into a container image.
 
 ## HTTP / WS surface
 
-`wsd` listens on a single port (default `45678`; the Cloudflare
+`computerd` listens on a single port (default `45678`; the Cloudflare
 backend pins it to `8080`) and serves:
 
 | Route | Method | Purpose |
 | --- | --- | --- |
 | `/health` | `GET`, `HEAD` | Liveness probe; `200 ok\n` as soon as the HTTP server binds. |
-| `/__wsd/info` | `GET` | Runtime info: FUSE backend, mount point, port. |
+| `/__computerd/info` | `GET` | Runtime info: FUSE backend, mount point, port. |
 | `/api` | `POST` | HTTP-batch capnweb transport. |
 | `/ws` | `GET` (upgrade) | WebSocket capnweb transport — the bootstrap stub is `WorkspaceRPC`. |
-| `/connect` | `POST` | Tells `wsd` to dial *out* to a caller-supplied URL and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
+| `/connect` | `POST` | Tells `computerd` to dial *out* to a caller-supplied URL and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
 | `/` | `GET` | Banner/info page. |
 
 The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
@@ -72,15 +72,15 @@ RUN apt-get update \
       fuse3 libfuse2t64 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY build/wsd-linux-x64 /usr/local/bin/wsd
-RUN chmod +x /usr/local/bin/wsd
+COPY build/computerd-linux-x64 /usr/local/bin/computerd
+RUN chmod +x /usr/local/bin/computerd
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace
 ENV FUSE_MOUNT=auto
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/wsd"]
+ENTRYPOINT ["/usr/local/bin/computerd"]
 ```
 
 Notes:
@@ -91,7 +91,7 @@ Notes:
   install of `fuse3 libfuse2t64` provides the userland tooling and
   `/dev/fuse` plumbing for the host kernel.
 - `EXPOSE 8080` matches the Cloudflare backend's pinned port. If you
-  run `wsd` outside Cloudflare Containers, leave `PORT` unset (default
+  run `computerd` outside Cloudflare Containers, leave `PORT` unset (default
   `45678`) or pick your own.
 - The port is currently hard-coded in code via `DEFAULT_PORT`; making
   it a build-time variable is on the roadmap **(planned)**.
@@ -101,7 +101,7 @@ Notes:
 Provider-agnostic shape — three steps, in order:
 
 1. **Start the binary.** The host-side workspace asks its sandbox
-   provider to launch `wsd` as the container's entrypoint.
+   provider to launch `computerd` as the container's entrypoint.
 2. **Poll the health endpoint.** The host issues `HEAD /health` until
    it returns `200`. Caveat: `/health` is wired by the HTTP server and
    answers `200` as soon as the socket binds. In the FUSE-enabled
@@ -109,13 +109,13 @@ Provider-agnostic shape — three steps, in order:
    `/health` answers FUSE is up too. With `FUSE_MOUNT=none` there is
    no FUSE step at all.
 3. **Open the capnweb session.** Either the host upgrades to `/ws`
-   directly, or it asks `wsd` (via `POST /connect`) to dial *out* to a
+   directly, or it asks `computerd` (via `POST /connect`) to dial *out* to a
    URL it controls and serve the session over that outbound socket.
    Either way, the bootstrap stub is `WorkspaceRPC`.
 
 ### Cloudflare Containers specifics
 
-`CloudflareContainerBackend` (`packages/workspace/src/backends/cloudflare-container.ts`)
+`CloudflareContainerBackend` (`packages/computer/src/backends/cloudflare-container.ts`)
 wires it like this:
 
 1. **Start.** `container.start({ enableInternet, env })` on the
@@ -123,7 +123,7 @@ wires it like this:
    Idempotence comes from `container.running` plus a cached `#handle`;
    there is no process-name registry, no `startProcess`/`getProcess`,
    and no `node /app/...` command (the container's `ENTRYPOINT` runs
-   `wsd` directly). `containerEnv` pins `PORT=8080` and lets the
+   `computerd` directly). `containerEnv` pins `PORT=8080` and lets the
    image's own `FUSE_MOUNT` value (typically `auto`) win.
 2. **Wire egress.** `container.interceptOutboundHttp(egressHost, egress)`
    routes outbound HTTP from the container at `egressHost` back to a
@@ -132,7 +132,7 @@ wires it like this:
    repeated until it returns `200`.
 4. **Invert the WebSocket.** The DO arms an upgrade slot
    (`#armUpgrade`) and then `POST`s to `/connect` on the container
-   (`#postConnect`). `wsd` reads that request and dials *out* to the
+   (`#postConnect`). `computerd` reads that request and dials *out* to the
    egress at `${egressHost}/ws`. Because the egress is intercepted,
    that outbound dial loops back to the DO's `handleFetch()`, which
    accepts the upgrade and resolves the in-flight `#pendingUpgrade`.
@@ -142,7 +142,7 @@ wires it like this:
 
 Sharp edges actually present in `cloudflare-container.ts`:
 
-- `#armUpgrade` must be set up *before* `#postConnect`, because `wsd`
+- `#armUpgrade` must be set up *before* `#postConnect`, because `computerd`
   can dial back before the `POST /connect` response returns.
 - A `#monitoring` flag watches container exit and drops the cached
   handle so the next call rebuilds from scratch.
@@ -153,19 +153,19 @@ Sharp edges actually present in `cloudflare-container.ts`:
 
 ## Environment variables
 
-These are the variables `wsd` actually consumes (see
-`packages/wsd/src/cli/wsd.ts` and `packages/wsd/src/fuse/backend.ts`):
+These are the variables `computerd` actually consumes (see
+`packages/computerd/src/cli/computerd.ts` and `packages/computerd/src/fuse/backend.ts`):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `45678` | Port the HTTP/WS server listens on. CF backend pins this to `8080`. |
 | `MOUNT_POINT` | `/workspace` | Absolute path inside the container to mount the FUSE filesystem at. Ignored when `FUSE_MOUNT=none`. |
 | `FUSE_MOUNT` | `auto` | Backend selector: `auto` probes `/dev/fuse` (linux) or macFUSE (darwin) and falls back to the userspace shim; `fuse` / `macfuse` require the corresponding real backend; `shim` forces the userspace shim; `none` skips the mount entirely. |
-| `UPSTREAM_URL` | unset | If set, `wsd` starts a sync client against this URL to push/pull VFS revisions. |
+| `UPSTREAM_URL` | unset | If set, `computerd` starts a sync client against this URL to push/pull VFS revisions. |
 | `EXEC_LOG_MAX_BYTES` | runner default | Caps the per-exec stdout/stderr log retained in-memory. |
 | `LOG_FILE` | unset | If set, every `console.log` / `console.error` line and any `uncaughtException` / `unhandledRejection` is also appended to this file. Stdout/stderr behaviour is unchanged. |
 
-When `LOG_FILE` is set, `wsd` mirrors console output into the file in
+When `LOG_FILE` is set, `computerd` mirrors console output into the file in
 addition to stdout/stderr. See "Failure handling" below for the crash
 handlers that share the same logger.
 
@@ -173,7 +173,7 @@ handlers that share the same logger.
 
 Today:
 
-- `wsd` installs `uncaughtException` and `unhandledRejection`
+- `computerd` installs `uncaughtException` and `unhandledRejection`
   handlers via `installLogging()` (in `cli/logger.ts`). Each handler
   writes a formatted entry to the same logger — `console.error` and,
   if `LOG_FILE` is set, the file too — then calls `process.exit(1)`.
@@ -190,19 +190,19 @@ Today:
 **Planned**:
 
 - Soft-fail on FUSE-detect failure: the server still starts, exposes
-  RPC, and reports `fuseActive=false` via `/__wsd/info`. Whether
+  RPC, and reports `fuseActive=false` via `/__computerd/info`. Whether
   that includes a host-FS mirror for in-container writes is still
   open.
 
 ## Lifetime
 
-The `wsd` process is long-lived and outlives DO restarts — the
+The `computerd` process is long-lived and outlives DO restarts — the
 sandbox container is reaped only when its lifetime policy says so,
 and a fresh DO incarnation reconnects to the same running daemon over
 a new WebSocket (the Cloudflare backend's `#monitoring` flag drops the
 cached handle if the container itself exits, forcing a rebuild).
 
-Caveat: **no on-disk persistence yet** (`packages/wsd/README.md`).
+Caveat: **no on-disk persistence yet** (`packages/computerd/README.md`).
 The "same in-memory VFS across DO restarts" picture only holds while
 the container process is alive. A container restart loses VFS state;
 sync via `UPSTREAM_URL` is what brings state back across container
@@ -223,10 +223,10 @@ use case depends on a particular resolution.
   provisioned at boot. The wire surface
   ([08. Capnweb Interface](./08_capnweb_interface.md)) will need a
   hello/auth phase before the bootstrap stub is exposed.
-- **Process user and file ownership.** `wsd` currently runs as
+- **Process user and file ownership.** `computerd` currently runs as
   whatever user the sandbox image's `ENTRYPOINT` runs as — typically
   `root`, which is a poor default for a process that mounts FUSE and
-  spawns arbitrary shell commands. The intent is to run `wsd` as an
+  spawns arbitrary shell commands. The intent is to run `computerd` as an
   unprivileged user so a misbehaving exec can't escalate, *but*
   exec'd commands need to be able to read and write the FUSE-mounted
   tree. Open: which user owns the mount, what user `exec` runs as

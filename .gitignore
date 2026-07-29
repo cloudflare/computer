@@ -1,19 +1,19 @@
 node_modules/
 dist/
 PLAN.md
-# Build output at the repo root only. The @cloudflare/workspace
-# Artifacts source tree (packages/workspace/src/artifacts/) is real,
+# Build output at the repo root only. The @cloudflare/computer
+# Artifacts source tree (packages/computer/src/artifacts/) is real,
 # tracked code and must not be caught by this rule.
 /artifacts/
 
 # Generated bundle for the worker backend's ShellWorker. Built
-# by packages/workspace/src/backends/worker/script/build-bundle.mjs
+# by packages/computer/src/backends/worker/script/build-bundle.mjs
 # on prepare / pretest / pretypecheck.
-packages/workspace/src/backends/worker/generated-bundle.ts
+packages/computer/src/backends/worker/generated-bundle.ts
 
 # SEA binary destinations populated at publish time from
-# artifacts/wsd/ via the build-bin step. The @cloudflare/workspace
+# artifacts/computerd/ via the build-bin step. The @cloudflare/computer
 # copy lives under dist/bin/, which is already covered by the
 # blanket dist/ rule above; listed here for discoverability.
-packages/wsd-*/bin/wsd
-packages/workspace/dist/bin/wsd-*
+packages/computer-computerd-*/bin/computerd
+packages/computer/dist/bin/computerd-*

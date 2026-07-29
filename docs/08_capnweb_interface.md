@@ -5,7 +5,7 @@
 > **(planned)** are deferred work.
 
 [capnweb](https://github.com/cloudflare/capnweb) is the RPC framing used
-between the Durable Object and the in-container `wsd` workspace-server.
+between the Durable Object and the in-container `computerd` computerd.
 The wire format is text JSON over a single WebSocket (with an HTTP-batch
 alternative). The interface served is `WorkspaceRPC`, defined in
 `packages/rpc/src/interface.ts` and consumed by both sides.
@@ -13,7 +13,7 @@ alternative). The interface served is `WorkspaceRPC`, defined in
 ## Transport
 
 - **Carrier.** One long-lived WebSocket per Workspace. The DO opens it
-  against the workspace-server's `/ws` endpoint, with `/api` available
+  against the computerd's `/ws` endpoint, with `/api` available
   as an HTTP-batch alternative (single POST per call) for callers that
   can't hold a socket. Default port is `45678`; it will become a
   build-time variable so hosts can pin a non-default port. The stale
@@ -28,7 +28,7 @@ alternative). The interface served is `WorkspaceRPC`, defined in
 - **Reconnect.** On close or error the DO-side connection
   self-destructs synchronously from the event handler. The next RPC
   call transparently rebuilds against the still-running
-  workspace-server.
+  computerd.
 
 The DO uses a deferred transport so the RPC stub can be created before
 the WebSocket upgrade completes — queued sends flush as soon as the
@@ -124,7 +124,7 @@ interface SyncRPC {
 }
 ```
 
-The durable object and `wsd` are deployed as a matched pair. This
+The durable object and `computerd` are deployed as a matched pair. This
 interface has no version negotiation, so request and response shape
 changes are hard wire breaks and require lockstep rollout.
 
@@ -269,7 +269,7 @@ relying on stream-pull semantics. See
 ## Stream replay and durability
 
 Every `ExecEvent` is written straight to the SQLite-backed
-`wsd_exec_events` table (`packages/wsd/src/exec/log.ts`). `getExec({
+`computerd_exec_events` table (`packages/computerd/src/exec/log.ts`). `getExec({
 id, after })` resumes by selecting rows with `seq > after`. There is no
 separate in-memory log and no file spill — SQLite is the durable
 substrate.
@@ -347,7 +347,7 @@ already uses.
 These behaviours aren't fully specified yet. File an issue if your use
 case depends on a particular resolution.
 
-- **Compatibility dates.** The DO and the workspace-server are
+- **Compatibility dates.** The DO and the computerd are
   versioned independently — the DO ships with its host Worker, the
   server ships in the sandbox image. They can drift. The intent is to
   follow Workers' compatibility-date model: the DO declares a

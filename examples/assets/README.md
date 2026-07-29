@@ -11,7 +11,7 @@ get a URL.
 The Durable Object runs the prompt through a Workers AI
 text-to-image model, writes the generated PNG into its `Workspace`,
 then uploads that file to R2 and returns a presigned URL through
-[`@cloudflare/workspace/assets`](../../docs/14_assets_interface.md).
+[`@cloudflare/computer/assets`](../../docs/14_assets_interface.md).
 
 > [!NOTE]
 > This is a **production-only** example. The presigner needs R2 S3
@@ -65,7 +65,7 @@ the `bucket_name` on the `ASSETS` binding.
 Create the bucket once before the first deploy:
 
 ```sh
-wrangler r2 bucket create workspace-assets-example
+wrangler r2 bucket create computer-assets-example
 ```
 
 ## HTTP surface
@@ -78,9 +78,9 @@ POST /prompt   { "prompt": "..." }
 ## Deploy and run
 
 ```sh
-npm run deploy --workspace @example/workspace-assets
+npm run deploy --workspace @example/computer-assets
 
-curl -X POST https://workspace-assets-example.<your-subdomain>.workers.dev/prompt \
+curl -X POST https://computer-assets-example.<your-subdomain>.workers.dev/prompt \
   -H 'content-type: application/json' \
   -d '{"prompt":"a sunset over the alps, oil painting"}'
 ```

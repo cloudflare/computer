@@ -211,5 +211,5 @@ function isEnvironmentAssignment(token: string): boolean {
 }
 
 function workspaceExecutionTarget(backend: "container" | "shell") {
-  return backend === "shell" ? "worker-shell" : "workspace-container";
+  return backend === "shell" ? "worker-shell" : "computer-container";
 }

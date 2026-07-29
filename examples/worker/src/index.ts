@@ -34,8 +34,8 @@ import {
   R2Bucket,
   WorkspaceServiceProxy,
   withWorkspace,
-} from "@cloudflare/workspace";
-import { WorkerBackend } from "@cloudflare/workspace/backends/worker";
+} from "@cloudflare/computer";
+import { WorkerBackend } from "@cloudflare/computer/backends/worker";
 
 // Re-export so the runtime can wrap WorkspaceServiceProxy into a
 // loopback Fetcher binding. The DO reaches the wrapped class

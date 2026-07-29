@@ -86,7 +86,7 @@ describe("createWorkspaceFixtureRuntime", () => {
       exitCode: 0,
       stdout: "workspace\n",
       stderr: "",
-      executionTarget: "workspace-container",
+      executionTarget: "computer-container",
     });
     expect(calls).toEqual([
       "ready container",
@@ -138,36 +138,39 @@ describe("createWorkspaceFixtureRuntime", () => {
     "npx vitest",
     "tsc --noEmit",
     "./scripts/check-docs.mjs",
-  ])("exec routes runtime and package commands to the Workspace container backend: %s", async (command) => {
-    const calls: string[] = [];
-    const runner = createWorkspaceCommandRunner({
-      async ready(backend?: string) {
-        calls.push(`ready ${backend ?? "default"}`);
-      },
-      shell: {
-        async exec(
-          actualCommand: string,
-          options?: { backend?: string; cwd?: string; encoding?: "utf8" },
-        ) {
-          calls.push(`${actualCommand} ${options?.backend} ${options?.cwd} ${options?.encoding}`);
-          return {
-            async result() {
-              return { exitCode: 0, stdout: "workspace\n", stderr: "", pushed: 1, pulled: 1 };
-            },
-          };
+  ])(
+    "exec routes runtime and package commands to the Workspace container backend: %s",
+    async (command) => {
+      const calls: string[] = [];
+      const runner = createWorkspaceCommandRunner({
+        async ready(backend?: string) {
+          calls.push(`ready ${backend ?? "default"}`);
         },
-      },
-    });
+        shell: {
+          async exec(
+            actualCommand: string,
+            options?: { backend?: string; cwd?: string; encoding?: "utf8" },
+          ) {
+            calls.push(`${actualCommand} ${options?.backend} ${options?.cwd} ${options?.encoding}`);
+            return {
+              async result() {
+                return { exitCode: 0, stdout: "workspace\n", stderr: "", pushed: 1, pulled: 1 };
+              },
+            };
+          },
+        },
+      });
 
-    await expect(runner.exec(command, { cwd: "/workspace/repo" })).resolves.toMatchObject({
-      exitCode: 0,
-      stdout: "workspace\n",
-      stderr: "",
-      executionTarget: "workspace-container",
-    });
+      await expect(runner.exec(command, { cwd: "/workspace/repo" })).resolves.toMatchObject({
+        exitCode: 0,
+        stdout: "workspace\n",
+        stderr: "",
+        executionTarget: "computer-container",
+      });
 
-    expect(calls).toEqual(["ready container", `${command} container /workspace/repo utf8`]);
-  });
+      expect(calls).toEqual(["ready container", `${command} container /workspace/repo utf8`]);
+    },
+  );
 });
 
 function expectedSeedCalls(): Array<{ type: "mkdir" | "write"; path: string; contents?: string }> {

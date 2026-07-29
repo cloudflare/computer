@@ -19,7 +19,7 @@ describe("createRuntimeExecTool", () => {
             exitCode: 0,
             stdout: "ok\n",
             stderr: "",
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
           };
         },
       },
@@ -31,7 +31,7 @@ describe("createRuntimeExecTool", () => {
       exitCode: 0,
       stdout: "ok\n",
       stderr: "",
-      executionTarget: "workspace-container",
+      executionTarget: "computer-container",
     });
 
     expect(calls).toEqual([

@@ -17,16 +17,17 @@ import type { WireErrorCode } from "./interface.js";
 // map covers every WireErrorCode in the union.
 const COVERAGE: Record<WireErrorCode, string> = {
   ENOENT:
-    "dofs:fs/stat throws ENOENT for a missing path; wsd:runner throws on get() of unknown id.",
+    "dofs:fs/stat throws ENOENT for a missing path; computerd:runner throws on get() of unknown id.",
   EUNKNOWN_HASH: "workspace:WorkspaceFs#assembleChunks throws when fetchObjects skipped a hash.",
   ESHUTDOWN:
-    "TBD — wsd shutdown path will raise this when the runner refuses new exec after disposeAll.",
-  EAUTH: "TBD — wired when the WSD_AUTH_TOKEN handshake lands.",
+    "TBD — computerd shutdown path will raise this when the runner refuses new exec after disposeAll.",
+  EAUTH: "TBD — wired when the COMPUTERD_AUTH_TOKEN handshake lands.",
   EPROTOCOL:
     "TBD — wired when frame-size / version-mismatch enforcement lands (docs/08 open question).",
   EEXEC_BUSY:
-    "wsd:exec/runner.ts throws when an id is reused while live, or a second subscriber attaches.",
-  ELOG_TRUNCATED: "wsd:exec/log.ts throws on replay() when the meta row marks the log as evicted.",
+    "computerd:exec/runner.ts throws when an id is reused while live, or a second subscriber attaches.",
+  ELOG_TRUNCATED:
+    "computerd:exec/log.ts throws on replay() when the meta row marks the log as evicted.",
 };
 
 describe("WireErrorCode coverage registry", () => {

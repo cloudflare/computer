@@ -1,0 +1,27 @@
+{
+  // Test-only worker for the docker harness. Not deployed.
+  // The Workspace facade runs inside this worker; the computerd
+  // container is a sibling process the harness boots in
+  // globalSetup, addressable from the worker via the URL the
+  // setup writes into a per-test binding. The DO gives each
+  // test a fresh ctx.storage to hand to Workspace as its local
+  // store.
+  "name": "computer-harness",
+  "main": "../src/test-harness-worker.ts",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TEST_DO",
+        "class_name": "TestStorageDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TestStorageDO"]
+    }
+  ]
+}

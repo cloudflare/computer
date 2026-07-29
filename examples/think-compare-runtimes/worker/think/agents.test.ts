@@ -32,7 +32,7 @@ vi.mock("@cloudflare/think", () => ({
   },
 }));
 
-vi.mock("@cloudflare/workspace", () => ({
+vi.mock("@cloudflare/computer", () => ({
   Workspace: class {
     readonly fs = {
       mkdir: async () => {},
@@ -59,7 +59,7 @@ vi.mock("@cloudflare/workspace", () => ({
   WorkspaceServiceProxy: class {},
 }));
 
-vi.mock("@cloudflare/workspace/backends/container", () => ({
+vi.mock("@cloudflare/computer/backends/container", () => ({
   CloudflareContainerBackend: class {
     readonly id: string;
 
@@ -74,7 +74,7 @@ vi.mock("@cloudflare/workspace/backends/container", () => ({
   },
 }));
 
-vi.mock("@cloudflare/workspace/backends/worker", () => ({
+vi.mock("@cloudflare/computer/backends/worker", () => ({
   WorkerBackend: class {
     readonly id: string;
 
@@ -252,14 +252,14 @@ describe("WorkspaceThinkAgent", () => {
         {
           kind: "container_acquired",
           detail: JSON.stringify({
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
             containerId: "sandbox-physical-1",
           }),
         },
         {
           kind: "container_released",
           detail: JSON.stringify({
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
             containerId: "sandbox-physical-1",
           }),
         },

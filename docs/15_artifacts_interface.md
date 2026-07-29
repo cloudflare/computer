@@ -2,8 +2,8 @@
 
 > [!NOTE]
 > This doc describes shipped code in
-> `packages/workspace/src/artifacts/` and the `artifacts` custom
-> command in `packages/workspace/src/backends/worker/`.
+> `packages/computer/src/artifacts/` and the `artifacts` custom
+> command in `packages/computer/src/backends/worker/`.
 
 [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/)
 is versioned, Git-speaking repository storage. A Worker reaches it
@@ -11,13 +11,13 @@ through a namespace binding (`env.ARTIFACTS`) that can create,
 inspect, import, and delete repositories and mint Git tokens scoped
 to a repository.
 
-`@cloudflare/workspace/artifacts` wraps that binding with a
+`@cloudflare/computer/artifacts` wraps that binding with a
 **session-scoped** facade. `createArtifact(binding, sessionId)`
 binds a namespace binding and a session id once and returns a client
 whose every operation is implicitly scoped to that session.
 
 ```ts
-import { createArtifact } from "@cloudflare/workspace/artifacts";
+import { createArtifact } from "@cloudflare/computer/artifacts";
 
 const artifacts = createArtifact(env.ARTIFACTS, agentId);
 

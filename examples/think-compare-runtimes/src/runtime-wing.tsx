@@ -22,7 +22,7 @@ const runtimeCopy: Record<
 > = {
   workspace: {
     label: "Workspace",
-    packageName: "@cloudflare/workspace",
+    packageName: "@cloudflare/computer",
   },
   sandbox: {
     label: "Sandbox",
@@ -361,7 +361,7 @@ function compactToneClass(item: AgentWorkItem): string {
 
 function executionTargetCopy(target: NonNullable<AgentWorkItem["executionTarget"]>): string {
   if (target === "worker-shell") return "dynamic worker";
-  if (target === "workspace-container") return "workspace container";
+  if (target === "computer-container") return "workspace container";
   return "sandbox container";
 }
 

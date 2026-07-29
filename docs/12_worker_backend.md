@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > This doc reflects shipped code in
-> `packages/workspace/src/backends/worker/`. The example deployment
+> `packages/computer/src/backends/worker/`. The example deployment
 > lives at `examples/worker/`.
 
 The worker backend is the second `WorkspaceBackend` shape the
@@ -17,12 +17,12 @@ Import via the sub-path so the bundled just-bash payload tree-shakes
 out of consumers that don't use it:
 
 ```ts
-import { WorkerBackend } from "@cloudflare/workspace/backends/worker";
+import { WorkerBackend } from "@cloudflare/computer/backends/worker";
 ```
 
 ## When to reach for it
 
-The container backend (`@cloudflare/workspace/backends/container`)
+The container backend (`@cloudflare/computer/backends/container`)
 gives you a real Linux environment with arbitrary binaries on
 `$PATH`, network, and a full POSIX filesystem. It costs a container
 per session and a real roundtrip on every filesystem op.
@@ -116,7 +116,7 @@ values passed through the Worker Loader's `env` go through
 structured clone, and a raw `DurableObjectNamespace` doesn't
 survive that.
 
-`WorkspaceServiceProxy` (in `@cloudflare/workspace`) is a tiny
+`WorkspaceServiceProxy` (in `@cloudflare/computer`) is a tiny
 `WorkerEntrypoint` whose `getWorkspace()` method does the
 namespace lookup on the host side. The backend mints a stub
 through `ctx.exports.WorkspaceServiceProxy({ props: { binding,
@@ -154,7 +154,7 @@ shape across the isolate hop.
 The backend decodes the frames into structured `ExecEvent` values
 and re-encodes string payloads (`stdout` / `stderr`) into
 `Uint8Array` so the existing `WorkspaceShell` utf8 decoder
-transforms in `packages/workspace/src/shell.ts` see the shape
+transforms in `packages/computer/src/shell.ts` see the shape
 they already handle.
 
 ## Fetcher factory escape hatch
@@ -251,7 +251,7 @@ network-bound `git` subcommands do. See
   `/c/<name>/file/...` and `/c/<name>/exec` routes the container
   example also exposes).
 - No Dockerfile, no build script. The shell bundle ships with
-  `@cloudflare/workspace/backends/worker` as `SHELL_MODULES`
+  `@cloudflare/computer/backends/worker` as `SHELL_MODULES`
   (a record of module name → source covering the entry plus
   every code-split chunk); the backend hands the whole record
   to the Loader callback itself.
@@ -266,6 +266,6 @@ new WorkerBackend({
 })
 ```
 
-Run with `npm run dev --workspace @example/workspace-worker`.
+Run with `npm run dev --workspace @example/computer-worker`.
 The same `curl` recipes from the container example work without
 changes.

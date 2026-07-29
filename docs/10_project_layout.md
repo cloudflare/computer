@@ -14,33 +14,33 @@ The workspace ships as a monorepo. Each published package lives under
 ```
 
 ```
-workspace/
+computer/
 ├── packages/
-│   ├── workspace/         # @cloudflare/workspace — DO-side facade, backends, proxy
-│   ├── vfs/               # @cloudflare/dofs — SQLite-backed VFS + sync
-│   ├── rpc/               # @cloudflare/workspace-rpc — capnweb wire interface
-│   ├── wsd/               # @cloudflare/workspace-wsd — in-container daemon (binary)
+│   ├── computer/          # @cloudflare/computer — DO-side facade, backends, proxy
+│   ├── dofs/              # @cloudflare/dofs — SQLite-backed VFS + sync
+│   ├── rpc/               # @cloudflare/computer-rpc — capnweb wire interface
+│   ├── computerd/         # @cloudflare/computerd — in-container daemon (binary)
 │   ├── fs-tools/          # (planned) AI SDK file tools + FileStore
 │   └── git-tools/         # (planned) AI SDK git tools
 ├── examples/
-│   └── container/     # Reference container image for the wsd daemon
+│   └── container/     # Reference container image for the computerd daemon
 ├── docs/                  # This documentation set
-└── package.json           # Workspace root (workspaces: packages/*, examples/*)
+└── package.json           # Monorepo root (workspaces: packages/*, examples/*)
 ```
 
 ### Folder rename history
 
 Two renames have landed:
 
-- `packages/workspace-rpc/` → `packages/rpc/` (folder only). The npm
-  package is still `@cloudflare/workspace-rpc`.
-- `packages/workspace-fs/` → `packages/dofs/`, and the npm package
-  was renamed `@cloudflare/workspace-fs` → `@cloudflare/dofs`.
+- `packages/computer-rpc/` → `packages/rpc/` (folder only). The npm
+  package is still `@cloudflare/computer-rpc`.
+- `packages/computer-fs/` → `packages/dofs/`, and the npm package
+  was renamed `@cloudflare/computer-fs` → `@cloudflare/dofs`.
 
 If you grep older history or other docs and find the old folder paths,
 they refer to the same code under the new names.
 
-## `packages/workspace/` — `@cloudflare/workspace`
+## `packages/computer/` — `@cloudflare/computer`
 
 The DO-side facade. Owns the `Workspace` class, re-exports
 `WorkspaceFilesystem` from `@cloudflare/dofs`, exposes the
@@ -50,14 +50,14 @@ The DO-side facade. Owns the `Workspace` class, re-exports
 through an RPC stub.
 
 ```
-packages/workspace/
+packages/computer/
 ├── src/
 │   ├── index.ts                     # Public entrypoint
 │   ├── workspace.ts                 # Workspace facade
 │   ├── shell.ts                     # WorkspaceShell
 │   ├── backend.ts                   # Backend interface
 │   ├── backends/
-│   │   ├── container/               # Cloudflare Container + wsd backend
+│   │   ├── container/               # Cloudflare Container + computerd backend
 │   │   ├── worker/                  # Dynamic Worker + just-bash backend
 │   │   └── test.ts                  # In-process test backend
 │   ├── proxy.ts                     # WorkspaceProxy
@@ -75,8 +75,8 @@ Build: dual ESM + CJS via two `tsc` invocations
 (`tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json`). The
 `package.json` declares a single `.` export resolving to
 `dist/cjs/index.js` (CJS) with ESM types alongside. There is no
-`ws.js` or `shared.js` — the injected service is the separate `wsd`
-package, and shared wire types live in `@cloudflare/workspace-rpc`.
+`ws.js` or `shared.js` — the injected service is the separate `computerd`
+package, and shared wire types live in `@cloudflare/computer-rpc`.
 
 ## `packages/dofs/` — `@cloudflare/dofs`
 
@@ -112,7 +112,7 @@ packages/dofs/
 
 Exports resolve to `dist/index.js` and `dist/testing.js`.
 
-## `packages/rpc/` — `@cloudflare/workspace-rpc`
+## `packages/rpc/` — `@cloudflare/computer-rpc`
 
 The capnweb wire interface that joins DO-side and container-side
 processes. `WorkspaceRPC` is the union of the sync and shell
@@ -133,20 +133,20 @@ packages/rpc/
 └── package.json                     # exports: `.`, `./server`, `./client`, `./driver`
 ```
 
-## `packages/wsd/` — `@cloudflare/workspace-wsd`
+## `packages/computerd/` — `@cloudflare/computerd`
 
 The in-container daemon. Built as a single-file native binary named
-`wsd` that runs inside the sandbox container. It owns the FUSE
+`computerd` that runs inside the sandbox container. It owns the FUSE
 mount, the exec runner, and dials back to the DO over WebSocket via
 the `rpc` package. (Replaces the historical `ws.js` injected script;
 see doc 07.)
 
 
 ```
-packages/wsd/
+packages/computerd/
 ├── src/
 │   ├── cli/
-│   │   └── wsd.ts                   # CLI entry
+│   │   └── computerd.ts                   # CLI entry
 │   ├── fuse/
 │   │   ├── driver.ts
 │   │   ├── backend.ts
@@ -160,22 +160,22 @@ packages/wsd/
 │       ├── log.ts
 │       └── index.ts
 ├── scripts/
-│   ├── build.mjs                    # → dist/cli/wsd.cjs
+│   ├── build.mjs                    # → dist/cli/computerd.cjs
 │   ├── build-bin.mjs                # SEA driver
 │   └── sea/
 │       └── bundle.mjs               # esbuild → SEA bundle
 ├── artifacts/
-│   └── wsd/
-│       ├── wsd-linux-x64
-│       └── wsd-macos-x64
+│   └── computerd/
+│       ├── computerd-linux-x64
+│       └── computerd-macos-x64
 ├── tsconfig.json
 └── package.json
 ```
 
-Build pipeline: `scripts/build.mjs` emits `dist/cli/wsd.cjs`;
+Build pipeline: `scripts/build.mjs` emits `dist/cli/computerd.cjs`;
 `scripts/build-bin.mjs` together with `scripts/sea/bundle.mjs`
 produces the Node SEA single-file binary at
-`artifacts/wsd/wsd-{linux,macos}-x64`.
+`artifacts/computerd/computerd-{linux,macos}-x64`.
 
 ## `packages/fs-tools/` — **(planned)**
 
@@ -187,7 +187,7 @@ implemented yet.
 ## Git
 
 Git access ships through `workspace.git` on the main
-`@cloudflare/workspace` package rather than a separate package.
+`@cloudflare/computer` package rather than a separate package.
 Both a typed JavaScript API and an argv-driven entry point are
 available; the worker backend's shell isolate also exposes a
 built-in `git` command that forwards to the same dispatcher.
@@ -200,7 +200,7 @@ Runnable examples live at the repo root, not inside any package:
 
 ```
 examples/
-└── container/        # Reference container image for wsd
+└── container/        # Reference container image for computerd
 ```
 
 The root `package.json` includes `examples/*` in its workspaces glob
@@ -211,8 +211,8 @@ so each example can declare its own dependencies and scripts.
 - **Unit tests live next to source.** Every package follows the
   `foo.ts` + `foo.test.ts` convention. There is no top-level
   `tests/` directory anywhere in the repo.
-- **Integration / harness tests** for the workspace package live in
-  `packages/workspace/test-harness/`:
+- **Integration / harness tests** for the computer package live in
+  `packages/computer/test-harness/`:
   - `end-to-end.test.ts` — DO ↔ container round-trip
   - `shell.test.ts` — shell surface against a real backend
   - `load.bench.ts` — load / soak benchmark
@@ -227,9 +227,9 @@ so each example can declare its own dependencies and scripts.
 - **Biome.** Both linter and formatter are enabled in `biome.jsonc`
   at the repo root (`biome check` covers lint + format; `biome
   format` formats only). No ESLint, no Prettier.
-- **esbuild.** Used by `packages/wsd/scripts/sea/bundle.mjs` to
-  produce the single-file `wsd` SEA bundle. Application bundling is
+- **esbuild.** Used by `packages/computerd/scripts/sea/bundle.mjs` to
+  produce the single-file `computerd` SEA bundle. Application bundling is
   left to consumers.
-- **vitest.** Drives unit tests in every package. `wsd` additionally
+- **vitest.** Drives unit tests in every package. `computerd` additionally
   uses `node --experimental-strip-types --test` for some scripts
   given its native-binary nature.

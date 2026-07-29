@@ -1,3 +1,9 @@
+export {
+  WorkspaceContainerHost,
+  type WorkspaceContainerHostHandle,
+  type WorkspacePoolEnv,
+  WorkspaceWarmPool,
+} from "./computer-container-pool";
 export { containerSleepAfter, containerSleepAfterMs } from "./container-config";
 export {
   type ContainerWarmPoolHandle,
@@ -5,9 +11,3 @@ export {
   getWarmPoolHandle,
 } from "./container-warm-pool";
 export { type SandboxPoolEnv, SandboxWarmPool } from "./sandbox-container-pool";
-export {
-  WorkspaceContainerHost,
-  type WorkspaceContainerHostHandle,
-  type WorkspacePoolEnv,
-  WorkspaceWarmPool,
-} from "./workspace-container-pool";

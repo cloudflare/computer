@@ -100,7 +100,7 @@ describe("buildDashboardModel", () => {
           title: "exec called",
           detail: JSON.stringify({
             command: "npm run check",
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
             cwd: "/workspace/repo",
           }),
           timestamp: "2026-06-04T00:00:06.000Z",

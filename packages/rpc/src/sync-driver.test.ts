@@ -372,7 +372,7 @@ describe("SyncRPC server — afterApply hook", () => {
 describe("SyncRPC server — beforeFetch hook", () => {
   // Symmetric to the afterApply spy above. beforeFetch runs on the
   // receiver right before fetchChanges streams entries, giving the
-  // host a chance to settle any out-of-band writes (e.g. wsd's shim
+  // host a chance to settle any out-of-band writes (e.g. computerd's shim
   // pulling disk changes into the VFS) into the store the fetch is
   // about to read.
   function makeReceiverWithSpy(): {
@@ -720,7 +720,7 @@ describe("sync driver — cross-side invariant", () => {
   it("pullOnce resets pushRev and retries when fetchChanges echoes a lower appliedPushCursor", async () => {
     // The remote reporting an appliedPushCursor below our localPushRev
     // means the remote forgot what we pushed — typically a process-
-    // lifetime wsd restart while the WebSocket stayed up, so the
+    // lifetime computerd restart while the WebSocket stayed up, so the
     // reconcileWatermarks pass we run on connect never re-ran. The
     // pull path now treats this inline: cancel the in-flight
     // stream, reset pushRev to 0, and retry. The next pushOnce
@@ -1181,7 +1181,7 @@ describe("sync driver — push atomicity", () => {
 describe("sync driver — reconcileWatermarks", () => {
   // Run on (re)connect. The DO's watermarks survive across DO and
   // container lifetimes; the container's watermarks are
-  // process-lifetime in today's wsd. After a container restart with
+  // process-lifetime in today's computerd. After a container restart with
   // no new DO-side writes, pushOnce's localRev <= sincePush
   // early-return means the assertAppliedPushCursor check never runs and
   // the container's empty FUSE mount is invisible to the DO. The

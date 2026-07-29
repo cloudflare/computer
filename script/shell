@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Launch a debian-slim container with the linux wsd binary mounted as /usr/local/bin/wsd.
+# Launch a debian-slim container with the linux computerd binary mounted as /usr/local/bin/computerd.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-binary="${repo_root}/artifacts/wsd/wsd-linux-x64"
+binary="${repo_root}/artifacts/computerd/computerd-linux-x64"
 
 if [[ ! -x "${binary}" ]]; then
   echo "missing or non-executable binary: ${binary}" >&2
@@ -18,7 +18,7 @@ exec docker run --rm -it \
   --cap-add MKNOD \
   --security-opt apparmor=unconfined \
   --security-opt seccomp=unconfined \
-  -v "${binary}:/usr/local/bin/wsd:ro" \
+  -v "${binary}:/usr/local/bin/computerd:ro" \
   -v "${repo_root}/script/fs-tests.sh:/usr/local/bin/fs-tests:ro" \
   -v "${repo_root}/script/fs-bench.sh:/usr/local/bin/fs-bench:ro" \
   -w /root \

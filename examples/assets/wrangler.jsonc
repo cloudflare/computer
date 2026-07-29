@@ -1,14 +1,14 @@
 {
   // Example: Worker + Durable Object that turns a prompt into an
   // image with Workers AI, writes it into a Workspace, and returns
-  // a shareable link via @cloudflare/workspace/assets.
+  // a shareable link via @cloudflare/computer/assets.
   //
   // Production-only. The presigner needs R2 S3 credentials set as
   // secrets (see the README), and the image model runs on
   // Cloudflare's network, so `wrangler dev` against a local stack
   // won't produce a working link.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "workspace-assets-example",
+  "name": "computer-assets-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],
@@ -33,12 +33,12 @@
   "r2_buckets": [
     {
       "binding": "ASSETS",
-      "bucket_name": "workspace-assets-example"
+      "bucket_name": "computer-assets-example"
     }
   ],
 
   "vars": {
-    "ASSETS_BUCKET_NAME": "workspace-assets-example"
+    "ASSETS_BUCKET_NAME": "computer-assets-example"
   },
 
   "migrations": [

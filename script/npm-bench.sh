@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Benchmarks npm package installs on native disk vs the wsd FUSE mount.
+# Benchmarks npm package installs on native disk vs the computerd FUSE mount.
 #
-# Runs each scenario on both a native target directory and the wsd
+# Runs each scenario on both a native target directory and the computerd
 # FUSE mount, repeating REPS times with WARMUP untimed runs first.
 # Emits periodic heartbeats while npm is quiet so the run is
 # distinguishable from a hang. Writes a JSON summary when OUTPUT_JSON
@@ -9,7 +9,7 @@
 #
 # Scenarios:
 #   express         npm install express --prefer-offline
-#   workspace       npm install for the cloudflare/workspace monorepo
+#   computer        npm install for the cloudflare/computer monorepo
 #   synthetic       a synthetic package tree with many tiny files
 #
 # Knobs (environment variables):
@@ -20,7 +20,7 @@
 #   SCENARIOS       comma-separated list of scenario names (default: express)
 #   OUTPUT_JSON     path to write the JSON results file (optional)
 #   HEARTBEAT_SEC   heartbeat interval in seconds (default: 10)
-#   WSD_FUSE_TRACE  set to "summary" to collect a FUSE op trace per run
+#   COMPUTERD_FUSE_TRACE  set to "summary" to collect a FUSE op trace per run
 #   NPM_CACHE_DIR   npm cache directory (default: /tmp/npm-cache)
 set -euo pipefail
 
@@ -31,7 +31,7 @@ WARMUP="${WARMUP:-1}"
 SCENARIOS="${SCENARIOS:-express}"
 OUTPUT_JSON="${OUTPUT_JSON:-}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-10}"
-WSD_FUSE_TRACE="${WSD_FUSE_TRACE:-}"
+COMPUTERD_FUSE_TRACE="${COMPUTERD_FUSE_TRACE:-}"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-/tmp/npm-cache}"
 
 # Warm the npm cache for express so the FUSE install is not I/O bound.
@@ -51,10 +51,10 @@ warm_npm_cache() {
         --no-fund \
         >/dev/null 2>&1 || true
       ;;
-    workspace)
-      if [ -d /tmp/workspace-repo ]; then
+    computer)
+      if [ -d /tmp/computer-repo ]; then
         npm install \
-          --prefix /tmp/workspace-repo \
+          --prefix /tmp/computer-repo \
           --cache "$NPM_CACHE_DIR" \
           --prefer-offline \
           --ignore-scripts \
@@ -124,14 +124,14 @@ run_install() {
         --loglevel warn \
         >"$npm_log" 2>&1 || exit_code=$?
       ;;
-    workspace)
-      if [ ! -d /tmp/workspace-repo ]; then
-        echo "[bench] workspace-repo not found; clone it to /tmp/workspace-repo to use this scenario"
+    computer)
+      if [ ! -d /tmp/computer-repo ]; then
+        echo "[bench] computer-repo not found; clone it to /tmp/computer-repo to use this scenario"
         stop_heartbeat
-        echo '{"error":"workspace-repo not found"}'
+        echo '{"error":"computer-repo not found"}'
         return
       fi
-      cp -r /tmp/workspace-repo "$work_dir/repo"
+      cp -r /tmp/computer-repo "$work_dir/repo"
       npm install \
         --prefix "$work_dir/repo" \
         --cache "$NPM_CACHE_DIR" \

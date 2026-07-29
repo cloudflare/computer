@@ -50,7 +50,7 @@ describe("runFixtureComparison", () => {
             exitCode: 0,
             stdout: `workspace ${command}\n`,
             stderr: "",
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
           };
         },
       },

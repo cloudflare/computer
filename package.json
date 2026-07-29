@@ -1,12 +1,12 @@
 {
-  "name": "@cloudflare/workspace",
+  "name": "@cloudflare/computer",
   "private": true,
   "packageManager": "npm",
   "workspaces": [
     "packages/dofs",
     "packages/rpc",
-    "packages/workspace",
-    "packages/wsd",
+    "packages/computer",
+    "packages/computerd",
     "examples/*"
   ],
   "scripts": {

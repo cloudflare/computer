@@ -1,7 +1,7 @@
 // Server-side adapter: a SQLite-backed Database becomes a SyncRPC.
 //
 // The DO uses this to expose its sync surface to the container, and
-// the in-container workspace-server uses it to expose its mirror to
+// the in-container computerd uses it to expose its mirror to
 // the DO. Same code on both ends; what differs is who calls whom.
 
 import {
@@ -26,10 +26,10 @@ import { newWebSocketRpcSession, nodeHttpBatchRpcResponse, RpcTarget } from "cap
 import { trackStub, untrackStub } from "./debug.js";
 import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "./interface.js";
 
-// Subset of wsd's Runner that the shell server needs. Defining
+// Subset of computerd's Runner that the shell server needs. Defining
 // the shape here (instead of importing the concrete class) keeps
-// workspace-rpc free of a wsd dependency — the package builds and
-// runs without wsd's process-supervision code on the path.
+// computer-rpc free of a computerd dependency — the package builds and
+// runs without computerd's process-supervision code on the path.
 export interface RunnerLike {
   exec(
     command: string,
@@ -54,7 +54,7 @@ export interface ServerOptions {
   /**
    * Optional hook fired inside the SyncRPC `push` handler, right
    * after a successful peer batch has been committed. Resolved
-   * before `push()` returns to the caller. Used by wsd to settle
+   * before `push()` returns to the caller. Used by computerd to settle
    * the userspace shim layer so a subsequent `shell.exec` sees the
    * just-pushed files on disk.
    *
@@ -66,7 +66,7 @@ export interface ServerOptions {
   /**
    * Optional hook fired inside the SyncRPC `fetchChanges` handler,
    * right before the receiver computes the change set the puller
-   * will see. Resolved before any entries stream. Used by wsd to
+   * will see. Resolved before any entries stream. Used by computerd to
    * settle the userspace shim's disk→VFS reconcile so a
    * `Workspace.pull()` issued right after `shell.exec` returns the
    * files the exec'd process wrote, without waiting on the shim's
@@ -300,7 +300,7 @@ export function createSyncServer(db: Database, options: ServerOptions = {}): Syn
   });
 }
 
-// Construct a ShellRPC bound to a Runner. wsd holds the only
+// Construct a ShellRPC bound to a Runner. computerd holds the only
 // Runner today; tests can pass a fake that implements RunnerLike.
 export function createShellServer(runner: RunnerLike): ShellRPC {
   return new ShellRPCServer(runner);
@@ -334,7 +334,7 @@ export function acceptWebSocketSession(
 }
 
 // Serve a single capnweb HTTP-batch session against a SyncRPC. Wraps
-// capnweb's nodeHttpBatchRpcResponse so wsd never directly imports
+// capnweb's nodeHttpBatchRpcResponse so computerd never directly imports
 // capnweb (which would split capnweb's module identity in mixed
 // ESM/CJS contexts — the RpcTarget instanceof check then fails).
 export function serveHTTPBatch(

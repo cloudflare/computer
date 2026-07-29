@@ -11,12 +11,12 @@ The workspace exposes a single absolute path namespace rooted at `/`.
 The host-side VFS root is always `/` (`ROOT_INODE`); it is not
 configurable on the `Workspace` constructor. By convention user data
 lives under `/workspace`, which is the default *container* mount point
-(configured via the `MOUNT_POINT` env var read by `wsd` inside the
+(configured via the `MOUNT_POINT` env var read by `computerd` inside the
 container, not on `WorkspaceOptions`).
 
 ```ts
-import { Workspace } from "@cloudflare/workspace";
-import { CloudflareContainerBackend } from "@cloudflare/workspace/backends/container";
+import { Workspace } from "@cloudflare/computer";
+import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
 
 new Workspace({
   storage:  ctx.storage,
@@ -119,7 +119,7 @@ to use any naming convention you like for your own data.
 
 ## Sandbox view
 
-`wsd` (the in-container daemon) mounts the VFS at `MOUNT_POINT`
+`computerd` (the in-container daemon) mounts the VFS at `MOUNT_POINT`
 (default `/workspace`) via FUSE by default. The backend is picked
 by the in-image `FUSE_MOUNT` env var (`auto` by default; see doc 07).
 On Cloudflare Containers `/dev/fuse` is exposed and the real kernel
@@ -144,7 +144,7 @@ pinned `DISABLE_FUSE=1`, which produced a degraded mode where:
 FUSE is the default for full sandbox parity — when enabled, reads
 route through the FUSE driver to the in-container VFS mirror and
 writes are recorded as dirty and pulled back to the DO on the next
-bracket. It is implemented in `wsd` (see `packages/wsd/src/fuse/`)
+bracket. It is implemented in `computerd` (see `packages/computerd/src/fuse/`)
 and selected via `FUSE_MOUNT` (any value other than `none`).
 
 See [06. Mount Interface](./06_mount_interface.md) for mount

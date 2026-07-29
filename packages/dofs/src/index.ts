@@ -33,7 +33,7 @@ export { initializeSchema, ROOT_INODE, SCHEMA_VERSION } from "./schema/index.js"
 export { Database } from "./storage.js";
 export type { ApplyOptions, ApplyResult, SkippedEntry } from "./sync/apply.js";
 // Sync protocol building blocks. The wire wiring lives in
-// @cloudflare/workspace-rpc; these are the helpers that wiring binds
+// @cloudflare/computer-rpc; these are the helpers that wiring binds
 // to a Database.
 export { applyChanges, applyChangesSync } from "./sync/apply.js";
 export { stageBlob } from "./sync/blobs.js";

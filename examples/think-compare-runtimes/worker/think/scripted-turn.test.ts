@@ -30,7 +30,7 @@ describe("runScriptedThinkToolSmoke", () => {
             exitCode: 0,
             stdout: `${command}\n`,
             stderr: "",
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
           };
         },
       },

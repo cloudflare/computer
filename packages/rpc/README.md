@@ -1,4 +1,4 @@
-# `@cloudflare/workspace-rpc`
+# `@cloudflare/computer-rpc`
 
 > [!IMPORTANT]
 > **PREVIEW ONLY** This package is provided as a preview for feedback only.
@@ -11,13 +11,13 @@
 > intent, not as description of the code today.
 
 capnweb-based RPC wire types and server/client helpers shared
-between the DO and `wsd`. The package is split into four entry
+between the DO and `computerd`. The package is split into four entry
 points:
 
 - `.` — the typed wire interface (`SyncRPC`, `ShellRPC`,
   `WorkspaceRPC`, `WireError`).
 - `./server` — a `Database`-backed implementation. Imported by
-  DO code and by the in-container workspace-server.
+  DO code and by the in-container computerd.
 - `./client` — typed stubs over a WebSocket carrier.
 - `./driver` — `pullOnce` / `pushOnce` / `tick` helpers that
   drive a SyncRPC client through a sync round.
@@ -50,7 +50,7 @@ import {
   enableStubTracking,
   isStubTrackingEnabled,
   stubSnapshot,
-} from "@cloudflare/workspace-rpc/debug";
+} from "@cloudflare/computer-rpc/debug";
 
 // Either set CAPNWEB_TRACK_STUBS=1 in the environment, or call
 // enableStubTracking() at module init in runtimes (like workerd)
@@ -61,5 +61,5 @@ enableStubTracking();
 console.log(stubSnapshot());
 ```
 
-The counter is opt-in and has no cost when disabled. `wsd`
-exposes the snapshot at `GET /__wsd/stubs` when tracking is on.
+The counter is opt-in and has no cost when disabled. `computerd`
+exposes the snapshot at `GET /__computerd/stubs` when tracking is on.

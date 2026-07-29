@@ -12,9 +12,9 @@
 //   client ─► Worker /c/<name>/{file,exec}
 //              │  (DO RPC)
 //              ▼
-//        ContainerExample DO ──► Container ──► wsd (:8080)
+//        ContainerExample DO ──► Container ──► computerd (:8080)
 //              ▲                                │
-//              │  ws://workspace.internal/ws    │
+//              │  ws://computer.internal/ws    │
 //              └─── capnweb session ◀─────────────┘
 
 import { DurableObject, tracing } from "cloudflare:workers";
@@ -26,16 +26,16 @@ import {
   type WorkspaceOptions,
   WorkspaceProxy,
   withWorkspace,
-} from "@cloudflare/workspace";
+} from "@cloudflare/computer";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
-} from "@cloudflare/workspace/backends/container";
-import { createCloudflareObserver } from "@cloudflare/workspace/observe/cloudflare";
+} from "@cloudflare/computer/backends/container";
+import { createCloudflareObserver } from "@cloudflare/computer/observe/cloudflare";
 
 // Re-export so the runtime can build a loopback binding for the
 // container egress (ctx.exports.WorkspaceProxy below). The class
-// itself lives in @cloudflare/workspace; the re-export is what
+// itself lives in @cloudflare/computer; the re-export is what
 // puts it in the worker's top-level module graph.
 export { WorkspaceProxy };
 
@@ -89,9 +89,9 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
 // withWorkspace owns the Workspace and installs the prototype
 // accessor `getWorkspace` dispatches to. Methods on the client it
 // hands back round-trip into this DO; the actual SyncRPC + ShellRPC
-// traffic stays on the wsd ↔ DO capnweb wire.
+// traffic stays on the computerd ↔ DO capnweb wire.
 export class ContainerExample extends withWorkspace(ContainerBase, workspaceOptions) {
-  // ---- WebSocket: wsd's outbound /ws upgrade ---------------------
+  // ---- WebSocket: computerd's outbound /ws upgrade ---------------------
 
   override async fetch(request: Request): Promise<Response> {
     return this.backend.handleFetch(request);
@@ -109,11 +109,11 @@ interface ExecRequest {
   encoding?: "utf8";
 }
 
-// wsd mounts the VFS at /workspace inside the container. The file
+// computerd mounts the VFS at /workspace inside the container. The file
 // handler enforces that every path it touches sits under that
 // root; callers pass the absolute VFS path verbatim in the URL
 // (e.g. PUT /c/<name>/file/workspace/hello.txt writes
-// /workspace/hello.txt, exactly as wsd sees it). Anything outside
+// /workspace/hello.txt, exactly as computerd sees it). Anything outside
 // /workspace is rejected up front — the example only wants to
 // expose the mounted tree, not the container's full filesystem.
 const MOUNT_ROOT = "/workspace";

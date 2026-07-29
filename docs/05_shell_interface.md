@@ -212,7 +212,7 @@ from inside it (`getWorkspace(this)`); the surface is identical both
 ways:
 
 ```ts
-import { getWorkspace } from "@cloudflare/workspace";
+import { getWorkspace } from "@cloudflare/computer";
 
 using ws = await getWorkspace(env.MyDO.get(id));
 
@@ -231,7 +231,7 @@ available. Use it when you need `cwd` or `backend`, and wrap an
 interpolated command in the `sh` tag to escape it:
 
 ```ts
-import { sh } from "@cloudflare/workspace";
+import { sh } from "@cloudflare/computer";
 
 await ws.shell.exec(sh`cat ${file}`, { cwd: "/workspace" });
 await ws.shell.exec("npm test", { cwd: "/workspace", encoding: "utf8" });

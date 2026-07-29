@@ -1,18 +1,18 @@
 {
-  "name": "@example/workspace-container",
+  "name": "@example/computer-container",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Example Worker + Durable Object that uses @cloudflare/workspace inside a Cloudflare Container.",
+  "description": "Example Worker + Durable Object that uses @cloudflare/computer inside a Cloudflare Container.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "seed:r2": "wrangler r2 object put workspace-container-hello/hello.txt --file ./seed/data/hello.txt --remote",
-    "seed:r2:local": "wrangler r2 object put workspace-container-hello/hello.txt --file ./seed/data/hello.txt --local"
+    "seed:r2": "wrangler r2 object put computer-container-hello/hello.txt --file ./seed/data/hello.txt --remote",
+    "seed:r2:local": "wrangler r2 object put computer-container-hello/hello.txt --file ./seed/data/hello.txt --local"
   },
   "dependencies": {
-    "@cloudflare/workspace": "*"
+    "@cloudflare/computer": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",

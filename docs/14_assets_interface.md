@@ -18,7 +18,7 @@ webhook without exposing the bucket or the rest of the workspace.
 ## Creating a client
 
 ```ts
-import { createAssets } from "@cloudflare/workspace/assets";
+import { createAssets } from "@cloudflare/computer/assets";
 
 const assets = createAssets({
   ws,

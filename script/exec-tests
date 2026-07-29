@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Boot wsd in docker (FUSE-disabled), drive a few exec scenarios
+# Boot computerd in docker (FUSE-disabled), drive a few exec scenarios
 # over the WebSocket from the host, assert outputs, tear down.
 #
-# Mirrors `script/shell` for the mount point — the linux wsd
+# Mirrors `script/shell` for the mount point — the linux computerd
 # binary is the only thing bind-mounted into the container. The
 # repo isn't mounted: everything else lives in the binary.
 #
@@ -10,14 +10,14 @@
 #   script/exec-tests
 #
 # Requires:
-#   - artifacts/wsd/wsd-linux-x64 (run `npm run build:bin --workspace
-#     @cloudflare/workspace-wsd` first)
+#   - artifacts/computerd/computerd-linux-x64 (run `npm run build:bin --workspace
+#     @cloudflare/computerd` first)
 #   - docker
 #   - node 22+ on the host
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-binary="${repo_root}/artifacts/wsd/wsd-linux-x64"
+binary="${repo_root}/artifacts/computerd/computerd-linux-x64"
 port="${PORT:-45678}"
 cid_file="$(mktemp -u)"
 trap 'cleanup; rm -f "${cid_file}"' EXIT
@@ -30,11 +30,11 @@ cleanup() {
 
 if [[ ! -x "${binary}" ]]; then
   echo "missing or non-executable binary: ${binary}" >&2
-  echo "run \`npm run build:bin --workspace @cloudflare/workspace-wsd\` first" >&2
+  echo "run \`npm run build:bin --workspace @cloudflare/computerd\` first" >&2
   exit 2
 fi
 
-echo "==> booting wsd in docker"
+echo "==> booting computerd in docker"
 docker run --rm -d \
   --cidfile "${cid_file}" \
   --platform linux/amd64 \
@@ -42,11 +42,11 @@ docker run --rm -d \
   -e FUSE_MOUNT=none \
   -e EXEC_LOG_MAX_BYTES=256 \
   -p "${port}:${port}" \
-  -v "${binary}:/usr/local/bin/wsd:ro" \
+  -v "${binary}:/usr/local/bin/computerd:ro" \
   debian:stable-slim \
-  /usr/local/bin/wsd >/dev/null
+  /usr/local/bin/computerd >/dev/null
 
-# Wait for /health to come up. wsd binds quickly but pkg-bundled
+# Wait for /health to come up. computerd binds quickly but pkg-bundled
 # binaries do a v8 snapshot warm-up on first launch.
 for _ in $(seq 1 30); do
   if curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
@@ -55,11 +55,11 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 if ! curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
-  echo "wsd did not become healthy on port ${port}" >&2
+  echo "computerd did not become healthy on port ${port}" >&2
   docker logs "$(cat "${cid_file}")" 2>&1 | tail -20 >&2
   exit 1
 fi
-echo "==> wsd healthy on :${port}"
+echo "==> computerd healthy on :${port}"
 
 # Drive the smoke from a node script. Inline so we don't add a
 # new file to mount; the script is self-contained.
@@ -67,7 +67,7 @@ PORT="${port}" REPO_ROOT="${repo_root}" node --input-type=module -e '
 const repoRoot = process.env.REPO_ROOT;
 const port = process.env.PORT;
 const { createWorkspaceClient } = await import(
-  `${repoRoot}/node_modules/@cloudflare/workspace-rpc/dist/client.js`
+  `${repoRoot}/node_modules/@cloudflare/computer-rpc/dist/client.js`
 );
 
 const assert = (cond, msg) => {
@@ -239,10 +239,10 @@ try {
   // WorkerEntrypoint from cloudflare:workers — that scheme
   // only resolves under workerd, not plain Node.
   const { TestBackend } = await import(
-    `${repoRoot}/packages/workspace/dist/backends/test.js`
+    `${repoRoot}/packages/computer/dist/backends/test.js`
   );
   const { Workspace } = await import(
-    `${repoRoot}/packages/workspace/dist/workspace.js`
+    `${repoRoot}/packages/computer/dist/workspace.js`
   );
   // Workspace needs DurableObjectStorageLike; supply the
   // node:sqlite-backed test storage so this runs under plain

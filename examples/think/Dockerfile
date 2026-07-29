@@ -1,14 +1,15 @@
 # Container image for the think example. Identical wiring to
-# examples/container — we pull a wsd binary out of the public
+# examples/container — we pull a computerd binary out of the public
 # GHCR image, drop it into a slim debian, and run it as PID 1.
 # The :VERSION tag is rewritten in lockstep with the rest of the
 # monorepo by script/set-versions.mjs.
 #
-# wsd mounts a FUSE filesystem at MOUNT_POINT so exec'd commands
+# computerd mounts a FUSE filesystem at MOUNT_POINT so exec'd commands
 # (git, npm, vitest, …) see the same files the Workspace RPC
 # surface reads and writes.
 
-FROM ghcr.io/cloudflare/workspace-wsd-linux-x64:0.0.0-alpha.13 AS wsd
+
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.0.0-alpha.13 AS computerd
 
 FROM debian:stable-slim
 
@@ -31,7 +32,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=wsd /usr/local/bin/wsd /usr/local/bin/wsd
+COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace
@@ -43,4 +44,4 @@ ENV MOUNT_POINT=/workspace
 ENV FUSE_MOUNT=auto
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/wsd"]
+ENTRYPOINT ["/usr/local/bin/computerd"]

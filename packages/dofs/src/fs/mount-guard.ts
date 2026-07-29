@@ -10,7 +10,7 @@
 // The set of read-only roots is small (one row per registered
 // mount per workspace, typically <10) and changes only at indexer
 // write time. Cache it per Database in a WeakMap so repeat lookups
-// don't hit SQLite. The mount indexer in @cloudflare/workspace
+// don't hit SQLite. The mount indexer in @cloudflare/computer
 // invalidates the cache via `invalidateReadOnlyMountCache(db)` after
 // it writes _vfs_mounts.
 

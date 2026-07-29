@@ -1,12 +1,12 @@
-# Cloudflare Workspace
+# Cloudflare Computer
 
-Cloudflare Workspace is a virtual filesystem that lives inside a
+Cloudflare Computer is a virtual filesystem that lives inside a
 Durable Object. The Durable Object holds the authoritative state in
 SQLite and exposes the filesystem to a shell through a pluggable
 backend. Two backends ship today:
 
 - **Container** projects the SQLite state into a sandbox container as
-  a real FUSE mount. A sandbox-side daemon (`wsd`) mounts the state
+  a real FUSE mount. A sandbox-side daemon (`computerd`) mounts the state
   as a filesystem and syncs changes back over a capnweb RPC channel.
   Full Linux userland, real binaries, real network.
 - **Worker** runs the shell as [just-bash](https://github.com/vercel-labs/just-bash)
@@ -42,7 +42,7 @@ callers the filesystem on its own.
 
 - Node 22 or newer.
 - npm. This repo uses npm workspaces.
-- Linux with FUSE if you want to run `packages/wsd` end-to-end. Other
+- Linux with FUSE if you want to run `packages/computerd` end-to-end. Other
   packages build and test on macOS as well.
 - Docker, optionally, for [`examples/container`](examples/container).
   The worker example needs no Docker.
@@ -50,8 +50,8 @@ callers the filesystem on its own.
 ## Quick start
 
 ```bash
-git clone https://github.com/cloudflare/workspace.git
-cd workspace
+git clone https://github.com/cloudflare/computer.git
+cd computer
 npm install
 npm run build:all
 npm test
@@ -59,7 +59,7 @@ npm test
 
 To see the pieces working together, start with the examples:
 
-- [`examples/container`](examples/container) — runs `wsd` inside a
+- [`examples/container`](examples/container) — runs `computerd` inside a
   container, mounts a workspace, and talks to a Durable Object over
   capnweb.
 - [`examples/worker`](examples/worker) — same HTTP surface as the
@@ -77,13 +77,13 @@ package-specific status and usage notes.
   Durable Object SQLite-backed virtual filesystem, sync protocol
   building blocks, and a `@platformatic/vfs` provider for Node.
 - [`packages/rpc`](packages/rpc/README.md)
-  (`@cloudflare/workspace-rpc`) — capnweb wire types and
-  server/client helpers shared between the Durable Object and `wsd`.
-- [`packages/wsd`](packages/wsd/README.md)
-  (`@cloudflare/workspace-wsd`) — the `wsd` daemon: a FUSE mount plus
+  (`@cloudflare/computer-rpc`) — capnweb wire types and
+  server/client helpers shared between the Durable Object and `computerd`.
+- [`packages/computerd`](packages/computerd/README.md)
+  (`@cloudflare/computerd`) — the `computerd` daemon: a FUSE mount plus
   HTTP/WebSocket RPC server that runs inside the sandbox container.
-- [`packages/workspace`](packages/workspace/README.md)
-  (`@cloudflare/workspace`) — the top-level Workspace package
+- [`packages/computer`](packages/computer/README.md)
+  (`@cloudflare/computer`) — the top-level Computer package
   consumed by Durable Objects. Work in progress.
 
 ## Performance
@@ -91,18 +91,18 @@ package-specific status and usage notes.
 Numbers from `script/fs-bench.sh` and a full
 `npm install` of [`cloudflare/sandbox-sdk`](https://github.com/cloudflare/sandbox-sdk)
 (854 packages, 36,675 files), running
-[`examples/wsd-container`](examples/wsd-container) on a Cloudflare
+[`examples/container`](examples/container) on a Cloudflare
 Containers **standard-2** instance (1 vCPU, 6 GiB memory, 12 GB disk).
-The wsd FUSE mount lives at `/workspace`; the comparison columns are
+The computerd FUSE mount lives at `/workspace`; the comparison columns are
 an in-memory `tmpfs` at `/tmp` and the container's ext4 root disk at
 `/var/tmp`.
 
-Ratios are `wsd / baseline` — lower is faster, values below 1.0 mean
-wsd beats the baseline.
+Ratios are `computerd / baseline` — lower is faster, values below 1.0 mean
+computerd beats the baseline.
 
 ### `fs-bench` (REPS=3, WARMUP=1, randomized targets)
 
-| Scenario | wsd | tmpfs | tmpfs ratio | ext4 disk | disk ratio |
+| Scenario | computerd | tmpfs | tmpfs ratio | ext4 disk | disk ratio |
 |---|---:|---:|---:|---:|---:|
 | **tiny-file churn** | | | | | |
 | create 1000 files | 560.6 ms | 83.2 ms | 6.7x | 303.2 ms | 1.85x |
@@ -129,14 +129,14 @@ wsd beats the baseline.
 | Target | Duration |
 |---|---:|
 | tmpfs (`/tmp`) | 34.3 s |
-| wsd FUSE (`/workspace`) | 124.7 s |
+| computerd FUSE (`/workspace`) | 124.7 s |
 | ext4 disk (`/var/tmp`) | 63.9 s |
 
-wsd is ~2x slower than the container's ext4 disk for the full
+computerd is ~2x slower than the container's ext4 disk for the full
 `npm install`, and ~3.6x slower than tmpfs. The disk comparison is
 the more realistic baseline for general usage.
 
-### Where wsd is faster than the disk baseline
+### Where computerd is faster than the disk baseline
 
 The in-memory inode store beats real disk on metadata-heavy work:
 `stat`, `rm`, `mkdir tree`, `find tree`, `git init`, `git clone`,
@@ -144,9 +144,9 @@ The in-memory inode store beats real disk on metadata-heavy work:
 of tools like `git status`, module resolution, and incremental
 builds.
 
-### Where wsd is slower
+### Where computerd is slower
 
-Large sequential file I/O. The wsd write path hashes each
+Large sequential file I/O. The computerd write path hashes each
 [`CHUNK_SIZE`](packages/dofs/src/fs/writeFile.ts) (512 KiB) chunk
 into a content-addressed blob store on every release; that's how
 the Durable Object can sync only the chunks that changed and
@@ -161,7 +161,7 @@ baseline despite `pure read 64 MiB` being 30x slower.
 bash script/run-fs-bench.sh
 ```
 
-or against a deployed `wsd-container` instance, upload
+or against a deployed `computerd-container` instance, upload
 [`script/fs-bench.sh`](script/fs-bench.sh) and run it with
 `MOUNT=/workspace BASE=/tmp`.
 

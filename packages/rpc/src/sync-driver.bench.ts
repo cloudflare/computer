@@ -8,8 +8,8 @@
 //
 // All scenarios run two SQLite-backed VFSes in-process,
 // driving the driver against direct stubs (no WebSocket).
-// That isolates the dofs + workspace-rpc cost from
-// docker / FUSE / capnweb framing. The wsd harness covers
+// That isolates the dofs + computer-rpc cost from
+// docker / FUSE / capnweb framing. The computerd harness covers
 // the integration cost separately.
 
 import {

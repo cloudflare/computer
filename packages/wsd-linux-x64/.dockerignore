@@ -1,4 +1,0 @@
-# Only the binary needs to enter the docker build context. README and
-# package.json belong in the npm-published package, not in the image.
-*
-!bin/wsd

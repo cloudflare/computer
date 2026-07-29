@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for working on the Cloudflare Workspace prototype. This document
+Thanks for working on the Cloudflare Computer prototype. This document
 covers the day-to-day mechanics: how to set up the repo, how to run the
 checks, and how to shape commits and pull requests.
 
@@ -11,17 +11,17 @@ which points at the in-repo skills under [`.agents/skills/`](.agents/skills/).
 
 Requirements:
 
-- Node 22 or newer (`packages/wsd` declares `"engines": { "node": ">=22" }`).
+- Node 22 or newer (`packages/computerd` declares `"engines": { "node": ">=22" }`).
 - npm — this repo uses npm workspaces, not pnpm or yarn.
-- Linux with FUSE if you want to run `packages/wsd` end-to-end. The
+- Linux with FUSE if you want to run `packages/computerd` end-to-end. The
   rest of the workspace builds and tests on macOS as well.
 - Docker, optionally, for `examples/container`.
 
 Clone and install from the repo root:
 
 ```bash
-git clone https://github.com/cloudflare/workspace.git
-cd workspace
+git clone https://github.com/cloudflare/computer.git
+cd computer
 npm install
 ```
 
@@ -38,11 +38,11 @@ with package-specific status and usage notes:
   filesystem, sync protocol building blocks, and a `@platformatic/vfs`
   provider for Node.
 - [`packages/rpc`](packages/rpc/) — capnweb-based wire types and
-  server/client helpers shared between the Durable Object and `wsd`.
-- [`packages/wsd`](packages/wsd/) — the `wsd` daemon: a FUSE mount plus
+  server/client helpers shared between the Durable Object and `computerd`.
+- [`packages/computerd`](packages/computerd/) — the `computerd` daemon: a FUSE mount plus
   HTTP/WebSocket RPC server that runs inside the sandbox container.
-- [`packages/workspace`](packages/workspace/) — the top-level
-  `@cloudflare/workspace` package consumed by Durable Objects.
+- [`packages/computer`](packages/computer/) — the top-level
+  `@cloudflare/computer` package consumed by Durable Objects.
 
 [`docs/`](docs/) holds the design specification. It is forward-looking
 and has diverged from `main` in places — treat it as intent, not as a
@@ -94,7 +94,7 @@ For a single test file inside a package:
 npm test --workspace @cloudflare/dofs -- src/path/to/file.test.ts
 ```
 
-`packages/wsd` includes FUSE-backed tests that only run on Linux. On
+`packages/computerd` includes FUSE-backed tests that only run on Linux. On
 other platforms they're skipped automatically.
 
 New behavior needs a test. Bug fixes need a reproduction test that
@@ -124,9 +124,9 @@ short version:
 
 - **Subject line.** Imperative mood, ≤ 50 characters where possible,
   72 hard maximum. No trailing period. Prefix with the package or
-  scope: `dofs:`, `rpc:`, `wsd:`, `workspace:`, `examples/think:`,
+  scope: `dofs:`, `rpc:`, `computer:`, `computerd:`, `examples/think:`,
   `docs:`, `ci:`. Multiple scopes are joined with commas, as in
-  `wsd, rpc: …`.
+  `computerd, rpc: …`.
 - **Blank line**, then a body wrapped at 72 characters. Explain *what
   and why*, not *how* — the diff already shows how.
 - **One logical change per commit.** Don't bundle unrelated edits.

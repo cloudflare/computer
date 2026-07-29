@@ -31,7 +31,7 @@ client ─► Worker /c/<name>/{file,exec}
 ```
 
 1. The DO constructs a `WorkerBackend` from
-   `@cloudflare/workspace/backends/worker`, passing the Loader
+   `@cloudflare/computer/backends/worker`, passing the Loader
    binding, a `{binding, id}` reference to itself, and `ctx`.
    The backend handles the rest internally: it builds the Loader
    callback (with the code-split shell modules + the seek-bzip
@@ -47,7 +47,7 @@ client ─► Worker /c/<name>/{file,exec}
    survive structured clone into the loader's env; the
    binding-shape Fetcher the proxy produces does.
 3. `ShellWorker` (shipped in
-   `@cloudflare/workspace/backends/worker`) lives inside that
+   `@cloudflare/computer/backends/worker`) lives inside that
    Dynamic Worker. Each `exec(input)` calls
    `env.HOST.getWorkspace()`, builds a fresh `Bash` around a
    `WorkspaceFsAdapter` wrapping the stub's `.fs`, runs the
@@ -82,10 +82,10 @@ so the shell can't reach the public internet on its own.
 Identical to the container example. Seed once with:
 
 ```sh
-npm run seed:r2:local --workspace @example/workspace-worker
+npm run seed:r2:local --workspace @example/computer-worker
 
 # or after deploy
-npm run seed:r2 --workspace @example/workspace-worker
+npm run seed:r2 --workspace @example/computer-worker
 ```
 
 ## HTTP surface
@@ -103,7 +103,7 @@ POST /c/<name>/exec                    { command | argv, cwd?, encoding? }
 
 No Docker, no extra build step. The shell ships as a record of
 pre-bundled modules (`SHELL_MODULES`) inside
-`@cloudflare/workspace/backends/worker`; `WorkerBackend` spreads
+`@cloudflare/computer/backends/worker`; `WorkerBackend` spreads
 the whole record into the Loader callback internally so the DO
 constructor stays a three-line backend invocation. The entry
 module parses on cold start; the dynamic chunks (python, js-exec,
@@ -111,7 +111,7 @@ sqlite, curl, html-to-markdown) stay cold until a script reaches
 for them.
 
 ```sh
-npm run dev --workspace @example/workspace-worker
+npm run dev --workspace @example/computer-worker
 ```
 
 Smoke test (same recipes as the container example):
@@ -138,7 +138,7 @@ examples/worker/
 ```
 
 Nothing else. The Dynamic Worker source ships from
-`@cloudflare/workspace/backends/worker` as a pre-built module
+`@cloudflare/computer/backends/worker` as a pre-built module
 string.
 
 ## Known limitations

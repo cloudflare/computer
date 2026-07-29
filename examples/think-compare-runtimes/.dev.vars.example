@@ -2,6 +2,6 @@
 #
 # wrangler dev / vite dev under colima or Docker Desktop does not
 # expose /dev/fuse to Workers Containers. This tells the Workspace
-# container to run wsd with its userspace shim locally. Production
-# leaves this unset so wsd uses real kernel FUSE when available.
+# container to run computerd with its userspace shim locally. Production
+# leaves this unset so computerd uses real kernel FUSE when available.
 FUSE_MOUNT=shim

@@ -1,14 +1,14 @@
-import { getSandbox, type Sandbox as SandboxDO } from "@cloudflare/sandbox";
-import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
 import {
   type DurableObjectStorageLike,
   Workspace,
   WorkspaceProxy,
   WorkspaceServiceProxy,
   type WorkspaceStub,
-} from "@cloudflare/workspace";
-import { CloudflareContainerBackend } from "@cloudflare/workspace/backends/container";
-import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/workspace/backends/worker";
+} from "@cloudflare/computer";
+import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
+import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/computer/backends/worker";
+import { getSandbox, type Sandbox as SandboxDO } from "@cloudflare/sandbox";
+import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { getServerByName } from "partyserver";
 import type { ExecutionTarget, RunEventKind, RuntimeId } from "../../shared/events";
@@ -314,7 +314,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
           await recordContainerLifecycle(recorder, {
             runtime: this.runtime,
             kind: "container_acquired",
-            executionTarget: "workspace-container",
+            executionTarget: "computer-container",
             containerId,
           });
         }
@@ -359,7 +359,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
         await recordContainerLifecycle(recorder, {
           runtime: this.runtime,
           kind: "container_released",
-          executionTarget: "workspace-container",
+          executionTarget: "computer-container",
           containerId,
         });
       }

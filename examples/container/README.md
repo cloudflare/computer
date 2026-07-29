@@ -8,7 +8,7 @@
 > for production use at this time.
 
 A Cloudflare Worker + Durable Object that boots a Container running
-the `wsd` daemon and exposes a minimal `write` / `read` / `exec`
+the `computerd` daemon and exposes a minimal `write` / `read` / `exec`
 HTTP surface, modelled on the
 [cloudflare/sandbox-sdk](https://github.com/cloudflare/sandbox-sdk)
 bridge.
@@ -19,30 +19,30 @@ bridge.
 client ─► Worker /c/<name>/{file,exec}
              │  (DO RPC calls)
              ▼
-       DO (ContainerExample) ──► Container ──► wsd (:8080)
+       DO (ContainerExample) ──► Container ──► computerd (:8080)
              ▲                                  │
-             │      ws://workspace.internal/ws  │
+             │      ws://computer.internal/ws  │
              └────────── capnweb session ◄──────┘
 ```
 
 1. The DO constructs a `CloudflareContainerBackend` from
-   `@cloudflare/workspace/backends/container` and hands it to a
-   `Workspace` instance. That backend owns the entire wsd lifecycle:
+   `@cloudflare/computer/backends/container` and hands it to a
+   `Workspace` instance. That backend owns the entire computerd lifecycle:
    container start,
    outbound egress interception, port-readiness polling, POST
-   `/connect` to wsd, `/ws` upgrade routing, and capnweb session
+   `/connect` to computerd, `/ws` upgrade routing, and capnweb session
    attach.
-2. wsd reaches the Worker through the container's **outbound
-   interception** (`ctx.container.interceptOutboundHttp("workspace.internal",
+2. computerd reaches the Worker through the container's **outbound
+   interception** (`ctx.container.interceptOutboundHttp("computer.internal",
    …)`, set up by the backend). The DO passes
    `ctx.exports.WorkspaceProxy({ props: { binding, id } })` as the
    egress fetcher; that `WorkerEntrypoint` (re-exported from
-   `@cloudflare/workspace`) routes `/ws` upgrades back to the owning DO.
+   `@cloudflare/computer`) routes `/ws` upgrades back to the owning DO.
 3. When `Workspace.ready()` is called for the first time, the
-   backend posts `/connect` into wsd with
-   `{ url: "http://workspace.internal" }`. wsd polls
-   `workspace.internal/health`, then dials
-   `ws://workspace.internal/ws`.
+   backend posts `/connect` into computerd with
+   `{ url: "http://computer.internal" }`. computerd polls
+   `computer.internal/health`, then dials
+   `ws://computer.internal/ws`.
 4. `WorkspaceProxy.fetch` forwards the upgrade to the DO's `fetch()`
    via the DO binding looked up from its props. The DO's `fetch()`
    delegates to `backend.handleFetch(req)`, which performs the
@@ -60,7 +60,7 @@ The DO extends the plain `DurableObject` class from
 `cloudflare:workers`. The container lifecycle plumbing all lives
 in `CloudflareContainerBackend` — the DO is a thin host.
 
-The container mounts wsd's VFS at `MOUNT_POINT` (`/workspace`) so
+The container mounts computerd's VFS at `MOUNT_POINT` (`/workspace`) so
 `exec`'d commands see the same tree the RPC surface reads and
 writes. On Cloudflare Containers `/dev/fuse` is exposed and the
 real FUSE backend mounts; under `wrangler dev` the same image
@@ -97,10 +97,10 @@ which contains the bytes `hello world`):
 
 ```sh
 # Local miniflare bucket — use this with `wrangler dev`.
-npm run seed:r2:local --workspace @example/workspace-container
+npm run seed:r2:local --workspace @example/computer-container
 
 # Real Cloudflare R2 bucket — use this after `wrangler deploy`.
-npm run seed:r2 --workspace @example/workspace-container
+npm run seed:r2 --workspace @example/computer-container
 ```
 
 Then:
@@ -128,7 +128,7 @@ POST /c/<name>/exec                    { command | argv, cwd?, encoding? }
 The Worker enables Cloudflare's built-in tracing in
 `wrangler.jsonc` (`observability.traces.enabled = true`) and wires
 the workspace observer to `ctx.tracing` via the
-`@cloudflare/workspace/observe/cloudflare` adapter. Every workspace
+`@cloudflare/computer/observe/cloudflare` adapter. Every workspace
 operation (`workspace.connect`, `workspace.sync.push`,
 `workspace.sync.pull`, `workspace.shell.exec`, and the
 `workspace.fs.*` family) opens a span on the runtime, so the
@@ -143,18 +143,18 @@ required in this example.
 ## Run it locally
 
 Requires Docker. The Dockerfile pulls
-`ghcr.io/cloudflare/workspace-wsd-linux-x64:<version>` from the
+`ghcr.io/cloudflare/computer-computerd-linux-x64:<version>` from the
 public GitHub Container Registry on first build, so no local image
 prep is needed.
 
 ```sh
-npm run dev --workspace @example/workspace-container
+npm run dev --workspace @example/computer-container
 ```
 
 Smoke test:
 
 ```sh
-# Trigger the container (first call also boots wsd + the capnweb session).
+# Trigger the container (first call also boots computerd + the capnweb session).
 curl http://127.0.0.1:8787/
 
 # Write a file at /workspace/hello.txt
@@ -174,7 +174,7 @@ curl -X POST http://127.0.0.1:8787/c/demo/exec \
 
 ```
 examples/container/
-  Dockerfile                debian + libfuse + wsd binary (ENTRYPOINT)
+  Dockerfile                debian + libfuse + computerd binary (ENTRYPOINT)
   wrangler.jsonc            Worker + DO + Container binding
   src/index.ts              Worker handler, DO (ContainerExample)
 ```
@@ -186,9 +186,9 @@ examples/container/
   the DO to expose an async-iterable RPC; v1 keeps the surface flat.
 - **No auth.** The egress proxy trusts anything the container sends.
   Fine for in-DO traffic (only the owning Worker can address it),
-  but the moment we expose `workspace.internal` more broadly we need
+  but the moment we expose `computer.internal` more broadly we need
   a handshake.
-- **One-shot session.** If wsd's WebSocket drops mid-session, the
+- **One-shot session.** If computerd's WebSocket drops mid-session, the
   cached `BackendHandle` goes stale and the next call throws.
   `Workspace.ready()` will retry on the next call, but in-flight
   operations are lost. Transparent reconnect is deferred work.

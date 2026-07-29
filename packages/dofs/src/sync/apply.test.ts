@@ -972,7 +972,7 @@ describe("applyChanges with read-only mount roots", () => {
 });
 
 describe("applyChanges mtime propagation (auto_cache contract)", () => {
-  // The FUSE driver mounts with WSD_FUSE_AUTO_CACHE=1 in the
+  // The FUSE driver mounts with COMPUTERD_FUSE_AUTO_CACHE=1 in the
   // production-safe profile. auto_cache tells the kernel to keep
   // file data in the page cache until the file is reopened with a
   // different mtime or size; the kernel then drops the cached

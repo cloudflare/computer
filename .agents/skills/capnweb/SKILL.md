@@ -3,7 +3,7 @@ name: capnweb
 description: |
   capnweb RPC patterns for this repo, with a heavy focus on stub lifecycle
   and disposal. Load when touching anything that crosses the Durable Object
-  ↔ wsd boundary: packages/rpc, packages/workspace, the wsd client, or the
+  ↔ computerd boundary: packages/rpc, packages/computer, the computerd client, or the
   Durable Object server. Triggers include "capnweb", "RpcTarget", "stub",
   "RPC wire", "promise pipelining", "stub disposal", "RpcPromise".
 ---
@@ -11,7 +11,7 @@ description: |
 # capnweb in this repo
 
 [capnweb](https://github.com/cloudflare/capnweb) is the RPC framing
-between the Durable Object and `wsd`. It's an object-capability RPC
+between the Durable Object and `computerd`. It's an object-capability RPC
 system with promise pipelining, structured-clone-style transfer of
 stubs, and bidirectional calls. The wire format used here is text
 JSON over a long-lived WebSocket, with an HTTP batch alternative.
@@ -23,7 +23,7 @@ JSON over a long-lived WebSocket, with an HTTP batch alternative.
   `SyncRPC` and `ShellRPC`. Add new methods here first.
 - [`packages/rpc/src/server.ts`](../../../packages/rpc/src/server.ts)
   — `Database`-backed implementation. Imported by the Durable Object
-  and the in-container workspace-server.
+  and the in-container computerd.
 - [`packages/rpc/src/client.ts`](../../../packages/rpc/src/client.ts)
   — typed stubs over a WebSocket carrier. The Durable Object uses a
   deferred transport so the stub can be created before the upgrade
@@ -50,7 +50,7 @@ side of the connection.
 This matters more here than in many capnweb deployments because the
 connection is **long-lived**. HTTP batch sessions auto-dispose
 everything when the batch ends, but our WebSocket between the
-Durable Object and `wsd` stays up for the lifetime of the workspace.
+Durable Object and `computerd` stays up for the lifetime of the workspace.
 Every undisposed stub stays alive until that connection drops.
 
 ## The caller-disposes rule
@@ -163,7 +163,7 @@ dispose call per stub. To collapse them into one, wrap the target in
 `stub.onRpcBroken(cb)` fires when the stub becomes unusable —
 typically because the underlying connection dropped or, for a
 promise, because the promise rejected. After the callback runs every
-method call on that stub will throw. `packages/workspace` already
+method call on that stub will throw. `packages/computer` already
 folds `onRpcBroken` into the workspace's closed promise; reuse that
 plumbing rather than wiring up a parallel listener.
 
@@ -232,7 +232,7 @@ envelope to release every stub it contains.
   contain stubs — futureproofing is cheap.
 - **Do** call `.dup()` rather than awaiting twice when you need a
   stub copy to outlive a callee's auto-dispose.
-- **Do** run the leak harness (`script/wsd-stub-soak`) when you
+- **Do** run the leak harness (`script/computerd-stub-soak`) when you
   change anything around RPC lifecycle, and check
   `session.getStats()` for drift.
 - **Don't** send binary WebSocket frames. The wire is text JSON.
@@ -249,11 +249,11 @@ envelope to release every stub it contains.
 
 - Use `enableStubTracking()` + `stubSnapshot()` in a test to assert
   no stub survives a round trip you expected to clean up.
-- Soak the boundary with `script/wsd-stub-soak` for
+- Soak the boundary with `script/computerd-stub-soak` for
   disposal-sensitive changes; it reads `session.getStats()` to
   detect drift.
 - Server-side RPC behavior is tested against the real `Database`
-  and real driver helpers in `packages/rpc` and `packages/workspace`.
+  and real driver helpers in `packages/rpc` and `packages/computer`.
 
 ## Further reading
 

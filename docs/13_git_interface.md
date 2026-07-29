@@ -1,9 +1,9 @@
 # 13. Git interface
 
 > [!NOTE]
-> This doc describes shipped code in `packages/workspace/src/git/`
+> This doc describes shipped code in `packages/computer/src/git/`
 > and the `git` custom command in
-> `packages/workspace/src/backends/worker/`. Everything below
+> `packages/computer/src/backends/worker/`. Everything below
 > works today.
 
 `workspace.git` is the third major surface on `Workspace`,
@@ -111,7 +111,7 @@ diff against HEAD — through each entry point.
 ### Typed API from a durable object
 
 ```ts
-import { Workspace } from "@cloudflare/workspace";
+import { Workspace } from "@cloudflare/computer";
 
 const ws = new Workspace({ storage: ctx.storage });
 await ws.git.clone({ url: "https://github.com/example/repo.git" });
@@ -304,7 +304,7 @@ form with `??` for untracked files; `--short` / `-s` produces
 the short form (` ?` for untracked). The typed surface returns
 the underlying `StatusEntry[]`; format it with
 `formatPorcelainV2`, `formatPorcelainV1`, or `formatShort`
-from `@cloudflare/workspace/git`.
+from `@cloudflare/computer/git`.
 
 *Not mapped:* `--branch`, `--ignored`, `--untracked-files`,
 the long human-readable form. The structured return is the
@@ -1066,7 +1066,7 @@ commands receive the live host stub the shell already reached,
 so they share its lifetime without refetching.
 
 ```ts
-import { ShellWorker, defineGitCommand } from "@cloudflare/workspace/backends/worker";
+import { ShellWorker, defineGitCommand } from "@cloudflare/computer/backends/worker";
 import { type CustomCommand } from "just-bash";
 
 class MyShell extends ShellWorker {

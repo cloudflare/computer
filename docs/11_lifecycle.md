@@ -12,7 +12,7 @@
 ## Architecture
 
 A workspace pairs **one Durable Object** with **one container instance**
-running `wsd`. The DO owns the source-of-truth VFS in its SQLite
+running `computerd`. The DO owns the source-of-truth VFS in its SQLite
 storage; the container owns a transient in-memory mirror exposed at the
 FUSE mount inside `MOUNT_POINT`. They talk over a single long-lived
 capnweb WebSocket session.
@@ -21,7 +21,7 @@ capnweb WebSocket session.
 ┌───────────────────────────┐                  ┌────────────────────────┐
 │ Durable Object            │                  │ Container              │
 │  ┌─────────────────────┐  │                  │  ┌──────────────────┐  │
-│  │ Workspace           │  │                  │  │ wsd              │  │
+│  │ Workspace           │  │                  │  │ computerd              │  │
 │  │  fs:  WorkspaceFS   │  │                  │  │  HTTP server     │  │
 │  │  shell: ShellRPC    │  │                  │  │   /health        │  │
 │  │  sync: SyncRPC      │◀─┼── capnweb WS ───▶│  │   /connect /ws   │  │
@@ -49,7 +49,7 @@ The 1:1 mapping is load-bearing for several reasons:
 - Hibernation enablement (see below) becomes tractable because the DO
   doesn't have to multiplex multiple WS peers.
 
-The DO is the WebSocket *server* in this pairing, even though `wsd`
+The DO is the WebSocket *server* in this pairing, even though `computerd`
 exposes its own `/ws` server-side and could be dialed directly. The
 reason for the inversion is documented in
 [07. Injected Service §Bootstrap sequence](./07_injected_service.md):
@@ -115,11 +115,11 @@ lifetime policy. From the DO's perspective:
 
 | Event | What survives | What's lost |
 | --- | --- | --- |
-| **DO restart, container alive** | The container's in-memory VFS, FUSE mount, `wsd` process | The DO's `#handle` |
-| **Container SIGTERM / restart** | The DO's `ctx.storage`, the DO instance itself | The container's in-memory VFS, FUSE mount state, `wsd` process state |
+| **DO restart, container alive** | The container's in-memory VFS, FUSE mount, `computerd` process | The DO's `#handle` |
+| **Container SIGTERM / restart** | The DO's `ctx.storage`, the DO instance itself | The container's in-memory VFS, FUSE mount state, `computerd` process state |
 | **Both die** (host OOM, region failure) | `ctx.storage` | Everything else |
 
-`wsd` is a long-lived process. It outlives DO restarts — the
+`computerd` is a long-lived process. It outlives DO restarts — the
 `Container.monitor()` promise resolves only when the container itself
 exits, and the backend's `#monitoring` flag drops the cached handle at
 that point so the next call rebuilds from scratch
@@ -162,9 +162,9 @@ WebSocket, which means **the DO must be alive in memory to receive
 frames**. There is no hibernation-aware variant today.
 
 On the container side: `acceptWebSocketSession(ws, rpc)` in
-`wsd.ts:181` for inbound `/ws` upgrades, or the same call in the
-`/connect` outbound dial path at `wsd.ts:266`. Both attach to a `ws`
-package WebSocket and require the `wsd` process to be live.
+`computerd.ts:181` for inbound `/ws` upgrades, or the same call in the
+`/connect` outbound dial path at `computerd.ts:266`. Both attach to a `ws`
+package WebSocket and require the `computerd` process to be live.
 
 ### Session lifecycle, today
 
@@ -214,9 +214,9 @@ accumulate until someone calls it.
 There are two boundaries where stubs cross in this codebase, and
 they have slightly different rules.
 
-**Boundary 1: Worker / DO ↔ wsd (capnweb over WebSocket).**
+**Boundary 1: Worker / DO ↔ computerd (capnweb over WebSocket).**
 This is the long-lived session described above. The driver code
-(`packages/rpc/src/sync-driver.ts`, `packages/workspace/src/shell.ts`)
+(`packages/rpc/src/sync-driver.ts`, `packages/computer/src/shell.ts`)
 holds the only client-side references to result envelopes. When a
 call returns `{ stream, ... }` or `{ events, ... }`, the driver
 binds the envelope to a `using` variable so it disposes at the end
@@ -231,7 +231,7 @@ result to `using`, or call `result[Symbol.dispose]()` after
 draining.
 
 **Boundary 2: Worker ↔ DO (Workers RPC).** This is the boundary
-`env.WSD.get(id).getWorkspace()` crosses. Returns are
+`env.COMPUTERD.get(id).getWorkspace()` crosses. Returns are
 `RpcTarget`-derived stubs, not plain objects. Three live across
 the boundary:
 
@@ -252,8 +252,8 @@ The minimal correct pattern from a Worker is:
 ```ts
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const id = env.WSD.idFromName("user-123");
-    using ws = await env.WSD.get(id).getWorkspace();
+    const id = env.COMPUTERD.idFromName("user-123");
+    using ws = await env.COMPUTERD.get(id).getWorkspace();
 
     using handle = await ws.shell.exec("npm test");
     const result = await handle.result();
@@ -276,10 +276,10 @@ long-lived isolates that keep grabbing fresh `WorkspaceStub`s
 workloads inside a single request.
 
 Leak discovery is instrumented via `CAPNWEB_TRACK_STUBS=1` and
-`stubSnapshot()` from `@cloudflare/workspace-rpc/debug`. wsd
-exposes the snapshot at `GET /__wsd/stubs` when the flag is set;
-the soak script at `script/wsd-stub-soak.mjs` and the workerd
-soak at `packages/workspace/tests/stub-soak.test.ts` use it to
+`stubSnapshot()` from `@cloudflare/computer-rpc/debug`. computerd
+exposes the snapshot at `GET /__computerd/stubs` when the flag is set;
+the soak script at `script/computerd-stub-soak.mjs` and the workerd
+soak at `packages/computer/tests/stub-soak.test.ts` use it to
 prove no unbounded growth under sustained workloads.
 
 ## Hibernation
@@ -376,7 +376,7 @@ between agent turns, and it's exactly where hibernation pays off.
 ### What about the alternative — invert the dial direction?
 
 Adopting PartySocket for reconnect/backoff would require the DO
-to be the WebSocket *client* dialing `wsd`'s
+to be the WebSocket *client* dialing `computerd`'s
 `/ws` endpoint. That model is appealing for reconnect, but
 hibernatable WebSockets only work server-side via
 `ctx.acceptWebSocket()` — there is no hibernation API for outbound
@@ -412,7 +412,7 @@ durability work still to ship.
 
 - [02. Sync Protocol](./02_sync_protocol.md) — wire format and rev
   watermark semantics.
-- [07. Injected Service](./07_injected_service.md) — `wsd` boot
+- [07. Injected Service](./07_injected_service.md) — `computerd` boot
   sequence and the egress-interception dial-back.
 - [08. Capnweb Interface](./08_capnweb_interface.md) — RPC surface
   and transport assumptions.

@@ -3,7 +3,7 @@
 # example. Demonstrates the round-trip between the file HTTP
 # surface (which writes through the DO into the workspace VFS) and
 # the exec HTTP surface (which runs commands inside the container,
-# where wsd's FUSE / shim mount exposes the same tree at
+# where computerd's FUSE / shim mount exposes the same tree at
 # /workspace).
 #
 # Run `npm run dev` in another terminal first, then:
@@ -40,7 +40,7 @@ curl -fsS -X POST "${BASE_URL}/c/${NAME}/exec" \
   -H 'content-type: application/json' \
   -d "{\"command\":\"echo hello-from-exec > /workspace/${PATH_VIA_EXEC} && cat /workspace/${PATH_VIA_EXEC}\",\"encoding\":\"utf8\"}"
 printf '\n'
-# No settle wait needed: wsd's `beforeFetch` hook runs the shim's
+# No settle wait needed: computerd's `beforeFetch` hook runs the shim's
 # disk→VFS reconcile synchronously inside `fetchChanges`, so the
 # GET below is guaranteed to see whatever the exec just wrote.
 

@@ -88,7 +88,7 @@ describe("run-event-facts", () => {
           exitCode: 0,
           command: "npm run check",
           cwd: "/workspace/repo",
-          executionTarget: "workspace-container",
+          executionTarget: "computer-container",
         }),
       }),
     );
@@ -97,7 +97,7 @@ describe("run-event-facts", () => {
       { label: "command", value: "npm run check" },
       { label: "path", value: "/workspace/repo/docs/index.md" },
       { label: "cwd", value: "/workspace/repo" },
-      { label: "executionTarget", value: "workspace-container" },
+      { label: "executionTarget", value: "computer-container" },
       { label: "exitCode", value: "0" },
       { label: "stdout", value: "ok\n" },
     ]);

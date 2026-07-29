@@ -40,7 +40,7 @@ describe("runtime Think prompts", () => {
   test("adds Workspace-specific guidance for durable files, worker shell, and container validation", () => {
     const prompt = createRuntimeSystemPrompt("workspace");
 
-    expect(prompt).toContain("Cloudflare Workspace");
+    expect(prompt).toContain("Cloudflare Computer");
     expect(prompt).toContain("durable workspace storage");
     expect(prompt).toContain("Start Workspace discovery with the worker shell");
     expect(prompt).toContain("workspace container is for Node, npm, package scripts");

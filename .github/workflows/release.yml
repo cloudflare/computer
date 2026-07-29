@@ -2,28 +2,28 @@
 #
 #   1. Builds every workspace.
 #   2. Runs all package tests.
-#   3. Builds the wsd linux-x64 SEA binary (build-only — proves the
+#   3. Builds the computerd linux-x64 SEA binary (build-only — proves the
 #      release tag still produces a working binary; not published).
 #   4. Stamps the tag's version into the publishable package.
-#   5. Publishes @cloudflare/workspace under a dist-tag picked from
+#   5. Publishes @cloudflare/computer under a dist-tag picked from
 #      the version: prerelease tags (`-alpha.N`, `-beta.N`, `-rc.N`)
 #      publish under the matching suffix (`alpha`, `beta`, `rc`)
-#      so plain `npm i @cloudflare/workspace` doesn't pick them up;
+#      so plain `npm i @cloudflare/computer` doesn't pick them up;
 #      stable tags (no suffix) publish under `latest`.
-#   6. Pushes the wsd binary image to two registries: ghcr.io (the
+#   6. Pushes the computerd binary image to two registries: ghcr.io (the
 #      canonical public source the example Dockerfiles reference)
 #      and registry.cloudflare.com (so wrangler / Containers can
 #      pull from inside Cloudflare's platform without an outbound
 #      hop). Stable releases also move each registry's `:latest`
 #      tag; prereleases only push the version-specific tag.
 #
-# The wsd binary is shipped two ways:
-#   - inside the @cloudflare/workspace npm tarball at dist/bin/
-#     wsd-linux-x64, so consumers installing the package get it for
+# The computerd binary is shipped two ways:
+#   - inside the @cloudflare/computer npm tarball at dist/bin/
+#     computerd-linux-x64, so consumers installing the package get it for
 #     free; and
 #   - as a single-layer container image, mirrored to both
-#     ghcr.io/cloudflare/workspace-wsd-linux-x64 and
-#     registry.cloudflare.com/library/workspace-wsd-linux-x64. The
+#     ghcr.io/cloudflare/computer-computerd-linux-x64 and
+#     registry.cloudflare.com/library/computer-computerd-linux-x64. The
 #     example Dockerfiles pin the GHCR coordinate (anonymous pulls,
 #     no Cloudflare-account dependency); the CF copy is kept for
 #     consumers that prefer to stay on the in-platform registry.
@@ -43,7 +43,7 @@
 #
 # One manual step is needed once, after the first push of the GHCR
 # package: flip the package visibility to Public at
-#   https://github.com/orgs/cloudflare/packages/container/workspace-wsd-linux-x64/settings
+#   https://github.com/orgs/cloudflare/packages/container/computer-computerd-linux-x64/settings
 # Subsequent pushes inherit the public visibility automatically.
 #
 # Triggers:
@@ -98,9 +98,9 @@ jobs:
         with:
           registry-url: "https://registry.npmjs.org"
 
-      # wsd's tests spawn the binary, which dynamically links
+      # computerd's tests spawn the binary, which dynamically links
       # libfuse2 (fuse-native) and uses fuse3 helpers for the
-      # FUSE_MOUNT=shim userspace mount path. Without these the wsd test
+      # FUSE_MOUNT=shim userspace mount path. Without these the computerd test
       # suite fails with `libfuse.so.2: cannot open shared object
       # file`. Mirrors the install in ci.yml.
       - name: Install system dependencies
@@ -114,20 +114,20 @@ jobs:
       - name: Test
         run: npm test --workspaces --if-present
 
-      - name: Build wsd binary
-        run: npm run build:bin --workspace @cloudflare/workspace-wsd
+      - name: Build computerd binary
+        run: npm run build:bin --workspace @cloudflare/computerd
 
-      # Short-term bundling: ship the linux-x64 wsd binary inside
-      # @cloudflare/workspace under dist/bin/ — not registered as a
+      # Short-term bundling: ship the linux-x64 computerd binary inside
+      # @cloudflare/computer under dist/bin/ — not registered as a
       # "bin" entry, so npm install won't try to symlink it on
       # non-linux hosts. Docker workflows reach in and copy it out
       # explicitly. Replace with a proper platform-package install
       # once we have more than one target.
-      - name: Stage binary into @cloudflare/workspace
+      - name: Stage binary into @cloudflare/computer
         run: |
-          mkdir -p packages/workspace/dist/bin
-          cp artifacts/wsd/wsd-linux-x64 packages/workspace/dist/bin/wsd-linux-x64
-          chmod +x packages/workspace/dist/bin/wsd-linux-x64
+          mkdir -p packages/computer/dist/bin
+          cp artifacts/computerd/computerd-linux-x64 packages/computer/dist/bin/computerd-linux-x64
+          chmod +x packages/computer/dist/bin/computerd-linux-x64
 
       - name: Sync versions
         run: node script/set-versions.mjs "${RELEASE_TAG}"
@@ -154,18 +154,18 @@ jobs:
           echo "npm_tag=${npm_tag}" >> "$GITHUB_OUTPUT"
           echo "is_stable=${is_stable}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish @cloudflare/workspace
-        run: npm publish --workspace @cloudflare/workspace --tag "${{ steps.release-meta.outputs.npm_tag }}" --provenance --access public
+      - name: Publish @cloudflare/computer
+        run: npm publish --workspace @cloudflare/computer --tag "${{ steps.release-meta.outputs.npm_tag }}" --provenance --access public
 
-      # Stage the SEA binary into the wsd-linux-x64 package's bin/
-      # directory — that package's Dockerfile copies from `bin/wsd`
+      # Stage the SEA binary into the computerd-linux-x64 package's bin/
+      # directory — that package's Dockerfile copies from `bin/computerd`
       # against a `scratch` base, producing a single-layer image
       # whose only purpose is to ship the binary at a known path.
-      - name: Stage binary into @cloudflare/workspace-wsd-linux-x64
+      - name: Stage binary into @cloudflare/computer-computerd-linux-x64
         run: |
-          mkdir -p packages/wsd-linux-x64/bin
-          cp artifacts/wsd/wsd-linux-x64 packages/wsd-linux-x64/bin/wsd
-          chmod +x packages/wsd-linux-x64/bin/wsd
+          mkdir -p packages/computer-computerd-linux-x64/bin
+          cp artifacts/computerd/computerd-linux-x64 packages/computer-computerd-linux-x64/bin/computerd
+          chmod +x packages/computer-computerd-linux-x64/bin/computerd
 
       - name: Set up buildx
         uses: docker/setup-buildx-action@v3
@@ -195,16 +195,16 @@ jobs:
       # trailing lines in the `tags` list are tolerated by
       # build-push-action. One buildx invocation pushes to both
       # registries in parallel, sharing the layer build.
-      - name: Build and push wsd-linux-x64 image
+      - name: Build and push computerd-linux-x64 image
         uses: docker/build-push-action@v6
         with:
-          context: packages/wsd-linux-x64
-          file: packages/wsd-linux-x64/Dockerfile
+          context: packages/computer-computerd-linux-x64
+          file: packages/computer-computerd-linux-x64/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/cloudflare/workspace-wsd-linux-x64:${{ steps.release-meta.outputs.version }}
-            ${{ steps.release-meta.outputs.is_stable == 'true' && 'ghcr.io/cloudflare/workspace-wsd-linux-x64:latest' || '' }}
-            registry.cloudflare.com/library/workspace-wsd-linux-x64:${{ steps.release-meta.outputs.version }}
-            ${{ steps.release-meta.outputs.is_stable == 'true' && 'registry.cloudflare.com/library/workspace-wsd-linux-x64:latest' || '' }}
+            ghcr.io/cloudflare/computer-computerd-linux-x64:${{ steps.release-meta.outputs.version }}
+            ${{ steps.release-meta.outputs.is_stable == 'true' && 'ghcr.io/cloudflare/computer-computerd-linux-x64:latest' || '' }}
+            registry.cloudflare.com/library/computer-computerd-linux-x64:${{ steps.release-meta.outputs.version }}
+            ${{ steps.release-meta.outputs.is_stable == 'true' && 'registry.cloudflare.com/library/computer-computerd-linux-x64:latest' || '' }}
           provenance: false

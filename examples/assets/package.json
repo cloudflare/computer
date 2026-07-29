@@ -1,16 +1,16 @@
 {
-  "name": "@example/workspace-assets",
+  "name": "@example/computer-assets",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Example Worker + Durable Object that turns a prompt into an image with Workers AI, writes it to the workspace, and returns a shareable link via @cloudflare/workspace/assets.",
+  "description": "Example Worker + Durable Object that turns a prompt into an image with Workers AI, writes it to the workspace, and returns a shareable link via @cloudflare/computer/assets.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/workspace": "*"
+    "@cloudflare/computer": "*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",

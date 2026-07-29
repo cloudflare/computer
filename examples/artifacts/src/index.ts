@@ -17,8 +17,8 @@ import {
   type WorkspaceClient,
   WorkspaceServiceProxy,
   withWorkspace,
-} from "@cloudflare/workspace";
-import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/workspace/backends/worker";
+} from "@cloudflare/computer";
+import { WorkerBackend, type WorkerBackendOptions } from "@cloudflare/computer/backends/worker";
 
 export { WorkspaceServiceProxy };
 
@@ -44,7 +44,7 @@ interface ArtifactCreateOutput {
 }
 
 const WORKSPACE_ROOT = "/workspace";
-const SOURCE_REPO = "https://github.com/cloudflare/workspace";
+const SOURCE_REPO = "https://github.com/cloudflare/computer";
 const EXAMPLE_PATH = "examples/worker";
 const GIT_REMOTE = "origin";
 const SHARE_TOKEN_TTL = "24h";
@@ -143,7 +143,7 @@ async function handleCreate(request: Request, env: Env): Promise<Response> {
         sh`git init --initial-branch=main ${projectDir}`,
         sh`cat ${`${projectDir}/.git/HEAD`} >/dev/null`,
         "git add .",
-        sh`git commit -m ${`Create ${name} worker example`} --author ${"Cloudflare Workspace Artifacts Example <workspace-artifacts@example.invalid>"}`,
+        sh`git commit -m ${`Create ${name} worker example`} --author ${"Cloudflare Computer Artifacts Example <computer-artifacts@example.invalid>"}`,
       ].join(" && "),
       { cwd: projectDir },
     );

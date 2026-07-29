@@ -1,5 +1,5 @@
 // Worker + Durable Object hosting a minimal @cloudflare/think chat
-// agent. The Assistant DO owns one @cloudflare/workspace VFS with a
+// agent. The Assistant DO owns one @cloudflare/computer VFS with a
 // fast Dynamic Worker shell backend and a Cloudflare Container backend
 // for full Linux commands. Connect to it from a terminal with
 // `npm run chat`.
@@ -15,7 +15,7 @@
   "containers": [
     {
       "class_name": "Assistant",
-      // Built from the local Dockerfile, which copies wsd into a
+      // Built from the local Dockerfile, which copies computerd into a
       // small Debian image with Node/npm/git for real build and test
       // workflows.
       "image": "./Dockerfile",

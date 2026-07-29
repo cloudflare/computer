@@ -153,7 +153,7 @@ function executionTargetForEvent(
 
   const backend = stringField(detail, "backend");
   if (event.runtime === "workspace" && backend === "shell") return "worker-shell";
-  if (event.runtime === "workspace" && backend === "container") return "workspace-container";
+  if (event.runtime === "workspace" && backend === "container") return "computer-container";
   if (event.runtime === "sandbox" && toolForEvent(event, detail) === "exec") {
     return "sandbox-container";
   }
@@ -202,6 +202,6 @@ function isToolName(value: string | null): value is ToolName {
 
 function isExecutionTarget(value: string | null): value is ExecutionTarget {
   return (
-    value === "worker-shell" || value === "workspace-container" || value === "sandbox-container"
+    value === "worker-shell" || value === "computer-container" || value === "sandbox-container"
   );
 }

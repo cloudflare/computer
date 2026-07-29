@@ -1,6 +1,6 @@
 export type RuntimeId = "workspace" | "sandbox";
 export type EventRuntime = RuntimeId | "both";
-export type ExecutionTarget = "worker-shell" | "workspace-container" | "sandbox-container";
+export type ExecutionTarget = "worker-shell" | "computer-container" | "sandbox-container";
 
 export type RunEventKind =
   | "run_started"

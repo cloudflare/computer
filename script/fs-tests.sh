@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Filesystem conformance test harness for the wsd FUSE mount.
+# Filesystem conformance test harness for the computerd FUSE mount.
 # Each test runs in its own subdirectory with `set -e` so failures don't cascade.
 # Run from inside the container: MOUNT=/workspace fs-tests
 set -u

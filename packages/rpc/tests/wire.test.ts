@@ -222,8 +222,8 @@ describe("SyncRPC push convergence", () => {
 describe("SyncRPC pull convergence", () => {
   // Reproduces the FUSE → RPC direction observed broken in the
   // production container example: an exec'd command writes a
-  // file through FUSE on the wsd side, and the host's
-  // pullOnce(b, wsdRpc) is supposed to bring the bytes back. The
+  // file through FUSE on the computerd side, and the host's
+  // pullOnce(b, computerdRpc) is supposed to bring the bytes back. The
   // bug surfaced as HTTP 200 / 0 bytes on the subsequent RPC read,
   // suggesting the dirent transferred but the chunks didn't.
   let harness: Harness | undefined;
@@ -495,7 +495,7 @@ describe("push semantics — external vs sync peer", () => {
       // The push landed: currentRev bumped past 1.
       expect(currentRev(harness.db)).toBeGreaterThan(1);
       // pushRev was NOT advanced. Anything driving the
-      // outbound sync loop (a wsd with UPSTREAM_URL set) would
+      // outbound sync loop (a computerd with UPSTREAM_URL set) would
       // see the new entry on the next tick.
       expect(readWatermark(harness.db, "pushRev")).toBe(0);
       // The fetch cursor was NOT advanced either — the sender has

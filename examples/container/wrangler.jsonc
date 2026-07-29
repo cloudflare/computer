@@ -1,10 +1,10 @@
 {
   // Example: Worker + Durable Object hosting a Cloudflare Container whose
-  // ENTRYPOINT is the wsd daemon. This scaffold proves the wiring — the
+  // ENTRYPOINT is the computerd daemon. This scaffold proves the wiring — the
   // Worker reaches the DO, the DO boots the container, the container's
-  // wsd process answers /health on port 8080.
+  // computerd process answers /health on port 8080.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "workspace-container-example",
+  "name": "computer-container-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],
@@ -12,7 +12,7 @@
   "containers": [
     {
       "class_name": "ContainerExample",
-      // Built from the local Dockerfile, which COPYs the wsd binary
+      // Built from the local Dockerfile, which COPYs the computerd binary
       // staged into ./build/ by the predev / predeploy hook.
       "image": "./Dockerfile",
       "instance_type": "standard-2",
@@ -33,17 +33,17 @@
 
   // R2 bucket mounted into every Workspace at /workspace/r2 via
   // R2Bucket(...). Seed it once with:
-  //   npm run seed:r2 --workspace @example/workspace-container
+  //   npm run seed:r2 --workspace @example/computer-container
   // which uploads ./seed/data/hello.txt to the bucket.
   // `bucket_name` is what `wrangler dev` and `wrangler deploy` both
   // look at; omitting `preview_bucket_name` makes the same bucket
   // back the local miniflare and the deployed worker, which keeps
   // the seed scripts honest (a `--local` put and a `--remote` put
-  // both target `workspace-container-hello`).
+  // both target `computer-container-hello`).
   "r2_buckets": [
     {
       "binding": "Bucket",
-      "bucket_name": "workspace-container-hello"
+      "bucket_name": "computer-container-hello"
     }
   ],
 

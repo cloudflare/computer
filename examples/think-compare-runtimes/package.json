@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:wsd": "npm run build:docker --workspace @cloudflare/workspace-wsd",
-    "predev": "npm run build:wsd",
-    "predeploy": "npm run build:wsd",
+    "build:computerd": "npm run build:docker --workspace @cloudflare/computerd",
+    "predev": "npm run build:computerd",
+    "predeploy": "npm run build:computerd",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
@@ -16,12 +16,12 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cloudflare/computer": "*",
+    "@cloudflare/computer-rpc": "*",
     "@cloudflare/kumo": "^2.4.1",
     "@cloudflare/sandbox": "^0.11.0",
     "@cloudflare/shell": "^0.4.3",
     "@cloudflare/think": "^0.15.1",
-    "@cloudflare/workspace": "*",
-    "@cloudflare/workspace-rpc": "*",
     "@phosphor-icons/react": "^2.1.10",
     "@shikijs/core": "^4.2.0",
     "@shikijs/engine-javascript": "^4.2.0",

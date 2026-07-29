@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Minimal @cloudflare/think chat agent backed by a @cloudflare/workspace VFS. Talk to it from a terminal with the AI SDK v7 TUI.",
+  "description": "Minimal @cloudflare/think chat agent backed by a @cloudflare/computer VFS. Talk to it from a terminal with the AI SDK v7 TUI.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
@@ -16,8 +16,8 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.45",
     "@ai-sdk/tui": "^1.0.43",
+    "@cloudflare/computer": "*",
     "@cloudflare/think": "^0.15.1",
-    "@cloudflare/workspace": "*",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@modelcontextprotocol/server": "2.0.0",

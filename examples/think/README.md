@@ -9,9 +9,9 @@
 
 A minimal example that puts [`@cloudflare/think`][think] behind a
 terminal chat interface. The agent is a Durable Object with a
-[`@cloudflare/workspace`][workspace] VFS for a working directory and
+[`@cloudflare/computer`][workspace] VFS for a working directory and
 the shared file and shell tools from
-[`@cloudflare/workspace/tools`][tools]. The Workspace has both the
+[`@cloudflare/computer/tools`][tools]. The Workspace has both the
 fast worker shell backend and a container backend, so the same `exec`
 tool can run quick text commands or full Linux userland commands.
 There is no task workflow: you open a terminal, type, and talk to the
@@ -23,8 +23,8 @@ talks to the agent over the same WebSocket chat protocol a browser
 would use, so no bespoke HTTP route or transport is involved.
 
 [think]: https://www.npmjs.com/package/@cloudflare/think
-[workspace]: ../../packages/workspace
-[tools]: ../../packages/workspace/src/tools
+[workspace]: ../../packages/computer
+[tools]: ../../packages/computer/src/tools
 [aisdk7]: https://vercel.com/blog/ai-sdk-7
 
 ## Shape
@@ -35,9 +35,9 @@ client (npm run chat)                 worker
    │  AgentClient WebSocket              │
    ├────────────────────────────────────▶  Assistant DO (Think)
    │  /agents/assistant/<name>           │    ├── Workers AI model
-   │                                     │    └── @cloudflare/workspace VFS
+   │                                     │    └── @cloudflare/computer VFS
    │  ◀───────── streamed reply ─────────┤          ├── worker backend (env.LOADER)
-   │                                                └── container backend (wsd)
+   │                                                └── container backend (computerd)
 ```
 
 `src/index.ts` hands every request to `routeAgentRequest`, which
@@ -53,7 +53,7 @@ model, a Workspace, and the workspace tools.
 ## Tools
 
 The tools come from `createAITools()` in
-[`@cloudflare/workspace/tools`][tools]. This example enables the file
+[`@cloudflare/computer/tools`][tools]. This example enables the file
 tools and opts into `exec` by passing a shell backend description; it
 does not configure the assets publisher, so `publish` is not offered.
 
@@ -75,7 +75,7 @@ does not configure the assets publisher, so `publish` is not offered.
   and `git log` work from inside `exec` even though the shell isolate
   has no public network of its own. Only `https://` URLs are
   supported.
-- `"container"` — a Cloudflare Container running `wsd` over capnweb,
+- `"container"` — a Cloudflare Container running `computerd` over capnweb,
   modelled on [`examples/container`](../container). It has full Linux
   userland, public network, `npm`, `node`, `python`, package managers,
   test runners, and other real binaries on `$PATH`. It cold-starts
@@ -132,7 +132,7 @@ The worker is configured in [`wrangler.jsonc`](./wrangler.jsonc):
 - `LOADER` — Worker Loader binding. The Assistant's Workspace uses it
   to mint the Dynamic Worker that hosts the `exec` shell backend.
 - `containers` — builds [`Dockerfile`](./Dockerfile), which stages the
-  published `wsd` binary into a Debian image with Node 22, npm, npx,
+  published `computerd` binary into a Debian image with Node 22, npm, npx,
   git, and FUSE runtime libraries. The Assistant DO owns one
   container instance when the `container` backend is first used.
 - `Assistant` — the SQLite-backed Durable Object and container class.

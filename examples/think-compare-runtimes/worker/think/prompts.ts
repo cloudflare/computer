@@ -98,7 +98,7 @@ function sharedCodingPrompt(): string {
 
 function workspaceRuntimePrompt(): string {
   return [
-    "Runtime: Cloudflare Workspace.",
+    "Runtime: Cloudflare Computer.",
     "- Workspace file tools read and write durable workspace storage directly.",
     "- Start Workspace discovery with the worker shell for grep, find, ls, cat, pwd, head, tail, sed, and wc.",
     "- The workspace container is for Node, npm, package scripts, tests, and executable project scripts.",
