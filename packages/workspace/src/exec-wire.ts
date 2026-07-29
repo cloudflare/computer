@@ -80,15 +80,20 @@ function eventOf(frame: ExecFrame): WorkspaceExecEvent<ExecEncoding> {
   } as WorkspaceExecEvent<ExecEncoding>;
 }
 
+const encoder = new TextEncoder();
+
+export function encodeExecEvent(event: WorkspaceExecEvent<ExecEncoding>): Uint8Array {
+  return encoder.encode(`${JSON.stringify(frameOf(event))}\n`);
+}
+
 // Frame a stream of exec events as JSONL bytes for the wire.
 export function encodeExecEvents(
   events: ReadableStream<WorkspaceExecEvent<ExecEncoding>>,
 ): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
   return events.pipeThrough(
     new TransformStream<WorkspaceExecEvent<ExecEncoding>, Uint8Array>({
       transform(event, controller) {
-        controller.enqueue(encoder.encode(`${JSON.stringify(frameOf(event))}\n`));
+        controller.enqueue(encodeExecEvent(event));
       },
     }),
   );

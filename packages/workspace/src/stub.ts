@@ -67,7 +67,7 @@ import type {
   ArtifactsCLIResult,
 } from "./artifacts/index.js";
 import type { ShareOptions } from "./assets/index.js";
-import { encodeExecEvents } from "./exec-wire.js";
+import { encodeExecEvent } from "./exec-wire.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
 import { assertNotTemplate } from "./sh.js";
@@ -364,31 +364,40 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   stream(): ReadableStream<Uint8Array> {
     this.#claim();
     const consumer = this.#consumer;
+    let reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
     let exitCode = -1;
-    const source = new ReadableStream<WorkspaceExecEvent<E>>({
-      start: async (controller) => {
-        try {
-          const handle = await this.#handle;
-          const reader = (handle as ReadableStream<WorkspaceExecEvent<E>>).getReader();
+    return new ReadableStream<Uint8Array>(
+      {
+        pull: async (controller) => {
           try {
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              if (value.name === "exit") exitCode = value.value;
-              controller.enqueue(value);
+            if (reader === undefined) {
+              const handle = await this.#handle;
+              reader = (handle as ReadableStream<WorkspaceExecEvent<E>>).getReader();
             }
-          } finally {
-            reader.releaseLock();
+            const { value, done } = await reader.read();
+            if (done) {
+              reader.releaseLock();
+              reader = undefined;
+              controller.close();
+              consumer.resolve({ exitCode, pushed: 0, pulled: 0, skippedCount: 0 });
+              return;
+            }
+            if (value.name === "exit") exitCode = value.value;
+            controller.enqueue(encodeExecEvent(value as WorkspaceExecEvent<ExecEncoding>));
+          } catch (error) {
+            consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
+            controller.error(error);
           }
-          controller.close();
-          consumer.resolve({ exitCode, pushed: 0, pulled: 0, skippedCount: 0 });
-        } catch (error) {
+        },
+        cancel: async (reason) => {
           consumer.resolve({ exitCode: -1, pushed: 0, pulled: 0, skippedCount: 0 });
-          controller.error(error);
-        }
+          await reader?.cancel(reason);
+          reader?.releaseLock();
+          reader = undefined;
+        },
       },
-    });
-    return encodeExecEvents(source as ReadableStream<WorkspaceExecEvent<ExecEncoding>>);
+      { highWaterMark: 0 },
+    );
   }
 
   async kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void> {

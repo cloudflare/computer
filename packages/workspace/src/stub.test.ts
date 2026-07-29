@@ -422,6 +422,53 @@ describe("WorkspaceStub", () => {
     );
   });
 
+  it("shell.exec handle.stream() waits for the wire consumer to pull", async () => {
+    let pulls = 0;
+    const shellRpc: import("@cloudflare/workspace-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id: "e-1",
+          events: new ReadableStream({
+            pull(c) {
+              pulls += 1;
+              if (pulls < 10) {
+                c.enqueue({
+                  id: "e-1",
+                  seq: pulls,
+                  name: "stdout",
+                  value: new Uint8Array([pulls]),
+                });
+                return;
+              }
+              c.enqueue({ id: "e-1", seq: 10, name: "exit", value: 0 });
+              c.close();
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        const handle = await stub.shell.exec("noop");
+        const wire = handle.stream();
+        await Promise.resolve();
+        expect(pulls).toBe(0);
+
+        const reader = wire.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toContain('"name":"stdout"');
+        expect(pulls).toBeLessThan(10);
+        await reader.cancel();
+        reader.releaseLock();
+      },
+      { backend: backend({ shell: shellRpc }) },
+    );
+  });
+
   it("shell.exec handle rejects result() after stream() has claimed it", async () => {
     const shellRpc: import("@cloudflare/workspace-rpc").ShellRPC = {
       async exec() {
