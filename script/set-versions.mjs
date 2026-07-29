@@ -27,6 +27,7 @@ const PACKAGES = [
 // `git clone && wrangler dev` against any release tag pulls the
 // matching wsd image.
 const DOCKERFILES = [
+  "examples/codemode/Dockerfile",
   "examples/container/Dockerfile",
   "examples/think/Dockerfile",
   "examples/think-compare-runtimes/Dockerfile.workspace",
