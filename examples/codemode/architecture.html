@@ -309,6 +309,210 @@ return await state.readFile("/workspace/hello.txt");   // → stdout</pre>
         </p>
       </div>
 
+      <h2>Call sequence</h2>
+      <p class="muted">
+        Five participants, and only one of them can touch a file. Read these two diagrams as a pair:
+        the difference between them is the entire feature.
+      </p>
+
+      <h3>An unattended turn — the policy recognizes a read</h3>
+      <figure>
+        <svg viewBox="0 0 940 440" role="img" aria-label="Call sequence for an unattended turn">
+          <defs>
+            <marker id="sq-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#7f8a9a" />
+            </marker>
+            <style>
+              .sq-head { fill: #171a21; stroke: #2b313c; stroke-width: 1.5; }
+              .sq-name { fill: #e6e9ef; font: 600 12.5px -apple-system, "Segoe UI", sans-serif; }
+              .sq-role { fill: #9aa4b2; font: 10.5px "SF Mono", Menlo, monospace; }
+              .sq-life { stroke: #2b313c; stroke-width: 1.3; stroke-dasharray: 4 5; }
+              .sq-edge { stroke: #7f8a9a; stroke-width: 1.5; fill: none; marker-end: url(#sq-arrow); }
+              .sq-self { stroke: #33c48d; stroke-width: 1.5; fill: none; marker-end: url(#sq-arrow); }
+              .sq-cap { fill: #cbd5e1; font: 11.5px "SF Mono", Menlo, monospace; }
+              .sq-bg { fill: #0f1115; }
+              .sq-ok { fill: #5fd6a4; font: 11.5px "SF Mono", Menlo, monospace; }
+            </style>
+          </defs>
+
+          <rect class="sq-head" x="8" y="6" width="128" height="44" rx="9" />
+          <text class="sq-name" x="72" y="27" text-anchor="middle">client / human</text>
+          <text class="sq-role" x="72" y="42" text-anchor="middle">script/agent</text>
+          <rect class="sq-head" x="204" y="6" width="128" height="44" rx="9" stroke="#2f6f57" />
+          <text class="sq-name" x="268" y="27" text-anchor="middle" fill="#5fd6a4">Worker</text>
+          <text class="sq-role" x="268" y="42" text-anchor="middle">index.ts · agent.ts</text>
+          <rect class="sq-head" x="398" y="6" width="128" height="44" rx="9" />
+          <text class="sq-name" x="462" y="27" text-anchor="middle">Workers AI</text>
+          <text class="sq-role" x="462" y="42" text-anchor="middle">Kimi k2.6</text>
+          <rect class="sq-head" x="592" y="6" width="128" height="44" rx="9" />
+          <text class="sq-name" x="656" y="27" text-anchor="middle" fill="#6b7688">AgentSession</text>
+          <text class="sq-role" x="656" y="42" text-anchor="middle" fill="#6b7688">(not used)</text>
+          <rect class="sq-head" x="790" y="6" width="136" height="44" rx="9" stroke="#6b5d2f" />
+          <text class="sq-name" x="858" y="27" text-anchor="middle" fill="#ffd166">Example DO</text>
+          <text class="sq-role" x="858" y="42" text-anchor="middle">Workspace + files</text>
+
+          <path class="sq-life" d="M72,50 L72,430" />
+          <path class="sq-life" d="M268,50 L268,430" />
+          <path class="sq-life" d="M462,50 L462,430" />
+          <path class="sq-life" d="M656,50 L656,430" />
+          <path class="sq-life" d="M858,50 L858,430" />
+
+          <path class="sq-edge" d="M72,80 L268,80" />
+          <rect class="sq-bg" x="93" y="60" width="155" height="15" />
+          <text class="sq-cap" x="170" y="72" text-anchor="middle">POST /agent { prompt }</text>
+
+          <path class="sq-edge" d="M268,118 L858,118" />
+          <rect class="sq-bg" x="489" y="98" width="149" height="15" />
+          <text class="sq-cap" x="563" y="110" text-anchor="middle">getWorkspace() → stub</text>
+
+          <path class="sq-edge" d="M268,156 L462,156" />
+          <rect class="sq-bg" x="261" y="136" width="208" height="15" />
+          <text class="sq-cap" x="365" y="148" text-anchor="middle">generateText(prompt, { exec })</text>
+
+          <path class="sq-edge" d="M462,194 L268,194" />
+          <rect class="sq-bg" x="261" y="174" width="208" height="15" />
+          <text class="sq-cap" x="365" y="186" text-anchor="middle">exec { "ls /workspace", shell }</text>
+
+          <path class="sq-self" d="M268,224 L312,224 L312,246 L272,246" />
+          <rect class="sq-bg" x="320" y="226" width="232" height="15" />
+          <text class="sq-ok" x="320" y="238">decideApproval() → a read, no human</text>
+
+          <path class="sq-edge" d="M268,282 L858,282" />
+          <rect class="sq-bg" x="443" y="262" width="241" height="15" />
+          <text class="sq-cap" x="563" y="274" text-anchor="middle">ws.shell.exec(command, { backend })</text>
+
+          <path class="sq-edge" d="M858,320 L268,320" />
+          <rect class="sq-bg" x="466" y="300" width="195" height="15" />
+          <text class="sq-cap" x="563" y="312" text-anchor="middle">{ exitCode, stdout, stderr }</text>
+
+          <path class="sq-edge" d="M268,358 L462,358" />
+          <rect class="sq-bg" x="265" y="338" width="201" height="15" />
+          <text class="sq-cap" x="365" y="350" text-anchor="middle">tool result → model continues</text>
+
+          <path class="sq-edge" d="M268,396 L72,396" />
+          <rect class="sq-bg" x="43" y="376" width="254" height="15" />
+          <text class="sq-cap" x="170" y="388" text-anchor="middle">200 { status: completed, … }</text>
+        </svg>
+        <figcaption>
+          One HTTP request in, one out. The green self-call is the whole decision; because it
+          answered "read", nobody was asked anything.
+        </figcaption>
+      </figure>
+
+      <h3>A gated turn — the policy holds the command back</h3>
+      <figure>
+        <svg viewBox="0 0 940 760" role="img" aria-label="Call sequence for a gated turn">
+          <defs>
+            <style>
+              .sq-stop { stroke: #ff8a3d; stroke-width: 1.5; fill: none; marker-end: url(#sq-arrow); }
+              .sq-warn { fill: #ffb07d; font: 11.5px "SF Mono", Menlo, monospace; }
+              .sq-pause { fill: rgba(255,209,102,0.07); stroke: #6b5d2f; stroke-width: 1.2; stroke-dasharray: 5 4; }
+            </style>
+          </defs>
+
+          <rect class="sq-head" x="8" y="6" width="128" height="44" rx="9" />
+          <text class="sq-name" x="72" y="27" text-anchor="middle">client / human</text>
+          <text class="sq-role" x="72" y="42" text-anchor="middle">script/agent</text>
+          <rect class="sq-head" x="204" y="6" width="128" height="44" rx="9" stroke="#2f6f57" />
+          <text class="sq-name" x="268" y="27" text-anchor="middle" fill="#5fd6a4">Worker</text>
+          <text class="sq-role" x="268" y="42" text-anchor="middle">index.ts · agent.ts</text>
+          <rect class="sq-head" x="398" y="6" width="128" height="44" rx="9" />
+          <text class="sq-name" x="462" y="27" text-anchor="middle">Workers AI</text>
+          <text class="sq-role" x="462" y="42" text-anchor="middle">Kimi k2.6</text>
+          <rect class="sq-head" x="592" y="6" width="128" height="44" rx="9" stroke="#2f6f57" />
+          <text class="sq-name" x="656" y="27" text-anchor="middle" fill="#5fd6a4">AgentSession</text>
+          <text class="sq-role" x="656" y="42" text-anchor="middle">paused turn (DO)</text>
+          <rect class="sq-head" x="790" y="6" width="136" height="44" rx="9" stroke="#6b5d2f" />
+          <text class="sq-name" x="858" y="27" text-anchor="middle" fill="#ffd166">Example DO</text>
+          <text class="sq-role" x="858" y="42" text-anchor="middle">Workspace + files</text>
+
+          <path class="sq-life" d="M72,50 L72,750" />
+          <path class="sq-life" d="M268,50 L268,750" />
+          <path class="sq-life" d="M462,50 L462,750" />
+          <path class="sq-life" d="M656,50 L656,750" />
+          <path class="sq-life" d="M858,50 L858,750" />
+
+          <path class="sq-edge" d="M72,80 L268,80" />
+          <rect class="sq-bg" x="93" y="60" width="155" height="15" />
+          <text class="sq-cap" x="170" y="72" text-anchor="middle">POST /agent { prompt }</text>
+
+          <path class="sq-edge" d="M268,118 L858,118" />
+          <rect class="sq-bg" x="489" y="98" width="149" height="15" />
+          <text class="sq-cap" x="563" y="110" text-anchor="middle">getWorkspace() → stub</text>
+
+          <path class="sq-edge" d="M268,156 L462,156" />
+          <rect class="sq-bg" x="261" y="136" width="208" height="15" />
+          <text class="sq-cap" x="365" y="148" text-anchor="middle">generateText(prompt, { exec })</text>
+
+          <path class="sq-edge" d="M462,194 L268,194" />
+          <rect class="sq-bg" x="268" y="174" width="194" height="15" />
+          <text class="sq-cap" x="365" y="186" text-anchor="middle">exec { "echo hi &gt; f", shell }</text>
+
+          <path class="sq-stop" d="M268,224 L312,224 L312,246 L272,246" />
+          <rect class="sq-bg" x="320" y="226" width="246" height="15" />
+          <text class="sq-warn" x="320" y="238">decideApproval() → needs a human</text>
+
+          <path class="sq-edge" d="M268,282 L656,282" />
+          <rect class="sq-bg" x="352" y="262" width="221" height="15" />
+          <text class="sq-cap" x="462" y="274" text-anchor="middle">put(turnId, history, awaiting[])</text>
+
+          <path class="sq-edge" d="M268,320 L72,320" />
+          <rect class="sq-bg" x="56" y="300" width="228" height="15" />
+          <text class="sq-cap" x="170" y="312" text-anchor="middle">200 { awaiting-approval }</text>
+
+          <rect class="sq-pause" x="8" y="342" width="924" height="46" rx="8" />
+          <text class="sq-warn" x="470" y="362" text-anchor="middle">PAUSE — the command has not run. Nothing is in flight.</text>
+          <text class="sq-role" x="470" y="379" text-anchor="middle">The turn is a row in the AgentSession DO. The Worker can die here; it holds no state.</text>
+
+          <path class="sq-edge" d="M72,418 L268,418" />
+          <rect class="sq-bg" x="43" y="398" width="254" height="15" />
+          <text class="sq-cap" x="170" y="410" text-anchor="middle">POST /approvals/&lt;id&gt; { approved }</text>
+
+          <path class="sq-edge" d="M268,456 L656,456" />
+          <rect class="sq-bg" x="362" y="436" width="201" height="15" />
+          <text class="sq-cap" x="462" y="448" text-anchor="middle">resolve(id) → history if last</text>
+
+          <path class="sq-edge" d="M268,494 L462,494" />
+          <rect class="sq-bg" x="255" y="474" width="221" height="15" />
+          <text class="sq-cap" x="365" y="486" text-anchor="middle">replay(history + approval)</text>
+
+          <path class="sq-self" d="M268,524 L312,524 L312,546 L272,546" />
+          <rect class="sq-bg" x="320" y="526" width="260" height="15" />
+          <text class="sq-cap" x="320" y="538">decideApproval() re-runs — must agree</text>
+
+          <path class="sq-edge" d="M268,580 L858,580" />
+          <rect class="sq-bg" x="443" y="560" width="241" height="15" />
+          <text class="sq-cap" x="563" y="572" text-anchor="middle">ws.shell.exec(command, { backend })</text>
+
+          <path class="sq-edge" d="M858,618 L268,618" />
+          <rect class="sq-bg" x="466" y="598" width="195" height="15" />
+          <text class="sq-cap" x="563" y="610" text-anchor="middle">{ exitCode, stdout, stderr }</text>
+
+          <path class="sq-edge" d="M268,656 L462,656" />
+          <rect class="sq-bg" x="265" y="636" width="201" height="15" />
+          <text class="sq-cap" x="365" y="648" text-anchor="middle">tool result → model continues</text>
+
+          <path class="sq-edge" d="M268,700 L72,700" />
+          <rect class="sq-bg" x="43" y="680" width="254" height="15" />
+          <text class="sq-cap" x="170" y="692" text-anchor="middle">200 { status: completed, … }</text>
+        </svg>
+        <figcaption>
+          Two HTTP requests, one pause. The orange self-call is where the write was stopped —
+          <em>before</em> the Example DO was ever asked to run it, which is why the pause band is
+          safe to sit in indefinitely.
+        </figcaption>
+      </figure>
+
+      <div class="card">
+        <p class="note" style="margin:0">
+          The one subtlety worth internalising: <code>decideApproval()</code> runs
+          <strong>twice</strong> — once to gate, once on replay. The AI SDK re-checks the policy when
+          a turn resumes and converts an approved call into a denial if the answer changed. That is
+          why the policy is a pure function of the command and the backend, with no clock and no
+          mutable state: anything else would make approvals decay on their own.
+        </p>
+      </div>
+
       <h2>Request flows</h2>
       <div class="two">
         <div class="card">
