@@ -161,14 +161,26 @@ the only direction worth failing in.
 
 The matcher speaks two dialects, because the backends do. For `shell`
 and `container` it rejects redirection and composition (`>`, `|`, `;`,
-`&&`, `$(...)`) outright and then requires the leading verb to be a
-known read (`cat`, `ls`, `grep`, `find`, `git log`, …). For `codemode`
-it reads the JavaScript instead: every mention of `state` has to
-resolve to a named member, and every member has to be a read
-(`readFile`, `stat`, `readdir`, …). That is why
-`state["writeFile"](...)` is gated — it allowlists reads rather than
-blocklisting writes, so an unclassifiable access is a question, not a
-free pass.
+`&&`, `$(...)`) outright, then requires the leading verb to be a known
+read (`cat`, `ls`, `grep`, `find`, `git log`, …), and then — for verbs
+that write when handed the wrong flag — requires the flags to be known
+reads too. `find /workspace -name '*.ts'` runs;
+`find /workspace -delete` and `sort -o out in` ask. For `codemode` it
+reads the JavaScript instead: every mention of `state` has to resolve
+to a named member, and every member has to be a read (`readFile`,
+`stat`, `readdir`, …). That is why `state["writeFile"](...)` is gated.
+
+Both dialects allowlist rather than blocklist, which is the only
+version that holds up. A blocklist of writing flags has to keep pace
+with every flag that happens to write; an allowlist turns the ones
+nobody thought of into questions.
+
+Some commands are left out of the read set entirely because their
+writes cannot be read off their arguments: `sed` writes through `-i`
+and through a `w` command buried in its script, `uniq` and `tree` take
+an output file as a positional argument, `awk` and `echo` write through
+their own syntax, and `date -s` sets the clock. Listing them would buy
+false confidence rather than fewer approvals.
 
 The rules are configuration, not a hardcoded list. `runAgentTurn`
 takes a `policy`, and `never` turns the gate off for a backend
@@ -351,10 +363,40 @@ curl -X POST $B/agent -H 'content-type: application/json' -d '{
 The `/agent` response includes `toolCalls[].backend`, showing which
 backend the model chose for each command.
 
+### Watching it ask
+
+The quickest way to see an approval happen is the interactive driver.
+It starts a turn and prompts on the terminal for every command the
+policy holds back, which is what a real approval UI would do with the
+same two routes:
+
+```sh
+./script/agent "Create /workspace/greeting.txt containing exactly: hello world"
+```
+
+```
+APPROVAL NEEDED (codemode)
+  await state.writeFile("/workspace/greeting.txt", "hello world");
+  why: state.writeFile is not a recognized read-only call
+  approve? [y/N] y
+  approved
+  ran [codemode] await state.writeFile("/workspace/greeting.txt", "hello world");
+
+status  completed
+steps   2
+agent   Created /workspace/greeting.txt containing exactly `hello world`.
+```
+
+Answer `n` and the command never runs; the model is told it was denied
+and reports back. It defaults to a fresh workspace each run, so the
+first write always has to be approved. `AUTO_APPROVE=1` says yes to
+everything, and piping answers (`printf 'y\nn\n' | ./script/agent …`)
+scripts them.
+
 ### The approval flow by hand
 
-Use a fresh workspace name so the "nothing ran yet" step proves
-something:
+The same thing with two curls, which is what the driver is doing. Use a
+fresh workspace name so the "nothing ran yet" step proves something:
 
 ```sh
 B=http://127.0.0.1:8787/c/hitl-demo
@@ -472,6 +514,7 @@ examples/codemode/
   wrangler.jsonc          Worker + 2 DOs + worker_loaders + containers + AI
   Dockerfile              wsd + Debian userland for the container backend
   script/run              smoke test: file surface, 3 backends, approvals
+  script/agent            one agent turn, prompting y/n for each approval
   src/index.ts            Worker handler + DO (CodemodeExample, 3 backends)
   src/agent.ts            the optional Workers AI model loop
   src/tools/exec.ts       the exec tool advertised to the model
@@ -517,3 +560,9 @@ examples/codemode/
   strings, so it is conservative by construction and will ask about
   commands that are in fact harmless. Real enforcement belongs at the
   capability layer, as the [policy section](#the-policy) spells out.
+- **Telling the model not to reroute is advice, not a guarantee.** The
+  system prompt asks it not to retry a denied command on another
+  backend, and models do not always listen. That costs nothing: every
+  attempt is classified afresh, so a reroute either produces a command
+  the policy allows or asks again. The gate does not depend on the
+  model cooperating.

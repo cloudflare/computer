@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+// Drive one agent turn against a running `wrangler dev`, stopping to ask
+// on the terminal for every command the approval policy holds back.
+//
+// The HTTP surface answers approvals with a second request, which is
+// the right shape for a UI but an awkward way to see the feature work.
+// This script closes that loop: it starts a turn, and each time the
+// turn comes back waiting on a human it prints the command, asks y/n,
+// posts the answer, and picks the turn up where it left off. What you
+// see is what a real approval UI would drive.
+//
+//   ./script/agent "Create /workspace/notes.txt saying hello"
+//   NAME=foo ./script/agent "..."                 # workspace instance
+//   BASE_URL=http://127.0.0.1:8799 ./script/agent "..."
+//   ./script/agent                                # uses a default prompt
+//   AUTO_APPROVE=1 ./script/agent "..."           # say yes to everything
+//   printf 'y\nn\n' | ./script/agent "..."        # scripted answers
+
+const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+// A fresh instance by default, so a demo starts from an empty tree and
+// "the file is not there yet" means what it looks like.
+const NAME = process.env.NAME ?? `agent-${Date.now().toString(36)}`;
+const PROMPT =
+  process.argv.slice(2).join(" ") ||
+  "Create /workspace/greeting.txt containing exactly: hello world";
+
+const base = `${BASE_URL}/c/${NAME}`;
+
+const bold = (s) => `\u001b[1m${s}\u001b[0m`;
+const dim = (s) => `\u001b[2m${s}\u001b[0m`;
+const green = (s) => `\u001b[32m${s}\u001b[0m`;
+const red = (s) => `\u001b[31m${s}\u001b[0m`;
+const yellow = (s) => `\u001b[33m${s}\u001b[0m`;
+
+async function post(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`${url} returned HTTP ${response.status}: ${text.slice(0, 200)}`);
+  }
+  if (parsed.error != null) {
+    throw new Error(`${url} returned HTTP ${response.status}: ${parsed.error}`);
+  }
+  return parsed;
+}
+
+function reportRan(toolCalls, alreadyReported) {
+  for (const call of toolCalls.slice(alreadyReported)) {
+    const status = call.exitCode === 0 ? green("ran") : red(`exit ${call.exitCode}`);
+    console.log(`  ${status} ${dim(`[${call.backend}]`)} ${call.command.replace(/\n/g, " ")}`);
+    const out = (call.stdout || call.stderr).trim();
+    if (out.length > 0) console.log(dim(`       ${out.slice(0, 200).replace(/\n/g, "\n       ")}`));
+  }
+  return toolCalls.length;
+}
+
+/**
+ * Read answers a line at a time from stdin.
+ *
+ * Not `node:readline`, because a piped answer arrives and ends the
+ * stream while the first model call is still in flight, and readline
+ * then rejects the question that follows with "readline was closed".
+ * Buffering from the start works for a terminal and a pipe alike.
+ * Returns null once stdin has no more to give.
+ */
+function lineReader() {
+  const ready = [];
+  const waiting = [];
+  let buffer = "";
+  let ended = false;
+
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    let index = buffer.indexOf("\n");
+    while (index >= 0) {
+      const line = buffer.slice(0, index);
+      buffer = buffer.slice(index + 1);
+      const waiter = waiting.shift();
+      if (waiter) waiter(line);
+      else ready.push(line);
+      index = buffer.indexOf("\n");
+    }
+  });
+  process.stdin.on("end", () => {
+    ended = true;
+    if (buffer.length > 0) {
+      const line = buffer;
+      buffer = "";
+      const waiter = waiting.shift();
+      if (waiter) waiter(line);
+      else ready.push(line);
+    }
+    while (waiting.length > 0) waiting.shift()(null);
+  });
+
+  return {
+    next() {
+      if (ready.length > 0) return Promise.resolve(ready.shift());
+      if (ended) return Promise.resolve(null);
+      return new Promise((resolve) => waiting.push(resolve));
+    },
+  };
+}
+
+const reader = lineReader();
+const autoApprove = process.env.AUTO_APPROVE === "1";
+
+/** Ask the human. No answer left on stdin means no. */
+async function askApproval() {
+  if (autoApprove) {
+    console.log(`  approve? ${dim("[y/N]")} y ${dim("(AUTO_APPROVE)")}`);
+    return true;
+  }
+  process.stdout.write(`  approve? ${dim("[y/N]")} `);
+  const answer = await reader.next();
+  if (answer === null) {
+    console.log(dim("(no answer on stdin, treating as no)"));
+    return false;
+  }
+  if (!process.stdin.isTTY) console.log(answer.trim());
+  return /^y(es)?$/i.test(answer.trim());
+}
+
+try {
+  console.log(`${bold("workspace")} ${NAME}   ${dim(base)}`);
+  console.log(`${bold("prompt")}    ${PROMPT}\n`);
+
+  let turn = await post(`${base}/agent`, { prompt: PROMPT });
+  let reported = reportRan(turn.toolCalls, 0);
+
+  while (turn.status === "awaiting-approval") {
+    for (const approval of turn.pendingApprovals) {
+      console.log(`\n${yellow("APPROVAL NEEDED")} ${dim(`(${approval.backend})`)}`);
+      console.log(`  ${bold(approval.command.replace(/\n/g, "\n  "))}`);
+      console.log(`  ${dim(`why: ${approval.reason}`)}`);
+
+      const approved = await askApproval();
+
+      // Nothing has run at this point. Approving is what executes it.
+      const outcome = await post(`${base}/approvals/${approval.approvalId}`, {
+        approved,
+        ...(approved ? {} : { reason: "denied at the prompt" }),
+      });
+      console.log(approved ? green("  approved") : red("  denied"));
+      turn = outcome;
+      reported = reportRan(turn.toolCalls, reported);
+    }
+  }
+
+  console.log(`\n${bold("status")}  ${turn.status}`);
+  console.log(`${bold("steps")}   ${turn.stepsUsed}`);
+  if (turn.text) console.log(`${bold("agent")}   ${turn.text}`);
+  console.log(dim(`\nturn record: curl -s ${base}/agent/${turn.turnId}`));
+} catch (error) {
+  console.error(red(`\nFAIL: ${error.message}`));
+  process.exitCode = 1;
+} finally {
+  process.stdin.pause();
+}
