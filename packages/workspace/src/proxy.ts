@@ -103,8 +103,8 @@ export class ArtifactsCLITarget extends RpcTarget {
 }
 
 // WorkspaceServiceProxy — a loopback WorkerEntrypoint that
-// exposes the host DO's getWorkspace() method as a callable
-// Fetcher binding. Wired into a Dynamic Worker's env by a
+// exposes the host DO's Workspace stub as a callable Fetcher
+// binding. Wired into a Dynamic Worker's env by a
 // Worker Loader callback so the loaded Worker can reach the
 // host Workspace without being handed the DO namespace
 // directly.
@@ -136,7 +136,7 @@ export class ArtifactsCLITarget extends RpcTarget {
 // The proxy resolves env[binding] at call time — the same lazy
 // lookup WorkspaceProxy does for the /ws upgrade path — so the
 // DO class doesn't need to live in @cloudflare/workspace. Any
-// DO that exposes a `getWorkspace(): WorkspaceStub` RPC method
+// DO that exposes a `__getWorkspaceStub(): WorkspaceStub` RPC method
 // works.
 export interface WorkspaceServiceProxyProps {
   // Name of a DurableObjectNamespace binding in env. The proxy
@@ -148,12 +148,12 @@ export interface WorkspaceServiceProxyProps {
 }
 
 export class WorkspaceServiceProxy extends WorkerEntrypoint<unknown, WorkspaceServiceProxyProps> {
-  // Forward to the host DO's getWorkspace() method. The DO class
-  // is expected to expose this method; both the container
-  // and worker example DOs do.
+  // Forward to the host DO's Workspace stub accessor. The method
+  // name is intentionally private-looking so user code reaches for
+  // `getWorkspace(stub)` instead of calling it directly.
   async getWorkspace(): Promise<unknown> {
-    const stub = this.#hostStub<{ getWorkspace(): Promise<unknown> }>();
-    return stub.getWorkspace();
+    const stub = this.#hostStub<{ __getWorkspaceStub(): Promise<unknown> }>();
+    return stub.__getWorkspaceStub();
   }
 
   // Optional Artifacts CLI hook used by the worker-backend shell.

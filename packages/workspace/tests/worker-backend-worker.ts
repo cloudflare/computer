@@ -19,8 +19,7 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { WorkerBackend } from "../src/backends/worker/index.js";
-import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
-import { Workspace } from "../src/index.js";
+import { type DurableObjectStorageLike, getWorkspace, withWorkspace } from "../src/index.js";
 
 export { WorkspaceServiceProxy } from "../src/proxy.js";
 
@@ -29,23 +28,20 @@ export interface Env {
   LOADER: WorkerLoader;
 }
 
-export class HostDO extends DurableObject<Env> {
-  readonly #workspace: Workspace;
+export class HostDO extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
+  const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
+  return {
+    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    backends: [
+      new WorkerBackend({
+        loader: env.LOADER,
+        workspace: { binding: "HOST", id: ctx.id.toString() },
+        ctx,
+      }),
+    ],
+  };
+}) {
   #seeded: Promise<void> | undefined;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
-      backends: [
-        new WorkerBackend({
-          loader: env.LOADER,
-          workspace: { binding: "HOST", id: ctx.id.toString() },
-          ctx,
-        }),
-      ],
-    });
-  }
 
   // The VFS is empty on a fresh DO — not even /workspace exists.
   // The wsd-container example seeds the mount root through wsd's
@@ -54,32 +50,29 @@ export class HostDO extends DurableObject<Env> {
   // /workspace directly.
   #seed(): Promise<void> {
     if (this.#seeded === undefined) {
-      this.#seeded = this.#workspace.fs.mkdir("/workspace", { recursive: true });
+      this.#seeded = (async () => {
+        using ws = await getWorkspace(this);
+        await ws.fs.mkdir("/workspace", { recursive: true });
+      })();
     }
     return this.#seeded;
   }
 
-  // Required by WorkspaceServiceProxy: the loopback proxy looks
-  // the host DO up by name and calls getWorkspace() to obtain the
-  // stub it returns to the Dynamic Worker. The shell's per-exec
-  // env.HOST.getWorkspace() call lands here.
-  async getWorkspace(): Promise<WorkspaceStub> {
-    await this.#workspace.ready();
-    return this.#workspace.stub();
-  }
-
   async writeFile(path: string, body: string): Promise<void> {
     await this.#seed();
-    await this.#workspace.fs.writeFile(path, body);
+    using ws = await getWorkspace(this);
+    await ws.fs.writeFile(path, body);
   }
 
   async readFile(path: string): Promise<string> {
-    return this.#workspace.fs.readFile(path, "utf8");
+    using ws = await getWorkspace(this);
+    return ws.fs.readFile(path, "utf8");
   }
 
   async exec(command: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     await this.#seed();
-    const handle = await this.#workspace.shell.exec(command, {
+    using ws = await getWorkspace(this);
+    const handle = await ws.shell.exec(command, {
       encoding: "utf8",
     });
     const result = await handle.result();
