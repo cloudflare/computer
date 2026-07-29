@@ -1,82 +1,108 @@
-# 09. Tool Interface (Agents)
+# 09. Tool interface (agents)
 
-> [!IMPORTANT]
-> The `@cloudflare/fs-tools` package described here is **not yet
-> implemented**. The substrate (`workspace.fs.*`, `workspace.shell.exec`)
-> is in place; only the AI-SDK wrappers and the `FileStore` abstraction
-> are missing. This doc remains the design target.
->
-> Git access already ships through `workspace.git`, the third major
-> surface on `Workspace` alongside `fs` and `shell`. The original plan
-> was a sibling `@cloudflare/git-tools` package, but the typed and
-> argv-driven APIs (`workspace.git.clone(...)`,
-> `workspace.git.cli({ argv })`) live in `@cloudflare/workspace/git`
-> today. AI-SDK tool wrappers around that surface can land later
-> against a stable target. See
-> [`13_git_interface.md`](./13_git_interface.md).
+`@cloudflare/workspace/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`. The first provider target is the AI SDK because it is the tool layer used by the `agents` SDK and the Think example.
 
-The `@cloudflare/fs-tools` package ships ready-made
-[AI SDK](https://github.com/vercel/ai) tools that drive a `Workspace`
-through its `FileStore` adapter. Drop them into a `@cloudflare/agents`
-agent and the model can read, write, and edit files in the workspace
-without you wiring tool definitions by hand.
+The tools are thin wrappers over the existing `Workspace` surfaces:
+
+- `workspace.fs` for file reads, writes, edits, and directory listing.
+- `workspace.shell.exec` for command execution when the caller opts in.
+- `workspace.assets` for publishing generated files when an assets publisher is configured.
+
+Git access already ships through `workspace.git`, the third major surface on `Workspace` alongside `fs` and `shell`. AI SDK tool wrappers around that surface can land later against a stable target. See [`13_git_interface.md`](./13_git_interface.md).
 
 ## What ships
 
-| Tool | Purpose |
+| Export | Purpose |
 | --- | --- |
+| `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
 | `createReadTool` | Memory-efficient, line-windowed file read. |
 | `createWriteTool` | Whole-file write with a UTF-8 byte cap. |
-| `createEditTool` | Fuzzy-matched targeted replacements with unified-diff preview. |
-| `createGrepTool` | Recursive content search across the workspace. |
-| `createExecTool` | Run a shell command inside the sandbox container. |
+| `createEditTool` | Exact targeted replacements with unified-diff preview. |
+| `createListTool` | One-level directory listing. |
+| `createExecTool` | Run a shell command through a configured Workspace backend. |
+| `createShareTool` | Publish a workspace file through `workspace.assets`. |
+| `WorkspaceFileStore` | Adapt `Workspace.fs` to the file-store shape used by the file tools. |
 
-Plus the low-level building blocks:
-
-- `WorkspaceFileStore` — adapts a `Workspace` to the `FileStore` shape
-  the tools consume.
-- `InMemoryFileStore` — in-memory implementation for tests.
-- `FileStore`, `FileStat` types and the diff helpers (`generateDiffString`,
-  `generateUnifiedPatch`, `applyEditsToNormalizedContent`, etc.).
+The fixed tool names from `createAITools()` are `read`, `write`, `edit`, and `ls`. When present, the conditional tool names are also fixed: `exec` for shell commands and `share` for asset publishing.
 
 ## Wiring up
 
 ```ts
-import { AIChatAgent } from "@cloudflare/agents"; // TODO: confirm exact subpath, e.g. "@cloudflare/agents/ai-chat-agent"
 import { Workspace } from "@cloudflare/workspace";
-import {
-  WorkspaceFileStore,
-  createReadTool,
-  createWriteTool,
-  createEditTool,
-  createGrepTool,
-  createExecTool,
-} from "@cloudflare/fs-tools";
+import { createAITools } from "@cloudflare/workspace/tools";
 
-export class Agent extends AIChatAgent<Env> {
+export class Agent {
   workspace: Workspace;
 
-  constructor(...args: ConstructorParameters<typeof AIChatAgent>) {
-    super(...(args as [any, any]));
-    this.workspace = new Workspace({ /* ... */ });
+  constructor(ctx: DurableObjectState) {
+    this.workspace = new Workspace({
+      storage: ctx.storage,
+    });
   }
 
-  tools() {
-    const store = new WorkspaceFileStore(this.workspace);
-    return {
-      read:  createReadTool({ store }),
-      write: createWriteTool({ store }),
-      edit:  createEditTool({ store }),
-      grep:  createGrepTool({ workspace: this.workspace }),
-      exec:  createExecTool({ workspace: this.workspace }),
-    };
+  getTools() {
+    return createAITools({
+      workspace: this.workspace,
+      read: { maxBytes: 32 * 1024, maxLines: 800 },
+    });
   }
 }
 ```
 
-The tools are plain AI SDK `Tool` objects — pass them straight to
-`generateText` / `streamText` or expose them through the agent's tool
-registry.
+Pass `shell` only when the `Workspace` was constructed with matching backend ids:
+
+```ts
+const workspace = new Workspace({
+  storage: ctx.storage,
+  backends: [
+    new WorkerBackend({ id: "shell", /* ... */ }),
+    new CloudflareContainerBackend({ id: "container", /* ... */ }),
+  ],
+});
+
+const tools = createAITools({
+  workspace,
+  shell: {
+    defaultBackend: "shell",
+    backends: {
+      shell: {
+        description: "Fast Worker shell with built-in textual commands.",
+      },
+      container: {
+        description: "Full Linux userland in a Cloudflare Container.",
+      },
+    },
+  },
+});
+```
+
+The returned value is an AI SDK `ToolSet`. Pass it to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
+
+## `createAITools`
+
+```ts
+createAITools({
+  workspace,
+  readonly?,
+  assets?,
+  read?,
+  write?,
+  edit?,
+  shell?,
+});
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `workspace` | required | A `Workspace` or structural equivalent with `fs`, and optionally `shell`, `assets`, and `sessionId`. |
+| `readonly` | `false` | When true, return only `read` and `ls`. This omits mutation tools, `exec`, and `share` even if other options are present. |
+| `assets` | `true` | Set to `false` to omit `share`. When not false, `share` appears only if `workspace.assets` is configured. |
+| `read` | default caps | Options passed to `createReadTool`. |
+| `write` | default caps | Options passed to `createWriteTool`. Ignored when `readonly` is true. |
+| `edit` | default caps | Options passed to `createEditTool`. Ignored when `readonly` is true. |
+| `shell` | omitted | Options passed to `createExecTool`. `exec` appears only when this is present and `readonly` is not true. |
+
+`createAITools({ workspace, readonly: true })` is the safe mode for agents that should inspect a workspace but not change it or run commands.
 
 ## `read`
 
@@ -93,16 +119,40 @@ Schema:
 
 ```ts
 {
-  path:   string;            // absolute path
-  offset?: number;           // 1-indexed start line
-  limit?:  number;           // max lines this call
+  path: string;
+  offset?: number; // 1-indexed start line
+  limit?: number;  // max lines this call
 }
 ```
 
-Returns the line window plus a `nextOffset` whenever the result was
-truncated, so the model can call `read` again to keep going. Lazy
-through `store.readChunks(path)` — never materializes the full file
-unless the file itself fits in the budget.
+Returns the line window plus `nextOffset` whenever the result was truncated, so the model can call `read` again to keep going. Reads stream through `store.readChunks(path)` and stop as soon as the line or byte cap is hit.
+
+## `ls`
+
+```ts
+createListTool({ workspace });
+```
+
+Schema:
+
+```ts
+{
+  path: string;
+}
+```
+
+Calls `workspace.fs.readdir(path)` and returns:
+
+```ts
+{
+  path: string;
+  entries: Array<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+  }>;
+}
+```
 
 ## `write`
 
@@ -118,14 +168,12 @@ Schema:
 
 ```ts
 {
-  path:    string;
+  path: string;
   content: string;
 }
 ```
 
-Overwrites the file. Preserves an existing file's `mode` so executable
-scripts keep their `+x` bit. Rejects writes larger than `maxBytes` with
-a structured error pointing the model at the `edit` tool.
+Overwrites the file. Preserves an existing file's `mode` so executable scripts keep their executable bit. Rejects writes larger than `maxBytes` with a structured error pointing the model at the `edit` tool or a smaller write.
 
 ## `edit`
 
@@ -141,126 +189,114 @@ Schema:
 
 ```ts
 {
-  path:  string;
+  path: string;
   edits: Array<{ oldText: string; newText: string }>;
 }
 ```
 
-Each edit is matched against the *original* file content (not
-incrementally), so overlapping or nested edits are rejected. The tool
-handles:
-
-- BOM stripping and line-ending normalization (LF for matching, restored
-  on write).
-- Fuzzy matching that tolerates whitespace drift.
-- Unified-diff generation for the model to review.
-
-## `grep`
-
-```ts
-createGrepTool({ workspace, maxHits?, maxBytesPerLine? });
-```
-
-| Option | Default | Notes |
-| --- | --- | --- |
-| `maxHits` | 200 | Hard cap on returned hits. Truncation is reported in the result. |
-| `maxBytesPerLine` | 1 KiB | Lines longer than this are truncated to keep the model context manageable. |
-
-Schema:
-
-```ts
-{
-  pattern:     string;            // literal by default, or a regex if `regex: true`
-  path:        string;            // absolute path; directory or file
-  regex?:      boolean;           // treat pattern as a regex
-  ignoreCase?: boolean;
-  glob?:       string;            // restrict to paths matching this glob
-}
-```
-
-Delegates to `workspace.fs.grep` (see
-[04. Filesystem Interface](./04_filesystem_interface.md#grep)). Runs
-container-side when a sandbox is available so big trees use ripgrep;
-falls back to the DO-side scan otherwise. Returns
-`{ hits: Array<{ path, line, text }>, truncated: boolean }` so the model
-can tell when results were capped and refine the query.
+Each edit is matched against the original file content, not incrementally. Overlapping or nested edits are rejected. The tool normalizes line endings for matching, restores the original line ending style on write, preserves the existing file mode, and returns a unified patch for review.
 
 ## `exec`
 
 ```ts
-createExecTool({ workspace, defaultCwd?, allowedCommands?, timeoutMs? });
+createExecTool({
+  workspace,
+  backends,
+  defaultBackend,
+  maxBytes?,
+});
 ```
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `defaultCwd` | workspace root | Applied when the model doesn't pass `cwd`. |
-| `allowedCommands` | `undefined` (anything) | Optional allow-list of command prefixes. Anything else is rejected before reaching the sandbox. |
-| `timeoutMs` | 60_000 | Auto-`kill()` after this long. Set to `0` to disable. |
+| `backends` | required | Map of backend id to a model-facing description. |
+| `defaultBackend` | required | Backend used when the model omits `backend`. Must be a key in `backends`. |
+| `maxBytes` | 64 KiB | UTF-8 byte cap for each of stdout and stderr. |
 
 Schema:
 
 ```ts
 {
-  command: string;                // full command line, run through a shell
-  cwd?:    string;                // absolute path inside the workspace
+  command: string;
+  cwd?: string;
+  backend?: string;
 }
 ```
 
-Calls `Workspace.shell.exec` with `encoding: "utf8"`, waits for
-`result()`, and returns
-`{ exitCode, stdout, stderr, truncated }`. stdout and stderr are each
-capped at a fixed byte budget (default 32 KiB) so a chatty command
-can't blow the model's context window; `truncated` flags when the cap
-was hit. See [05. Shell Interface](./05_shell_interface.md) for the
-underlying API and the open questions around long-running execs.
+Calls `workspace.shell.exec(command, { cwd, encoding: "utf8", backend })`, waits for `result()`, and returns:
 
-Wire this tool up carefully: it executes arbitrary shell commands
-inside the sandbox. Pair it with `allowedCommands` (or a system-prompt
-policy) unless the agent is fully trusted.
+```ts
+{
+  command: string;
+  cwd: string | null;
+  backend: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+```
+
+`exec` is opt-in. `createAITools()` includes it only when the caller passes `shell` options and `readonly` is not true. The backend descriptions are included in the tool description so the model can choose the cheapest backend that can run the command.
+
+Wire this tool up carefully: it executes arbitrary shell commands inside the configured backend. Use `readonly: true` for inspection-only agents, or omit `shell` when command execution is not part of the agent's job.
+
+## `share`
+
+```ts
+createShareTool({ workspace });
+```
+
+Schema:
+
+```ts
+{
+  path: string;
+  expiresAfterMs?: number;
+}
+```
+
+Calls `workspace.assets.share(path, { expiresAfter, prefix })` and returns either:
+
+```ts
+{ ok: true; url: string }
+```
+
+or:
+
+```ts
+{ ok: false; error: string }
+```
+
+The default expiry is one hour. The prefix is `agent-${workspace.sessionId}` so generated links are grouped by workspace session.
+
+`createAITools()` includes `share` by default when `readonly` is not true, `assets` is not false, and `workspace.assets` is configured. Pass `assets: false` to hide the tool even when credentials are present.
 
 ## `FileStore`
 
-The shape the tools depend on:
+The file tools depend on this shape:
 
 ```ts
 interface FileStore {
   stat(path: string): Promise<FileStat | null>;
-  read(path: string): Promise<Uint8Array | null>;
-  readChunks(path: string): AsyncIterable<Uint8Array>;
+  readAll(path: string): Promise<Uint8Array | null>;
+  readChunks(path: string, byteOffset?: number, byteLength?: number): AsyncIterable<Uint8Array>;
   write(path: string, bytes: Uint8Array, options?: { mode?: number }): Promise<void>;
 }
 
 interface FileStat {
-  size:  number;
-  mode:  number;
+  size: number;
+  mode?: number;
   mtime: number;
-  type:  "file" | "dir";
 }
 ```
 
-`WorkspaceFileStore` adapts these to `Workspace.fs.readFile` /
-`writeFile` / `stat`. Custom stores let the same tools drive an SSH
-bridge, a remote git working tree, or any other FS-shaped backend.
-
-Note: `grep` and `exec` take the `Workspace` directly rather than a
-`FileStore`. They need the shell and search surfaces, which aren't part
-of the `FileStore` contract.
+`WorkspaceFileStore` adapts `Workspace.fs.stat`, `Workspace.fs.readFile`, `Workspace.fs.writeFile`, and `Workspace.fs.mkdir` to this contract. Custom stores can use the same tools against another filesystem-shaped backend.
 
 ## Conventions for agents
 
-- Tools take absolute paths. Pre-resolve user input against the
-  configured workspace root before calling (see
-  [01. VFS](./01_vfs.md)).
-- The `read` tool returns continuation offsets — feed them back to the
-  model on truncation rather than asking for the whole file.
-- Pair the `edit` tool with a system prompt that tells the model edits
-  apply against the *original* file. Models that incrementally update
-  their mental model of the file will produce overlapping edits and
-  get the rejection error.
-- The `grep` tool returns a `truncated` flag when its hit cap is
-  reached — prompt the model to refine the query instead of asking for
-  more pages.
-- The `exec` tool is the most dangerous of the set. Use
-  `allowedCommands` to limit blast radius, and treat its
-  `stdout`/`stderr` as untrusted attacker-controlled input when
-  feeding them back into the model.
+- Tools take absolute paths. Pre-resolve user input against the configured workspace root before calling. See [01. VFS](./01_vfs.md).
+- The `read` tool returns continuation offsets. Feed them back to the model on truncation rather than asking for the whole file.
+- Pair the `edit` tool with a system prompt that says edits apply against the original file. Models that incrementally update their mental model of the file will produce overlapping edits and get a rejection error.
+- Describe every shell backend in plain language. The model reads those descriptions when deciding where a command should run.
+- Treat `exec` output as untrusted text when feeding it back into the model.
+- Use `readonly: true` for review, indexing, or support agents that should not modify the workspace.

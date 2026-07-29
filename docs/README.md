@@ -21,7 +21,7 @@ It provides:
  - Durability over DO restarts for all file operations.
  - A pluggable shell backend: a Cloudflare Container running the `wsd` FUSE daemon (full Linux userland) or a Dynamic Worker running [just-bash](https://github.com/vercel-labs/just-bash) (no container, broad textual tooling).
  - Workspace constructable without a backend, for filesystem-only use cases.
- - Out-of-the-box tools for `@cloudflare/agents`. **(not yet implemented)**
+ - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/workspace/tools`.
 
 It comes with the following limitations:
 
@@ -46,6 +46,7 @@ The package ships several entrypoints:
 | `@cloudflare/workspace/backends/worker` | `WorkerBackend` and the bundled just-bash shell. The shell ships as a record of code-split modules the Dynamic Worker loads on demand: a ~290 KB entry parsed on cold start, plus ~2.5 MB of chunks that stay cold until a script reaches for them. |
 | `@cloudflare/workspace/git` | Isomorphic-git glue for working with checkouts inside the workspace. |
 | `@cloudflare/workspace/artifacts` | `createArtifact`, a session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
+| `@cloudflare/workspace/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional asset sharing. |
 
 A consumer that only uses the container backend never imports the
 worker subpath, so the just-bash payload tree-shakes away.
@@ -228,7 +229,7 @@ above, then dive into the area you're working on.
 | [06. Mount Interface](./06_mount_interface.md) | Pre-filling paths from R2, Artifacts, GitHub, and custom sources. **(not yet implemented)** |
 | [07. Injected Service](./07_injected_service.md) | The in-container `wsd` service that backs FUSE and shell. |
 | [08. Capnweb Interface](./08_capnweb_interface.md) | RPC wire protocol between the DO and the sandbox. |
-| [09. Tool Interface (Agents)](./09_tool_interface.md) | Ready-made tools for `@cloudflare/agents`. **(not yet implemented)** |
+| [09. Tool Interface (Agents)](./09_tool_interface.md) | Ready-made AI SDK tools for `@cloudflare/agents`. |
 | [10. Project Layout](./10_project_layout.md) | Source tree of this package and how the pieces fit together. |
 | [11. Lifecycle](./11_lifecycle.md) | DO incarnations, container lifetime, capnweb session lifecycle, and hibernation. |
 | [12. Worker backend](./12_worker_backend.md) | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
