@@ -26,6 +26,17 @@ back — anything that writes, and everything on `container` — pause the
 turn until a human answers, which is what the
 [approval flow](#human-in-the-loop-approval) below is about.
 
+> [!TIP]
+> [`architecture.html`](architecture.html) draws all of this: the
+> system diagram, the call sequence for an unattended turn beside a
+> gated one, and every branch of the approval route. It is a
+> standalone page with no build step, and it is the fastest way in if
+> you would rather see the shape than read it.
+>
+> ```sh
+> open examples/codemode/architecture.html
+> ```
+
 ## What makes codemode different
 
 The `shell` and `container` backends take a **shell command line**.
