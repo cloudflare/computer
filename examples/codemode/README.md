@@ -499,7 +499,7 @@ a model nor a container:
 npm test --workspace @example/workspace-codemode
 ```
 
-Three suites. `approval-policy.test.ts` pins the policy: which commands
+Four suites. `approval-policy.test.ts` pins the policy: which commands
 are recognized reads, that redirection is gated and that a pipeline is
 judged one stage at a time, that
 `state["writeFile"]` does not slip past the allowlist, and that the
@@ -511,6 +511,32 @@ scripted model (`MockLanguageModelV3`), asserting against a fake
 workspace that a gated command **never reaches `shell.exec`**, that the
 message history survives a JSON round trip, and that approving runs the
 held-back command while rejecting does not.
+
+`approval-policy.effects.test.ts` is the one that earns its keep
+differently. The other three assert what the code was meant to do,
+which cannot find the mistake that matters here: the matcher and its
+tests are written by the same hand, so they miss the same cases. Both
+real defects in this policy were found by running the agent and
+noticing, not by a test.
+
+So that suite checks the claim against the world. It generates a corpus
+— every allowlisted verb crossed with argument shapes including the
+flags that turn a read into a write — keeps the commands the policy
+would run **unattended**, and executes each one under real `just-bash`
+against a recording filesystem. The property is one-directional:
+
+> a command the policy allows unattended must write nothing
+
+Currently 630 commands generated, 475 allowed, and the whole suite
+runs in well under a second. Reintroduce the `find -delete` hole and it
+fails naming every file that would have been deleted. The verbs come
+from `READ_ONLY_COMMANDS` itself rather than a copy, so widening the
+policy later puts the new verb under test without anybody remembering
+to.
+
+It does not cover the `container` backend, which runs GNU coreutils
+rather than just-bash and can behave differently — one more reason that
+backend stays gated outright.
 
 The backend beneath it has two further test tiers, both under
 `packages/workspace`:

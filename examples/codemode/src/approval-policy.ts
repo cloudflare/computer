@@ -137,7 +137,12 @@ const COMMAND_SEPARATORS = ["&&", "||", ";", "|"];
  * off its arguments does not belong here, because listing it would
  * buy false confidence rather than fewer approvals.
  */
-const READ_ONLY_COMMANDS = new Set([
+// Exported so approval-policy.effects.test.ts can build its corpus
+// from the claim itself rather than from a copy of it. A verb added
+// here then comes under test automatically, which is the point: the
+// gap that let `find -delete` through was a case nobody had thought
+// to write down.
+export const READ_ONLY_COMMANDS = new Set([
   "basename",
   "cat",
   "cmp",
@@ -188,7 +193,7 @@ const READ_ONLY_COMMANDS = new Set([
  * because the verbs in READ_ONLY_COMMANDS that are absent here have no
  * flag that writes at all.
  */
-const READ_ONLY_FLAGS: Record<string, Set<string>> = {
+export const READ_ONLY_FLAGS: Record<string, Set<string>> = {
   find: new Set([
     "-a",
     "-and",
