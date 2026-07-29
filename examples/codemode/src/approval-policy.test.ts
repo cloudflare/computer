@@ -99,14 +99,42 @@ describe("decideApproval", () => {
       expect(gates("ls /workspace\nrm -rf /workspace", "shell")).toBe(true);
     });
 
-    it("gates sed -i, which edits in place", () => {
-      expect(gates("sed -i s/a/b/ /workspace/hello.txt", "shell")).toBe(true);
-      expect(gates("sed -i.bak s/a/b/ /workspace/hello.txt", "shell")).toBe(true);
-      expect(gates("sed --in-place s/a/b/ /workspace/hello.txt", "shell")).toBe(true);
+    it("gates a read verb handed a flag that writes", () => {
+      // A verb allowlist is not enough on its own: several read
+      // commands write when given the right flag, so an unrecognized
+      // flag on a read verb has to gate too.
+      expect(gates("find /workspace -mindepth 1 -delete", "shell")).toBe(true);
+      expect(gates("find /workspace -name x -exec rm {} +", "shell")).toBe(true);
+      expect(gates("find /workspace -execdir rm {} +", "shell")).toBe(true);
+      expect(gates("find /workspace -fprint /workspace/out", "shell")).toBe(true);
+      expect(gates("sort -o /workspace/out /workspace/in", "shell")).toBe(true);
+      expect(gates("sort --output=/workspace/out /workspace/in", "shell")).toBe(true);
     });
 
-    it("waves through sed as a filter", () => {
-      expect(gates("sed s/a/b/ /workspace/hello.txt", "shell")).toBe(false);
+    it("still waves through the read flags those verbs are used with", () => {
+      expect(gates("find /workspace -name '*.ts'", "shell")).toBe(false);
+      expect(gates("find /workspace -type f -maxdepth 2", "shell")).toBe(false);
+      expect(gates("find /workspace -mtime -1", "shell")).toBe(false);
+      expect(gates("sort -n /workspace/hello.txt", "shell")).toBe(false);
+      expect(gates("sort -u -r /workspace/hello.txt", "shell")).toBe(false);
+    });
+
+    it("gates an unrecognized flag on a checked verb", () => {
+      expect(gates("find /workspace -frobnicate", "shell")).toBe(true);
+    });
+
+    it("gates verbs whose writing cannot be told from their arguments", () => {
+      // sed writes through -i and through a `w` command inside the
+      // script, which a matcher cannot reliably find. uniq and tree
+      // take an output file as a positional argument, and date -s sets
+      // the clock. None of them are worth the false confidence, so
+      // none of them are recognized reads.
+      expect(gates("sed s/a/b/ /workspace/hello.txt", "shell")).toBe(true);
+      expect(gates("sed -i s/a/b/ /workspace/hello.txt", "shell")).toBe(true);
+      expect(gates("sed 'w /workspace/out' /workspace/hello.txt", "shell")).toBe(true);
+      expect(gates("uniq /workspace/in /workspace/out", "shell")).toBe(true);
+      expect(gates("tree -o /workspace/out", "shell")).toBe(true);
+      expect(gates("date -s 12:00", "shell")).toBe(true);
     });
 
     it("strips leading environment assignments before reading the verb", () => {

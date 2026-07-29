@@ -115,17 +115,23 @@ const SHELL_METACHARACTERS: Array<[string, string]> = [
 ];
 
 /**
- * Commands that only read. Deliberately conservative: `echo` and
- * `awk` are absent because both can write through their own syntax
- * rather than through a shell redirect, and the extra approvals cost
- * less than the argument about whether the matcher caught every form.
+ * Commands that only read.
+ *
+ * Deliberately conservative, and the omissions are the interesting
+ * part. `echo` and `awk` can write through their own syntax rather
+ * than through a shell redirect. `sed` writes through `-i` and also
+ * through a `w` command buried in its script, which no matcher is
+ * going to find reliably. `uniq` and `tree` take an output file as a
+ * positional argument, so their writes do not look like flags at all.
+ * `date -s` sets the system clock. A verb whose writes cannot be read
+ * off its arguments does not belong here, because listing it would
+ * buy false confidence rather than fewer approvals.
  */
 const READ_ONLY_COMMANDS = new Set([
   "basename",
   "cat",
   "cmp",
   "cut",
-  "date",
   "df",
   "diff",
   "dirname",
@@ -141,19 +147,103 @@ const READ_ONLY_COMMANDS = new Set([
   "pwd",
   "readlink",
   "realpath",
-  "sed",
   "sort",
   "stat",
   "tail",
   "test",
-  "tree",
   "true",
   "uname",
-  "uniq",
   "wc",
   "which",
   "whoami",
 ]);
+
+/**
+ * Flags a read verb is allowed to carry, for the verbs that write when
+ * given the wrong one.
+ *
+ * A verb allowlist alone is not enough: `find` deletes with `-delete`
+ * and runs arbitrary commands with `-exec`, and `sort` writes to a
+ * file with `-o`. So for these verbs the flags are allowlisted too,
+ * and an unrecognized flag gates. That is the same shape as the
+ * `state.*` check — name what is allowed, treat everything else as a
+ * question — rather than a blocklist that has to keep up with every
+ * flag that happens to write.
+ *
+ * A verb absent from this table takes flags freely, which is only safe
+ * because the verbs in READ_ONLY_COMMANDS that are absent here have no
+ * flag that writes at all.
+ */
+const READ_ONLY_FLAGS: Record<string, Set<string>> = {
+  find: new Set([
+    "-a",
+    "-and",
+    "-atime",
+    "-depth",
+    "-empty",
+    "-follow",
+    "-group",
+    "-ilname",
+    "-iname",
+    "-inum",
+    "-ipath",
+    "-iregex",
+    "-links",
+    "-lname",
+    "-ls",
+    "-maxdepth",
+    "-mindepth",
+    "-mmin",
+    "-mtime",
+    "-name",
+    "-newer",
+    "-not",
+    "-o",
+    "-or",
+    "-path",
+    "-perm",
+    "-print",
+    "-print0",
+    "-printf",
+    "-prune",
+    "-readable",
+    "-regex",
+    "-samefile",
+    "-size",
+    "-type",
+    "-user",
+    "-xdev",
+    "-H",
+    "-L",
+    "-P",
+  ]),
+  sort: new Set([
+    "-b",
+    "-c",
+    "-d",
+    "-f",
+    "-g",
+    "-h",
+    "-i",
+    "-k",
+    "-M",
+    "-n",
+    "-r",
+    "-s",
+    "-t",
+    "-u",
+    "-V",
+    "-z",
+    "--check",
+    "--ignore-case",
+    "--key",
+    "--numeric-sort",
+    "--reverse",
+    "--sort",
+    "--unique",
+    "--version-sort",
+  ]),
+};
 
 /** Git subcommands that only inspect history. */
 const READ_ONLY_GIT_SUBCOMMANDS = new Set([
@@ -254,17 +344,20 @@ function classifyShellLine(command: string): Verdict {
     return { readOnly: false, reason: `"${verb}" is not a recognized read-only command` };
   }
 
-  // sed is a filter until it is handed -i, at which point it rewrites
-  // its input in place.
-  if (verb === "sed") {
-    const inPlace = args.find(
-      (arg) =>
-        arg === "--in-place" ||
-        arg.startsWith("--in-place=") ||
-        (arg.startsWith("-") && !arg.startsWith("--") && arg.includes("i")),
-    );
-    if (inPlace != null) {
-      return { readOnly: false, reason: `sed ${inPlace} edits the file in place` };
+  const allowedFlags = READ_ONLY_FLAGS[verb];
+  if (allowedFlags != null) {
+    for (const arg of args) {
+      if (!arg.startsWith("-")) continue;
+      // A negative number is a value, not a flag: `find -mtime -1`.
+      if (/^-\d/.test(arg)) continue;
+      // Compare on the name so `--output=path` is caught as --output.
+      const flag = arg.split("=")[0];
+      if (!allowedFlags.has(flag)) {
+        return {
+          readOnly: false,
+          reason: `"${flag}" is not a recognized read-only flag for "${verb}"`,
+        };
+      }
     }
   }
 
