@@ -1,0 +1,47 @@
+// Recipe card tutorial. POST /prompt {"prompt":"chili con carne"}
+// runs an agent whose Workspace is backed by a Cloudflare Container
+// with pandoc and typst installed, then uploads the PDF the agent
+// produced to R2 and answers with a signed link to it.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workspace-tutorial",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "ai": { "binding": "AI" },
+
+  "containers": [
+    {
+      "class_name": "RecipeAgent",
+      "image": "./Dockerfile",
+      "max_instances": 5
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "RecipeAgent", "class_name": "RecipeAgent" }]
+  },
+
+  // Bucket the finished PDFs are uploaded to. The same bucket name is
+  // passed to the assets client as CARDS_BUCKET_NAME so the presigner
+  // can build the URL — the binding alone can't report it. Create the
+  // bucket once with:
+  //   wrangler r2 bucket create recipe-cards
+  //
+  // Presigning also needs R2 S3 credentials, set as secrets:
+  // R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, and CLOUDFLARE_ACCOUNT_ID.
+  // See the README.
+  "r2_buckets": [
+    {
+      "binding": "CARDS",
+      "bucket_name": "recipe-cards"
+    }
+  ],
+
+  "vars": {
+    "CARDS_BUCKET_NAME": "recipe-cards"
+  },
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RecipeAgent"] }]
+}

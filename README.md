@@ -67,6 +67,10 @@ To see the pieces working together, start with the examples:
   through `env.LOADER`. No container.
 - [`examples/think`](examples/think) — an agent that uses the
   workspace as its working directory.
+- [`examples/tutorial`](examples/tutorial) — the smallest version of
+  that idea, built up step by step: one endpoint, one file, an agent
+  that writes markdown on the host and runs `pandoc` on it in the
+  container.
 
 ## Repository layout
 
