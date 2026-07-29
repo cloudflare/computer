@@ -284,6 +284,24 @@ async function handleFile(
   return new Response("method not allowed", { status: 405, headers: { allow: "GET, PUT" } });
 }
 
+// Run one command with no approval check.
+//
+// The gate lives in the exec *tool*, so it sits on the model's path
+// and not on this one. The reasoning is that approval exists to put a
+// human in front of a command a model chose, and a caller posting here
+// is already that human: asking them to confirm what they just typed
+// buys nothing.
+//
+// The consequence is worth stating plainly rather than leaving to be
+// discovered. Two callers reach ws.shell.exec() and only one of them
+// is checked, so this route will run `rm -rf /workspace` on request.
+// That is a property of where enforcement currently sits, not a
+// decision that this route should be privileged, and it is the part of
+// the design most likely to change: moving enforcement below
+// ws.shell.exec() — handing the backend a read-only view of the
+// workspace and letting the filesystem refuse the write — would cover
+// both callers and leave the matcher as an optimisation rather than
+// the thing standing between a model and the files.
 async function handleExec(request: Request, env: Env, name: string): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("method not allowed", { status: 405, headers: { allow: "POST" } });
