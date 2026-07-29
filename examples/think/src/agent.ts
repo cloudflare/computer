@@ -10,10 +10,11 @@
  *   - Think's own `workspace` field expects a string-based
  *     `WorkspaceLike` for its built-in workspace tools. We satisfy
  *     it with a small adapter over the container workspace and turn
- *     off `workspaceBash` because we expose our own `exec` tool.
- *     We also shadow Think's `read`/`write`/`edit` tool names with
- *     our vendored fs-tools (their streaming/byte-cap behaviour is
- *     friendlier for this example).
+ *     off `workspaceBash` because `@cloudflare/workspace/tools`
+ *     provides the `exec` tool. We also shadow Think's
+ *     `read`/`write`/`edit` tool names with the shared Workspace
+ *     tools so this example uses the same caps and edit behavior as
+ *     package consumers.
  *
  * Phase model:
  *   - The workflow flips `phase` via `setPhase("explore" | "structure")`
@@ -46,19 +47,10 @@ import {
   withWorkspaceContainer,
 } from "@cloudflare/workspace/backends/container";
 import { WorkerBackend } from "@cloudflare/workspace/backends/worker";
-import { type ToolSet, tool } from "ai";
+import { createAITools } from "@cloudflare/workspace/tools";
+import type { ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
-import { z } from "zod";
-import { createExecTool } from "./tools/exec.js";
-import {
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-  type WorkspaceLike as FsWorkspaceLike,
-  WorkspaceFileStore,
-} from "./tools/fs/index.js";
 import { createReportUpdateTool } from "./tools/report-update.js";
-import { createShareTool } from "./tools/share.js";
 
 // Re-export so the runtime can build loopback bindings the DO
 // uses: WorkspaceProxy carries container egress traffic back to
@@ -600,20 +592,17 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
     const phase = this.#phase ?? "explore";
     if (phase === "structure") return {} as ToolSet;
 
-    const store = new WorkspaceFileStore(adaptToFsWorkspace(this.#workspaceFs));
     const ws = this.#workspaceFs;
-    return {
+    const workspaceTools = createAITools({
+      workspace: ws,
+      assets: hasAssetsConfig(this.env),
       // Per-tool caps. Kimi K2.6 has a 262k context window so we
       // don't need to be paranoid; the caps are mostly so a
       // pathological tool call (giant lockfile, multi-MB log) doesn't
       // burn through the input budget on a single turn. ~32 KiB ≈
       // ~8k tokens per read.
-      read: createReadTool({ store, maxBytes: 32 * 1024, maxLines: 800 }),
-      ls: createLsTool(ws),
-      write: createWriteTool({ store }),
-      edit: createEditTool({ store }),
-      exec: createExecTool({
-        workspace: ws,
+      read: { maxBytes: 32 * 1024, maxLines: 800 },
+      shell: {
         maxBytes: 32 * 1024,
         backends: {
           shell: {
@@ -644,22 +633,12 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
           },
         },
         defaultBackend: "shell",
-      }),
+      },
+    });
+
+    return {
+      ...workspaceTools,
       report_update: createReportUpdateTool({ webhookUrl: ctx.webhookUrl }),
-      // Only offered when R2 S3 credentials are configured; the
-      // bucket binding alone can't mint the presigned URL the tool
-      // returns. Absent credentials, the agent simply has no share
-      // tool rather than one that fails on every call.
-      ...(hasAssetsConfig(this.env)
-        ? {
-            share: createShareTool({
-              workspace: ws,
-              bucket: this.env.ASSETS,
-              s3Bucket: "think-example-assets",
-              env: this.env as unknown as Record<string, string | undefined>,
-            }),
-          }
-        : {}),
     };
   }
 
@@ -760,16 +739,6 @@ export class TriageAgent extends withWorkspaceContainer(TriageBase) {
 }
 
 // ── Adapters ───────────────────────────────────────────────────────
-
-/**
- * Bridge from `@cloudflare/workspace.Workspace` to the vendored
- * fs-tools' `WorkspaceLike` shape. The vendored tools only call into
- * `fs.{stat,readFile,writeFile,mkdir}`, which the container
- * workspace already exposes directly.
- */
-function adaptToFsWorkspace(ws: Workspace): FsWorkspaceLike {
-  return ws as unknown as FsWorkspaceLike;
-}
 
 /**
  * Bridge from `@cloudflare/workspace.Workspace` to Think's
@@ -891,29 +860,6 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
     off += p.byteLength;
   }
   return out;
-}
-
-// ── A small `ls` tool: vendored fs-tools don't include it. ─────────
-
-function createLsTool(ws: Workspace) {
-  return tool({
-    description:
-      "List the immediate children of a workspace directory. Returns " +
-      "names with their type (file/dir). One level only.",
-    inputSchema: z.object({
-      path: z.string().describe("Absolute directory path."),
-    }),
-    execute: async ({ path }) => {
-      const entries = await ws.fs.readdir(path);
-      return {
-        path,
-        entries: entries.map((e) => ({
-          name: e.name,
-          type: e.isDirectory ? "dir" : "file",
-        })),
-      };
-    },
-  });
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────

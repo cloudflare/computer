@@ -55,15 +55,21 @@ right phase. `explore` has the full toolset; `structure` has none —
 the model can't be tempted to keep calling tools when its job is to
 just emit JSON.
 
-| Tool            | Source                             |
-| --------------- | ---------------------------------- |
-| `read`          | vendored from `hackspace/fs-tools` |
-| `ls`            | `src/agent.ts`                     |
-| `write`         | vendored from `hackspace/fs-tools` |
-| `edit`          | vendored from `hackspace/fs-tools` |
-| `exec`          | `src/tools/exec.ts`                |
-| `report_update` | `src/tools/report-update.ts`       |
-| `share`         | `src/tools/share.ts` (optional)    |
+| Tool            | Source                                           |
+| --------------- | ------------------------------------------------ |
+| `read`          | `@cloudflare/workspace/tools`                    |
+| `ls`            | `@cloudflare/workspace/tools`                    |
+| `write`         | `@cloudflare/workspace/tools`                    |
+| `edit`          | `@cloudflare/workspace/tools`                    |
+| `exec`          | `@cloudflare/workspace/tools` (optional shell)   |
+| `share`         | `@cloudflare/workspace/tools` (optional assets)  |
+| `report_update` | `src/tools/report-update.ts` (example-specific)  |
+
+The Workspace tools come from `createAITools()` in
+`@cloudflare/workspace/tools`. In the explore phase this example
+includes `read`, `write`, `edit`, and `ls`, opts into `exec` by
+passing shell backend descriptions, and includes `share` only when the
+Workspace assets publisher is configured.
 
 The `share` tool uploads a workspace file to R2 and returns a
 time-limited link, so the agent can hand the user an artifact it
