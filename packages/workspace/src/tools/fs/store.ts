@@ -74,10 +74,14 @@ export class WorkspaceFileStore implements FileStore {
     const reader = stream.getReader();
     let skipped = 0;
     let yielded = 0;
+    let completed = false;
     try {
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          completed = true;
+          break;
+        }
         if (!value || value.byteLength === 0) continue;
 
         let start = 0;
@@ -107,6 +111,7 @@ export class WorkspaceFileStore implements FileStore {
         if (byteLength !== undefined && yielded >= byteLength) break;
       }
     } finally {
+      if (!completed) await reader.cancel();
       reader.releaseLock();
     }
   }

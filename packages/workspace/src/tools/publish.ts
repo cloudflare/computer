@@ -33,9 +33,12 @@ export function createPublishTool(options: PublishToolOptions) {
     }),
     execute: async ({ path, expiresAfterMs }) => {
       try {
+        const prefix = options.workspace.sessionId
+          ? `agent-${options.workspace.sessionId}`
+          : undefined;
         const url = await assets.share(path, {
           expiresAfter: expiresAfterMs ?? DEFAULT_EXPIRY_MS,
-          prefix: `agent-${options.workspace.sessionId}`,
+          ...(prefix ? { prefix } : {}),
         });
         return { ok: true, url };
       } catch (err) {

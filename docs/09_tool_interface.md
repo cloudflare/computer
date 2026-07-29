@@ -267,7 +267,7 @@ or:
 { ok: false; error: string }
 ```
 
-The default expiry is one hour. The prefix is `agent-${workspace.sessionId}` so generated links are grouped by workspace session.
+The default expiry is one hour. When `workspace.sessionId` is non-empty, the prefix is `agent-${workspace.sessionId}` so generated links are grouped by workspace session. If no session id was configured, the tool leaves the prefix unset.
 
 `createAITools()` includes `publish` by default when `readonly` is not true, `assets` is not false, and `workspace.assets` is configured. Pass `assets: false` to hide the tool even when credentials are present.
 

@@ -51,8 +51,8 @@ export function createExecTool(options: ExecToolOptions) {
     "Backends:",
     backendGuidance,
     "",
-    `Default backend: ${JSON.stringify(options.defaultBackend)}.`,
-    "Prefer the dedicated read, write, and edit tools for file operations. Long output is truncated to keep tool replies small.",
+    `Default backend: ${JSON.stringify(options.defaultBackend)}. Try this first for any command you're not sure about; if it fails with a "command not found" or a similar capability error, retry on a backend whose description covers the missing tool.`,
+    "Use for builds, test runs, typechecks, formatters, and git plumbing. Prefer the dedicated read, write, and edit tools for file operations. Long output is truncated to keep tool replies small.",
   ].join("\n");
 
   const backendSchema = z
@@ -62,7 +62,7 @@ export function createExecTool(options: ExecToolOptions) {
       [
         "Which backend to run on. Omit to use the default",
         `(${JSON.stringify(options.defaultBackend)}). Set explicitly when the`,
-        "default backend is not capable of running the command.",
+        "default backend is not capable of running the command. If a command fails because the backend lacks that tool, retry on a backend whose description covers it.",
       ].join(" "),
     );
 
@@ -75,20 +75,29 @@ export function createExecTool(options: ExecToolOptions) {
     }),
     execute: async ({ command, cwd, backend }) => {
       const selectedBackend = backend ?? options.defaultBackend;
-      const handle = await options.workspace.shell.exec(command, {
-        cwd,
-        encoding: "utf8",
-        backend: selectedBackend,
-      });
-      const result = await handle.result();
-      return {
-        command,
-        cwd: cwd ?? null,
-        backend: selectedBackend,
-        exitCode: result.exitCode,
-        stdout: truncate(result.stdout, maxBytes),
-        stderr: truncate(result.stderr, maxBytes),
-      };
+      try {
+        const handle = await options.workspace.shell.exec(command, {
+          cwd,
+          encoding: "utf8",
+          backend: selectedBackend,
+        });
+        const result = await handle.result();
+        return {
+          command,
+          cwd: cwd ?? null,
+          backend: selectedBackend,
+          exitCode: result.exitCode,
+          stdout: truncate(result.stdout, maxBytes),
+          stderr: truncate(result.stderr, maxBytes),
+        };
+      } catch (err) {
+        return {
+          command,
+          cwd: cwd ?? null,
+          backend: selectedBackend,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
   });
 }

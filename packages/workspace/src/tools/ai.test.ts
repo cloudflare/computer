@@ -20,6 +20,12 @@ async function executeTool(tool: unknown, input: unknown): Promise<unknown> {
   return await execute(input, toolOptions);
 }
 
+function toolDescription(tool: unknown): string {
+  const description = (tool as { description?: unknown }).description;
+  if (typeof description !== "string") throw new Error("tool has no description");
+  return description;
+}
+
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
 }
@@ -92,6 +98,39 @@ describe("WorkspaceFileStore", () => {
     await expect(
       drainChunks(store.readChunks("/workspace/range.txt", 2, 5)).then(decode),
     ).resolves.toBe("cdefg");
+  });
+
+  it("cancels read streams when a byte range stops before EOF", async () => {
+    let cancelled = false;
+    const workspace = {
+      fs: {
+        async stat() {
+          return { size: 10, mtime: 1, mode: 0o100644, isFile: true, isDirectory: false };
+        },
+        async readFile() {
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(bytes("abcdefghij"));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          });
+        },
+        async writeFile() {},
+        async mkdir() {},
+        async rm() {},
+        async readdir() {
+          return [];
+        },
+      },
+    };
+    const store = new WorkspaceFileStore(workspace);
+
+    await expect(
+      drainChunks(store.readChunks("/workspace/range.txt", 2, 5)).then(decode),
+    ).resolves.toBe("cdefg");
+    expect(cancelled).toBe(true);
   });
 });
 
@@ -355,6 +394,81 @@ describe("createAITools exec tool", () => {
     expect(calls).toEqual([{ command: "echo ok", backend: "shell" }]);
   });
 
+  it("tells the model to retry on a capable backend after command-not-found errors", () => {
+    const workspace = {
+      shell: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: {
+          shell: { description: "fast shell with a limited built-in command set" },
+          container: { description: "full Linux userland with npm and node" },
+        },
+      },
+    });
+
+    expect(toolDescription(tools.exec)).toContain("command not found");
+    expect(toolDescription(tools.exec)).toContain("retry on a backend whose description covers");
+  });
+
+  it("returns structured exec errors", async () => {
+    const workspace = {
+      shell: {
+        async exec() {
+          throw new Error("backend unavailable");
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    await expect(executeTool(tools.exec, { command: "npm test" })).resolves.toEqual({
+      command: "npm test",
+      cwd: null,
+      backend: "shell",
+      error: "backend unavailable",
+    });
+  });
+
+  it("returns structured exec result errors", async () => {
+    const workspace = {
+      shell: {
+        async exec() {
+          return {
+            async result() {
+              throw new Error("transport closed");
+            },
+          };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    await expect(executeTool(tools.exec, { command: "npm test" })).resolves.toEqual({
+      command: "npm test",
+      cwd: null,
+      backend: "shell",
+      error: "transport closed",
+    });
+  });
+
   it("rejects invalid shell backend configuration", () => {
     const workspace = makeWorkspace();
 
@@ -389,6 +503,29 @@ describe("createAITools publish tool", () => {
     expect(calls).toEqual([
       { path: "/workspace/out/report.html", expiresAfter: 1234, prefix: "agent-session-a" },
     ]);
+  });
+
+  it("omits the publish prefix when sessionId is empty", async () => {
+    const calls: Array<{ path: string; expiresAfter: number; prefix?: string }> = [];
+    const workspace = {
+      fs: makeWorkspace().fs,
+      sessionId: "",
+      assets: {
+        async share(path: string, opts: { expiresAfter: number; prefix?: string }) {
+          calls.push({ path, ...opts });
+          return "https://example.test/report.html";
+        },
+      },
+    };
+    const tools = createAITools({ workspace });
+
+    await expect(
+      executeTool(tools.publish, { path: "/workspace/out/report.html" }),
+    ).resolves.toEqual({
+      ok: true,
+      url: "https://example.test/report.html",
+    });
+    expect(calls).toEqual([{ path: "/workspace/out/report.html", expiresAfter: 60 * 60 * 1000 }]);
   });
 
   it("omits publish when assets are disabled or readonly is true", () => {

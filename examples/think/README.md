@@ -62,7 +62,7 @@ just emit JSON.
 | `write`         | `@cloudflare/workspace/tools`                    |
 | `edit`          | `@cloudflare/workspace/tools`                    |
 | `exec`          | `@cloudflare/workspace/tools` (optional shell)   |
-| `publish`         | `@cloudflare/workspace/tools` (optional assets)  |
+| `publish`      | `@cloudflare/workspace/tools` (optional assets)  |
 | `report_update` | `src/tools/report-update.ts` (example-specific)  |
 
 The Workspace tools come from `createAITools()` in
