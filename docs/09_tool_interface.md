@@ -49,7 +49,7 @@ export class Agent {
 }
 ```
 
-Pass `shell` only when the `Workspace` was constructed with matching backend ids:
+When assigning the same instance to `Think.workspace`, construct it with `useThink: true` so Think's built-in workspace tools can use the compatibility filesystem methods. Pass `shell` only when the `Workspace` was constructed with matching backend ids:
 
 ```ts
 const workspace = new Workspace({
