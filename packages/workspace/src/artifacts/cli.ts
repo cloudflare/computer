@@ -30,13 +30,11 @@ import type { ArtifactScope } from "./types.js";
  * When `force` is set the implementation updates the existing remote
  * (the moral equivalent of `git remote set-url`) rather than failing.
  */
-export interface RemoteAddFn {
-  (opts: {
-    name: string;
-    url: string;
-    force?: boolean;
-  }): Promise<{ ok: boolean; exists?: boolean; message?: string }>;
-}
+export type RemoteAddFn = (opts: {
+  name: string;
+  url: string;
+  force?: boolean;
+}) => Promise<{ ok: boolean; exists?: boolean; message?: string }>;
 
 export interface ArtifactsCLIInput {
   /** Argv as seen by the shell command. `argv[0]` is the group. */
