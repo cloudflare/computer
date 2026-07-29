@@ -160,11 +160,21 @@ reached through a computed access. The gate fails **closed**, which is
 the only direction worth failing in.
 
 The matcher speaks two dialects, because the backends do. For `shell`
-and `container` it rejects redirection and composition (`>`, `|`, `;`,
-`&&`, `$(...)`) outright, then requires the leading verb to be a known
-read (`cat`, `ls`, `grep`, `find`, `git log`, …), and then — for verbs
-that write when handed the wrong flag — requires the flags to be known
-reads too. `find /workspace -name '*.ts'` runs;
+and `container` it rejects redirection, substitution and backgrounding
+(`>`, `<`, `$(...)`, `` ` ``, `&`) outright, since those either write or
+run something it would have to parse to see. What is left is a
+pipeline, so it splits on `|`, `&&`, `||` and `;` and judges each stage
+on its own: the verb has to be a known read (`cat`, `ls`, `grep`,
+`find`, `git log`, …), and for verbs that write when handed the wrong
+flag, the flags have to be known reads too.
+
+Judging stages separately rather than gating all composition is what
+makes the rule usable — `ls -1 /workspace | wc -l` is two reads and a
+pipe, which touches no files, so it runs unattended. It gives nothing
+up: `ls; rm -rf /workspace` still stops on its second stage, and
+`find /workspace -type f | xargs rm` still stops on `xargs`, even
+though that `find` would have passed alone. Single commands behave the
+same as before: `find /workspace -name '*.ts'` runs, while
 `find /workspace -delete` and `sort -o out in` ask. For `codemode` it
 reads the JavaScript instead: every mention of `state` has to resolve
 to a named member, and every member has to be a read (`readFile`,
@@ -178,9 +188,12 @@ nobody thought of into questions.
 Some commands are left out of the read set entirely because their
 writes cannot be read off their arguments: `sed` writes through `-i`
 and through a `w` command buried in its script, `uniq` and `tree` take
-an output file as a positional argument, `awk` and `echo` write through
-their own syntax, and `date -s` sets the clock. Listing them would buy
-false confidence rather than fewer approvals.
+an output file as a positional argument, `awk` writes through its own
+syntax, and `date -s` sets the clock. Listing them would buy false
+confidence rather than fewer approvals. `echo` and `printf` are in the
+read set, on the other hand, because they only ever write to stdout —
+aiming that at a file needs a redirect, which gates the line whatever
+the verb.
 
 The rules are configuration, not a hardcoded list. `runAgentTurn`
 takes a `policy`, and `never` turns the gate off for a backend
@@ -476,7 +489,8 @@ npm test --workspace @example/workspace-codemode
 ```
 
 Three suites. `approval-policy.test.ts` pins the policy: which commands
-are recognized reads, that redirection and composition are gated, that
+are recognized reads, that redirection is gated and that a pipeline is
+judged one stage at a time, that
 `state["writeFile"]` does not slip past the allowlist, and that the
 decision is a pure function of its inputs. `turn-store.test.ts` drives
 the paused-turn bookkeeping against an in-memory map — a turn waits for

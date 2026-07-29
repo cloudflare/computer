@@ -79,14 +79,53 @@ describe("decideApproval", () => {
       expect(gates("cat < /workspace/a", "shell")).toBe(true);
     });
 
-    it("gates composition, even of two reads", () => {
-      // A pipeline of reads is harmless, but allowing composition
-      // means auditing every element; the gate stays closed instead.
-      expect(gates("cat /workspace/a | grep needle", "shell")).toBe(true);
+    it("waves through a pipeline whose every stage is a read", () => {
+      // A pipe moves bytes between processes and touches no files, so
+      // a pipeline of reads is a read. Each stage is classified on its
+      // own rather than the composition being waved through.
+      expect(gates("ls -1 /workspace | wc -l", "shell")).toBe(false);
+      expect(gates("cat /workspace/a | grep needle", "shell")).toBe(false);
+      expect(gates("cat /workspace/a | grep needle | wc -l", "shell")).toBe(false);
+      expect(gates("ls /workspace || true", "shell")).toBe(false);
+      expect(gates("ls /workspace && cat /workspace/a", "shell")).toBe(false);
+      expect(gates("cd /workspace; ls", "shell")).toBe(true);
+    });
+
+    it("gates a pipeline with a stage that is not a read", () => {
       expect(gates("ls /workspace; rm -rf /workspace", "shell")).toBe(true);
       expect(gates("ls /workspace && rm -rf /workspace", "shell")).toBe(true);
-      expect(gates("ls /workspace || true", "shell")).toBe(true);
+      expect(gates("cat /workspace/a | tee /workspace/b", "shell")).toBe(true);
+      expect(gates("find /workspace -type f | xargs rm", "shell")).toBe(true);
+      expect(gates("ls /workspace | sed -i s/a/b/", "shell")).toBe(true);
+    });
+
+    it("names the offending stage when it gates a pipeline", () => {
+      expect(
+        decideApproval({ command: "ls /workspace | tee /workspace/b", backend: "shell" }).reason,
+      ).toContain("tee");
+    });
+
+    it("gates an empty or dangling stage", () => {
+      expect(gates("ls /workspace |", "shell")).toBe(true);
+      expect(gates("| wc -l", "shell")).toBe(true);
+      expect(gates("ls &&", "shell")).toBe(true);
+    });
+
+    it("still gates backgrounding, which leaves something running", () => {
       expect(gates("ls /workspace &", "shell")).toBe(true);
+      expect(gates("cat /workspace/a & cat /workspace/b", "shell")).toBe(true);
+    });
+
+    it("still gates redirection inside a pipeline", () => {
+      expect(gates("ls /workspace | wc -l > /workspace/count", "shell")).toBe(true);
+    });
+
+    it("waves through echo and printf, which cannot write without a redirect", () => {
+      // Both write to stdout only. Sending that to a file needs `>`,
+      // which gates the whole line regardless of the verb.
+      expect(gates("echo hello", "shell")).toBe(false);
+      expect(gates("ls /workspace && echo done", "shell")).toBe(false);
+      expect(gates("echo hello > /workspace/x", "shell")).toBe(true);
     });
 
     it("gates command substitution", () => {

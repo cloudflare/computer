@@ -92,20 +92,20 @@ const DEFAULT_DIALECTS: Record<string, CommandDialect> = {
 };
 
 /**
- * Shell characters that redirect output or glue a second command onto
- * the first. Their presence disqualifies a line on its own, before
- * the verb is even considered: `cat a > b` writes, and
- * `ls; rm -rf /` is not the `ls` it appears to be. A pipeline of two
- * reads is harmless in principle, but allowing composition means
- * classifying every element and every operator, so the gate stays
- * closed on all of it.
+ * Shell characters that disqualify a line outright, whatever it runs.
+ *
+ * Redirection writes files, and substitution and subshells run
+ * commands this matcher would have to parse to see. None of them are
+ * decomposable the way a pipeline is, so their presence ends the
+ * question before the verb is considered.
+ *
+ * Backgrounding is here for a different reason: `ls &` leaves a
+ * process alive past the command, which is not something to wave
+ * through on the strength of the verb.
  */
 const SHELL_METACHARACTERS: Array<[string, string]> = [
   [">", "redirects output"],
   ["<", "redirects input"],
-  ["|", "pipes into another command"],
-  [";", "chains another command"],
-  ["&", "chains or backgrounds another command"],
   ["$", "expands a variable or substitutes a command"],
   ["`", "substitutes a command"],
   ["(", "groups or substitutes a command"],
@@ -115,11 +115,21 @@ const SHELL_METACHARACTERS: Array<[string, string]> = [
 ];
 
 /**
+ * Operators that join commands without touching the filesystem
+ * themselves. A line built from these is split on them and every stage
+ * classified on its own, so `ls | wc -l` reads and
+ * `ls; rm -rf /` does not.
+ *
+ * Longest first, so `&&` and `||` are found before a bare `&` or `|`.
+ */
+const COMMAND_SEPARATORS = ["&&", "||", ";", "|"];
+
+/**
  * Commands that only read.
  *
  * Deliberately conservative, and the omissions are the interesting
- * part. `echo` and `awk` can write through their own syntax rather
- * than through a shell redirect. `sed` writes through `-i` and also
+ * part. `awk` can write through its own syntax rather than through a
+ * shell redirect. `sed` writes through `-i` and also
  * through a `w` command buried in its script, which no matcher is
  * going to find reliably. `uniq` and `tree` take an output file as a
  * positional argument, so their writes do not look like flags at all.
@@ -136,6 +146,10 @@ const READ_ONLY_COMMANDS = new Set([
   "diff",
   "dirname",
   "du",
+  // echo and printf write to stdout and nowhere else. Sending that at
+  // a file takes a redirect, which gates the line whatever the verb.
+  "echo",
+  "printf",
   "egrep",
   "fgrep",
   "file",
@@ -307,8 +321,14 @@ interface Verdict {
 }
 
 /**
- * Classify a shell line. Composition and redirection disqualify it
- * outright; otherwise the leading verb has to be a recognized read.
+ * Classify a shell line.
+ *
+ * Redirection and substitution disqualify the line outright. What is
+ * left is a pipeline, which is split on its separators and judged one
+ * stage at a time: the line reads only if every stage does. Piping and
+ * sequencing touch no files themselves, so `ls | wc -l` is as much a
+ * read as `ls` is, while the stage-by-stage check is what still catches
+ * the `rm -rf` in `ls; rm -rf /`.
  */
 function classifyShellLine(command: string): Verdict {
   for (const [character, effect] of SHELL_METACHARACTERS) {
@@ -318,6 +338,36 @@ function classifyShellLine(command: string): Verdict {
     }
   }
 
+  // A lone `&` backgrounds; a doubled one is the and-then separator
+  // handled below.
+  if (/(?<!&)&(?!&)/.test(command)) {
+    return { readOnly: false, reason: '"&" backgrounds a command' };
+  }
+
+  const separator = new RegExp(
+    `\\s*(?:${COMMAND_SEPARATORS.map((token) => token.replace(/[|]/g, "\\$&")).join("|")})\\s*`,
+  );
+  const stages = command.trim().split(separator);
+
+  const verdicts: Verdict[] = [];
+  for (const stage of stages) {
+    if (stage.trim().length === 0) {
+      return { readOnly: false, reason: "a stage of the pipeline is empty" };
+    }
+    const verdict = classifyShellCommand(stage);
+    if (!verdict.readOnly) return verdict;
+    verdicts.push(verdict);
+  }
+
+  if (verdicts.length === 1) return verdicts[0];
+  return {
+    readOnly: true,
+    reason: `every stage only reads (${verdicts.map((verdict) => verdict.reason).join("; ")})`,
+  };
+}
+
+/** Classify a single command, with no separators left in it. */
+function classifyShellCommand(command: string): Verdict {
   const tokens = command
     .trim()
     .split(/\s+/)
