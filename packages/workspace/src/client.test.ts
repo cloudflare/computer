@@ -25,8 +25,10 @@ interface ExecCall {
 function fakeShell(): {
   shell: { exec: (c: string, o?: Record<string, unknown>) => Promise<unknown> };
   calls: ExecCall[];
+  disposedHandles: () => number;
 } {
   const calls: ExecCall[] = [];
+  let disposedHandles = 0;
   // A minimal handle satisfying both the local identity rehydrate
   // (which passes it through) and the remote rebuild (which calls
   // stream()/result()/kill()). stream() emits one JSONL exit frame so
@@ -45,9 +47,13 @@ function fakeShell(): {
         },
       }),
     kill: () => Promise.resolve(),
+    [Symbol.dispose]() {
+      disposedHandles += 1;
+    },
   });
   return {
     calls,
+    disposedHandles: () => disposedHandles,
     shell: {
       exec(command: string, options?: Record<string, unknown>) {
         calls.push({ command, options });
@@ -63,8 +69,9 @@ function fakeRemote(): {
   host: WorkspaceStubHost;
   calls: ExecCall[];
   disposed: () => boolean;
+  disposedHandles: () => number;
 } {
-  const { shell, calls } = fakeShell();
+  const { shell, calls, disposedHandles } = fakeShell();
   let disposed = false;
   const stub = {
     fs: { marker: "fs" },
@@ -79,6 +86,7 @@ function fakeRemote(): {
   return {
     calls,
     disposed: () => disposed,
+    disposedHandles,
     host: { __getWorkspaceStub: () => Promise.resolve(stub as never) },
   };
 }
@@ -204,5 +212,13 @@ describe("client shell.exec — remote handle rebuild", () => {
     await reader.read();
     reader.releaseLock();
     expect(() => (handle as { result(): unknown }).result()).toThrow(/already streaming/);
+  });
+
+  it("disposes the remote handle when the rebuilt handle is disposed", async () => {
+    const { host, disposedHandles } = fakeRemote();
+    const ws = await getWorkspace(host);
+    const handle = await ws.shell.exec("echo hi");
+    handle[Symbol.dispose]?.();
+    expect(disposedHandles()).toBe(1);
   });
 });

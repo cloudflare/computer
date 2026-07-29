@@ -87,9 +87,17 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle): un
     // result()-only caller never trips the "already streaming" guard.
     { highWaterMark: 0 },
   );
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    void reader?.cancel();
+    remote[Symbol.dispose]?.();
+  };
   const handle = stream as ReadableStream<WorkspaceExecEvent<E>> & {
     result(): Promise<unknown>;
     kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void>;
+    [Symbol.dispose](): void;
   };
   Object.defineProperties(handle, {
     result: {
@@ -105,6 +113,10 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle): un
     },
     kill: {
       value: (signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP") => remote.kill(signal),
+      enumerable: false,
+    },
+    [Symbol.dispose]: {
+      value: dispose,
       enumerable: false,
     },
   });
