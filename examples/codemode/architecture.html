@@ -513,6 +513,147 @@ return await state.readFile("/workspace/hello.txt");   // → stdout</pre>
         </p>
       </div>
 
+      <h2>The approval route</h2>
+      <p class="muted">
+        Where every branch goes, and what the client gets back. The two entry points funnel into one
+        model loop, and the loop can come back around: answering an approval resumes the turn, and the
+        resumed pass may stop on a different command.
+      </p>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--agent)"></i> the command runs</span>
+        <span><i class="dot" style="background:var(--container)"></i> the command is held back</span>
+        <span><i class="dot" style="background:#7f8a9a"></i> control flow</span>
+      </div>
+      <figure>
+        <svg viewBox="0 0 940 830" role="img" aria-label="Control flow of the approval route">
+          <defs>
+            <marker id="rt-ok-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#33c48d" />
+            </marker>
+            <marker id="rt-no-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff8a3d" />
+            </marker>
+            <marker id="rt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#7f8a9a" />
+            </marker>
+            <style>
+              .rt-bg { fill: #0f1115; }
+              .rt-box { fill: #171a21; stroke: #2b313c; stroke-width: 1.5; }
+              .rt-code { fill: #cbd5e1; font: 11.5px "SF Mono", Menlo, monospace; }
+              .rt-name { fill: #e6e9ef; font: 600 12.5px -apple-system, "Segoe UI", sans-serif; }
+              .rt-mut { fill: #9aa4b2; font: 10.5px "SF Mono", Menlo, monospace; }
+              .rt-edge { stroke: #7f8a9a; stroke-width: 1.6; fill: none; marker-end: url(#rt-arrow); }
+              .rt-ok { stroke: #33c48d; stroke-width: 1.6; fill: none; marker-end: url(#rt-ok-arrow); }
+              .rt-no { stroke: #ff8a3d; stroke-width: 1.6; fill: none; marker-end: url(#rt-no-arrow); }
+              .rt-dash { stroke-dasharray: 5 4; }
+            </style>
+          </defs>
+
+          <rect class="rt-box" x="30" y="20" width="250" height="46" rx="10" stroke="#2f6f57" />
+          <text class="rt-code" x="155" y="48" text-anchor="middle">POST /agent { prompt }</text>
+
+          <rect class="rt-box" x="560" y="20" width="340" height="46" rx="10" stroke="#2f6f57" />
+          <text class="rt-code" x="730" y="48" text-anchor="middle">POST /approvals/&lt;id&gt; { approved }</text>
+
+          <rect class="rt-box" x="560" y="100" width="340" height="46" rx="10" />
+          <text class="rt-code" x="730" y="128" text-anchor="middle">session.resolveApproval(id, approved)</text>
+
+          <rect class="rt-box" x="560" y="176" width="160" height="48" rx="10" />
+          <text class="rt-name" x="640" y="197" text-anchor="middle" fill="#ffb07d">404</text>
+          <text class="rt-mut" x="640" y="213" text-anchor="middle">unknown or answered</text>
+
+          <rect class="rt-box" x="740" y="176" width="160" height="48" rx="10" />
+          <text class="rt-name" x="820" y="197" text-anchor="middle" fill="#ffd166">202</text>
+          <text class="rt-mut" x="820" y="213" text-anchor="middle">others outstanding</text>
+
+          <path class="rt-edge" d="M155,66 L155,248" />
+          <path class="rt-edge" d="M730,66 L730,98" />
+          <path class="rt-edge" d="M640,146 L640,174" />
+          <path class="rt-edge" d="M820,146 L820,174" />
+          <path class="rt-edge" d="M700,146 L700,160 L470,160 L470,248" />
+          <rect class="rt-bg" x="486" y="152" width="118" height="14" />
+          <text class="rt-mut" x="490" y="163">last one → resume</text>
+
+          <rect class="rt-box rt-dash" x="30" y="250" width="870" height="250" rx="12" stroke="#2f6f57" />
+          <text class="rt-name" x="48" y="276" fill="#5fd6a4">runAgentTurn() — the model loop, inside the Worker</text>
+
+          <rect class="rt-box" x="60" y="296" width="300" height="46" rx="9" />
+          <text class="rt-code" x="210" y="324" text-anchor="middle">model proposes exec { cmd, backend }</text>
+
+          <rect class="rt-box" x="440" y="296" width="300" height="46" rx="9" stroke="#a05a2f" />
+          <text class="rt-code" x="590" y="324" text-anchor="middle">decideApproval(cmd, backend)</text>
+          <text class="rt-mut" x="756" y="322">the gate</text>
+          <text class="rt-mut" x="756" y="337">pure function</text>
+
+          <path class="rt-edge" d="M360,319 L436,319" />
+
+          <rect class="rt-box" x="60" y="404" width="340" height="56" rx="9" stroke="#2f6f57" />
+          <text class="rt-code" x="230" y="427" text-anchor="middle" fill="#5fd6a4">recognized read</text>
+          <text class="rt-mut" x="230" y="446" text-anchor="middle">→ ws.shell.exec() on the Example DO</text>
+
+          <rect class="rt-box" x="440" y="404" width="340" height="56" rx="9" stroke="#a05a2f" />
+          <text class="rt-code" x="610" y="427" text-anchor="middle" fill="#ffb07d">not recognized</text>
+          <text class="rt-mut" x="610" y="446" text-anchor="middle">held back — never executed</text>
+
+          <path class="rt-ok" d="M560,342 L560,376 L230,376 L230,402" />
+          <path class="rt-no" d="M620,342 L620,402" />
+
+          <path class="rt-ok" d="M58,432 L44,432 L44,319 L56,319" />
+          <text class="rt-mut" x="230" y="479" text-anchor="middle">result → the model continues, and may propose another</text>
+          <text class="rt-mut" x="610" y="479" text-anchor="middle">collected as pendingApprovals[]</text>
+
+          <path class="rt-edge" d="M470,500 L470,528" />
+
+          <rect class="rt-box" x="250" y="530" width="440" height="46" rx="10" />
+          <text class="rt-code" x="470" y="558" text-anchor="middle">recordTurn() → AgentSession.saveTurn(turn)</text>
+
+          <path class="rt-edge" d="M470,576 L470,598" />
+
+          <rect class="rt-box" x="330" y="600" width="280" height="46" rx="10" />
+          <text class="rt-code" x="470" y="628" text-anchor="middle">pending.length &gt; 0 ?</text>
+
+          <path class="rt-edge" d="M440,646 L440,662 L235,662 L235,678" />
+          <rect class="rt-bg" x="252" y="654" width="26" height="14" />
+          <text class="rt-mut" x="256" y="665">no</text>
+          <path class="rt-edge" d="M500,646 L500,662 L665,662 L665,678" />
+          <rect class="rt-bg" x="612" y="654" width="34" height="14" />
+          <text class="rt-mut" x="616" y="665">yes</text>
+
+          <rect class="rt-box" x="100" y="680" width="270" height="50" rx="10" stroke="#2f6f57" />
+          <text class="rt-code" x="235" y="702" text-anchor="middle">200 { status: completed }</text>
+          <text class="rt-mut" x="235" y="719" text-anchor="middle">nothing left to ask</text>
+
+          <rect class="rt-box" x="470" y="680" width="390" height="50" rx="10" stroke="#6b5d2f" />
+          <text class="rt-code" x="665" y="702" text-anchor="middle">200 { status: awaiting-approval, pending[] }</text>
+          <text class="rt-mut" x="665" y="719" text-anchor="middle">the command has not run</text>
+
+          <path class="rt-edge" d="M665,730 L665,762" />
+
+          <rect class="rt-box" x="470" y="764" width="390" height="44" rx="10" />
+          <text class="rt-code" x="665" y="791" text-anchor="middle">human answers one — script/agent, UI, bot</text>
+
+          <path class="rt-edge rt-dash" d="M860,786 L922,786 L922,43 L903,43" />
+          <text class="rt-mut" x="904" y="420" text-anchor="middle" transform="rotate(-90 904 420)">a resumed turn can pause again</text>
+        </svg>
+        <figcaption>
+          The gate is the orange box, and it sits inside the Worker — upstream of the Durable Object
+          that owns the files. Only the green path ever reaches it.
+        </figcaption>
+      </figure>
+
+      <div class="card">
+        <h3 style="margin-top:0">Why 404 and 202 are different answers</h3>
+        <p class="muted" style="margin-bottom:0">
+          <code>404</code> means the id is not waiting for an answer — either it was never issued, or
+          somebody already answered it. Both are the same fact, and both have to reject: treating a
+          repeat as a fresh approval would run the command a second time.
+          <code>202</code> means the answer was recorded but the turn is still waiting on others,
+          because one model step can propose several commands and the resume has to carry every
+          answer at once. Only the last answer resumes the turn, which is why the reply to
+          <code>POST /approvals/&lt;id&gt;</code> is sometimes a transcript and sometimes a receipt.
+        </p>
+      </div>
+
       <h2>Request flows</h2>
       <div class="two">
         <div class="card">
