@@ -1,0 +1,23 @@
+examples/codemode/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_6b4afea582ff56 11333,11935,12003,12393,12828
+packages/workspace/src/backends/worker/entrypoint.test.ts
+  s_3bac4a8ecb5284::t_8c11d229e19416 202-237
+packages/workspace/src/backends/worker/entrypoint.ts
+  s_3bac4a8ecb5284::t_42df9f9a0480f2 9-11,75-79,97,142-153,155-164,178,182-189,193-197,199-200,235,239-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "064d0399c5f5a4e32b061a3fb6e514d0a79d58f3",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
