@@ -309,7 +309,9 @@ function emptyConsumeOutcome(exitCode = -1): ConsumeOutcome {
 // result() and stream() are mutually exclusive: each drains the
 // single underlying handle, so the first one called wins and the
 // other throws (the host ExecHandle is a one-shot ReadableStream).
-// This mirrors the host contract exactly.
+// This mirrors the host contract exactly. kill() is not one of the
+// two: it signals the child without draining anything, so the output
+// of a killed run remains available.
 export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> extends RpcTarget {
   readonly #handle: Promise<ExecHandle<E>>;
   readonly #consumer: Consumer;
@@ -318,6 +320,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   // — observers see a complete span synchronously after the await.
   readonly #span: Promise<unknown>;
   #consumed = false;
+  #settled = false;
 
   constructor(handle: Promise<ExecHandle<E>>, consumer: Consumer, span: Promise<unknown>) {
     super();
@@ -333,7 +336,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
     // stops the command rather than buffering forever.
     if (!this.#consumed) {
       this.#consumed = true;
-      this.#consumer.resolve(emptyConsumeOutcome());
+      this.#settle(emptyConsumeOutcome());
       this.#handle
         .then((handle) => handle.cancel?.())
         .catch(() => {
@@ -350,12 +353,23 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
     this.#consumed = true;
   }
 
+  // Close the exec span, once. Every terminal path settles: result(),
+  // stream(), kill(), and dispose. The first one to arrive describes
+  // the outcome; later ones are no-ops, so a result() after a kill()
+  // still returns the real result while the span keeps the outcome the
+  // kill recorded.
+  #settle(outcome: ConsumeOutcome): void {
+    if (this.#settled) return;
+    this.#settled = true;
+    this.#consumer.resolve(outcome);
+  }
+
   async result(): Promise<WorkspaceExecResult<E>> {
     this.#claim();
     try {
       const handle = await this.#handle;
       const result = await handle.result();
-      this.#consumer.resolve({
+      this.#settle({
         exitCode: result.exitCode,
         pushed: result.pushed,
         pulled: result.pulled,
@@ -374,7 +388,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
         sync: result.sync,
       };
     } catch (error) {
-      this.#consumer.resolve(emptyConsumeOutcome());
+      this.#settle(emptyConsumeOutcome());
       throw error;
     }
   }
@@ -385,7 +399,7 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   // counts; the exit code is captured off the wire as it passes.
   stream(): ReadableStream<Uint8Array> {
     this.#claim();
-    const consumer = this.#consumer;
+    const settle = (outcome: ConsumeOutcome) => this.#settle(outcome);
     let reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
     let exitCode = -1;
     return new ReadableStream<Uint8Array>(
@@ -401,18 +415,18 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
               reader.releaseLock();
               reader = undefined;
               controller.close();
-              consumer.resolve(emptyConsumeOutcome(exitCode));
+              settle(emptyConsumeOutcome(exitCode));
               return;
             }
             if (value.name === "exit") exitCode = value.value;
             controller.enqueue(encodeExecEvent(value as WorkspaceExecEvent<ExecEncoding>));
           } catch (error) {
-            consumer.resolve(emptyConsumeOutcome());
+            settle(emptyConsumeOutcome());
             controller.error(error);
           }
         },
         cancel: async (reason) => {
-          consumer.resolve(emptyConsumeOutcome());
+          settle(emptyConsumeOutcome());
           await reader?.cancel(reason);
           reader?.releaseLock();
           reader = undefined;
@@ -425,6 +439,15 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   async kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void> {
     const handle = await this.#handle;
     await handle.kill(signal);
+    // The child has exited by the time kill() resolves, so this is a
+    // terminal path even for a caller that never reads the output.
+    // Close the span rather than leaving it open for the life of the
+    // session. Nothing drained the stream, so the outcome carries no
+    // exit code or sync counts.
+    this.#settle(emptyConsumeOutcome());
+    // Same reason result() waits: the span's attributes are set by the
+    // time kill() resolves.
+    await this.#span.catch(() => {});
   }
 }
 

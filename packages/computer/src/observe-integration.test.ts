@@ -301,6 +301,59 @@ describe("Workspace observer — shell stub", () => {
     expect(childNames).toContain("workspace.sync.pull");
   });
 
+  it("closes the exec span when the caller only kills the command", async () => {
+    // kill() is a terminal path for callers that never read the
+    // output: the signal goes out, the child exits, and nothing else
+    // touches the handle. The span has to close on that path, and the
+    // handle stays consumable so a caller can still collect the
+    // output of the killed run.
+    const observer = makeRecorder();
+    let events!: ReadableStreamDefaultController<import("@cloudflare/computer-rpc").ExecEvent>;
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id: "exec-killed",
+          events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
+            start(c) {
+              events = c;
+            },
+          }),
+        };
+      },
+      async getExec() {
+        throw new Error("not used");
+      },
+      async killExec() {
+        events.enqueue({ id: "exec-killed", seq: 0, name: "exit", value: 137 });
+        events.close();
+      },
+      async disposeExec() {},
+    };
+    const ws = new Workspace({
+      storage: makeStorage(),
+      backends: [
+        {
+          id: "shelled",
+          async connect() {
+            return { rpc: { sync: fakeSync(), shell: shellRpc }, close: async () => {} };
+          },
+        },
+      ],
+      observer,
+    });
+    await ws.ready();
+    using handle = await new WorkspaceShellStub(ws).exec("sleep 100");
+    await handle.kill("SIGKILL");
+
+    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
+    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("complete");
+    expect(execSpan.attributes["workspace.shell.exit_code"]).toBe(-1);
+
+    // The signal doesn't claim the handle: the output of the killed
+    // run is still there for the asking.
+    await expect(handle.result()).resolves.toMatchObject({ exitCode: 137 });
+  });
+
   it("reports pending sync on the exec span without exposing secrets", async () => {
     const observer = makeRecorder();
     const secret = "observer-secret";
