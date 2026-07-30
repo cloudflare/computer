@@ -420,6 +420,31 @@ stub's `exec` rejects a raw tagged-template call so the unescaped path
 fails loudly. `shellQuote` is exported too, for the rare case where
 you need to quote a single argument outside a template.
 
+### Reattaching to a run
+
+A command outlives the request that started it. Every handle carries
+the run's `id`, and `shell.get(id)` reattaches to it from a later
+request:
+
+```ts
+using ws = await getWorkspace(env.ContainerExample.get(id));
+
+// First request: start a long install and remember its id.
+using started = await ws.shell.exec("npm install", { id: "install-1" });
+
+// Later request, new handle, same run. `resume` picks where the
+// replayed event stream starts: "tail" for live events only, "full"
+// (the default) for everything the runner still holds, or a sequence
+// number to resume after.
+using again = await ws.shell.get("install-1", { encoding: "utf8", resume: "tail" });
+const { exitCode } = await again.result();
+```
+
+The client mints an id when the caller doesn't pass one, so
+`handle.id` is available either way. Reattach doesn't run the
+push/pull bracket — it joins a run already in flight — so its sync
+counts cover only what lands after the reattach.
+
 ## Observability
 
 The package emits one span per documented operation through an optional

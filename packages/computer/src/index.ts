@@ -27,6 +27,7 @@ export { TestBackend, type TestBackendOptions } from "./backends/test.js";
 export {
   getWorkspace,
   type ShellExecOptions,
+  type ShellGetOptions,
   type WorkspaceClient,
   type WorkspaceHandle,
   type WorkspaceShellClient,
@@ -73,6 +74,7 @@ export {
   type WorkspaceExecOptions,
   type WorkspaceExecResult,
   WorkspaceFilesystemStub,
+  type WorkspaceGetExecOptions,
   WorkspaceGitStub,
   WorkspaceShellStub,
   WorkspaceStub,

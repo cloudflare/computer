@@ -52,7 +52,7 @@ interface RemoteExecHandle {
 }
 
 // Rebuild a host-shaped ExecHandle from a remote handle stub. The
-// result is a ReadableStream of decoded events with result() and
+// result is a ReadableStream of decoded events with id, result() and
 // kill() tacked on, matching what the local path returns from
 // Workspace.shell.exec.
 //
@@ -61,7 +61,7 @@ interface RemoteExecHandle {
 // whichever is used first wins. result() goes through the stub's
 // run-and-wait path (which runs the post-exit pull); iterating goes
 // through the stub's byte stream (which doesn't).
-function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle): unknown {
+function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle, id: string): unknown {
   let started = false;
   let reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
   const stream = new ReadableStream<WorkspaceExecEvent<E>>(
@@ -101,11 +101,16 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle): un
     remote[Symbol.dispose]?.();
   };
   const handle = stream as ReadableStream<WorkspaceExecEvent<E>> & {
+    readonly id: string;
     result(): Promise<unknown>;
     kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void>;
     [Symbol.dispose](): void;
   };
   Object.defineProperties(handle, {
+    id: {
+      value: id,
+      enumerable: false,
+    },
     result: {
       value: () => {
         if (started) {
@@ -140,6 +145,15 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle): un
 //     the underlying surface's default. Wrap an interpolated command
 //     in `sh` to escape it: `exec(sh`cat ${file}`, { cwd })`.
 //
+// `get` reattaches to a run by id, from any request and any handle:
+//
+//   using ws = await getWorkspace(env.MyDO.get(id));
+//   const handle = await ws.shell.get(runId, { resume: "tail" });
+//
+// The id comes off a prior handle's `id` or from the caller's own
+// `exec` options, so a long command outlives the request that started
+// it.
+//
 // `R` is the handle type the underlying surface returns (the host
 // `ExecHandle` locally, the handle stub remotely).
 export interface WorkspaceShellClient<RUtf8, ROpts, RBytes> {
@@ -147,6 +161,9 @@ export interface WorkspaceShellClient<RUtf8, ROpts, RBytes> {
   exec(command: string): Promise<RBytes>;
   exec(command: string, options: ShellExecOptions & { encoding: "utf8" }): Promise<RUtf8>;
   exec(command: string, options: ShellExecOptions): Promise<ROpts>;
+  get(id: string): Promise<RBytes>;
+  get(id: string, options: ShellGetOptions & { encoding: "utf8" }): Promise<RUtf8>;
+  get(id: string, options: ShellGetOptions): Promise<ROpts>;
 }
 
 // Options accepted by the plain `exec` form, common to both paths.
@@ -158,6 +175,16 @@ export interface ShellExecOptions {
   timeoutMs?: number;
 }
 
+// Options accepted by `get`, common to both paths. `resume` picks
+// where the replayed event stream starts: "tail" for live events only,
+// "full" (the default) for everything buffered, or a sequence number
+// to resume after.
+export interface ShellGetOptions {
+  encoding?: "utf8";
+  resume?: "tail" | "full" | number;
+  backend?: string;
+}
+
 function isTemplateStringsArray(value: unknown): value is TemplateStringsArray {
   // A tagged-template call hands the cooked strings as the first
   // argument: an array. A plain `exec(command)` call hands a string.
@@ -165,19 +192,22 @@ function isTemplateStringsArray(value: unknown): value is TemplateStringsArray {
 }
 
 // The underlying shell surface both paths expose: an `exec` taking a
-// command string and options. Locally this is `Workspace.shell`;
-// remotely it's the shell stub.
+// command string and options, and a `get` taking an exec id. Locally
+// this is `Workspace.shell`; remotely it's the shell stub.
 interface UnderlyingShell {
   // biome-ignore lint/suspicious/noExplicitAny: bridges two concrete exec overload sets
   exec(command: string, options?: Record<string, unknown>): Promise<any>;
+  // biome-ignore lint/suspicious/noExplicitAny: bridges two concrete get overload sets
+  get(id: string, options?: Record<string, unknown>): Promise<any>;
 }
 
 function makeShellClient(
   shell: UnderlyingShell,
   // Adapts the handle the underlying `exec` resolves to: identity on
-  // the local path (already a host ExecHandle), rebuild on the remote
-  // path (a handle stub that needs inflating from its JSONL stream).
-  rehydrate: (handle: unknown) => unknown,
+  // the local path (already a host ExecHandle carrying its own id),
+  // rebuild on the remote path (a handle stub that needs inflating
+  // from its JSONL stream and carries no id of its own).
+  rehydrate: (handle: unknown, id: string) => unknown,
   // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
 ): WorkspaceShellClient<any, any, any> {
   async function exec(
@@ -189,17 +219,30 @@ function makeShellClient(
     if (isTemplateStringsArray(commandOrStrings)) {
       const values = optionsOrValue === undefined ? rest : [optionsOrValue as ShellValue, ...rest];
       const command = sh(commandOrStrings, ...values);
-      return rehydrate(await shell.exec(command, { encoding: "utf8" }));
+      const id = crypto.randomUUID();
+      return rehydrate(await shell.exec(command, { id, encoding: "utf8" }), id);
     }
-    const options = optionsOrValue as ShellExecOptions | undefined;
+    const options = (optionsOrValue as ShellExecOptions | undefined) ?? {};
+    // Every run is addressed by an id the caller knows, so the handle
+    // exposes one on both paths and a later get() can reattach to a
+    // command that outlived the request that started it. A caller
+    // passing its own id keeps it.
+    const id = options.id ?? crypto.randomUUID();
+    return rehydrate(await shell.exec(commandOrStrings, { ...options, id }), id);
+  }
+  async function get(
+    id: string,
+    options?: ShellGetOptions,
+    // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
+  ): Promise<any> {
     const handle =
       options === undefined
-        ? await shell.exec(commandOrStrings)
-        : await shell.exec(commandOrStrings, options as Record<string, unknown>);
-    return rehydrate(handle);
+        ? await shell.get(id)
+        : await shell.get(id, options as Record<string, unknown>);
+    return rehydrate(handle, id);
   }
   // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-  return { exec } as WorkspaceShellClient<any, any, any>;
+  return { exec, get } as WorkspaceShellClient<any, any, any>;
 }
 
 // The canonical client surface. `shell.exec` is the adapted member;
@@ -222,7 +265,7 @@ export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
 function makeClient(
   // biome-ignore lint/suspicious/noExplicitAny: underlying surface differs per path
   surface: any,
-  rehydrate: (handle: unknown) => unknown,
+  rehydrate: (handle: unknown, id: string) => unknown,
   dispose: () => void,
   useThink: boolean,
 ): WorkspaceClient {
@@ -280,7 +323,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
   try {
     return makeClient(
       stub,
-      (h) => rebuildExecHandle(h as RemoteExecHandle),
+      (h, id) => rebuildExecHandle(h as RemoteExecHandle, id),
       () => {
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },

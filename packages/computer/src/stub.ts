@@ -94,6 +94,18 @@ export interface WorkspaceExecOptions {
   backend?: string;
 }
 
+export interface WorkspaceGetExecOptions {
+  // See WorkspaceExecOptions.encoding.
+  encoding?: "utf8";
+  // Where the replayed event stream starts: "tail" for live events
+  // only, "full" (the default) for everything the runner still holds,
+  // or a sequence number to resume after.
+  resume?: "tail" | "full" | number;
+  // See WorkspaceExecOptions.backend. Reattach is per-backend: the id
+  // is only known to the backend that ran the command.
+  backend?: string;
+}
+
 export interface WorkspaceExecResult<E extends "utf8" | undefined = undefined> {
   exitCode: number;
   stdout: E extends "utf8" ? string : Uint8Array;
@@ -578,10 +590,9 @@ export class WorkspaceGitStub extends RpcTarget {
   }
 }
 
-// Shell half. exec() returns an RpcTarget handle whose only
-// method today is result(). Streaming exec lands as a separate
-// method when a concrete caller needs it; see the note at the
-// top of this file.
+// Shell half. exec() and get() both return an RpcTarget handle the
+// caller drains through result() or stream(); see the note at the top
+// of this file.
 export class WorkspaceShellStub extends RpcTarget {
   readonly #ws: Workspace;
 
@@ -689,6 +700,45 @@ export class WorkspaceShellStub extends RpcTarget {
     // promise from surfacing as an unhandled rejection.
     span.catch((error) => rejectHandle(error));
     return new WorkspaceExecHandleStub<"utf8" | undefined>(handle, consumer, span);
+  }
+
+  get(id: string): Promise<WorkspaceExecHandleStub<undefined>>;
+  get(
+    id: string,
+    options: WorkspaceGetExecOptions & { encoding: "utf8" },
+  ): Promise<WorkspaceExecHandleStub<"utf8">>;
+  get(id: string, options: WorkspaceGetExecOptions): Promise<WorkspaceExecHandleStub<undefined>>;
+  // Reattach to a run by id. The command outlives the request that
+  // started it, so a later request — or a caller that dropped its
+  // handle stub — picks the events back up here.
+  async get(
+    id: string,
+    options: WorkspaceGetExecOptions = {},
+  ): Promise<WorkspaceExecHandleStub<"utf8" | undefined>> {
+    // Same reason exec() calls ready(): heal a torn-down session
+    // before reaching for the shell.
+    await this.#ws.ready();
+    const reattached =
+      options.encoding === "utf8"
+        ? await this.#ws.shell.get(id, {
+            encoding: "utf8",
+            resume: options.resume,
+            backend: options.backend,
+          })
+        : await this.#ws.shell.get(id, {
+            resume: options.resume,
+            backend: options.backend,
+          });
+    // Reattach runs no bracket: no pre-exec push, no post-exit pull,
+    // and so no span to hold open until the handle is consumed (see
+    // WorkspaceShell.get). The handle stub still reports how it was
+    // consumed, so give it a consumer nobody reads and a span that has
+    // already closed.
+    return new WorkspaceExecHandleStub<"utf8" | undefined>(
+      Promise.resolve(reattached as ExecHandle<"utf8" | undefined>),
+      makeConsumer(),
+      Promise.resolve(),
+    );
   }
 }
 

@@ -455,6 +455,50 @@ describe("WorkspaceStub", () => {
     );
   });
 
+  it("shell.get reattaches to a run and resumes where the caller asked", async () => {
+    // A command outlives the request that spawned it, so a later
+    // request reattaches by id. `resume` reaches the runner as the
+    // `after` cursor of the replay.
+    const requests: Array<{ id: string; after: number | "tail" | undefined }> = [];
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      exec: () => Promise.reject(new Error("not used")),
+      async getExec(request) {
+        requests.push({ id: request.id, after: request.after });
+        return {
+          id: request.id,
+          events: new ReadableStream({
+            start(c) {
+              c.enqueue({
+                id: request.id,
+                seq: 8,
+                name: "stdout",
+                value: new TextEncoder().encode("tail\n"),
+              });
+              c.enqueue({ id: request.id, seq: 9, name: "exit", value: 0 });
+              c.close();
+            },
+          }),
+        };
+      },
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        using handle = await stub.shell.get("install-1", { encoding: "utf8", resume: 7 });
+        await expect(handle.result()).resolves.toMatchObject({ exitCode: 0, stdout: "tail\n" });
+        using tail = await stub.shell.get("install-1", { resume: "tail" });
+        await tail.result();
+        expect(requests).toEqual([
+          { id: "install-1", after: 7 },
+          { id: "install-1", after: "tail" },
+        ]);
+      },
+      { backend: backend({ shell: shellRpc }) },
+    );
+  });
+
   it("shell.exec handle.stream() frames events as JSONL that decode back", async () => {
     // The handle's stream() projects the event stream as JSONL bytes
     // for the wire. Decoding it back yields the original events,

@@ -19,15 +19,25 @@ interface ExecCall {
   options: Record<string, unknown> | undefined;
 }
 
-// A fake shell that records exec calls. Stands in for both
+interface GetCall {
+  id: string;
+  options: Record<string, unknown> | undefined;
+}
+
+// A fake shell that records exec and get calls. Stands in for both
 // Workspace.shell (local) and the shell stub (remote) — the client
-// only needs `exec(command, options?)`.
+// only needs `exec(command, options?)` and `get(id, options?)`.
 function fakeShell(): {
-  shell: { exec: (c: string, o?: Record<string, unknown>) => Promise<unknown> };
+  shell: {
+    exec: (c: string, o?: Record<string, unknown>) => Promise<unknown>;
+    get: (id: string, o?: Record<string, unknown>) => Promise<unknown>;
+  };
   calls: ExecCall[];
+  gets: GetCall[];
   disposedHandles: () => number;
 } {
   const calls: ExecCall[] = [];
+  const gets: GetCall[] = [];
   let disposedHandles = 0;
   // A minimal handle satisfying both the local identity rehydrate
   // (which passes it through) and the remote rebuild (which calls
@@ -53,10 +63,15 @@ function fakeShell(): {
   });
   return {
     calls,
+    gets,
     disposedHandles: () => disposedHandles,
     shell: {
       exec(command: string, options?: Record<string, unknown>) {
         calls.push({ command, options });
+        return Promise.resolve(makeHandle());
+      },
+      get(id: string, options?: Record<string, unknown>) {
+        gets.push({ id, options });
         return Promise.resolve(makeHandle());
       },
     },
@@ -68,10 +83,11 @@ function fakeShell(): {
 function fakeRemote(): {
   host: WorkspaceStubHost;
   calls: ExecCall[];
+  gets: GetCall[];
   disposed: () => boolean;
   disposedHandles: () => number;
 } {
-  const { shell, calls, disposedHandles } = fakeShell();
+  const { shell, calls, gets, disposedHandles } = fakeShell();
   let disposed = false;
   const stub = {
     fs: { marker: "fs" },
@@ -86,6 +102,7 @@ function fakeRemote(): {
   };
   return {
     calls,
+    gets,
     disposed: () => disposed,
     disposedHandles,
     host: { __getWorkspaceStub: () => Promise.resolve(stub as never) },
@@ -114,11 +131,15 @@ function fakeBrokenRemote(): {
 // Local path fake: an object carrying a real Workspace under the
 // stash symbol, but with its shell swapped for a recording fake so we
 // can assert on exec without a backend.
-function fakeLocal(): { host: { [WORKSPACE]: Workspace }; calls: ExecCall[] } {
+function fakeLocal(): {
+  host: { [WORKSPACE]: Workspace };
+  calls: ExecCall[];
+  gets: GetCall[];
+} {
   const ws = new Workspace({ storage: new SQLiteTestStorage() });
-  const { shell, calls } = fakeShell();
+  const { shell, calls, gets } = fakeShell();
   Object.defineProperty(ws, "shell", { get: () => shell });
-  return { calls, host: { [WORKSPACE]: ws } };
+  return { calls, gets, host: { [WORKSPACE]: ws } };
 }
 
 describe("getWorkspace — remote dispatch", () => {
@@ -205,7 +226,7 @@ describe("client shell.exec — tagged template form", () => {
     const { host, calls } = fakeRemote();
     const ws = await getWorkspace(host);
     await ws.shell.exec`ls`;
-    expect(calls[0].options).toEqual({ encoding: "utf8" });
+    expect(calls[0].options).toMatchObject({ encoding: "utf8" });
   });
 
   it("quotes each element of an interpolated array", async () => {
@@ -217,21 +238,19 @@ describe("client shell.exec — tagged template form", () => {
 });
 
 describe("client shell.exec — plain string form", () => {
-  it("forwards a bare command with no options", async () => {
+  it("forwards a bare command", async () => {
     const { host, calls } = fakeRemote();
     const ws = await getWorkspace(host);
     await ws.shell.exec("npm test");
-    expect(calls[0]).toEqual({ command: "npm test", options: undefined });
+    expect(calls[0].command).toBe("npm test");
   });
 
   it("forwards options unchanged", async () => {
     const { host, calls } = fakeRemote();
     const ws = await getWorkspace(host);
     await ws.shell.exec("npm test", { cwd: "/workspace", backend: "sandbox" });
-    expect(calls[0]).toEqual({
-      command: "npm test",
-      options: { cwd: "/workspace", backend: "sandbox" },
-    });
+    expect(calls[0].command).toBe("npm test");
+    expect(calls[0].options).toMatchObject({ cwd: "/workspace", backend: "sandbox" });
   });
 
   it("does not escape a plain string command", async () => {
@@ -274,11 +293,52 @@ describe("client shell.exec — remote handle rebuild", () => {
     expect(() => (handle as { result(): unknown }).result()).toThrow(/already streaming/);
   });
 
+  it("carries the id the caller asked for onto the rebuilt handle", async () => {
+    const { host, calls } = fakeRemote();
+    const ws = await getWorkspace(host);
+    const handle = await ws.shell.exec("npm install", { id: "install-1" });
+    expect(handle.id).toBe("install-1");
+    expect(calls[0].options).toMatchObject({ id: "install-1" });
+  });
+
+  it("mints an id when the caller omits one so the handle can be reattached", async () => {
+    const { host, calls } = fakeRemote();
+    const ws = await getWorkspace(host);
+    const handle = await ws.shell.exec("npm install");
+    // The minted id is what went over the wire, so a later
+    // shell.get(handle.id) addresses this run.
+    expect(typeof handle.id).toBe("string");
+    expect(handle.id).not.toBe("");
+    expect(calls[0].options?.id).toBe(handle.id);
+  });
+
   it("disposes the remote handle when the rebuilt handle is disposed", async () => {
     const { host, disposedHandles } = fakeRemote();
     const ws = await getWorkspace(host);
     const handle = await ws.shell.exec("echo hi");
     handle[Symbol.dispose]?.();
     expect(disposedHandles()).toBe(1);
+  });
+});
+
+describe("client shell.get — reattach", () => {
+  it("reattaches over RPC and rebuilds a handle carrying the run's id", async () => {
+    const { host, gets } = fakeRemote();
+    const ws = await getWorkspace(host);
+    const handle = await ws.shell.get("install-1", { encoding: "utf8", resume: "tail" });
+    expect(gets[0]).toEqual({
+      id: "install-1",
+      options: { encoding: "utf8", resume: "tail" },
+    });
+    expect(handle.id).toBe("install-1");
+    const result = await handle.result();
+    expect(result).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+  });
+
+  it("delegates to the in-isolate Workspace on the local path", async () => {
+    const { host, gets } = fakeLocal();
+    const ws = await getWorkspace(host);
+    await ws.shell.get("install-1", { resume: 12 });
+    expect(gets[0]).toEqual({ id: "install-1", options: { resume: 12 } });
   });
 });
