@@ -749,4 +749,66 @@ describe("WorkspaceShell.get — reattach", () => {
     expect(result.stdout).toBe("replay");
     expect(result.exitCode).toBe(5);
   });
+
+  it("reattaches to a live run once the first handle is dropped", async () => {
+    // The runner allows one live subscriber per run, so dropping a
+    // handle has to give up its subscription. The handle keeps a
+    // second reader on the event stream to watch for the exit event
+    // (kill() awaits it), and that reader has to go too — otherwise
+    // the subscription outlives the handle and reattach is refused
+    // for the rest of the run.
+    const f = liveRpc();
+    const shell = new WorkspaceShell(f.shell, makeSync());
+    const started = await shell.exec("sleep 100", { id: "long-run" });
+    await started.cancel();
+
+    const again = await shell.get("long-run", { encoding: "utf8", resume: "tail" });
+    f.emit(stdout(1, "still here\n"));
+    f.emit(exit(2, 0));
+    const result = await again.result();
+    expect(result.stdout).toBe("still here\n");
+  });
 });
+
+// A ShellRPC that models the runner's live subscriber bookkeeping: one
+// subscriber per run, and the slot only frees when that subscriber
+// cancels. Events are pushed by the test through emit(), so the run
+// stays live for as long as the test wants it to.
+function liveRpc(): {
+  shell: ShellRPC;
+  emit: (event: ExecEvent) => void;
+} {
+  let subscriber: ReadableStreamDefaultController<ExecEvent> | undefined;
+  const subscribe = (id: string): ReadableStream<ExecEvent> => {
+    if (subscriber !== undefined) {
+      throw new Error(`EEXEC_BUSY: exec ${id} already has a live subscriber`);
+    }
+    return new ReadableStream<ExecEvent>({
+      start(c) {
+        subscriber = c;
+      },
+      cancel() {
+        subscriber = undefined;
+      },
+    });
+  };
+  return {
+    // The runner closes the subscriber's stream after the exit
+    // event; result() drains until close.
+    emit: (event) => {
+      subscriber?.enqueue(event);
+      if (event.name === "exit") subscriber?.close();
+    },
+    shell: {
+      async exec(input) {
+        const id = input.id ?? "runner-minted-id";
+        return { id, events: subscribe(id) };
+      },
+      async getExec(input) {
+        return { id: input.id, events: subscribe(input.id) };
+      },
+      async killExec() {},
+      async disposeExec() {},
+    },
+  };
+}

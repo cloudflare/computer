@@ -344,8 +344,9 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
 
   [Symbol.dispose](): void {
     // If neither result() nor stream() ran, release the exec span so
-    // it doesn't hang open, and cancel the handle's stream so computerd
-    // stops the command rather than buffering forever.
+    // it doesn't hang open, and cancel the handle's stream so the run
+    // stops streaming to nobody — and stays reattachable through
+    // shell.get, which needs the subscription slot free.
     if (!this.#consumed) {
       this.#consumed = true;
       this.#settle(emptyConsumeOutcome());

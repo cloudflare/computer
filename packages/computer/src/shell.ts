@@ -236,8 +236,8 @@ function wrapHandle<E extends ExecEncoding>(
   pushed: number,
 ): ExecHandle<E> {
   const [forUser, forWatcher] = wireEvents.tee();
-  const exited = watchForExit(forWatcher);
-  const stream = pipeEvents<E>(forUser, encoding);
+  const watcher = watchForExit(forWatcher);
+  const stream = pipeEvents<E>(releaseWatcherOnCancel(forUser, watcher.release), encoding);
   const handle = stream as ExecHandle<E>;
   // configurable: true on result/kill lets the Workspace-level
   // router redefine them to add cross-cutting concerns (transport
@@ -254,7 +254,7 @@ function wrapHandle<E extends ExecEncoding>(
     kill: {
       value: async (signal?: KillSignal) => {
         await shell.killExec({ id, signal });
-        await exited;
+        await watcher.exited;
       },
       enumerable: false,
       writable: false,
@@ -268,10 +268,14 @@ function wrapHandle<E extends ExecEncoding>(
 // first exit event is observed (or the stream closes / errors
 // without one). Errors are swallowed so kill() doesn't reject on a
 // torn-down wire — the caller's own branch will surface any real
-// stream error.
-function watchForExit(events: ReadableStream<ExecEvent>): Promise<void> {
-  return (async () => {
-    const reader = events.getReader();
+// stream error. `release` abandons the watch, letting the branch
+// cancel through to the wire stream.
+function watchForExit(events: ReadableStream<ExecEvent>): {
+  exited: Promise<void>;
+  release: () => void;
+} {
+  const reader = events.getReader();
+  const exited = (async () => {
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -284,6 +288,46 @@ function watchForExit(events: ReadableStream<ExecEvent>): Promise<void> {
       reader.releaseLock();
     }
   })();
+  return {
+    exited,
+    release: () => {
+      reader.cancel().catch(() => {});
+    },
+  };
+}
+
+// A run allows one live subscriber in the container, so a caller
+// that cancels its stream has to give the subscription up — until
+// then a reattach through get() is refused for the rest of the run.
+// Cancelling the caller's tee branch isn't enough: a tee holds its
+// source until both branches cancel, and the watcher branch reads
+// to the exit event. So the caller's cancel takes the watcher with
+// it.
+function releaseWatcherOnCancel(
+  source: ReadableStream<ExecEvent>,
+  release: () => void,
+): ReadableStream<ExecEvent> {
+  const reader = source.getReader();
+  return new ReadableStream<ExecEvent>(
+    {
+      pull: async (controller) => {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      },
+      cancel: async (reason) => {
+        // Order matters: the branch cancel doesn't settle until the
+        // watcher has cancelled too.
+        const cancelled = reader.cancel(reason);
+        release();
+        await cancelled;
+      },
+    },
+    { highWaterMark: 0 },
+  );
 }
 
 function pipeEvents<E extends ExecEncoding>(

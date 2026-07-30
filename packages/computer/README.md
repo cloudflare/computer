@@ -445,6 +445,11 @@ The client mints an id when the caller doesn't pass one, so
 push/pull bracket — it joins a run already in flight — so its sync
 counts cover only what lands after the reattach.
 
+A run streams to one reader at a time. Dropping a handle — the `using`
+above, or an explicit `cancel()` — hands the stream back, which is what
+lets the next request reattach. Reattaching while an earlier handle is
+still reading is refused.
+
 ## Observability
 
 The package emits one span per documented operation through an optional

@@ -617,4 +617,52 @@ describe("WorkspaceStub", () => {
       { backend: backend({ shell: shellRpc }) },
     );
   });
+
+  it("disposing an exec handle frees the run for a later shell.get", async () => {
+    // The documented Worker flow: start a long command in one
+    // request, reattach in a later one. Only one live subscriber per
+    // run is allowed, so the handle stub's disposal has to hand the
+    // subscription back.
+    let subscriber: ReadableStreamDefaultController<
+      import("@cloudflare/computer-rpc").ExecEvent
+    > | null = null;
+    const subscribe = (id: string) => {
+      if (subscriber !== null) throw new Error(`exec ${id} already has a live subscriber`);
+      return new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
+        start(c) {
+          subscriber = c;
+        },
+        cancel() {
+          subscriber = null;
+        },
+      });
+    };
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec(request) {
+        const id = request.id ?? "e-1";
+        return { id, events: subscribe(id) };
+      },
+      async getExec(request) {
+        return { id: request.id, events: subscribe(request.id) };
+      },
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        {
+          using handle = await stub.shell.exec("sleep 100", { id: "long-run" });
+          expect(handle).toBeDefined();
+        }
+        // Disposal cancels the handle's stream in the background.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        using again = await stub.shell.get("long-run", { resume: "tail" });
+        expect(again).toBeDefined();
+      },
+      { backend: backend({ shell: shellRpc }) },
+    );
+  });
 });
