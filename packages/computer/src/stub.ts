@@ -75,11 +75,19 @@ import type { ExecEncoding, ExecHandle, ExecSyncResult, WorkspaceExecEvent } fro
 import type { Workspace } from "./workspace.js";
 
 export interface WorkspaceExecOptions {
+  // Stable id for the run. Omit to let the runner mint a UUID.
+  // Reusing an id while a previous run is still active throws
+  // EEXEC_BUSY.
+  id?: string;
   cwd?: string;
   // "utf8" decodes stdout/stderr chunks through a streaming
   // TextDecoder so multi-byte boundaries survive. Default leaves
   // bytes as Uint8Array.
   encoding?: "utf8";
+  // Per-call timeout in milliseconds. Past this duration the
+  // container signals the child. Omit for the runner's default;
+  // pass 0 to disable the timeout for this call.
+  timeoutMs?: number;
   // Backend selector. Omit to use the default backend (the first
   // one configured on the Workspace); pass the id of another
   // configured backend to route this call there.
@@ -626,12 +634,16 @@ export class WorkspaceShellStub extends RpcTarget {
         const spawned =
           options.encoding === "utf8"
             ? await this.#ws.shell.exec(command, {
+                id: options.id,
                 cwd: options.cwd,
                 encoding: "utf8",
+                timeoutMs: options.timeoutMs,
                 backend: options.backend,
               })
             : await this.#ws.shell.exec(command, {
+                id: options.id,
                 cwd: options.cwd,
+                timeoutMs: options.timeoutMs,
                 backend: options.backend,
               });
         resolveHandle(spawned as ExecHandle<"utf8" | undefined>);

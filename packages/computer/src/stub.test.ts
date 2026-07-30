@@ -418,6 +418,43 @@ describe("WorkspaceStub", () => {
     );
   });
 
+  it("shell.exec forwards id and timeoutMs to the runner", async () => {
+    // The remote surface accepts the same options as the host shell,
+    // so a stable id and a per-call timeout have to reach the runner
+    // rather than being dropped at the boundary.
+    const requests: Array<{ id?: string; timeoutMs?: number }> = [];
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec(request) {
+        requests.push({ id: request.id, timeoutMs: request.timeoutMs });
+        return {
+          id: request.id ?? "e-1",
+          events: new ReadableStream({
+            start(c) {
+              c.enqueue({ id: request.id ?? "e-1", seq: 1, name: "exit", value: 0 });
+              c.close();
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        using handle = await stub.shell.exec("noop", {
+          encoding: "utf8",
+          id: "install-1",
+          timeoutMs: 250,
+        });
+        await handle.result();
+        expect(requests).toEqual([{ id: "install-1", timeoutMs: 250 }]);
+      },
+      { backend: backend({ shell: shellRpc }) },
+    );
+  });
+
   it("shell.exec handle.stream() frames events as JSONL that decode back", async () => {
     // The handle's stream() projects the event stream as JSONL bytes
     // for the wire. Decoding it back yields the original events,
