@@ -354,6 +354,64 @@ describe("Workspace observer — shell stub", () => {
     await expect(handle.result()).resolves.toMatchObject({ exitCode: 137 });
   });
 
+  it("leaves the span to a stream() the kill interrupts", async () => {
+    // Killing a command someone is streaming is not a terminal path
+    // for the span: the reader sees the exit event the signal
+    // produced, so it reports the real exit code and kill() keeps out
+    // of the way.
+    const observer = makeRecorder();
+    let events!: ReadableStreamDefaultController<import("@cloudflare/computer-rpc").ExecEvent>;
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id: "exec-streamed",
+          events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
+            start(c) {
+              events = c;
+            },
+          }),
+        };
+      },
+      async getExec() {
+        throw new Error("not used");
+      },
+      async killExec() {
+        events.enqueue({ id: "exec-streamed", seq: 0, name: "exit", value: 137 });
+        events.close();
+      },
+      async disposeExec() {},
+    };
+    const ws = new Workspace({
+      storage: makeStorage(),
+      backends: [
+        {
+          id: "shelled",
+          async connect() {
+            return { rpc: { sync: fakeSync(), shell: shellRpc }, close: async () => {} };
+          },
+        },
+      ],
+      observer,
+    });
+    await ws.ready();
+    using handle = await new WorkspaceShellStub(ws).exec("sleep 100");
+    const reader = handle.stream().getReader();
+    const first = reader.read();
+
+    await handle.kill("SIGKILL");
+    await first;
+    while (!(await reader.read()).done) {
+      // drain to close
+    }
+    reader.releaseLock();
+    // The span closes once the reader reports the stream done; unlike
+    // result(), nothing hands the caller a promise to await for it.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
+    expect(execSpan.attributes["workspace.shell.exit_code"]).toBe(137);
+  });
+
   it("reports pending sync on the exec span without exposing secrets", async () => {
     const observer = makeRecorder();
     const secret = "observer-secret";

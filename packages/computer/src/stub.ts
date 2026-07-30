@@ -452,11 +452,16 @@ export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> e
   async kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void> {
     const handle = await this.#handle;
     await handle.kill(signal);
-    // The child has exited by the time kill() resolves, so this is a
-    // terminal path even for a caller that never reads the output.
-    // Close the span rather than leaving it open for the life of the
-    // session. Nothing drained the stream, so the outcome carries no
-    // exit code or sync counts.
+    // A result() or stream() already reading the handle describes the
+    // outcome itself — it sees the exit event this signal produced,
+    // exit code and all. Leave the span to it, and don't wait on it
+    // either: it closes when the caller finishes reading, which may be
+    // long after kill() returns.
+    if (this.#consumed) return;
+    // Otherwise this is a terminal path: the child has exited and
+    // nothing will read the output, so close the span rather than
+    // leave it open for the life of the session. With nothing drained
+    // the outcome carries no exit code or sync counts.
     this.#settle(emptyConsumeOutcome());
     // Same reason result() waits: the span's attributes are set by the
     // time kill() resolves.
@@ -681,6 +686,12 @@ export class WorkspaceShellStub extends RpcTarget {
                 timeoutMs: options.timeoutMs,
                 backend: options.backend,
               });
+        // The caller addresses the run by the id it asked for, so a
+        // backend that mints its own instead has to say so rather
+        // than hand back a handle nothing can reattach to.
+        if (options.id !== undefined && spawned.id !== options.id) {
+          throw new Error(`backend ran exec as ${spawned.id}, not the requested id ${options.id}`);
+        }
         resolveHandle(spawned as ExecHandle<"utf8" | undefined>);
         return consumer.promise;
       },
@@ -735,6 +746,11 @@ export class WorkspaceShellStub extends RpcTarget {
     // WorkspaceShell.get). The handle stub still reports how it was
     // consumed, so give it a consumer nobody reads and a span that has
     // already closed.
+    //
+    // Disposing this stub cancels the event stream, which gives the
+    // subscription back so the run can be reattached again. It doesn't
+    // stop the command — this handle didn't start it. Use kill() for
+    // that.
     return new WorkspaceExecHandleStub<"utf8" | undefined>(
       Promise.resolve(reattached as ExecHandle<"utf8" | undefined>),
       makeConsumer(),

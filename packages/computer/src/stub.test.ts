@@ -618,6 +618,36 @@ describe("WorkspaceStub", () => {
     );
   });
 
+  it("shell.exec rejects when the backend runs under a different id", async () => {
+    // The caller reattaches by the id it asked for, so a backend that
+    // substitutes its own has to fail loudly instead of handing back a
+    // handle shell.get can't find.
+    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id: "runner-picked",
+          events: new ReadableStream({
+            start(c) {
+              c.enqueue({ id: "runner-picked", seq: 1, name: "exit", value: 0 });
+              c.close();
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    await withStub(
+      async (ws) => {
+        const stub = ws.stub();
+        using handle = await stub.shell.exec("noop", { id: "asked-for" });
+        await expect(handle.result()).rejects.toThrow(/not the requested id asked-for/);
+      },
+      { backend: backend({ shell: shellRpc }) },
+    );
+  });
+
   it("disposing an exec handle frees the run for a later shell.get", async () => {
     // The documented Worker flow: start a long command in one
     // request, reattach in a later one. Only one live subscriber per

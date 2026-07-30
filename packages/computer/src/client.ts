@@ -226,7 +226,10 @@ function makeShellClient(
     // Every run is addressed by an id the caller knows, so the handle
     // exposes one on both paths and a later get() can reattach to a
     // command that outlived the request that started it. A caller
-    // passing its own id keeps it.
+    // passing its own id keeps it; minting one here rather than
+    // reading the runner's back saves a round trip on the remote
+    // path, and the shell stub rejects a spawn that came back under a
+    // different id.
     const id = options.id ?? crypto.randomUUID();
     return rehydrate(await shell.exec(commandOrStrings, { ...options, id }), id);
   }
