@@ -165,6 +165,11 @@ export interface ThinkWorkspaceCompatibility {
   stat(path: string): Promise<ThinkFileInfo | null>;
 }
 
+export type ThinkWorkspaceFilesystem = Pick<
+  WorkspaceFilesystem,
+  "find" | "mkdir" | "readFile" | "readdir" | "rm" | "stat" | "writeFile"
+>;
+
 export class Workspace {
   readonly #db: Database;
   readonly #fs: WorkspaceFilesystem;
@@ -184,6 +189,7 @@ export class Workspace {
   readonly #retryMaxAttempts: number;
   readonly #sessionId: string;
   readonly #defaultGitIdentity: GitIdentity | undefined;
+  readonly #useThink: boolean;
   readonly #assets: AssetsClient | undefined;
   readonly #artifacts: ArtifactClient;
   // Lazily-constructed git client, cached so the dynamic
@@ -240,6 +246,7 @@ export class Workspace {
     );
     this.#sessionId = options.sessionId ?? "";
     this.#defaultGitIdentity = options.defaultGitIdentity;
+    this.#useThink = options.useThink ?? false;
     this.#artifacts = options.artifacts
       ? createArtifact(
           options.artifacts.binding,
@@ -278,8 +285,8 @@ export class Workspace {
       mounts: this.#mounts,
     });
     this.#assets = typeof options.assets === "function" ? options.assets(this) : options.assets;
-    if (options.useThink) {
-      const think = createThinkCompatibility(this);
+    if (this.#useThink) {
+      const think = createThinkCompatibility(this.fs);
       Object.assign(this, think);
     }
   }
@@ -324,6 +331,10 @@ export class Workspace {
   // also rejected (and surfaced via Workspace.pull's skipped[]).
   get fs(): WorkspaceFilesystem {
     return this.#fs;
+  }
+
+  get useThink(): boolean {
+    return this.#useThink;
   }
 
   // Identifier for this workspace / session, as passed to the
@@ -945,11 +956,13 @@ class WorkspaceShellRouter {
   }
 }
 
-function createThinkCompatibility(ws: Workspace): ThinkWorkspaceCompatibility {
+export function createThinkCompatibility(
+  fs: ThinkWorkspaceFilesystem,
+): ThinkWorkspaceCompatibility {
   return {
     async readFile(path) {
       try {
-        return await ws.fs.readFile(path, "utf8");
+        return await fs.readFile(path, "utf8");
       } catch (err) {
         if (isEnoent(err)) return null;
         throw err;
@@ -957,17 +970,17 @@ function createThinkCompatibility(ws: Workspace): ThinkWorkspaceCompatibility {
     },
     async readFileBytes(path) {
       try {
-        return await drainBytes(await ws.fs.readFile(path));
+        return await drainBytes(await fs.readFile(path));
       } catch (err) {
         if (isEnoent(err)) return null;
         throw err;
       }
     },
     async writeFile(path, content) {
-      await ws.fs.writeFile(path, content);
+      await fs.writeFile(path, content);
     },
     async readDir(dir, opts) {
-      const entries = await ws.fs.readdir(dir);
+      const entries = await fs.readdir(dir);
       const offset = opts?.offset ?? 0;
       const limit = opts?.limit ?? entries.length;
       return entries.slice(offset, offset + limit).map((entry) =>
@@ -982,11 +995,11 @@ function createThinkCompatibility(ws: Workspace): ThinkWorkspaceCompatibility {
       );
     },
     async rm(path, opts) {
-      await ws.fs.rm(path, opts);
+      await fs.rm(path, opts);
     },
     async glob(pattern) {
       const { directory, relativePattern } = splitGlobPattern(pattern);
-      const matches = await ws.fs.find(directory, relativePattern);
+      const matches = await fs.find(directory, relativePattern);
       return matches.map((match) =>
         toThinkFileInfo({
           path: match.path,
@@ -999,11 +1012,11 @@ function createThinkCompatibility(ws: Workspace): ThinkWorkspaceCompatibility {
       );
     },
     async mkdir(path, opts) {
-      await ws.fs.mkdir(path, opts);
+      await fs.mkdir(path, opts);
     },
     async stat(path) {
       try {
-        const stat = await ws.fs.stat(path);
+        const stat = await fs.stat(path);
         return toThinkFileInfo({ ...stat, path, name: basename(path) });
       } catch (err) {
         if (isEnoent(err)) return null;

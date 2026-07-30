@@ -138,9 +138,10 @@ const body = await ws.fs.readFile("/notes.md", "utf8");
 // ws.shell throws — there's no backend wired up.
 ```
 
-Pass `useThink: true` when assigning the same instance to
-`Think.workspace`. That adds Think's compatibility methods directly
-on the instance while keeping the primary file API on `workspace.fs`.
+Pass `useThink: true` when assigning a workspace to `Think.workspace`.
+That adds Think's compatibility methods directly to the local instance
+and to clients returned by `getWorkspace()`, while keeping the primary
+file API on `workspace.fs`.
 
 Git, also without a backend:
 

@@ -10,9 +10,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { getWorkspace } from "./client.js";
+import { getWorkspace, type WorkspaceClient } from "./client.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { Workspace } from "./workspace.js";
+import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
 
 interface ExecCall {
   command: string;
@@ -75,6 +75,7 @@ function fakeRemote(): {
   let disposed = false;
   const stub = {
     fs: { marker: "fs" },
+    useThink: false,
     git: { marker: "git" },
     assets: undefined,
     artifacts: { marker: "artifacts" },
@@ -87,6 +88,25 @@ function fakeRemote(): {
     calls,
     disposed: () => disposed,
     disposedHandles,
+    host: { __getWorkspaceStub: () => Promise.resolve(stub as never) },
+  };
+}
+
+function fakeBrokenRemote(): {
+  host: WorkspaceStubHost;
+  disposed: () => boolean;
+} {
+  let disposed = false;
+  const stub = {
+    get useThink(): boolean {
+      throw new Error("compatibility lookup failed");
+    },
+    [Symbol.dispose]() {
+      disposed = true;
+    },
+  };
+  return {
+    disposed: () => disposed,
     host: { __getWorkspaceStub: () => Promise.resolve(stub as never) },
   };
 }
@@ -108,6 +128,7 @@ describe("getWorkspace — remote dispatch", () => {
     expect(ws.fs).toEqual({ marker: "fs" });
     expect(ws.git).toEqual({ marker: "git" });
     expect(ws.artifacts).toEqual({ marker: "artifacts" });
+    expect(ws).not.toHaveProperty("readFile");
   });
 
   it("disposing the client disposes the remote stub", async () => {
@@ -115,6 +136,30 @@ describe("getWorkspace — remote dispatch", () => {
     const ws = await getWorkspace(host);
     ws[Symbol.dispose]();
     expect(disposed()).toBe(true);
+  });
+
+  it("disposes the remote stub when client initialization fails", async () => {
+    const { host, disposed } = fakeBrokenRemote();
+
+    await expect(getWorkspace(host)).rejects.toThrow("compatibility lookup failed");
+    expect(disposed()).toBe(true);
+  });
+
+  it("adds Think compatibility when the remote Workspace enables it", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      useThink: true,
+    });
+    await workspace.fs.writeFile("/notes.txt", "hello");
+    const host: WorkspaceStubHost = {
+      __getWorkspaceStub: () => Promise.resolve(workspace.stub()),
+    };
+
+    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
+
+    expect(client).toHaveProperty("readFile");
+    await expect(client.readFile("/notes.txt")).resolves.toBe("hello");
+    await expect(client.readFile("/missing.txt")).resolves.toBeNull();
   });
 });
 
@@ -124,12 +169,27 @@ describe("getWorkspace — local dispatch", () => {
     const ws = await getWorkspace(host);
     await ws.shell.exec`cat ${"my file.txt"}`;
     expect(calls[0].command).toBe("cat 'my file.txt'");
+    expect(ws).not.toHaveProperty("readFile");
   });
 
   it("does not throw on dispose (the durable object owns the lifecycle)", async () => {
     const { host } = fakeLocal();
     const ws = await getWorkspace(host);
     expect(() => ws[Symbol.dispose]()).not.toThrow();
+  });
+
+  it("adds Think compatibility when the local Workspace enables it", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      useThink: true,
+    });
+    const host = { [WORKSPACE]: workspace };
+    const { shell } = fakeShell();
+    Object.defineProperty(workspace, "shell", { get: () => shell });
+
+    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
+
+    expect(client).toHaveProperty("readFile");
   });
 });
 

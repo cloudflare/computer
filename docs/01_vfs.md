@@ -41,8 +41,9 @@ facade — sandbox wiring lives behind a `WorkspaceBackend`.
 Set `useThink: true` when assigning the Workspace to
 `Think.workspace`. This adds Think's string-oriented filesystem
 compatibility methods (`readFile`, `readFileBytes`, `writeFile`,
-`readDir`, `rm`, `glob`, `mkdir`, and `stat`) directly to that
-Workspace instance while leaving the primary API on `workspace.fs`.
+`readDir`, `rm`, `glob`, `mkdir`, and `stat`) to that Workspace and to
+clients returned by `getWorkspace()`, while leaving the primary API on
+`workspace.fs`.
 
 Illustrative layout (nothing below `/` is auto-created beyond
 `ROOT_INODE` itself):

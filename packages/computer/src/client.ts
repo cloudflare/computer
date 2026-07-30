@@ -30,11 +30,17 @@
 // a `TemplateStringsArray`'s `.raw` does not survive structured clone
 // over RPC.
 
+import type { WorkspaceFilesystem } from "@cloudflare/dofs";
+
 import { decodeExecEvents } from "./exec-wire.js";
 import { type ShellValue, sh } from "./sh.js";
 import type { ExecEncoding, WorkspaceExecEvent } from "./shell.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { Workspace } from "./workspace.js";
+import {
+  createThinkCompatibility,
+  type ThinkWorkspaceCompatibility,
+  Workspace,
+} from "./workspace.js";
 
 // The remote shell handle stub: a result / stream / kill surface
 // carried across Workers RPC.
@@ -198,12 +204,10 @@ function makeShellClient(
 
 // The canonical client surface. `shell.exec` is the adapted member;
 // `fs`, `git`, `artifacts`, and `assets` are the underlying surface's
-// members, passed through. Their concrete types differ between the
-// local Workspace and the remote stub, so they're surfaced loosely
-// here and narrowed by the caller when needed.
-export interface WorkspaceClient {
-  // biome-ignore lint/suspicious/noExplicitAny: fs type differs local vs remote
-  readonly fs: any;
+// members, passed through. The filesystem stub mirrors the local
+// filesystem, so it also serves as the common client type.
+export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
+  readonly fs: WorkspaceFilesystem;
   // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
   readonly shell: WorkspaceShellClient<any, any, any>;
   // biome-ignore lint/suspicious/noExplicitAny: git type differs local vs remote
@@ -220,9 +224,10 @@ function makeClient(
   surface: any,
   rehydrate: (handle: unknown) => unknown,
   dispose: () => void,
+  useThink: boolean,
 ): WorkspaceClient {
   const shell = makeShellClient(surface.shell as UnderlyingShell, rehydrate);
-  return {
+  const client: WorkspaceClient = {
     get fs() {
       return surface.fs;
     },
@@ -238,6 +243,8 @@ function makeClient(
     },
     [Symbol.dispose]: dispose,
   };
+  if (useThink) Object.assign(client, createThinkCompatibility(client.fs));
+  return client;
 }
 
 // What `getWorkspace` accepts: a local host carrying the symbol stash
@@ -263,17 +270,24 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       // Local handle is already a host ExecHandle — pass it through.
       (h) => h,
       () => {},
+      local.useThink,
     );
   }
   // Remote path: fetch the stub over RPC and delegate to it. Handle
   // stubs need inflating from their JSONL stream into a host-shaped
   // ExecHandle.
   const stub = await (handle as WorkspaceStubHost).__getWorkspaceStub();
-  return makeClient(
-    stub,
-    (h) => rebuildExecHandle(h as RemoteExecHandle),
-    () => {
-      (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
-    },
-  );
+  try {
+    return makeClient(
+      stub,
+      (h) => rebuildExecHandle(h as RemoteExecHandle),
+      () => {
+        (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
+      },
+      await stub.useThink,
+    );
+  } catch (error) {
+    (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
+    throw error;
+  }
 }
