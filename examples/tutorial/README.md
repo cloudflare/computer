@@ -14,9 +14,9 @@ with a link to the PDF.
 
 ```
 POST /prompt ──► RecipeAgent
-                   │ webfetch https://openstove.org/...       (host)
-                   │ write    /workspace/card.md              (host)
-                   │ exec     pandoc card.md -o card.pdf      (container)
+                   │ fetch_url https://openstove.org/...      (host)
+                   │ write     /workspace/card.md             (host)
+                   │ bash      pandoc card.md -o card.pdf     (container)
                    ▼
                  R2 ──► signed link, good for a day
 ```
@@ -26,7 +26,7 @@ of the workspace. The `write` tool runs on the host, in the durable
 object, and writes through the `Workspace` into durable object storage.
 The container sees the same file on its FUSE mount at `/workspace`, so
 `pandoc` reads it as an ordinary file. The PDF `pandoc` writes syncs
-back the other way when the `exec` call finishes, so the finished file
+back the other way when the `bash` call finishes, so the finished file
 can be published straight from the workspace.
 
 The finished code is [one file](src/index.ts). The rest of this page
@@ -83,16 +83,20 @@ wrangler r2 bucket create recipe-cards
 ## 2. Install the dependencies
 
 ```sh
-npm install @cloudflare/workspace @cloudflare/ai-chat agents ai \
-  workers-ai-provider zod
+npm install @cloudflare/workspace
+npm install --no-save --package-lock=false \
+  /path/to/agents/packages/think /path/to/agents/packages/agents
 ```
 
 - `@cloudflare/workspace` is the filesystem, the container backend, and
   the assets client that publishes to R2.
-- `@cloudflare/ai-chat` provides `AIChatAgent`, and `agents` provides
-  `getAgentByName` for reaching an instance by name.
-- `ai`, `workers-ai-provider` and `zod` are the AI SDK, its Workers AI
-  provider, and the schema library the tool definitions use.
+- `@cloudflare/think` provides the agent loop and its file, shell, and
+  fetch tools. `agents` provides `getAgentByName` for reaching an
+  instance by name.
+
+The no-save install keeps this experiment out of the application's
+manifest and lockfile. A standalone project can use the published
+packages once this integration ships.
 
 ## 3. Create the Dockerfile
 
@@ -131,22 +135,30 @@ reachable, which it is on Cloudflare Containers, and falls back to a
 userspace shim otherwise, which is what `wrangler dev` gets. One image
 works in both places.
 
-## 4. Wire up the Workspace class
+## 4. Give Think a Computer workspace
 
-The durable object owns two objects: a `CloudflareContainerBackend`,
-which is the container the workspace is mounted in, and the `Workspace`
-itself, which is the filesystem.
+The durable object owns a `CloudflareContainerBackend`, which is the
+container the workspace is mounted in. `createComputerWorkspace` makes
+the Computer that owns the filesystem and gives it Think's workspace
+interface.
 
 ```ts
-import { type DurableObjectStorageLike, Workspace } from "@cloudflare/workspace";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
 } from "@cloudflare/workspace/backends/container";
+import { Think } from "@cloudflare/think";
+import {
+  createComputerWorkspace,
+  type LocalComputerWorkspace,
+} from "@cloudflare/think/experimental/computer";
+import type { DurableObjectStorageLike } from "@cloudflare/workspace";
 
-export class RecipeAgent extends withWorkspaceContainer(class extends AIChatAgent<Env> {}) {
+class RecipeBase extends Think<Env> {}
+
+export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
+  override workspace: LocalComputerWorkspace;
   readonly #backend: CloudflareContainerBackend;
-  readonly #workspace: Workspace;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -154,7 +166,7 @@ export class RecipeAgent extends withWorkspaceContainer(class extends AIChatAgen
       container: () => this,
       workspace: { binding: "RecipeAgent", id: ctx.id.toString() },
     });
-    this.#workspace = new Workspace({
+    this.workspace = createComputerWorkspace({
       storage: ctx.storage as unknown as DurableObjectStorageLike,
       backends: [this.#backend],
     });
@@ -169,66 +181,40 @@ export class RecipeAgent extends withWorkspaceContainer(class extends AIChatAgen
 }
 ```
 
-`withWorkspaceContainer` mixes the container lifecycle into whatever
-class you give it, so the durable object can start and stop its own
-container. The `workspace: { binding, id }` pair is how the container
-finds its way home: it dials the named binding at that id, which is why
-`fetch` has to hand `/ws` to the backend before the base class sees it.
+`withWorkspaceContainer` mixes the container lifecycle into Think, so
+the durable object can start and stop its own container. The
+`workspace: { binding, id }` pair is how the container finds its way
+home: it dials the named binding at that id, which is why `fetch` has to
+hand `/ws` to the backend before the base class sees it.
 
 ## 5. Hook the workspace up to the agent
 
-`AIChatAgent` has no filesystem of its own, so the tools you give it
-are the tools it has. Three are enough. `webfetch` is `fetch()` behind
-an allowlist of one host, so the agent can read openstove.org and
-nothing else. `write` is one call into the workspace. `exec` runs a
-command in the container.
+Think already has file and shell tools. The experimental Computer
+workspace makes those tools use the same filesystem as the container:
+`write` calls Computer's host-side filesystem, while `bash` calls the
+container shell. Think's fetch tool gets an allowlist of one host, so
+the agent can read openstove.org and nothing else.
 
 ```ts
-override async onChatMessage(): Promise<Response> {
-  const ws = this.#workspace;
-  const result = streamText({
-    model: createWorkersAI({ binding: this.env.AI })("@cf/moonshotai/kimi-k2.6"),
-    system: SYSTEM,
-    messages: await convertToModelMessages(this.messages),
-    stopWhen: stepCountIs(10),
-    tools: {
-      webfetch: tool({
-        description: `Fetch a page and return its text. Only ${RECIPES} URLs are allowed.`,
-        inputSchema: z.object({ url: z.string() }),
-        execute: async ({ url }) => {
-          const target = URL.parse(url);
-          if (target?.protocol !== "https:" || target.hostname !== RECIPES) {
-            return { error: `Only https://${RECIPES} URLs can be fetched.` };
-          }
-          const response = await fetch(target, { redirect: "manual" });
-          if (!response.ok) return { error: `${target} answered ${response.status}.` };
-          return { body: (await response.text()).slice(0, 64_000) };
-        },
-      }),
-      write: tool({
-        description: "Write a file into the workspace, which the container also sees.",
-        inputSchema: z.object({ path: z.string(), content: z.string() }),
-        execute: async ({ path, content }) => {
-          await ws.fs.writeFile(path, content);
-          return { path, bytes: content.length };
-        },
-      }),
-      exec: tool({
-        description: "Run a shell command in the container.",
-        inputSchema: z.object({ command: z.string() }),
-        execute: async ({ command }) => {
-          const handle = await ws.shell.exec(command, { encoding: "utf8" });
-          const { exitCode, stdout, stderr } = await handle.result();
-          return { exitCode, stdout: stdout.slice(0, 16_000), stderr: stderr.slice(0, 2_000) };
-        },
-      }),
-    },
-  });
-  return result.toUIMessageStreamResponse();
+override maxSteps = 10;
+override fetchTools = {
+  allowlist: ["https://openstove.org/**"],
+  followRedirects: "none" as const,
+  maxModelChars: 64_000,
+};
+
+override getModel() {
+  return "@cf/moonshotai/kimi-k2.6";
+}
+
+override getSystemPrompt() {
+  return SYSTEM;
 }
 ```
 
-Nothing copies files between the `write` and the `exec`. The write goes
+There is no `onChatMessage`, tool schema, or filesystem adapter in the
+agent. Think assembles its tools and drives the model loop. Nothing
+copies files between `write` and `bash`: the write goes
 into durable object storage and the container reads it back out of the
 mount, and the PDF `pandoc` leaves behind travels the same road in
 reverse.
@@ -245,31 +231,36 @@ the PDF to the assets client:
 
 ```ts
 async card(prompt: string): Promise<{ url: string; summary: string }> {
-  await this.#workspace.fs.mkdir("/workspace", { recursive: true });
-  const turn = await this.saveMessages([
-    { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: prompt }] },
-  ]);
-  if (turn.status !== "completed") {
-    throw new Error(`Agent turn ${turn.status}: ${turn.error ?? "no detail"}`);
+  try {
+    await this.workspace.fs.mkdir("/workspace", { recursive: true });
+    const turn = await this.saveMessages([
+      { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: prompt }] },
+    ]);
+    if (turn.status !== "completed") {
+      throw new Error(`Agent turn ${turn.status}: ${turn.error ?? "no detail"}`);
+    }
+    const assets = createAssets({
+      ws: this.workspace,
+      bucket: this.env.CARDS,
+      s3: {
+        bucket: this.env.CARDS_BUCKET_NAME,
+        accountId: this.env.CLOUDFLARE_ACCOUNT_ID,
+        accessKeyId: this.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
+      },
+    });
+    const url = await assets.share(PDF, { expiresAfter: LINK_TTL_MS, prefix: "cards" });
+    return { url, summary: lastAssistantText(this.messages) };
+  } finally {
+    await this.workspace.close();
   }
-  const assets = createAssets({
-    ws: this.#workspace,
-    bucket: this.env.CARDS,
-    s3: {
-      bucket: this.env.CARDS_BUCKET_NAME,
-      accountId: this.env.CLOUDFLARE_ACCOUNT_ID,
-      accessKeyId: this.env.R2_ACCESS_KEY_ID,
-      secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
-    },
-  });
-  const url = await assets.share(PDF, { expiresAfter: LINK_TTL_MS, prefix: "cards" });
-  return { url, summary: lastAssistantText(this.messages) };
 }
 ```
 
 `share` streams the file out of the workspace into R2 and signs a GET
 for it, so the bucket stays private, the worker never serves the bytes,
-and the link stops working after a day.
+and the link stops working after a day. The `finally` block closes the
+container session after this one-shot agent has finished.
 [`examples/assets`](../assets) uses the same client on its own.
 
 ## 6. Add the export
@@ -333,11 +324,16 @@ credential names, so generate it with the env file:
 wrangler types --env-file=.env.example
 ```
 
-From inside this repository, build the workspace package first and run
-the tutorial from the root:
+Clone the Agents SDK at `../agents/think-workspace` and install its
+dependencies first. Then, from this repository's root, build both local
+packages and run the tutorial:
 
 ```sh
 npm install
+pnpm --dir ../agents/think-workspace --filter @cloudflare/think build
+npm install --no-save --package-lock=false \
+  ../agents/think-workspace/packages/think \
+  ../agents/think-workspace/packages/agents
 npm run build --workspace @cloudflare/workspace
 npm run dev --workspace @example/workspace-tutorial
 ```
@@ -358,7 +354,7 @@ curl -X POST http://localhost:8787/prompt \
 ```
 
 The first request is slow: the container has to boot before the first
-`exec` runs. The link points at R2 rather than at the worker, so it
+`bash` runs. The link points at R2 rather than at the worker, so it
 works the same whether the worker runs locally or deployed.
 
 `wrangler deploy` works against any account with Workers AI and
