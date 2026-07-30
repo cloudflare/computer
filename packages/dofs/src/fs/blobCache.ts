@@ -7,11 +7,14 @@
 // blob in vfs_blobs, and we then re-fetch that one blob 512 times
 // over the lifetime of one read pass.
 //
-// vfs_blob_bytes is content-addressed and immutable: a stored
-// (hash, bytes) pair never changes for the life of the database.
-// That makes the cache trivially correct — any write that mutates a
-// file produces new chunk rows with new hashes, never overwriting
-// the bytes the cache holds.
+// vfs_blob_bytes is content-addressed. The normal write path
+// (upsertChunkBlob) uses ON CONFLICT DO NOTHING, so a correct
+// (hash, bytes) pair is never overwritten and the cache stays valid
+// for it. The one exception is repair: stageBlob (the sync receiver
+// path) uses ON CONFLICT DO UPDATE SET bytes to replace an incomplete
+// or size-mismatched payload left by an interrupted or corrupt write,
+// and clears this cache afterward so a stale payload is never served
+// after a repair.
 //
 // The cache is bounded (CHUNK_CACHE_MAX_ENTRIES) and per-Database so
 // independent test databases don't pollute each other. Eviction is
