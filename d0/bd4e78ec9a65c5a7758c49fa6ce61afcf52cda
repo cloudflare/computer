@@ -1,0 +1,105 @@
+.github/workflows/ci.yml
+  s_198507e0f343dc::t_f0743a5841ca02 29-31,143-160
+docs/01_vfs.md
+  s_53884fd8ca186b::t_a9ed47a5b13dae 36-45
+docs/05_shell_interface.md
+  s_53884fd8ca186b::t_4433db650b201e 186-258
+docs/09_tool_interface.md
+  s_53884fd8ca186b::t_1a14040148e1e0 1-11,15,17,20-24,26,32-34,37-40,43-47,52-105,122-124,128-155,171,176,192,197,199,202-207,212-214,220-222,226,229-236,239-247,253-254,258-264,266-272,276,281-282,287-288,293,297-302
+docs/README.md
+  s_53884fd8ca186b::t_05538dd8750315 24,49,58,232
+examples/artifacts/src/index.ts
+  s_53884fd8ca186b::t_d92bc82e41a77b 7-9,15-17,19,52-69,126-129,137-144,146,161,166,175,185,195
+examples/think/README.md
+  s_53884fd8ca186b::t_e9fd3252bf8301 58-74,80,187,194,207
+examples/think/src/agent.ts
+  s_53884fd8ca186b::t_c2aa30a0fc847a 11-17,28-29,50-51,211,225,229,597-599,605-606,637-641
+examples/think/wrangler.jsonc
+  s_53884fd8ca186b::t_d3d935c95827f1 56,59
+package-lock.json
+  s_53884fd8ca186b::t_586ce4cf587033 19,5994,9353-9362,12828,12837-12838,12842-12844,12850,12855-12857
+package.json
+  s_53884fd8ca186b::t_628dcf0d3f333f 27
+packages/computer/README.md
+  s_198507e0f343dc::t_a015d248f33043 13,71-74,81,88-96,99-100,103-104,110,116-119,122-124,127-128,141-144,248-249,253,256,264-319,407
+packages/computer/package.json
+  s_53884fd8ca186b::t_f1b3b3db516abd 30-33,75-77,83,88-90,99,108-109
+packages/computer/rolldown.config.ts
+  s_53884fd8ca186b::t_cab1c047874886 30,39-40
+packages/computer/src/client.test.ts
+  s_53884fd8ca186b::t_7fb10634ed4304 1-224
+packages/computer/src/client.ts
+  s_53884fd8ca186b::t_579c336e6fdee2 1-279
+packages/computer/src/exec-wire.test.ts
+  s_53884fd8ca186b::t_01b544d66143f3 1-120
+packages/computer/src/exec-wire.ts
+  s_53884fd8ca186b::t_0bbe5c907e243d 1-137
+packages/computer/src/index.ts
+  s_53884fd8ca186b::t_a5dff99378990d 27-34,58,79-84
+packages/computer/src/proxy.ts
+  s_198507e0f343dc::t_1c413b63a4836f 18,106-107,139,151-153,155-156
+packages/computer/src/sh.test.ts
+  s_53884fd8ca186b::t_a53b1ca9f3dc66 1-96
+packages/computer/src/sh.ts
+  s_53884fd8ca186b::t_d2e00b7f1c4356 1-102
+packages/computer/src/shell.ts
+  s_53884fd8ca186b::t_695f8e1c3da314 36,152
+packages/computer/src/stub.test.ts
+  s_53884fd8ca186b::t_a78f5a9b7ffedb 19,378-496
+packages/computer/src/stub.ts
+  s_53884fd8ca186b::t_fd3b3d4c822795 31-36,70,73-74,253-279,281-287,289-292,294-302,304-306,311-322,326-332,334-405,563-568,581-582,584-603,611-614,619-625,631,634-638
+packages/computer/src/tools/ai.test.ts
+  s_53884fd8ca186b::t_0dd5ec060b887f 1-561
+packages/computer/src/tools/ai.ts
+  s_53884fd8ca186b::t_3c977ef084c3fd 1-44
+packages/computer/src/tools/exec.ts
+  s_53884fd8ca186b::t_095235b77a944a 30,32-34,38,40,45,48-49,54-55,64-65,71-75,77-100,105-106,109-121
+packages/computer/src/tools/fs/edit.ts
+  s_53884fd8ca186b::t_b277aa5f3de000 12-13,109-145,147-151
+packages/computer/src/tools/fs/list.ts
+  s_53884fd8ca186b::t_c2ef9f07fe8460 1-39
+packages/computer/src/tools/fs/read.ts
+  s_53884fd8ca186b::t_75464599adb357 3
+packages/computer/src/tools/fs/store.ts
+  s_53884fd8ca186b::t_126e866aa0ee33 2,4-11,17-18,67-73,75-77,81-111,114
+packages/computer/src/tools/fs/types.ts
+  s_53884fd8ca186b::t_01a178b2265aec 2-6
+packages/computer/src/tools/fs/write.ts
+  s_53884fd8ca186b::t_c760c74bda6085 3,35-44
+packages/computer/src/tools/index.ts
+  s_53884fd8ca186b::t_226f387987ab6e 1-9
+packages/computer/src/tools/publish.ts
+  s_53884fd8ca186b::t_16c02d5558349f 3-8,10-11,14,16-20,24,36-38,41,45
+packages/computer/src/with-workspace.ts
+  s_53884fd8ca186b::t_34c322638ffb4e 1-80
+packages/computer/src/workspace.test.ts
+  s_53884fd8ca186b::t_751ee94a9cb170 6,12-24,1081-1133
+packages/computer/src/workspace.ts
+  s_53884fd8ca186b::t_21a0b6482af866 99-125,170-178,221-224,806-961
+packages/computer/tests/worker-backend-worker.ts
+  s_53884fd8ca186b::t_fea6466b9efcd3 22,31-43,53-56,63-64,68-69,74-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d0bd4e78ec9a65c5a7758c49fa6ce61afcf52cda",
+  "prompts": {},
+  "sessions": {
+    "s_198507e0f343dc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fae65-0cb2-7282-bf70-8c312cb15b08",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Christopher Little-Savage <clittle-savage@cloudflare.com>"
+    },
+    "s_53884fd8ca186b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_04dad267bffeDlbUDa13bjqlGt",
+        "model": "grok-4.5"
+      },
+      "human_author": "Christopher Little-Savage <clittle-savage@cloudflare.com>"
+    }
+  }
+}
