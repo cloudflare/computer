@@ -83,9 +83,7 @@ wrangler r2 bucket create recipe-cards
 ## 2. Install the dependencies
 
 ```sh
-npm install @cloudflare/workspace
-npm install --no-save --package-lock=false \
-  /path/to/agents/packages/think /path/to/agents/packages/agents
+npm install @cloudflare/workspace @cloudflare/think agents
 ```
 
 - `@cloudflare/workspace` is the filesystem, the container backend, and
@@ -93,10 +91,6 @@ npm install --no-save --package-lock=false \
 - `@cloudflare/think` provides the agent loop and its file, shell, and
   fetch tools. `agents` provides `getAgentByName` for reaching an
   instance by name.
-
-The no-save install keeps this experiment out of the application's
-manifest and lockfile. A standalone project can use the published
-packages once this integration ships.
 
 ## 3. Create the Dockerfile
 
@@ -324,16 +318,11 @@ credential names, so generate it with the env file:
 wrangler types --env-file=.env.example
 ```
 
-Clone the Agents SDK at `../agents/think-workspace` and install its
-dependencies first. Then, from this repository's root, build both local
-packages and run the tutorial:
+From this repository's root, install the dependencies, build the
+workspace package, and run the tutorial:
 
 ```sh
 npm install
-pnpm --dir ../agents/think-workspace --filter @cloudflare/think build
-npm install --no-save --package-lock=false \
-  ../agents/think-workspace/packages/think \
-  ../agents/think-workspace/packages/agents
 npm run build --workspace @cloudflare/workspace
 npm run dev --workspace @example/workspace-tutorial
 ```
