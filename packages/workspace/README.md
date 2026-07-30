@@ -302,7 +302,14 @@ export class WorkspaceHost extends DurableObject<Env> {
     const now = Date.now();
     for (const intent of intents.values()) {
       if (intent.notBefore <= now) {
-        await this.workspace.retryPendingSync(intent.backend);
+        const result = await this.workspace.retryPendingSync(intent.backend);
+        // An exhausted backend keeps its final intent in storage with a
+        // past-due notBefore. Clear it here so it stops driving the alarm;
+        // otherwise the wake-up fires immediately and forever. Inspect or
+        // alert before clearing if you need to surface the exhaustion.
+        if (result.status === "exhausted") {
+          await this.scheduler.clear(intent.backend);
+        }
       }
     }
 
