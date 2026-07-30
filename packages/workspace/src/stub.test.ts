@@ -17,6 +17,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { decodeExecEvents } from "./exec-wire.js";
+import type { ExecHandle, ExecResult } from "./shell.js";
 import {
   WorkspaceAssetsStub,
   WorkspaceExecHandleStub,
@@ -338,21 +339,34 @@ describe("WorkspaceStub", () => {
   });
 
   it("shell result carries the structured sync outcome across Workers RPC", async () => {
-    using handle = new WorkspaceExecHandleStub(
-      Promise.resolve({
-        exitCode: 0,
-        stdout: "done",
-        stderr: "",
-        pushed: 1,
-        pulled: 0,
+    const result = {
+      exitCode: 0,
+      stdout: "done",
+      stderr: "",
+      pushed: 1,
+      pulled: 0,
+      skipped: [],
+      sync: {
+        status: "pending" as const,
+        applied: 0,
         skipped: [],
-        sync: {
-          status: "pending" as const,
-          applied: 0,
-          skipped: [],
-          error: "WebSocket closed before pull completed",
-        },
-      }),
+        error: "WebSocket closed before pull completed",
+      },
+    } satisfies ExecResult<"utf8">;
+    const hostHandle = { result: async () => result } as ExecHandle<"utf8">;
+    using handle = new WorkspaceExecHandleStub<"utf8">(
+      Promise.resolve(hostHandle),
+      {
+        promise: Promise.resolve({
+          exitCode: 0,
+          pushed: 0,
+          pulled: 0,
+          skippedCount: 0,
+          sync: { status: "complete", applied: 0, skipped: [] },
+        }),
+        resolve() {},
+      },
+      Promise.resolve(),
     );
     await expect(handle.result()).resolves.toMatchObject({
       exitCode: 0,
