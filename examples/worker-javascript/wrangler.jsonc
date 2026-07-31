@@ -1,0 +1,51 @@
+{
+  // Example: Worker + Durable Object that runs a Workspace whose
+  // runtime is an ECMAScript module evaluated in a Dynamic Worker
+  // loaded through env.LOADER.
+  //
+  // Mirrors examples/worker-shell beat for beat — same DO class
+  // name, same routes, same R2 mount. The only difference is the
+  // backend: WorkerJavaScriptBackend instead of WorkerShellBackend,
+  // so exec evaluates JavaScript modules rather than shell commands.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-worker-javascript-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  // Worker Loader binding. The DO's WorkerJavaScriptBackend calls
+  // env.LOADER.load(...) to mint a Dynamic Worker that evaluates
+  // each module.
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ContainerExample",
+        "class_name": "ContainerExample"
+      }
+    ]
+  },
+
+  // R2 bucket mounted into every Workspace at /workspace/r2 via
+  // R2Bucket(...). Seed it once with:
+  //   npm run seed:r2 --workspace @example/computer-worker-javascript
+  // which uploads ./seed/data/hello.txt to the bucket.
+  "r2_buckets": [
+    {
+      "binding": "Bucket",
+      "bucket_name": "computer-worker-javascript-hello"
+    }
+  ],
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ContainerExample"]
+    }
+  ]
+}

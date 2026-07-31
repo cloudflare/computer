@@ -1,0 +1,22 @@
+{
+  "name": "@example/computer-worker-javascript",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker + Durable Object that evaluates ECMAScript modules inside a Dynamic Worker via @cloudflare/computer's WorkerJavaScriptBackend.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "seed:r2": "wrangler r2 object put computer-worker-javascript-hello/hello.txt --file ./seed/data/hello.txt --remote",
+    "seed:r2:local": "wrangler r2 object put computer-worker-javascript-hello/hello.txt --file ./seed/data/hello.txt --local"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.107.1"
+  }
+}

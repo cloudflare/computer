@@ -200,6 +200,7 @@ Runnable examples live at the repo root, not inside any package:
 examples/
 ├── container/        # Reference container image for computerd
 ├── worker-shell/     # WorkerShellBackend example
+├── worker-javascript/ # WorkerJavaScriptBackend example
 ├── code/             # workspace.runtime with Worker and Container shells
 └── think/            # @cloudflare/think integration
 ```
