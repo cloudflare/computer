@@ -38,6 +38,13 @@ export interface WorkspaceBackend {
   // Workspace selection logic.
   readonly type: string;
 
+  // Whether the backend accepts a structured `input` value and
+  // returns a structured `result` value. Independent of the
+  // implementation kind: a shell backend that coerces JSON to
+  // argv/stdin and parses stdout back to a value can be callable
+  // too. Defaults to false when omitted.
+  readonly callable?: boolean;
+
   // Materialise a connection. Called lazily on first use, once
   // per backend per workspace lifetime. The Workspace caches the
   // resulting handle by `id`; subsequent exec / push / pull

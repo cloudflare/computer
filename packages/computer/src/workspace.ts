@@ -214,6 +214,7 @@ export class Workspace {
   readonly #backendsById: Map<string, WorkspaceBackend>;
   readonly #moduleBackendsById: Map<string, WorkspaceModuleBackend>;
   readonly #registeredBackendIds: Set<string>;
+  readonly #callableBackendIds: Set<string>;
   readonly #defaultBackendId: string | undefined;
   readonly #defaultCommandBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
@@ -315,6 +316,9 @@ export class Workspace {
       registered.filter(isModuleBackend).map((backend) => [backend.id, backend]),
     );
     this.#registeredBackendIds = new Set();
+    this.#callableBackendIds = new Set(
+      registered.filter((backend) => backend.callable === true).map((backend) => backend.id),
+    );
     for (const backend of registered) {
       if (this.#registeredBackendIds.has(backend.id)) {
         throw new Error(
@@ -435,6 +439,7 @@ export class Workspace {
     if (!this.#runtime) {
       this.#runtime = new WorkspaceRuntime({
         commandBackendIds: new Set(this.#backendsById.keys()),
+        callableBackendIds: this.#callableBackendIds,
         shell: () => this.#routedShell(),
         moduleHandle: (id) => this.#moduleHandleFor(id),
         resolveBackendId: (id) => this.#resolveBackendId(id) ?? "",

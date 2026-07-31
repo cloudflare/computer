@@ -122,6 +122,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
   readonly requiresWaitUntil = true;
   readonly type = "worker-javascript";
+  readonly callable = true;
   readonly id: string;
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
 

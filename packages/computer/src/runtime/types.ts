@@ -170,6 +170,7 @@ export interface WorkspaceModuleBackend {
   readonly id: string;
   readonly requiresWaitUntil?: boolean;
   readonly type: string;
+  readonly callable?: boolean;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
 }
 

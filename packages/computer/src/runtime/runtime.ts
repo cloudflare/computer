@@ -14,6 +14,7 @@ import type {
 
 interface WorkspaceRuntimeRouterOptions {
   commandBackendIds: ReadonlySet<string>;
+  callableBackendIds: ReadonlySet<string>;
   shell: () => WorkspaceShell;
   moduleHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
@@ -41,10 +42,12 @@ export class WorkspaceRuntime {
   ): Promise<WorkspaceRuntimeExecHandle<E>> {
     if (options.id !== undefined) assertExecutionId(options.id);
     const backend = this.#backend(options.backend);
+    if (options.input !== undefined && !this.#options.callableBackendIds.has(backend)) {
+      throw new Error(
+        `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
+      );
+    }
     if (this.#options.commandBackendIds.has(backend)) {
-      if (options.input !== undefined) {
-        throw new Error(`Backend ${JSON.stringify(backend)} does not accept structured input.`);
-      }
       const shell = this.#options.shell();
       const handle = await (
         shell.exec as unknown as (
