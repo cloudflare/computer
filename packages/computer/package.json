@@ -79,7 +79,6 @@
   "peerDependencies": {
     "@platformatic/vfs": "*",
     "ai": "^6.0.196 || ^7.0.0",
-    "isomorphic-git": "^1.27.0",
     "zod": "^4.4.3"
   },
   "peerDependenciesMeta": {
@@ -87,9 +86,6 @@
       "optional": true
     },
     "ai": {
-      "optional": true
-    },
-    "isomorphic-git": {
       "optional": true
     },
     "zod": {

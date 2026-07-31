@@ -100,6 +100,7 @@ export {
   type SyncRetryScheduler,
   type ThinkWorkspaceCompatibility,
   Workspace,
+  type WorkspaceGitFactory,
   type WorkspaceOptions,
   type WorkspaceRetryPendingSyncResult,
 } from "./workspace.js";

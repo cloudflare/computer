@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeArtifactsBinding } from "../../../tests/utilities/fake-artifacts-binding.js";
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index.js";
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
+import { createGitClient } from "../../git/index.js";
 import type { WorkspaceStub } from "../../stub.js";
 import { Workspace } from "../../workspace.js";
 import { ShellWorker } from "./entrypoint.js";
@@ -268,6 +269,7 @@ describe("ShellWorker", () => {
       workspace = new Workspace({
         storage: new SQLiteTestStorage() as never,
         backends: [noopBackend()],
+        git: createGitClient(),
       });
       await workspace.ready();
       // /workspace is the ShellWorker's default cwd; create it

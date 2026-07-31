@@ -372,7 +372,9 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       {
         fs: local.fs,
         runtime: local.runtime,
-        git: local.git,
+        get git() {
+          return local.git;
+        },
         artifacts: local.artifacts,
         assets: local.assets,
       },

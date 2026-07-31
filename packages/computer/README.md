@@ -56,12 +56,17 @@ uniform; the counts are just always zero.
   surface: `exec`, `getExec`, `killExec`, and `disposeExec`. The selected
   backend defines the source language. JavaScript results may include a
   structured `value`; command backends return stdout/stderr and an exit code.
-- `workspace.git` — a typed git client backed by
-  `isomorphic-git` against the local SQLite VFS. Surfaces both a
-  TypeScript API (`workspace.git.clone({ url })`) and an
-  argv-driven entry point (`workspace.git.cli({ argv })`). The
-  worker backend's shell exposes the same dispatcher through a
-  built-in `git` custom command. See
+- `workspace.git` — an opt-in typed git client backed by
+  `isomorphic-git` against the local SQLite VFS. Pass
+  `createGitClient()` from `@cloudflare/computer/git` as
+  `WorkspaceOptions.git` to enable both the TypeScript API
+  (`workspace.git.clone({ url })`) and the argv-driven entry point
+  (`workspace.git.cli({ argv })`). The git subpath bundles
+  `isomorphic-git` lazily and replaces its `pako` dependency with
+  the Workers `node:zlib` implementation, so the default package
+  graph stays free of git. The worker backend's shell exposes the
+  same dispatcher through a built-in `git` custom command when git
+  is configured. See
   [`docs/13_git_interface.md`](../../docs/13_git_interface.md).
 - `createAssets` (from `@cloudflare/computer/assets`) — `share` a
   workspace file to an R2 bucket and get back a presigned URL.
@@ -158,8 +163,11 @@ and `workspace.runtime` as the primary surfaces.
 Git, also without a backend:
 
 ```ts
+import { createGitClient } from "@cloudflare/computer/git";
+
 const ws = new Workspace({
   storage: ctx.storage,
+  git: createGitClient(),
   defaultGitIdentity: { name: "Agent", email: "agent@example.test" },
 });
 await ws.git.clone({ url: "https://github.com/example/repo.git" });

@@ -30,7 +30,7 @@ describe("createGitClient", () => {
     const fs = stubFs();
     const adapter = vi.fn(async () => fs);
 
-    const client = createGitClient({ ws: { provider }, adapter });
+    const client = createGitClient({ adapter })({ ws: { provider } });
 
     // No work happens at construction time.
     expect(provider).not.toHaveBeenCalled();

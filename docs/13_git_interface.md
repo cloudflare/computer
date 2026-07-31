@@ -6,10 +6,12 @@
 > `packages/computer/src/backends/worker/`. Everything below
 > works today.
 
-`workspace.git` is a major typed surface on `Workspace`, alongside `fs`, `runtime`, Assets, and Artifacts. It runs every operation against the
-local SQLite-backed VFS through `isomorphic-git`, so a
+`workspace.git` is a major typed surface on `Workspace`, alongside `fs`, `runtime`, Assets, and Artifacts. It is opt-in: pass `createGitClient()` from `@cloudflare/computer/git` as `WorkspaceOptions.git` to enable it. Git runs every operation against the local SQLite-backed VFS through `isomorphic-git`, so a
 filesystem-only workspace (no backend) can drive a full
-clone/commit/diff cycle.
+clone/commit/diff cycle. The git subpath bundles `isomorphic-git`
+lazily and replaces its `pako` dependency with a small
+`node:zlib` shim for Workers running with `nodejs_compat`; the
+default `@cloudflare/computer` graph stays free of git.
 
 Two doors into the same implementation:
 
@@ -111,8 +113,9 @@ diff against HEAD — through each entry point.
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
+import { createGitClient } from "@cloudflare/computer/git";
 
-const ws = new Workspace({ storage: ctx.storage });
+const ws = new Workspace({ storage: ctx.storage, git: createGitClient() });
 await ws.git.clone({ url: "https://github.com/example/repo.git" });
 await ws.fs.writeFile("/README.md", "hello world\n");
 const patch = await ws.git.diff();
@@ -174,8 +177,8 @@ committer in this order:
    by `git config user.email "..."`. Only the local
    `<dir>/.git/config` is consulted; there is no global
    `~/.gitconfig` fallback.
-4. `defaultIdentity` from `createGitClient` / `new Workspace({
-   defaultGitIdentity })`.
+4. `defaultIdentity` from `createGitClient()` / `new Workspace({
+   git: createGitClient(), defaultGitIdentity })`.
 
 If none of the four yields a name and email,
 `MissingIdentityError` fires. The CLI surfaces it as `git

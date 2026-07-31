@@ -8,8 +8,11 @@
 //   - capnweb            — a regular npm dep on this package.
 //   - @platformatic/vfs  — optional userland import used by
 //                          examples but not the workspace core.
-// `node:*` builtins are externalised automatically because
-// `platform: "node"` is the default for `esm` output here.
+//   - node:*             — provided by nodejs_compat in workerd.
+//
+// The git entrypoint bundles isomorphic-git, but aliases pako to a
+// tiny node:zlib-backed compatibility layer so Workers don't carry
+// pako's JavaScript zlib implementation.
 
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,11 +42,8 @@ export default defineConfig({
     "@platformatic/vfs",
     "ai",
     "zod",
-    "isomorphic-git",
-    /^isomorphic-git\//,
     "just-bash",
-    "node:crypto",
-    "node:events",
+    /^node:/,
   ],
   resolve: {
     alias: {
@@ -51,6 +51,7 @@ export default defineConfig({
       "@cloudflare/dofs/testing": resolve(here, "../dofs/src/testing.ts"),
       "@cloudflare/computer-rpc": resolve(here, "../rpc/src/index.ts"),
       "@cloudflare/computer-rpc/driver": resolve(here, "../rpc/src/sync-driver.ts"),
+      pako: resolve(here, "src/git/pako-zlib-shim.ts"),
     },
   },
   // ESM only. Nothing in-tree loads CJS — the example Worker, computerd,

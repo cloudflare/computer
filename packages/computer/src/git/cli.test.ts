@@ -1953,7 +1953,7 @@ describe("runGitCli — clean argv parsing", () => {
 
 describe("runGitCli — end-to-end against an in-process Workspace", () => {
   it("diff prints the working-tree delta against HEAD", async () => {
-    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    const ws = new Workspace({ git: createGitClient(), storage: new SQLiteTestStorage() });
     await ws.ready();
 
     // Seed a repo with one committed file, then mutate the
@@ -1987,6 +1987,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     // any subcommand drifts from the typed surface, the chain
     // breaks here rather than in a downstream consumer.
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2030,6 +2031,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
 
   it("log / show / rev-parse / ls-files round-trip", async () => {
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2065,6 +2067,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
 
   it("hash-object / cat-file / update-ref / config round-trip", async () => {
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2104,7 +2107,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
   });
 
   it("remote add / list / remove round-trip through the config file", async () => {
-    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    const ws = new Workspace({ git: createGitClient(), storage: new SQLiteTestStorage() });
     await ws.ready();
     const cli = (argv: string[]) => ws.git.cli({ argv, cwd: "/" });
     await cli(["init"]);
@@ -2128,6 +2131,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
 
   it("branch / checkout / tag round-trip moves HEAD and creates refs", async () => {
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2162,6 +2166,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
 
   it("switch restores tracked file content from the target branch", async () => {
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2184,6 +2189,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
 
   it("reset HEAD unstages all staged changes", async () => {
     const ws = new Workspace({
+      git: createGitClient(),
       storage: new SQLiteTestStorage(),
       defaultGitIdentity: { name: "Test", email: "test@example.test" },
     });
@@ -2205,7 +2211,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
   });
 
   it("commit without identity surfaces as exit 128", async () => {
-    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    const ws = new Workspace({ git: createGitClient(), storage: new SQLiteTestStorage() });
     await ws.ready();
     await ws.git.cli({ argv: ["init"], cwd: "/" });
     await ws.fs.writeFile("/a.txt", "x\n");
@@ -2221,7 +2227,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     // would drive it: configure identity, stage with -A, commit
     // with -am, inspect with the new flags, branch with switch
     // -c, then reset / stash / clean.
-    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    const ws = new Workspace({ git: createGitClient(), storage: new SQLiteTestStorage() });
     await ws.ready();
     const cli = (argv: string[]) => ws.git.cli({ argv, cwd: "/" });
 
@@ -2299,18 +2305,17 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     // Force the clone path to fail by pointing at an invalid host;
     // we want to pin that the dispatcher's catch arm produces a
     // CLI-shaped result and doesn't propagate the rejection.
-    const ws = new Workspace({ storage: new SQLiteTestStorage() });
+    const ws = new Workspace({ git: createGitClient(), storage: new SQLiteTestStorage() });
     await ws.ready();
     // Swap the git client out for one whose clone rejects, so we
     // don't depend on network reachability inside the test runner.
     const failing: GitClient = createGitClient({
-      ws,
       adapter: async () => ({
         promises: {
           readFile: vi.fn(async () => new Uint8Array()),
         },
       }),
-    });
+    })({ ws });
     // Replace `clone` with a deterministic failure — the real
     // path is exercised by `clone.test.ts`.
     (failing as { clone: GitClient["clone"] }).clone = async () => {

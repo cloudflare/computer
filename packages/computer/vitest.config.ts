@@ -21,6 +21,12 @@ export default defineConfig({
         find: "cloudflare:workers",
         replacement: resolve(__dirname, "test-helpers/cloudflare-workers-stub.ts"),
       },
+      // Match the package build: isomorphic-git's pako import is
+      // replaced with the Workers node:zlib-backed shim.
+      {
+        find: "pako",
+        replacement: resolve(__dirname, "src/git/pako-zlib-shim.ts"),
+      },
     ],
   },
   test: {

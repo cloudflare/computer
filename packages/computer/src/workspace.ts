@@ -27,7 +27,7 @@ import {
 } from "./artifacts/index.js";
 import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { createGitClient, type GitClient, type GitIdentity } from "./git/index.js";
+import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
@@ -124,10 +124,16 @@ export interface WorkspaceOptions {
   retryScheduler?: SyncRetryScheduler;
   retry?: SyncRetryOptions;
 
+  // Optional git client factory. Omit it to keep the default
+  // Workspace graph free of isomorphic-git; pass createGitClient()
+  // from @cloudflare/computer/git when the caller needs
+  // workspace.git or the worker backend's built-in git command.
+  git?: WorkspaceGitFactory;
+
   // Default identity used by commit-producing git subcommands
   // when neither the call site nor the relevant `GIT_AUTHOR_*` /
   // `GIT_COMMITTER_*` env vars supply one. Threaded through to
-  // `createGitClient` on first access to `workspace.git`.
+  // the configured git factory on first access to `workspace.git`.
   defaultGitIdentity?: GitIdentity;
 
   // Optional assets publisher used by WorkspaceStub and the worker
@@ -180,6 +186,22 @@ export type ThinkWorkspaceFilesystem = Pick<
   "find" | "mkdir" | "readFile" | "readdir" | "rm" | "stat" | "writeFile"
 >;
 
+export type WorkspaceGitFactory = GitClientFactory;
+
+const GIT_NOT_CONFIGURED_MESSAGE =
+  "Workspace git is not configured. Import createGitClient from " +
+  "@cloudflare/computer/git and pass createGitClient() as WorkspaceOptions.git.";
+
+const DISABLED_GIT_CLIENT = new Proxy(
+  {},
+  {
+    get(_target, property) {
+      if (property === "then") return undefined;
+      return () => Promise.reject(new Error(GIT_NOT_CONFIGURED_MESSAGE));
+    },
+  },
+) as GitClient;
+
 export class Workspace {
   readonly #db: Database;
   readonly #fs: WorkspaceFilesystem;
@@ -202,6 +224,7 @@ export class Workspace {
   readonly #retryMaxDelayMs: number;
   readonly #retryMaxAttempts: number;
   readonly #sessionId: string;
+  readonly #gitFactory: WorkspaceGitFactory | undefined;
   readonly #defaultGitIdentity: GitIdentity | undefined;
   readonly #useThink: boolean;
   readonly #assets: AssetsClient | undefined;
@@ -264,6 +287,7 @@ export class Workspace {
       "maxAttempts",
     );
     this.#sessionId = options.sessionId ?? "";
+    this.#gitFactory = options.git;
     this.#defaultGitIdentity = options.defaultGitIdentity;
     this.#useThink = options.useThink ?? false;
     this.#artifacts = options.artifacts
@@ -381,18 +405,21 @@ export class Workspace {
     return this.#assets;
   }
 
-  // Git facade. Available immediately and does not require a
+  // Git facade. Opt-in so the default Workspace graph does not
+  // carry isomorphic-git. When configured, it does not require a
   // backend — every supported subcommand reads and writes through
-  // the local SQLite-backed VFS. The dynamic imports for
-  // isomorphic-git / diff are deferred until the first method on
-  // the returned client is awaited; touching `workspace.git`
-  // itself is cheap.
+  // the local SQLite-backed VFS. The configured factory decides
+  // how the heavy git implementation is loaded.
   //
   // Memoised on a private field so repeated callers share the
-  // pack/index cache and the resolved peer-dep modules.
+  // pack/index cache and resolved modules from the configured
+  // implementation.
   get git(): GitClient {
+    if (!this.#gitFactory) {
+      throw new Error(GIT_NOT_CONFIGURED_MESSAGE);
+    }
     if (!this.#git) {
-      this.#git = createGitClient({
+      this.#git = this.#gitFactory({
         ws: this,
         defaultIdentity: this.#defaultGitIdentity,
       });
@@ -785,7 +812,7 @@ export class Workspace {
           db: this.#db,
           waitUntil: this.#waitUntil,
           fs: this.#fs,
-          git: this.git,
+          git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
           artifacts: this.#artifacts,
         }),
     )

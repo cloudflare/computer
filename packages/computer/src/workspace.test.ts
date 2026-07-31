@@ -2,6 +2,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
@@ -641,21 +642,25 @@ describe("Workspace backend selection", () => {
   });
 
   describe("workspace.git", () => {
-    // workspace.git is a lazy property accessor that doesn't
-    // require a backend — every supported subcommand reads and
-    // writes through the local SQLite-backed VFS. We pin three
-    // contracts here: (1) repeat access returns the same client
-    // so the pack/index cache is shared, (2) constructing the
-    // client doesn't fire the dynamic imports of isomorphic-git
-    // / diff, (3) the surface is available on a Workspace with
-    // no backend configured.
-    it("returns the same client across calls", () => {
+    // workspace.git is an opt-in property accessor. The default
+    // Workspace graph stays free of the git implementation; callers
+    // that need git pass the factory from @cloudflare/computer/git.
+    // The client is still lazy once configured, so touching the
+    // getter does not load isomorphic-git / diff, and it works on a
+    // filesystem-only Workspace because every subcommand reads and
+    // writes through the local SQLite-backed VFS.
+    it("throws a clear error when git is not configured", () => {
       const ws = new Workspace({ storage: makeStorage() });
+      expect(() => ws.git).toThrow(/Workspace git is not configured/);
+    });
+
+    it("returns the same configured client across calls", () => {
+      const ws = new Workspace({ storage: makeStorage(), git: createGitClient() });
       expect(ws.git).toBe(ws.git);
     });
 
-    it("is available with no backend configured", async () => {
-      const ws = new Workspace({ storage: makeStorage() });
+    it("is available with no backend configured when a git factory is passed", async () => {
+      const ws = new Workspace({ storage: makeStorage(), git: createGitClient() });
       await ws.ready();
       // help is hermetic — no dynamic imports, no fs touches.
       const res = await ws.git.cli({ argv: ["help"] });
@@ -663,8 +668,8 @@ describe("Workspace backend selection", () => {
       expect(res.stdout).toContain("usage: git");
     });
 
-    it("`git version` runs end-to-end without ready()", async () => {
-      const ws = new Workspace({ storage: makeStorage() });
+    it("`git version` runs end-to-end without ready() when configured", async () => {
+      const ws = new Workspace({ storage: makeStorage(), git: createGitClient() });
       const res = await ws.git.cli({ argv: ["version"] });
       expect(res.exitCode).toBe(0);
       expect(res.stdout).toContain("@cloudflare/computer");

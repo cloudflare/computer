@@ -16,6 +16,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { createGitClient } from "./git/index.js";
 import type { EagerMount, MountWriteAPI } from "./mounts/types.js";
 import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "./runtime/types.js";
 import { decodeRuntimeEvents } from "./runtime/wire.js";
@@ -113,7 +114,7 @@ function snapshotOf(names: string[]): Record<string, number> {
 
 async function withStub<T>(
   fn: (ws: Workspace) => T | Promise<T>,
-  options?: Pick<ConstructorParameters<typeof Workspace>[0], "assets" | "code"> & {
+  options?: Pick<ConstructorParameters<typeof Workspace>[0], "assets" | "code" | "git"> & {
     backend?: WorkspaceBackend;
   },
 ): Promise<T> {
@@ -122,6 +123,7 @@ async function withStub<T>(
     backends: [options?.backend ?? backend()],
     assets: options?.assets,
     code: options?.code,
+    git: options?.git ?? createGitClient(),
   });
   try {
     await ws.ready();

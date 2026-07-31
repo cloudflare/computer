@@ -1,5 +1,6 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import { IsolateJavaScriptBackend } from "../src/backends/javascript/index.js";
+import { createGitClient } from "../src/git/index.js";
 import type {
   DurableObjectStorageLike,
   WorkspaceRuntimeValue,
@@ -20,6 +21,7 @@ export class HostDO extends DurableObject<Env> {
     this.#workspace = new Workspace({
       storage: ctx.storage as unknown as DurableObjectStorageLike,
       waitUntil: ctx.waitUntil.bind(ctx),
+      git: createGitClient(),
       backends: [
         new IsolateJavaScriptBackend({
           loader: env.LOADER,
