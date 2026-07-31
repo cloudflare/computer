@@ -109,6 +109,7 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   encoding?: E;
   input?: WorkspaceRuntimeValue;
   env?: Record<string, string>;
+  stdin?: Uint8Array | string;
   timeoutMs?: number;
 }
 
@@ -142,6 +143,7 @@ export interface ModuleExecutionInput {
   cwd?: string;
   input?: WorkspaceRuntimeValue;
   env?: Record<string, string>;
+  stdin?: Uint8Array | string;
   timeoutMs?: number;
 }
 

@@ -144,6 +144,28 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("exposes caller-supplied stdin as an async-iterable process.stdin", async () => {
+    const response = await runtime({
+      source: `
+        export default async () => {
+          const decoder = new TextDecoder();
+          let text = "";
+          for await (const chunk of process.stdin) text += decoder.decode(chunk);
+          return { text, isTTY: process.stdin.isTTY };
+        };
+      `,
+      stdin: "hello stdin",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "completed",
+        value: { text: "hello stdin", isTTY: false },
+      },
+    });
+  });
+
   it("bounds persisted console output including truncation markers and newlines", async () => {
     const response = await runtime({
       source: `export default () => { console.log("🙂".repeat(256)); return true; };`,

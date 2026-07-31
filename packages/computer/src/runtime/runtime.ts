@@ -76,6 +76,7 @@ export class WorkspaceRuntime {
       cwd: options.cwd,
       input: options.input,
       env: options.env,
+      stdin: options.stdin,
       timeoutMs: options.timeoutMs,
     });
     return wrapModuleHandle(runtime, backend, envelope.id, envelope.events, options.encoding);

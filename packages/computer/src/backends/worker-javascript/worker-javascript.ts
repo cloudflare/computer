@@ -29,6 +29,7 @@ export interface WorkerJavaScriptBackendOptions {
   maxTimeoutMs?: number;
   maxSourceBytes?: number;
   maxInputBytes?: number;
+  maxStdinBytes?: number;
   maxResultBytes?: number;
   maxLogBytes?: number;
   maxLogEvents?: number;
@@ -67,6 +68,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "maxTimeoutMs"
     | "maxSourceBytes"
     | "maxInputBytes"
+    | "maxStdinBytes"
     | "maxResultBytes"
     | "maxLogBytes"
     | "maxLogEvents"
@@ -90,6 +92,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
 interface WorkspaceExecutionContext {
   env: Record<string, string>;
   cwd: string;
+  stdin: Uint8Array;
 }
 
 interface JavaScriptEntrypoint {
@@ -140,6 +143,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(defaultTimeoutMs, "defaultTimeoutMs");
     assertPositiveFinite(options.maxSourceBytes ?? 256 * 1024, "maxSourceBytes");
     assertPositiveFinite(options.maxInputBytes ?? 256 * 1024, "maxInputBytes");
+    assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
     assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
     assertPositiveFinite(options.maxLogBytes ?? 256 * 1024, "maxLogBytes");
     assertPositiveInteger(options.maxLogEvents ?? 1024, "maxLogEvents");
@@ -181,6 +185,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxTimeoutMs,
       maxSourceBytes: options.maxSourceBytes ?? 256 * 1024,
       maxInputBytes: options.maxInputBytes ?? 256 * 1024,
+      maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
       maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
       maxLogBytes: options.maxLogBytes ?? 256 * 1024,
       maxLogEvents: options.maxLogEvents ?? 1024,
@@ -304,6 +309,10 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     const inputValue = input.input ?? null;
     assertRuntimeValue(inputValue);
     assertEncodedSize(inputValue, this.#options.maxInputBytes, "input");
+    const stdinBytes = normalizeStdin(input.stdin);
+    if (stdinBytes.byteLength > this.#options.maxStdinBytes) {
+      throw new Error(`Workspace runtime stdin exceeds ${this.#options.maxStdinBytes} bytes.`);
+    }
     if (new TextEncoder().encode(input.source).byteLength > this.#options.maxSourceBytes) {
       throw new Error(`Workspace runtime source exceeds ${this.#options.maxSourceBytes} bytes.`);
     }
@@ -384,7 +393,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           modules: graph.modules,
           entryName: graph.entryName,
           input: inputValue,
-          context: { env: input.env ?? {}, cwd: input.cwd ?? this.#options.root },
+          context: {
+            env: input.env ?? {},
+            cwd: input.cwd ?? this.#options.root,
+            stdin: stdinBytes,
+          },
           bridge,
           timeoutMs,
           globalOutbound: this.#options.globalOutbound ?? null,
@@ -971,11 +984,29 @@ function runtimeWorkerModule(
       async evaluate(input, host, context) {
         const env = (context && context.env) || {};
         const cwd = (context && context.cwd) || "/workspace";
+        const stdinBytes = (context && context.stdin) || new Uint8Array(0);
+        const stdin = {
+          isTTY: false,
+          [Symbol.asyncIterator]() {
+            let done = false;
+            return {
+              next() {
+                if (done) return Promise.resolve({ done: true, value: undefined });
+                done = true;
+                if (stdinBytes.byteLength === 0) {
+                  return Promise.resolve({ done: true, value: undefined });
+                }
+                return Promise.resolve({ done: false, value: stdinBytes });
+              },
+            };
+          },
+        };
         const nextProcess = {
           env,
           argv: ["workspace", ${JSON.stringify(entryName)}],
           cwd: () => cwd,
           platform: "linux",
+          stdin,
         };
         try {
           globalThis.process = nextProcess;
@@ -992,6 +1023,9 @@ function runtimeWorkerModule(
         if (globalThis.process !== nextProcess && globalThis.process) {
           try {
             globalThis.process.env = env;
+          } catch {}
+          try {
+            globalThis.process.stdin = stdin;
           } catch {}
         }
         const logs = [];
@@ -1101,6 +1135,12 @@ function assertEncodedSize(value: WorkspaceRuntimeValue, maxBytes: number, name:
   if (bytes > maxBytes) {
     throw new Error(`Workspace runtime ${name} exceeds ${maxBytes} bytes.`);
   }
+}
+
+function normalizeStdin(stdin: Uint8Array | string | undefined): Uint8Array {
+  if (stdin === undefined) return new Uint8Array(0);
+  if (typeof stdin === "string") return new TextEncoder().encode(stdin);
+  return stdin;
 }
 
 function assertPositiveFinite(value: number, name: string) {
