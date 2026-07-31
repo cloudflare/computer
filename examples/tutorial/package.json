@@ -1,26 +1,25 @@
 {
-  "name": "@example/workspace-tutorial",
+  "name": "@example/computer-tutorial",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Tutorial Worker where an AIChatAgent looks up a recipe, renders a markdown card, and converts it to a PDF with pandoc in a @cloudflare/workspace container.",
+  "description": "Tutorial Worker where a Think agent looks up a recipe, renders a markdown card, and converts it to a PDF with pandoc in a @cloudflare/computer container.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "cf-typegen": "wrangler types --env-file=.env.example"
+    "build:types": "wrangler types --env-file=.env.example"
   },
   "dependencies": {
-    "@cloudflare/ai-chat": "^0.10.1",
-    "@cloudflare/workspace": "*",
-    "agents": "^0.20.1",
-    "ai": "^6.0.196",
-    "workers-ai-provider": "^3.1.14",
+    "@cloudflare/computer": "*",
+    "@cloudflare/think": "^0.15.1",
+    "agents": "^0.20.0",
+    "ai": "^7.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",
     "typescript": "^6.0.3",
-    "wrangler": "^4.96.0"
+    "wrangler": "^4.107.1"
   }
 }

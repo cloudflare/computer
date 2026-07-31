@@ -4,7 +4,7 @@
 // produced to R2 and answers with a signed link to it.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "workspace-tutorial",
+  "name": "computer-tutorial",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],

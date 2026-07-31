@@ -35,9 +35,9 @@ builds it from an empty directory.
 ## 1. Create the worker project
 
 ```sh
-npm create cloudflare@latest -- workspace-tutorial --type=hello-world \
+npm create cloudflare@latest -- computer-tutorial --type=hello-world \
   --lang=ts --no-git --no-deploy -y
-cd workspace-tutorial
+cd computer-tutorial
 ```
 
 Replace the generated `wrangler.jsonc` with the bindings this project
@@ -46,7 +46,7 @@ attached to it, and an R2 bucket for the finished PDFs.
 
 ```jsonc
 {
-  "name": "workspace-tutorial",
+  "name": "computer-tutorial",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],
@@ -83,24 +83,24 @@ wrangler r2 bucket create recipe-cards
 ## 2. Install the dependencies
 
 ```sh
-npm install @cloudflare/workspace @cloudflare/think agents
+npm install @cloudflare/computer @cloudflare/think agents ai zod
 ```
 
-- `@cloudflare/workspace` is the filesystem, the container backend, and
+- `@cloudflare/computer` is the filesystem, the container backend, and
   the assets client that publishes to R2.
 - `@cloudflare/think` provides the agent loop and its file, shell, and
   fetch tools. `agents` provides `getAgentByName` for reaching an
-  instance by name.
+  instance by name; `ai` and `zod` satisfy Think's peer dependencies.
 
 ## 3. Create the Dockerfile
 
-The container is an ordinary Linux image with one requirement: `wsd`,
+The container is an ordinary Linux image with one requirement: `computerd`,
 the workspace daemon, has to be PID 1. It mounts the workspace at
 `MOUNT_POINT` and syncs it with the durable object. Everything else in
 the image is yours — here, `pandoc` and a PDF engine for it.
 
 ```dockerfile
-FROM ghcr.io/cloudflare/workspace-wsd-linux-x64:VERSION AS wsd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:VERSION AS computerd
 
 FROM debian:stable-slim
 
@@ -109,14 +109,14 @@ RUN apt-get update \
       fuse3 libfuse2t64 ca-certificates curl xz-utils \
  && ...install pandoc and typst...
 
-COPY --from=wsd /usr/local/bin/wsd /usr/local/bin/wsd
+COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace
 ENV FUSE_MOUNT=auto
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/wsd"]
+ENTRYPOINT ["/usr/local/bin/computerd"]
 ```
 
 See [`Dockerfile`](Dockerfile) for the full version, including the
@@ -132,41 +132,36 @@ works in both places.
 ## 4. Give Think a Computer workspace
 
 The durable object owns a `CloudflareContainerBackend`, which is the
-container the workspace is mounted in. `createComputerWorkspace` makes
-the Computer that owns the filesystem and gives it Think's workspace
-interface.
+container the workspace is mounted in. The `Workspace` instance enables
+Computer's Think-compatible methods so Think's built-in tools use the
+same filesystem as the container.
 
 ```ts
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
-} from "@cloudflare/workspace/backends/container";
+} from "@cloudflare/computer/backends/container";
 import { Think } from "@cloudflare/think";
 import {
-  createComputerWorkspace,
-  type LocalComputerWorkspace,
-} from "@cloudflare/think/experimental/computer";
-import type { DurableObjectStorageLike } from "@cloudflare/workspace";
+  type DurableObjectStorageLike,
+  type ThinkWorkspaceCompatibility,
+  Workspace,
+} from "@cloudflare/computer";
 
 class RecipeBase extends Think<Env> {}
 
 export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
-  override workspace: LocalComputerWorkspace;
-  readonly #backend: CloudflareContainerBackend;
+  readonly #backend = new CloudflareContainerBackend({
+    container: () => this,
+    workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
+  });
 
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.#backend = new CloudflareContainerBackend({
-      container: () => this,
-      workspace: { binding: "RecipeAgent", id: ctx.id.toString() },
-    });
-    this.workspace = createComputerWorkspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
-      backends: [this.#backend],
-    });
-  }
+  override workspace = new Workspace({
+    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    backends: [this.#backend],
+    useThink: true,
+  }) as Workspace & ThinkWorkspaceCompatibility;
 
-  // The container dials back in over this route to open its session.
   override async fetch(request: Request): Promise<Response> {
     return new URL(request.url).pathname === "/ws"
       ? this.#backend.handleFetch(request)
@@ -183,8 +178,8 @@ hand `/ws` to the backend before the base class sees it.
 
 ## 5. Hook the workspace up to the agent
 
-Think already has file and shell tools. The experimental Computer
-workspace makes those tools use the same filesystem as the container:
+Think already has file and shell tools. The Computer workspace makes
+those tools use the same filesystem as the container:
 `write` calls Computer's host-side filesystem, while `bash` calls the
 container shell. Think's fetch tool gets an allowlist of one host, so
 the agent can read openstove.org and nothing else.
@@ -198,25 +193,35 @@ override fetchTools = {
 };
 
 override getModel() {
-  return "@cf/moonshotai/kimi-k2.6";
+  return "@cf/zai-org/glm-5.2";
 }
 
 override getSystemPrompt() {
-  return SYSTEM;
+  return [
+    "You turn a cooking request into a one-page PDF recipe card.",
+    "",
+    "1. Find the recipe. `fetch_url` https://openstove.org/sitemap-0.xml lists every recipe page.",
+    "   Pick the closest match and fetch it; each page carries the whole",
+    '   recipe in a <script type="application/ld+json"> block, so read that',
+    "   JSON rather than the surrounding markup.",
+    "2. `write` the card to /workspace/card.md. Use a level-one heading for the",
+    "   dish, a line with the total time and servings, an Ingredients list,",
+    "   and numbered Method steps. End with the source page URL spelled out,",
+    "   not a markdown link: the card gets printed, and a link prints as its",
+    "   text alone.",
+    "3. Convert it with `bash`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
+    "4. Reply with one sentence naming the recipe you picked.",
+  ].join("\n");
 }
 ```
 
-There is no `onChatMessage`, tool schema, or filesystem adapter in the
-agent. Think assembles its tools and drives the model loop. Nothing
-copies files between `write` and `bash`: the write goes
-into durable object storage and the container reads it back out of the
-mount, and the PDF `pandoc` leaves behind travels the same road in
-reverse.
+Nothing copies files between `write` and `bash`: the write goes into
+durable object storage and the container reads it back out of the mount,
+and the PDF `pandoc` leaves behind travels the same road in reverse.
 
 The system prompt is what turns those three tools into a recipe card:
 fetch the sitemap, pick the closest page, read the JSON-LD the page
-carries, write the card, run `pandoc`. See `SYSTEM` in
-[`src/index.ts`](src/index.ts).
+carries, write the card, and run `pandoc`.
 
 One method drives a whole turn and publishes the result.
 `saveMessages` appends the user's message, runs the turn, and reports
@@ -243,7 +248,10 @@ async card(prompt: string): Promise<{ url: string; summary: string }> {
         secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
       },
     });
-    const url = await assets.share(PDF, { expiresAfter: LINK_TTL_MS, prefix: "cards" });
+    const url = await assets.share("/workspace/card.pdf", {
+      expiresAfter: 24 * 60 * 60 * 1000,
+      prefix: "cards",
+    });
     return { url, summary: lastAssistantText(this.messages) };
   } finally {
     await this.workspace.close();
@@ -288,12 +296,12 @@ Three exports have to be reachable from the entrypoint: the default
 handler, the `RecipeAgent` class the durable object binding names, and
 `WorkspaceProxy`, which carries the container's egress back to the
 durable object. `WorkspaceProxy` is re-exported from
-`@cloudflare/workspace`; the runtime binds it by name, so it has to
+`@cloudflare/computer`; the runtime binds it by name, so it has to
 appear in the module graph even though your code never calls it.
 
 ## Running it
 
-You need Docker running locally. The first build pulls the `wsd` image
+You need Docker running locally. The first build pulls the `computerd` image
 from the public GitHub Container Registry and installs `pandoc` and
 `typst` on top of a slim debian.
 
@@ -315,16 +323,16 @@ endpoint isn't the default `https://<account>.r2.cloudflarestorage.com`.
 credential names, so generate it with the env file:
 
 ```sh
-wrangler types --env-file=.env.example
+npm run build:types
 ```
 
 From this repository's root, install the dependencies, build the
-workspace package, and run the tutorial:
+Computer package, and run the tutorial:
 
 ```sh
 npm install
-npm run build --workspace @cloudflare/workspace
-npm run dev --workspace @example/workspace-tutorial
+npm run build --workspace @cloudflare/computer
+npm run dev --workspace @example/computer-tutorial
 ```
 
 Then ask for a card:
@@ -342,19 +350,9 @@ curl -X POST http://localhost:8787/prompt \
 }
 ```
 
-The first request is slow: the container has to boot before the first
-`bash` runs. The link points at R2 rather than at the worker, so it
-works the same whether the worker runs locally or deployed.
+The first request may be slow: the container has to boot before the
+first `bash` runs. The link points at R2 rather than at the worker, so
+it works the same whether the worker runs locally or deployed.
 
 `wrangler deploy` works against any account with Workers AI and
 Cloudflare Containers enabled.
-
-## What this tutorial deliberately doesn't do
-
-- Check the recipe. The model picks a page and paraphrases it; nothing
-  verifies the ingredient amounts survived the trip.
-- Cache anything. Two requests for the same dish boot two containers
-  and produce two PDFs.
-- Delete the PDFs. The link expires after a day but the object stays
-  in the bucket; set a lifecycle rule if you care.
-- Style the card. `pandoc` defaults, no template.

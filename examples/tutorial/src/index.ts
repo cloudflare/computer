@@ -17,90 +17,74 @@
 //
 // README.md walks through building this file from an empty directory.
 
-import { Think } from "@cloudflare/think";
 import {
-  createComputerWorkspace,
-  type LocalComputerWorkspace,
-} from "@cloudflare/think/experimental/computer";
-import { type DurableObjectStorageLike, WorkspaceProxy } from "@cloudflare/workspace";
-import { createAssets } from "@cloudflare/workspace/assets";
+  type DurableObjectStorageLike,
+  type ThinkWorkspaceCompatibility,
+  Workspace,
+  WorkspaceProxy,
+} from "@cloudflare/computer";
+import { createAssets } from "@cloudflare/computer/assets";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
-} from "@cloudflare/workspace/backends/container";
+} from "@cloudflare/computer/backends/container";
+import { Think } from "@cloudflare/think";
 import { getAgentByName } from "agents";
 
 // Carries container egress back to the durable object. The runtime
 // binds it by name, so it has to appear in the worker's module graph.
 export { WorkspaceProxy };
 
-const MARKDOWN = "/workspace/card.md";
-const PDF = "/workspace/card.pdf";
-
-// The only host the agent is allowed to fetch.
-const RECIPES = "openstove.org";
-const SITEMAP = `https://${RECIPES}/sitemap-0.xml`;
-
-// How long a shared link stays valid: one day.
-const LINK_TTL_MS = 24 * 60 * 60 * 1000;
-
-const SYSTEM = [
-  "You turn a cooking request into a one-page PDF recipe card.",
-  "",
-  `1. Find the recipe. \`fetch_url\` ${SITEMAP} lists every recipe page.`,
-  "   Pick the closest match and fetch it; each page carries the whole",
-  '   recipe in a <script type="application/ld+json"> block, so read that',
-  "   JSON rather than the surrounding markup.",
-  `2. \`write\` the card to ${MARKDOWN}. Use a level-one heading for the`,
-  "   dish, a line with the total time and servings, an Ingredients list,",
-  "   and numbered Method steps. End with the source page URL spelled out,",
-  "   not a markdown link: the card gets printed, and a link prints as its",
-  "   text alone.",
-  `3. Convert it with \`bash\`: \`pandoc ${MARKDOWN} -o ${PDF} --pdf-engine=typst\`.`,
-  "4. Reply with one sentence naming the recipe you picked.",
-].join("\n");
-
 class RecipeBase extends Think<Env> {}
 
 export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   override maxSteps = 10;
   override fetchTools = {
-    allowlist: [`https://${RECIPES}/**`],
+    allowlist: ["https://openstove.org/**"],
     followRedirects: "none" as const,
     maxModelChars: 64_000,
   };
-  override workspace: LocalComputerWorkspace;
 
-  readonly #backend: CloudflareContainerBackend;
+  readonly #backend = new CloudflareContainerBackend({
+    container: () => this,
+    workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
+  });
 
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.#backend = new CloudflareContainerBackend({
-      container: () => this,
-      workspace: { binding: "RecipeAgent", id: ctx.id.toString() },
-    });
-    this.workspace = createComputerWorkspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
-      backends: [this.#backend],
-    });
-  }
+  override workspace = new Workspace({
+    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    backends: [this.#backend],
+    useThink: true,
+  }) as Workspace & ThinkWorkspaceCompatibility;
 
   override getModel() {
-    return "@cf/moonshotai/kimi-k2.6";
+    return "@cf/zai-org/glm-5.2";
   }
 
   override getSystemPrompt() {
-    return SYSTEM;
+    return [
+      "You turn a cooking request into a one-page PDF recipe card.",
+      "",
+      "1. Find the recipe. `fetch_url` https://openstove.org/sitemap-0.xml lists every recipe page.",
+      "   Pick the closest match and fetch it; each page carries the whole",
+      '   recipe in a <script type="application/ld+json"> block, so read that',
+      "   JSON rather than the surrounding markup.",
+      "2. `write` the card to /workspace/card.md. Use a level-one heading for the",
+      "   dish, a line with the total time and servings, an Ingredients list,",
+      "   and numbered Method steps. End with the source page URL spelled out,",
+      "   not a markdown link: the card gets printed, and a link prints as its",
+      "   text alone.",
+      "3. Convert it with `bash`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
+      "4. Reply with one sentence naming the recipe you picked.",
+    ].join("\n");
   }
 
-  // The container dials back in over this route to open its session.
   override async fetch(request: Request): Promise<Response> {
     return new URL(request.url).pathname === "/ws"
       ? this.#backend.handleFetch(request)
       : super.fetch(request);
   }
 
-  /** Run one turn, then publish the PDF the agent left behind. */
+  /** Run the agent. */
   async card(prompt: string): Promise<{ url: string; summary: string }> {
     try {
       await this.workspace.fs.mkdir("/workspace", { recursive: true });
@@ -110,12 +94,8 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
       if (turn.status !== "completed") {
         throw new Error(`Agent turn ${turn.status}: ${turn.error ?? "no detail"}`);
       }
-      const written = await this.workspace.fs.stat(PDF).catch(() => null);
-      if (!written?.isFile) throw new Error(`The agent produced no PDF at ${PDF}`);
-      // The assets client streams the file from the workspace into R2 and
-      // signs a GET for it, so the bucket stays private and the worker
-      // never serves the bytes itself. The R2 binding can't sign, hence
-      // the S3 credentials from .env.example.
+      const written = await this.workspace.fs.stat("/workspace/card.pdf").catch(() => null);
+      if (!written?.isFile) throw new Error("The agent produced no PDF at /workspace/card.pdf");
       const assets = createAssets({
         ws: this.workspace,
         bucket: this.env.CARDS,
@@ -126,7 +106,10 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
           secretAccessKey: this.env.R2_SECRET_ACCESS_KEY,
         },
       });
-      const url = await assets.share(PDF, { expiresAfter: LINK_TTL_MS, prefix: "cards" });
+      const url = await assets.share("/workspace/card.pdf", {
+        expiresAfter: 24 * 60 * 60 * 1000,
+        prefix: "cards",
+      });
       return { url, summary: lastAssistantText(this.messages) };
     } finally {
       await this.workspace.close();

@@ -1,14 +1,14 @@
 # Container image for the recipe card tutorial. Same wiring as
-# examples/think — pull the wsd binary out of the public GHCR image,
+# examples/think — pull the computerd binary out of the public GHCR image,
 # drop it into a slim debian, and run it as PID 1. The :VERSION tag is
 # rewritten in lockstep with the rest of the monorepo by
 # script/set-versions.mjs.
 #
-# wsd mounts the workspace at MOUNT_POINT, so a file the host writes
+# computerd mounts the workspace at MOUNT_POINT, so a file the host writes
 # through the Workspace is on disk for pandoc to read, and the PDF
 # pandoc writes syncs back to the durable object.
 
-FROM ghcr.io/cloudflare/workspace-wsd-linux-x64:0.0.0-alpha.11 AS wsd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.1.0-alpha.1 AS computerd
 
 FROM debian:stable-slim
 
@@ -29,7 +29,7 @@ RUN apt-get update \
  && mv /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst \
  && rm -rf /tmp/pandoc.deb /tmp/typst-x86_64-unknown-linux-musl /var/lib/apt/lists/*
 
-COPY --from=wsd /usr/local/bin/wsd /usr/local/bin/wsd
+COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace
@@ -39,4 +39,4 @@ ENV MOUNT_POINT=/workspace
 ENV FUSE_MOUNT=auto
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/wsd"]
+ENTRYPOINT ["/usr/local/bin/computerd"]
