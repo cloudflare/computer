@@ -162,8 +162,11 @@ requests with an indefinite gap in the middle.
 
 ### The policy
 
-Approval is a table keyed by backend, because the three backends
-differ in what they can reach:
+Approval works in two tiers, and they are worth telling apart because
+only one of them is a guess.
+
+The first tier is a table keyed by backend. It decides on what a
+backend can reach, not on what a command says:
 
 | Backend | Rule | Why |
 |---|---|---|
@@ -171,11 +174,24 @@ differ in what they can reach:
 | `codemode` | `read-only` | Same, and it has no network at all. |
 | `container` | `always` | Full Linux userland with public network. "Which command is it" is the wrong question. |
 
-Under `read-only`, a command runs unattended only when it is
-*recognizably* a read. Anything the matcher does not understand needs
-a human — an unknown verb, a shell metacharacter, a `state.*` call
-reached through a computed access. The gate fails **closed**, which is
-the only direction worth failing in.
+That table is the boundary, and it needs no parsing to enforce.
+`container` gets a full userland and a public network, so everything
+on it asks, whatever the command turns out to be.
+
+The second tier applies only under `read-only`, and it is an
+optimization: it exists to ask fewer questions, not to be the thing
+standing between the model and the files. A command runs unattended
+only when it is *recognizably* a read. Anything the matcher does not
+understand needs a human — an unknown verb, a shell metacharacter, a
+`state.*` call reached through a computed access.
+
+Because the gate fails closed, the matcher is allowed to be wrong in
+one direction only. Asking about a command that turns out to be
+harmless costs a person ten seconds. Waving through a command that
+writes is the failure that matters, and
+`approval-policy.effects.test.ts` is what rules it out — it runs every
+command the policy would allow and fails if any of them touched a
+file.
 
 The matcher speaks two dialects, because the backends do. For `shell`
 and `container` it rejects redirection, substitution and backgrounding
@@ -229,13 +245,28 @@ const transcript = await runAgentTurn({
 });
 ```
 
-Be clear-eyed about what this is: pattern-matching a command line is a
-heuristic, appropriate for an example. A production gate belongs at
-the capability layer — hand the backend a read-only view of the
-workspace and let the filesystem refuse the write — rather than in a
-matcher that has to anticipate every way a shell can be told to write
-a file. Denying by default is what makes the heuristic's failure mode
-tolerable in the meantime.
+The second tier is the part with no equivalent elsewhere. Pausing a
+turn on a human is well-trodden ground, as the
+[section below](#why-not-an-off-the-shelf-approvals-system) covers.
+Deciding which shell commands are safe enough to skip the pause is
+not: Think's built-in Bash tool runs on the same `just-bash` library
+as the `shell` backend here, and its only controls are on, off, and
+resource limits. This example took the problem on because nothing off
+the shelf solves it.
+
+That is a reason to be careful about how much weight the matcher
+carries. Reading a command line to guess its effect is a heuristic,
+and a heuristic is the wrong place for a boundary. The right place is
+the capability layer: hand the backend a read-only view of the
+workspace and let the filesystem refuse the write. Think already works
+that way, protecting files it did not mount during write-back so a
+script cannot delete what it was never given. Doing the same here
+would cover every caller instead of only the model's path, and would
+leave the matcher as what it should be — a way to ask fewer questions.
+
+Until then, lean on the backend table, treat the matcher as a
+convenience, and read `approval-policy.effects.test.ts` as the thing
+that keeps the convenience honest.
 
 ### Where a paused turn lives
 
@@ -271,7 +302,44 @@ Two consequences worth knowing:
   every pass, not per pass, so waiting for a human does not buy the
   model a fresh allowance.
 
-### Why not codemode's built-in approvals
+### Why not an off-the-shelf approvals system
+
+Several parts of the Cloudflare stack already do approvals, and this
+example uses one of them: the pause is the AI SDK's `needsApproval`,
+one field on the `exec` tool that was there anyway. That is the same
+field Think gates its own tools with, so the mechanism here is the
+common one rather than a local invention. The rest were considered and
+are a worse fit, for reasons worth writing down.
+
+Think itself is the closest. Its Actions API can park a turn on a
+human and resume it later with no connection held open, which is this
+design under another name, down to `pendingApprovals`,
+`approveExecution` and `rejectExecution` matching the three routes
+below and a repeat answer being a no-op. But Think is a whole chat
+agent framework — memory, streaming, messengers, scheduled turns — and
+adopting it to get the approval plumbing would replace what this
+example is for.
+
+The Agents SDK is the smaller version of that argument. Its `Agent`
+class supplies SQL storage and routing, but message persistence
+belongs to `AIChatAgent`, so `turn-store.ts` would move from key
+prefixes to SQL rather than disappear, and the check that stops an
+approval being answered twice has no equivalent to inherit. That is
+about a hundred lines saved against eleven more dependencies in an
+example that has four. `AIChatAgent` would delete the store outright,
+but it is built around streaming chat messages, so the turn loop, the
+routes and both scripts would need rewriting.
+
+Workflows can hold an approval for months and retry each step. This
+pause is minutes long and holds nothing open, so a stored row is the
+smaller mechanism, and `waitForApproval()` is an `Agent` method that
+brings the same dependency with it. What that costs is a real timeout
+and escalation; the prune below is the crude substitute.
+
+Fibers solve the neighboring problem, not this one. `runFiber()` makes
+work survive eviction by checkpointing what is in flight. Nothing is
+in flight here on purpose — the command was never sent, no connection
+is open, no container booted — so there is no progress to save.
 
 `@cloudflare/codemode` ships its own approvals system —
 `requiresApproval` on connector tools, `createCodemodeRuntime`, and
@@ -285,10 +353,9 @@ tool. Adopting them would mean replacing the `exec` tool with a
 connector-based path, wrapping all three backends as a connector, and
 taking on replay's determinism rules — which would delete the thing
 this example exists to show, that the model picks one of three
-backends per command. The AI SDK's `needsApproval` gives the same
-pause in one field on the tool that is already there. If you are
-building on codemode connectors rather than workspace backends, the
-runtime's approvals are the better fit; here they are not.
+backends per command. If you are building on codemode connectors
+rather than workspace backends, the runtime's approvals are the better
+fit; here they are not.
 
 ## HTTP surface
 
@@ -299,6 +366,8 @@ GET  /c/<name>/file/workspace/<path>   octet-stream of /workspace/<path>
 POST /c/<name>/exec                    { command, cwd?, backend? }
                                        backend: shell | codemode | container
                                        (omit to use the default, shell)
+                                       runs unapproved: you are the caller,
+                                       so there is nobody to ask
                                        → JSON { exitCode, stdout, stderr }
 POST /c/<name>/agent                   { prompt }
                                        → JSON transcript (see below)
@@ -616,8 +685,18 @@ examples/codemode/
   background and poll the turn record.
 - **The approval matcher is a heuristic.** It classifies command
   strings, so it is conservative by construction and will ask about
-  commands that are in fact harmless. Real enforcement belongs at the
-  capability layer, as the [policy section](#the-policy) spells out.
+  commands that are in fact harmless. What it guarantees is only the
+  one direction the effects test checks: a command it allows does not
+  write. It is the second tier of the policy, not the boundary, and
+  real enforcement belongs at the capability layer, as the
+  [policy section](#the-policy) spells out.
+- **Approval requests in the stored history are unsigned.** The AI
+  SDK can sign them with `experimental_toolApprovalSecret`, but that
+  setting expects approval requests to carry a signature and throws
+  on the plain message history this example replays, so it stays off.
+  Nothing here depends on it: the history never leaves the server, and
+  `GET /agent/<turnId>` strips `messages` before it answers. Move that
+  history through a client and the signature starts mattering.
 - **Telling the model not to reroute is advice, not a guarantee.** The
   system prompt asks it not to retry a denied command on another
   backend, and models do not always listen. That costs nothing: every

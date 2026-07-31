@@ -1,27 +1,34 @@
 /**
  * Which commands a human has to approve before the agent runs them.
  *
- * The policy is a table keyed by backend id, because the three
- * backends differ in what they can reach: `container` is a full Linux
- * userland with a public network, while `shell` and `codemode` are
- * sandboxed and see only the workspace filesystem. Expressing the
- * rules per backend keeps the interesting decision visible and
- * configurable instead of buried in a list of blocked commands.
+ * There are two tiers here and they are not equally trustworthy.
  *
- * Every rule denies by default. Under `read-only`, a command runs
- * unattended only when it is *recognizably* a read; anything the
- * matcher does not understand needs a human. That direction matters:
- * a matcher that fails closed turns an unparsed command into a
- * question, while one that fails open turns it into an unreviewed
- * mutation.
+ * The first is a table keyed by backend id, and it decides on what a
+ * backend can reach rather than on what a command says: `container`
+ * is a full Linux userland with a public network, while `shell` and
+ * `codemode` are sandboxed and see only the workspace filesystem.
+ * Nothing is parsed to apply it, so nothing about it can be fooled by
+ * a command it did not anticipate. This is the boundary.
  *
- * It is worth being plain about the limit here. Pattern-matching a
- * command line is a heuristic, appropriate for an example. A
- * production gate belongs at the capability layer — hand the backend
- * a read-only view of the workspace and let the filesystem refuse the
- * write — rather than in a matcher that has to anticipate every way a
- * shell can be told to write a file. Denying by default is what makes
- * the heuristic's failure mode tolerable in the meantime.
+ * The second is `read-only`, which classifies a command by reading
+ * it. A command runs unattended only when it is *recognizably* a
+ * read; anything the matcher does not understand needs a human. That
+ * direction matters: a matcher that fails closed turns an unparsed
+ * command into a question, while one that fails open turns it into an
+ * unreviewed mutation. Because it fails closed it is free to be
+ * wrong in one direction, and `approval-policy.effects.test.ts` is
+ * what holds it to that — it runs every command this file would allow
+ * and fails if any of them wrote.
+ *
+ * Treat the second tier as a way to ask fewer questions, not as the
+ * thing standing between the model and the files. Reading a command
+ * line to guess its effect is a heuristic, and a heuristic is the
+ * wrong place for a boundary. The boundary belongs at the capability
+ * layer: hand the backend a read-only view of the workspace and let
+ * the filesystem refuse the write. Think's built-in Bash tool already
+ * works that way, protecting files it did not mount during write-back
+ * so a script cannot delete what it was never given. Doing the same
+ * here would cover every caller rather than only the model's path.
  *
  * `decideApproval` must stay a pure function of the command and the
  * backend. The AI SDK re-runs it when a paused turn resumes, and an
