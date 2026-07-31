@@ -87,10 +87,16 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
 > &
   WorkerJavaScriptBackendOptions;
 
+interface WorkspaceExecutionContext {
+  env: Record<string, string>;
+  cwd: string;
+}
+
 interface JavaScriptEntrypoint {
   evaluate(
     input: WorkspaceRuntimeValue,
     host: WorkspaceRuntimeBridge,
+    context: WorkspaceExecutionContext,
   ): Promise<{ result?: unknown; logs?: string[]; error?: string }>;
   [Symbol.dispose]?: () => void;
 }
@@ -378,6 +384,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           modules: graph.modules,
           entryName: graph.entryName,
           input: inputValue,
+          context: { env: input.env ?? {}, cwd: input.cwd ?? this.#options.root },
           bridge,
           timeoutMs,
           globalOutbound: this.#options.globalOutbound ?? null,
@@ -851,6 +858,7 @@ function startJavaScriptExecution(options: {
   modules: Record<string, string | { js?: string }>;
   entryName: string;
   input: WorkspaceRuntimeValue;
+  context: WorkspaceExecutionContext;
   bridge: WorkspaceRuntimeBridge;
   timeoutMs: number;
   globalOutbound: Fetcher | null;
@@ -903,7 +911,9 @@ function startJavaScriptExecution(options: {
     cancelExecution = reject;
   });
   const execution = Promise.race([
-    Promise.resolve().then(() => entrypoint.evaluate(options.input, options.bridge)),
+    Promise.resolve().then(() =>
+      entrypoint.evaluate(options.input, options.bridge, options.context),
+    ),
     new Promise<never>((_, reject) => {
       timer = setTimeout(
         () => reject(new Error("JavaScript execution timed out")),
@@ -958,7 +968,32 @@ function runtimeWorkerModule(
     import { install } from "workspace-capabilities.js";
 
     export default class extends WorkerEntrypoint {
-      async evaluate(input, host) {
+      async evaluate(input, host, context) {
+        const env = (context && context.env) || {};
+        const cwd = (context && context.cwd) || "/workspace";
+        const nextProcess = {
+          env,
+          argv: ["workspace", ${JSON.stringify(entryName)}],
+          cwd: () => cwd,
+          platform: "linux",
+        };
+        try {
+          globalThis.process = nextProcess;
+        } catch {}
+        if (globalThis.process !== nextProcess) {
+          try {
+            Object.defineProperty(globalThis, "process", {
+              value: nextProcess,
+              configurable: true,
+              writable: true,
+            });
+          } catch {}
+        }
+        if (globalThis.process !== nextProcess && globalThis.process) {
+          try {
+            globalThis.process.env = env;
+          } catch {}
+        }
         const logs = [];
         const encoder = new TextEncoder();
         let logBytes = 0;

@@ -83,6 +83,7 @@ export class HostDO extends DurableObject<Env> {
     cwd?: string;
     value?: WorkspaceRuntimeValue;
     id?: string;
+    env?: Record<string, string>;
   }) {
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
@@ -90,6 +91,7 @@ export class HostDO extends DurableObject<Env> {
       cwd: input.cwd,
       input: input.value,
       id: input.id,
+      env: input.env,
       encoding: "utf8",
     });
     return { id: handle.id, result: await handle.result() };
@@ -207,6 +209,7 @@ export default class extends WorkerEntrypoint<Env> {
               cwd?: string;
               value?: WorkspaceRuntimeValue;
               id?: string;
+              env?: Record<string, string>;
             },
           ),
         );

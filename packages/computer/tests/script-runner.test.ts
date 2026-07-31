@@ -119,6 +119,31 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("exposes caller-supplied env through process.env and hides host env", async () => {
+    const response = await runtime({
+      source: `
+        export default () => ({
+          greeting: process.env.GREETING ?? null,
+          hasHostSecret: "HOST_SECRET" in process.env,
+          keys: Object.keys(process.env).sort(),
+        });
+      `,
+      env: { GREETING: "hello" },
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "completed",
+        value: {
+          greeting: "hello",
+          hasHostSecret: false,
+          keys: ["GREETING"],
+        },
+      },
+    });
+  });
+
   it("bounds persisted console output including truncation markers and newlines", async () => {
     const response = await runtime({
       source: `export default () => { console.log("🙂".repeat(256)); return true; };`,
