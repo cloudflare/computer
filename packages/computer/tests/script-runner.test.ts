@@ -166,6 +166,25 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("routes console and process.stdout/stderr writes to the right streams", async () => {
+    const response = await runtime({
+      source: `
+        export default () => {
+          console.log("log-line");
+          console.error("error-line");
+          process.stderr.write("raw-err");
+          return true;
+        };
+      `,
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const payload = JSON.parse(text);
+    expect(payload.result.status).toBe("completed");
+    expect(payload.result.stdout).toBe("log-line\n");
+    expect(payload.result.stderr).toBe("error-line\nraw-err");
+  });
+
   it("bounds persisted console output including truncation markers and newlines", async () => {
     const response = await runtime({
       source: `export default () => { console.log("🙂".repeat(256)); return true; };`,
@@ -203,7 +222,7 @@ describe("WorkspaceRuntime", () => {
     expect(response.status, text).toBe(200);
     const payload = JSON.parse(text);
     expect(payload.result.stdout.split("\n").filter(Boolean)).toEqual(["...[logs truncated]"]);
-    expect(payload.result.stdout.split("\n").length - 1).toBe(4);
+    expect(payload.result.stdout.split("\n").length - 1).toBe(3);
   });
 
   it("bounds concurrent host capability calls", async () => {

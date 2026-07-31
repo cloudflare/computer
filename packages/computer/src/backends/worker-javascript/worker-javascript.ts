@@ -95,12 +95,17 @@ interface WorkspaceExecutionContext {
   stdin: Uint8Array;
 }
 
+interface RuntimeLogEntry {
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
 interface JavaScriptEntrypoint {
   evaluate(
     input: WorkspaceRuntimeValue,
     host: WorkspaceRuntimeBridge,
     context: WorkspaceExecutionContext,
-  ): Promise<{ result?: unknown; logs?: string[]; error?: string }>;
+  ): Promise<{ result?: unknown; logs?: RuntimeLogEntry[]; error?: string }>;
   [Symbol.dispose]?: () => void;
 }
 
@@ -566,7 +571,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
   #complete(
     record: ExecutionRecord,
-    outcome: { result?: unknown; logs?: string[]; error?: string },
+    outcome: { result?: unknown; logs?: RuntimeLogEntry[]; error?: string },
   ): Promise<void> {
     if (record.finalization) return record.finalization;
     if (record.status !== "running") return Promise.resolve();
@@ -577,7 +582,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
   async #completeOnce(
     record: ExecutionRecord,
-    outcome: { result?: unknown; logs?: string[]; error?: string },
+    outcome: { result?: unknown; logs?: RuntimeLogEntry[]; error?: string },
   ) {
     try {
       await record.bridge?.cancelAndDrain();
@@ -597,12 +602,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
     try {
       for (const log of outcome.logs ?? []) {
-        const stderr = log.startsWith("[warn] ") || log.startsWith("[error] ");
         this.#append(record, {
           id: record.id,
           seq: record.events.length + 1,
-          name: stderr ? "stderr" : "stdout",
-          value: new TextEncoder().encode(`${log}\n`),
+          name: log.stream,
+          value: new TextEncoder().encode(log.text),
         });
       }
       if (outcome.error !== undefined) {
@@ -881,7 +885,11 @@ function startJavaScriptExecution(options: {
   maxLogEvents: number;
   maxResultBytes: number;
   maxSourceBytes: number;
-  onComplete(outcome: { result?: unknown; logs?: string[]; error?: string }): void | Promise<void>;
+  onComplete(outcome: {
+    result?: unknown;
+    logs?: RuntimeLogEntry[];
+    error?: string;
+  }): void | Promise<void>;
 }): ActiveControl {
   const modules = {
     ...options.modules,
@@ -1031,44 +1039,66 @@ function runtimeWorkerModule(
         const logs = [];
         const encoder = new TextEncoder();
         let logBytes = 0;
+        let logEvents = 0;
         let logsTruncated = false;
-        const capture = (prefix, args) => {
+        const record = (stream, text) => {
           if (logsTruncated) return;
-          if (logs.length >= ${maxLogEvents - 1}) {
-            logs.push("...[logs truncated]");
+          if (logEvents >= ${maxLogEvents - 1}) {
+            logs.push({ stream, text: "...[logs truncated]" });
             logsTruncated = true;
             return;
           }
-          const line = prefix + args.map(String).join(" ");
-          const bytes = encoder.encode(line);
+          const bytes = encoder.encode(text);
           const remaining = ${maxLogBytes} - logBytes;
-          if (bytes.byteLength + 1 <= remaining) {
-            logs.push(line);
-            logBytes += bytes.byteLength + 1;
+          if (bytes.byteLength <= remaining) {
+            logs.push({ stream, text });
+            logBytes += bytes.byteLength;
+            logEvents += 1;
             return;
           }
           const marker = encoder.encode("...[logs truncated]");
-          const available = remaining - marker.byteLength - 1;
+          const available = remaining - marker.byteLength;
           if (available >= 0) {
-            let prefix = bytes.slice(0, available);
+            let head = bytes.slice(0, available);
             let partial = "";
-            while (prefix.byteLength > 0) {
+            while (head.byteLength > 0) {
               try {
-                partial = new TextDecoder("utf-8", { fatal: true }).decode(prefix);
+                partial = new TextDecoder("utf-8", { fatal: true }).decode(head);
                 break;
               } catch {
-                prefix = prefix.slice(0, -1);
+                head = head.slice(0, -1);
               }
             }
-            logs.push(partial + "...[logs truncated]");
-            logBytes += prefix.byteLength + marker.byteLength + 1;
+            logs.push({ stream, text: partial + "...[logs truncated]" });
+            logBytes += head.byteLength + marker.byteLength;
           }
           logsTruncated = true;
         };
-        console.log = (...args) => capture("", args);
-        console.info = (...args) => capture("", args);
-        console.warn = (...args) => capture("[warn] ", args);
-        console.error = (...args) => capture("[error] ", args);
+        const consoleLine = (stream, args) => record(stream, args.map(String).join(" ") + "\\n");
+        console.log = (...args) => consoleLine("stdout", args);
+        console.info = (...args) => consoleLine("stdout", args);
+        console.warn = (...args) => consoleLine("stderr", args);
+        console.error = (...args) => consoleLine("stderr", args);
+        nextProcess.stdout = {
+          write: (chunk) => {
+            record("stdout", typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+            return true;
+          },
+        };
+        nextProcess.stderr = {
+          write: (chunk) => {
+            record("stderr", typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+            return true;
+          },
+        };
+        if (globalThis.process !== nextProcess && globalThis.process) {
+          try {
+            globalThis.process.stdout = nextProcess.stdout;
+          } catch {}
+          try {
+            globalThis.process.stderr = nextProcess.stderr;
+          } catch {}
+        }
         install(host);
         try {
           const module = await import(${JSON.stringify(entryName)});
