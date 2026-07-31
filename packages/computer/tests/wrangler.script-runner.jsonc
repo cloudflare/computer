@@ -1,0 +1,11 @@
+{
+  "name": "workspace-script-runner-tests",
+  "main": "./script-runner-worker.ts",
+  "compatibility_date": "2026-06-23",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": {
+    "bindings": [{ "name": "HOST", "class_name": "HostDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostDO"] }]
+}

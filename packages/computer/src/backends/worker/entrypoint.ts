@@ -92,8 +92,8 @@ export class ShellWorker<
   Env extends ShellWorkerEnv = ShellWorkerEnv,
 > extends WorkerEntrypoint<Env> {
   // Subclasses override to change the default cwd.
-  // just-bash's Python and JavaScript commands require
-  // node:worker_threads and cannot run in workerd.
+  // ECMAScript module execution uses workspace.runtime; just-bash's Python and JavaScript
+  // commands require node:worker_threads and cannot run in workerd.
   protected readonly shellOptions: ShellWorkerOptions = {};
   readonly #executions = new Map<string, AbortController>();
 

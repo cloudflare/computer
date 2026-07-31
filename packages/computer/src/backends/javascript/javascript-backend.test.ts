@@ -1,0 +1,722 @@
+import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dofs";
+import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import { describe, expect, it, vi } from "vitest";
+
+import { Workspace } from "../../workspace.js";
+import { IsolateJavaScriptBackend as ProductionIsolateJavaScriptBackend } from "./javascript-backend.js";
+
+class IsolateJavaScriptBackend extends ProductionIsolateJavaScriptBackend {
+  override readonly requiresWaitUntil = false;
+
+  override connect(host: Parameters<ProductionIsolateJavaScriptBackend["connect"]>[0]) {
+    return super.connect({ ...host, waitUntil: host.waitUntil ?? (() => {}) });
+  }
+}
+
+function throwingLoader(message: string) {
+  return {
+    load() {
+      throw new Error(message);
+    },
+  };
+}
+
+describe("IsolateJavaScriptBackend", () => {
+  it("requires a host event-lifetime hook", async () => {
+    const backend = new ProductionIsolateJavaScriptBackend({ loader: throwingLoader("unused") });
+    await expect(
+      backend.connect({
+        db: undefined as never,
+        fs: undefined as never,
+        git: undefined as never,
+        artifacts: undefined as never,
+      }),
+    ).rejects.toThrow(/requires WorkspaceOptions.waitUntil/);
+  });
+
+  it("validates timeout configuration", () => {
+    expect(
+      () =>
+        new IsolateJavaScriptBackend({
+          loader: throwingLoader("unused"),
+          maxTimeoutMs: Number.NaN,
+        }),
+    ).toThrow(/positive finite/);
+    expect(
+      () =>
+        new IsolateJavaScriptBackend({
+          loader: throwingLoader("unused"),
+          defaultTimeoutMs: -1,
+        }),
+    ).toThrow(/positive finite/);
+  });
+
+  it("cancels a started worker when waitUntil registration fails", async () => {
+    let entrypointDisposals = 0;
+    let workerDisposals = 0;
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      waitUntil() {
+        throw new Error("waitUntil unavailable");
+      },
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return {
+                    evaluate: () => new Promise(() => undefined),
+                    [Symbol.dispose]() {
+                      entrypointDisposals += 1;
+                    },
+                  };
+                },
+                [Symbol.dispose]() {
+                  workerDisposals += 1;
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("waitUntil unavailable"),
+    });
+    expect(entrypointDisposals).toBe(1);
+    expect(workerDisposals).toBe(1);
+  });
+
+  it("disposes Loader resources when evaluate throws synchronously", async () => {
+    let entrypointDisposals = 0;
+    let workerDisposals = 0;
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      waitUntil() {},
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return {
+                    evaluate() {
+                      throw new Error("evaluate failed");
+                    },
+                    [Symbol.dispose]() {
+                      entrypointDisposals += 1;
+                    },
+                  };
+                },
+                [Symbol.dispose]() {
+                  workerDisposals += 1;
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("evaluate failed"),
+    });
+    expect(entrypointDisposals).toBe(1);
+    expect(workerDisposals).toBe(1);
+  });
+
+  it("migrates the legacy execution journal schema", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    db.run(`CREATE TABLE workspace_runtime_executions (
+      backend TEXT NOT NULL,
+      id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      PRIMARY KEY (backend, id)
+    )`);
+    db.run(
+      `INSERT INTO workspace_runtime_executions (backend, id, status)
+       VALUES ('isolate-javascript', 'legacy', 'completed')`,
+    );
+    const fs = new WorkspaceFilesystem(db);
+    const backend = new IsolateJavaScriptBackend({ loader: throwingLoader("unused") });
+    await backend.connect({ db, fs, git: undefined as never, artifacts: undefined as never });
+    const columns = db.all<{ name: string }>("PRAGMA table_info(workspace_runtime_executions)");
+    expect(columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(["created_at", "finished_at"]),
+    );
+    expect(
+      db.scalar<number>("SELECT finished_at FROM workspace_runtime_executions WHERE id = 'legacy'"),
+    ).toBeTypeOf("number");
+  });
+
+  it("enforces finite input and result byte ceilings", async () => {
+    const load = vi.fn(() => ({
+      getEntrypoint() {
+        return { evaluate: async () => ({ result: "result-too-large" }) };
+      },
+    }));
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: { load },
+          maxInputBytes: 8,
+          maxResultBytes: 8,
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", { input: "input-too-large" }),
+    ).rejects.toThrow("input exceeds 8 bytes");
+    expect(load).not.toHaveBeenCalled();
+
+    const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("result exceeds 8 bytes"),
+    });
+  });
+
+  it("rejects an execution whose module graph finishes after the handle closes", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    await fs.writeFile("/workspace/task.js", "export default 1");
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => (release = resolve));
+    const readFile = fs.readFile.bind(fs);
+    fs.readFile = (async (...args: Parameters<typeof fs.readFile>) => {
+      await blocked;
+      return readFile(...args);
+    }) as typeof fs.readFile;
+    const backend = new IsolateJavaScriptBackend({ loader: throwingLoader("must not load") });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = handle.exec({
+      source: `import task from "./task.js"; export default task;`,
+      cwd: "/workspace",
+    });
+    await Promise.resolve();
+    let closed = false;
+    const closing = handle.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release();
+    await closing;
+    await expect(execution).rejects.toMatchObject({ code: "ECLOSED" });
+  });
+
+  it("checks limits against the complete loader map including the runtime runner", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new IsolateJavaScriptBackend({ loader: { load }, maxSourceBytes: 128 })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("loader graph exceeds 128 source bytes"),
+    });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("records synchronous loader startup failure as a completed failed execution", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: throwingLoader("loader failed"),
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const handle = await workspace.runtime.exec("export default () => 1", {
+      backend: "isolate-javascript",
+      id: "startup-failure",
+      encoding: "utf8",
+    });
+    await expect(handle.result()).resolves.toMatchObject({
+      status: "failed",
+      exitCode: 1,
+      stderr: expect.stringContaining("loader failed"),
+    });
+    const replay = await workspace.runtime.getExec("startup-failure", {
+      backend: "isolate-javascript",
+      encoding: "utf8",
+    });
+    await expect(replay.result()).resolves.toMatchObject({ status: "failed", exitCode: 1 });
+  });
+
+  it("replays a coherent failure after backend recreation interrupts a run", async () => {
+    const storage = new SQLiteTestStorage();
+    const dispose = vi.fn();
+    const loader = {
+      load() {
+        return {
+          getEntrypoint() {
+            return { evaluate: () => new Promise(() => undefined) };
+          },
+          [Symbol.dispose]: dispose,
+        };
+      },
+    };
+    const first = new Workspace({
+      storage,
+      backends: [new IsolateJavaScriptBackend({ loader })],
+    });
+    await first.fs.mkdir("/workspace", { recursive: true });
+    await first.runtime.exec("export default async () => new Promise(() => {})", {
+      backend: "isolate-javascript",
+      id: "interrupted",
+    });
+
+    const recreated = new Workspace({
+      storage,
+      backends: [new IsolateJavaScriptBackend({ loader })],
+    });
+    const replay = await recreated.runtime.getExec("interrupted", {
+      backend: "isolate-javascript",
+      encoding: "utf8",
+    });
+    await expect(replay.result()).resolves.toMatchObject({
+      status: "failed",
+      exitCode: 1,
+      stderr: expect.stringContaining("runtime restarted"),
+    });
+    await first.close();
+  });
+
+  it("reserves an explicit execution id while module construction is in flight", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return { evaluate: () => new Promise(() => undefined) };
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const [first, second] = await Promise.allSettled([
+      workspace.runtime.exec("export default async () => new Promise(() => {})", {
+        id: "shared-id",
+      }),
+      workspace.runtime.exec("export default 2", { id: "shared-id" }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = first.status === "rejected" ? first.reason : second.reason;
+    expect(rejected).toMatchObject({ code: "EEXEC_BUSY" });
+    await workspace.close();
+  });
+
+  it("limits concurrent Dynamic Workers and attaches execution to waitUntil", async () => {
+    let resolveEvaluation!: (value: { result: number }) => void;
+    const evaluation = new Promise<{ result: number }>((resolve) => {
+      resolveEvaluation = resolve;
+    });
+    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      waitUntil,
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return { evaluate: () => evaluation };
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const first = await workspace.runtime.exec("export default 1", { id: "first" });
+    expect(waitUntil).toHaveBeenCalledOnce();
+    await expect(
+      workspace.runtime.exec("export default 2", { id: "second" }),
+    ).rejects.toMatchObject({ code: "EEXEC_BUSY" });
+    resolveEvaluation({ result: 1 });
+    await expect(first.result()).resolves.toMatchObject({ status: "completed" });
+    await expect(
+      workspace.runtime.exec("export default 2", { id: "second" }),
+    ).resolves.toBeDefined();
+    await workspace.close();
+  });
+
+  it("waits for accepted host calls before reporting successful completion", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let releaseWrite!: () => void;
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = fs.writeFile.bind(fs);
+    fs.writeFile = (async (...args: Parameters<typeof fs.writeFile>) => {
+      await writeReleased;
+      return originalWrite(...args);
+    }) as typeof fs.writeFile;
+    const backend = new IsolateJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                evaluate(
+                  _input: unknown,
+                  host: { call(name: string, args: string): Promise<string> },
+                ) {
+                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  return Promise.resolve({ result: 1 });
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "successful-host-call", source: "export default 1" });
+    let settled = false;
+    const terminal = (async () => {
+      const events = [];
+      for await (const event of execution.events) events.push(event);
+      settled = true;
+      return events;
+    })();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseWrite();
+    const events = await terminal;
+    expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
+    expect(events.at(-1)).toMatchObject({ name: "exit", value: 0 });
+  });
+
+  it("aborts cooperative trusted-module calls at their deadline", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let aborted = false;
+    const backend = new IsolateJavaScriptBackend({
+      maxHostCallMs: 5,
+      trustedModules: {
+        "ws:test": {
+          call(_method, _args, context) {
+            return new Promise((_resolve, reject) => {
+              context?.signal.addEventListener("abort", () => {
+                aborted = true;
+                reject(context.signal.reason);
+              });
+            });
+          },
+        },
+      },
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { call(name: string, args: string): Promise<string> },
+                ) {
+                  await host.call("trusted/ws:test.call", JSON.stringify(["run"]));
+                  return { result: 1 };
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "trusted-timeout", source: "export default 1" });
+    const events = [];
+    for await (const event of execution.events) events.push(event);
+    expect(aborted).toBe(true);
+    expect(events.at(-1)).toMatchObject({ name: "exit", value: 1 });
+  });
+
+  it("waits for accepted host calls before reporting cancellation", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let releaseWrite!: () => void;
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let callStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      callStarted = resolve;
+    });
+    const originalWrite = fs.writeFile.bind(fs);
+    fs.writeFile = (async (...args: Parameters<typeof fs.writeFile>) => {
+      callStarted();
+      await writeReleased;
+      return originalWrite(...args);
+    }) as typeof fs.writeFile;
+    const backend = new IsolateJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                evaluate(
+                  _input: unknown,
+                  host: { call(name: string, args: string): Promise<string> },
+                ) {
+                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  return new Promise(() => undefined);
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "cancel-host-call", source: "export default 1" });
+    await started;
+    let killed = false;
+    const kill = handle.killExec({ id: execution.id }).then(() => {
+      killed = true;
+    });
+    let secondKilled = false;
+    const secondKill = handle.killExec({ id: execution.id }).then(() => {
+      secondKilled = true;
+    });
+    let closed = false;
+    const closing = handle.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(killed).toBe(false);
+    expect(secondKilled).toBe(false);
+    expect(closed).toBe(false);
+    releaseWrite();
+    await Promise.all([kill, secondKill, closing]);
+    expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
+    const events = [];
+    for await (const event of execution.events) events.push(event);
+    expect(events.at(-1)).toMatchObject({ name: "exit", value: 130 });
+  });
+
+  it("settles subscribers when terminal persistence fails and repairs on reconnect", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let finish!: (value: { result: number }) => void;
+    const evaluation = new Promise<{ result: number }>((resolve) => {
+      finish = resolve;
+    });
+    const backend = new IsolateJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return { evaluate: () => evaluation };
+            },
+          };
+        },
+      },
+    });
+    const host = { db, fs, git: undefined as never, artifacts: undefined as never };
+    const handle = await backend.connect(host);
+    const execution = await handle.exec({ id: "storage-failure", source: "export default 1" });
+    const originalRun = db.run.bind(db);
+    db.run = ((query: string, ...bindings: unknown[]) => {
+      if (query.includes("UPDATE workspace_runtime_executions")) {
+        throw new Error("storage unavailable");
+      }
+      return originalRun(query, ...bindings);
+    }) as typeof db.run;
+    finish({ result: 1 });
+    const events = [];
+    for await (const event of execution.events) events.push(event);
+    expect(events.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    const sameSessionReplay = await handle.getExec({ id: "storage-failure" });
+    const sameSessionEvents = [];
+    for await (const event of sameSessionReplay.events) sameSessionEvents.push(event);
+    expect(sameSessionEvents.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    db.run = originalRun as typeof db.run;
+
+    const reconnected = await backend.connect(host);
+    const replay = await reconnected.getExec({ id: "storage-failure" });
+    const repaired = [];
+    for await (const event of replay.events) repaired.push(event);
+    expect(repaired.at(-1)).toMatchObject({ name: "exit", value: 1 });
+  });
+
+  it("bounds durable completed-execution retention", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: throwingLoader("finished"),
+          maxRetainedExecutions: 1,
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    for (const id of ["one", "two"]) {
+      const execution = await workspace.runtime.exec("export default 1", { id });
+      await execution.result();
+    }
+    const third = await workspace.runtime.exec("export default 1", { id: "three" });
+    await third.result();
+    await expect(workspace.runtime.getExec("one")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(workspace.runtime.getExec("two")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(workspace.runtime.getExec("three")).resolves.toBeDefined();
+  });
+
+  it("rejects cwd and execution ids outside their configured bounds", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new IsolateJavaScriptBackend({ loader: { load } })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(workspace.runtime.exec("export default 1", { cwd: "/outside" })).rejects.toThrow(
+      /stay under \/workspace/,
+    );
+    await expect(
+      workspace.runtime.exec("export default 1", { id: "x".repeat(257) }),
+    ).rejects.toThrow(/id exceeds 256 bytes/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("caps unconsumed event subscribers per execution", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const backend = new IsolateJavaScriptBackend({
+      maxExecutionSubscribers: 2,
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return { evaluate: () => new Promise(() => undefined) };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    await handle.exec({ id: "subscribers", source: "export default 1" });
+    await handle.getExec({ id: "subscribers", after: "tail" });
+    const rejected = await handle.getExec({ id: "subscribers", after: "tail" });
+    await expect(rejected.events.getReader().read()).rejects.toMatchObject({ code: "EEXEC_BUSY" });
+    await handle.close();
+  });
+
+  it("rejects malformed host trusted-module names", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: throwingLoader("must not load"),
+          trustedModules: {
+            "ws:bad/path": {
+              async call() {
+                return null;
+              },
+            },
+          } as never,
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec(`import { call } from "ws:bad/path"; export default call;`, {
+        backend: "isolate-javascript",
+      }),
+    ).rejects.toThrow(/simple reserved ws:\*/);
+  });
+
+  it("rejects relative imports that collide with internal Loader modules", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new IsolateJavaScriptBackend({ loader: { load }, root: "/" })],
+    });
+    await workspace.fs.writeFile("/workspace-capabilities.js", "export const stolen = true");
+    await expect(
+      workspace.runtime.exec(`import "./workspace-capabilities.js"; export default 1;`, {
+        cwd: "/",
+      }),
+    ).rejects.toThrow(/reserved for Workspace internals/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("rejects configured module names that collide with generated modules", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new IsolateJavaScriptBackend({
+          loader: { load },
+          modules: {
+            "__workspace_entry__.js": "export default 42",
+            "node:fs": "export default {};",
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", { backend: "isolate-javascript" }),
+    ).rejects.toThrow(/reserved module name/);
+    expect(load).not.toHaveBeenCalled();
+  });
+});

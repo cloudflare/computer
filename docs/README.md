@@ -19,7 +19,8 @@ It provides:
  - A fs API for working with files and directories compatible with Worker bindings.
  - R2-backed mounts for pre-filling read-only data into the workspace tree.
  - Durability over DO restarts for all file operations.
- - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell or a just-bash Dynamic Worker.
+ - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
+ - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
  - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/computer/tools`.
 
@@ -44,6 +45,7 @@ The package ships several entrypoints:
 | `@cloudflare/computer` | The Workspace facade, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker` | `WorkerBackend` and the bundled just-bash command runtime. |
+| `@cloudflare/computer/backends/javascript` | `IsolateJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/git` | Isomorphic-git glue for working with checkouts inside the workspace. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, a session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
@@ -105,7 +107,7 @@ export class Agent extends withWorkspaceContainer(class extends DurableObject<En
 }
 ```
 
-Once you have a `workspace` on your Durable Object, the `fs` and `runtime` surfaces feel a lot like Node's `fs/promises` plus routed command execution — everything is async, paths are absolute, and operations are durable across DO restarts.
+Once you have a `workspace` on your Durable Object, the `fs` and `runtime` surfaces feel a lot like Node's `fs/promises` plus routed command/module execution — everything is async, paths are absolute, and operations are durable across DO restarts.
 
 Create and write files:
 
@@ -227,6 +229,9 @@ above, then dive into the area you're working on.
 | [13. Git interface](./13_git_interface.md) | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
 | [14. Assets interface](./14_assets_interface.md) | `share` a workspace file to R2 and get back a presigned URL. |
 | [15. Artifacts interface](./15_artifacts_interface.md) | `createArtifact` and the `artifacts` CLI, a session-scoped facade over the Cloudflare Artifacts binding. |
+| [16. Execution runtime architecture](./16_code_execution.md) | One runtime entry point over command and module backends. |
+| [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed lifecycle. |
+| [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 
 ## High-level API
 

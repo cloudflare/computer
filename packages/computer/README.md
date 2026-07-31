@@ -14,7 +14,7 @@ Durable Object-side facade for Cloudflare Computer. Pairs a local
 SQLite-backed VFS (via `@cloudflare/dofs`) with pluggable execution
 backends selected through `workspace.runtime.exec()`.
 
-Two command backends ship today on tree-shakeable subpaths:
+Three backends ship today on tree-shakeable subpaths:
 
 - [`@cloudflare/computer/backends/container`](./src/backends/container/) —
   runs the shell inside a Cloudflare Container against a `computerd`
@@ -28,6 +28,18 @@ Two command backends ship today on tree-shakeable subpaths:
   no second store, no sync round trip. See
   [`docs/12_worker_backend.md`](../../docs/12_worker_backend.md) and
   `examples/worker/`.
+- [`@cloudflare/computer/backends/javascript`](./src/backends/javascript/) —
+  executes ECMAScript modules in fresh Dynamic Workers with structured
+  input/results, durable relative imports, configured libraries, durable
+  `node:fs/promises`, and trusted `ws:git` / `ws:artifacts` modules. See
+  [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md).
+
+The isolate-JavaScript backend runs after `runtime.exec()` returns. Pass
+`waitUntil: ctx.waitUntil.bind(ctx)` to `Workspace` so completion remains
+attached to the Durable Object event. The backend refuses to connect without
+this lifecycle hook. It admits one execution at a time by default and bounds
+completed execution retention by time and count.
+
 A backend can declare `sync: "none"` on the handle it returns to
 opt out of the push/pull bracket entirely — the worker backend
 does this because its shell shares the host store directly. The
@@ -42,7 +54,7 @@ uniform; the counts are just always zero.
   cross the Workers-RPC boundary into another Worker or DO.
 - `workspace.runtime` / `WorkspaceRuntimeStub` — the single execution
   surface: `exec`, `getExec`, `killExec`, and `disposeExec`. The selected
-  backend defines how to interpret the source. Module backends may include a
+  backend defines the source language. JavaScript results may include a
   structured `value`; command backends return stdout/stderr and an exit code.
 - `workspace.git` — a typed git client backed by
   `isomorphic-git` against the local SQLite VFS. Surfaces both a
@@ -198,7 +210,7 @@ an in-shell `artifacts` command. See
 
 A Workspace can carry more than one backend. Each backend
 registers under a stable selector `id` (defaulting to
-`"isolate-shell"` or `"container-shell"`; this is intentionally separate from the diagnostic `type`).
+`"isolate-shell"`, `"container-shell"`, or `"isolate-javascript"`; this is intentionally separate from the diagnostic `type`).
 `runtime.exec` picks the default (the first backend in the list)
 unless the caller names one through `WorkspaceRuntimeExecOptions.backend`. Per-backend
 sync cursors live in dofs's `_vfs_watermark` table keyed by

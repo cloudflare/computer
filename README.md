@@ -3,7 +3,7 @@
 Cloudflare Computer is a virtual filesystem that lives inside a
 Durable Object. The Durable Object holds the authoritative state in
 SQLite and exposes one pluggable execution surface through
-`workspace.runtime`. Two backends ship today:
+`workspace.runtime`. Three backends ship today:
 
 - **Container** projects the SQLite state into a sandbox container as
   a real FUSE mount. A sandbox-side daemon (`computerd`) mounts the state
@@ -12,11 +12,15 @@ SQLite and exposes one pluggable execution surface through
 - **Isolate shell** runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker. It reaches the authoritative Workspace over
   Workers RPC, so there is no second store or sync round trip.
+- **Isolate JavaScript** runs an ECMAScript module in a fresh Dynamic
+  Worker with structured input/results, durable relative imports,
+  configured libraries, Workspace-backed `node:fs/promises`, and trusted `ws:git` and
+  `ws:artifacts` modules.
+
 A Workspace may register multiple backends under stable IDs.
 `workspace.runtime.exec(source, { backend })` is the single execution
-entry point; the selected backend defines how to interpret `source`.
-The shipped backends treat it as a shell command. Backends connect lazily on
-first use.
+entry point; the selected backend defines whether `source` is a shell
+command or an ECMAScript module. Backends connect lazily on first use.
 
 Workspace can also be constructed without a backend at all, giving
 callers the filesystem on its own.

@@ -2,6 +2,17 @@ import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
 
+export type WorkspaceRuntimeAccess = "read" | "read-write";
+
+export interface WorkspaceTrustedModule {
+  /** Dispatch a call made through a host-installed reserved ws:* module. */
+  call(
+    method: string,
+    args: WorkspaceRuntimeValue[],
+    context?: { signal: AbortSignal; deadline: number },
+  ): Promise<WorkspaceRuntimeValue>;
+}
+
 export type WorkspaceRuntimeValue =
   | null
   | boolean
@@ -9,6 +20,65 @@ export type WorkspaceRuntimeValue =
   | string
   | WorkspaceRuntimeValue[]
   | { [key: string]: WorkspaceRuntimeValue };
+
+export interface WorkspaceRuntimeStat {
+  name: string;
+  inode: number;
+  mode: number;
+  mtime: number;
+  size: number;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymbolicLink: boolean;
+}
+
+export interface WorkspaceRuntimeFilesystem {
+  readFile(path: string): Promise<ReadableStream<Uint8Array>>;
+  readFile(path: string, encoding: "utf8"): Promise<string>;
+  stat(path: string): Promise<WorkspaceRuntimeStat>;
+  lstat(path: string): Promise<WorkspaceRuntimeStat>;
+  readlink(path: string): Promise<string>;
+  readdir(
+    path: string,
+    options?: { limit?: number },
+  ): Promise<
+    Array<{
+      name: string;
+      isFile: boolean;
+      isDirectory: boolean;
+      isSymbolicLink: boolean;
+    }>
+  >;
+  find(directory: string, pattern?: string): Promise<Array<{ path: string; type: "file" | "dir" }>>;
+  ls(prefix: string): Promise<string[]>;
+  grep(
+    pattern: string,
+    path: string,
+    options?: { ignoreCase?: boolean },
+  ): Promise<Array<{ path: string; line: number; text: string }>>;
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  writeFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: { exclusive?: boolean },
+  ): Promise<void>;
+  rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+  symlink(target: string, path: string): Promise<void>;
+}
+
+export interface WorkspaceRuntimeLoader {
+  load(code: {
+    compatibilityDate: string;
+    compatibilityFlags?: string[];
+    limits?: { cpuMs?: number };
+    mainModule: string;
+    modules: Record<string, string | { js?: string }>;
+    globalOutbound?: Fetcher | null;
+  }): {
+    getEntrypoint(name?: string, options?: { limits?: { cpuMs?: number } }): unknown;
+  };
+}
 
 export type WorkspaceRuntimeStatus = "completed" | "failed" | "cancelled";
 

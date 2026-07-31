@@ -64,15 +64,18 @@ export type {
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
   WorkspaceRegisteredBackend,
+  WorkspaceRuntimeAccess,
   WorkspaceRuntimeDisposeOptions,
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
   WorkspaceRuntimeExecOptions,
   WorkspaceRuntimeGetOptions,
   WorkspaceRuntimeKillOptions,
+  WorkspaceRuntimeLoader,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeStatus,
   WorkspaceRuntimeValue,
+  WorkspaceTrustedModule,
 } from "./runtime/types.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
