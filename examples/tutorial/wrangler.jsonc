@@ -9,7 +9,7 @@
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],
 
-  "ai": { "binding": "AI" },
+  "ai": { "binding": "AI", "remote": true },
 
   "containers": [
     {
