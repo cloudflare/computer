@@ -1,0 +1,41 @@
+packages/rpc/tests/shell-and-composite.test.ts
+  s_d2d5c90431634a::t_4d036428f85c48 38,72,163-166,176
+packages/computerd/src/exec/runner.test.ts
+  s_d2d5c90431634a::t_c9b77d47fc96fc 81-105
+packages/computer/src/backends/worker/entrypoint.ts
+  s_d2d5c90431634a::t_c8c4e201623882 33,114,181,203-207
+packages/rpc/src/interface.ts
+  s_d2d5c90431634a::t_9fab8047af3dc0 107-108
+packages/computer/src/backends/worker/worker.ts
+  s_d2d5c90431634a::t_9df23b8f787a31 36-42,177
+packages/computer/src/workspace.test.ts
+  s_d2d5c90431634a::t_af011f99f2574d 245-281,418-438
+packages/computer/src/shell.ts
+  s_d2d5c90431634a::t_c599a702f92fa8 108-110,183
+packages/computer/src/backends/worker/worker.test.ts
+  s_d2d5c90431634a::t_e9c2420b495e4c 34-40,67-73,199-218
+packages/computer/src/runtime/types.ts
+  s_d2d5c90431634a::t_e06b3757616a07 112-113
+packages/computer/src/runtime/runtime.ts
+  s_d2d5c90431634a::t_bf11ad6c6b8de6 60,65-67
+packages/rpc/src/server.ts
+  s_d2d5c90431634a::t_cd6a90bb925e42 36,233-239,247
+packages/computer/src/backends/worker/entrypoint.test.ts
+  s_d2d5c90431634a::t_d06af7e7f3372e 35,192-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "717137141a417dac82540896da4bd68ac1da2e63",
+  "prompts": {},
+  "sessions": {
+    "s_d2d5c90431634a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fa8ed-9626-7793-bd78-49d1bae24dcb",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
