@@ -65,13 +65,25 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    const callback = url.pathname.match(/^\/__workspace_connect\/([0-9a-f-]{36})\/(health|ws)$/);
+    if (callback?.[2] === "health") {
+      return new Response("ok\n", {
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
     if (url.pathname === "/health") {
       return new Response("ok\n", {
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
 
-    if (url.pathname === "/ws") {
+    if (url.pathname === "/ws" || callback?.[2] === "ws") {
+      if (callback?.[1]) {
+        url.pathname = "/ws";
+        url.searchParams.set("token", callback[1]);
+        request = new Request(url, request);
+      }
       const { binding, id } = this.ctx.props;
       const ns = (this.env as Record<string, unknown>)[binding] as
         | DurableObjectNamespace

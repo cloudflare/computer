@@ -11,11 +11,10 @@
 > intent, not as description of the code today.
 
 Durable Object-side facade for Cloudflare Computer. Pairs a local
-SQLite-backed VFS (via `@cloudflare/dofs`) with a pluggable backend
-that decides where shell commands run.
+SQLite-backed VFS (via `@cloudflare/dofs`) with pluggable execution
+backends selected through `workspace.runtime.exec()`.
 
-Two backends ship today, each on its own sub-path so the large
-dependencies they carry can be tree-shaken when you only use one:
+Two command backends ship today on tree-shakeable subpaths:
 
 - [`@cloudflare/computer/backends/container`](./src/backends/container/) —
   runs the shell inside a Cloudflare Container against a `computerd`
@@ -29,11 +28,10 @@ dependencies they carry can be tree-shaken when you only use one:
   no second store, no sync round trip. See
   [`docs/12_worker_backend.md`](../../docs/12_worker_backend.md) and
   `examples/worker/`.
-
 A backend can declare `sync: "none"` on the handle it returns to
 opt out of the push/pull bracket entirely — the worker backend
 does this because its shell shares the host store directly. The
-bracket still runs around `shell.exec` so the surface stays
+bracket still runs around `runtime.exec` so the surface stays
 uniform; the counts are just always zero.
 
 ## Public surface
@@ -42,9 +40,10 @@ uniform; the counts are just always zero.
   backend handle, and the push/pull bracket.
 - `WorkspaceStub` — what `workspace.stub()` returns, designed to
   cross the Workers-RPC boundary into another Worker or DO.
-- `WorkspaceShell` / `ExecHandle` — the command-execution half of
-  the API. Throws a clear error if the Workspace was constructed
-  without a backend.
+- `workspace.runtime` / `WorkspaceRuntimeStub` — the single execution
+  surface: `exec`, `getExec`, `killExec`, and `disposeExec`. The selected
+  backend defines how to interpret the source. Module backends may include a
+  structured `value`; command backends return stdout/stderr and an exit code.
 - `workspace.git` — a typed git client backed by
   `isomorphic-git` against the local SQLite VFS. Surfaces both a
   TypeScript API (`workspace.git.clone({ url })`) and an
@@ -68,80 +67,81 @@ uniform; the counts are just always zero.
   an Artifacts binding, the worker backend exposes the same CLI as
   an `artifacts` custom command. See
   [`docs/15_artifacts_interface.md`](../../docs/15_artifacts_interface.md).
-- `createAITools` (from `@cloudflare/computer/tools`) — AI SDK
-  tools for agents: `read`, `write`, `edit`, `ls`, optional `exec`,
-  and optional `publish`. See
-  [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Typical DO-side usage
 
 Container backend:
 
 ```ts
-import { withWorkspace, WorkspaceProxy } from "@cloudflare/computer";
+import { Workspace, WorkspaceProxy } from "@cloudflare/computer";
 import { CloudflareContainerBackend, withWorkspaceContainer }
   from "@cloudflare/computer/backends/container";
 import { DurableObject } from "cloudflare:workers";
 
 export { WorkspaceProxy };
 
-// `withWorkspace` constructs the Workspace and installs the plumbing
-// `getWorkspace` needs — no hand-written stub method. The options
-// callback runs after `super(...)`, so it can read `self.ctx`. Compose
-// it with `withWorkspaceContainer` when the durable object also owns
-// the container binding.
-export class ContainerExample extends withWorkspace(
-  withWorkspaceContainer(class extends DurableObject<Env> {}),
-  (self) => ({
-    storage: self.ctx.storage,
+export class ContainerExample extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  #workspace = new Workspace({
+    storage: this.ctx.storage,
     backends: [
       new CloudflareContainerBackend({
-        container: () => self,
-        workspace: { binding: "ContainerExample", id: self.ctx.id.toString() },
+        container: () => this,
+        workspace: { binding: "ContainerExample", id: this.ctx.id.toString() },
       }),
     ],
-  }),
-) {}
+  });
+
+  async getWorkspace(): Promise<WorkspaceStub> {
+    await this.#workspace.ready();
+    return this.#workspace.stub();
+  }
+
+  override fetch(req: Request) { return this.#workspace; /* see example */ }
+}
 ```
 
 Worker backend:
 
 ```ts
-import { withWorkspace, WorkspaceServiceProxy } from "@cloudflare/computer";
+import { Workspace, WorkspaceServiceProxy } from "@cloudflare/computer";
 import { WorkerBackend } from "@cloudflare/computer/backends/worker";
 import { DurableObject } from "cloudflare:workers";
 
 export { WorkspaceServiceProxy };
 
-export class ContainerExample extends withWorkspace(
-  class extends DurableObject<Env> {},
-  (self) => ({
-    storage: self.ctx.storage,
+export class WorkerExample extends DurableObject<Env> {
+  #workspace = new Workspace({
+    storage: this.ctx.storage,
     backends: [
       new WorkerBackend({
-        loader: self.env.LOADER,
-        workspace: { binding: "ContainerExample", id: self.ctx.id.toString() },
-        ctx: self.ctx,
+        loader: this.env.LOADER,
+        workspace: { binding: "WorkerExample", id: this.ctx.id.toString() },
+        ctx: this.ctx,
       }),
     ],
-  }),
-) {}
+  });
+
+  async getWorkspace(): Promise<WorkspaceStub> {
+    await this.#workspace.ready();
+    return this.#workspace.stub();
+  }
+}
 ```
 
-Filesystem only — no backend, no shell:
+Filesystem only — no execution backend:
 
 ```ts
 const ws = new Workspace({ storage: ctx.storage });
 await ws.ready();
 await ws.fs.writeFile("/notes.md", "hello");
 const body = await ws.fs.readFile("/notes.md", "utf8");
-// ws.shell throws — there's no backend wired up.
+// ws.runtime throws — there's no backend wired up.
 ```
 
 Pass `useThink: true` when assigning a workspace to `Think.workspace`.
 That adds Think's compatibility methods directly to the local instance
-and to clients returned by `getWorkspace()`, while keeping the primary
-file API on `workspace.fs`.
+and to clients returned by `getWorkspace()`, while keeping `workspace.fs`
+and `workspace.runtime` as the primary surfaces.
 
 Git, also without a backend:
 
@@ -197,11 +197,10 @@ an in-shell `artifacts` command. See
 ## Multiple backends per workspace
 
 A Workspace can carry more than one backend. Each backend
-registers under a stable `id` (defaulting to the backend's
-diagnostic kind — `"worker"`, `"cloudflare-container"` — so
-single-backend setups stay terse). `shell.exec` picks the
-default (the first backend in the list) unless the caller
-names a backend through `ExecOptions.backend`. Per-backend
+registers under a stable selector `id` (defaulting to
+`"isolate-shell"` or `"container-shell"`; this is intentionally separate from the diagnostic `type`).
+`runtime.exec` picks the default (the first backend in the list)
+unless the caller names one through `WorkspaceRuntimeExecOptions.backend`. Per-backend
 sync cursors live in dofs's `_vfs_watermark` table keyed by
 the same id; a push or pull against one backend never disturbs
 the other's cursors.
@@ -225,10 +224,10 @@ const workspace = new Workspace({
 });
 
 // Default: the first backend in the list runs the command.
-const grep = await ws.shell.exec("grep -r TODO /workspace");
+const grep = await ws.runtime.exec("grep -r TODO /workspace");
 
 // Explicit: route a heavy build to the container.
-const build = await ws.shell.exec("npm test", { backend: "sandbox" });
+const build = await ws.runtime.exec("npm test", { backend: "sandbox" });
 ```
 
 Backends connect lazily — the first `exec` (or `push` /
@@ -240,215 +239,31 @@ the first one.
 
 A workspace with two backends that both write into
 `/workspace` has no global ordering between them; see
-[`docs/05_shell_interface.md`](../../docs/05_shell_interface.md)
+[`docs/05_runtime_interface.md`](../../docs/05_runtime_interface.md)
 for the caveat.
 
 ## Durable pending-sync retries
 
-A command can finish after changing backend files while its post-command pull
-fails. The command result reports `sync.status: "pending"`. If you configure a
-`SyncRetryScheduler`, Workspace also writes one durable retry intent for that
-backend. The library does not use an in-memory timer and cannot own the host
-Durable Object's alarm.
+A command can finish after changing backend files while its post-command pull fails. The command result exposes `sync: { status: "pending", error, ... }`. Configure a `SyncRetryScheduler` on `Workspace` to persist one coalesced retry intent per backend, then call `workspace.retryPendingSync(backend)` from the owning Durable Object's alarm or another durable scheduler. Retries share the same per-backend mutation FIFO as `push`, `pull`, and command brackets, use bounded exponential backoff, clear their intent after success, and return `"exhausted"` after the configured maximum. The library intentionally does not own the host Durable Object's alarm.
 
-The scheduler contract contains only values that a host can persist:
-
-```ts
-import {
-  type SyncRetryIntent,
-  type SyncRetryScheduler,
-  Workspace,
-} from "@cloudflare/computer";
-
-const RETRY_PREFIX = "workspace:sync-retry:";
-
-class DurableObjectRetryScheduler implements SyncRetryScheduler {
-  constructor(private readonly state: DurableObjectState) {}
-
-  async get(backend: string): Promise<SyncRetryIntent | undefined> {
-    return this.state.storage.get(`${RETRY_PREFIX}${backend}`);
-  }
-
-  async schedule(intent: SyncRetryIntent): Promise<void> {
-    // schedule replaces the backend's existing intent, so repeated
-    // failures coalesce instead of creating an alarm queue.
-    await this.state.storage.put(`${RETRY_PREFIX}${intent.backend}`, intent);
-
-    const intents = await this.state.storage.list<SyncRetryIntent>({
-      prefix: RETRY_PREFIX,
-    });
-    const next = Math.min(...[...intents.values()].map((item) => item.notBefore));
-    await this.state.storage.setAlarm(next);
-  }
-
-  async clear(backend: string): Promise<void> {
-    await this.state.storage.delete(`${RETRY_PREFIX}${backend}`);
-  }
-}
-```
-
-Pass the scheduler to `Workspace` and invoke `retryPendingSync` from the host's
-alarm or another durable scheduler:
-
-```ts
-export class WorkspaceHost extends DurableObject<Env> {
-  readonly scheduler = new DurableObjectRetryScheduler(this.ctx);
-  readonly workspace = new Workspace({
-    storage: this.ctx.storage,
-    backends: [/* ... */],
-    retryScheduler: this.scheduler,
-    retry: {
-      initialDelayMs: 1_000,
-      maxDelayMs: 60_000,
-      maxAttempts: 5,
-    },
-  });
-
-  async alarm(): Promise<void> {
-    const intents = await this.ctx.storage.list<SyncRetryIntent>({
-      prefix: RETRY_PREFIX,
-    });
-    const now = Date.now();
-    for (const intent of intents.values()) {
-      if (intent.notBefore <= now) {
-        const result = await this.workspace.retryPendingSync(intent.backend);
-        // An exhausted backend keeps its final intent in storage with a
-        // past-due notBefore. Clear it here so it stops driving the alarm;
-        // otherwise the wake-up fires immediately and forever. Inspect or
-        // alert before clearing if you need to surface the exhaustion.
-        if (result.status === "exhausted") {
-          await this.scheduler.clear(intent.backend);
-        }
-      }
-    }
-
-    const remaining = await this.ctx.storage.list<SyncRetryIntent>({
-      prefix: RETRY_PREFIX,
-    });
-    if (remaining.size > 0) {
-      await this.ctx.storage.setAlarm(
-        Math.min(...[...remaining.values()].map((item) => item.notBefore)),
-      );
-    }
-  }
-}
-```
-
-`retryPendingSync(backend?)` enters the same per-backend FIFO as commands,
-`push`, and `pull`. It resumes `pullOnce` from the cursor already persisted in
-SQLite. Success clears the intent. Failure replaces it with the next bounded
-exponential-backoff attempt. Once `maxAttempts` fails, the final intent stays
-in storage and the method returns `status: "exhausted"`; the host can inspect,
-alert on, or explicitly clear it. Calling the method with no pending intent
-returns `status: "idle"`.
+See `SyncRetryScheduler`, `SyncRetryIntent`, and `SyncRetryOptions` in the root package exports for the persistence contract.
 
 ## Worker-side consumption
 
 ```ts
-import { getWorkspace } from "@cloudflare/computer";
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const id = env.ContainerExample.idFromName("user-123");
-    using ws = await getWorkspace(env.ContainerExample.get(id));
+    using ws = await env.ContainerExample.get(id).getWorkspace();
 
     await ws.fs.writeFile("/notes.md", "hello");
-    using handle = await ws.shell.exec("ls /workspace", { encoding: "utf8" });
-    const { exitCode, stdout, sync } = await handle.result();
-    if (sync.status === "pending") {
-      console.warn("command completed before its filesystem changes synced", sync.error);
-    }
+    using handle = await ws.runtime.exec("ls /workspace");
+    const { exitCode, stdout } = await handle.result();
 
     return new Response(stdout, { status: exitCode === 0 ? 200 : 500 });
   },
 } satisfies ExportedHandler<Env>;
 ```
-
-`getWorkspace(stub)` calls the accessor the `withWorkspace` mixin
-installed on the durable object, then wraps the returned stub in a
-Worker-side client. Called with the durable object itself
-(`getWorkspace(this)`), it returns the same client backed by the
-in-isolate Workspace, so the surface is identical in both places. The
-client mirrors the stub surface (`fs`, `git`, `shell`, `artifacts`,
-`assets`); the only difference is that
-`shell.exec` also accepts a tagged template, covered next.
-
-### Building commands safely
-
-`shell.exec` runs one command string through `/bin/sh -c` in the
-container. Pasting a path or any other value straight into that string
-is a shell-injection risk: a value like `x; rm -rf /` breaks out of its
-argument. Call `exec` as a tagged template and interpolated values are
-escaped for you:
-
-```ts
-const file = "my notes.md";
-const out = await (await ws.shell.exec`cat ${file}`).result(); // cat 'my notes.md'
-```
-
-The tagged-template form defaults to string (`utf8`) output, since a
-caller reaching for it almost always wants text back.
-
-The plain `exec(command, options)` form is unchanged. Use it when you
-need `cwd` or `backend`, and wrap an interpolated command in the `sh`
-tag to escape it:
-
-```ts
-import { sh } from "@cloudflare/computer";
-
-await ws.shell.exec(sh`cat ${file}`, { cwd: "/workspace" });
-await ws.shell.exec("npm test", { cwd: "/workspace", encoding: "utf8" });
-```
-
-The plain form defaults to `Uint8Array` output; pass
-`{ encoding: "utf8" }` for a string.
-
-`sh` quotes strings and numbers, quotes arrays element-by-element, and
-leaves the static template parts alone — they're the trusted command.
-When you really do mean shell syntax, wrap the value in `{ raw: "..." }`
-to opt out of escaping for that one value:
-
-```ts
-await ws.shell.exec(sh`ls ${dir} ${{ raw: "| wc -l" }}`);
-```
-
-The escaping has to run in the caller, not on the durable-object side:
-when the command crosses Workers RPC, a tagged template's `.raw`
-property doesn't survive structured clone, so the wrapper (and `sh`)
-collapse the template to a finished string before the call. The remote
-stub's `exec` rejects a raw tagged-template call so the unescaped path
-fails loudly. `shellQuote` is exported too, for the rare case where
-you need to quote a single argument outside a template.
-
-### Reattaching to a run
-
-A command outlives the request that started it. Every handle carries
-the run's `id`, and `shell.get(id)` reattaches to it from a later
-request:
-
-```ts
-using ws = await getWorkspace(env.ContainerExample.get(id));
-
-// First request: start a long install and remember its id.
-using started = await ws.shell.exec("npm install", { id: "install-1" });
-
-// Later request, new handle, same run. `resume` picks where the
-// replayed event stream starts: "tail" for live events only, "full"
-// (the default) for everything the runner still holds, or a sequence
-// number to resume after.
-using again = await ws.shell.get("install-1", { encoding: "utf8", resume: "tail" });
-const { exitCode } = await again.result();
-```
-
-The client mints an id when the caller doesn't pass one, so
-`handle.id` is available either way. Reattach doesn't run the
-push/pull bracket — it joins a run already in flight — so its sync
-counts cover only what lands after the reattach.
-
-A run streams to one reader at a time. Dropping a handle — the `using`
-above, or an explicit `cancel()` — hands the stream back, which is what
-lets the next request reattach. Reattaching while an earlier handle is
-still reading is refused.
 
 ## Observability
 
@@ -486,14 +301,11 @@ The span names the package emits today:
 - `workspace.sync.push` / `workspace.sync.pull` — one per sync call.
   Tagged with the entry counts (`workspace.sync.pushed`,
   `workspace.sync.applied`, `workspace.sync.skipped`).
-- `workspace.shell.exec` — the full exec bracket from the
-  `WorkspaceStub`. Contains `workspace.sync.push`,
-  `workspace.shell.exec.spawn`, and `workspace.sync.pull` as nested
-  children. Tagged with `workspace.shell.exit_code`,
-  `workspace.shell.pushed`, `workspace.shell.pulled`,
-  `workspace.shell.skipped`, and `workspace.shell.sync.status`. Pending
-  pulls also set `workspace.shell.sync.error` to the same bounded,
-  credential-redacted error returned in `ExecResult.sync`.
+- `workspace.runtime.exec.spawn` — command-backend dispatch. Command
+  synchronization emits separate `workspace.sync.push` and
+  `workspace.sync.pull` spans. Module-runtime instrumentation currently
+  records backend connection and capability filesystem operations; a
+  unified parent execution span is planned.
 - `workspace.fs.<op>` — one per filesystem call routed through the
   stub (`readFile`, `writeFile`, `stat`, `readdir`, `find`, `ls`,
   `grep`, `mkdir`, `rm`). Tagged with `workspace.fs.path` and, where
@@ -521,8 +333,8 @@ discipline is the same.
 The minimum a caller needs to know:
 
 - `using` the value returned from `env.COMPUTERD.get(id).getWorkspace()`.
-- `using` the handle returned from `ws.shell.exec(...)`.
-- Don't worry about `ws.fs`, `ws.shell`, or `ws.git` — those are
+- `using` the handle returned from `ws.runtime.exec(...)`.
+- Don't worry about `ws.fs`, `ws.runtime`, or `ws.git` — those are
   property accessors that ride with the parent.
 - Pure-value returns (`readFile` as a string, `stat`, `readdir`,
   `git.cli({...})`, etc.) carry no stubs; nothing to dispose.

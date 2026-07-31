@@ -5,7 +5,7 @@
 > `packages/computer/src/backends/`. Items marked **(planned)** are
 > deferred work.
 
-The "injected service" is the computer daemon that runs *inside* the
+The "injected service" is the workspace daemon that runs *inside* the
 sandbox container. It owns the FUSE mount, the in-container VFS, the
 exec runner, and the capnweb RPC endpoint the DO talks to.
 
@@ -36,7 +36,7 @@ staging the binary into a container image.
    what surfaces those revisions back out. See doc 02 for the sync
    protocol.
 3. **Exec.** Runs shell commands and streams stdout/stderr back over
-   capnweb. See [05. Shell Interface](./05_shell_interface.md).
+   capnweb. See [05. Shell Interface](./05_runtime_interface.md).
 4. **Apply.** Accepts changes pushed by the DO and writes them into
    the VFS, suppressing its own dirty-tracking so deletes don't bounce
    back.
@@ -115,7 +115,7 @@ Provider-agnostic shape — three steps, in order:
 
 ### Cloudflare Containers specifics
 
-`CloudflareContainerBackend` (`packages/computer/src/backends/cloudflare-container.ts`)
+`CloudflareContainerBackend` (`packages/computer/src/backends/container/cloudflare-container.ts`)
 wires it like this:
 
 1. **Start.** `container.start({ enableInternet, env })` on the

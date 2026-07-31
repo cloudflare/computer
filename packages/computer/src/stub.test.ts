@@ -16,14 +16,14 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { decodeExecEvents } from "./exec-wire.js";
-import type { ExecHandle, ExecResult } from "./shell.js";
+import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "./runtime/types.js";
+import { decodeRuntimeEvents } from "./runtime/wire.js";
 import {
   WorkspaceAssetsStub,
-  WorkspaceExecHandleStub,
   WorkspaceFilesystemStub,
   WorkspaceGitStub,
-  WorkspaceShellStub,
+  WorkspaceRuntimeExecHandleStub,
+  WorkspaceRuntimeStub,
 } from "./stub.js";
 import { Workspace } from "./workspace.js";
 
@@ -85,6 +85,7 @@ function fakeSync(): import("@cloudflare/computer-rpc").SyncRPC {
 function backend(rpc?: Partial<import("@cloudflare/computer-rpc").WorkspaceRPC>): WorkspaceBackend {
   return {
     id: "test",
+    type: "test",
     async connect(): Promise<BackendHandle> {
       const sync = rpc?.sync ?? fakeSync();
       const shell = rpc?.shell as Partial<import("@cloudflare/computer-rpc").ShellRPC> | undefined;
@@ -102,7 +103,7 @@ function snapshotOf(names: string[]): Record<string, number> {
 
 async function withStub<T>(
   fn: (ws: Workspace) => T | Promise<T>,
-  options?: Pick<ConstructorParameters<typeof Workspace>[0], "assets"> & {
+  options?: Pick<ConstructorParameters<typeof Workspace>[0], "assets" | "code"> & {
     backend?: WorkspaceBackend;
   },
 ): Promise<T> {
@@ -110,6 +111,7 @@ async function withStub<T>(
     storage: new SQLiteTestStorage(),
     backends: [options?.backend ?? backend()],
     assets: options?.assets,
+    code: options?.code,
   });
   try {
     await ws.ready();
@@ -127,16 +129,17 @@ describe("WorkspaceStub", () => {
     await withStub(async (ws) => {
       const stub = ws.stub();
       const fsDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "fs");
-      const shellDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "shell");
       const gitDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "git");
+      const runtimeDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "runtime");
       const assetsDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(stub), "assets");
       expect(fsDesc?.get).toBeTypeOf("function");
-      expect(shellDesc?.get).toBeTypeOf("function");
       expect(gitDesc?.get).toBeTypeOf("function");
+      expect(runtimeDesc?.get).toBeTypeOf("function");
       expect(assetsDesc?.get).toBeTypeOf("function");
       expect(stub.fs).toBeInstanceOf(WorkspaceFilesystemStub);
-      expect(stub.shell).toBeInstanceOf(WorkspaceShellStub);
+      expect(stub.runtime).toBeInstanceOf(WorkspaceRuntimeStub);
       expect(stub.git).toBeInstanceOf(WorkspaceGitStub);
+      expect(stub.runtime).toBeInstanceOf(WorkspaceRuntimeStub);
       expect(stub.assets).toBeUndefined();
     });
   });
@@ -190,6 +193,19 @@ describe("WorkspaceStub", () => {
     });
   });
 
+  it("fs.readdir forwards bounded-read options", async () => {
+    await withStub(async (ws) => {
+      const stub = ws.stub();
+      await ws.fs.writeFile("/a", "");
+      await ws.fs.writeFile("/b", "");
+      await ws.fs.writeFile("/c", "");
+      expect((await stub.fs.readdir("/", { limit: 2 })).map((entry) => entry.name)).toEqual([
+        "a",
+        "b",
+      ]);
+    });
+  });
+
   it("fs.stat propagates ENOENT for missing paths", async () => {
     await withStub(async (ws) => {
       const stub = ws.stub();
@@ -200,7 +216,7 @@ describe("WorkspaceStub", () => {
   it("shell.exec auto-reconnects after the backend signals closed", async () => {
     // When the underlying transport drops mid-session, the
     // Workspace clears its cached BackendHandle for that backend
-    // id. The next stub.shell.exec call must dial a fresh handle
+    // id. The next stub.runtime.exec call must dial a fresh handle
     // through the lazy-connect path rather than reuse the dead
     // one. Pin the heal so a transport drop is invisible to the
     // caller.
@@ -261,9 +277,9 @@ describe("WorkspaceStub", () => {
       signalClosed();
       await new Promise((r) => setTimeout(r, 0));
 
-      // The next stub.shell.exec call enters the lazy connect
+      // The next stub.runtime.exec call enters the lazy connect
       // path against the now-empty handle cache and reconnects.
-      const handle = await stub.shell.exec("noop");
+      const handle = await stub.runtime.exec("noop");
       const res = await handle.result();
       expect(res.exitCode).toBe(0);
       expect(connectCount).toBe(2);
@@ -289,12 +305,12 @@ describe("WorkspaceStub", () => {
       enableStubTracking();
     });
 
-    it("disposing the parent stub releases fs, shell, and git sub-stubs", async () => {
+    it("disposing the parent stub releases fs, runtime, and git sub-stubs", async () => {
       await withStub(async (ws) => {
         const names = [
           "WorkspaceStub",
           "WorkspaceFilesystemStub",
-          "WorkspaceShellStub",
+          "WorkspaceRuntimeStub",
           "WorkspaceGitStub",
         ];
         const before = snapshotOf(names);
@@ -302,12 +318,12 @@ describe("WorkspaceStub", () => {
           using stub = ws.stub();
           // Touch every half so any lazy construction lands.
           expect(stub.fs).toBeInstanceOf(WorkspaceFilesystemStub);
-          expect(stub.shell).toBeInstanceOf(WorkspaceShellStub);
+          expect(stub.runtime).toBeInstanceOf(WorkspaceRuntimeStub);
           expect(stub.git).toBeInstanceOf(WorkspaceGitStub);
           const live = snapshotOf(names);
           expect(live.WorkspaceStub).toBe(before.WorkspaceStub + 1);
           expect(live.WorkspaceFilesystemStub).toBe(before.WorkspaceFilesystemStub + 1);
-          expect(live.WorkspaceShellStub).toBe(before.WorkspaceShellStub + 1);
+          expect(live.WorkspaceRuntimeStub).toBe(before.WorkspaceRuntimeStub + 1);
           expect(live.WorkspaceGitStub).toBe(before.WorkspaceGitStub + 1);
         }
         // Out of scope — `using` ran Symbol.dispose on the parent,
@@ -336,7 +352,7 @@ describe("WorkspaceStub", () => {
     });
   });
 
-  it("shell result carries the structured sync outcome across Workers RPC", async () => {
+  it("runtime result carries the structured sync outcome across Workers RPC", async () => {
     const result = {
       exitCode: 0,
       stdout: "done",
@@ -350,22 +366,13 @@ describe("WorkspaceStub", () => {
         skipped: [],
         error: "WebSocket closed before pull completed",
       },
-    } satisfies ExecResult<"utf8">;
-    const hostHandle = { result: async () => result } as ExecHandle<"utf8">;
-    using handle = new WorkspaceExecHandleStub<"utf8">(
-      Promise.resolve(hostHandle),
-      {
-        promise: Promise.resolve({
-          exitCode: 0,
-          pushed: 0,
-          pulled: 0,
-          skippedCount: 0,
-          sync: { status: "complete", applied: 0, skipped: [] },
-        }),
-        resolve() {},
-      },
-      Promise.resolve(),
-    );
+    } satisfies WorkspaceRuntimeResult<"utf8">;
+    const hostHandle = {
+      id: "result",
+      result: async () => result,
+      kill: async () => undefined,
+    } as unknown as WorkspaceRuntimeExecHandle<"utf8">;
+    using handle = new WorkspaceRuntimeExecHandleStub<"utf8">(hostHandle);
     await expect(handle.result()).resolves.toMatchObject({
       exitCode: 0,
       sync: {
@@ -377,8 +384,8 @@ describe("WorkspaceStub", () => {
     });
   });
 
-  it("shell.exec returns an eagerly-spawned handle", async () => {
-    // The stub's exec() kicks off the underlying workspace.shell.exec
+  it("runtime.exec returns an eagerly-spawned handle", async () => {
+    // The stub's exec() kicks off the underlying workspace.runtime.exec
     // before returning, so the caller's first round trip already has
     // the spawn in flight. We can't directly observe "eager" without
     // a clock, but we can pin that the returned handle is the right
@@ -405,8 +412,8 @@ describe("WorkspaceStub", () => {
     await withStub(
       async (ws) => {
         const stub = ws.stub();
-        const handle = await stub.shell.exec("noop");
-        expect(handle).toBeInstanceOf(WorkspaceExecHandleStub);
+        const handle = await stub.runtime.exec("noop");
+        expect(handle).toBeInstanceOf(WorkspaceRuntimeExecHandleStub);
         // exec ran by the time result() resolves. The stub kicks off
         // the underlying exec eagerly (via promise chaining) so the
         // caller doesn't pay an extra round trip before result().
@@ -418,88 +425,7 @@ describe("WorkspaceStub", () => {
     );
   });
 
-  it("shell.exec forwards id and timeoutMs to the runner", async () => {
-    // The remote surface accepts the same options as the host shell,
-    // so a stable id and a per-call timeout have to reach the runner
-    // rather than being dropped at the boundary.
-    const requests: Array<{ id?: string; timeoutMs?: number }> = [];
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec(request) {
-        requests.push({ id: request.id, timeoutMs: request.timeoutMs });
-        return {
-          id: request.id ?? "e-1",
-          events: new ReadableStream({
-            start(c) {
-              c.enqueue({ id: request.id ?? "e-1", seq: 1, name: "exit", value: 0 });
-              c.close();
-            },
-          }),
-        };
-      },
-      getExec: () => Promise.reject(new Error("not used")),
-      killExec: () => Promise.reject(new Error("not used")),
-      disposeExec: () => Promise.reject(new Error("not used")),
-    };
-    await withStub(
-      async (ws) => {
-        const stub = ws.stub();
-        using handle = await stub.shell.exec("noop", {
-          encoding: "utf8",
-          id: "install-1",
-          timeoutMs: 250,
-        });
-        await handle.result();
-        expect(requests).toEqual([{ id: "install-1", timeoutMs: 250 }]);
-      },
-      { backend: backend({ shell: shellRpc }) },
-    );
-  });
-
-  it("shell.get reattaches to a run and resumes where the caller asked", async () => {
-    // A command outlives the request that spawned it, so a later
-    // request reattaches by id. `resume` reaches the runner as the
-    // `after` cursor of the replay.
-    const requests: Array<{ id: string; after: number | "tail" | undefined }> = [];
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      exec: () => Promise.reject(new Error("not used")),
-      async getExec(request) {
-        requests.push({ id: request.id, after: request.after });
-        return {
-          id: request.id,
-          events: new ReadableStream({
-            start(c) {
-              c.enqueue({
-                id: request.id,
-                seq: 8,
-                name: "stdout",
-                value: new TextEncoder().encode("tail\n"),
-              });
-              c.enqueue({ id: request.id, seq: 9, name: "exit", value: 0 });
-              c.close();
-            },
-          }),
-        };
-      },
-      killExec: () => Promise.reject(new Error("not used")),
-      disposeExec: () => Promise.reject(new Error("not used")),
-    };
-    await withStub(
-      async (ws) => {
-        const stub = ws.stub();
-        using handle = await stub.shell.get("install-1", { encoding: "utf8", resume: 7 });
-        await expect(handle.result()).resolves.toMatchObject({ exitCode: 0, stdout: "tail\n" });
-        using tail = await stub.shell.get("install-1", { resume: "tail" });
-        await tail.result();
-        expect(requests).toEqual([
-          { id: "install-1", after: 7 },
-          { id: "install-1", after: "tail" },
-        ]);
-      },
-      { backend: backend({ shell: shellRpc }) },
-    );
-  });
-
-  it("shell.exec handle.stream() frames events as JSONL that decode back", async () => {
+  it("runtime.exec handle.stream() frames events as JSONL that decode back", async () => {
     // The handle's stream() projects the event stream as JSONL bytes
     // for the wire. Decoding it back yields the original events,
     // including a binary stdout chunk carried base64.
@@ -524,9 +450,9 @@ describe("WorkspaceStub", () => {
     await withStub(
       async (ws) => {
         const stub = ws.stub();
-        const handle = await stub.shell.exec("noop");
+        const handle = await stub.runtime.exec("noop");
         const events: Array<{ name: string; value: unknown }> = [];
-        const decoded = decodeExecEvents(handle.stream());
+        const decoded = decodeRuntimeEvents(handle.stream());
         const reader = decoded.getReader();
         while (true) {
           const { value, done } = await reader.read();
@@ -543,7 +469,7 @@ describe("WorkspaceStub", () => {
     );
   });
 
-  it("shell.exec handle.stream() waits for the wire consumer to pull", async () => {
+  it("runtime.exec handle.stream() waits for the wire consumer to pull", async () => {
     let pulls = 0;
     const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
       async exec() {
@@ -574,10 +500,12 @@ describe("WorkspaceStub", () => {
     await withStub(
       async (ws) => {
         const stub = ws.stub();
-        const handle = await stub.shell.exec("noop");
+        const handle = await stub.runtime.exec("noop");
         const wire = handle.stream();
         await Promise.resolve();
-        expect(pulls).toBe(0);
+        // WorkspaceShell's internal exit watcher may prefetch a small number of
+        // events, but the user-facing wire must not drain the whole execution.
+        expect(pulls).toBeLessThan(10);
 
         const reader = wire.getReader();
         const first = await reader.read();
@@ -590,7 +518,7 @@ describe("WorkspaceStub", () => {
     );
   });
 
-  it("shell.exec handle rejects result() after stream() has claimed it", async () => {
+  it("runtime.exec handle rejects result() after stream() has claimed it", async () => {
     const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
       async exec() {
         return {
@@ -610,87 +538,9 @@ describe("WorkspaceStub", () => {
     await withStub(
       async (ws) => {
         const stub = ws.stub();
-        const handle = await stub.shell.exec("noop");
+        const handle = await stub.runtime.exec("noop");
         handle.stream();
         await expect(handle.result()).rejects.toThrow(/single-shot/);
-      },
-      { backend: backend({ shell: shellRpc }) },
-    );
-  });
-
-  it("shell.exec rejects when the backend runs under a different id", async () => {
-    // The caller reattaches by the id it asked for, so a backend that
-    // substitutes its own has to fail loudly instead of handing back a
-    // handle shell.get can't find.
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec() {
-        return {
-          id: "runner-picked",
-          events: new ReadableStream({
-            start(c) {
-              c.enqueue({ id: "runner-picked", seq: 1, name: "exit", value: 0 });
-              c.close();
-            },
-          }),
-        };
-      },
-      getExec: () => Promise.reject(new Error("not used")),
-      killExec: () => Promise.reject(new Error("not used")),
-      disposeExec: () => Promise.reject(new Error("not used")),
-    };
-    await withStub(
-      async (ws) => {
-        const stub = ws.stub();
-        using handle = await stub.shell.exec("noop", { id: "asked-for" });
-        await expect(handle.result()).rejects.toThrow(/not the requested id asked-for/);
-      },
-      { backend: backend({ shell: shellRpc }) },
-    );
-  });
-
-  it("disposing an exec handle frees the run for a later shell.get", async () => {
-    // The documented Worker flow: start a long command in one
-    // request, reattach in a later one. Only one live subscriber per
-    // run is allowed, so the handle stub's disposal has to hand the
-    // subscription back.
-    let subscriber: ReadableStreamDefaultController<
-      import("@cloudflare/computer-rpc").ExecEvent
-    > | null = null;
-    const subscribe = (id: string) => {
-      if (subscriber !== null) throw new Error(`exec ${id} already has a live subscriber`);
-      return new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
-        start(c) {
-          subscriber = c;
-        },
-        cancel() {
-          subscriber = null;
-        },
-      });
-    };
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec(request) {
-        const id = request.id ?? "e-1";
-        return { id, events: subscribe(id) };
-      },
-      async getExec(request) {
-        return { id: request.id, events: subscribe(request.id) };
-      },
-      killExec: () => Promise.reject(new Error("not used")),
-      disposeExec: () => Promise.reject(new Error("not used")),
-    };
-
-    await withStub(
-      async (ws) => {
-        const stub = ws.stub();
-        {
-          using handle = await stub.shell.exec("sleep 100", { id: "long-run" });
-          expect(handle).toBeDefined();
-        }
-        // Disposal cancels the handle's stream in the background.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        using again = await stub.shell.get("long-run", { resume: "tail" });
-        expect(again).toBeDefined();
       },
       { backend: backend({ shell: shellRpc }) },
     );

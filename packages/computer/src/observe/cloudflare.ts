@@ -70,7 +70,7 @@ export function createCloudflareObserver(options: CloudflareObserverOptions): Wo
     span(name, attributes, run) {
       // The runtime requires the operation name to fit in 64 bytes.
       // Names emitted by the workspace are well under that today
-      // (longest is `workspace.shell.exec.spawn` at 26 bytes), so no
+      // (longest is `workspace.runtime.exec.spawn` at 26 bytes), so no
       // truncation is needed here; an over-length name is a workspace
       // bug rather than a caller bug.
       return tracing.enterSpan(name, (runtimeSpan) => {

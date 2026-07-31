@@ -42,6 +42,18 @@ describe("WorkspaceProxy", () => {
     expect(await res.text()).toBe("from-do");
   });
 
+  it("accepts tokenized callback health and forwards a normalized tokenized /ws", async () => {
+    const token = "123e4567-e89b-12d3-a456-426614174000";
+    const health = await SELF.fetch(`http://proxy.test/__workspace_connect/${token}/health`, {
+      headers: { "x-test-id": freshId() },
+    });
+    expect(health.status).toBe(200);
+    const websocket = await SELF.fetch(`http://proxy.test/__workspace_connect/${token}/ws`, {
+      headers: { "x-test-id": freshId(), "x-test-binding": "COMPUTERD" },
+    });
+    expect(await websocket.text()).toBe(`from-do:${token}`);
+  });
+
   it("/ws returns 500 when env[binding] is missing", async () => {
     const res = await SELF.fetch("http://proxy.test/ws", {
       headers: { "x-test-id": freshId(), "x-test-binding": "NOT_A_BINDING" },

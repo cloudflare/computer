@@ -122,8 +122,7 @@ lifetime policy. From the DO's perspective:
 `computerd` is a long-lived process. It outlives DO restarts — the
 `Container.monitor()` promise resolves only when the container itself
 exits, and the backend's `#monitoring` flag drops the cached handle at
-that point so the next call rebuilds from scratch
-(`cloudflare-container.ts:215-226`).
+that point so the next call rebuilds from scratch (see the container host and backend implementations under `packages/computer/src/backends/container/`).
 
 The critical asymmetry: the **container's VFS is process-lifetime
 in-memory**, while the **DO's VFS is durable SQLite**. A container
@@ -156,14 +155,12 @@ the `close` callback, the session is gone.
 ### Where capnweb attaches in our code
 
 On the DO side: `newWebSocketRpcSession(ws)` in
-`CloudflareContainerBackend.connect()` (`cloudflare-container.ts:138-140`).
+`CloudflareContainerBackend.connect()` in `packages/computer/src/backends/container/cloudflare-container.ts`.
 This installs `addEventListener("message", ...)` on the accepted
 WebSocket, which means **the DO must be alive in memory to receive
 frames**. There is no hibernation-aware variant today.
 
-On the container side: `acceptWebSocketSession(ws, rpc)` in
-`computerd.ts:181` for inbound `/ws` upgrades, or the same call in the
-`/connect` outbound dial path at `computerd.ts:266`. Both attach to a `ws`
+On the container side, `acceptWebSocketSession(ws, rpc)` is attached by the inbound upgrade and outbound `/connect` paths in `packages/computerd/src/cli/computerd.ts`. Both attach to a `ws`
 package WebSocket and require the `computerd` process to be live.
 
 ### Session lifecycle, today
@@ -223,8 +220,8 @@ binds the envelope to a `using` variable so it disposes at the end
 of the scope. Drivers also drain the inner stream before disposal
 so the server side sees clean shutdown, not a cancelled stream.
 
-For callers who use the driver helpers (`pullOnce`, `pushOnce`,
-`WorkspaceShell.exec`), disposal is internal — nothing to do.
+For callers who use the driver helpers (`pullOnce`, `pushOnce`, or
+`workspace.runtime.exec`), transport disposal is internal.
 Callers who reach into `client.sync` / `client.shell` directly to
 invoke streaming methods inherit the disposal contract: bind the
 result to `using`, or call `result[Symbol.dispose]()` after
@@ -236,15 +233,15 @@ draining.
 the boundary:
 
 - `WorkspaceStub`, returned from `getWorkspace()`.
-- `WorkspaceExecHandleStub`, returned from `ws.shell.exec(...)`.
-- `WorkspaceFilesystemStub` and `WorkspaceShellStub`, reached as
-  properties of `WorkspaceStub` (`ws.fs`, `ws.shell`).
+- `WorkspaceRuntimeExecHandleStub`, returned from `ws.runtime.exec(...)`.
+- `WorkspaceFilesystemStub` and `WorkspaceRuntimeStub`, reached as
+  properties of `WorkspaceStub` (`ws.fs`, `ws.runtime`).
 
 Worker-side callers dispose the two stubs they receive by direct
 return (the first two above). The sub-stubs reached as properties
 are not independently disposable in the Workers-RPC contract —
 their lifetime is bounded by the parent stub. Disposing
-`WorkspaceStub` cascades to its `#fs` / `#shell` children on the
+`WorkspaceStub` cascades to its `#fs` / `#runtime` children on the
 DO side.
 
 The minimal correct pattern from a Worker is:
@@ -255,7 +252,7 @@ export default {
     const id = env.COMPUTERD.idFromName("user-123");
     using ws = await env.COMPUTERD.get(id).getWorkspace();
 
-    using handle = await ws.shell.exec("npm test");
+    using handle = await ws.runtime.exec("npm test");
     const result = await handle.result();
 
     return Response.json({ exitCode: result.exitCode });

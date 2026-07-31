@@ -157,7 +157,7 @@ export default class TestDriver extends WorkerEntrypoint<Env> {
       // on the DO side.
       await ws.fs.writeFile(`/soak-${i}.txt`, `hello ${i}`);
       await ws.fs.readFile(`/soak-${i}.txt`, "utf8");
-      const handle = await ws.shell.exec("noop");
+      const handle = await ws.runtime.exec("noop");
       await handle.result();
       if (opts.disposeExecHandles) {
         (handle as unknown as Disposable)[Symbol.dispose]?.();

@@ -19,7 +19,7 @@ describe("runtime adapters", () => {
             files.set(path, contents);
           },
         },
-        shell: {
+        runtime: {
           async exec(command: string) {
             return {
               async result() {

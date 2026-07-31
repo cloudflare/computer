@@ -24,7 +24,7 @@
 //     the returned stub.
 //
 // Both return the same `WorkspaceClient`. The one member that needs
-// adapting per path is `shell.exec`, which accepts a tagged template
+// adapting per path is `runtime.exec`, which accepts a tagged template
 // (escaped caller-side through `sh`) as well as the plain
 // `(command, options?)` form. Escaping has to run caller-side because
 // a `TemplateStringsArray`'s `.raw` does not survive structured clone
@@ -32,9 +32,15 @@
 
 import type { WorkspaceFilesystem } from "@cloudflare/dofs";
 
-import { decodeExecEvents } from "./exec-wire.js";
+import type {
+  WorkspaceRuntimeEvent,
+  WorkspaceRuntimeExecHandle,
+  WorkspaceRuntimeResult,
+  WorkspaceRuntimeValue,
+} from "./runtime/types.js";
+import { decodeRuntimeEvents } from "./runtime/wire.js";
 import { type ShellValue, sh } from "./sh.js";
-import type { ExecEncoding, WorkspaceExecEvent } from "./shell.js";
+import type { ExecEncoding } from "./shell.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
 import {
   createThinkCompatibility,
@@ -42,51 +48,83 @@ import {
   Workspace,
 } from "./workspace.js";
 
-// The remote shell handle stub: a result / stream / kill surface
+// The remote runtime handle stub: a result / stream / kill surface
 // carried across Workers RPC.
 interface RemoteExecHandle {
-  result(): Promise<{ exitCode: number; stdout: unknown; stderr: unknown }>;
-  stream(): ReadableStream<Uint8Array>;
+  readonly id: string | PromiseLike<string>;
+  readonly backend: string | PromiseLike<string>;
+  result(): Promise<WorkspaceRuntimeResult<ExecEncoding>>;
+  stream(): Promise<ReadableStream<Uint8Array>> | ReadableStream<Uint8Array>;
   kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void>;
   [Symbol.dispose]?(): void;
 }
 
 // Rebuild a host-shaped ExecHandle from a remote handle stub. The
-// result is a ReadableStream of decoded events with id, result() and
+// result is a ReadableStream of decoded events with result() and
 // kill() tacked on, matching what the local path returns from
-// Workspace.shell.exec.
+// Workspace.runtime.exec.
 //
-// result() and iterating the stream are mutually exclusive, mirroring
-// the host ExecHandle: the underlying stub drains a single handle, so
-// whichever is used first wins. result() goes through the stub's
-// run-and-wait path (which runs the post-exit pull); iterating goes
-// through the stub's byte stream (which doesn't).
-function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle, id: string): unknown {
-  let started = false;
-  let reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
-  const stream = new ReadableStream<WorkspaceExecEvent<E>>(
+// result() and iterating the stream are mutually exclusive, matching the
+// local handle. Both paths wait for command post-exit synchronization before
+// completing; result() also returns its synchronization counts.
+async function rebuildExecHandle<E extends ExecEncoding>(
+  remote: RemoteExecHandle,
+): Promise<WorkspaceRuntimeExecHandle<E>> {
+  const [id, backend] = await Promise.all([remote.id, remote.backend]);
+  let claimed: "result" | "stream" | undefined;
+  let resultPromise: Promise<WorkspaceRuntimeResult<E>> | undefined;
+  let reader: ReadableStreamDefaultReader<WorkspaceRuntimeEvent<E>> | undefined;
+  const stream = new ReadableStream<WorkspaceRuntimeEvent<E>>(
     {
       // Lazy: don't call remote.stream() until the consumer actually
       // pulls. A result()-only caller never starts the stream, so the
       // stub's single handle is free for its run-and-wait path.
       pull: async (controller) => {
+        if (claimed === "result") {
+          controller.error(
+            new Error(
+              "exec handle already consumed by result(): result() and streaming are exclusive",
+            ),
+          );
+          return;
+        }
         if (reader === undefined) {
-          started = true;
-          reader = decodeExecEvents<E>(remote.stream()).getReader();
+          claimed = "stream";
+          const encoded = await remote.stream();
+          reader = decodeRuntimeEvents(encoded).getReader() as ReadableStreamDefaultReader<
+            WorkspaceRuntimeEvent<E>
+          >;
         }
         try {
-          const { value, done } = await reader.read();
+          const activeReader = reader;
+          if (!activeReader) throw new Error("runtime stream reader was not initialized");
+          const { value, done } = await activeReader.read();
           if (done) {
+            activeReader.releaseLock();
+            reader = undefined;
             controller.close();
             return;
           }
           controller.enqueue(value);
         } catch (error) {
+          reader?.releaseLock();
+          reader = undefined;
           controller.error(error);
         }
       },
-      cancel: (reason) => {
-        void reader?.cancel(reason);
+      cancel: async (reason) => {
+        const activeReader = reader;
+        reader = undefined;
+        if (!activeReader) {
+          dispose();
+          return;
+        }
+        try {
+          await activeReader.cancel(reason);
+        } finally {
+          activeReader.releaseLock();
+          dispose();
+        }
       },
     },
     // highWaterMark 0 keeps pull() from firing until a real read, so a
@@ -97,28 +135,30 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle, id:
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    void reader?.cancel();
+    const activeReader = reader;
+    reader = undefined;
+    if (activeReader) {
+      void activeReader
+        .cancel()
+        .catch(() => undefined)
+        .finally(() => activeReader.releaseLock());
+    }
     remote[Symbol.dispose]?.();
   };
-  const handle = stream as ReadableStream<WorkspaceExecEvent<E>> & {
-    readonly id: string;
-    result(): Promise<unknown>;
-    kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void>;
-    [Symbol.dispose](): void;
-  };
+  const handle = stream as WorkspaceRuntimeExecHandle<E>;
   Object.defineProperties(handle, {
-    id: {
-      value: id,
-      enumerable: false,
-    },
+    id: { value: id, enumerable: false },
+    backend: { value: backend, enumerable: false },
     result: {
       value: () => {
-        if (started) {
+        if (claimed === "stream") {
           throw new Error(
             "exec handle already streaming: call result() or iterate the stream, not both",
           );
         }
-        return remote.result();
+        claimed = "result";
+        resultPromise ??= remote.result() as Promise<WorkspaceRuntimeResult<E>>;
+        return resultPromise;
       },
       enumerable: false,
     },
@@ -134,7 +174,7 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle, id:
   return handle;
 }
 
-// The shell half of the client. `exec` takes two forms:
+// The runtime execution half of the client. `exec` takes two forms:
 //
 //   - Tagged template: `exec`cat ${file}``. Interpolated values are
 //     escaped before the command is built. Defaults to string
@@ -145,44 +185,56 @@ function rebuildExecHandle<E extends ExecEncoding>(remote: RemoteExecHandle, id:
 //     the underlying surface's default. Wrap an interpolated command
 //     in `sh` to escape it: `exec(sh`cat ${file}`, { cwd })`.
 //
-// `get` reattaches to a run by id, from any request and any handle:
-//
-//   using ws = await getWorkspace(env.MyDO.get(id));
-//   const handle = await ws.shell.get(runId, { resume: "tail" });
-//
-// The id comes off a prior handle's `id` or from the caller's own
-// `exec` options, so a long command outlives the request that started
-// it.
-//
-// `R` is the handle type the underlying surface returns (the host
-// `ExecHandle` locally, the handle stub remotely).
-export interface WorkspaceShellClient<RUtf8, ROpts, RBytes> {
-  exec(strings: TemplateStringsArray, ...values: ShellValue[]): Promise<RUtf8>;
-  exec(command: string): Promise<RBytes>;
-  exec(command: string, options: ShellExecOptions & { encoding: "utf8" }): Promise<RUtf8>;
-  exec(command: string, options: ShellExecOptions): Promise<ROpts>;
-  get(id: string): Promise<RBytes>;
-  get(id: string, options: ShellGetOptions & { encoding: "utf8" }): Promise<RUtf8>;
-  get(id: string, options: ShellGetOptions): Promise<ROpts>;
+export interface WorkspaceRuntimeClient {
+  exec(
+    strings: TemplateStringsArray,
+    ...values: ShellValue[]
+  ): Promise<WorkspaceRuntimeExecHandle<"utf8">>;
+  exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;
+  exec(
+    source: string,
+    options: RuntimeExecOptions & { encoding: "utf8" },
+  ): Promise<WorkspaceRuntimeExecHandle<"utf8">>;
+  exec(
+    source: string,
+    options: RuntimeExecOptions & { encoding?: undefined },
+  ): Promise<WorkspaceRuntimeExecHandle<undefined>>;
+  exec(
+    source: string,
+    options: RuntimeExecOptions,
+  ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>>;
+  getExec(id: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;
+  getExec(
+    id: string,
+    options: RuntimeGetOptions & { encoding: "utf8" },
+  ): Promise<WorkspaceRuntimeExecHandle<"utf8">>;
+  getExec(
+    id: string,
+    options?: RuntimeGetOptions,
+  ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>>;
+  killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
+  disposeExec(id: string, options?: { backend?: string }): Promise<void>;
 }
 
 // Options accepted by the plain `exec` form, common to both paths.
-export interface ShellExecOptions {
+export interface RuntimeExecOptions {
   cwd?: string;
   encoding?: "utf8";
   backend?: string;
   id?: string;
   timeoutMs?: number;
+  input?: WorkspaceRuntimeValue;
 }
 
-// Options accepted by `get`, common to both paths. `resume` picks
-// where the replayed event stream starts: "tail" for live events only,
-// "full" (the default) for everything buffered, or a sequence number
-// to resume after.
-export interface ShellGetOptions {
+export interface RuntimeGetOptions {
   encoding?: "utf8";
-  resume?: "tail" | "full" | number;
   backend?: string;
+  resume?: "tail" | "full" | number;
+}
+
+export interface RuntimeKillOptions {
+  backend?: string;
+  signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
 }
 
 function isTemplateStringsArray(value: unknown): value is TemplateStringsArray {
@@ -191,71 +243,62 @@ function isTemplateStringsArray(value: unknown): value is TemplateStringsArray {
   return Array.isArray(value);
 }
 
-// The underlying shell surface both paths expose: an `exec` taking a
-// command string and options, and a `get` taking an exec id. Locally
-// this is `Workspace.shell`; remotely it's the shell stub.
-interface UnderlyingShell {
-  // biome-ignore lint/suspicious/noExplicitAny: bridges two concrete exec overload sets
-  exec(command: string, options?: Record<string, unknown>): Promise<any>;
-  // biome-ignore lint/suspicious/noExplicitAny: bridges two concrete get overload sets
-  get(id: string, options?: Record<string, unknown>): Promise<any>;
+// The underlying runtime surface both paths expose: an `exec` taking a
+// command string and options. Locally this is `Workspace.runtime`;
+// remotely it's the runtime stub.
+interface UnderlyingRuntime {
+  // biome-ignore lint/suspicious/noExplicitAny: bridges local and RPC overload sets
+  exec(source: string, options?: Record<string, unknown>): Promise<any>;
+  // biome-ignore lint/suspicious/noExplicitAny: bridges local and RPC overload sets
+  getExec(id: string, options?: Record<string, unknown>): Promise<any>;
+  killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
+  disposeExec(id: string, options?: { backend?: string }): Promise<void>;
 }
 
-function makeShellClient(
-  shell: UnderlyingShell,
+type RehydrateRuntimeHandle = <E extends ExecEncoding>(
+  handle: unknown,
+) => WorkspaceRuntimeExecHandle<E> | Promise<WorkspaceRuntimeExecHandle<E>>;
+
+function makeRuntimeClient(
+  runtime: UnderlyingRuntime,
   // Adapts the handle the underlying `exec` resolves to: identity on
-  // the local path (already a host ExecHandle carrying its own id),
-  // rebuild on the remote path (a handle stub that needs inflating
-  // from its JSONL stream and carries no id of its own).
-  rehydrate: (handle: unknown, id: string) => unknown,
-  // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-): WorkspaceShellClient<any, any, any> {
+  // the local path (already a host handle), rebuild on the remote path.
+  rehydrate: RehydrateRuntimeHandle,
+): WorkspaceRuntimeClient {
   async function exec(
     commandOrStrings: string | TemplateStringsArray,
-    optionsOrValue?: ShellExecOptions | ShellValue,
+    optionsOrValue?: RuntimeExecOptions | ShellValue,
     ...rest: ShellValue[]
-    // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-  ): Promise<any> {
+  ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>> {
     if (isTemplateStringsArray(commandOrStrings)) {
       const values = optionsOrValue === undefined ? rest : [optionsOrValue as ShellValue, ...rest];
       const command = sh(commandOrStrings, ...values);
-      const id = crypto.randomUUID();
-      return rehydrate(await shell.exec(command, { id, encoding: "utf8" }), id);
+      return rehydrate<"utf8">(await runtime.exec(command, { encoding: "utf8" }));
     }
-    const options = (optionsOrValue as ShellExecOptions | undefined) ?? {};
-    // Every run is addressed by an id the caller knows, so the handle
-    // exposes one on both paths and a later get() can reattach to a
-    // command that outlived the request that started it. A caller
-    // passing its own id keeps it; minting one here rather than
-    // reading the runner's back saves a round trip on the remote
-    // path, and the shell stub rejects a spawn that came back under a
-    // different id.
-    const id = options.id ?? crypto.randomUUID();
-    return rehydrate(await shell.exec(commandOrStrings, { ...options, id }), id);
-  }
-  async function get(
-    id: string,
-    options?: ShellGetOptions,
-    // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-  ): Promise<any> {
+    const options = optionsOrValue as RuntimeExecOptions | undefined;
     const handle =
       options === undefined
-        ? await shell.get(id)
-        : await shell.get(id, options as Record<string, unknown>);
-    return rehydrate(handle, id);
+        ? await runtime.exec(commandOrStrings)
+        : await runtime.exec(commandOrStrings, options as Record<string, unknown>);
+    return options?.encoding === "utf8" ? rehydrate<"utf8">(handle) : rehydrate<undefined>(handle);
   }
-  // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-  return { exec, get } as WorkspaceShellClient<any, any, any>;
+  const getExec = async (id: string, options?: RuntimeGetOptions) => {
+    const handle = await runtime.getExec(id, options as Record<string, unknown> | undefined);
+    return options?.encoding === "utf8" ? rehydrate<"utf8">(handle) : rehydrate<undefined>(handle);
+  };
+  const killExec = (id: string, options?: RuntimeKillOptions) => runtime.killExec(id, options);
+  const disposeExec = (id: string, options?: { backend?: string }) =>
+    runtime.disposeExec(id, options);
+  return { exec, getExec, killExec, disposeExec } as WorkspaceRuntimeClient;
 }
 
-// The canonical client surface. `shell.exec` is the adapted member;
+// The canonical client surface. `runtime.exec` is the adapted member;
 // `fs`, `git`, `artifacts`, and `assets` are the underlying surface's
 // members, passed through. The filesystem stub mirrors the local
 // filesystem, so it also serves as the common client type.
 export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
   readonly fs: WorkspaceFilesystem;
-  // biome-ignore lint/suspicious/noExplicitAny: handle types differ per path
-  readonly shell: WorkspaceShellClient<any, any, any>;
+  readonly runtime: WorkspaceRuntimeClient;
   // biome-ignore lint/suspicious/noExplicitAny: git type differs local vs remote
   readonly git: any;
   // biome-ignore lint/suspicious/noExplicitAny: assets type differs local vs remote
@@ -268,16 +311,19 @@ export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
 function makeClient(
   // biome-ignore lint/suspicious/noExplicitAny: underlying surface differs per path
   surface: any,
-  rehydrate: (handle: unknown, id: string) => unknown,
+  rehydrate: (handle: unknown) => unknown,
   dispose: () => void,
   useThink: boolean,
 ): WorkspaceClient {
-  const shell = makeShellClient(surface.shell as UnderlyingShell, rehydrate);
+  const runtime = makeRuntimeClient(
+    surface.runtime as UnderlyingRuntime,
+    rehydrate as RehydrateRuntimeHandle,
+  );
   const client: WorkspaceClient = {
     get fs() {
       return surface.fs;
     },
-    shell,
+    runtime,
     get git() {
       return surface.git;
     },
@@ -308,7 +354,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
     return makeClient(
       {
         fs: local.fs,
-        shell: local.shell,
+        runtime: local.runtime,
         git: local.git,
         artifacts: local.artifacts,
         assets: local.assets,
@@ -326,7 +372,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
   try {
     return makeClient(
       stub,
-      (h, id) => rebuildExecHandle(h as RemoteExecHandle, id),
+      (h) => rebuildExecHandle(h as RemoteExecHandle),
       () => {
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },

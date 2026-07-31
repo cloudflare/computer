@@ -88,7 +88,7 @@ function retryBackend(options: {
 }
 
 async function runCommand(ws: Workspace): Promise<WorkspaceRetryPendingSyncResult | undefined> {
-  const handle = await ws.shell.exec("build", { encoding: "utf8" });
+  const handle = await ws.runtime.exec("build", { encoding: "utf8" });
   const result = await handle.result();
   expect(result.sync.status).toBe("pending");
   return undefined;

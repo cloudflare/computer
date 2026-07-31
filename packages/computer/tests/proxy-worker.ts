@@ -26,7 +26,10 @@ export class TestStorageDO extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/ws") {
-      return new Response("from-do", { status: 200 });
+      return new Response(
+        url.searchParams.has("token") ? `from-do:${url.searchParams.get("token")}` : "from-do",
+        { status: 200 },
+      );
     }
     return new Response("DO unknown path", { status: 404 });
   }

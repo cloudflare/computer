@@ -53,7 +53,7 @@ client ─► Worker /c/<name>/{file,exec}
    `Workspace`). The Worker's fetch handler calls
    `await stub.getWorkspace()` once per request and then drives
    `ws.fs.writeFile(...)` / `ws.fs.readFile(...)` /
-   `ws.shell.exec(...)` directly. Promise pipelining keeps the
+   `ws.runtime.exec(...)` directly. Promise pipelining keeps the
    nested-property pattern (`ws.fs.writeFile`) at one round trip.
 
 The DO extends the plain `DurableObject` class from
@@ -130,7 +130,7 @@ The Worker enables Cloudflare's built-in tracing in
 the workspace observer to `ctx.tracing` via the
 `@cloudflare/computer/observe/cloudflare` adapter. Every workspace
 operation (`workspace.connect`, `workspace.sync.push`,
-`workspace.sync.pull`, `workspace.shell.exec`, and the
+`workspace.sync.pull`, `workspace.runtime.exec`, and the
 `workspace.fs.*` family) opens a span on the runtime, so the
 dashboard under Workers → Observability → Traces shows them
 nested under the automatic fetch and Durable Object spans.

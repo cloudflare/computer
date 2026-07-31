@@ -89,14 +89,14 @@ describe("createCloudflareObserver", () => {
   it("hands the callback a span facade whose setAttribute reaches the runtime", async () => {
     const { tracing, spans } = makeFakeTracing();
     const observer = createCloudflareObserver({ tracing });
-    await observer.span("workspace.shell.exec", {}, async (span) => {
-      span.setAttribute("workspace.shell.exit_code", 0);
-      span.setAttribute("workspace.shell.cwd", "/workspace");
+    await observer.span("workspace.runtime.exec", {}, async (span) => {
+      span.setAttribute("workspace.runtime.exit_code", 0);
+      span.setAttribute("workspace.runtime.cwd", "/workspace");
       span.setAttribute("dropped", undefined);
     });
     expect(spans[0].attributes).toEqual({
-      "workspace.shell.exit_code": 0,
-      "workspace.shell.cwd": "/workspace",
+      "workspace.runtime.exit_code": 0,
+      "workspace.runtime.cwd": "/workspace",
     });
   });
 

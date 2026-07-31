@@ -1,6 +1,6 @@
 // A backend produces a connection to a shell runtime. The
 // Workspace constructor takes a set of backends keyed by `id`;
-// `Workspace.shell.exec("...", { backend })` picks one by id.
+// `Workspace.runtime.exec("...", { backend })` picks one by id.
 // `id` is user-supplied so the same shape can host multiple
 // instances of the same backend kind (two workers on different
 // loaders, a worker + a container side by side, ...). `type`
@@ -27,8 +27,8 @@ export interface WorkspaceBackend {
   //
   // Each concrete backend constructor accepts an `id` option
   // and defaults it to a sensible string when omitted: "test"
-  // for TestBackend, "cloudflare-container" for the container
-  // backend, "worker" for the worker backend. Single-backend
+  // for TestBackend, "container-shell" for the container
+  // backend, and "isolate-shell" for the worker backend. Single-backend
   // setups can ride the default and never touch the field.
   readonly id: string;
 

@@ -17,7 +17,16 @@ interface DirentRow {
   type: "file" | "dir" | "symlink";
 }
 
-export function readdir(db: Database, path: string): WorkspaceDirentResult[] {
+export interface ReaddirOptions {
+  /** Maximum committed entries to materialize. Pending entries may extend the result. */
+  limit?: number;
+}
+
+export function readdir(
+  db: Database,
+  path: string,
+  options: ReaddirOptions = {},
+): WorkspaceDirentResult[] {
   const { path: canonical } = canonicalizePath(path);
   const node = resolveInode(db, canonical);
   if (node === null) {
@@ -27,13 +36,18 @@ export function readdir(db: Database, path: string): WorkspaceDirentResult[] {
     throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
   }
 
+  const limit = options.limit;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+    throw new TypeError("readdir limit must be a non-negative safe integer");
+  }
   const rows = db.all<DirentRow>(
     `SELECT d.name AS name, n.type AS type
        FROM vfs_dirents d
        JOIN vfs_nodes n ON n.inode = d.child_inode
       WHERE d.parent_inode = ?
-      ORDER BY d.name`,
-    node.inode,
+      ORDER BY d.name
+      ${limit === undefined ? "" : "LIMIT ?"}`,
+    ...(limit === undefined ? [node.inode] : [node.inode, limit]),
   );
 
   const entries = rows.map((row) => ({

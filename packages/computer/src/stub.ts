@@ -6,8 +6,8 @@
 //
 // Usage shape:
 //
-//   // Inside a DO that owns the live computerd connection:
-//   class ComputerdContainer extends DurableObject {
+//   // Inside a DO that owns the live wsd connection:
+//   class WsdContainer extends DurableObject {
 //     #workspace = new Workspace({ backends: [...] });
 //     async getWorkspace(): Promise<WorkspaceStub> {
 //       await this.#workspace.ready();
@@ -16,9 +16,9 @@
 //   }
 //
 //   // From a Worker (or another DO):
-//   const ws = await env.COMPUTERD.get(id).getWorkspace();
+//   const ws = await env.WSD.get(id).getWorkspace();
 //   await ws.fs.writeFile("/foo", bytes);
-//   const handle = await ws.shell.exec("ls /workspace");
+//   const handle = await ws.runtime.exec("ls /workspace");
 //   const { exitCode, stdout, stderr } = await handle.result();
 //
 // All the SyncRPC streaming (push / pushObjects / fetchObjects /
@@ -28,12 +28,9 @@
 // because Workers RPC doesn't carry non-byte ReadableStreams or
 // capnweb stubs.
 //
-// Streaming exec crosses the boundary as bytes. Workers RPC only
-// carries ReadableStream<Uint8Array>, so the exec handle's event
-// stream is framed as JSONL bytes by handle.stream() and inflated
-// back into events on the Worker side (see exec-wire.ts and the
-// getWorkspace client). The handle also exposes result() (run-and-
-// wait) and kill().
+// Runtime event streams cross Workers RPC as newline-delimited byte frames.
+// The handle exposes the same single-consumer result, stream, kill, backend,
+// and disposal surface as a local runtime handle.
 //
 // RpcTarget comes from capnweb rather than `cloudflare:workers`.
 // Per capnweb's docs, that import is an alias for the workerd
@@ -46,6 +43,7 @@ import { trackStub, untrackStub } from "@cloudflare/computer-rpc/debug";
 import type {
   GrepOptions,
   MkdirOptions,
+  ReaddirOptions,
   ReadFileOptions,
   RmOptions,
   WorkspaceDirentResult,
@@ -67,51 +65,18 @@ import type {
   ArtifactsCLIResult,
 } from "./artifacts/index.js";
 import type { ShareOptions } from "./assets/index.js";
-import { encodeExecEvent } from "./exec-wire.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
-import { assertNotTemplate } from "./sh.js";
-import type { ExecEncoding, ExecHandle, ExecSyncResult, WorkspaceExecEvent } from "./shell.js";
+import type {
+  WorkspaceRuntimeEvent,
+  WorkspaceRuntimeExecHandle,
+  WorkspaceRuntimeExecOptions,
+  WorkspaceRuntimeGetOptions,
+  WorkspaceRuntimeKillOptions,
+  WorkspaceRuntimeResult,
+} from "./runtime/types.js";
+import { encodeRuntimeEvent } from "./runtime/wire.js";
 import type { Workspace } from "./workspace.js";
-
-export interface WorkspaceExecOptions {
-  // Stable id for the run. Omit to let the runner mint a UUID.
-  // Reusing an id while a previous run is still active throws
-  // EEXEC_BUSY.
-  id?: string;
-  cwd?: string;
-  // "utf8" decodes stdout/stderr chunks through a streaming
-  // TextDecoder so multi-byte boundaries survive. Default leaves
-  // bytes as Uint8Array.
-  encoding?: "utf8";
-  // Per-call timeout in milliseconds. Past this duration the
-  // container signals the child. Omit for the runner's default;
-  // pass 0 to disable the timeout for this call.
-  timeoutMs?: number;
-  // Backend selector. Omit to use the default backend (the first
-  // one configured on the Workspace); pass the id of another
-  // configured backend to route this call there.
-  backend?: string;
-}
-
-export interface WorkspaceGetExecOptions {
-  // See WorkspaceExecOptions.encoding.
-  encoding?: "utf8";
-  // Where the replayed event stream starts: "tail" for live events
-  // only, "full" (the default) for everything the runner still holds,
-  // or a sequence number to resume after.
-  resume?: "tail" | "full" | number;
-  // See WorkspaceExecOptions.backend. Reattach is per-backend: the id
-  // is only known to the backend that ran the command.
-  backend?: string;
-}
-
-export interface WorkspaceExecResult<E extends "utf8" | undefined = undefined> {
-  exitCode: number;
-  stdout: E extends "utf8" ? string : Uint8Array;
-  stderr: E extends "utf8" ? string : Uint8Array;
-  sync: ExecSyncResult;
-}
 
 // Filesystem half. A direct proxy onto Workspace.fs — every
 // public WorkspaceFilesystem method is mirrored verbatim so the
@@ -149,6 +114,23 @@ export class WorkspaceFilesystemStub extends RpcTarget {
     );
   }
 
+  exists(path: string): Promise<boolean> {
+    return withSpan(
+      this.#ws.observer,
+      "workspace.fs.exists",
+      { "workspace.fs.path": path },
+      async () => {
+        try {
+          await this.#ws.fs.stat(path);
+          return true;
+        } catch (error) {
+          if ((error as { code?: string }).code === "ENOENT") return false;
+          throw error;
+        }
+      },
+    );
+  }
+
   stat(path: string): Promise<WorkspaceStatResult> {
     return withSpan(this.#ws.observer, "workspace.fs.stat", { "workspace.fs.path": path }, () =>
       this.#ws.fs.stat(path),
@@ -167,12 +149,12 @@ export class WorkspaceFilesystemStub extends RpcTarget {
     );
   }
 
-  readdir(path: string): Promise<WorkspaceDirentResult[]> {
+  readdir(path: string, options: ReaddirOptions = {}): Promise<WorkspaceDirentResult[]> {
     return withSpan(
       this.#ws.observer,
       "workspace.fs.readdir",
       { "workspace.fs.path": path },
-      () => this.#ws.fs.readdir(path),
+      () => this.#ws.fs.readdir(path, options),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.fs.entries", outcome.value.length);
       },
@@ -271,205 +253,167 @@ export class WorkspaceFilesystemStub extends RpcTarget {
   }
 }
 
-// How the handle was consumed, fed back to the exec span so it can
-// record the exit code. result() carries the full outcome; stream()
-// carries the exit code observed on the wire and zeroes the sync
-// counts (raw stream consumption skips the post-exit pull, matching
-// the host ExecHandle contract).
-interface ConsumeOutcome {
-  exitCode: number;
-  pushed: number;
-  pulled: number;
-  skippedCount: number;
-  sync: ExecSyncResult;
-}
-
-// A deferred the exec span awaits. Resolving it (via result(),
-// stream(), or dispose) lets the span close and record its outcome.
-interface Consumer {
-  promise: Promise<ConsumeOutcome>;
-  resolve(outcome: ConsumeOutcome): void;
-}
-
-function makeConsumer(): Consumer {
-  let resolve!: (outcome: ConsumeOutcome) => void;
-  const promise = new Promise<ConsumeOutcome>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
-
-function emptyConsumeOutcome(exitCode = -1): ConsumeOutcome {
-  return {
-    exitCode,
-    pushed: 0,
-    pulled: 0,
-    skippedCount: 0,
-    sync: { status: "complete", applied: 0, skipped: [] },
-  };
-}
-
-// Exec handle returned from WorkspaceShellStub.exec. Holds the
-// underlying host ExecHandle and projects it across Workers RPC:
-//
-//   - result() drains the handle and returns the run-and-wait result.
-//   - stream() returns the event stream framed as JSONL bytes — the
-//     one shape Workers RPC carries — for run-and-stream callers. The
-//     client side inflates it back into events.
-//   - kill() forwards a signal to the running command.
-//
-// result() and stream() are mutually exclusive: each drains the
-// single underlying handle, so the first one called wins and the
-// other throws (the host ExecHandle is a one-shot ReadableStream).
-// This mirrors the host contract exactly. kill() is not one of the
-// two: it signals the child without draining anything, so the output
-// of a killed run remains available.
-export class WorkspaceExecHandleStub<E extends "utf8" | undefined = undefined> extends RpcTarget {
-  readonly #handle: Promise<ExecHandle<E>>;
-  readonly #consumer: Consumer;
-  // Resolves when the exec span has closed (finalize has run). result()
-  // awaits it so the span's attributes are set before result() returns
-  // — observers see a complete span synchronously after the await.
-  readonly #span: Promise<unknown>;
+export class WorkspaceRuntimeExecHandleStub<
+  E extends "utf8" | undefined = undefined,
+> extends RpcTarget {
+  readonly #handle: WorkspaceRuntimeExecHandle<E>;
   #consumed = false;
-  #settled = false;
+  #disposed = false;
+  #reader: ReadableStreamDefaultReader<WorkspaceRuntimeEvent<"utf8" | undefined>> | undefined;
 
-  constructor(handle: Promise<ExecHandle<E>>, consumer: Consumer, span: Promise<unknown>) {
+  constructor(handle: WorkspaceRuntimeExecHandle<E>) {
     super();
     this.#handle = handle;
-    this.#consumer = consumer;
-    this.#span = span;
     trackStub(this);
   }
 
   [Symbol.dispose](): void {
-    // If neither result() nor stream() ran, release the exec span so
-    // it doesn't hang open, and cancel the handle's stream so the run
-    // stops streaming to nobody — and stays reattachable through
-    // shell.get, which needs the subscription slot free.
-    if (!this.#consumed) {
-      this.#consumed = true;
-      this.#settle(emptyConsumeOutcome());
-      this.#handle
-        .then((handle) => handle.cancel?.())
-        .catch(() => {
-          // best effort — nothing to do if the handle never resolved
-        });
+    if (this.#disposed) return;
+    this.#disposed = true;
+    const reader = this.#reader;
+    this.#reader = undefined;
+    if (reader) {
+      void reader
+        .cancel()
+        .catch(() => undefined)
+        .finally(() => reader.releaseLock());
+    } else {
+      const cancel = (this.#handle as { cancel?: () => Promise<void> }).cancel;
+      if (typeof cancel === "function") void cancel.call(this.#handle).catch(() => undefined);
     }
     untrackStub(this);
   }
 
-  #claim(): void {
-    if (this.#consumed) {
-      throw new Error("exec handle already consumed: result() and stream() are single-shot");
-    }
-    this.#consumed = true;
+  get id(): string {
+    return this.#handle.id;
   }
 
-  // Close the exec span, once. Every terminal path settles: result(),
-  // stream(), kill(), and dispose. The first one to arrive describes
-  // the outcome; later ones are no-ops, so a result() after a kill()
-  // still returns the real result while the span keeps the outcome the
-  // kill recorded.
-  #settle(outcome: ConsumeOutcome): void {
-    if (this.#settled) return;
-    this.#settled = true;
-    this.#consumer.resolve(outcome);
+  get backend(): string {
+    return this.#handle.backend;
   }
 
-  async result(): Promise<WorkspaceExecResult<E>> {
+  async result(): Promise<WorkspaceRuntimeResult<E>> {
     this.#claim();
-    try {
-      const handle = await this.#handle;
-      const result = await handle.result();
-      this.#settle({
-        exitCode: result.exitCode,
-        pushed: result.pushed,
-        pulled: result.pulled,
-        skippedCount: result.skipped.length,
-        sync: result.sync,
-      });
-      // Let the span close before returning so its attributes are set.
-      await this.#span.catch(() => {});
-      return {
-        exitCode: result.exitCode,
-        // joinParts in shell.ts returns string for "utf8",
-        // Uint8Array otherwise — exactly the
-        // WorkspaceExecResult shape.
-        stdout: result.stdout as WorkspaceExecResult<E>["stdout"],
-        stderr: result.stderr as WorkspaceExecResult<E>["stderr"],
-        sync: result.sync,
-      };
-    } catch (error) {
-      this.#settle(emptyConsumeOutcome());
-      throw error;
-    }
+    return this.#handle.result();
   }
 
-  // Event stream framed as JSONL bytes for the wire. The client
-  // decodes it back into WorkspaceExecEvents. Raw stream consumption
-  // skips the post-exit pull, so the exec span records zero sync
-  // counts; the exit code is captured off the wire as it passes.
   stream(): ReadableStream<Uint8Array> {
     this.#claim();
-    const settle = (outcome: ConsumeOutcome) => this.#settle(outcome);
-    let reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
-    let exitCode = -1;
+    const reader = (
+      this.#handle as ReadableStream<WorkspaceRuntimeEvent<"utf8" | undefined>>
+    ).getReader();
+    this.#reader = reader;
+    const owner = this;
     return new ReadableStream<Uint8Array>(
       {
-        pull: async (controller) => {
+        async pull(controller) {
           try {
-            if (reader === undefined) {
-              const handle = await this.#handle;
-              reader = (handle as ReadableStream<WorkspaceExecEvent<E>>).getReader();
-            }
             const { value, done } = await reader.read();
             if (done) {
               reader.releaseLock();
-              reader = undefined;
+              owner.#reader = undefined;
               controller.close();
-              settle(emptyConsumeOutcome(exitCode));
               return;
             }
-            if (value.name === "exit") exitCode = value.value;
-            controller.enqueue(encodeExecEvent(value as WorkspaceExecEvent<ExecEncoding>));
+            controller.enqueue(encodeRuntimeEvent(value));
           } catch (error) {
-            settle(emptyConsumeOutcome());
+            reader.releaseLock();
+            owner.#reader = undefined;
             controller.error(error);
           }
         },
-        cancel: async (reason) => {
-          settle(emptyConsumeOutcome());
-          await reader?.cancel(reason);
-          reader?.releaseLock();
-          reader = undefined;
+        async cancel(reason) {
+          try {
+            await reader.cancel(reason);
+          } finally {
+            reader.releaseLock();
+            owner.#reader = undefined;
+          }
         },
       },
       { highWaterMark: 0 },
     );
   }
 
-  async kill(signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP"): Promise<void> {
-    const handle = await this.#handle;
-    await handle.kill(signal);
-    // A result() or stream() already reading the handle describes the
-    // outcome itself — it sees the exit event this signal produced,
-    // exit code and all. Leave the span to it, and don't wait on it
-    // either: it closes when the caller finishes reading, which may be
-    // long after kill() returns.
-    if (this.#consumed) return;
-    // Otherwise this is a terminal path: the child has exited and
-    // nothing will read the output, so close the span rather than
-    // leave it open for the life of the session. With nothing drained
-    // the outcome carries no exit code or sync counts.
-    this.#settle(emptyConsumeOutcome());
-    // Same reason result() waits: the span's attributes are set by the
-    // time kill() resolves.
-    await this.#span.catch(() => {});
+  #claim() {
+    if (this.#consumed) {
+      throw new Error("runtime handle already consumed: result() and stream() are single-shot");
+    }
+    this.#consumed = true;
+  }
+
+  kill(signal?: WorkspaceRuntimeKillOptions["signal"]): Promise<void> {
+    return this.#handle.kill(signal);
   }
 }
 
-// Assets half. Pure value returns: `publish(path, { expiresAfter })`
+export class WorkspaceRuntimeStub extends RpcTarget {
+  readonly #ws: Workspace;
+
+  constructor(ws: Workspace) {
+    super();
+    this.#ws = ws;
+    trackStub(this);
+  }
+
+  [Symbol.dispose](): void {
+    untrackStub(this);
+  }
+
+  exec(source: string): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
+  exec(
+    source: string,
+    options: WorkspaceRuntimeExecOptions<"utf8">,
+  ): Promise<WorkspaceRuntimeExecHandleStub<"utf8">>;
+  exec(
+    source: string,
+    options: WorkspaceRuntimeExecOptions<undefined>,
+  ): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
+  async exec(
+    source: string,
+    options: WorkspaceRuntimeExecOptions<"utf8" | undefined> = {},
+  ): Promise<WorkspaceRuntimeExecHandleStub<"utf8" | undefined>> {
+    const handle = await (
+      this.#ws.runtime.exec as unknown as (
+        source: string,
+        options: WorkspaceRuntimeExecOptions<"utf8" | undefined>,
+      ) => Promise<WorkspaceRuntimeExecHandle<"utf8" | undefined>>
+    )(source, options);
+    return new WorkspaceRuntimeExecHandleStub(handle);
+  }
+
+  getExec(id: string): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
+  getExec(
+    id: string,
+    options: WorkspaceRuntimeGetOptions<"utf8">,
+  ): Promise<WorkspaceRuntimeExecHandleStub<"utf8">>;
+  getExec(
+    id: string,
+    options: WorkspaceRuntimeGetOptions<undefined>,
+  ): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
+  async getExec(
+    id: string,
+    options: WorkspaceRuntimeGetOptions<"utf8" | undefined> = {},
+  ): Promise<WorkspaceRuntimeExecHandleStub<"utf8" | undefined>> {
+    const handle = await (
+      this.#ws.runtime.getExec as unknown as (
+        id: string,
+        options: WorkspaceRuntimeGetOptions<"utf8" | undefined>,
+      ) => Promise<WorkspaceRuntimeExecHandle<"utf8" | undefined>>
+    )(id, options);
+    return new WorkspaceRuntimeExecHandleStub(handle);
+  }
+
+  killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {
+    return this.#ws.runtime.killExec(id, options);
+  }
+
+  disposeExec(id: string, options: { backend?: string } = {}): Promise<void> {
+    return this.#ws.runtime.disposeExec(id, options);
+  }
+}
+
+// Assets half. Pure value returns: `publish(path, { expiresAfter })
 // resolves to the share URL string. The configured assets client
 // lives on the durable-object side where the R2 binding and signing
 // secrets are available; the worker-backend shell only reaches this
@@ -596,169 +540,6 @@ export class WorkspaceGitStub extends RpcTarget {
   }
 }
 
-// Shell half. exec() and get() both return an RpcTarget handle the
-// caller drains through result() or stream(); see the note at the top
-// of this file.
-export class WorkspaceShellStub extends RpcTarget {
-  readonly #ws: Workspace;
-
-  constructor(ws: Workspace) {
-    super();
-    this.#ws = ws;
-    trackStub(this);
-  }
-
-  [Symbol.dispose](): void {
-    untrackStub(this);
-  }
-
-  exec(command: string): Promise<WorkspaceExecHandleStub<undefined>>;
-  exec(
-    command: string,
-    options: WorkspaceExecOptions & { encoding: "utf8" },
-  ): Promise<WorkspaceExecHandleStub<"utf8">>;
-  exec(command: string, options: WorkspaceExecOptions): Promise<WorkspaceExecHandleStub<undefined>>;
-  async exec(
-    command: string,
-    options: WorkspaceExecOptions = {},
-  ): Promise<WorkspaceExecHandleStub<"utf8" | undefined>> {
-    // A worker that calls this as a tagged template ships a
-    // TemplateStringsArray over Workers RPC, which loses its `.raw`
-    // property to structured clone before it lands here. Reject it
-    // so the unsafe path fails loudly; escaping belongs caller-side
-    // through sh`...`.
-    assertNotTemplate(command);
-    // Heal a torn-down session before reaching for the shell. The
-    // backend's `closed` listener (see workspace.ts) clears #handle,
-    // #shell, and #readyPromise on a mid-session transport drop, so
-    // a bare `this.#ws.shell` would throw "Workspace not connected"
-    // until a caller manually called ready() again. ready() is
-    // idempotent on a live handle and re-enters connect() on a dead
-    // one, so a stale container is detected and replaced
-    // transparently here.
-    await this.#ws.ready();
-
-    // Kick off the exec eagerly so the caller's first round trip
-    // (the one that built this stub) already has the spawn in
-    // flight. The handle is consumed later by the returned stub's
-    // result() or stream().
-    //
-    // The bracket runs inside one `workspace.shell.exec` span. The
-    // span stays open until the handle is consumed: the spawn runs
-    // inside the callback (so `workspace.shell.exec.spawn` and the
-    // pre-exec push nest under it), then the callback awaits the
-    // consumer deferred, which the stub resolves from result() /
-    // stream() / dispose. Because the recorder keeps the span on its
-    // stack across that await, the post-drain pull triggered by
-    // result() also nests under this span.
-    const consumer = makeConsumer();
-    let resolveHandle!: (handle: ExecHandle<"utf8" | undefined>) => void;
-    let rejectHandle!: (error: unknown) => void;
-    const handle = new Promise<ExecHandle<"utf8" | undefined>>((resolve, reject) => {
-      resolveHandle = resolve;
-      rejectHandle = reject;
-    });
-    // Swallow rejections on the convenience promise; the real
-    // rejection is delivered to whoever awaits the handle.
-    handle.catch(() => {});
-
-    const span = withSpan(
-      this.#ws.observer,
-      "workspace.shell.exec",
-      {
-        "workspace.shell.cwd": options.cwd,
-        "workspace.shell.encoding": options.encoding,
-        "workspace.shell.backend": options.backend,
-      },
-      async () => {
-        const spawned =
-          options.encoding === "utf8"
-            ? await this.#ws.shell.exec(command, {
-                id: options.id,
-                cwd: options.cwd,
-                encoding: "utf8",
-                timeoutMs: options.timeoutMs,
-                backend: options.backend,
-              })
-            : await this.#ws.shell.exec(command, {
-                id: options.id,
-                cwd: options.cwd,
-                timeoutMs: options.timeoutMs,
-                backend: options.backend,
-              });
-        // The caller addresses the run by the id it asked for, so a
-        // backend that mints its own instead has to say so rather
-        // than hand back a handle nothing can reattach to.
-        if (options.id !== undefined && spawned.id !== options.id) {
-          throw new Error(`backend ran exec as ${spawned.id}, not the requested id ${options.id}`);
-        }
-        resolveHandle(spawned as ExecHandle<"utf8" | undefined>);
-        return consumer.promise;
-      },
-      (span, outcome) => {
-        if (!outcome.ok) return;
-        span.setAttribute("workspace.shell.exit_code", outcome.value.exitCode);
-        span.setAttribute("workspace.shell.pushed", outcome.value.pushed);
-        span.setAttribute("workspace.shell.pulled", outcome.value.pulled);
-        span.setAttribute("workspace.shell.skipped", outcome.value.skippedCount);
-        span.setAttribute("workspace.shell.sync.status", outcome.value.sync.status);
-        if (outcome.value.sync.status === "pending") {
-          span.setAttribute("workspace.shell.sync.error", outcome.value.sync.error);
-        }
-      },
-    );
-    // If the spawn throws, the span rejects: forward the failure to
-    // the handle so result() / stream() reject, and keep the span
-    // promise from surfacing as an unhandled rejection.
-    span.catch((error) => rejectHandle(error));
-    return new WorkspaceExecHandleStub<"utf8" | undefined>(handle, consumer, span);
-  }
-
-  get(id: string): Promise<WorkspaceExecHandleStub<undefined>>;
-  get(
-    id: string,
-    options: WorkspaceGetExecOptions & { encoding: "utf8" },
-  ): Promise<WorkspaceExecHandleStub<"utf8">>;
-  get(id: string, options: WorkspaceGetExecOptions): Promise<WorkspaceExecHandleStub<undefined>>;
-  // Reattach to a run by id. The command outlives the request that
-  // started it, so a later request — or a caller that dropped its
-  // handle stub — picks the events back up here.
-  async get(
-    id: string,
-    options: WorkspaceGetExecOptions = {},
-  ): Promise<WorkspaceExecHandleStub<"utf8" | undefined>> {
-    // Same reason exec() calls ready(): heal a torn-down session
-    // before reaching for the shell.
-    await this.#ws.ready();
-    const reattached =
-      options.encoding === "utf8"
-        ? await this.#ws.shell.get(id, {
-            encoding: "utf8",
-            resume: options.resume,
-            backend: options.backend,
-          })
-        : await this.#ws.shell.get(id, {
-            resume: options.resume,
-            backend: options.backend,
-          });
-    // Reattach runs no bracket: no pre-exec push, no post-exit pull,
-    // and so no span to hold open until the handle is consumed (see
-    // WorkspaceShell.get). The handle stub still reports how it was
-    // consumed, so give it a consumer nobody reads and a span that has
-    // already closed.
-    //
-    // Disposing this stub cancels the event stream, which gives the
-    // subscription back so the run can be reattached again. It doesn't
-    // stop the command — this handle didn't start it. Use kill() for
-    // that.
-    return new WorkspaceExecHandleStub<"utf8" | undefined>(
-      Promise.resolve(reattached as ExecHandle<"utf8" | undefined>),
-      makeConsumer(),
-      Promise.resolve(),
-    );
-  }
-}
-
 // Top-level wrapper. Two sub-RpcTargets let callers use promise
 // pipelining: `stub.fs.writeFile(...)` is one round trip, not two.
 //
@@ -767,7 +548,7 @@ export class WorkspaceShellStub extends RpcTarget {
 //
 // Note the name collision: the *type* `WorkspaceRPC` is also
 // exported by @cloudflare/computer-rpc as the wire contract
-// between computerd and the DO. WorkspaceStub here is a different thing
+// between wsd and the DO. WorkspaceStub here is a different thing
 // (the Workers-RPC value carried between the DO and a Worker), so
 // the name doesn't clash.
 export class WorkspaceStub extends RpcTarget {
@@ -776,7 +557,7 @@ export class WorkspaceStub extends RpcTarget {
   // set in the constructor land as private isolate state and the
   // proxy reports "method not implemented".
   readonly #fs: WorkspaceFilesystemStub;
-  readonly #shell: WorkspaceShellStub;
+  readonly #runtime: WorkspaceRuntimeStub;
   readonly #git: WorkspaceGitStub;
   readonly #assets: WorkspaceAssetsStub | undefined;
   readonly #artifacts: WorkspaceArtifactsStub;
@@ -785,7 +566,7 @@ export class WorkspaceStub extends RpcTarget {
   constructor(ws: Workspace) {
     super();
     this.#fs = new WorkspaceFilesystemStub(ws);
-    this.#shell = new WorkspaceShellStub(ws);
+    this.#runtime = new WorkspaceRuntimeStub(ws);
     this.#git = new WorkspaceGitStub(ws);
     this.#assets = ws.assets === undefined ? undefined : new WorkspaceAssetsStub(ws);
     this.#artifacts = new WorkspaceArtifactsStub(ws.artifacts);
@@ -801,7 +582,7 @@ export class WorkspaceStub extends RpcTarget {
   // getWorkspace() call) never collapses.
   [Symbol.dispose](): void {
     this.#fs[Symbol.dispose]();
-    this.#shell[Symbol.dispose]();
+    this.#runtime[Symbol.dispose]();
     this.#git[Symbol.dispose]();
     this.#assets?.[Symbol.dispose]();
     this.#artifacts[Symbol.dispose]();
@@ -816,8 +597,8 @@ export class WorkspaceStub extends RpcTarget {
     return this.#useThink;
   }
 
-  get shell(): WorkspaceShellStub {
-    return this.#shell;
+  get runtime(): WorkspaceRuntimeStub {
+    return this.#runtime;
   }
 
   get git(): WorkspaceGitStub {

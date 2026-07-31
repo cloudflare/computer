@@ -5,7 +5,7 @@
     "lib": ["ES2022"],
     "allowImportingTsExtensions": true,
     "module": "ESNext",
-    "types": ["@cloudflare/workers-types/2023-07-01"],
+    "types": ["@cloudflare/workers-types"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "noEmit": true,

@@ -6,8 +6,7 @@
 > `packages/computer/src/backends/worker/`. Everything below
 > works today.
 
-`workspace.git` is the third major surface on `Workspace`,
-alongside `fs` and `shell`. It runs every operation against the
+`workspace.git` is a major typed surface on `Workspace`, alongside `fs`, `runtime`, Assets, and Artifacts. It runs every operation against the
 local SQLite-backed VFS through `isomorphic-git`, so a
 filesystem-only workspace (no backend) can drive a full
 clone/commit/diff cycle.
@@ -132,7 +131,7 @@ console.log(stdout);
 ### Inside the shell (worker backend)
 
 ```ts
-const handle = await ws.shell.exec(
+const handle = await ws.runtime.exec(
   "git clone https://github.com/example/repo.git . && " +
     "echo 'hello world' > README.md && " +
     "git diff",

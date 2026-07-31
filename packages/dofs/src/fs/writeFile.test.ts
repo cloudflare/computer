@@ -97,6 +97,36 @@ describe("writeFile", () => {
     });
   });
 
+  it("atomically rejects an exclusive write when the target exists", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/exclusive.txt", "first", {}, () => 1);
+      await expect(
+        writeFile(db, "/exclusive.txt", "second", { exclusive: true }, () => 2),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      expect(new TextDecoder().decode(readBack(db, "/exclusive.txt"))).toBe("first");
+    });
+  });
+
+  it("rejects an exclusive streaming write before reading its source", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/exclusive-stream.txt", "first", {}, () => 1);
+      let pulls = 0;
+      const source = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulls += 1;
+            controller.enqueue(new TextEncoder().encode("second"));
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      await expect(
+        writeFile(db, "/exclusive-stream.txt", source, { exclusive: true }, () => 2),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+      expect(pulls).toBe(0);
+    });
+  });
+
   it("accepts a Uint8Array", async () => {
     await withDB(async (db) => {
       const data = new Uint8Array([1, 2, 3, 4, 5]);

@@ -32,7 +32,7 @@ curl -X POST https://<worker-subdomain>.workers.dev/create \
 
 The Worker endpoint owns the orchestration. The durable object stays minimal: it owns the `Workspace`, exposes `getWorkspace()`, and bridges the host Artifacts binding into the worker-backend shell's `artifacts` command.
 
-`POST /create` does the following through `ws.shell.exec(...)`:
+`POST /create` does the following through `ws.runtime.exec(...)`:
 
 1. clones `https://github.com/cloudflare/computer` into `/workspace/<name>-source`;
 2. copies `/workspace/<name>-source/examples/worker` to `/workspace/<name>`;

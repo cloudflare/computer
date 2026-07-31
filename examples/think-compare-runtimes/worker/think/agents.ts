@@ -264,6 +264,10 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
   }
 
   async getWorkspace(): Promise<WorkspaceStub> {
+    return this.__getWorkspaceStub();
+  }
+
+  async __getWorkspaceStub(): Promise<WorkspaceStub> {
     if (!this.#activeWorkspace) {
       throw new Error("WorkspaceThinkAgent has no active Workspace session.");
     }

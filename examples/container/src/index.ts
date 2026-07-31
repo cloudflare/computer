@@ -229,7 +229,7 @@ async function handleExec(request: Request, env: Env, name: string): Promise<Res
   const stub = env.ContainerExample.get(env.ContainerExample.idFromName(name));
   const ws = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
   try {
-    const handle = await ws.shell.exec(command, { cwd: body.cwd, encoding: "utf8" });
+    const handle = await ws.runtime.exec(command, { cwd: body.cwd, encoding: "utf8" });
     const result = await handle.result();
     return new Response(JSON.stringify(result), {
       status: 200,

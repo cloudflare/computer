@@ -6,7 +6,9 @@
 // the Worker Loader callback the host DO supplied. No state
 // survives across exec calls: each builds its own Bash
 // instance, its own WorkspaceFsAdapter, and disposes the
-// workspace stub when the run settles.
+// workspace stub when the run settles. The only shared per-execution state is
+// an AbortController map keyed by explicit execution id so timeout and kill
+// requests can cooperatively stop just-bash at statement boundaries.
 //
 // That shape matters for two reasons. First, the workspace
 // reach happens on the user Worker's side, so every fs RPC the
@@ -36,10 +38,6 @@ export interface ShellWorkerOptions {
   // container backend uses, so scripts that hard-code that path
   // keep working.
   cwd?: string;
-  // Forwarded to the Bash constructor verbatim. Off by default;
-  // each is a security knob and the consumer Worker opts in.
-  python?: boolean;
-  javascript?: boolean;
 }
 
 // Env shape the host Worker is expected to wire through the
@@ -74,6 +72,12 @@ export interface HostWorkspaceStub extends GitCommandHost, AssetsCommandHost {
 }
 
 const DEFAULT_CWD = "/workspace";
+const MAX_OUTPUT_BYTES = 1024 * 1024;
+const defenseDebug = console.debug.bind(console);
+console.debug = (...args: unknown[]) => {
+  if (String(args[0]).startsWith("[DefenseInDepthBox] Could not register import() hooks:")) return;
+  defenseDebug(...args);
+};
 
 // Wire event shape. Matches @cloudflare/computer-rpc's ExecEvent
 // but with stdout/stderr values as utf8 strings (the host-side
@@ -87,9 +91,11 @@ type WireEvent =
 export class ShellWorker<
   Env extends ShellWorkerEnv = ShellWorkerEnv,
 > extends WorkerEntrypoint<Env> {
-  // Subclasses override to opt into python / javascript or to
-  // change the default cwd. The base class leaves both off.
+  // Subclasses override to change the default cwd.
+  // just-bash's Python and JavaScript commands require
+  // node:worker_threads and cannot run in workerd.
   protected readonly shellOptions: ShellWorkerOptions = {};
+  readonly #executions = new Map<string, AbortController>();
 
   // Test seam: when set, exec uses this to spawn the command
   // instead of `new Bash({...}).exec(...)`. Real production
@@ -134,10 +140,29 @@ export class ShellWorker<
   async exec(input: ExecInput): Promise<{ id: string; events: ReadableStream<Uint8Array> }> {
     const id = input.id ?? crypto.randomUUID();
     const cwd = input.cwd ?? this.shellOptions.cwd ?? DEFAULT_CWD;
+    if (this.#executions.has(id))
+      throw createShellError("EEXEC_BUSY", `execution ${id} is running`);
+    const controller = new AbortController();
+    this.#executions.set(id, controller);
+    let timedOut = false;
+    const timer =
+      input.timeoutMs === undefined || input.timeoutMs === 0
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            controller.abort(new Error("Execution timed out"));
+          }, input.timeoutMs);
 
-    // Reach the host workspace on each call. Two concurrent
-    // execs get two stubs; no instance field, no race.
-    const ws = await this.env.HOST.getWorkspace();
+    // Reach the host workspace on each call. Concurrent execs get separate
+    // stubs; only their cancellation controllers share this entrypoint.
+    let ws: HostWorkspaceStub;
+    try {
+      ws = await this.env.HOST.getWorkspace();
+    } catch (error) {
+      if (timer !== undefined) clearTimeout(timer);
+      if (this.#executions.get(id) === controller) this.#executions.delete(id);
+      throw error;
+    }
 
     const customCommands: CustomCommand[] = [
       defineGitCommand(ws),
@@ -151,6 +176,7 @@ export class ShellWorker<
       if (this.bashFactoryOverride !== undefined) {
         result = await this.bashFactoryOverride(input.command, {
           cwd,
+          signal: controller.signal,
           customCommands,
         });
       } else {
@@ -159,8 +185,6 @@ export class ShellWorker<
             ConstructorParameters<typeof Bash>[0]
           >["fs"],
           cwd,
-          python: this.shellOptions.python,
-          javascript: this.shellOptions.javascript,
           customCommands,
           // just-bash's in-process DefenseInDepthBox activates by
           // registering ESM loader hooks through node:module's
@@ -171,13 +195,20 @@ export class ShellWorker<
           // which is the real boundary. Opt out so the interpreter
           // runs on the workerd target.
           defenseInDepth: { enabled: false },
+          executionLimits: { maxOutputSize: MAX_OUTPUT_BYTES },
         });
-        result = await bash.exec(input.command, { cwd });
+        result = await bash.exec(input.command, { cwd, signal: controller.signal });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      result = { stdout: "", stderr: `${message}\n`, exitCode: 1 };
+      result = {
+        stdout: "",
+        stderr: `${timedOut ? "Execution timed out" : message}\n`,
+        exitCode: timedOut ? 124 : controller.signal.aborted ? 130 : 1,
+      };
     } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (this.#executions.get(id) === controller) this.#executions.delete(id);
       // Dispose the workspace stub after Bash has fully settled.
       // Bash held a reference to the adapter for the duration of
       // the exec; once .exec resolves the adapter's underlying
@@ -212,13 +243,13 @@ export class ShellWorker<
     throw createShellError("ENOENT", `no such exec: ${input.id}`);
   }
 
-  async killExec(_input: {
+  async killExec(input: {
     id: string;
     signal?: "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
   }): Promise<void> {
-    // No state to kill. Bash runs synchronously to completion
-    // inside exec(); by the time a caller could observe an id
-    // through the returned envelope the run has already settled.
+    this.#executions
+      .get(input.id)
+      ?.abort(new Error(`Execution cancelled with ${input.signal ?? "SIGTERM"}`));
   }
 }
 

@@ -64,10 +64,10 @@ via FUSE) create it like any other directory.
 
 ## Conventions
 
-- **Absolute paths only.** Every fs and shell call takes an absolute
+- **Absolute host paths.** Every `workspace.fs` path and command-backend `cwd` takes an absolute
   path starting with `/`. Relative paths are rejected with `EINVAL`.
   Resolve paths against `process.cwd()` (or the `cwd` option on
-  `shell.exec`) at the call site if you need relative semantics.
+  `runtime.exec`) at the call site if you need relative semantics.
 - **Forward slashes.** Paths are POSIX-style. Backslashes are not
   separators.
 - **No trailing slash.** `/workspace/foo` and `/workspace/foo/` are
@@ -93,7 +93,7 @@ target shape:
   construction.
 - Read-only mounts (the default) reject all writes under their root
   with `EROFS`. Read-write mounts mirror writes back to the provider.
-- Writes that originate from `shell.exec` under a read-only mount
+- Writes that originate from `runtime.exec` under a read-only mount
   are silently dropped on the post-exec pull (see
   [02. Sync Protocol](./02_sync_protocol.md)).
 
@@ -135,7 +135,7 @@ pinned `DISABLE_FUSE=1`, which produced a degraded mode where:
   directly; synchronization with the DO-side VFS happens over RPC
   through the post-exec pull bracket and explicit
   `workspace.push()` / `workspace.pull()` calls.
-- Writes performed by `shell.exec` are picked up by the post-exec
+- Writes performed by `runtime.exec` are picked up by the post-exec
   pull. `workspace.push()` flushes pending DO-side writes to the
   container without waiting for the next `exec()`. Use these when
   you need to synchronize the two sides outside of a command run.

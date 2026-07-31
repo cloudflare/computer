@@ -290,7 +290,7 @@ describe("createAITools exec tool", () => {
     const calls: Array<{ command: string; cwd: string | undefined; backend: string | undefined }> =
       [];
     const workspace = {
-      shell: {
+      runtime: {
         async exec(command: string, options: { cwd?: string; encoding: "utf8"; backend?: string }) {
           calls.push({ command, cwd: options.cwd, backend: options.backend });
           const result: ExecResult<"utf8"> = {
@@ -332,7 +332,7 @@ describe("createAITools exec tool", () => {
 
   it("truncates exec output on UTF-8 byte boundaries", async () => {
     const workspace = {
-      shell: {
+      runtime: {
         async exec() {
           const result: ExecResult<"utf8"> = {
             exitCode: 0,
@@ -364,7 +364,7 @@ describe("createAITools exec tool", () => {
   it("routes omitted backend to defaultBackend", async () => {
     const calls: Array<{ command: string; backend: string | undefined }> = [];
     const workspace = {
-      shell: {
+      runtime: {
         async exec(command: string, options: { encoding: "utf8"; backend?: string }) {
           calls.push({ command, backend: options.backend });
           const result: ExecResult<"utf8"> = {
@@ -396,7 +396,7 @@ describe("createAITools exec tool", () => {
 
   it("tells the model to retry on a capable backend after command-not-found errors", () => {
     const workspace = {
-      shell: {
+      runtime: {
         async exec() {
           throw new Error("not used");
         },
@@ -419,7 +419,7 @@ describe("createAITools exec tool", () => {
 
   it("returns structured exec errors", async () => {
     const workspace = {
-      shell: {
+      runtime: {
         async exec() {
           throw new Error("backend unavailable");
         },
@@ -443,7 +443,7 @@ describe("createAITools exec tool", () => {
 
   it("returns structured exec result errors", async () => {
     const workspace = {
-      shell: {
+      runtime: {
         async exec() {
           return {
             async result() {

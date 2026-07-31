@@ -5,10 +5,10 @@
 The tools are thin wrappers over the existing `Workspace` surfaces:
 
 - `workspace.fs` for file reads, writes, edits, and directory listing.
-- `workspace.shell.exec` for command execution when the caller opts in.
+- `workspace.runtime.exec` for command execution when the caller opts in.
 - `workspace.assets` for publishing generated files when an assets publisher is configured.
 
-Git access already ships through `workspace.git`, the third major surface on `Workspace` alongside `fs` and `shell`. AI SDK tool wrappers around that surface can land later against a stable target. See [`13_git_interface.md`](./13_git_interface.md).
+Git access already ships through `workspace.git`, the third major surface on `Workspace` alongside `fs`, `runtime`, Assets, and Artifacts. AI SDK tool wrappers around that surface can land later against a stable target. See [`13_git_interface.md`](./13_git_interface.md).
 
 ## What ships
 
@@ -223,7 +223,7 @@ Schema:
 }
 ```
 
-Calls `workspace.shell.exec(command, { cwd, encoding: "utf8", backend })`, waits for `result()`, and returns:
+Calls `workspace.runtime.exec(command, { cwd, encoding: "utf8", backend })`, waits for `result()`, and returns:
 
 ```ts
 {

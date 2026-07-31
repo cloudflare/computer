@@ -123,7 +123,7 @@ export interface CloudflareContainerBackendOptions {
   healthRetryMaxDelayMs?: number;
 
   // Selector this backend is registered under in Workspace.
-  // Defaults to "cloudflare-container"; override when the
+  // Defaults to "container-shell"; override when the
   // workspace hosts more than one instance of the same backend
   // kind (e.g. two containers pinned to different pool members).
   id?: string;
@@ -158,7 +158,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   #handle: BackendHandle | undefined;
 
   constructor(options: CloudflareContainerBackendOptions) {
-    this.id = options.id ?? "cloudflare-container";
+    this.id = options.id ?? "container-shell";
     this.#options = {
       container: options.container,
       workspace: options.workspace,

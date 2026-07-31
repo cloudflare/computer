@@ -19,7 +19,7 @@ It provides:
  - A fs API for working with files and directories compatible with Worker bindings.
  - R2-backed mounts for pre-filling read-only data into the workspace tree.
  - Durability over DO restarts for all file operations.
- - A pluggable shell backend: a Cloudflare Container running the `computerd` FUSE daemon (full Linux userland) or a Dynamic Worker running [just-bash](https://github.com/vercel-labs/just-bash) (no container, broad textual tooling).
+ - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell or a just-bash Dynamic Worker.
  - Workspace constructable without a backend, for filesystem-only use cases.
  - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/computer/tools`.
 
@@ -41,9 +41,9 @@ The package ships several entrypoints:
 
 | Entrypoint | Purpose |
 | --- | --- |
-| `@cloudflare/computer` | The Workspace facade, stub types, the R2 mount, and proxy classes. |
+| `@cloudflare/computer` | The Workspace facade, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
-| `@cloudflare/computer/backends/worker` | `WorkerBackend` and the bundled just-bash shell. The shell ships as a record of code-split modules the Dynamic Worker loads on demand: a ~290 KB entry parsed on cold start, plus ~2.5 MB of chunks that stay cold until a script reaches for them. |
+| `@cloudflare/computer/backends/worker` | `WorkerBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/git` | Isomorphic-git glue for working with checkouts inside the workspace. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, a session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
@@ -80,41 +80,32 @@ ENTRYPOINT ["/usr/local/bin/computerd"]
 ## Example
 
 ```ts
-import { AIChatAgent } from "@cloudflare/ai-chat";
 import { Workspace } from "@cloudflare/computer";
-import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
+import {
+  CloudflareContainerBackend,
+  withWorkspaceContainer,
+} from "@cloudflare/computer/backends/container";
+import { DurableObject } from "cloudflare:workers";
 
-export class Agent extends AIChatAgent<Env> {
-	readonly workspace: Workspace;
+export class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  readonly workspace = new Workspace({
+    storage: this.ctx.storage, // DO storage → VFS lives here
+    backends: [
+      new CloudflareContainerBackend({
+        container: () => this,
+        workspace: { binding: "Agent", id: this.ctx.id.toString() },
+      }),
+    ],
+  });
 
-	constructor(...args: ConstructorParameters<typeof AIChatAgent>) {
-		super(...(args as [any, any]));
-		this.workspace = new Workspace({
-			storage:  this.ctx.storage, // DO storage → VFS lives here
-			backends: [
-				new CloudflareContainerBackend({
-					container: () => this,
-					workspace: { binding: "Agent", id: this.ctx.id.toString() },
-				}),
-			],
-		});
-	}
-
-    onStart() {
-		// Prime the backend connection in the background so the first
-		// exec is warm. `ready()` is idempotent and lazy-connects over
-		// the configured backends.
-		this.ctx.waitUntil(
-			(async () => {
-				await this.workspace.ready();
-				await this.workspace.fs.mkdir("/workspace", { recursive: true });
-			})().catch(() => {}),
-		);
-    }
+  async initialize() {
+    await this.workspace.ready();
+    await this.workspace.fs.mkdir("/workspace", { recursive: true });
+  }
 }
 ```
 
-Once you have a `workspace` on your agent, the `fs` and `shell` surfaces feel a lot like Node's `fs/promises` and a shell session — everything is async, paths are absolute, and operations are durable across DO restarts.
+Once you have a `workspace` on your Durable Object, the `fs` and `runtime` surfaces feel a lot like Node's `fs/promises` plus routed command execution — everything is async, paths are absolute, and operations are durable across DO restarts.
 
 Create and write files:
 
@@ -169,7 +160,7 @@ for (const hit of hits) {
 Run a shell command in the sandbox — the same filesystem is mounted there, so writes from `fs` are immediately visible to `exec` and vice versa:
 
 ```ts
-const run = await this.workspace.shell.exec("ls -la /workspace", { encoding: "utf8" });
+const run = await this.workspace.runtime.exec("ls -la /workspace", { encoding: "utf8" });
 const { stdout, exitCode } = await run.result();
 console.log(stdout, exitCode);
 ```
@@ -179,7 +170,7 @@ console.log(stdout, exitCode);
 ```ts
 // Inside a fetch handler on your Agent.
 async fetch(request: Request) {
-  const run = await this.workspace.shell.exec("npm test", { encoding: "utf8" });
+  const run = await this.workspace.runtime.exec("npm test", { encoding: "utf8" });
 
   const sse = run.pipeThrough(
     new TransformStream<
@@ -225,7 +216,7 @@ above, then dive into the area you're working on.
 | [02. Sync Protocol](./02_sync_protocol.md) | How the DO-backed VFS synchronises with the sandbox container. |
 | [03. Filesystem Schema](./03_filesystem_schema.md) | SQLite schema backing the virtual filesystem. |
 | [04. Filesystem Interface](./04_filesystem_interface.md) | `Workspace.fs` API: `readFile`, `writeFile`, `mkdir`, `grep`, etc. |
-| [05. Shell Interface](./05_shell_interface.md) | `Workspace.shell.exec` and streamed command execution. |
+| [05. Runtime Interface](./05_runtime_interface.md) | `Workspace.runtime.exec/getExec/killExec/disposeExec` and backend routing. |
 | [06. Mount Interface](./06_mount_interface.md) | Pre-filling paths from R2, Artifacts, GitHub, and custom sources. **(not yet implemented)** |
 | [07. Injected Service](./07_injected_service.md) | The in-container `computerd` service that backs FUSE and shell. |
 | [08. Capnweb Interface](./08_capnweb_interface.md) | RPC wire protocol between the DO and the sandbox. |
@@ -241,8 +232,8 @@ above, then dive into the area you're working on.
 
 ```ts
 interface Workspace {
-  fs:    WorkspaceFilesystem;     // 04_filesystem_interface.md
-  shell: WorkspaceShell;          // 05_shell_interface.md, throws when no backend is configured
+  fs: WorkspaceFilesystem;
+  runtime: WorkspaceRuntime;
 
   /** Push pending DO-side writes to the configured backend. Resolves with the entry count. */
   push():  Promise<number>;
@@ -258,4 +249,4 @@ interface Workspace {
 ```
 
 See [04. Filesystem Interface](./04_filesystem_interface.md) and
-[05. Shell Interface](./05_shell_interface.md) for the full surface, and [02. Sync Protocol](./02_sync_protocol.md) for `push`/`pull` semantics.
+[05. Runtime Interface](./05_runtime_interface.md) for the full surface, and [02. Sync Protocol](./02_sync_protocol.md) for `push`/`pull` semantics.

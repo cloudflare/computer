@@ -31,8 +31,8 @@ The worker backend trades the real environment for a Workers
 isolate that boots instantly, scales out cheaply, and has no
 container lifecycle. The shell is the just-bash interpreter; the
 supported command set is broad (`cat`, `grep`, `awk`, `sed`, `jq`,
-`sort`, optional Python and JavaScript via WASM) but not the full
-Linux userland. Filesystem operations forward into the same
+`sort`) but not the full Linux userland. just-bash's Node-only language
+commands are disabled on workerd. Filesystem operations forward into the same
 SQLite store as the container backend, so the storage shape, mount
 rules, and read-only enforcement are unchanged.
 
@@ -46,9 +46,7 @@ Reach for the worker backend when:
   affecting the host DO.
 - You're sensitive to the per-session container cost.
 
-Reach for the container backend when the agent runs `git`, `npm`,
-a real language runtime, or anything else that wants a real
-kernel under it.
+Reach for the container backend when the agent runs `npm`, a real language runtime, native binaries, or anything else that needs a real kernel. Prefer the worker backend's host-forwarded `git` command for supported Git operations; use the container only for Git behavior that requires its native environment.
 
 ## Wire shape
 

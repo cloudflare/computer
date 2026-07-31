@@ -1,6 +1,6 @@
 // Shell command templating with automatic escaping.
 //
-// `Workspace.shell.exec` takes a single command string that the
+// `Workspace.runtime.exec` takes a single command string that the
 // container runs through `/bin/sh -c`. Building that string by hand
 // is a shell-injection footgun: any interpolated path, branch name,
 // or user-supplied value can break out of its argument and run

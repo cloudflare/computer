@@ -62,7 +62,7 @@ describe("createWorkspaceFixtureRuntime", () => {
       async ready(backend?: string) {
         calls.push(`ready ${backend ?? "default"}`);
       },
-      shell: {
+      runtime: {
         async exec(
           command: string,
           options?: { backend?: string; cwd?: string; encoding?: "utf8"; timeoutMs?: number },
@@ -101,13 +101,14 @@ describe("createWorkspaceFixtureRuntime", () => {
     "find . -name package.json",
     "ls docs/workers",
     "pwd",
+    "echo '$(npm test)'",
   ])("exec keeps generic Workspace inspection on the worker shell backend: %s", async (command) => {
     const calls: string[] = [];
     const runner = createWorkspaceCommandRunner({
       async ready(backend?: string) {
         calls.push(`ready ${backend ?? "default"}`);
       },
-      shell: {
+      runtime: {
         async exec(
           actualCommand: string,
           options?: { backend?: string; cwd?: string; encoding?: "utf8" },
@@ -138,6 +139,10 @@ describe("createWorkspaceFixtureRuntime", () => {
     "npx vitest",
     "tsc --noEmit",
     "./scripts/check-docs.mjs",
+    'echo "$(node --version)"',
+    'echo "$(./scripts/check-docs.mjs)"',
+    `echo "$(printf ')'; npm test)"`,
+    'echo "$(echo "$(node --version)")"',
   ])(
     "exec routes runtime and package commands to the Workspace container backend: %s",
     async (command) => {
@@ -146,7 +151,7 @@ describe("createWorkspaceFixtureRuntime", () => {
         async ready(backend?: string) {
           calls.push(`ready ${backend ?? "default"}`);
         },
-        shell: {
+        runtime: {
           async exec(
             actualCommand: string,
             options?: { backend?: string; cwd?: string; encoding?: "utf8" },

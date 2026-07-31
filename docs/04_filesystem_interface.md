@@ -15,7 +15,7 @@ file could be large.
 ```ts
 interface Workspace {
   fs:    WorkspaceFilesystem;
-  shell: WorkspaceShell;        // see 05_shell_interface.md
+  runtime: WorkspaceRuntime;    // see 05_runtime_interface.md
 }
 ```
 
@@ -232,7 +232,7 @@ const paths = await fs.ls("/workspace/.agents/skills");
 ### `grep`
 
 Available on `Workspace.fs` for parity with the agent tools, and on
-`Workspace.shell` when you want it to run inside the container (faster
+`Workspace.runtime` when you want it to run inside the container (faster
 for large trees because it uses ripgrep).
 
 ```ts
@@ -261,7 +261,7 @@ for (const hit of hits) {
 }
 ```
 
-See [05. Shell Interface](./05_shell_interface.md) for the container-side
+See [05. Shell Interface](./05_runtime_interface.md) for the container-side
 variant.
 
 ## Error handling

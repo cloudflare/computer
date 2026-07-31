@@ -196,7 +196,7 @@ async function exec(
   command: string,
   options: { cwd?: string; secretToRedact?: string } = {},
 ): Promise<string> {
-  const handle = await ws.shell.exec(command, { cwd: options.cwd, encoding: "utf8" });
+  const handle = await ws.runtime.exec(command, { cwd: options.cwd, encoding: "utf8" });
   try {
     const result = await handle.result();
     if (result.exitCode === 0) return result.stdout;

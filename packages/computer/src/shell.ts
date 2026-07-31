@@ -16,11 +16,8 @@
 //     visible to subsequent Workspace.fs reads.
 // The pushed / pulled counts land in ExecResult.
 //
-// Pull only fires when the caller awaits handle.result(). A
-// caller that consumes the stream directly gets the push but not
-// the pull — docs/05 puts the pull after the exit event, which
-// only result() observes. If you need the pull in that flow,
-// drive the stream yourself then call Workspace.pull() explicitly.
+// Pull fires after either result() or direct stream consumption drains
+// the execution events. The stream does not close until that pull settles.
 //
 // get() (reattach) is intentionally not bracketed. Reattaching
 // to an already-running exec doesn't represent a new push frame.
@@ -61,10 +58,8 @@ export interface ExecResult<E extends ExecEncoding = undefined> {
   //             because they targeted a read-only mount root.
   //             Empty when no read-only mounts are registered or
   //             the container stayed clear of them.
-  // pulled / skipped are populated only when handle.result() is
-  // awaited. Consuming the stream directly leaves both at their
-  // empty values; pushed is observed before the stream is returned
-  // so it reflects the real push count either way.
+  // pushed is observed before the stream is returned. The remaining
+  // fields describe the post-command pull when result() is used.
   pushed: number;
   pulled: number;
   skipped: SkippedEntry[];
@@ -91,6 +86,7 @@ export interface ExecHandle<E extends ExecEncoding = undefined>
   readonly id: string;
   result(): Promise<ExecResult<E>>;
   kill(signal?: KillSignal): Promise<void>;
+  [Symbol.dispose](): void;
 }
 
 export interface ExecOptions<E extends ExecEncoding = undefined> {
@@ -169,11 +165,11 @@ export class WorkspaceShell {
     }
     const envelope = await withSpan(
       this.#observer,
-      "workspace.shell.exec.spawn",
+      "workspace.runtime.exec.spawn",
       {
-        "workspace.shell.cwd": options.cwd,
-        "workspace.shell.timeout_ms": options.timeoutMs,
-        "workspace.shell.id": options.id,
+        "workspace.runtime.cwd": options.cwd,
+        "workspace.runtime.timeout_ms": options.timeoutMs,
+        "workspace.runtime.id": options.id,
       },
       () =>
         this.#shell.exec({
@@ -183,7 +179,7 @@ export class WorkspaceShell {
           timeoutMs: options.timeoutMs,
         }),
       (span, outcome) => {
-        if (outcome.ok) span.setAttribute("workspace.shell.id", outcome.value.id);
+        if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
       },
     );
     // Dispose the result envelope when the event stream finishes
@@ -210,6 +206,16 @@ export class WorkspaceShell {
     // between reattach and the next drain.
     return wrapHandle<E>(this.#shell, this.#sync, id, events, options.encoding, 0);
   }
+
+  kill(id: string, signal?: KillSignal, _options: { backend?: string } = {}): Promise<void> {
+    return this.#shell.killExec({ id, signal });
+  }
+
+  dispose(id: string): Promise<void>;
+  dispose(id: string, options: { backend?: string }): Promise<void>;
+  dispose(id: string, _options: { backend?: string } = {}): Promise<void> {
+    return this.#shell.disposeExec({ id });
+  }
 }
 
 function resumeToAfter(resume: "tail" | "full" | number | undefined): number | "tail" | undefined {
@@ -222,11 +228,8 @@ function resumeToAfter(resume: "tail" | "full" | number | undefined): number | "
 // ReadableStream that pipes from the wire stream and applies any
 // encoding conversion in flight.
 //
-// The wire stream is tee'd so kill() can observe the exit event
-// independently of whatever the caller does with the handle. kill()
-// sends the signal then awaits the exit event so callers can rely on
-// "resolved ⇒ child has exited" without having to drain the stream
-// or await result() themselves.
+// The user stream remains the only reader so backpressure reaches the backend.
+// kill() requests a signal; result() or stream completion observes the exit.
 function wrapHandle<E extends ExecEncoding>(
   shell: ShellRPC,
   sync: Sync,
@@ -235,10 +238,11 @@ function wrapHandle<E extends ExecEncoding>(
   encoding: E | undefined,
   pushed: number,
 ): ExecHandle<E> {
-  const [forUser, forWatcher] = wireEvents.tee();
-  const watcher = watchForExit(forWatcher);
-  const stream = pipeEvents<E>(releaseWatcherOnCancel(forUser, watcher.release), encoding);
+  const postPull = withPostPull(pipeEvents<E>(wireEvents, encoding), sync);
+  const stream = postPull.stream;
   const handle = stream as ExecHandle<E>;
+  let resultPromise: Promise<ExecResult<E>> | undefined;
+  let resultReader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
   // configurable: true on result/kill lets the Workspace-level
   // router redefine them to add cross-cutting concerns (transport
   // failure invalidation on result(); future kill hooks). The id
@@ -246,88 +250,30 @@ function wrapHandle<E extends ExecEncoding>(
   Object.defineProperties(handle, {
     id: { value: id, enumerable: false, writable: false, configurable: false },
     result: {
-      value: () => drainToResult<E>(stream, encoding, sync, pushed),
+      value: () => {
+        resultPromise ??= drainToResult<E>(stream, encoding, pushed, postPull.outcome, (reader) => {
+          resultReader = reader;
+        });
+        return resultPromise;
+      },
       enumerable: false,
       writable: false,
       configurable: true,
     },
     kill: {
-      value: async (signal?: KillSignal) => {
-        await shell.killExec({ id, signal });
-        await watcher.exited;
-      },
+      value: (signal?: KillSignal) => shell.killExec({ id, signal }),
       enumerable: false,
       writable: false,
       configurable: true,
     },
+    [Symbol.dispose]: {
+      value: () => {
+        if (resultReader) void resultReader.cancel().catch(() => undefined);
+        else void stream.cancel().catch(() => undefined);
+      },
+    },
   });
   return handle;
-}
-
-// Drain the watcher branch in the background, resolving once the
-// first exit event is observed (or the stream closes / errors
-// without one). Errors are swallowed so kill() doesn't reject on a
-// torn-down wire — the caller's own branch will surface any real
-// stream error. `release` abandons the watch, letting the branch
-// cancel through to the wire stream.
-function watchForExit(events: ReadableStream<ExecEvent>): {
-  exited: Promise<void>;
-  release: () => void;
-} {
-  const reader = events.getReader();
-  const exited = (async () => {
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) return;
-        if (value.name === "exit") return;
-      }
-    } catch {
-      // Swallow — surfaced via the user-facing branch instead.
-    } finally {
-      reader.releaseLock();
-    }
-  })();
-  return {
-    exited,
-    release: () => {
-      reader.cancel().catch(() => {});
-    },
-  };
-}
-
-// A run allows one live subscriber in the container, so a caller
-// that cancels its stream has to give the subscription up — until
-// then a reattach through get() is refused for the rest of the run.
-// Cancelling the caller's tee branch isn't enough: a tee holds its
-// source until both branches cancel, and the watcher branch reads
-// to the exit event. So the caller's cancel takes the watcher with
-// it.
-function releaseWatcherOnCancel(
-  source: ReadableStream<ExecEvent>,
-  release: () => void,
-): ReadableStream<ExecEvent> {
-  const reader = source.getReader();
-  return new ReadableStream<ExecEvent>(
-    {
-      pull: async (controller) => {
-        const { value, done } = await reader.read();
-        if (done) {
-          controller.close();
-          return;
-        }
-        controller.enqueue(value);
-      },
-      cancel: async (reason) => {
-        // Order matters: the branch cancel doesn't settle until the
-        // watcher has cancelled too.
-        const cancelled = reader.cancel(reason);
-        release();
-        await cancelled;
-      },
-    },
-    { highWaterMark: 0 },
-  );
 }
 
 function pipeEvents<E extends ExecEncoding>(
@@ -342,10 +288,23 @@ function pipeEvents<E extends ExecEncoding>(
   // across chunk splits.
   const stdoutDec = new TextDecoder("utf-8", { fatal: false });
   const stderrDec = new TextDecoder("utf-8", { fatal: false });
+  let stdoutMeta: { id: string; seq: number } | undefined;
+  let stderrMeta: { id: string; seq: number } | undefined;
+  const flushPending = (controller: TransformStreamDefaultController<WorkspaceExecEvent<E>>) => {
+    const stdout = stdoutDec.decode();
+    const stderr = stderrDec.decode();
+    if (stdout && stdoutMeta) {
+      controller.enqueue({ ...stdoutMeta, name: "stdout", value: stdout as Chunk<E> });
+    }
+    if (stderr && stderrMeta) {
+      controller.enqueue({ ...stderrMeta, name: "stderr", value: stderr as Chunk<E> });
+    }
+  };
   return source.pipeThrough(
     new TransformStream<ExecEvent, WorkspaceExecEvent<E>>({
       transform(event, controller) {
         if (event.name === "stdout") {
+          stdoutMeta = { id: event.id, seq: event.seq };
           controller.enqueue({
             id: event.id,
             seq: event.seq,
@@ -353,6 +312,7 @@ function pipeEvents<E extends ExecEncoding>(
             value: stdoutDec.decode(event.value, { stream: true }) as Chunk<E>,
           });
         } else if (event.name === "stderr") {
+          stderrMeta = { id: event.id, seq: event.seq };
           controller.enqueue({
             id: event.id,
             seq: event.seq,
@@ -360,31 +320,102 @@ function pipeEvents<E extends ExecEncoding>(
             value: stderrDec.decode(event.value, { stream: true }) as Chunk<E>,
           });
         } else {
+          flushPending(controller);
           controller.enqueue(event as WorkspaceExecEvent<E>);
         }
       },
-      flush(_controller) {
-        // Flush any trailing bytes the streaming decoder
-        // held back. These are dropped on the floor today
-        // — they'd land in an event with no seq attached.
-        // In practice the child terminates its output with
-        // a newline; partial multi-byte sequences at EOF
-        // are rare. Note for follow-up if real callers see
-        // truncation.
-        stdoutDec.decode();
-        stderrDec.decode();
-      },
+      flush: flushPending,
     }),
   );
+}
+
+interface PostPullOutcome {
+  applied: number;
+  skipped: SkippedEntry[];
+  sync: ExecSyncResult;
+}
+
+function withPostPull<E extends ExecEncoding>(
+  source: ReadableStream<WorkspaceExecEvent<E>>,
+  sync: Sync,
+): { stream: ReadableStream<WorkspaceExecEvent<E>>; outcome: Promise<PostPullOutcome> } {
+  const reader = source.getReader();
+  let resolveOutcome!: (outcome: PostPullOutcome) => void;
+  const outcome = new Promise<PostPullOutcome>((resolve) => {
+    resolveOutcome = resolve;
+  });
+  const stream = new ReadableStream<WorkspaceExecEvent<E>>(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (!next.done) {
+            controller.enqueue(next.value);
+            return;
+          }
+          reader.releaseLock();
+          const pulled = await runPostPull(sync);
+          resolveOutcome(pulled);
+          controller.close();
+        } catch (error) {
+          try {
+            reader.releaseLock();
+          } catch {}
+          resolveOutcome({
+            applied: 0,
+            skipped: [],
+            sync: { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) },
+          });
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          reader.releaseLock();
+          resolveOutcome({
+            applied: 0,
+            skipped: [],
+            sync: { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(reason) },
+          });
+        }
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, outcome };
+}
+
+async function runPostPull(sync: Sync): Promise<PostPullOutcome> {
+  try {
+    const result = await sync.pull();
+    return {
+      applied: result.applied,
+      skipped: result.skipped,
+      sync: { status: "complete", applied: result.applied, skipped: result.skipped },
+    };
+  } catch (error) {
+    try {
+      await sync.onPullPending?.(error);
+    } catch {}
+    return {
+      applied: 0,
+      skipped: [],
+      sync: { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) },
+    };
+  }
 }
 
 async function drainToResult<E extends ExecEncoding>(
   stream: ReadableStream<WorkspaceExecEvent<E>>,
   encoding: E | undefined,
-  sync: Sync,
   pushed: number,
+  postPull: Promise<PostPullOutcome>,
+  setReader: (reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined) => void,
 ): Promise<ExecResult<E>> {
   const reader = stream.getReader();
+  setReader(reader);
   const stdoutParts: Array<Chunk<E>> = [];
   const stderrParts: Array<Chunk<E>> = [];
   let exitCode = -1;
@@ -398,37 +429,17 @@ async function drainToResult<E extends ExecEncoding>(
     }
   } finally {
     reader.releaseLock();
+    setReader(undefined);
   }
-  // Post-drain pull: apply anything computerd produced during the exec.
-  // Failures non-fatal per docs/05 ("failed pushes/pulls do not
-  // abort the command"); pulled / skipped stay at their empty
-  // values in that case.
-  let pulled = 0;
-  let skipped: SkippedEntry[] = [];
-  let syncResult: ExecSyncResult;
-  try {
-    const result = await sync.pull();
-    pulled = result.applied;
-    skipped = result.skipped;
-    syncResult = { status: "complete", applied: pulled, skipped };
-  } catch (error) {
-    syncResult = { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) };
-    try {
-      await sync.onPullPending?.(error);
-    } catch {
-      // The command result must remain available even when the host's
-      // durable scheduler is temporarily unavailable. The pending
-      // status keeps the missed pull visible to the caller.
-    }
-  }
+  const pulled = await postPull;
   return {
     exitCode,
     stdout: joinParts<E>(stdoutParts, encoding),
     stderr: joinParts<E>(stderrParts, encoding),
     pushed,
-    pulled,
-    skipped,
-    sync: syncResult,
+    pulled: pulled.applied,
+    skipped: pulled.skipped,
+    sync: pulled.sync,
   };
 }
 
@@ -453,34 +464,48 @@ function joinParts<E extends ExecEncoding>(
   return out as Chunk<E>;
 }
 
-// Pipe `stream` through an identity TransformStream that fires `onDone`
-// exactly once when the stream finishes — clean end, cancel, or
-// error. Used to release a capnweb result envelope as soon as the
-// event stream it carried is drained, without having to keep the
-// envelope reference alive across wrapHandle().
+// Wrap `stream` so its capnweb envelope is released exactly once on clean
+// completion, source failure, or consumer cancellation.
 function disposeOnDone<T>(stream: ReadableStream<T>, onDone: () => void): ReadableStream<T> {
-  let fired = false;
-  const fire = () => {
-    if (fired) return;
-    fired = true;
+  const reader = stream.getReader();
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    try {
+      reader.releaseLock();
+    } catch {}
     try {
       onDone();
     } catch {
-      // ignore — disposer errors are not actionable here
+      // Disposer failures cannot be recovered at this boundary.
     }
   };
-  return stream.pipeThrough(
-    new TransformStream<T, T>({
-      transform(chunk, controller) {
-        controller.enqueue(chunk);
+  return new ReadableStream<T>(
+    {
+      async pull(controller) {
+        try {
+          const { value, done } = await reader.read();
+          if (done) {
+            finish();
+            controller.close();
+          } else {
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          finish();
+          controller.error(error);
+        }
       },
-      flush() {
-        fire();
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          finish();
+        }
       },
-      cancel() {
-        fire();
-      },
-    }),
+    },
+    { highWaterMark: 0 },
   );
 }
 

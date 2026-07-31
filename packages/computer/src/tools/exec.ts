@@ -2,7 +2,7 @@ import { type Tool, tool } from "ai";
 import { z } from "zod";
 
 export interface ExecWorkspaceLike {
-  shell: {
+  runtime: {
     exec(
       command: string,
       options: { cwd?: string; encoding: "utf8"; backend?: string },
@@ -78,7 +78,7 @@ export function createExecTool(
     execute: async ({ command, cwd, backend }) => {
       const selectedBackend = backend ?? options.defaultBackend;
       try {
-        const handle = await options.workspace.shell.exec(command, {
+        const handle = await options.workspace.runtime.exec(command, {
           cwd,
           encoding: "utf8",
           backend: selectedBackend,

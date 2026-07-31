@@ -294,14 +294,14 @@ edited file) shows up exactly once on the wire. See
 - **Concurrent mutators.** `Workspace.push()` and `Workspace.pull()`
   go through a per-Workspace tail-promise FIFO. Two concurrent
   callers queue — the second can't enter `pushOnce` / `pullOnce`
-  until the first has resolved or rejected. The shell exec bracket
-  drives `push()` / `pull()` through the same facade, so
-  `shell.exec()` calls participate in the FIFO automatically.
-  Rejections aren't contagious: a failed mutation surfaces its
-  error to its own caller without poisoning the queue for the next.
-  Pure reads on `Workspace.fs` bypass the FIFO entirely — they hit
-  the local SQLite store, which the DO runtime already serialises
-  internally through its input gates.
+  until the first has resolved or rejected. A command's pre-exec push
+  and post-stream pull each use this facade, but the FIFO is not held
+  for the command's lifetime: overlapping commands and explicit sync
+  calls are not one transaction. Rejections aren't contagious: a
+  failed mutation surfaces its error to its own caller without
+  poisoning the queue for the next. Pure reads on `Workspace.fs`
+  bypass the FIFO entirely — they hit the local SQLite store, which
+  the DO runtime already serialises internally through its input gates.
 
 ## Conflict semantics
 
@@ -322,8 +322,9 @@ the input gate wins and that is the authoritative state.
 The per-`Workspace` tail-promise FIFO adds a second layer of
 serialisation for `push()` and `pull()`: a concurrent pair of callers
 that both trigger sync operations will queue at the FIFO before either
-enters `pushOnce` / `pullOnce`. `shell.exec()` participates in the
-same FIFO automatically.
+enters `pushOnce` / `pullOnce`. The push and pull phases of
+`runtime.exec()` use that FIFO independently; the running command does
+not hold it.
 
 ### Across two containers sharing one Workspace
 
@@ -450,7 +451,7 @@ from the DO. Two options worth weighing later:
 - **Stub entries with an `ignored` flag** on `stat()`, surfaced via
   `readdir`. Easy to retrofit; surprising for tools that walk the tree
   and don't check the flag.
-- **An explicit shell-only namespace** — e.g. `workspace.shell.readdir`
+- **An explicit shell-only namespace** — e.g. `workspace.runtime.readdir`
   returns container-only entries, `workspace.fs.readdir` stays clean.
   Cleaner separation, larger API surface.
 

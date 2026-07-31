@@ -26,11 +26,12 @@ export type { BackendHandle, WorkspaceBackend } from "./backend.js";
 export { TestBackend, type TestBackendOptions } from "./backends/test.js";
 export {
   getWorkspace,
-  type ShellExecOptions,
-  type ShellGetOptions,
+  type RuntimeExecOptions,
+  type RuntimeGetOptions,
+  type RuntimeKillOptions,
   type WorkspaceClient,
   type WorkspaceHandle,
-  type WorkspaceShellClient,
+  type WorkspaceRuntimeClient,
 } from "./client.js";
 export { decodeExecEvents, encodeExecEvents } from "./exec-wire.js";
 export { R2Bucket, type R2BucketBinding, type R2BucketOptions } from "./mounts/providers/r2.js";
@@ -56,27 +57,32 @@ export {
   WorkspaceServiceProxy,
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
-export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
 export type {
-  ExecEncoding,
-  ExecHandle,
-  ExecOptions,
-  ExecResult,
-  ExecSyncResult,
-  GetExecOptions,
-  KillSignal,
-  WorkspaceExecEvent,
-} from "./shell.js";
-export { WorkspaceShell } from "./shell.js";
+  ModuleExecutionEnvelope,
+  ModuleExecutionInput,
+  WorkspaceModuleBackend,
+  WorkspaceModuleBackendHandle,
+  WorkspaceModuleBackendHost,
+  WorkspaceRegisteredBackend,
+  WorkspaceRuntimeDisposeOptions,
+  WorkspaceRuntimeEvent,
+  WorkspaceRuntimeExecHandle,
+  WorkspaceRuntimeExecOptions,
+  WorkspaceRuntimeGetOptions,
+  WorkspaceRuntimeKillOptions,
+  WorkspaceRuntimeResult,
+  WorkspaceRuntimeStatus,
+  WorkspaceRuntimeValue,
+} from "./runtime/types.js";
+export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";
+export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
+export type { ExecEncoding, ExecSyncResult, KillSignal } from "./shell.js";
 export {
   WorkspaceAssetsStub,
-  WorkspaceExecHandleStub,
-  type WorkspaceExecOptions,
-  type WorkspaceExecResult,
   WorkspaceFilesystemStub,
-  type WorkspaceGetExecOptions,
   WorkspaceGitStub,
-  WorkspaceShellStub,
+  WorkspaceRuntimeExecHandleStub,
+  WorkspaceRuntimeStub,
   WorkspaceStub,
 } from "./stub.js";
 export {

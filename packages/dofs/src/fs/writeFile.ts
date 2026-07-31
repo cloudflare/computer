@@ -28,6 +28,8 @@ export type WriteFileContent = string | Uint8Array | ReadableStream<Uint8Array>;
 
 export interface WriteFileOptions {
   mode?: number;
+  /** Fail with EEXIST when the target already exists. */
+  exclusive?: boolean;
 }
 
 export interface WriteFileRange {
@@ -146,9 +148,20 @@ async function writeFileStreaming(
   if (parts.length === 0) {
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
   }
-  // Reject before we stage any blob bytes so a read-only mount
-  // doesn't grow orphan vfs_blobs rows that gc() then has to reap.
+  // Reject before we stage any blob bytes so known failures do not grow
+  // orphan blob rows that gc() then has to reap.
   assertNotReadOnly(db, canonical);
+  if (options.exclusive) {
+    const parentInode = resolveParent(db, parts, canonical);
+    const existing = db.one(
+      "SELECT 1 FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+      parentInode,
+      parts[parts.length - 1],
+    );
+    if (existing !== undefined) {
+      throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+    }
+  }
   const mode = (options.mode ?? 0o644) & 0o7777;
   const mtime = now();
 
@@ -212,6 +225,9 @@ async function writeFileStreaming(
     );
     let inode: number;
     if (existing !== undefined) {
+      if (options.exclusive) {
+        throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+      }
       const node = db.one<{ type: "file" | "dir" }>(
         "SELECT type FROM vfs_nodes WHERE inode = ?",
         existing.child_inode,
@@ -930,6 +946,9 @@ export function writeFileSync(
 
     let inode: number;
     if (existing !== undefined) {
+      if (options.exclusive) {
+        throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+      }
       const node = db.one<{ type: "file" | "dir" }>(
         "SELECT type FROM vfs_nodes WHERE inode = ?",
         existing.child_inode,

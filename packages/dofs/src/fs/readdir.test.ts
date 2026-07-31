@@ -45,6 +45,13 @@ describe("readdir", () => {
     });
   });
 
+  it("limits committed entries before materializing the result", async () => {
+    await withDB(async (db) => {
+      for (const name of ["a", "b", "c"]) await writeFile(db, `/${name}`, "", {}, () => 0);
+      expect(readdir(db, "/", { limit: 2 }).map((entry) => entry.name)).toEqual(["a", "b"]);
+    });
+  });
+
   it("uses the canonical parent path for nested directories", async () => {
     await withDB(async (db) => {
       mkdir(db, "/a/b", { recursive: true }, () => 0);

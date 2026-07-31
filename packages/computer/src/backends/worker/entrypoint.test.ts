@@ -199,6 +199,42 @@ describe("ShellWorker", () => {
     await expect(worker.killExec({ id: "missing" })).resolves.toBeUndefined();
   });
 
+  it("enforces timeoutMs through just-bash's cooperative abort signal", async () => {
+    const worker = TestShellWorker.withFakeBash(fakeEnv(), async (_command, options) => {
+      if (options.signal?.aborted) throw options.signal.reason;
+      await new Promise<never>((_, reject) => {
+        options.signal?.addEventListener("abort", () => reject(options.signal?.reason));
+      });
+      throw new Error("unreachable");
+    });
+    const events = await drain(
+      (await worker.exec({ id: "timeout", command: "while true; do :; done", timeoutMs: 5 }))
+        .events,
+    );
+    expect(events).toMatchObject([
+      { id: "timeout", name: "stderr", value: "Execution timed out\n" },
+      { id: "timeout", name: "exit", value: 124 },
+    ]);
+  });
+
+  it("kills an in-flight explicit execution id cooperatively", async () => {
+    const worker = TestShellWorker.withFakeBash(fakeEnv(), async (_command, options) => {
+      if (options.signal?.aborted) throw options.signal.reason;
+      await new Promise<never>((_, reject) => {
+        options.signal?.addEventListener("abort", () => reject(options.signal?.reason));
+      });
+      throw new Error("unreachable");
+    });
+    const pending = worker.exec({ id: "cancel", command: "sleep 60" });
+    await Promise.resolve();
+    await worker.killExec({ id: "cancel", signal: "SIGINT" });
+    const events = await drain((await pending).events);
+    expect(events).toMatchObject([
+      { id: "cancel", name: "stderr", value: "Execution cancelled with SIGINT\n" },
+      { id: "cancel", name: "exit", value: 130 },
+    ]);
+  });
+
   it("fetch() rejects plain HTTP with a clear error", async () => {
     const worker = new TestShellWorker(undefined as never, fakeEnv() as never);
     const response = await worker.fetch(new Request("http://shell/", { method: "GET" }));

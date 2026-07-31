@@ -18,7 +18,7 @@ interface WorkspaceFileStoreTarget {
 
 interface WorkspaceCommandTarget {
   ready(backend?: string): Promise<void>;
-  shell: {
+  runtime: {
     exec(
       command: string,
       options: { backend?: string; cwd?: string; encoding: "utf8"; timeoutMs?: number },
@@ -57,7 +57,10 @@ export function createWorkspaceCommandRunner(
     async exec(command, options) {
       const backend = workspaceBackendForCommand(command);
       await workspace.ready(backend);
-      const handle = await workspace.shell.exec(command, toWorkspaceExecOptions(options, backend));
+      const handle = await workspace.runtime.exec(
+        command,
+        toWorkspaceExecOptions(options, backend),
+      );
       const { exitCode, stdout, stderr } = await handle.result();
       return { exitCode, stdout, stderr, executionTarget: workspaceExecutionTarget(backend) };
     },
@@ -100,11 +103,83 @@ const workerShellCommands = new Set([
 const containerCommands = new Set(["node", "npm", "npx", "pnpm", "tsc", "vitest", "yarn"]);
 
 function workspaceBackendForCommand(command: string): "container" | "shell" {
-  const executables = shellExecutables(command);
+  const executables = shellCommands(command).flatMap(shellExecutables);
   if (executables.length === 0) return "shell";
   return executables.every((executable) => workerShellCommands.has(executable))
     ? "shell"
     : "container";
+}
+
+function shellCommands(command: string): string[] {
+  const substitutions = commandSubstitutions(command);
+  return [command, ...substitutions.flatMap(shellCommands)];
+}
+
+function commandSubstitutions(command: string): string[] {
+  const substitutions: string[] = [];
+  let singleQuoted = false;
+  let doubleQuoted = false;
+  let escaped = false;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" && !doubleQuoted) {
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+    if (char === '"' && !singleQuoted) {
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+    if (singleQuoted) continue;
+    if (char === "`") {
+      const end = command.indexOf("`", index + 1);
+      if (end !== -1) {
+        substitutions.push(command.slice(index + 1, end));
+        index = end;
+      }
+      continue;
+    }
+    if (char === "$" && command[index + 1] === "(") {
+      let depth = 1;
+      let end = index + 2;
+      let quote: "'" | '"' | null = null;
+      let innerEscaped = false;
+      for (; end < command.length && depth > 0; end++) {
+        const inner = command[end];
+        if (innerEscaped) {
+          innerEscaped = false;
+          continue;
+        }
+        if (inner === "\\") {
+          innerEscaped = true;
+          continue;
+        }
+        if (quote) {
+          if (inner === quote) quote = null;
+          continue;
+        }
+        if (inner === "'" || inner === '"') {
+          quote = inner;
+          continue;
+        }
+        if (inner === "(") depth += 1;
+        else if (inner === ")") depth -= 1;
+      }
+      if (depth === 0) {
+        substitutions.push(command.slice(index + 2, end - 1));
+        index = end - 1;
+      }
+    }
+  }
+  return substitutions;
 }
 
 function shellExecutables(command: string): string[] {

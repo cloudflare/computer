@@ -7,7 +7,7 @@
 //                                  connect() + watermark reconcile.
 //   workspace.sync.push          — one per `Workspace.push()` call.
 //   workspace.sync.pull          — one per `Workspace.pull()` call.
-//   workspace.shell.exec         — one per `WorkspaceShell.exec()` call,
+//   workspace.runtime.exec         — one per `WorkspaceShell.exec()` call,
 //                                  covering pre-exec push, the spawn
 //                                  request, and (when `result()` is
 //                                  awaited) the post-drain pull.
@@ -17,7 +17,7 @@
 //                                  find, ls, grep, mkdir, rm).
 //
 // Spans nest the way callers would expect. An `exec()` whose `result()`
-// is awaited produces a `workspace.shell.exec` parent with
+// is awaited produces a `workspace.runtime.exec` parent with
 // `workspace.sync.push` and `workspace.sync.pull` children. The nesting
 // is whatever the active context provides — for the built-in Cloudflare
 // `ctx.tracing` adapter that is the AsyncContextFrame; for an

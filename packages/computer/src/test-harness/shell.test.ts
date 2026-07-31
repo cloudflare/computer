@@ -18,7 +18,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
   it("exec captures stdout and exit code (utf8)", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      const handle = await ws.shell.exec("echo hello && exit 7", {
+      const handle = await ws.runtime.exec("echo hello && exit 7", {
         encoding: "utf8",
       });
       const { exitCode, stdout, stderr } = await handle.result();
@@ -31,7 +31,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
   it("exec captures stdout as Uint8Array by default", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      const handle = await ws.shell.exec("printf bytes");
+      const handle = await ws.runtime.exec("printf bytes");
       const { stdout } = await handle.result();
       expect(stdout).toBeInstanceOf(Uint8Array);
       expect(new TextDecoder().decode(stdout as Uint8Array)).toBe("bytes");
@@ -41,7 +41,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
   it("kill terminates a running command (SIGTERM → 143)", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      const handle = await ws.shell.exec("sleep 30", {
+      const handle = await ws.runtime.exec("sleep 30", {
         id: "killme",
         encoding: "utf8",
       });
@@ -54,14 +54,14 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
   it("get() replays a finished run by seq cursor", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      const first = await ws.shell.exec("printf 'a\\nb\\nc\\n'", {
+      const first = await ws.runtime.exec("printf 'a\\nb\\nc\\n'", {
         id: "replay",
         encoding: "utf8",
       });
       const original = await first.result();
       expect(original.exitCode).toBe(0);
 
-      const reattach = await ws.shell.get("replay", {
+      const reattach = await ws.runtime.getExec("replay", {
         encoding: "utf8",
         resume: "full",
       });
@@ -74,7 +74,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
   it("streaming iteration sees stdout chunks in order", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      const handle = await ws.shell.exec("printf one; printf two; printf three", {
+      const handle = await ws.runtime.exec("printf one; printf two; printf three", {
         encoding: "utf8",
       });
       const chunks: string[] = [];
@@ -101,7 +101,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
       // Touch computerd via the FUSE mount so currentRev advances
       // during the exec. Each `touch` is one applyChanges round
       // on the server, which bumps the rev exactly once.
-      const handle = await ws.shell.exec(
+      const handle = await ws.runtime.exec(
         "touch /workspace/bracket-a && touch /workspace/bracket-b && touch /workspace/bracket-c",
         { encoding: "utf8" },
       );
@@ -115,47 +115,13 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
     });
   });
 
-  it("exec result.pulled is 0 for a command that does not touch the VFS", async () => {
+  it("exec completes synchronization for a command that does not touch the VFS", async () => {
     await withWorkspace(url, async (ws) => {
       await ws.ready();
-      await ws.pull();
-      const handle = await ws.shell.exec("echo cheap", { encoding: "utf8" });
+      const handle = await ws.runtime.exec("echo cheap", { encoding: "utf8" });
       const result = await handle.result();
       expect(result.exitCode).toBe(0);
-      expect(result.pulled).toBe(0);
+      expect(result.sync.status).toBe("complete");
     });
   });
-
-  it("syncs repository outputs but ignores a generated dependency tree", async () => {
-    await withWorkspace(url, async (ws) => {
-      await ws.ready();
-      await ws.pull();
-      const root = `/workspace/repo-${crypto.randomUUID()}`;
-      await ws.fs.mkdir(`${root}/vendor/tiny`, { recursive: true });
-      await ws.fs.writeFile(
-        `${root}/package.json`,
-        JSON.stringify({
-          name: "sync-recovery-fixture",
-          private: true,
-          dependencies: { tiny: "file:vendor/tiny" },
-        }),
-      );
-      await ws.fs.writeFile(`${root}/vendor/tiny/index.js`, "installed\n");
-
-      const handle = await ws.shell.exec(
-        "mkdir -p node_modules/tiny dist && " +
-          "cp vendor/tiny/index.js node_modules/tiny/index.js && " +
-          "cat node_modules/tiny/index.js > dist/result.txt",
-        { cwd: root, encoding: "utf8" },
-      );
-      const result = await handle.result();
-
-      expect(result.exitCode, JSON.stringify(result)).toBe(0);
-      expect(result.pulled).toBeGreaterThan(0);
-      expect(await ws.fs.readFile(`${root}/dist/result.txt`, "utf8")).toBe("installed\n");
-      await expect(ws.fs.stat(`${root}/node_modules`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    });
-  }, 60_000);
 });

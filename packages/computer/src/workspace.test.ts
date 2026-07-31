@@ -2,6 +2,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
 
@@ -200,7 +201,7 @@ describe("Workspace backend selection", () => {
     });
     const ws = new Workspace({ storage: makeStorage(), backends: [a, b] });
     await ws.ready();
-    const handle = await ws.shell.exec("true");
+    const handle = await ws.runtime.exec("true");
     await drainExec(handle);
     expect(aExecs).toBe(1);
     expect(bExecs).toBe(0);
@@ -217,9 +218,164 @@ describe("Workspace backend selection", () => {
     });
     const ws = new Workspace({ storage: makeStorage(), backends: [a, b] });
     await ws.ready();
-    await drainExec(await ws.shell.exec("true", { backend: "b" }));
+    await drainExec(await ws.runtime.exec("true", { backend: "b" }));
     expect(aExecs).toBe(0);
     expect(bExecs).toBe(1);
+  });
+
+  it("routes command backends through workspace.runtime.exec", async () => {
+    let calls = 0;
+    const ws = new Workspace({
+      storage: makeStorage(),
+      backends: [
+        execBackend("container-shell", () => {
+          calls += 1;
+        }),
+      ],
+    });
+    const handle = await ws.runtime.exec("true", {
+      backend: "container-shell",
+      encoding: "utf8",
+    });
+    const result = await handle.result();
+    expect(calls).toBe(1);
+    expect(result).toMatchObject({ status: "completed", exitCode: 0 });
+  });
+
+  it("flushes incomplete trailing UTF-8 from command execution", async () => {
+    const id = "utf8-command";
+    const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        return {
+          id,
+          events: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ id, seq: 1, name: "stdout", value: new Uint8Array([0xe2]) });
+              controller.enqueue({ id, seq: 2, name: "exit", value: 0 });
+              controller.close();
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: async () => undefined,
+    };
+    const backend: WorkspaceBackend = {
+      id: "command",
+      type: "fake",
+      async connect() {
+        return { rpc: { sync: fakeRpc(), shell }, sync: "none", close: async () => undefined };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const execution = await ws.runtime.exec("printf", { encoding: "utf8" });
+    await expect(execution.result()).resolves.toMatchObject({ stdout: "�", exitCode: 0 });
+  });
+
+  it("reports command executions killed through runtime as cancelled", async () => {
+    const controllers: Array<
+      ReadableStreamDefaultController<import("@cloudflare/computer-rpc").ExecEvent>
+    > = [];
+    const id = "cancel-command";
+    let exit: import("@cloudflare/computer-rpc").ExecEvent | undefined;
+    const events = () =>
+      new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
+        start(controller) {
+          if (exit) {
+            controller.enqueue(exit);
+            controller.close();
+          } else controllers.push(controller);
+        },
+      });
+    const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        return { id, events: events() };
+      },
+      async getExec() {
+        return { id, events: events() };
+      },
+      async killExec() {
+        exit = { id, seq: 1, name: "exit", value: 143 };
+        for (const controller of controllers) {
+          controller.enqueue(exit);
+          controller.close();
+        }
+        controllers.length = 0;
+      },
+      disposeExec: async () => undefined,
+    };
+    const backend: WorkspaceBackend = {
+      id: "command",
+      type: "fake",
+      async connect() {
+        return { rpc: { sync: fakeRpc(), shell }, sync: "none", close: async () => undefined };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const execution = await ws.runtime.exec("sleep 60");
+    await ws.runtime.killExec(id);
+    await expect(execution.result()).resolves.toMatchObject({
+      status: "cancelled",
+      exitCode: 143,
+    });
+    const replay = await ws.runtime.getExec(id);
+    await expect(replay.result()).resolves.toMatchObject({ status: "cancelled", exitCode: 143 });
+  });
+
+  it("memoizes module results and enforces single-consumer handles", async () => {
+    const sourceEvents = () =>
+      new ReadableStream<import("./runtime/types.js").WorkspaceRuntimeEvent>({
+        start(controller) {
+          controller.enqueue({
+            id: "module-exec",
+            seq: 1,
+            name: "stdout",
+            value: new TextEncoder().encode("hello"),
+          });
+          controller.enqueue({
+            id: "module-exec",
+            seq: 2,
+            name: "stdout",
+            value: new Uint8Array([0xe2]),
+          });
+          controller.enqueue({ id: "module-exec", seq: 3, name: "result", value: 42 });
+          controller.enqueue({ id: "module-exec", seq: 4, name: "exit", value: 0 });
+          controller.close();
+        },
+      });
+    let replayCalls = 0;
+    const backend: WorkspaceModuleBackend = {
+      protocol: "module",
+      id: "module",
+      type: "test-module",
+      async connect() {
+        return {
+          async exec() {
+            return { id: "module-exec", events: sourceEvents() };
+          },
+          getExec: async () => {
+            replayCalls += 1;
+            return { id: "module-exec", events: sourceEvents() };
+          },
+          killExec: async () => undefined,
+          disposeExec: async () => undefined,
+          close: async () => undefined,
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const execution = await ws.runtime.exec("export default 42", { encoding: "utf8" });
+    expect(execution.backend).toBe("module");
+    const resultPromise = execution.result();
+    expect(execution.result()).toBe(resultPromise);
+    await expect(execution.getReader().read()).rejects.toThrow(/consumed by result/);
+    await expect(resultPromise).resolves.toMatchObject({
+      status: "completed",
+      stdout: "hello�",
+      value: 42,
+    });
+    expect(replayCalls).toBe(0);
   });
 
   it("throws on an unknown backend id", async () => {
@@ -228,7 +384,7 @@ describe("Workspace backend selection", () => {
       backends: [execBackend("only", () => {})],
     });
     await ws.ready();
-    await expect(ws.shell.exec("true", { backend: "missing" })).rejects.toThrow(
+    await expect(ws.runtime.exec("true", { backend: "missing" })).rejects.toThrow(
       /no backend with id/,
     );
   });
@@ -304,10 +460,10 @@ describe("Workspace backend selection", () => {
     const connectSpy = vi.spyOn(execBackendVar, "connect");
     await ws2.ready();
     expect(connectSpy).not.toHaveBeenCalled();
-    await drainExec(await ws2.shell.exec("true"));
+    await drainExec(await ws2.runtime.exec("true"));
     expect(connectSpy).toHaveBeenCalledTimes(1);
     // Second exec reuses the cached handle.
-    await drainExec(await ws2.shell.exec("true"));
+    await drainExec(await ws2.runtime.exec("true"));
     expect(connectSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -330,12 +486,96 @@ describe("Workspace backend selection", () => {
     expect(spyB).toHaveBeenCalledTimes(1);
   });
 
-  it("shell accessor returns a router even before any connect", () => {
+  it("closes a module handle that resolves after Workspace.close", async () => {
+    let resolveConnect!: (handle: Awaited<ReturnType<WorkspaceModuleBackend["connect"]>>) => void;
+    const closed = vi.fn(async () => undefined);
+    const backend: WorkspaceModuleBackend = {
+      protocol: "module",
+      id: "module",
+      type: "test-module",
+      connect: () =>
+        new Promise((resolve) => {
+          resolveConnect = resolve;
+        }),
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const ready = ws.ready("module");
+    await Promise.resolve();
+    await ws.close();
+    resolveConnect({
+      exec: async () => {
+        throw new Error("not used");
+      },
+      getExec: async () => {
+        throw new Error("not used");
+      },
+      killExec: async () => undefined,
+      disposeExec: async () => undefined,
+      close: closed,
+    });
+    await expect(ready).rejects.toThrow(/closed while backend/);
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("does not let a stale module connection clear a newer in-flight connection", async () => {
+    const resolvers: Array<
+      (handle: Awaited<ReturnType<WorkspaceModuleBackend["connect"]>>) => void
+    > = [];
+    const backend: WorkspaceModuleBackend = {
+      protocol: "module",
+      id: "module",
+      type: "test-module",
+      connect: () => new Promise((resolve) => resolvers.push(resolve)),
+    };
+    const handle = () => ({
+      exec: async () => {
+        throw new Error("not used");
+      },
+      getExec: async () => {
+        throw new Error("not used");
+      },
+      killExec: async () => undefined,
+      disposeExec: async () => undefined,
+      close: async () => undefined,
+    });
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const stale = ws.ready("module");
+    await Promise.resolve();
+    await ws.close();
+    const current = ws.ready("module");
+    await Promise.resolve();
+    resolvers[0]?.(handle());
+    await expect(stale).rejects.toThrow(/closed while backend/);
+    const shared = ws.ready("module");
+    expect(resolvers).toHaveLength(2);
+    resolvers[1]?.(handle());
+    await Promise.all([current, shared]);
+    expect(resolvers).toHaveLength(2);
+  });
+
+  it("closes a command handle that resolves after Workspace.close", async () => {
+    let resolveConnect!: (handle: Awaited<ReturnType<WorkspaceBackend["connect"]>>) => void;
+    const closed = vi.fn(async () => undefined);
+    const backend: WorkspaceBackend = {
+      id: "command",
+      type: "test-command",
+      connect: () => new Promise((resolve) => (resolveConnect = resolve)),
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const ready = ws.ready("command");
+    await Promise.resolve();
+    await ws.close();
+    resolveConnect({ rpc: composite(fakeRpc()), close: closed });
+    await expect(ready).rejects.toThrow(/closed while backend/);
+    expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it("runtime accessor returns a router even before any connect", () => {
     const ws = new Workspace({
       storage: makeStorage(),
       backends: [execBackend("only", () => {})],
     });
-    expect(ws.shell).toBeDefined();
+    expect(ws.runtime).toBeDefined();
   });
 
   it("fs accessor is available immediately — no ready() needed", () => {
@@ -405,9 +645,9 @@ describe("Workspace backend selection", () => {
       expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("hi");
     });
 
-    it("throws a clear error when shell is reached", () => {
+    it("throws a clear error when runtime execution is reached", async () => {
       const ws = new Workspace({ storage: makeStorage() });
-      expect(() => ws.shell).toThrow(/no backend/);
+      await expect(ws.runtime.exec("true")).rejects.toThrow(/no execution backend/);
     });
 
     it("push and pull short-circuit to zero / empty", async () => {
@@ -419,6 +659,20 @@ describe("Workspace backend selection", () => {
       expect(pulled).toEqual({ applied: 0, skipped: [] });
     });
 
+    it("module-only push and pull are no-op synchronization", async () => {
+      const backend: WorkspaceModuleBackend = {
+        protocol: "module",
+        id: "module",
+        type: "test-module",
+        async connect() {
+          throw new Error("sync must not connect a module backend");
+        },
+      };
+      const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+      expect(await ws.push()).toBe(0);
+      expect(await ws.pull()).toEqual({ applied: 0, skipped: [] });
+    });
+
     it("stub() works and fs methods round-trip through it", async () => {
       const ws = new Workspace({ storage: makeStorage() });
       await ws.ready();
@@ -427,16 +681,11 @@ describe("Workspace backend selection", () => {
       expect(await stub.fs.readFile("/b.txt", "utf8")).toBe("hello");
     });
 
-    it("stub().shell.exec throws the same no-backend error", async () => {
+    it("stub().runtime.exec throws the same no-backend error", async () => {
       const ws = new Workspace({ storage: makeStorage() });
       await ws.ready();
       const stub = ws.stub();
-      // The stub's exec kicks off the underlying call eagerly
-      // and returns a handle whose result() awaits the pending
-      // promise. With no backend configured the inner promise
-      // rejects; await result() to surface it.
-      const handle = await stub.shell.exec("true");
-      await expect(handle.result()).rejects.toThrow(/no backend/);
+      await expect(stub.runtime.exec("true")).rejects.toThrow(/no execution backend/);
     });
 
     it("close() is a no-op with no backend configured", async () => {
@@ -932,9 +1181,9 @@ describe("Workspace transport-failure invalidation", () => {
       },
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
-    await expect(ws.shell.exec("true")).rejects.toThrow(/RPC session was shut down/);
+    await expect(ws.runtime.exec("true")).rejects.toThrow(/RPC session was shut down/);
     expect(connects).toBe(1);
-    await ws.shell.exec("true").catch(() => undefined);
+    await ws.runtime.exec("true").catch(() => undefined);
     expect(connects).toBe(2);
   });
 
@@ -976,11 +1225,11 @@ describe("Workspace transport-failure invalidation", () => {
       },
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
-    const handle = await ws.shell.exec("sleep 60");
+    const handle = await ws.runtime.exec("sleep 60");
     await expect(handle.result()).rejects.toThrow(/WebSocket closed mid-stream/);
     expect(connects).toBe(1);
     // Next exec attempt must reconnect.
-    await ws.shell.exec("true").catch(() => undefined);
+    await ws.runtime.exec("true").catch(() => undefined);
     expect(connects).toBe(2);
   });
 
@@ -1038,7 +1287,7 @@ describe("Workspace transport-failure invalidation", () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
 
     // Dispatch against connection A; its stream stays pending.
-    const handleA = await ws.shell.exec("sleep 60");
+    const handleA = await ws.runtime.exec("sleep 60");
     expect(connects).toBe(1);
     const streamA = execStreams[0];
 
@@ -1048,7 +1297,7 @@ describe("Workspace transport-failure invalidation", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     // Next exec forces a fresh connection B.
-    const handleB = await ws.shell.exec("true");
+    const handleB = await ws.runtime.exec("true");
     expect(connects).toBe(2);
     const streamB = execStreams[1];
 
@@ -1064,7 +1313,7 @@ describe("Workspace transport-failure invalidation", () => {
     // reconnect again. Without the fix, A's late rejection would
     // have invalidated B's slot and this third exec would force a
     // third connect.
-    const handleC = await ws.shell.exec("true");
+    const handleC = await ws.runtime.exec("true");
     expect(connects).toBe(2);
     const streamC = execStreams[2];
 

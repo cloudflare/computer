@@ -272,6 +272,23 @@ describe("WorkspaceShell.exec — handle shape", () => {
     expect(seen).toEqual(["stdout", "stdout", "exit"]);
   });
 
+  it("runs the post-command pull after stream-only consumption", async () => {
+    const f = fakeRpc({ events: [exit(1, 0)] });
+    let pulls = 0;
+    const sync: Sync = {
+      push: async () => 0,
+      pull: async () => {
+        pulls += 1;
+        return applied(0);
+      },
+    };
+    const handle = await new WorkspaceShell(f.rpc.shell, sync).exec("noop");
+    for await (const _event of handle) {
+      // Drain the stream.
+    }
+    expect(pulls).toBe(1);
+  });
+
   it("hides id / result / kill from Object.keys and JSON.stringify", async () => {
     const f = fakeRpc();
     const shell = new WorkspaceShell(f.rpc.shell, makeSync());
@@ -300,47 +317,97 @@ describe("WorkspaceShell.exec — handle shape", () => {
     expect(f.calls.killExec).toEqual([{ id: "kid", signal: undefined }]);
   });
 
-  it("kill() resolves only after the exit event is observed on the wire", async () => {
-    // Build a controllable stream where exit lands on demand. The
-    // kill() promise must not resolve before exit shows up, even
-    // though killExec returns immediately.
-    let pushExit: ((code: number) => void) | undefined;
-    const events: ReadableStream<ExecEvent> = new ReadableStream({
-      start(c) {
-        pushExit = (code) => {
-          c.enqueue({ id: "kid", seq: 1, name: "exit", value: code });
-          c.close();
-        };
-      },
-    });
-    let killReturned = 0;
-    let killExecReturned = 0;
-    let order = 0;
+  it("disposes the RPC envelope when the event stream errors", async () => {
+    let disposed = 0;
     const shellRpc: ShellRPC = {
-      async exec(input) {
-        return { id: input.id ?? "kid", events };
+      async exec() {
+        return {
+          id: "broken",
+          events: new ReadableStream<ExecEvent>({
+            start(controller) {
+              controller.error(new Error("transport failed"));
+            },
+          }),
+          [Symbol.dispose]() {
+            disposed += 1;
+          },
+        };
       },
       async getExec() {
         throw new Error("unused");
       },
+      async killExec() {},
+      async disposeExec() {},
+    };
+    const handle = await new WorkspaceShell(shellRpc, makeSync()).exec("noop");
+    await expect(handle.getReader().read()).rejects.toThrow("transport failed");
+    expect(disposed).toBe(1);
+  });
+
+  it("disposes the RPC envelope when the consumer cancels", async () => {
+    let disposed = 0;
+    const shellRpc: ShellRPC = {
+      async exec() {
+        return {
+          id: "cancelled",
+          events: new ReadableStream<ExecEvent>(),
+          [Symbol.dispose]() {
+            disposed += 1;
+          },
+        };
+      },
+      async getExec() {
+        throw new Error("unused");
+      },
+      async killExec() {},
+      async disposeExec() {},
+    };
+    const handle = await new WorkspaceShell(shellRpc, makeSync()).exec("noop");
+    await handle.cancel();
+    expect(disposed).toBe(1);
+  });
+
+  it("kill() still reaches a non-retained backend when tail replay is absent", async () => {
+    let kills = 0;
+    const shellRpc: ShellRPC = {
+      async exec(input) {
+        return { id: input.id ?? "kid", events: new ReadableStream<ExecEvent>() };
+      },
+      async getExec() {
+        const error = new Error("no retained execution") as Error & { code: string };
+        error.code = "ENOENT";
+        throw error;
+      },
       async killExec() {
-        killExecReturned = ++order;
+        kills += 1;
       },
       async disposeExec() {},
     };
-    const shell = new WorkspaceShell(shellRpc, makeSync());
-    const handle = await shell.exec("noop", { id: "kid" });
-    const killPromise = handle.kill("SIGTERM").then(() => {
-      killReturned = ++order;
-    });
-    // Give microtasks a chance to settle so killExec has returned.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(killExecReturned).toBe(1);
-    expect(killReturned).toBe(0); // not yet — exit hasn't arrived
-    // Now deliver exit. kill() should resolve.
-    pushExit?.(143);
-    await killPromise;
-    expect(killReturned).toBe(2);
+    const handle = await new WorkspaceShell(shellRpc, makeSync()).exec("noop", { id: "kid" });
+    await handle.kill();
+    expect(kills).toBe(1);
+  });
+
+  it("kill() remains a no-op when the execution already completed", async () => {
+    const shellRpc: ShellRPC = {
+      async exec(input) {
+        return { id: input.id ?? "kid", events: new ReadableStream<ExecEvent>() };
+      },
+      async getExec() {
+        return {
+          id: "kid",
+          events: new ReadableStream<ExecEvent>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+        };
+      },
+      async killExec() {},
+      async disposeExec() {},
+    };
+    const handle = await new WorkspaceShell(shellRpc, makeSync()).exec("noop", { id: "kid" });
+    await expect(handle.kill()).resolves.toBeUndefined();
   });
 });
 

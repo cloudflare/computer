@@ -148,6 +148,21 @@ describe("WorkerBackend", () => {
     expect(envelope.id).toBe("run-1");
   });
 
+  it("errors the stream on malformed execution frames", async () => {
+    const fetcher = fakeFetcher(() => ({
+      id: "bad",
+      events: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"id":"bad","name":"exit"}\n'));
+          controller.close();
+        },
+      }),
+    }));
+    const handle = await new WorkerBackend({ fetcher: () => fetcher }).connect();
+    const envelope = await handle.rpc.shell.exec({ command: "bad" });
+    await expect(envelope.events.getReader().read()).rejects.toMatchObject({ code: "EPROTOCOL" });
+  });
+
   it("forwards cwd and id options to the fetcher", async () => {
     let observed: { command: string; cwd?: string; id?: string } | undefined;
     const fetcher = fakeFetcher((input) => {
@@ -185,7 +200,7 @@ describe("WorkerBackend", () => {
       backends: [new WorkerBackend({ fetcher: () => fetcher })],
     });
     await ws.ready();
-    const handle = await ws.shell.exec("echo world", { encoding: "utf8" });
+    const handle = await ws.runtime.exec("echo world", { encoding: "utf8" });
     const result = await handle.result();
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("world\n");
@@ -228,6 +243,62 @@ describe("WorkerBackend", () => {
 
     expect(observedDate).toBe("2026-06-17");
     expect(observedFlags).toEqual(["nodejs_compat"]);
+  });
+
+  it("disposes Loader entrypoint and worker handles exactly once", async () => {
+    let entrypointDisposals = 0;
+    let workerDisposals = 0;
+    const entrypoint = {
+      ...fakeFetcher(() => ({
+        id: "x",
+        events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+      })),
+      [Symbol.dispose]() {
+        entrypointDisposals += 1;
+      },
+    };
+    const loader = {
+      get() {
+        return {
+          getEntrypoint: () => entrypoint,
+          [Symbol.dispose]() {
+            workerDisposals += 1;
+          },
+        };
+      },
+    };
+    const backend = new WorkerBackend({
+      loader,
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx: { exports: { WorkspaceServiceProxy: () => ({}) } },
+    });
+    const handle = await backend.connect();
+    await handle.close();
+    await handle.close();
+    expect(entrypointDisposals).toBe(1);
+    expect(workerDisposals).toBe(1);
+  });
+
+  it("disposes the Loader worker when entrypoint creation fails", async () => {
+    let workerDisposals = 0;
+    const backend = new WorkerBackend({
+      loader: {
+        get() {
+          return {
+            getEntrypoint() {
+              throw new Error("entrypoint failed");
+            },
+            [Symbol.dispose]() {
+              workerDisposals += 1;
+            },
+          };
+        },
+      },
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx: { exports: { WorkspaceServiceProxy: () => ({}) } },
+    });
+    await expect(backend.connect()).rejects.toThrow("entrypoint failed");
+    expect(workerDisposals).toBe(1);
   });
 
   it("resolves an async fetcher factory once per connect()", async () => {

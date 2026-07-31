@@ -2,28 +2,21 @@
 
 Cloudflare Computer is a virtual filesystem that lives inside a
 Durable Object. The Durable Object holds the authoritative state in
-SQLite and exposes the filesystem to a shell through a pluggable
-backend. Two backends ship today:
+SQLite and exposes one pluggable execution surface through
+`workspace.runtime`. Two backends ship today:
 
 - **Container** projects the SQLite state into a sandbox container as
   a real FUSE mount. A sandbox-side daemon (`computerd`) mounts the state
   as a filesystem and syncs changes back over a capnweb RPC channel.
   Full Linux userland, real binaries, real network.
-- **Worker** runs the shell as [just-bash](https://github.com/vercel-labs/just-bash)
-  inside a Dynamic Worker loaded through `env.LOADER`. The shell
-  reaches the host workspace over Workers RPC, so there is no second
-  store and no sync round trip. Broad textual tooling (`cat`,
-  `grep`, `awk`, `sed`, `jq`, ...), no container lifecycle.
-
-A single Workspace can host more than one backend at the same
-time. Each backend registers under a stable `id`; `shell.exec`
-defaults to the first one in the list and the caller routes a
-specific call elsewhere with `{ backend: "sandbox" }`. Common
-shape: a Worker backend for cheap textual tooling that runs every
-command cold, plus a Container backend the agent reaches for when
-it needs a real Linux environment for `npm`, `git`, or anything
-else the worker isolate can't host. Each backend keeps its own
-sync cursors and connects lazily on first use.
+- **Isolate shell** runs [just-bash](https://github.com/vercel-labs/just-bash)
+  in a Dynamic Worker. It reaches the authoritative Workspace over
+  Workers RPC, so there is no second store or sync round trip.
+A Workspace may register multiple backends under stable IDs.
+`workspace.runtime.exec(source, { backend })` is the single execution
+entry point; the selected backend defines how to interpret `source`.
+The shipped backends treat it as a shell command. Backends connect lazily on
+first use.
 
 Workspace can also be constructed without a backend at all, giving
 callers the filesystem on its own.

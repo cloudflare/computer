@@ -36,7 +36,7 @@ async function runSoak(
     const ws = await stub.getWorkspace();
     await ws.fs.writeFile(`/soak-${i}.txt`, `hello ${i}`);
     await ws.fs.readFile(`/soak-${i}.txt`, "utf8");
-    const handle = await ws.shell.exec("noop");
+    const handle = await ws.runtime.exec("noop");
     await handle.result();
     if (opts.disposeExecHandles) {
       (handle as unknown as Disposable)[Symbol.dispose]?.();
@@ -74,7 +74,7 @@ describe("WorkspaceStub disposal soak (DO ↔ Worker)", () => {
     // The expected contract: when the caller disposes every
     // returned stub, the DO-side counters return to baseline.
     // Disposing WorkspaceStub cascades to its #fs / #shell
-    // children; disposing WorkspaceExecHandleStub releases the
+    // children; disposing WorkspaceRuntimeExecHandleStub releases the
     // exec handle. Anything non-zero here is a leak.
     const result = await runSoak(20, { disposeStubs: true, disposeExecHandles: true });
     const growth = diff(result.baseline, result.afterClose);
@@ -95,8 +95,8 @@ describe("WorkspaceStub disposal soak (DO ↔ Worker)", () => {
     expect(growth, JSON.stringify(result, null, 2)).toMatchObject({
       WorkspaceStub: 10,
       WorkspaceFilesystemStub: 10,
-      WorkspaceShellStub: 10,
-      WorkspaceExecHandleStub: 10,
+      WorkspaceRuntimeStub: 10,
+      WorkspaceRuntimeExecHandleStub: 10,
     });
   });
 

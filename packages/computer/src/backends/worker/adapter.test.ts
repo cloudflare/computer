@@ -10,12 +10,12 @@
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { Bash } from "just-bash";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import { WorkspaceFilesystemStub } from "../../stub.js";
 import { Workspace } from "../../workspace.js";
-import { WorkspaceFsAdapter } from "./adapter.js";
+import { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter.js";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromUtf8 = (b: Uint8Array): string => new TextDecoder("utf-8").decode(b);
@@ -92,6 +92,18 @@ describe("WorkspaceFsAdapter — reads", () => {
     await workspace.fs.writeFile("/here", "x");
     expect(await adapter.exists("/here")).toBe(true);
     expect(await adapter.exists("/missing")).toBe(false);
+  });
+
+  it("keeps expected PATH misses on the host side", async () => {
+    const exists = vi.fn(async () => false);
+    const stat = vi.fn(async () => {
+      throw Object.assign(new Error("should not cross RPC"), { code: "ENOENT" });
+    });
+    const pathAdapter = new WorkspaceFsAdapter({ exists, stat } as unknown as WorkspaceFs);
+
+    await expect(pathAdapter.exists("/usr/bin/cat")).resolves.toBe(false);
+    expect(exists).toHaveBeenCalledWith("/usr/bin/cat");
+    expect(stat).not.toHaveBeenCalled();
   });
 
   it("readdir returns immediate child names", async () => {

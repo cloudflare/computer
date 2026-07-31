@@ -11,7 +11,7 @@
 //     only backend is a WorkerBackend dialing through env.LOADER.
 //     Exposes writeFile / readFile / exec methods the test calls
 //     directly through the DO stub; the exec method goes through
-//     workspace.shell.exec which actually drives just-bash in a
+//     workspace.runtime.exec which actually drives just-bash in a
 //     real Dynamic Worker.
 //   - default — a tiny WorkerEntrypoint that routes incoming
 //     fetches into the DO. Lets the test drive the harness with
@@ -19,7 +19,8 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { WorkerBackend } from "../src/backends/worker/index.js";
-import { type DurableObjectStorageLike, getWorkspace, withWorkspace } from "../src/index.js";
+import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
+import { Workspace } from "../src/index.js";
 
 export { WorkspaceServiceProxy } from "../src/proxy.js";
 
@@ -28,20 +29,23 @@ export interface Env {
   LOADER: WorkerLoader;
 }
 
-export class HostDO extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
-  const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
-  return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
-    backends: [
-      new WorkerBackend({
-        loader: env.LOADER,
-        workspace: { binding: "HOST", id: ctx.id.toString() },
-        ctx,
-      }),
-    ],
-  };
-}) {
+export class HostDO extends DurableObject<Env> {
+  readonly #workspace: Workspace;
   #seeded: Promise<void> | undefined;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.#workspace = new Workspace({
+      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      backends: [
+        new WorkerBackend({
+          loader: env.LOADER,
+          workspace: { binding: "HOST", id: ctx.id.toString() },
+          ctx,
+        }),
+      ],
+    });
+  }
 
   // The VFS is empty on a fresh DO — not even /workspace exists.
   // The computerd-container example seeds the mount root through computerd's
@@ -50,29 +54,32 @@ export class HostDO extends withWorkspace(class extends DurableObject<Env> {}, (
   // /workspace directly.
   #seed(): Promise<void> {
     if (this.#seeded === undefined) {
-      this.#seeded = (async () => {
-        using ws = await getWorkspace(this);
-        await ws.fs.mkdir("/workspace", { recursive: true });
-      })();
+      this.#seeded = this.#workspace.fs.mkdir("/workspace", { recursive: true });
     }
     return this.#seeded;
   }
 
+  // Required by WorkspaceServiceProxy: the loopback proxy looks
+  // the host DO up by name and calls __getWorkspaceStub() to obtain the
+  // stub it returns to the Dynamic Worker. The shell's per-exec
+  // env.HOST.getWorkspace() proxy call lands here.
+  async __getWorkspaceStub(): Promise<WorkspaceStub> {
+    await this.#workspace.ready();
+    return this.#workspace.stub();
+  }
+
   async writeFile(path: string, body: string): Promise<void> {
     await this.#seed();
-    using ws = await getWorkspace(this);
-    await ws.fs.writeFile(path, body);
+    await this.#workspace.fs.writeFile(path, body);
   }
 
   async readFile(path: string): Promise<string> {
-    using ws = await getWorkspace(this);
-    return ws.fs.readFile(path, "utf8");
+    return this.#workspace.fs.readFile(path, "utf8");
   }
 
   async exec(command: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     await this.#seed();
-    using ws = await getWorkspace(this);
-    const handle = await ws.shell.exec(command, {
+    const handle = await this.#workspace.runtime.exec(command, {
       encoding: "utf8",
     });
     const result = await handle.result();

@@ -35,6 +35,7 @@ export interface WorkspaceFs {
   readFile(path: string): Promise<ReadableStream<Uint8Array>>;
   readFile(path: string, encoding: "utf8"): Promise<string>;
   readFile(path: string, options: ReadFileOptions): Promise<string | ReadableStream<Uint8Array>>;
+  exists(path: string): Promise<boolean>;
   stat(path: string): Promise<WorkspaceStatResult>;
   lstat(path: string): Promise<WorkspaceStatResult>;
   readdir(path: string): Promise<WorkspaceDirentResult[]>;
@@ -95,24 +96,23 @@ export class WorkspaceFsAdapter {
 
   async exists(path: string): Promise<boolean> {
     if (isVirtualDevPath(path)) return true;
-    try {
-      await this.#fs.stat(path);
-      return true;
-    } catch (err) {
-      if ((err as { code?: string }).code === "ENOENT") return false;
-      throw err;
-    }
+    // Resolve expected misses on the host side. Throwing ENOENT across Workers
+    // RPC makes workerd report an uncaught exception even when just-bash is
+    // deliberately probing PATH and catches the rejection.
+    return this.#fs.exists(path);
   }
 
   async stat(path: string): Promise<FsStat> {
     const virtual = virtualDevStat(path);
     if (virtual !== undefined) return virtual;
+    if (!(await this.#fs.exists(path))) throw missingPath(path);
     return mapStat(await this.#fs.stat(path));
   }
 
   async lstat(path: string): Promise<FsStat> {
     const virtual = virtualDevStat(path);
     if (virtual !== undefined) return virtual;
+    if (!(await this.#fs.exists(path))) throw missingPath(path);
     return mapStat(await this.#fs.lstat(path));
   }
 
@@ -254,6 +254,16 @@ export class WorkspaceFsAdapter {
     await this.#fs.stat(path);
     return normalizePath(path);
   }
+}
+
+function missingPath(path: string): Error & { code: string; path: string } {
+  const error = new Error(`ENOENT: no such file or directory, stat '${path}'`) as Error & {
+    code: string;
+    path: string;
+  };
+  error.code = "ENOENT";
+  error.path = path;
+  return error;
 }
 
 function mapStat(s: WorkspaceStatResult): FsStat {

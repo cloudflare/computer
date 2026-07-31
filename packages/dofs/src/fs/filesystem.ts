@@ -19,7 +19,7 @@ import { find, type WorkspaceFoundEntry } from "./find.js";
 import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep.js";
 import { ls } from "./ls.js";
 import { type MkdirOptions, mkdir } from "./mkdir.js";
-import { readdir, type WorkspaceDirentResult } from "./readdir.js";
+import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir.js";
 import { type ReadFileOptions, readFile } from "./readFile.js";
 import { readlink } from "./readlink.js";
 import { type RmOptions, rm } from "./rm.js";
@@ -78,8 +78,8 @@ export class WorkspaceFilesystem {
     return readlink(this.db, path);
   }
 
-  async readdir(path: string): Promise<WorkspaceDirentResult[]> {
-    return readdir(this.db, path);
+  async readdir(path: string, options: ReaddirOptions = {}): Promise<WorkspaceDirentResult[]> {
+    return readdir(this.db, path, options);
   }
 
   async find(directory: string, pattern?: string): Promise<WorkspaceFoundEntry[]> {

@@ -56,6 +56,7 @@ interface WorkerLoaderLike {
     getCode: () => WorkerLoaderCode | Promise<WorkerLoaderCode>,
   ): {
     getEntrypoint(name?: string): unknown;
+    [Symbol.dispose]?: () => void;
   };
 }
 
@@ -123,7 +124,7 @@ export interface WorkerBackendOptions {
   fetcher?: () => unknown | Promise<unknown>;
 
   // Selector this backend is registered under in Workspace.
-  // Defaults to "worker"; override when the workspace hosts
+  // Defaults to "isolate-shell"; override when the workspace hosts
   // more than one instance of the same backend kind (e.g. two
   // workers on different loaders or with different shell
   // configurations).
@@ -139,7 +140,7 @@ export class WorkerBackend implements WorkspaceBackend {
   readonly #options: WorkerBackendOptions;
 
   constructor(options: WorkerBackendOptions) {
-    this.id = options.id ?? "worker";
+    this.id = options.id ?? "isolate-shell";
     if (options.fetcher === undefined) {
       if (
         options.loader === undefined ||
@@ -157,7 +158,8 @@ export class WorkerBackend implements WorkspaceBackend {
   }
 
   async connect(): Promise<BackendHandle> {
-    const fetcher = (await this.#resolveFetcher()) as WorkerShellFetcher;
+    const resolved = await this.#resolveFetcher();
+    const fetcher = resolved.fetcher as WorkerShellFetcher;
 
     const shell: ShellRPC = {
       async exec(input) {
@@ -190,15 +192,14 @@ export class WorkerBackend implements WorkspaceBackend {
       rpc,
       sync: "none",
       close: async () => {
-        // Nothing to tear down. The Fetcher is a value; dropping
-        // the reference is enough.
+        resolved.dispose();
       },
     };
   }
 
-  async #resolveFetcher(): Promise<unknown> {
+  async #resolveFetcher(): Promise<{ fetcher: unknown; dispose: () => void }> {
     if (this.#options.fetcher !== undefined) {
-      return this.#options.fetcher();
+      return { fetcher: await this.#options.fetcher(), dispose: () => {} };
     }
     // Convenience path: the backend builds the Loader callback
     // itself. The constructor checks the required options are
@@ -212,7 +213,7 @@ export class WorkerBackend implements WorkspaceBackend {
       ? [...DEFAULT_COMPAT_FLAGS, ...this.#options.compatibilityFlags]
       : DEFAULT_COMPAT_FLAGS;
 
-    const stub = loader.get(loaderId, () => ({
+    const worker = loader.get(loaderId, () => ({
       compatibilityDate,
       compatibilityFlags,
       mainModule: "shell.js",
@@ -231,7 +232,23 @@ export class WorkerBackend implements WorkspaceBackend {
       // on its own. Filesystem RPCs go through env.HOST.
       globalOutbound: null,
     }));
-    return stub.getEntrypoint("ShellWorker");
+    let entrypoint: unknown;
+    try {
+      entrypoint = worker.getEntrypoint("ShellWorker");
+    } catch (error) {
+      disposeQuietly(worker);
+      throw error;
+    }
+    let disposed = false;
+    return {
+      fetcher: entrypoint,
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        disposeQuietly(entrypoint as { [Symbol.dispose]?: () => void });
+        disposeQuietly(worker);
+      },
+    };
   }
 }
 
@@ -251,11 +268,10 @@ function decodeFramedEvents(source: ReadableStream<Uint8Array>): ReadableStream<
           buffer = buffer.slice(nl + 1);
           if (line.length > 0) {
             try {
-              controller.enqueue(reshape(JSON.parse(line)));
-            } catch {
-              // Drop malformed frames; the wire is strict NDJSON
-              // so a broken frame here is a bug on the shell
-              // side, not a recoverable condition.
+              controller.enqueue(parseFrame(line));
+            } catch (error) {
+              controller.error(error);
+              return;
             }
           }
           nl = buffer.indexOf("\n");
@@ -265,15 +281,43 @@ function decodeFramedEvents(source: ReadableStream<Uint8Array>): ReadableStream<
         const tail = buffer + decoder.decode();
         for (const line of tail.split("\n")) {
           if (line.length === 0) continue;
-          try {
-            controller.enqueue(reshape(JSON.parse(line)));
-          } catch {
-            // see transform()
-          }
+          controller.enqueue(parseFrame(line));
         }
       },
     }),
   );
+}
+
+function parseFrame(line: string): ExecEvent {
+  let event: Record<string, unknown>;
+  try {
+    event = JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    throw protocolError("WorkerBackend received invalid execution JSON");
+  }
+  if (
+    typeof event.id !== "string" ||
+    !Number.isSafeInteger(event.seq) ||
+    (event.name !== "stdout" && event.name !== "stderr" && event.name !== "exit") ||
+    ((event.name === "stdout" || event.name === "stderr") && typeof event.value !== "string") ||
+    (event.name === "exit" && !Number.isSafeInteger(event.value))
+  ) {
+    throw protocolError("WorkerBackend received a malformed execution frame");
+  }
+  return reshape(
+    event as {
+      id: string;
+      seq: number;
+      name: "stdout" | "stderr" | "exit";
+      value: string | number;
+    },
+  );
+}
+
+function protocolError(message: string) {
+  const error = new Error(message) as Error & { code: string };
+  error.code = "EPROTOCOL";
+  return error;
 }
 
 function reshape(event: {
@@ -295,6 +339,12 @@ function reshape(event: {
     };
   }
   return { id: event.id, seq: event.seq, name: "exit", value: event.value as number };
+}
+
+function disposeQuietly(value: { [Symbol.dispose]?: () => void }) {
+  try {
+    value[Symbol.dispose]?.();
+  } catch {}
 }
 
 function noopSync(): SyncRPC {

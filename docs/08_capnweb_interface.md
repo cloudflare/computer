@@ -198,7 +198,7 @@ type ExecEvent =
   | { id: string; seq: number; name: "exit";   value: number };
 ```
 
-All payloads on the wire are binary. The host-side `Workspace.shell`
+All payloads on the wire are binary. The host-side `Workspace.runtime`
 converts to `string` when the caller passes `encoding: "utf8"`. Every
 event carries a monotonic `seq` (per exec id) so callers can resume
 from a known point after a disconnect.
@@ -264,7 +264,7 @@ backpressure rather than the originally-planned in-memory ring.
 **(planned)** the host-side exec handle will grow `pause()` /
 `resume()` for callers that want to throttle without
 relying on stream-pull semantics. See
-[05. Shell Interface](./05_shell_interface.md).
+[05. Shell Interface](./05_runtime_interface.md).
 
 ## Stream replay and durability
 

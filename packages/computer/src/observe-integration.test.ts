@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { makeRecorder, type RecordedSpan } from "./observe-recorder.js";
-import { WorkspaceFilesystemStub, WorkspaceShellStub } from "./stub.js";
+import { WorkspaceFilesystemStub, WorkspaceRuntimeStub } from "./stub.js";
 import { Workspace } from "./workspace.js";
 
 function makeStorage(): SQLiteTestStorage {
@@ -232,8 +232,8 @@ describe("Workspace observer — filesystem stub", () => {
   });
 });
 
-describe("Workspace observer — shell stub", () => {
-  it("wraps the exec bracket in a workspace.shell.exec span with the sync nested underneath", async () => {
+describe("Workspace observer — runtime stub", () => {
+  it("records command execution through workspace.runtime", async () => {
     const observer = makeRecorder();
 
     // The stub kicks off exec on construction, so the shell RPC has to
@@ -277,189 +277,18 @@ describe("Workspace observer — shell stub", () => {
       observer,
     });
     await ws.ready();
-    const shellStub = new WorkspaceShellStub(ws);
+    const runtimeStub = new WorkspaceRuntimeStub(ws);
 
-    using handle = await shellStub.exec("echo hi");
+    using handle = await runtimeStub.exec("echo hi");
     const result = await handle.result();
     expect(result.exitCode).toBe(0);
     expect(execed).toEqual(["echo hi"]);
 
-    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
-    expect(execSpan.outcome).toBe("ok");
-    expect(execSpan.attributes["workspace.shell.exit_code"]).toBe(0);
-    expect(execSpan.attributes["workspace.shell.pushed"]).toBe(0);
-    expect(execSpan.attributes["workspace.shell.pulled"]).toBe(0);
-    expect(execSpan.attributes["workspace.shell.skipped"]).toBe(0);
-    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("complete");
-    expect(execSpan.attributes["workspace.shell.sync.error"]).toBeUndefined();
-
-    // Nesting: the bracket runs push → spawn → pull inside the exec
-    // span's callback, so all three appear as children on the recorder.
-    const childNames = execSpan.children.map((c) => c.name);
-    expect(childNames).toContain("workspace.sync.push");
-    expect(childNames).toContain("workspace.shell.exec.spawn");
-    expect(childNames).toContain("workspace.sync.pull");
-  });
-
-  it("closes the exec span when the caller only kills the command", async () => {
-    // kill() is a terminal path for callers that never read the
-    // output: the signal goes out, the child exits, and nothing else
-    // touches the handle. The span has to close on that path, and the
-    // handle stays consumable so a caller can still collect the
-    // output of the killed run.
-    const observer = makeRecorder();
-    let events!: ReadableStreamDefaultController<import("@cloudflare/computer-rpc").ExecEvent>;
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec() {
-        return {
-          id: "exec-killed",
-          events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
-            start(c) {
-              events = c;
-            },
-          }),
-        };
-      },
-      async getExec() {
-        throw new Error("not used");
-      },
-      async killExec() {
-        events.enqueue({ id: "exec-killed", seq: 0, name: "exit", value: 137 });
-        events.close();
-      },
-      async disposeExec() {},
-    };
-    const ws = new Workspace({
-      storage: makeStorage(),
-      backends: [
-        {
-          id: "shelled",
-          async connect() {
-            return { rpc: { sync: fakeSync(), shell: shellRpc }, close: async () => {} };
-          },
-        },
-      ],
-      observer,
-    });
-    await ws.ready();
-    using handle = await new WorkspaceShellStub(ws).exec("sleep 100");
-    await handle.kill("SIGKILL");
-
-    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
-    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("complete");
-    expect(execSpan.attributes["workspace.shell.exit_code"]).toBe(-1);
-
-    // The signal doesn't claim the handle: the output of the killed
-    // run is still there for the asking.
-    await expect(handle.result()).resolves.toMatchObject({ exitCode: 137 });
-  });
-
-  it("leaves the span to a stream() the kill interrupts", async () => {
-    // Killing a command someone is streaming is not a terminal path
-    // for the span: the reader sees the exit event the signal
-    // produced, so it reports the real exit code and kill() keeps out
-    // of the way.
-    const observer = makeRecorder();
-    let events!: ReadableStreamDefaultController<import("@cloudflare/computer-rpc").ExecEvent>;
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec() {
-        return {
-          id: "exec-streamed",
-          events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
-            start(c) {
-              events = c;
-            },
-          }),
-        };
-      },
-      async getExec() {
-        throw new Error("not used");
-      },
-      async killExec() {
-        events.enqueue({ id: "exec-streamed", seq: 0, name: "exit", value: 137 });
-        events.close();
-      },
-      async disposeExec() {},
-    };
-    const ws = new Workspace({
-      storage: makeStorage(),
-      backends: [
-        {
-          id: "shelled",
-          async connect() {
-            return { rpc: { sync: fakeSync(), shell: shellRpc }, close: async () => {} };
-          },
-        },
-      ],
-      observer,
-    });
-    await ws.ready();
-    using handle = await new WorkspaceShellStub(ws).exec("sleep 100");
-    const reader = handle.stream().getReader();
-    const first = reader.read();
-
-    await handle.kill("SIGKILL");
-    await first;
-    while (!(await reader.read()).done) {
-      // drain to close
-    }
-    reader.releaseLock();
-    // The span closes once the reader reports the stream done; unlike
-    // result(), nothing hands the caller a promise to await for it.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
-    expect(execSpan.attributes["workspace.shell.exit_code"]).toBe(137);
-  });
-
-  it("reports pending sync on the exec span without exposing secrets", async () => {
-    const observer = makeRecorder();
-    const secret = "observer-secret";
-    const sync = fakeSync();
-    sync.fetchChanges = async () => {
-      throw new Error(`WebSocket closed token=${secret}`);
-    };
-    const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
-      async exec() {
-        return {
-          id: "exec-pending",
-          events: new ReadableStream({
-            start(c) {
-              c.enqueue({ id: "exec-pending", seq: 0, name: "exit", value: 0 });
-              c.close();
-            },
-          }),
-        };
-      },
-      async getExec() {
-        throw new Error("not used");
-      },
-      async killExec() {},
-      async disposeExec() {},
-    };
-    const ws = new Workspace({
-      storage: makeStorage(),
-      backends: [
-        {
-          id: "shelled",
-          async connect() {
-            return { rpc: { sync, shell: shellRpc }, close: async () => {} };
-          },
-        },
-      ],
-      observer,
-    });
-    await ws.ready();
-    using handle = await new WorkspaceShellStub(ws).exec("noop");
-    const result = await handle.result();
-    expect(result.sync.status).toBe("pending");
-
-    const execSpan = findSpan(observer.spans, "workspace.shell.exec");
-    expect(execSpan.attributes["workspace.shell.sync.status"]).toBe("pending");
-    expect(execSpan.attributes["workspace.shell.sync.error"]).toBe(
-      "WebSocket closed token=[REDACTED]",
-    );
-    expect(JSON.stringify(execSpan.attributes)).not.toContain(secret);
+    const spawnSpan = findSpan(observer.spans, "workspace.runtime.exec.spawn");
+    expect(spawnSpan.outcome).toBe("ok");
+    expect(spawnSpan.attributes["workspace.runtime.id"]).toBe("exec-1");
+    expect(findSpan(observer.spans, "workspace.sync.push").outcome).toBe("ok");
+    expect(findSpan(observer.spans, "workspace.sync.pull").outcome).toBe("ok");
   });
 });
 

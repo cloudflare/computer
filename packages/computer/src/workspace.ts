@@ -6,8 +6,8 @@
 // store directly via the WorkspaceFilesystem class from
 // @cloudflare/dofs; sync between the host store and computerd
 // is driven explicitly via Workspace.push() / Workspace.pull().
-// The shell-side pre-exec push / post-exec pull bracket lives
-// on Workspace.shell.exec.
+// Command-backend pre-exec push / post-exec pull brackets are
+// routed through Workspace.runtime.exec.
 
 import { pullOnce, pushOnce, reconcileWatermarks } from "@cloudflare/computer-rpc/driver";
 import {
@@ -32,6 +32,13 @@ import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
+import { WorkspaceRuntime } from "./runtime/runtime.js";
+import {
+  isModuleBackend,
+  type WorkspaceModuleBackend,
+  type WorkspaceModuleBackendHandle,
+  type WorkspaceRegisteredBackend,
+} from "./runtime/types.js";
 import { WorkspaceShell } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
 import { isWorkspaceTransportFailure } from "./transport-failure.js";
@@ -77,16 +84,19 @@ export interface WorkspaceOptions {
   // Database against it and runs initializeSchema (idempotent).
   storage: DurableObjectStorageLike;
 
-  // Backends are tried in declared order. The first one whose
-  // connect() resolves wins; the rest are not consulted. Optional:
-  // omit to construct a filesystem-only Workspace where the
-  // SQLite-backed fs surface is fully usable but the shell half
-  // throws a clear error on access.
-  backends?: WorkspaceBackend[];
+  // Registered execution backends. The first is the default;
+  // callers can select another by stable id.
+  // Omit to construct a filesystem-only Workspace whose runtime
+  // reports that no execution backend is configured.
+  backends?: WorkspaceRegisteredBackend[];
 
   // Clock used for mtime / last_seen on local FS writes. Defaults
   // to Date.now. Override for deterministic tests.
   now?: () => number;
+
+  // Attach detached module execution to the Durable Object event lifetime.
+  // Pass `ctx.waitUntil.bind(ctx)` when using module backends in production.
+  waitUntil?: (promise: Promise<unknown>) => void;
 
   // Identifier for this workspace / session. Forwarded to mount
   // factories via MountContext.sessionId. Optional; defaults to "".
@@ -101,7 +111,7 @@ export interface WorkspaceOptions {
   // Observer that receives one span per workspace operation: a
   // `workspace.connect` per backend connect attempt,
   // `workspace.sync.push` / `workspace.sync.pull` per sync call,
-  // `workspace.shell.exec` per exec, and `workspace.fs.<op>` per
+  // command runtime spans per exec, and `workspace.fs.<op>` per
   // filesystem call routed through the stub. The default is a
   // no-op so the package has no observability cost when callers
   // do not opt in. See `./observe.ts` for the contract and the
@@ -180,9 +190,13 @@ export class Workspace {
   #provider: SQLiteWorkspaceProvider | undefined;
   readonly #backends: WorkspaceBackend[];
   readonly #backendsById: Map<string, WorkspaceBackend>;
+  readonly #moduleBackendsById: Map<string, WorkspaceModuleBackend>;
+  readonly #registeredBackendIds: Set<string>;
   readonly #defaultBackendId: string | undefined;
+  readonly #defaultCommandBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
+  readonly #waitUntil: ((promise: Promise<unknown>) => void) | undefined;
   readonly #retryScheduler: SyncRetryScheduler | undefined;
   readonly #retryInitialDelayMs: number;
   readonly #retryMaxDelayMs: number;
@@ -207,6 +221,10 @@ export class Workspace {
   // Per-backend WorkspaceShell facades. Constructed alongside each
   // handle; reused for the life of the handle.
   readonly #shells = new Map<string, WorkspaceShell>();
+  readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
+  readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
+  #connectionGeneration = 0;
+  #runtime: WorkspaceRuntime | undefined;
   #readyPromise: Promise<void> | undefined;
   // Per-backend FIFOs that serialize mutating entry points (push,
   // pull, and the shell exec bracket which goes through them) for
@@ -228,6 +246,7 @@ export class Workspace {
 
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
+    this.#waitUntil = options.waitUntil;
     this.#retryScheduler = options.retryScheduler;
     this.#retryInitialDelayMs = positiveRetryOption(
       options.retry?.initialDelayMs,
@@ -256,24 +275,34 @@ export class Workspace {
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
     this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
-    this.#backends = (options.backends ?? []).slice();
-    // Reject duplicate backend ids at construction. The Workspace
-    // selects backends by id at exec / push / pull time; two
-    // backends sharing a string would make the selector
-    // non-deterministic in a way that's almost certainly a
-    // configuration bug.
-    this.#backendsById = new Map();
-    for (const backend of this.#backends) {
-      if (this.#backendsById.has(backend.id)) {
+    const registered = (options.backends ?? []).slice();
+    if (registered.some((backend) => isModuleBackend(backend) && backend.requiresWaitUntil)) {
+      if (!options.waitUntil) {
+        throw new Error(
+          "Workspace module backend requires waitUntil; pass ctx.waitUntil.bind(ctx).",
+        );
+      }
+    }
+    this.#backends = registered.filter(
+      (backend): backend is WorkspaceBackend => !isModuleBackend(backend),
+    );
+    this.#backendsById = new Map(this.#backends.map((backend) => [backend.id, backend]));
+    this.#moduleBackendsById = new Map(
+      registered.filter(isModuleBackend).map((backend) => [backend.id, backend]),
+    );
+    this.#registeredBackendIds = new Set();
+    for (const backend of registered) {
+      if (this.#registeredBackendIds.has(backend.id)) {
         throw new Error(
           `Workspace: duplicate backend id ${JSON.stringify(backend.id)}. ` +
             "Pass an explicit `id` on each backend's constructor options to " +
             "distinguish them.",
         );
       }
-      this.#backendsById.set(backend.id, backend);
+      this.#registeredBackendIds.add(backend.id);
     }
-    this.#defaultBackendId = this.#backends[0]?.id;
+    this.#defaultBackendId = registered[0]?.id;
+    this.#defaultCommandBackendId = this.#backends[0]?.id;
     this.#observer = options.observer ?? noopObserver;
     this.#mounts = buildMountRegistry(options.mounts, {
       sessionId: options.sessionId,
@@ -375,6 +404,18 @@ export class Workspace {
     return this.#artifacts;
   }
 
+  get runtime(): WorkspaceRuntime {
+    if (!this.#runtime) {
+      this.#runtime = new WorkspaceRuntime({
+        commandBackendIds: new Set(this.#backendsById.keys()),
+        shell: () => this.#routedShell(),
+        moduleHandle: (id) => this.#moduleHandleFor(id),
+        resolveBackendId: (id) => this.#resolveBackendId(id) ?? "",
+      });
+    }
+    return this.#runtime;
+  }
+
   /**
    * Underlying dofs `SQLiteWorkspaceProvider` over the local store.
    *
@@ -409,23 +450,6 @@ export class Workspace {
     return this.#provider;
   }
 
-  // Shell facade. Throws if no backend was configured (the
-  // Workspace was constructed for filesystem-only use).
-  //
-  // The returned facade is a router: each method picks the right
-  // backend (the default, or one named through ExecOptions.backend)
-  // and forwards to that backend's ShellRPC. Backend connect is
-  // lazy — the first exec / get for a backend dials it.
-  get shell(): WorkspaceShell {
-    if (this.#backends.length === 0) {
-      throw new Error(
-        "Workspace has no backend configured — the shell is not available. " +
-          "Pass `backends` to the Workspace constructor to enable shell.exec.",
-      );
-    }
-    return this.#routedShell();
-  }
-
   // ensureMountsIndexed() is the only thing ready() does today;
   // backends connect lazily on first use. The promise is still
   // cached so concurrent ready() calls share one index pass; a
@@ -448,16 +472,21 @@ export class Workspace {
     const indexPromise = this.#readyPromise;
     if (options === undefined) return indexPromise;
     if (typeof options === "string") {
-      const id = options;
+      const id = this.#resolveBackendId(options);
       return (async () => {
         await indexPromise;
-        await this.#handleFor(id);
+        if (!id) return;
+        if (this.#moduleBackendsById.has(id)) await this.#moduleHandleFor(id);
+        else await this.#handleFor(id);
       })();
     }
     if (options.all) {
       return (async () => {
         await indexPromise;
-        await Promise.all(this.#backends.map((b) => this.#handleFor(b.id)));
+        await Promise.all([
+          ...this.#backends.map((backend) => this.#handleFor(backend.id)),
+          ...[...this.#moduleBackendsById.keys()].map((id) => this.#moduleHandleFor(id)),
+        ]);
       })();
     }
     return indexPromise;
@@ -500,7 +529,7 @@ export class Workspace {
         "workspace.sync.push",
         { "workspace.sync.backend": resolvedId },
         async () => {
-          if (resolvedId === undefined) return 0;
+          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
           const handle = await this.#handleFor(resolvedId);
           // A backend that reuses the host store as its sole
           // source of truth has nothing to ship and no remote to
@@ -582,7 +611,9 @@ export class Workspace {
       "workspace.sync.pull",
       { "workspace.sync.backend": resolvedId },
       async () => {
-        if (resolvedId === undefined) return { applied: 0, skipped: [] };
+        if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
+          return { applied: 0, skipped: [] };
+        }
         const handle = await this.#handleFor(resolvedId);
         if (handle.sync === "none") return { applied: 0, skipped: [] };
         return this.#runWithInvalidation(resolvedId, handle, () =>
@@ -644,11 +675,11 @@ export class Workspace {
     }
   }
 
-  // Per-backend mutation FIFO. The shell exec bracket
-  // (push → spawn → pull) and the public push() / pull() methods
-  // route through this; reads bypass it entirely. A push to
-  // backend A does not block exec on backend B because each id
-  // gets its own tail-promise. The undefined id (filesystem-only
+  // Per-backend mutation FIFO. Public push() / pull() calls and each
+  // command's pre-exec push and post-stream pull route through this;
+  // the FIFO is not held for the command's lifetime. Reads bypass it
+  // entirely. A push to backend A does not block sync on backend B
+  // because each id gets its own tail-promise. The undefined id (filesystem-only
   // path through push/pull) shares one slot.
   //
   // Rejections are not contagious: the catch arm here swallows
@@ -681,13 +712,27 @@ export class Workspace {
   // workspace; throws on an unknown id. Omitted ids fall through
   // to the first backend in the list (the default).
   #resolveBackendId(id: string | undefined): string | undefined {
-    if (this.#backends.length === 0) return undefined;
+    if (this.#registeredBackendIds.size === 0) return undefined;
     const target = id ?? this.#defaultBackendId;
     if (target === undefined) return undefined;
-    if (!this.#backendsById.has(target)) {
+    if (!this.#registeredBackendIds.has(target)) {
       throw new Error(
         `Workspace: no backend with id ${JSON.stringify(target)}. ` +
-          `Configured backends: ${[...this.#backendsById.keys()].map((k) => JSON.stringify(k)).join(", ") || "<none>"}.`,
+          `Configured backends: ${[...this.#registeredBackendIds].map((key) => JSON.stringify(key)).join(", ") || "<none>"}.`,
+      );
+    }
+    return target;
+  }
+
+  #resolveCommandBackendId(id: string | undefined): string | undefined {
+    const target = id ?? this.#defaultCommandBackendId;
+    if (target === undefined) return undefined;
+    if (!this.#registeredBackendIds.has(target)) {
+      throw new Error(`Workspace: no backend with id ${JSON.stringify(target)}`);
+    }
+    if (!this.#backendsById.has(target)) {
+      throw new Error(
+        `Workspace backend ${JSON.stringify(target)} does not accept shell commands.`,
       );
     }
     return target;
@@ -697,13 +742,17 @@ export class Workspace {
     // Close every cached handle in parallel. Drop caches before
     // awaiting so a subsequent ready() / exec sees an empty slate
     // and rebuilds against fresh handles.
+    this.#connectionGeneration += 1;
     const handles = [...this.#handles.values()];
+    const moduleHandles = [...this.#moduleHandles.values()];
     this.#handles.clear();
     this.#shells.clear();
     this.#connecting.clear();
+    this.#moduleHandles.clear();
+    this.#connectingModuleHandles.clear();
     this.#readyPromise = undefined;
     await Promise.all(
-      handles.map(async (h) => {
+      [...handles, ...moduleHandles].map(async (h) => {
         try {
           await h.close();
         } catch {
@@ -712,6 +761,49 @@ export class Workspace {
         }
       }),
     );
+  }
+
+  #moduleHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
+    const cached = this.#moduleHandles.get(id);
+    if (cached) return Promise.resolve(cached);
+    const inflight = this.#connectingModuleHandles.get(id);
+    if (inflight) return inflight;
+    const backend = this.#moduleBackendsById.get(id);
+    if (!backend) {
+      return Promise.reject(
+        new Error(`Workspace backend ${JSON.stringify(id)} does not execute modules.`),
+      );
+    }
+    const generation = this.#connectionGeneration;
+    let promise!: Promise<WorkspaceModuleBackendHandle>;
+    promise = withSpan(
+      this.#observer,
+      "workspace.connect",
+      { "workspace.backend.id": id, "workspace.backend.type": backend.type },
+      () =>
+        backend.connect({
+          db: this.#db,
+          waitUntil: this.#waitUntil,
+          fs: this.#fs,
+          git: this.git,
+          artifacts: this.#artifacts,
+        }),
+    )
+      .then(async (handle) => {
+        if (generation !== this.#connectionGeneration) {
+          await handle.close().catch(() => undefined);
+          throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
+        }
+        this.#moduleHandles.set(id, handle);
+        return handle;
+      })
+      .finally(() => {
+        if (this.#connectingModuleHandles.get(id) === promise) {
+          this.#connectingModuleHandles.delete(id);
+        }
+      });
+    this.#connectingModuleHandles.set(id, promise);
+    return promise;
   }
 
   // Lazy backend connect. Concurrent callers for the same id
@@ -726,13 +818,19 @@ export class Workspace {
     if (backend === undefined) {
       return Promise.reject(new Error(`Workspace: no backend with id ${JSON.stringify(id)}`));
     }
-    const promise = (async () => {
+    const generation = this.#connectionGeneration;
+    let promise!: Promise<BackendHandle>;
+    promise = (async () => {
       const handle = await withSpan(
         this.#observer,
         "workspace.connect",
         { "workspace.backend.id": id, "workspace.backend.type": backend.type },
         () => backend.connect(),
       );
+      if (generation !== this.#connectionGeneration) {
+        await handle.close().catch(() => undefined);
+        throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
+      }
       // Reconcile watermarks before publishing the handle. If the
       // remote restarted between our pushes / fetches it has lost
       // state we thought it had; reset the local cursors so the
@@ -742,6 +840,10 @@ export class Workspace {
       // to reconcile against; skip the pass entirely.
       if (handle.sync !== "none") {
         await reconcileWatermarks(this.#db, handle.rpc.sync, id);
+      }
+      if (generation !== this.#connectionGeneration) {
+        await handle.close().catch(() => undefined);
+        throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
       }
       this.#handles.set(id, handle);
       // Watch the transport for mid-session loss. Backends without
@@ -763,9 +865,9 @@ export class Workspace {
       }
       return handle;
     })().finally(() => {
-      // Always drop the in-flight entry so a failed connect can
-      // be retried by the next call.
-      this.#connecting.delete(id);
+      // Always drop this in-flight entry so a failed connect can be
+      // retried, without deleting a newer connection started after close().
+      if (this.#connecting.get(id) === promise) this.#connecting.delete(id);
     });
     this.#connecting.set(id, promise);
     return promise;
@@ -800,9 +902,9 @@ export class Workspace {
   // and forwards to that backend's WorkspaceShell.
   #routedShell(): WorkspaceShell {
     const router = new WorkspaceShellRouter(
-      this.#defaultBackendId ?? "",
+      this.#defaultCommandBackendId ?? "",
       (id) => this.#shellFor(id),
-      (id) => this.#resolveBackendId(id) ?? "",
+      (id) => this.#resolveCommandBackendId(id) ?? "",
       (id, handle, error) => this.#onShellError(id, handle, error),
     );
     return router as unknown as WorkspaceShell;
@@ -913,6 +1015,32 @@ class WorkspaceShellRouter {
       throw error;
     }
     return this.#wrapHandle(backendId, dispatchHandle, execHandle);
+  }
+
+  async kill(
+    id: string,
+    signal?: import("./shell.js").KillSignal,
+    options: { backend?: string } = {},
+  ): Promise<void> {
+    const backendId = this.#resolveId(options.backend) || this.#defaultId;
+    const { shell, handle } = await this.#shellFor(backendId);
+    try {
+      await shell.kill(id, signal);
+    } catch (error) {
+      this.#onError(backendId, handle, error);
+      throw error;
+    }
+  }
+
+  async dispose(id: string, options: { backend?: string } = {}): Promise<void> {
+    const backendId = this.#resolveId(options.backend) || this.#defaultId;
+    const { shell, handle } = await this.#shellFor(backendId);
+    try {
+      await shell.dispose(id);
+    } catch (error) {
+      this.#onError(backendId, handle, error);
+      throw error;
+    }
   }
 
   // Wrap an ExecHandle so a transport-classified rejection from
