@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-mcp-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "vars": { "MCP_TOKEN": "test-token" },
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": {
+    "bindings": [{ "name": "COMPUTER_MCP", "class_name": "ComputerMCP" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ComputerMCP"] }]
+}

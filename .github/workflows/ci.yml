@@ -144,6 +144,9 @@ jobs:
             workspace: "@example/computer-container"
             path: examples/container
             typegen: "npx wrangler types"
+          - name: mcp
+            workspace: "@example/computer-mcp"
+            path: examples/mcp
           - name: think
             workspace: "@cloudflare/example-think"
             path: examples/think

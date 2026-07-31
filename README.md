@@ -63,6 +63,9 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/egress`](examples/egress) — sends one URL through the container,
   Worker shell, and Worker JavaScript backends with matching `none`, `all`, or
   custom egress policies.
+- [`examples/mcp`](examples/mcp) — a Computer MCP example:
+  one Code Mode `code` tool backed by a durable workspace, a Worker shell,
+  and a full Linux container.
 - [`examples/think`](examples/think) — a [`@cloudflare/think`](https://www.npmjs.com/package/@cloudflare/think)
   chat agent that uses the workspace as its working directory, reachable
   from a terminal.

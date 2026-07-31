@@ -1,0 +1,30 @@
+{
+  "name": "@example/computer-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Expose a durable Computer workspace through MCP.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@cloudflare/codemode": "^0.5.0",
+    "@cloudflare/computer": "*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@platformatic/vfs": "^0.4.0",
+    "ai": "^7.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.10",
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.107.1"
+  }
+}
