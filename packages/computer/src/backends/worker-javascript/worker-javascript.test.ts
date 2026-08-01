@@ -221,6 +221,19 @@ describe("WorkerJavaScriptBackend", () => {
     await expect(execution).rejects.toMatchObject({ code: "ECLOSED" });
   });
 
+  it("rejects stdin larger than the configured ceiling", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load }, maxStdinBytes: 8 })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", { stdin: "x".repeat(64) }),
+    ).rejects.toThrow(/stdin exceeds 8 bytes/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it("checks limits against the complete loader map including the runtime runner", async () => {
     const load = vi.fn();
     const workspace = new Workspace({

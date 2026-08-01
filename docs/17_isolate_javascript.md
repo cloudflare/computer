@@ -91,6 +91,35 @@ Cancellation stops new host capability calls, disposes the Dynamic Worker, and w
 
 Host calls have a caller-visible deadline, controlled by `maxHostCallMs` and defaulting to `maxTimeoutMs`. Missing the deadline fails the capability call and marks the execution failed, even if caller code catches that error. Execution still waits for the accepted host operation itself before publishing a terminal event because many host APIs cannot roll back an external side effect after dispatch. Trusted modules receive an optional `{ signal, deadline }` context and must stop promptly when the signal aborts. A trusted module that ignores cancellation and never settles will keep execution in its finalizing state. `compatibilityDate` and `compatibilityFlags` control the Dynamic Worker runtime and default to the package-tested settings.
 
+## Environment, standard input, and the `process` shim
+
+Each execution installs a small `node:process` shim so ordinary module code can read its environment and standard streams. The shim exposes only what the caller supplies for that execution; the host environment is never visible.
+
+`process.env` is a snapshot of the `env` record passed on the exec options. Values the caller does not pass are absent, and the Durable Object's own environment is never merged in, so a module cannot read host bindings or secrets through `process.env`.
+
+`process.stdin` is a non-interactive async-iterable over the caller-supplied `stdin` bytes. The caller passes `stdin` as a `Uint8Array` or string on the exec options; `for await` yields the bytes once and then ends, and there is no blocking read for further input because an evaluate-once execution has no session to wait on. `isTTY` is `false`. The supplied input is bounded by `maxStdinBytes`; exceeding it fails the run with a clear error.
+
+`process.stdout` and `process.stderr` are writable streams whose writes are captured as standard output and standard error. `console.log` and `console.info` route to standard output, `console.warn` and `console.error` route to standard error, and the captured output is bounded. `process.argv`, `process.cwd()`, and `process.platform` return inert values: `cwd()` reflects the execution's working directory, while `argv` and `platform` carry fixed placeholders rather than describing the host process.
+
+```ts
+const handle = await workspace.runtime.exec(
+  `
+    export default async function main() {
+      let piped = "";
+      for await (const chunk of process.stdin) piped += new TextDecoder().decode(chunk);
+      console.log("received", piped.length, "bytes");
+      return { who: process.env.WHO, piped };
+    }
+  `,
+  {
+    backend: "worker-javascript",
+    env: { WHO: "demo" },
+    stdin: "hello",
+    encoding: "utf8",
+  },
+);
+```
+
 ## Configured modules
 
 Bare imports are installed at backend construction, not passed on individual executions:
@@ -156,7 +185,7 @@ Each execution receives a fresh Dynamic Worker with:
 - a host wall-clock deadline;
 - `globalOutbound: null` by default;
 - finite, acyclic JSON-compatible input and structured result validation;
-- configurable source/module graph, input, result, captured-log, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxLogBytes`, and `maxCapabilityBytes`);
+- configurable source/module graph, input, result, stdin, captured-log, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxLogBytes`, and `maxCapabilityBytes`);
 - explicit entrypoint and Worker disposal;
 - host-owned cancellation;
 - retained events and result rows in the Workspace database.
