@@ -58,3 +58,25 @@ describe("WorkspaceRuntimeBridge cumulative limits", () => {
     );
   });
 });
+
+describe("WorkspaceRuntimeBridge assertResult", () => {
+  function resultBridge(maxResultBytes?: number) {
+    return new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, { maxResultBytes });
+  }
+
+  it("accepts a JSON-compatible value", async () => {
+    await expect(
+      resultBridge().assertResult({ a: [1, 2, null], b: "ok" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a value that is not JSON-compatible", async () => {
+    await expect(resultBridge().assertResult(new Date())).rejects.toThrow(/plain objects/);
+  });
+
+  it("rejects a value that exceeds the result byte ceiling", async () => {
+    await expect(resultBridge(8).assertResult("x".repeat(64))).rejects.toThrow(
+      /result exceeds 8 bytes/,
+    );
+  });
+});

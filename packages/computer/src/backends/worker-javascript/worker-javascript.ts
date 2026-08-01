@@ -396,6 +396,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           maxCalls: this.#options.maxCapabilityCalls,
           maxTotalRequestBytes: this.#options.maxCapabilityRequestBytes,
           maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
+          maxResultBytes: this.#options.maxResultBytes,
         });
         record.bridge = bridge;
         record.control = startJavaScriptExecution({

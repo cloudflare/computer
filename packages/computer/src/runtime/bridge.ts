@@ -2,7 +2,7 @@ import { RpcTarget } from "cloudflare:workers";
 
 import type { ArtifactClient } from "../artifacts/index.js";
 import type { GitClient } from "../git/index.js";
-import type { WorkspaceRuntimeCapability } from "./capability.js";
+import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
 import type { WorkspaceTrustedModule } from "./types.js";
 
 export class WorkspaceRuntimeBridge extends RpcTarget {
@@ -18,6 +18,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxCalls: number;
   readonly #maxTotalRequestBytes: number;
   readonly #maxTotalResponseBytes: number;
+  readonly #maxResultBytes: number;
   readonly #inFlight = new Set<Promise<string>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
@@ -40,6 +41,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxCalls?: number;
       maxTotalRequestBytes?: number;
       maxTotalResponseBytes?: number;
+      maxResultBytes?: number;
     } = {},
   ) {
     super();
@@ -55,6 +57,19 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxCalls = integrations.maxCalls ?? 256;
     this.#maxTotalRequestBytes = integrations.maxTotalRequestBytes ?? 8 * 1024 * 1024;
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
+    this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
+  }
+
+  // Validate an execution result before the runner frames it as JSON.
+  // The value crosses as an RPC argument (structured clone, full
+  // fidelity), so a Date or other non-plain value is rejected here
+  // rather than silently coerced by the JSON framing downstream.
+  async assertResult(value: unknown): Promise<void> {
+    assertRuntimeValue(value);
+    const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if (bytes > this.#maxResultBytes) {
+      throw new Error(`Workspace runtime result exceeds ${this.#maxResultBytes} bytes.`);
+    }
   }
 
   call(name: string, argsJson: string): Promise<string> {
