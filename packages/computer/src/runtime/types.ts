@@ -160,14 +160,7 @@ export interface WorkspaceModuleBackendHandle {
   close(): Promise<void>;
 }
 
-export interface WorkspaceModuleBackendHost {
-  readonly db: import("@cloudflare/dofs").Database;
-  /** Attach detached backend work to the host event lifetime. */
-  readonly waitUntil?: (promise: Promise<unknown>) => void;
-  readonly fs: import("@cloudflare/dofs").WorkspaceFilesystem;
-  readonly git: import("../git/index.js").GitClient;
-  readonly artifacts: import("../artifacts/index.js").ArtifactClient;
-}
+export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost;
 
 export interface WorkspaceModuleBackend {
   readonly protocol: "module";

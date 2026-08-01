@@ -20,6 +20,22 @@
 
 import type { WorkspaceRPC } from "@cloudflare/computer-rpc";
 
+// The handles the Workspace owns and injects into a backend when
+// it connects. The Workspace constructor builds `db`/`fs` itself,
+// after the caller has already constructed the backends and passed
+// them in, so a backend cannot capture them at its own
+// construction time. `connect(host)` is how the Workspace hands
+// over the storage-layer handles once they exist. Shell and
+// container backends ignore the bag (they reach the host through
+// their own transport); the in-process module backend uses it.
+export interface WorkspaceBackendHost {
+  readonly db: import("@cloudflare/dofs").Database;
+  readonly waitUntil?: (promise: Promise<unknown>) => void;
+  readonly fs: import("@cloudflare/dofs").WorkspaceFilesystem;
+  readonly git: import("./git/index.js").GitClient;
+  readonly artifacts: import("./artifacts/index.js").ArtifactClient;
+}
+
 export interface WorkspaceBackend {
   // User-supplied selector. Passed in `ExecOptions.backend` and
   // `Workspace.push(id)` / `Workspace.pull(id)` to address this
@@ -48,8 +64,10 @@ export interface WorkspaceBackend {
   // Materialise a connection. Called lazily on first use, once
   // per backend per workspace lifetime. The Workspace caches the
   // resulting handle by `id`; subsequent exec / push / pull
-  // calls reuse it.
-  connect(): Promise<BackendHandle>;
+  // calls reuse it. The Workspace always passes its host bag;
+  // backends that reach the host through their own transport
+  // ignore it.
+  connect(host: WorkspaceBackendHost): Promise<BackendHandle>;
 }
 
 export interface BackendHandle {

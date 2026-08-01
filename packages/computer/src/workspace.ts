@@ -857,7 +857,14 @@ export class Workspace {
         this.#observer,
         "workspace.connect",
         { "workspace.backend.id": id, "workspace.backend.type": backend.type },
-        () => backend.connect(),
+        () =>
+          backend.connect({
+            db: this.#db,
+            waitUntil: this.#waitUntil,
+            fs: this.#fs,
+            git: this.git,
+            artifacts: this.#artifacts,
+          }),
       );
       if (generation !== this.#connectionGeneration) {
         await handle.close().catch(() => undefined);
