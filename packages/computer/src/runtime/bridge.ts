@@ -19,6 +19,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxTotalRequestBytes: number;
   readonly #maxTotalResponseBytes: number;
   readonly #maxResultBytes: number;
+  readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
   readonly #inFlight = new Set<Promise<string>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
@@ -42,6 +43,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxTotalRequestBytes?: number;
       maxTotalResponseBytes?: number;
       maxResultBytes?: number;
+      onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
     } = {},
   ) {
     super();
@@ -58,6 +60,17 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxTotalRequestBytes = integrations.maxTotalRequestBytes ?? 8 * 1024 * 1024;
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
     this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
+    this.#onAttachOutput = integrations.onAttachOutput;
+  }
+
+  // Drain the runner's framed output stream. The isolate passes the
+  // readable end as a call argument (the direction that transfers a
+  // live byte stream over the loader boundary) and keeps this call
+  // in flight until it closes, which is what holds the bridge stub
+  // alive for the whole execution. The host consumer reads frames as
+  // they arrive, so output is observable before user code returns.
+  async attachOutput(readable: ReadableStream<Uint8Array>): Promise<void> {
+    await this.#onAttachOutput?.(readable);
   }
 
   // Validate an execution result before the runner frames it as JSON.

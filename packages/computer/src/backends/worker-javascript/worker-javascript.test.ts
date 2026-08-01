@@ -21,12 +21,16 @@ function throwingLoader(message: string) {
   };
 }
 
-// Frame a successful result the way the real runner does: validate
-// through the bridge, then emit a result frame and a zero exit.
-async function resultStream(
-  host: { assertResult(value: unknown): Promise<void> },
+// Drive a successful result the way the real runner does: validate
+// through the bridge, frame result + exit, hand the readable to
+// attachOutput, and stay "in flight" until the host finishes draining.
+async function evaluateResult(
+  host: {
+    assertResult(value: unknown): Promise<void>;
+    attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+  },
   value: unknown,
-): Promise<ReadableStream<Uint8Array>> {
+): Promise<void> {
   const frames: string[] = [];
   try {
     await host.assertResult(value);
@@ -38,12 +42,13 @@ async function resultStream(
     frames.push(JSON.stringify({ name: "exit", value: 1 }));
   }
   const encoder = new TextEncoder();
-  return new ReadableStream<Uint8Array>({
+  const readable = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const frame of frames) controller.enqueue(encoder.encode(`${frame}\n`));
       controller.close();
     },
   });
+  await host.attachOutput(readable);
 }
 
 describe("WorkerJavaScriptBackend", () => {
@@ -185,8 +190,13 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn(() => ({
       getEntrypoint() {
         return {
-          evaluate: (_input: unknown, host: { assertResult(value: unknown): Promise<void> }) =>
-            resultStream(host, "result-too-large"),
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, "result-too-large"),
         };
       },
     }));
@@ -420,8 +430,11 @@ describe("WorkerJavaScriptBackend", () => {
                   return {
                     evaluate: (
                       _input: unknown,
-                      host: { assertResult(value: unknown): Promise<void> },
-                    ) => evaluation.then((outcome) => resultStream(host, outcome.result)),
+                      host: {
+                        assertResult(value: unknown): Promise<void>;
+                        attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+                      },
+                    ) => evaluation.then((outcome) => evaluateResult(host, outcome.result)),
                   };
                 },
               };
@@ -469,10 +482,11 @@ describe("WorkerJavaScriptBackend", () => {
                   host: {
                     call(name: string, args: string): Promise<string>;
                     assertResult(value: unknown): Promise<void>;
+                    attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
                   },
                 ) {
                   void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
-                  return resultStream(host, 1);
+                  return evaluateResult(host, 1);
                 },
               };
             },
@@ -500,6 +514,65 @@ describe("WorkerJavaScriptBackend", () => {
     const events = await terminal;
     expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
     expect(events.at(-1)).toMatchObject({ name: "exit", value: 0 });
+  });
+
+  it("streams stdout before user code returns", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let releaseExit!: () => void;
+    const exitReleased = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    const encoder = new TextEncoder();
+    const backend = new WorkerJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { attachOutput(readable: ReadableStream<Uint8Array>): Promise<void> },
+                ) {
+                  const readable = new ReadableStream<Uint8Array>({
+                    async start(controller) {
+                      controller.enqueue(
+                        encoder.encode(
+                          `${JSON.stringify({ name: "stdout", b64: btoa("live\n") })}\n`,
+                        ),
+                      );
+                      await exitReleased;
+                      controller.enqueue(
+                        encoder.encode(`${JSON.stringify({ name: "exit", value: 0 })}\n`),
+                      );
+                      controller.close();
+                    },
+                  });
+                  await host.attachOutput(readable);
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "live-stream", source: "export default 1" });
+    const reader = execution.events.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(first.value).toMatchObject({ name: "stdout" });
+    expect(new TextDecoder().decode((first.value as { value: Uint8Array }).value)).toBe("live\n");
+    releaseExit();
+    reader.releaseLock();
+    await handle.close();
   });
 
   it("aborts cooperative trusted-module calls at their deadline", async () => {
@@ -532,7 +605,6 @@ describe("WorkerJavaScriptBackend", () => {
                   host: { call(name: string, args: string): Promise<string> },
                 ) {
                   await host.call("trusted/ws:test.call", JSON.stringify(["run"]));
-                  return { result: 1 };
                 },
               };
             },
@@ -640,8 +712,11 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 evaluate: (
                   _input: unknown,
-                  bridge: { assertResult(value: unknown): Promise<void> },
-                ) => evaluation.then((outcome) => resultStream(bridge, outcome.result)),
+                  bridge: {
+                    assertResult(value: unknown): Promise<void>;
+                    attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+                  },
+                ) => evaluation.then((outcome) => evaluateResult(bridge, outcome.result)),
               };
             },
           };

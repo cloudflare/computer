@@ -101,7 +101,7 @@ interface JavaScriptEntrypoint {
     input: WorkspaceRuntimeValue,
     host: WorkspaceRuntimeBridge,
     context: WorkspaceExecutionContext,
-  ): Promise<ReadableStream<Uint8Array>>;
+  ): Promise<void>;
   [Symbol.dispose]?: () => void;
 }
 
@@ -126,6 +126,9 @@ interface ExecutionRecord {
   finalization?: Promise<void>;
   admitted?: boolean;
   persistenceFailed?: boolean;
+  result?: WorkspaceRuntimeValue;
+  hasResult?: boolean;
+  exitCode?: number;
 }
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
@@ -389,6 +392,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           maxTotalRequestBytes: this.#options.maxCapabilityRequestBytes,
           maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
           maxResultBytes: this.#options.maxResultBytes,
+          onAttachOutput: (readable) => this.#pumpFrames(record, readable),
         });
         record.bridge = bridge;
         record.control = startJavaScriptExecution({
@@ -408,16 +412,14 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           compatibilityFlags: this.#options.compatibilityFlags,
           maxStdioBytes: this.#options.maxStdioBytes,
           maxSourceBytes: this.#options.maxSourceBytes,
-          onComplete: (frames) => this.#complete(record, frames),
+          onComplete: () => this.#finalize(record),
+          onError: (message) => this.#finalize(record, message),
         });
         this.#host.waitUntil?.(record.control.completion);
       } catch (error) {
         record.control?.cancel();
         await record.control?.completion.catch(() => undefined);
-        await this.#complete(
-          record,
-          errorFrames(error, Math.max(0, this.#options.maxStdioBytes - 1)),
-        );
+        await this.#finalize(record, error instanceof Error ? error.message : String(error));
       }
       return { id, events: this.#stream(record) };
     } finally {
@@ -566,15 +568,51 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     return record;
   }
 
-  #complete(record: ExecutionRecord, frames: RuntimeFrame[]): Promise<void> {
+  // Drain the runner's framed output stream live, ingesting each frame
+  // as it arrives. Resolves when the stream closes, which is the
+  // signal the runner's evaluate awaits before returning.
+  async #pumpFrames(record: ExecutionRecord, readable: ReadableStream<Uint8Array>) {
+    const reader = decodeRuntimeFrames(readable).getReader();
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        this.#ingestFrame(record, next.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  // Append a stdout/stderr frame the moment it arrives, so output is
+  // observable before user code returns. Result and exit ride the same
+  // stream but only settle the terminal state in #finalize.
+  #ingestFrame(record: ExecutionRecord, frame: RuntimeFrame) {
+    if (record.status !== "running") return;
+    if (frame.name === "stdout" || frame.name === "stderr") {
+      this.#append(record, {
+        id: record.id,
+        seq: record.events.length + 1,
+        name: frame.name,
+        value: frame.value,
+      });
+    } else if (frame.name === "result") {
+      record.result = frame.value;
+      record.hasResult = true;
+    } else {
+      record.exitCode = frame.value;
+    }
+  }
+
+  #finalize(record: ExecutionRecord, errorMessage?: string): Promise<void> {
     if (record.finalization) return record.finalization;
     if (record.status !== "running") return Promise.resolve();
-    const finalization = this.#completeOnce(record, frames);
+    const finalization = this.#finalizeOnce(record, errorMessage);
     record.finalization = finalization;
     return finalization;
   }
 
-  async #completeOnce(record: ExecutionRecord, frames: RuntimeFrame[]) {
+  async #finalizeOnce(record: ExecutionRecord, errorMessage?: string) {
     try {
       await record.bridge?.cancelAndDrain();
     } catch (error) {
@@ -591,54 +629,37 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       ]);
       return;
     }
-    try {
-      let result: WorkspaceRuntimeValue | undefined;
-      let hasResult = false;
-      let exitCode = 0;
-      for (const frame of frames) {
-        if (frame.name === "stdout" || frame.name === "stderr") {
-          this.#append(record, {
-            id: record.id,
-            seq: record.events.length + 1,
-            name: frame.name,
-            value: frame.value,
-          });
-        } else if (frame.name === "result") {
-          result = frame.value;
-          hasResult = true;
-        } else {
-          exitCode = frame.value;
-        }
-      }
-      const terminal: WorkspaceRuntimeEvent[] = [];
-      if (exitCode === 0 && hasResult) {
-        terminal.push({
-          id: record.id,
-          seq: record.events.length + 1,
-          name: "result",
-          value: result as WorkspaceRuntimeValue,
-        });
-      }
-      terminal.push({
-        id: record.id,
-        seq: record.events.length + terminal.length + 1,
-        name: "exit",
-        value: exitCode,
-      });
-      this.#finish(record, exitCode === 0 ? "completed" : "failed", terminal);
-    } catch (error) {
+    if (errorMessage !== undefined) {
       this.#finish(record, "failed", [
         {
           id: record.id,
           seq: record.events.length + 1,
           name: "stderr",
           value: new TextEncoder().encode(
-            `Execution finalization failed: ${error instanceof Error ? error.message : String(error)}\n`,
+            `${truncateUtf8(errorMessage, Math.max(0, this.#options.maxStdioBytes - 1))}\n`,
           ),
         },
         { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
       ]);
+      return;
     }
+    const exitCode = record.exitCode ?? 0;
+    const terminal: WorkspaceRuntimeEvent[] = [];
+    if (exitCode === 0 && record.hasResult) {
+      terminal.push({
+        id: record.id,
+        seq: record.events.length + 1,
+        name: "result",
+        value: record.result as WorkspaceRuntimeValue,
+      });
+    }
+    terminal.push({
+      id: record.id,
+      seq: record.events.length + terminal.length + 1,
+      name: "exit",
+      value: exitCode,
+    });
+    this.#finish(record, exitCode === 0 ? "completed" : "failed", terminal);
   }
 
   #stream(record: ExecutionRecord, after?: number | "tail") {
@@ -865,7 +886,8 @@ function startJavaScriptExecution(options: {
   compatibilityFlags: string[];
   maxStdioBytes: number;
   maxSourceBytes: number;
-  onComplete(frames: RuntimeFrame[]): void | Promise<void>;
+  onComplete(): void | Promise<void>;
+  onError(message: string): void | Promise<void>;
 }): ActiveControl {
   const modules = {
     ...options.modules,
@@ -902,45 +924,44 @@ function startJavaScriptExecution(options: {
   const cancellation = new Promise<never>((_, reject) => {
     cancelExecution = reject;
   });
-  const execution = Promise.race([
-    Promise.resolve().then(() =>
-      entrypoint.evaluate(options.input, options.bridge, options.context),
-    ),
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("JavaScript execution timed out")),
-        options.timeoutMs,
-      );
-    }),
-    cancellation,
-  ]);
-  const completion = execution
-    .then(async (stream) => {
+  // evaluate stays in flight for the whole run: it pushes its framed
+  // output stream to the host through the bridge (drained live there)
+  // and resolves only once user code returns and the stream closes.
+  const run = Promise.resolve().then(() =>
+    entrypoint.evaluate(options.input, options.bridge, options.context),
+  );
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("JavaScript execution timed out")),
+      options.timeoutMs,
+    );
+  });
+  const completion = Promise.race([run, timeout, cancellation])
+    .then(async () => {
       if (timer !== undefined) clearTimeout(timer);
-      let frames: RuntimeFrame[];
-      try {
-        frames = await drainFrames(stream);
-      } finally {
-        dispose();
-      }
-      await options.onComplete(frames);
+      dispose();
+      await options.onComplete();
     })
     .catch(async (error) => {
       if (timer !== undefined) clearTimeout(timer);
       dispose();
       if (!cancelled) {
-        const message = String(error).includes("hung and would never generate a response")
-          ? "JavaScript execution timed out"
-          : error instanceof Error
-            ? error.message
-            : String(error);
-        await options.onComplete(errorFrames(message, Math.max(0, options.maxStdioBytes - 1)));
+        await options.onError(
+          String(error).includes("hung and would never generate a response")
+            ? "JavaScript execution timed out"
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        );
       }
     })
     .finally(() => {
       if (timer !== undefined) clearTimeout(timer);
       dispose();
     });
+  // The stream read can reject after a timeout or cancel already
+  // settled the race; swallow that late rejection.
+  run.catch(() => undefined);
   return {
     completion,
     cancel() {
@@ -951,29 +972,6 @@ function startJavaScriptExecution(options: {
       dispose();
     },
   };
-}
-
-async function drainFrames(stream: ReadableStream<Uint8Array>): Promise<RuntimeFrame[]> {
-  const frames: RuntimeFrame[] = [];
-  const reader = decodeRuntimeFrames(stream).getReader();
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      frames.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return frames;
-}
-
-function errorFrames(error: unknown, maxBytes: number): RuntimeFrame[] {
-  const message = error instanceof Error ? error.message : String(error);
-  return [
-    { name: "stderr", value: new TextEncoder().encode(`${truncateUtf8(message, maxBytes)}\n`) },
-    { name: "exit", value: 1 },
-  ];
 }
 
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
@@ -1029,8 +1027,22 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             globalThis.process.stdin = stdin;
           } catch {}
         }
-        const logs = [];
         const encoder = new TextEncoder();
+        const output = new IdentityTransformStream();
+        const writer = output.writable.getWriter();
+        const toBase64 = (text) => {
+          const bytes = encoder.encode(text);
+          let binary = "";
+          for (let index = 0; index < bytes.length; index += 1) {
+            binary += String.fromCharCode(bytes[index]);
+          }
+          return btoa(binary);
+        };
+        const enqueue = (frame) => {
+          try {
+            writer.write(encoder.encode(JSON.stringify(frame) + "\\n"));
+          } catch {}
+        };
         let stdioBytes = 0;
         let stdioTruncated = false;
         const record = (stream, text) => {
@@ -1038,7 +1050,7 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           const bytes = encoder.encode(text);
           const remaining = ${maxStdioBytes} - stdioBytes;
           if (bytes.byteLength <= remaining) {
-            logs.push({ stream, text });
+            enqueue({ name: stream, b64: toBase64(text) });
             stdioBytes += bytes.byteLength;
             return;
           }
@@ -1055,7 +1067,7 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
                 head = head.slice(0, -1);
               }
             }
-            logs.push({ stream, text: partial + "...[stdio truncated]" });
+            enqueue({ name: stream, b64: toBase64(partial + "...[stdio truncated]") });
             stdioBytes += head.byteLength + marker.byteLength;
           }
           stdioTruncated = true;
@@ -1085,20 +1097,6 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             globalThis.process.stderr = nextProcess.stderr;
           } catch {}
         }
-        const frames = [];
-        const toBase64 = (text) => {
-          const bytes = encoder.encode(text);
-          let binary = "";
-          for (let index = 0; index < bytes.length; index += 1) {
-            binary += String.fromCharCode(bytes[index]);
-          }
-          return btoa(binary);
-        };
-        const emitLogs = () => {
-          for (const log of logs) {
-            frames.push(JSON.stringify({ name: log.stream, b64: toBase64(log.text) }));
-          }
-        };
         const truncate = (message) => {
           const bytes = encoder.encode(message);
           let prefix = bytes.slice(0, ${maxStdioBytes - 1});
@@ -1112,6 +1110,11 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           return "";
         };
         install(host);
+        // Hand the readable end to the host, which drains it live while
+        // this call stays in flight. Keeping evaluate in flight is what
+        // holds the host bridge stub alive for the whole run; frames
+        // enqueue as output is produced.
+        const drained = host.attachOutput(output.readable);
         try {
           const module = await import(${JSON.stringify(entryName)});
           const result = typeof module.default === "function"
@@ -1119,23 +1122,17 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             : module.default ?? null;
           const value = result ?? null;
           await host.assertResult(value);
-          emitLogs();
-          frames.push(JSON.stringify({ name: "result", value }));
-          frames.push(JSON.stringify({ name: "exit", value: 0 }));
+          enqueue({ name: "result", value });
+          enqueue({ name: "exit", value: 0 });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          emitLogs();
-          frames.push(JSON.stringify({ name: "stderr", b64: toBase64(truncate(message) + "\\n") }));
-          frames.push(JSON.stringify({ name: "exit", value: 1 }));
+          enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
+          enqueue({ name: "exit", value: 1 });
         }
-        return new ReadableStream({
-          start(controller) {
-            for (const frame of frames) {
-              controller.enqueue(encoder.encode(frame + "\\n"));
-            }
-            controller.close();
-          },
-        });
+        try {
+          await writer.close();
+        } catch {}
+        await drained;
       }
     }
   `;
