@@ -144,6 +144,27 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("reflects the exec cwd and inert argv/platform on process", async () => {
+    const response = await runtime({
+      source: `
+        export default () => ({
+          cwd: process.cwd(),
+          argvLength: process.argv.length,
+          platform: process.platform,
+        });
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "completed",
+        value: { cwd: "/workspace", argvLength: 2, platform: "linux" },
+      },
+    });
+  });
+
   it("exposes caller-supplied stdin as an async-iterable process.stdin", async () => {
     const response = await runtime({
       source: `
