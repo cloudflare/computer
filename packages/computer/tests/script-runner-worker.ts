@@ -140,6 +140,39 @@ class ModuleProbeBridge extends RpcTarget {
   }
 }
 
+async function drainToString(readable: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    chunks.push(next.value);
+  }
+  reader.releaseLock();
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+class StdioProbeBridge extends RpcTarget {
+  #sinkResult = "";
+
+  // Direction C (stdout path): worker passes a ReadableStream as an
+  // argument; host drains it.
+  async sink(readable: ReadableStream<Uint8Array>): Promise<void> {
+    this.#sinkResult = await drainToString(readable);
+  }
+
+  sinkResult(): string {
+    return this.#sinkResult;
+  }
+}
+
 export default class extends WorkerEntrypoint<Env> {
   override async fetch(request: Request) {
     const url = new URL(request.url);
@@ -198,6 +231,71 @@ export default class extends WorkerEntrypoint<Env> {
         };
         try {
           return new Response(await entrypoint.evaluate(new ModuleProbeBridge()));
+        } finally {
+          entrypoint[Symbol.dispose]?.();
+          (worker as unknown as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
+        }
+      }
+      if (url.pathname === "/stdio-probe") {
+        const worker = this.env.LOADER.load({
+          compatibilityDate: "2026-06-17",
+          compatibilityFlags: ["nodejs_compat"],
+          mainModule: "runner.js",
+          modules: {
+            "runner.js": `
+              import { WorkerEntrypoint } from "cloudflare:workers";
+              export default class extends WorkerEntrypoint {
+                async evaluate(bridge, stdin) {
+                  const results = {};
+                  try {
+                    results.stdin = await (async () => {
+                      const reader = stdin.getReader();
+                      const parts = [];
+                      while (true) {
+                        const next = await reader.read();
+                        if (next.done) break;
+                        parts.push(new TextDecoder().decode(next.value));
+                      }
+                      return parts.join("");
+                    })();
+                  } catch (error) {
+                    results.stdin = "ERR:" + (error instanceof Error ? error.message : String(error));
+                  }
+                  try {
+                    const transform = new IdentityTransformStream();
+                    const writer = transform.writable.getWriter();
+                    const done = bridge.sink(transform.readable);
+                    await writer.write(new TextEncoder().encode("from-isolate"));
+                    await writer.close();
+                    await done;
+                    results.sink = "ok";
+                  } catch (error) {
+                    results.sink = "ERR:" + (error instanceof Error ? error.message : String(error));
+                  }
+                  return results;
+                }
+              }
+            `,
+          },
+          globalOutbound: null,
+        });
+        const entrypoint = worker.getEntrypoint() as unknown as {
+          evaluate(
+            bridge: StdioProbeBridge,
+            stdin: ReadableStream<Uint8Array>,
+          ): Promise<Record<string, string>>;
+          [Symbol.dispose]?: () => void;
+        };
+        const bridge = new StdioProbeBridge();
+        const stdinTransform = new IdentityTransformStream();
+        void (async () => {
+          const writer = stdinTransform.writable.getWriter();
+          await writer.write(new TextEncoder().encode("from-host"));
+          await writer.close();
+        })();
+        try {
+          const results = await entrypoint.evaluate(bridge, stdinTransform.readable);
+          return Response.json({ ...results, sinkResult: bridge.sinkResult() });
         } finally {
           entrypoint[Symbol.dispose]?.();
           (worker as unknown as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();

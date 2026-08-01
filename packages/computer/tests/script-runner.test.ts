@@ -38,6 +38,17 @@ describe("WorkspaceRuntime", () => {
     expect(text).toBe("host:/workspace/probe.txt|relative|trusted");
   });
 
+  it("transfers byte streams across the loader boundary", async () => {
+    const response = await SELF.fetch("https://example.test/stdio-probe");
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text)).toEqual({
+      stdin: "from-host",
+      sink: "ok",
+      sinkResult: "from-isolate",
+    });
+  });
+
   it("executes an ES module with configured and trusted modules", async () => {
     const response = await runtime({
       source: `
