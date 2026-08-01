@@ -575,7 +575,23 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     const reader = decodeRuntimeFrames(readable).getReader();
     try {
       while (true) {
-        const next = await reader.read();
+        let next: ReadableStreamReadResult<RuntimeFrame>;
+        try {
+          next = await reader.read();
+        } catch (error) {
+          // Timeout or cancellation disposes the Dynamic Worker while this
+          // pump may be blocked on read(); the disposed isolate errors the
+          // transferred stream and the read rejects. When that rejection
+          // arrives after the record has already settled, treat it as a
+          // normal end-of-drain. When it arrives while the execution is
+          // still running it is re-thrown: on the timeout/cancel path that
+          // is harmless (it rejects the already-lost evaluate race, which
+          // run.catch swallows, and cancelAndDrain never awaits this pump),
+          // while on a genuine mid-run stream fault it correctly surfaces
+          // as a failed terminal.
+          if (record.status !== "running") break;
+          throw error;
+        }
         if (next.done) break;
         this.#ingestFrame(record, next.value);
       }

@@ -99,7 +99,7 @@ Each execution installs a small `node:process` shim so ordinary module code can 
 
 `process.stdin` is a non-interactive async-iterable over the caller-supplied `stdin` bytes. The caller passes `stdin` as a `Uint8Array` or string on the exec options; `for await` yields the bytes once and then ends, and there is no blocking read for further input because an evaluate-once execution has no session to wait on. `isTTY` is `false`. The supplied input is bounded by `maxStdinBytes`; exceeding it fails the run with a clear error.
 
-`process.stdout` and `process.stderr` are writable streams whose writes are captured as standard output and standard error. `console.log` and `console.info` route to standard output, `console.warn` and `console.error` route to standard error, and the captured output is bounded. `process.argv`, `process.cwd()`, and `process.platform` return inert values: `cwd()` reflects the execution's working directory, while `argv` and `platform` carry fixed placeholders rather than describing the host process.
+`process.stdout` and `process.stderr` are writable streams whose writes flow to the live output described under Isolation and lifecycle. `console.log` and `console.info` route to standard output, `console.warn` and `console.error` route to standard error, and both share the single `maxStdioBytes` ceiling. `process.argv`, `process.cwd()`, and `process.platform` return inert values: `cwd()` reflects the execution's working directory, while `argv` and `platform` carry fixed placeholders rather than describing the host process.
 
 ```ts
 const handle = await workspace.runtime.exec(
@@ -190,7 +190,7 @@ Each execution receives a fresh Dynamic Worker with:
 - host-owned cancellation;
 - retained events and result rows in the Workspace database.
 
-Console output is bounded but currently buffered in the Dynamic Worker and published when evaluation settles; the execution event stream provides replay/lifecycle semantics rather than live JavaScript console streaming. Completed writes are durable immediately. Failure or cancellation does not roll back filesystem effects already completed.
+Standard output and standard error stream live. The Dynamic Worker hands the readable end of its output stream to the host through the `attachOutput` bridge call, and the host drains it frame by frame while user code is still running, appending each chunk to the execution event stream as it arrives rather than buffering the run and publishing at the end. The structured result and the exit event settle once the output stream closes, so the terminal events always follow the last output. Output remains bounded by `maxStdioBytes` across both streams. Completed writes are durable immediately. Failure or cancellation does not roll back filesystem effects already completed.
 
 ## Trusted integrations
 

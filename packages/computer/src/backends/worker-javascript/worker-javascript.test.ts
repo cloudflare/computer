@@ -575,6 +575,69 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close();
   });
 
+  it("stops draining and settles with the kill exit when cancelled mid-stream", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const encoder = new TextEncoder();
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const backend = new WorkerJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { attachOutput(readable: ReadableStream<Uint8Array>): Promise<void> },
+                ) {
+                  const readable = new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      streamController = controller;
+                      controller.enqueue(
+                        encoder.encode(
+                          `${JSON.stringify({ name: "stdout", b64: btoa("live\n") })}\n`,
+                        ),
+                      );
+                      // Stays open with no exit frame: the run is torn down
+                      // by cancellation rather than finishing on its own.
+                    },
+                  });
+                  await host.attachOutput(readable);
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "kill-mid-stream", source: "export default 1" });
+    const reader = execution.events.getReader();
+    const first = await reader.read();
+    expect(first.value).toMatchObject({ name: "stdout" });
+    reader.releaseLock();
+    await handle.killExec({ id: execution.id });
+    // Cancellation disposes the Dynamic Worker, which errors the transferred
+    // output stream. Mirror that so the live pump's pending read rejects
+    // after the record has already settled.
+    streamController.error(new Error("worker disposed"));
+    const events = [];
+    for await (const event of execution.events) events.push(event);
+    const exitIndex = events.findIndex((event) => event.name === "exit");
+    expect(exitIndex).toBeGreaterThanOrEqual(0);
+    expect(events[exitIndex]).toMatchObject({ name: "exit", value: 130 });
+    // The exit event is terminal: no stdout, stderr, or result follows it.
+    expect(events.slice(exitIndex + 1)).toEqual([]);
+    await handle.close();
+  });
+
   it("aborts cooperative trusted-module calls at their deadline", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
