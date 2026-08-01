@@ -225,6 +225,18 @@ sync cursors live in dofs's `_vfs_watermark` table keyed by
 the same id; a push or pull against one backend never disturbs
 the other's cursors.
 
+A backend also declares whether it is `callable`. A callable
+backend accepts a structured `input` value on `runtime.exec` and
+returns a structured `value` on the result; the
+`worker-javascript` backend sets `callable: true` because it runs
+a module that takes an argument and produces a return value. This
+is independent of the backend kind — a shell backend that coerced
+JSON into argv and stdin and parsed stdout back into a value could
+declare itself callable too. When a caller passes `input` to a
+backend that is not callable, the runtime rejects the call with a
+clear error rather than silently dropping the value, so a custom
+backend must set `callable: true` before it can receive `input`.
+
 ```ts
 const workspace = new Workspace({
   storage: ctx.storage,
