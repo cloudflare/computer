@@ -86,7 +86,7 @@ npm run seed:r2 --workspace @example/computer-worker-javascript
 PUT  /c/<name>/file/workspace/<path>   raw body → writeFile at /workspace/<path>
 GET  /c/<name>/file/workspace/<path>   octet-stream of /workspace/<path>
                                        (any path outside /workspace returns 400)
-POST /c/<name>/exec                    { source, input?, cwd? }
+POST /c/<name>/exec                    { source, input?, cwd?, env?, stdin? }
                                        cwd defaults to /workspace
                                        → JSON { status, exitCode, stdout, stderr, value }
 ```
@@ -120,7 +120,17 @@ curl -X POST http://127.0.0.1:8787/c/demo/exec \
 curl -X POST http://127.0.0.1:8787/c/demo/exec \
   -H 'content-type: application/json' \
   -d '{"source":"export default (input) => input.n * 2;","input":{"n":21}}'
+
+curl -X POST http://127.0.0.1:8787/c/demo/exec \
+  -H 'content-type: application/json' \
+  -d '{"source":"export default async () => { let s = \"\"; for await (const c of process.stdin) s += new TextDecoder().decode(c); return process.env.WHO + \":\" + s; };","env":{"WHO":"demo"},"stdin":"piped"}'
 ```
+
+`env` populates `process.env` (only the values you pass; the host
+environment is never exposed), and `stdin` is readable through
+`process.stdin`. `console.log` / `console.error` and
+`process.stdout` / `process.stderr` writes come back as the result's
+`stdout` and `stderr`.
 
 ## Layout
 

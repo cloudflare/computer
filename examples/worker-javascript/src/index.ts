@@ -25,6 +25,8 @@ interface ExecRequest {
   source?: string;
   input?: WorkspaceRuntimeValue;
   cwd?: string;
+  env?: Record<string, string>;
+  stdin?: string;
 }
 
 const MOUNT_ROOT = "/workspace";
@@ -130,6 +132,8 @@ async function handleExec(request: Request, env: Env, name: string): Promise<Res
       backend: "worker-javascript",
       cwd: body.cwd,
       input: body.input,
+      env: body.env,
+      stdin: body.stdin,
       encoding: "utf8",
     });
     const result = await handle.result();
