@@ -83,7 +83,7 @@ Workspace parses the graph before loading the Worker, confines every durable pat
 
 The backend admits up to twenty-four executions at a time by default. A concurrent start past that ceiling fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Adjust `maxConcurrentExecutions` after measuring the Durable Object and Worker Loader limits for the deployment.
 
-Each execution also bounds log events, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxLogEvents`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
+Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
 
 Completed execution records remain available for replay for sixty minutes by default. The backend also keeps at most 100 completed records. Configure these bounds with `retentionMs` and `maxRetainedExecutions`. Completed records leave the in-memory active set immediately; replay reads them from SQLite.
 
@@ -185,7 +185,7 @@ Each execution receives a fresh Dynamic Worker with:
 - a host wall-clock deadline;
 - `globalOutbound: null` by default;
 - finite, acyclic JSON-compatible input and structured result validation;
-- configurable source/module graph, input, result, stdin, captured-log, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxLogBytes`, and `maxCapabilityBytes`);
+- configurable source/module graph, input, result, stdin, stdio, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxStdioBytes`, and `maxCapabilityBytes`);
 - explicit entrypoint and Worker disposal;
 - host-owned cancellation;
 - retained events and result rows in the Workspace database.

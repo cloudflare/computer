@@ -25,8 +25,7 @@ export class HostDO extends DurableObject<Env> {
       backends: [
         new WorkerJavaScriptBackend({
           loader: env.LOADER,
-          maxLogBytes: 64,
-          maxLogEvents: 4,
+          maxStdioBytes: 64,
           maxCapabilityBytes: 1024,
           maxConcurrentCapabilityCalls: 2,
           modules: {

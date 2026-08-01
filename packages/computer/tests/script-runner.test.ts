@@ -227,7 +227,7 @@ describe("WorkspaceRuntime", () => {
     const payload = JSON.parse(text);
     expect(payload.result.status).toBe("completed");
     expect(new TextEncoder().encode(payload.result.stdout).byteLength).toBeLessThanOrEqual(64);
-    expect(payload.result.stdout).toContain("logs truncated");
+    expect(payload.result.stdout).toContain("stdio truncated");
   });
 
   it("bounds oversized trusted-module error responses", async () => {
@@ -245,16 +245,17 @@ describe("WorkspaceRuntime", () => {
     expect(new TextEncoder().encode(payload.result.stderr).byteLength).toBeLessThanOrEqual(64);
   });
 
-  it("bounds log event amplification independently of log bytes", async () => {
+  it("bounds many small writes by the shared stdio byte ceiling", async () => {
     const response = await runtime({
-      source: `export default () => { for (let i = 0; i < 20; i++) console.log(""); return true; };`,
+      source: `export default () => { for (let i = 0; i < 100; i++) console.log("xy"); return true; };`,
       cwd: "/workspace",
     });
     const text = await response.text();
     expect(response.status, text).toBe(200);
     const payload = JSON.parse(text);
-    expect(payload.result.stdout.split("\n").filter(Boolean)).toEqual(["...[logs truncated]"]);
-    expect(payload.result.stdout.split("\n").length - 1).toBe(3);
+    expect(payload.result.status).toBe("completed");
+    expect(new TextEncoder().encode(payload.result.stdout).byteLength).toBeLessThanOrEqual(64);
+    expect(payload.result.stdout.split("\n").filter(Boolean).length).toBeLessThan(100);
   });
 
   it("bounds concurrent host capability calls", async () => {

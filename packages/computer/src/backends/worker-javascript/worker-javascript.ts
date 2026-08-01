@@ -33,8 +33,7 @@ export interface WorkerJavaScriptBackendOptions {
   maxStdinBytes?: number;
   maxEnvBytes?: number;
   maxResultBytes?: number;
-  maxLogBytes?: number;
-  maxLogEvents?: number;
+  maxStdioBytes?: number;
   maxCapabilityBytes?: number;
   /** Caller-visible deadline for one host capability call. */
   maxHostCallMs?: number;
@@ -73,8 +72,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "maxStdinBytes"
     | "maxEnvBytes"
     | "maxResultBytes"
-    | "maxLogBytes"
-    | "maxLogEvents"
+    | "maxStdioBytes"
     | "maxCapabilityBytes"
     | "maxHostCallMs"
     | "maxConcurrentCapabilityCalls"
@@ -149,8 +147,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
     assertPositiveFinite(options.maxEnvBytes ?? 1024 * 1024, "maxEnvBytes");
     assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
-    assertPositiveFinite(options.maxLogBytes ?? 256 * 1024, "maxLogBytes");
-    assertPositiveInteger(options.maxLogEvents ?? 1024, "maxLogEvents");
+    assertPositiveFinite(options.maxStdioBytes ?? 1024 * 1024, "maxStdioBytes");
     assertPositiveFinite(options.maxCapabilityBytes ?? 1024 * 1024, "maxCapabilityBytes");
     assertPositiveFinite(options.maxHostCallMs ?? maxTimeoutMs, "maxHostCallMs");
     assertPositiveInteger(
@@ -192,8 +189,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
       maxEnvBytes: options.maxEnvBytes ?? 1024 * 1024,
       maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
-      maxLogBytes: options.maxLogBytes ?? 256 * 1024,
-      maxLogEvents: options.maxLogEvents ?? 1024,
+      maxStdioBytes: options.maxStdioBytes ?? 1024 * 1024,
       maxCapabilityBytes: options.maxCapabilityBytes ?? 1024 * 1024,
       maxHostCallMs: options.maxHostCallMs ?? maxTimeoutMs,
       maxConcurrentCapabilityCalls: options.maxConcurrentCapabilityCalls ?? 32,
@@ -410,8 +406,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           globalOutbound: this.#options.globalOutbound ?? null,
           compatibilityDate: this.#options.compatibilityDate,
           compatibilityFlags: this.#options.compatibilityFlags,
-          maxLogBytes: this.#options.maxLogBytes,
-          maxLogEvents: this.#options.maxLogEvents,
+          maxStdioBytes: this.#options.maxStdioBytes,
           maxSourceBytes: this.#options.maxSourceBytes,
           onComplete: (frames) => this.#complete(record, frames),
         });
@@ -421,7 +416,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         await record.control?.completion.catch(() => undefined);
         await this.#complete(
           record,
-          errorFrames(error, Math.max(0, this.#options.maxLogBytes - 1)),
+          errorFrames(error, Math.max(0, this.#options.maxStdioBytes - 1)),
         );
       }
       return { id, events: this.#stream(record) };
@@ -868,18 +863,13 @@ function startJavaScriptExecution(options: {
   globalOutbound: Fetcher | null;
   compatibilityDate: string;
   compatibilityFlags: string[];
-  maxLogBytes: number;
-  maxLogEvents: number;
+  maxStdioBytes: number;
   maxSourceBytes: number;
   onComplete(frames: RuntimeFrame[]): void | Promise<void>;
 }): ActiveControl {
   const modules = {
     ...options.modules,
-    "workspace-runtime-runner.js": runtimeWorkerModule(
-      options.entryName,
-      options.maxLogBytes,
-      options.maxLogEvents,
-    ),
+    "workspace-runtime-runner.js": runtimeWorkerModule(options.entryName, options.maxStdioBytes),
   };
   assertLoaderGraph(modules, options.maxSourceBytes);
   const worker = options.loader.load({
@@ -944,7 +934,7 @@ function startJavaScriptExecution(options: {
           : error instanceof Error
             ? error.message
             : String(error);
-        await options.onComplete(errorFrames(message, Math.max(0, options.maxLogBytes - 1)));
+        await options.onComplete(errorFrames(message, Math.max(0, options.maxStdioBytes - 1)));
       }
     })
     .finally(() => {
@@ -986,7 +976,7 @@ function errorFrames(error: unknown, maxBytes: number): RuntimeFrame[] {
   ];
 }
 
-function runtimeWorkerModule(entryName: string, maxLogBytes: number, maxLogEvents: number) {
+function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
     import { install } from "workspace-capabilities.js";
@@ -1041,25 +1031,18 @@ function runtimeWorkerModule(entryName: string, maxLogBytes: number, maxLogEvent
         }
         const logs = [];
         const encoder = new TextEncoder();
-        let logBytes = 0;
-        let logEvents = 0;
-        let logsTruncated = false;
+        let stdioBytes = 0;
+        let stdioTruncated = false;
         const record = (stream, text) => {
-          if (logsTruncated) return;
-          if (logEvents >= ${maxLogEvents - 1}) {
-            logs.push({ stream, text: "...[logs truncated]" });
-            logsTruncated = true;
-            return;
-          }
+          if (stdioTruncated) return;
           const bytes = encoder.encode(text);
-          const remaining = ${maxLogBytes} - logBytes;
+          const remaining = ${maxStdioBytes} - stdioBytes;
           if (bytes.byteLength <= remaining) {
             logs.push({ stream, text });
-            logBytes += bytes.byteLength;
-            logEvents += 1;
+            stdioBytes += bytes.byteLength;
             return;
           }
-          const marker = encoder.encode("...[logs truncated]");
+          const marker = encoder.encode("...[stdio truncated]");
           const available = remaining - marker.byteLength;
           if (available >= 0) {
             let head = bytes.slice(0, available);
@@ -1072,10 +1055,10 @@ function runtimeWorkerModule(entryName: string, maxLogBytes: number, maxLogEvent
                 head = head.slice(0, -1);
               }
             }
-            logs.push({ stream, text: partial + "...[logs truncated]" });
-            logBytes += head.byteLength + marker.byteLength;
+            logs.push({ stream, text: partial + "...[stdio truncated]" });
+            stdioBytes += head.byteLength + marker.byteLength;
           }
-          logsTruncated = true;
+          stdioTruncated = true;
         };
         const consoleLine = (stream, args) => record(stream, args.map(String).join(" ") + "\\n");
         console.log = (...args) => consoleLine("stdout", args);
@@ -1118,7 +1101,7 @@ function runtimeWorkerModule(entryName: string, maxLogBytes: number, maxLogEvent
         };
         const truncate = (message) => {
           const bytes = encoder.encode(message);
-          let prefix = bytes.slice(0, ${maxLogBytes - 1});
+          let prefix = bytes.slice(0, ${maxStdioBytes - 1});
           while (prefix.byteLength > 0) {
             try {
               return new TextDecoder("utf-8", { fatal: true }).decode(prefix);
