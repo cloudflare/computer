@@ -33,7 +33,7 @@ class TestShellWorker extends ShellWorker {
     env: E,
     bashFactory: (
       command: string,
-      options: { cwd?: string; signal?: AbortSignal },
+      options: { cwd?: string; env?: Record<string, string>; signal?: AbortSignal },
     ) => Promise<{ stdout: string; stderr: string; exitCode: number }>,
   ): TestShellWorker {
     const w = new TestShellWorker(undefined as never, env as never);
@@ -188,6 +188,19 @@ describe("ShellWorker", () => {
     });
     await drain((await worker.exec({ command: "x", cwd: "/workspace/src" })).events);
     expect(observedCwd).toBe("/workspace/src");
+  });
+
+  it("forwards per-execution environment variables to Bash", async () => {
+    let observedEnv: Record<string, string> | undefined;
+    const worker = TestShellWorker.withFakeBash(fakeEnv(), async (_command, options) => {
+      observedEnv = options.env;
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    await drain(
+      (await worker.exec({ command: "printenv TOKEN", env: { TOKEN: "secret", EMPTY: "" } }))
+        .events,
+    );
+    expect(observedEnv).toEqual({ TOKEN: "secret", EMPTY: "" });
   });
 
   it("getExec without a prior exec throws ENOENT", async () => {

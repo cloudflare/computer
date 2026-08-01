@@ -104,6 +104,8 @@ export interface ShellRPC {
     // 0 disables the timeout. Omit to use the runner's default
     // (typically 320_000).
     timeoutMs?: number;
+    // Environment variables inherited by this command only.
+    env?: Record<string, string>;
   }): Promise<{
     id: string;
     events: ReadableStream<ExecEvent>;

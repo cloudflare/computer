@@ -30,6 +30,7 @@ export interface ExecInput {
   cwd?: string;
   id?: string;
   timeoutMs?: number;
+  env?: Record<string, string>;
 }
 
 export interface ShellWorkerOptions {
@@ -105,6 +106,7 @@ export class ShellWorker<
         command: string,
         options: {
           cwd?: string;
+          env?: Record<string, string>;
           signal?: AbortSignal;
           customCommands: CustomCommand[];
         },
@@ -171,6 +173,7 @@ export class ShellWorker<
       if (this.bashFactoryOverride !== undefined) {
         result = await this.bashFactoryOverride(input.command, {
           cwd,
+          env: input.env,
           signal: controller.signal,
           customCommands,
         });
@@ -192,7 +195,7 @@ export class ShellWorker<
           defenseInDepth: { enabled: false },
           executionLimits: { maxOutputSize: MAX_OUTPUT_BYTES },
         });
-        result = await bash.exec(input.command, { cwd, signal: controller.signal });
+        result = await bash.exec(input.command, { cwd, env: input.env, signal: controller.signal });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

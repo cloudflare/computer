@@ -78,6 +78,31 @@ test("exec captures stdout and propagates exit code", async () => {
   }
 });
 
+test("per-execution env overrides the base env without leaking to later commands", async () => {
+  const { runner, dispose } = fixture({ env: { TOKEN: "base", BASE_ONLY: "yes" } });
+  try {
+    const first = runner.exec('printf \'%s|%s|%s\' "$TOKEN" "$BASE_ONLY" "$EMPTY"', {
+      env: { TOKEN: "override", EMPTY: "" },
+    });
+    const firstEvents = await drain(first.events);
+    const firstStdout = firstEvents
+      .filter((event) => event.name === "stdout")
+      .map((event) => decode(event.value as Uint8Array))
+      .join("");
+    expect(firstStdout).toBe("override|yes|");
+
+    const second = runner.exec("printf '%s' \"$TOKEN\"");
+    const secondEvents = await drain(second.events);
+    const secondStdout = secondEvents
+      .filter((event) => event.name === "stdout")
+      .map((event) => decode(event.value as Uint8Array))
+      .join("");
+    expect(secondStdout).toBe("base");
+  } finally {
+    dispose();
+  }
+});
+
 test("reusing a live id throws EEXEC_BUSY", async () => {
   const { runner, dispose } = fixture();
   try {

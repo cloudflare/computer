@@ -31,6 +31,8 @@ interface WorkspaceRuntimeExecOptions {
   encoding?: "utf8";
   input?: WorkspaceRuntimeValue;
   timeoutMs?: number;
+  env?: Record<string, string>;
+  stdin?: Uint8Array | string;
 }
 
 interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEvent> {
@@ -42,7 +44,7 @@ interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEven
 }
 ```
 
-`input` is accepted by structured module backends and rejected by command backends. `cwd` is the command working directory or the base for durable relative module imports. A handle is single-consumer: call `result()` or consume its event stream, not both. Repeated `result()` calls return the same promise. `backend` records the resolved backend needed for later reattachment.
+`input` is accepted by callable backends and rejected by the rest; it carries a structured value that the callable backend returns a structured value for. `env` is accepted everywhere: command backends inherit it for the spawned command, and the JavaScript module backend exposes it through `process.env`. Its values apply to that execution only and do not change later executions. `stdin` is the caller-supplied standard input, accepted by backends that model it (the JavaScript module backend reads it through `process.stdin`). `cwd` is the command working directory or the base for durable relative module imports. A handle is single-consumer: call `result()` or consume its event stream, not both. Repeated `result()` calls return the same promise. `backend` records the resolved backend needed for later reattachment.
 
 ## Results
 

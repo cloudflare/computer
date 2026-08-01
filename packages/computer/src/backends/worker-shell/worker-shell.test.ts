@@ -31,7 +31,13 @@ type WireEvent =
   | { id: string; seq: number; name: "exit"; value: number };
 
 interface FakeShellFetcher {
-  exec(input: { command: string; cwd?: string; id?: string; timeoutMs?: number }): Promise<{
+  exec(input: {
+    command: string;
+    cwd?: string;
+    id?: string;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+  }): Promise<{
     id: string;
     events: ReadableStream<Uint8Array>;
   }>;
@@ -58,7 +64,13 @@ function framedStream(events: WireEvent[]): ReadableStream<Uint8Array> {
 }
 
 function fakeFetcher(
-  exec: (input: { command: string; cwd?: string; id?: string; timeoutMs?: number }) => {
+  exec: (input: {
+    command: string;
+    cwd?: string;
+    id?: string;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+  }) => {
     id: string;
     events: ReadableStream<Uint8Array>;
   },
@@ -146,6 +158,29 @@ describe("WorkerShellBackend", () => {
       { id: "run-1", seq: 2, name: "exit", value: 0 },
     ]);
     expect(envelope.id).toBe("run-1");
+  });
+
+  it("forwards per-execution environment variables to the fetcher", async () => {
+    let observedEnv: Record<string, string> | undefined;
+    const fetcher = fakeFetcher((input) => {
+      observedEnv = input.env;
+      return {
+        id: "env",
+        events: framedStream([{ id: "env", seq: 1, name: "exit", value: 0 }]),
+      };
+    });
+    const backend = new WorkerShellBackend({ fetcher: () => fetcher });
+    const handle = await backend.connect();
+    const envelope = await handle.rpc.shell.exec({
+      command: "printenv TOKEN",
+      env: { TOKEN: "secret", EMPTY: "" },
+    });
+    const reader = envelope.events.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    expect(observedEnv).toEqual({ TOKEN: "secret", EMPTY: "" });
   });
 
   it("errors the stream on malformed execution frames", async () => {

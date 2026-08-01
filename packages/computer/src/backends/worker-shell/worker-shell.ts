@@ -33,7 +33,13 @@ import { SHELL_RUNTIME_MODULES } from "./runtime-modules.js";
 // implementation lives in ./entrypoint.ts; the backend consumes
 // it through the Fetcher the loader returns.
 export interface WorkerShellFetcher {
-  exec(input: { command: string; cwd?: string; id?: string; timeoutMs?: number }): Promise<{
+  exec(input: {
+    command: string;
+    cwd?: string;
+    id?: string;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+  }): Promise<{
     id: string;
     events: ReadableStream<Uint8Array>;
   }>;
@@ -168,6 +174,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
           cwd: input.cwd,
           id: input.id,
           timeoutMs: input.timeoutMs,
+          env: input.env,
         });
         return { id: envelope.id, events: decodeFramedEvents(envelope.events) };
       },

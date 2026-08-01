@@ -105,6 +105,10 @@ export interface ExecOptions<E extends ExecEncoding = undefined> {
   // Omit to use the runner's default (typically 320_000). Pass 0
   // to disable the timeout for this call.
   timeoutMs?: number;
+  // Environment variables inherited by this command only. Values
+  // override the backend's base environment without changing later
+  // executions.
+  env?: Record<string, string>;
   // Backend selector. Omit to use the default backend (the first
   // one passed to the Workspace constructor); pass the id of
   // another configured backend to route this call there.
@@ -177,6 +181,7 @@ export class WorkspaceShell {
           id: options.id,
           cwd: options.cwd,
           timeoutMs: options.timeoutMs,
+          env: options.env,
         }),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
