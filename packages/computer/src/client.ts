@@ -225,6 +225,8 @@ export interface RuntimeExecOptions {
   id?: string;
   timeoutMs?: number;
   input?: WorkspaceRuntimeValue;
+  env?: Record<string, string>;
+  stdin?: Uint8Array | string;
 }
 
 export interface RuntimeGetOptions {
