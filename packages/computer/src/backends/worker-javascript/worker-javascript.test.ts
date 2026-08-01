@@ -21,6 +21,31 @@ function throwingLoader(message: string) {
   };
 }
 
+// Frame a successful result the way the real runner does: validate
+// through the bridge, then emit a result frame and a zero exit.
+async function resultStream(
+  host: { assertResult(value: unknown): Promise<void> },
+  value: unknown,
+): Promise<ReadableStream<Uint8Array>> {
+  const frames: string[] = [];
+  try {
+    await host.assertResult(value);
+    frames.push(JSON.stringify({ name: "result", value }));
+    frames.push(JSON.stringify({ name: "exit", value: 0 }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    frames.push(JSON.stringify({ name: "stderr", b64: btoa(`${message}\n`) }));
+    frames.push(JSON.stringify({ name: "exit", value: 1 }));
+  }
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const frame of frames) controller.enqueue(encoder.encode(`${frame}\n`));
+      controller.close();
+    },
+  });
+}
+
 describe("WorkerJavaScriptBackend", () => {
   it("requires a host event-lifetime hook", async () => {
     const backend = new ProductionWorkerJavaScriptBackend({ loader: throwingLoader("unused") });
@@ -159,7 +184,10 @@ describe("WorkerJavaScriptBackend", () => {
   it("enforces finite input and result byte ceilings", async () => {
     const load = vi.fn(() => ({
       getEntrypoint() {
-        return { evaluate: async () => ({ result: "result-too-large" }) };
+        return {
+          evaluate: (_input: unknown, host: { assertResult(value: unknown): Promise<void> }) =>
+            resultStream(host, "result-too-large"),
+        };
       },
     }));
     const workspace = new Workspace({
@@ -389,7 +417,12 @@ describe("WorkerJavaScriptBackend", () => {
             load() {
               return {
                 getEntrypoint() {
-                  return { evaluate: () => evaluation };
+                  return {
+                    evaluate: (
+                      _input: unknown,
+                      host: { assertResult(value: unknown): Promise<void> },
+                    ) => evaluation.then((outcome) => resultStream(host, outcome.result)),
+                  };
                 },
               };
             },
@@ -433,10 +466,13 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: {
+                    call(name: string, args: string): Promise<string>;
+                    assertResult(value: unknown): Promise<void>;
+                  },
                 ) {
                   void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
-                  return Promise.resolve({ result: 1 });
+                  return resultStream(host, 1);
                 },
               };
             },
@@ -601,7 +637,12 @@ describe("WorkerJavaScriptBackend", () => {
         load() {
           return {
             getEntrypoint() {
-              return { evaluate: () => evaluation };
+              return {
+                evaluate: (
+                  _input: unknown,
+                  bridge: { assertResult(value: unknown): Promise<void> },
+                ) => evaluation.then((outcome) => resultStream(bridge, outcome.result)),
+              };
             },
           };
         },

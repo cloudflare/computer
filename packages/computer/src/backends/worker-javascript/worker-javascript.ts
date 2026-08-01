@@ -12,6 +12,7 @@ import type {
   WorkspaceRuntimeValue,
   WorkspaceTrustedModule,
 } from "../../runtime/types.js";
+import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import { buildModuleGraph } from "./module-graph.js";
 
 export interface WorkerJavaScriptBackendOptions {
@@ -97,17 +98,12 @@ interface WorkspaceExecutionContext {
   stdin: Uint8Array;
 }
 
-interface RuntimeLogEntry {
-  stream: "stdout" | "stderr";
-  text: string;
-}
-
 interface JavaScriptEntrypoint {
   evaluate(
     input: WorkspaceRuntimeValue,
     host: WorkspaceRuntimeBridge,
     context: WorkspaceExecutionContext,
-  ): Promise<{ result?: unknown; logs?: RuntimeLogEntry[]; error?: string }>;
+  ): Promise<ReadableStream<Uint8Array>>;
   [Symbol.dispose]?: () => void;
 }
 
@@ -416,17 +412,17 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           compatibilityFlags: this.#options.compatibilityFlags,
           maxLogBytes: this.#options.maxLogBytes,
           maxLogEvents: this.#options.maxLogEvents,
-          maxResultBytes: this.#options.maxResultBytes,
           maxSourceBytes: this.#options.maxSourceBytes,
-          onComplete: (outcome) => this.#complete(record, outcome),
+          onComplete: (frames) => this.#complete(record, frames),
         });
         this.#host.waitUntil?.(record.control.completion);
       } catch (error) {
         record.control?.cancel();
         await record.control?.completion.catch(() => undefined);
-        await this.#complete(record, {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        await this.#complete(
+          record,
+          errorFrames(error, Math.max(0, this.#options.maxLogBytes - 1)),
+        );
       }
       return { id, events: this.#stream(record) };
     } finally {
@@ -575,21 +571,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     return record;
   }
 
-  #complete(
-    record: ExecutionRecord,
-    outcome: { result?: unknown; logs?: RuntimeLogEntry[]; error?: string },
-  ): Promise<void> {
+  #complete(record: ExecutionRecord, frames: RuntimeFrame[]): Promise<void> {
     if (record.finalization) return record.finalization;
     if (record.status !== "running") return Promise.resolve();
-    const finalization = this.#completeOnce(record, outcome);
+    const finalization = this.#completeOnce(record, frames);
     record.finalization = finalization;
     return finalization;
   }
 
-  async #completeOnce(
-    record: ExecutionRecord,
-    outcome: { result?: unknown; logs?: RuntimeLogEntry[]; error?: string },
-  ) {
+  async #completeOnce(record: ExecutionRecord, frames: RuntimeFrame[]) {
     try {
       await record.bridge?.cancelAndDrain();
     } catch (error) {
@@ -607,49 +597,40 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       return;
     }
     try {
-      for (const log of outcome.logs ?? []) {
-        this.#append(record, {
+      let result: WorkspaceRuntimeValue | undefined;
+      let hasResult = false;
+      let exitCode = 0;
+      for (const frame of frames) {
+        if (frame.name === "stdout" || frame.name === "stderr") {
+          this.#append(record, {
+            id: record.id,
+            seq: record.events.length + 1,
+            name: frame.name,
+            value: frame.value,
+          });
+        } else if (frame.name === "result") {
+          result = frame.value;
+          hasResult = true;
+        } else {
+          exitCode = frame.value;
+        }
+      }
+      const terminal: WorkspaceRuntimeEvent[] = [];
+      if (exitCode === 0 && hasResult) {
+        terminal.push({
           id: record.id,
           seq: record.events.length + 1,
-          name: log.stream,
-          value: new TextEncoder().encode(log.text),
+          name: "result",
+          value: result as WorkspaceRuntimeValue,
         });
       }
-      if (outcome.error !== undefined) {
-        this.#finish(record, "failed", [
-          {
-            id: record.id,
-            seq: record.events.length + 1,
-            name: "stderr",
-            value: new TextEncoder().encode(
-              `${truncateUtf8(outcome.error, Math.max(0, this.#options.maxLogBytes - 1))}\n`,
-            ),
-          },
-          { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
-        ]);
-        return;
-      }
-      const result = outcome.result ?? null;
-      try {
-        assertRuntimeValue(result);
-        assertEncodedSize(result, this.#options.maxResultBytes, "result");
-        this.#finish(record, "completed", [
-          { id: record.id, seq: record.events.length + 1, name: "result", value: result },
-          { id: record.id, seq: record.events.length + 2, name: "exit", value: 0 },
-        ]);
-      } catch (error) {
-        this.#finish(record, "failed", [
-          {
-            id: record.id,
-            seq: record.events.length + 1,
-            name: "stderr",
-            value: new TextEncoder().encode(
-              `${error instanceof Error ? error.message : String(error)}\n`,
-            ),
-          },
-          { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
-        ]);
-      }
+      terminal.push({
+        id: record.id,
+        seq: record.events.length + terminal.length + 1,
+        name: "exit",
+        value: exitCode,
+      });
+      this.#finish(record, exitCode === 0 ? "completed" : "failed", terminal);
     } catch (error) {
       this.#finish(record, "failed", [
         {
@@ -889,13 +870,8 @@ function startJavaScriptExecution(options: {
   compatibilityFlags: string[];
   maxLogBytes: number;
   maxLogEvents: number;
-  maxResultBytes: number;
   maxSourceBytes: number;
-  onComplete(outcome: {
-    result?: unknown;
-    logs?: RuntimeLogEntry[];
-    error?: string;
-  }): void | Promise<void>;
+  onComplete(frames: RuntimeFrame[]): void | Promise<void>;
 }): ActiveControl {
   const modules = {
     ...options.modules,
@@ -903,7 +879,6 @@ function startJavaScriptExecution(options: {
       options.entryName,
       options.maxLogBytes,
       options.maxLogEvents,
-      options.maxResultBytes,
     ),
   };
   assertLoaderGraph(modules, options.maxSourceBytes);
@@ -950,22 +925,26 @@ function startJavaScriptExecution(options: {
     cancellation,
   ]);
   const completion = execution
-    .then(async (outcome) => {
+    .then(async (stream) => {
       if (timer !== undefined) clearTimeout(timer);
-      dispose();
-      await options.onComplete(outcome);
+      let frames: RuntimeFrame[];
+      try {
+        frames = await drainFrames(stream);
+      } finally {
+        dispose();
+      }
+      await options.onComplete(frames);
     })
     .catch(async (error) => {
       if (timer !== undefined) clearTimeout(timer);
       dispose();
       if (!cancelled) {
-        await options.onComplete({
-          error: String(error).includes("hung and would never generate a response")
-            ? "JavaScript execution timed out"
-            : error instanceof Error
-              ? error.message
-              : String(error),
-        });
+        const message = String(error).includes("hung and would never generate a response")
+          ? "JavaScript execution timed out"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+        await options.onComplete(errorFrames(message, Math.max(0, options.maxLogBytes - 1)));
       }
     })
     .finally(() => {
@@ -984,12 +963,30 @@ function startJavaScriptExecution(options: {
   };
 }
 
-function runtimeWorkerModule(
-  entryName: string,
-  maxLogBytes: number,
-  maxLogEvents: number,
-  maxResultBytes: number,
-) {
+async function drainFrames(stream: ReadableStream<Uint8Array>): Promise<RuntimeFrame[]> {
+  const frames: RuntimeFrame[] = [];
+  const reader = decodeRuntimeFrames(stream).getReader();
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      frames.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return frames;
+}
+
+function errorFrames(error: unknown, maxBytes: number): RuntimeFrame[] {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    { name: "stderr", value: new TextEncoder().encode(`${truncateUtf8(message, maxBytes)}\n`) },
+    { name: "exit", value: 1 },
+  ];
+}
+
+function runtimeWorkerModule(entryName: string, maxLogBytes: number, maxLogEvents: number) {
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
     import { install } from "workspace-capabilities.js";
@@ -1105,29 +1102,57 @@ function runtimeWorkerModule(
             globalThis.process.stderr = nextProcess.stderr;
           } catch {}
         }
+        const frames = [];
+        const toBase64 = (text) => {
+          const bytes = encoder.encode(text);
+          let binary = "";
+          for (let index = 0; index < bytes.length; index += 1) {
+            binary += String.fromCharCode(bytes[index]);
+          }
+          return btoa(binary);
+        };
+        const emitLogs = () => {
+          for (const log of logs) {
+            frames.push(JSON.stringify({ name: log.stream, b64: toBase64(log.text) }));
+          }
+        };
+        const truncate = (message) => {
+          const bytes = encoder.encode(message);
+          let prefix = bytes.slice(0, ${maxLogBytes - 1});
+          while (prefix.byteLength > 0) {
+            try {
+              return new TextDecoder("utf-8", { fatal: true }).decode(prefix);
+            } catch {
+              prefix = prefix.slice(0, -1);
+            }
+          }
+          return "";
+        };
         install(host);
         try {
           const module = await import(${JSON.stringify(entryName)});
           const result = typeof module.default === "function"
             ? await module.default(input)
             : module.default ?? null;
-          if (encoder.encode(JSON.stringify(result)).byteLength > ${maxResultBytes}) {
-            throw new Error("Workspace runtime result exceeds ${maxResultBytes} bytes.");
-          }
-          return { result, logs };
+          const value = result ?? null;
+          await host.assertResult(value);
+          emitLogs();
+          frames.push(JSON.stringify({ name: "result", value }));
+          frames.push(JSON.stringify({ name: "exit", value: 0 }));
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const bytes = encoder.encode(message);
-          let prefix = bytes.slice(0, ${maxLogBytes});
-          while (prefix.byteLength > 0) {
-            try {
-              return { error: new TextDecoder("utf-8", { fatal: true }).decode(prefix), logs };
-            } catch {
-              prefix = prefix.slice(0, -1);
-            }
-          }
-          return { error: "", logs };
+          emitLogs();
+          frames.push(JSON.stringify({ name: "stderr", b64: toBase64(truncate(message) + "\\n") }));
+          frames.push(JSON.stringify({ name: "exit", value: 1 }));
         }
+        return new ReadableStream({
+          start(controller) {
+            for (const frame of frames) {
+              controller.enqueue(encoder.encode(frame + "\\n"));
+            }
+            controller.close();
+          },
+        });
       }
     }
   `;
