@@ -1,0 +1,35 @@
+package-lock.json
+  s_3bac4a8ecb5284::t_5c91eef0bd3c53 63-87,2842-2845
+README.md
+  s_3bac4a8ecb5284::t_0b4e0dec74bfdb 65-66
+examples/codemode/wrangler.jsonc
+  s_3bac4a8ecb5284::t_0f04b525d5aed8 1-12
+examples/codemode/README.md
+  s_3bac4a8ecb5284::t_c6aa725d9f467f 1-56
+examples/codemode/wrangler.test.jsonc
+  s_3bac4a8ecb5284::t_d15c7e877a5259 1-12
+examples/codemode/vitest.config.ts
+  s_3bac4a8ecb5284::t_1c43095471b76e 1-13
+examples/codemode/src/computer-mcp.ts
+  s_3bac4a8ecb5284::t_5b5b89763ac0e6 1-87
+examples/codemode/src/codemode.integration.test.ts
+  s_3bac4a8ecb5284::t_c67bd69da442ba 1-80
+.github/workflows/ci.yml
+  s_3bac4a8ecb5284::t_b045fe5b8e4f3a 117-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b2e6e918f380c2f091683407684c48dd13d1984c",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
