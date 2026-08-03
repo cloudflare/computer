@@ -14,8 +14,8 @@ const workspace = new Workspace({
       loader: env.LOADER,
       root: "/workspace",
       access: "read-write",
-      defaultTimeoutMs: 10_000,
-      maxTimeoutMs: 30_000,
+      defaultTimeoutMs: 60_000,
+      maxTimeoutMs: 180_000,
       globalOutbound: null,
       modules: {
         "math-kit": `export const double = value => value * 2;`,
@@ -81,11 +81,11 @@ Workspace parses the graph before loading the Worker, confines every durable pat
 
 ## Execution limits and retention
 
-The backend admits one execution at a time by default. A concurrent start fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Set `maxConcurrentExecutions` only after measuring the Durable Object and Worker Loader limits for the deployment.
+The backend admits up to twenty-four executions at a time by default. A concurrent start past that ceiling fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Adjust `maxConcurrentExecutions` after measuring the Durable Object and Worker Loader limits for the deployment.
 
 Each execution also bounds log events, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxLogEvents`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
 
-Completed execution records remain available for replay for five minutes by default. The backend also keeps at most 100 completed records. Configure these bounds with `retentionMs` and `maxRetainedExecutions`. Completed records leave the in-memory active set immediately; replay reads them from SQLite.
+Completed execution records remain available for replay for sixty minutes by default. The backend also keeps at most 100 completed records. Configure these bounds with `retentionMs` and `maxRetainedExecutions`. Completed records leave the in-memory active set immediately; replay reads them from SQLite.
 
 Cancellation stops new host capability calls, disposes the Dynamic Worker, and waits for host calls that were already accepted. Exit 130 is published only after those calls settle. Normal completion uses the same drain rule, so an unawaited capability call cannot mutate the workspace after exit 0.
 

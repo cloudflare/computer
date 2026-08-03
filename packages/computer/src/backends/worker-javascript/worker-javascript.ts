@@ -144,12 +144,12 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
 
   constructor(options: WorkerJavaScriptBackendOptions) {
     this.id = options.id ?? "worker-javascript";
-    const maxTimeoutMs = options.maxTimeoutMs ?? 30_000;
-    const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(10_000, maxTimeoutMs);
+    const maxTimeoutMs = options.maxTimeoutMs ?? 180_000;
+    const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(60_000, maxTimeoutMs);
     assertPositiveFinite(maxTimeoutMs, "maxTimeoutMs");
     assertPositiveFinite(defaultTimeoutMs, "defaultTimeoutMs");
-    assertPositiveFinite(options.maxSourceBytes ?? 256 * 1024, "maxSourceBytes");
-    assertPositiveFinite(options.maxInputBytes ?? 256 * 1024, "maxInputBytes");
+    assertPositiveFinite(options.maxSourceBytes ?? 1024 * 1024, "maxSourceBytes");
+    assertPositiveFinite(options.maxInputBytes ?? 1024 * 1024, "maxInputBytes");
     assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
     assertPositiveFinite(options.maxEnvBytes ?? 1024 * 1024, "maxEnvBytes");
     assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
@@ -158,7 +158,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(options.maxCapabilityBytes ?? 1024 * 1024, "maxCapabilityBytes");
     assertPositiveFinite(options.maxHostCallMs ?? maxTimeoutMs, "maxHostCallMs");
     assertPositiveInteger(
-      options.maxConcurrentCapabilityCalls ?? 16,
+      options.maxConcurrentCapabilityCalls ?? 32,
       "maxConcurrentCapabilityCalls",
     );
     assertPositiveInteger(options.maxCapabilityCalls ?? 256, "maxCapabilityCalls");
@@ -171,9 +171,9 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       "maxCapabilityResponseBytes",
     );
     assertPositiveInteger(options.maxDirectoryEntries ?? 1024, "maxDirectoryEntries");
-    assertPositiveInteger(options.maxConcurrentExecutions ?? 1, "maxConcurrentExecutions");
+    assertPositiveInteger(options.maxConcurrentExecutions ?? 24, "maxConcurrentExecutions");
     assertPositiveInteger(options.maxExecutionSubscribers ?? 8, "maxExecutionSubscribers");
-    assertPositiveFinite(options.retentionMs ?? 5 * 60_000, "retentionMs");
+    assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
     assertPositiveInteger(options.maxRetainedExecutions ?? 100, "maxRetainedExecutions");
     if ((options.maxCapabilityBytes ?? 1024 * 1024) < 256) {
       throw new Error("WorkerJavaScriptBackend maxCapabilityBytes must be at least 256 bytes.");
@@ -191,8 +191,8 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       access: options.access ?? "read-write",
       defaultTimeoutMs,
       maxTimeoutMs,
-      maxSourceBytes: options.maxSourceBytes ?? 256 * 1024,
-      maxInputBytes: options.maxInputBytes ?? 256 * 1024,
+      maxSourceBytes: options.maxSourceBytes ?? 1024 * 1024,
+      maxInputBytes: options.maxInputBytes ?? 1024 * 1024,
       maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
       maxEnvBytes: options.maxEnvBytes ?? 1024 * 1024,
       maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
@@ -200,14 +200,14 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxLogEvents: options.maxLogEvents ?? 1024,
       maxCapabilityBytes: options.maxCapabilityBytes ?? 1024 * 1024,
       maxHostCallMs: options.maxHostCallMs ?? maxTimeoutMs,
-      maxConcurrentCapabilityCalls: options.maxConcurrentCapabilityCalls ?? 16,
+      maxConcurrentCapabilityCalls: options.maxConcurrentCapabilityCalls ?? 32,
       maxCapabilityCalls: options.maxCapabilityCalls ?? 256,
       maxCapabilityRequestBytes: options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
       maxCapabilityResponseBytes: options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
       maxDirectoryEntries: options.maxDirectoryEntries ?? 1024,
-      maxConcurrentExecutions: options.maxConcurrentExecutions ?? 1,
+      maxConcurrentExecutions: options.maxConcurrentExecutions ?? 24,
       maxExecutionSubscribers: options.maxExecutionSubscribers ?? 8,
-      retentionMs: options.retentionMs ?? 5 * 60_000,
+      retentionMs: options.retentionMs ?? 60 * 60_000,
       maxRetainedExecutions: options.maxRetainedExecutions ?? 100,
       compatibilityDate,
       compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],

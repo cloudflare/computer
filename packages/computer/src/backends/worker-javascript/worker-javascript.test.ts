@@ -384,6 +384,7 @@ describe("WorkerJavaScriptBackend", () => {
       waitUntil,
       backends: [
         new WorkerJavaScriptBackend({
+          maxConcurrentExecutions: 1,
           loader: {
             load() {
               return {
