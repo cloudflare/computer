@@ -96,9 +96,13 @@ export interface ShellRPC {
   // Capnweb streams handle backpressure end-to-end; consumer-side
   // slowness propagates to the spawned process via the kernel pipe.
   exec(input: {
-    command: string;
+    source: string;
     cwd?: string;
     id?: string;
+    // Structured value handed to a callable backend. Command
+    // backends ignore it; the caller only sends it to backends that
+    // declare themselves callable.
+    input?: unknown;
     // Per-call timeout in milliseconds. Past this duration the
     // container sends SIGTERM (then SIGKILL after a short grace).
     // 0 disables the timeout. Omit to use the runner's default
@@ -146,7 +150,7 @@ export interface WorkspaceRPC {
 export type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit"; value: number };
+  | { id: string; seq: number; name: "exit"; value: number; result?: unknown };
 
 // Error codes carried over the wire. The client adapter rethrows as
 // WorkspaceError preserving `code`, so application code can branch
