@@ -17,7 +17,43 @@ async function executeTool(tool: unknown, input: unknown): Promise<unknown> {
   const execute = (tool as { execute?: (input: unknown, options: typeof toolOptions) => unknown })
     .execute;
   if (!execute) throw new Error("tool has no execute function");
-  return await execute(input, toolOptions);
+  const output = await execute(input, toolOptions);
+  if (output && typeof output === "object" && Symbol.asyncIterator in output) {
+    let last: unknown;
+    for await (const chunk of output as AsyncIterable<unknown>) last = chunk;
+    return last;
+  }
+  return output;
+}
+
+async function collectTool(tool: unknown, input: unknown): Promise<unknown[]> {
+  const execute = (tool as { execute?: (input: unknown, options: typeof toolOptions) => unknown })
+    .execute;
+  if (!execute) throw new Error("tool has no execute function");
+  const output = await execute(input, toolOptions);
+  if (!output || typeof output !== "object" || !(Symbol.asyncIterator in output)) {
+    return [output];
+  }
+  const chunks: unknown[] = [];
+  for await (const chunk of output as AsyncIterable<unknown>) chunks.push(chunk);
+  return chunks;
+}
+
+type ExecStreamEvent =
+  | { name: "stdout"; value: string }
+  | { name: "stderr"; value: string }
+  | { name: "result"; value: unknown }
+  | { name: "exit"; value: number };
+
+function streamingHandle(events: ExecStreamEvent[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) yield event;
+    },
+    result: async () => {
+      throw new Error("result() must not be called on a streamed handle");
+    },
+  };
 }
 
 function toolDescription(tool: unknown): string {
@@ -649,6 +685,154 @@ describe("createAITools callable exec", () => {
     });
 
     expect(toolDescription(tools.exec)).toContain("callable");
+  });
+});
+
+describe("createAITools exec streaming", () => {
+  it("streams stdout and stderr chunks and yields a final aggregate", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "one\n" },
+            { name: "stderr", value: "warn\n" },
+            { name: "stdout", value: "two\n" },
+            { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    await expect(collectTool(tools.exec, { command: "run" })).resolves.toEqual([
+      { command: "run", cwd: null, backend: "shell", exitCode: null, stdout: "one\n", stderr: "" },
+      {
+        command: "run",
+        cwd: null,
+        backend: "shell",
+        exitCode: null,
+        stdout: "one\n",
+        stderr: "warn\n",
+      },
+      {
+        command: "run",
+        cwd: null,
+        backend: "shell",
+        exitCode: null,
+        stdout: "one\ntwo\n",
+        stderr: "warn\n",
+      },
+      {
+        command: "run",
+        cwd: null,
+        backend: "shell",
+        exitCode: 0,
+        stdout: "one\ntwo\n",
+        stderr: "warn\n",
+      },
+    ]);
+  });
+
+  it("streams a callable backend's result value on the final chunk", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "working\n" },
+            { name: "result", value: { ok: true } },
+            { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "js",
+        backends: { js: { description: "JavaScript module runtime", callable: true } },
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, {
+      command: "export default () => ({ ok: true })",
+      input: {},
+    });
+    expect(chunks).toHaveLength(2);
+    expect(chunks.at(-1)).toEqual({
+      command: "export default () => ({ ok: true })",
+      cwd: null,
+      backend: "js",
+      exitCode: 0,
+      stdout: "working\n",
+      stderr: "",
+      result: { ok: true },
+    });
+  });
+
+  it("truncates streamed output on UTF-8 byte boundaries", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "a\u{1f642}b" },
+            { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+        maxBytes: 5,
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "echo emoji" });
+    expect(chunks.at(-1)).toMatchObject({
+      exitCode: 0,
+      stdout: "a\u{1f642}\n\n[truncated, 1 more bytes]",
+    });
+  });
+
+  it("yields a structured error when the stream fails mid-run", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { name: "stdout", value: "partial\n" } as ExecStreamEvent;
+              throw new Error("stream broke");
+            },
+            result: async () => {
+              throw new Error("result() must not be called on a streamed handle");
+            },
+          };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "run" });
+    expect(chunks.at(-1)).toEqual({
+      command: "run",
+      cwd: null,
+      backend: "shell",
+      error: "stream broke",
+    });
   });
 });
 

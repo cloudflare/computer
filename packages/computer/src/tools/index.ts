@@ -1,5 +1,12 @@
 export { type CreateAIToolsOptions, createAITools } from "./ai.js";
-export { createExecTool, type ExecBackendDescription, type ExecToolOptions } from "./exec.js";
+export {
+  createExecTool,
+  type ExecBackendDescription,
+  type ExecRuntimeHandle,
+  type ExecStreamEvent,
+  type ExecToolOptions,
+  type ExecToolOutput,
+} from "./exec.js";
 export { createEditTool, type EditToolOptions } from "./fs/edit.js";
 export { createListTool, type ListToolOptions } from "./fs/list.js";
 export { createReadTool, type ReadToolOptions } from "./fs/read.js";
