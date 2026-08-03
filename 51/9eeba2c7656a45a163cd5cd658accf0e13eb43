@@ -1,0 +1,23 @@
+packages/dofs/src/fs/filesystem.test.ts
+  s_6a296c733892b8::t_17f4dbbb33de52 13,19
+packages/dofs/src/schema/current.test.ts
+  s_6a296c733892b8::t_615e6905309b60 1-35
+packages/dofs/vitest.config.workers.ts
+  s_6a296c733892b8::t_e66953a175929d 27-31,34-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "519eeba2c7656a45a163cd5cd658accf0e13eb43",
+  "prompts": {},
+  "sessions": {
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
