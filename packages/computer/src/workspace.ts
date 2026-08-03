@@ -38,6 +38,7 @@ import {
   type WorkspaceModuleBackend,
   type WorkspaceModuleBackendHandle,
   type WorkspaceRegisteredBackend,
+  type WorkspaceRuntimeEvent,
 } from "./runtime/types.js";
 import { WorkspaceShell } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
@@ -212,7 +213,6 @@ export class Workspace {
   readonly #registeredBackendIds: Set<string>;
   readonly #callableBackendIds: Set<string>;
   readonly #defaultBackendId: string | undefined;
-  readonly #defaultCommandBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
   readonly #retryScheduler: SyncRetryScheduler | undefined;
@@ -317,7 +317,6 @@ export class Workspace {
       this.#registeredBackendIds.add(backend.id);
     }
     this.#defaultBackendId = registered[0]?.id;
-    this.#defaultCommandBackendId = this.#backends[0]?.id;
     this.#observer = options.observer ?? noopObserver;
     this.#mounts = buildMountRegistry(options.mounts, {
       sessionId: options.sessionId,
@@ -425,10 +424,8 @@ export class Workspace {
   get runtime(): WorkspaceRuntime {
     if (!this.#runtime) {
       this.#runtime = new WorkspaceRuntime({
-        commandBackendIds: new Set(this.#backendsById.keys()),
         callableBackendIds: this.#callableBackendIds,
-        shell: () => this.#routedShell(),
-        moduleHandle: (id) => this.#moduleHandleFor(id),
+        backendHandle: (id) => this.#backendHandleFor(id),
         resolveBackendId: (id) => this.#resolveBackendId(id) ?? "",
       });
     }
@@ -743,20 +740,6 @@ export class Workspace {
     return target;
   }
 
-  #resolveCommandBackendId(id: string | undefined): string | undefined {
-    const target = id ?? this.#defaultCommandBackendId;
-    if (target === undefined) return undefined;
-    if (!this.#registeredBackendIds.has(target)) {
-      throw new Error(`Workspace: no backend with id ${JSON.stringify(target)}`);
-    }
-    if (!this.#backendsById.has(target)) {
-      throw new Error(
-        `Workspace backend ${JSON.stringify(target)} does not accept shell commands.`,
-      );
-    }
-    return target;
-  }
-
   async close(): Promise<void> {
     // Close every cached handle in parallel. Drop caches before
     // awaiting so a subsequent ready() / exec sees an empty slate
@@ -780,6 +763,83 @@ export class Workspace {
         }
       }),
     );
+  }
+
+  // Unified backend handle used by the runtime. Module backends
+  // return their native handle; command backends are presented
+  // through the same interface by an adapter over their
+  // WorkspaceShell, so the runtime has a single execution path.
+  async #backendHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
+    if (this.#moduleBackendsById.has(id)) return this.#moduleHandleFor(id);
+    return this.#commandHandleFor(id);
+  }
+
+  async #commandHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
+    const { shell, handle } = await this.#shellFor(id);
+    const onError = (error: unknown) => this.#onShellError(id, handle, error);
+    return {
+      exec: async (input) => {
+        let envelope: Awaited<ReturnType<WorkspaceShell["execution"]>>;
+        try {
+          envelope = await shell.execution(input.source, {
+            id: input.id,
+            cwd: input.cwd,
+            timeoutMs: input.timeoutMs,
+            env: input.env,
+            stdin: input.stdin,
+          });
+        } catch (error) {
+          onError(error);
+          throw error;
+        }
+        return {
+          id: envelope.id,
+          events: watchStreamForTransportError(
+            envelope.events,
+            onError,
+          ) as ReadableStream<WorkspaceRuntimeEvent>,
+          sync: envelope.sync,
+        };
+      },
+      getExec: async ({ id: execId, after }) => {
+        const resume = after === undefined ? "full" : after;
+        let envelope: Awaited<ReturnType<WorkspaceShell["getExecution"]>>;
+        try {
+          envelope = await shell.getExecution(execId, { resume });
+        } catch (error) {
+          onError(error);
+          throw error;
+        }
+        return {
+          id: envelope.id,
+          events: watchStreamForTransportError(
+            envelope.events,
+            onError,
+          ) as ReadableStream<WorkspaceRuntimeEvent>,
+          sync: envelope.sync,
+        };
+      },
+      killExec: async ({ id: execId, signal }) => {
+        try {
+          await shell.kill(execId, signal);
+        } catch (error) {
+          onError(error);
+          throw error;
+        }
+      },
+      disposeExec: async ({ id: execId }) => {
+        try {
+          await shell.dispose(execId);
+        } catch (error) {
+          onError(error);
+          throw error;
+        }
+      },
+      close: async () => {
+        // The backend handle owns the transport; closing happens
+        // through the Workspace's own close path.
+      },
+    };
   }
 
   #moduleHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
@@ -921,19 +981,6 @@ export class Workspace {
     return { shell, handle };
   }
 
-  // Routed shell facade. Each method picks the right backend per
-  // call (default, or the one named through ExecOptions.backend)
-  // and forwards to that backend's WorkspaceShell.
-  #routedShell(): WorkspaceShell {
-    const router = new WorkspaceShellRouter(
-      this.#defaultCommandBackendId ?? "",
-      (id) => this.#shellFor(id),
-      (id) => this.#resolveCommandBackendId(id) ?? "",
-      (id, handle, error) => this.#onShellError(id, handle, error),
-    );
-    return router as unknown as WorkspaceShell;
-  }
-
   // Invalidate the cached handle for `id` when a shell-routed RPC
   // fails with a known transport error. Compares the caller's
   // captured handle against the live cache entry so a late-failing
@@ -943,6 +990,36 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     this.#invalidateHandle(id, handle);
   }
+}
+
+// Pass an execution event stream through unchanged, but classify any
+// error that tears it down. A transport-classified mid-stream failure
+// invalidates the cached backend handle so the next call reconnects,
+// matching the invalidation the shell router used to install around a
+// command handle's result().
+function watchStreamForTransportError<T>(
+  events: ReadableStream<T>,
+  onError: (error: unknown) => void,
+): ReadableStream<T> {
+  const reader = events.getReader();
+  return new ReadableStream<T>({
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        onError(error);
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
 }
 
 function positiveRetryOption(value: number | undefined, fallback: number, name: string): number {
@@ -972,140 +1049,6 @@ function createDisabledArtifactsClient(): ArtifactClient {
       return runArtifactsCLI(this, input);
     },
   } as ArtifactClient;
-}
-
-// Selector wrapper that satisfies the WorkspaceShell surface but
-// resolves the underlying ShellRPC per call. ExecOptions and
-// GetExecOptions both gain an optional `backend` field; when
-// present the router routes the call to that backend's
-// WorkspaceShell, otherwise it routes to the default.
-//
-// Implemented as a non-extending class with the same method
-// names so the routed object slots into every callsite that
-// expects a WorkspaceShell without having to thread the union
-// type through.
-class WorkspaceShellRouter {
-  readonly #defaultId: string;
-  readonly #shellFor: (id: string) => Promise<{ shell: WorkspaceShell; handle: BackendHandle }>;
-  readonly #resolveId: (id: string | undefined) => string;
-  readonly #onError: (id: string, handle: BackendHandle, error: unknown) => void;
-
-  constructor(
-    defaultId: string,
-    shellFor: (id: string) => Promise<{ shell: WorkspaceShell; handle: BackendHandle }>,
-    resolveId: (id: string | undefined) => string,
-    onError: (id: string, handle: BackendHandle, error: unknown) => void,
-  ) {
-    this.#defaultId = defaultId;
-    this.#shellFor = shellFor;
-    this.#resolveId = resolveId;
-    this.#onError = onError;
-  }
-
-  async exec(command: string, options: { backend?: string } & Record<string, unknown> = {}) {
-    const id = this.#resolveId(options.backend) || this.#defaultId;
-    // Capture the BackendHandle here, at dispatch time. A late
-    // failure from this command's stream must invalidate THIS
-    // handle, not whatever the cache holds when the rejection
-    // eventually fires; a concurrent reconnect may have already
-    // swapped in a newer handle that we must not clobber.
-    const { shell, handle: dispatchHandle } = await this.#shellFor(id);
-    const { backend: _backend, ...rest } = options;
-    let execHandle: unknown;
-    try {
-      execHandle = await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
-        command,
-        rest,
-      );
-    } catch (error) {
-      this.#onError(id, dispatchHandle, error);
-      throw error;
-    }
-    return this.#wrapHandle(id, dispatchHandle, execHandle);
-  }
-
-  async get(id: string, options: { backend?: string } & Record<string, unknown> = {}) {
-    const backendId = this.#resolveId(options.backend) || this.#defaultId;
-    const { shell, handle: dispatchHandle } = await this.#shellFor(backendId);
-    const { backend: _backend, ...rest } = options;
-    let execHandle: unknown;
-    try {
-      execHandle = await (shell.get as unknown as (e: string, o: typeof rest) => Promise<unknown>)(
-        id,
-        rest,
-      );
-    } catch (error) {
-      this.#onError(backendId, dispatchHandle, error);
-      throw error;
-    }
-    return this.#wrapHandle(backendId, dispatchHandle, execHandle);
-  }
-
-  async kill(
-    id: string,
-    signal?: import("./shell.js").KillSignal,
-    options: { backend?: string } = {},
-  ): Promise<void> {
-    const backendId = this.#resolveId(options.backend) || this.#defaultId;
-    const { shell, handle } = await this.#shellFor(backendId);
-    try {
-      await shell.kill(id, signal);
-    } catch (error) {
-      this.#onError(backendId, handle, error);
-      throw error;
-    }
-  }
-
-  async dispose(id: string, options: { backend?: string } = {}): Promise<void> {
-    const backendId = this.#resolveId(options.backend) || this.#defaultId;
-    const { shell, handle } = await this.#shellFor(backendId);
-    try {
-      await shell.dispose(id);
-    } catch (error) {
-      this.#onError(backendId, handle, error);
-      throw error;
-    }
-  }
-
-  // Wrap an ExecHandle so a transport-classified rejection from
-  // result() invalidates the cached backend handle. The dispatch-
-  // time catch above only fires when shell.exec()/get() rejects
-  // immediately; in practice a long-running command loses its
-  // transport mid-stream and the rejection surfaces through
-  // result() draining the event stream.
-  //
-  // The handle reference captured here is the one that was active
-  // when the exec was dispatched. By the time result() rejects, a
-  // concurrent reconnect may have replaced the cached entry for
-  // this id with a newer handle; invalidation in #onShellError
-  // checks identity against the dispatch-time handle so the newer
-  // entry survives.
-  //
-  // WorkspaceShell installs .result via defineProperty; we set it
-  // configurable: true so this slot can be redefined. The handle's
-  // stream identity is preserved — callers that consume the
-  // ReadableStream directly are unaffected; only result() routes
-  // through the invalidation path.
-  #wrapHandle(id: string, dispatchHandle: BackendHandle, execHandle: unknown): unknown {
-    const original = execHandle as { result?: unknown };
-    if (typeof original.result !== "function") return execHandle;
-    const onError = this.#onError;
-    const originalResult = original.result.bind(execHandle) as () => Promise<unknown>;
-    Object.defineProperty(execHandle, "result", {
-      value: async () => {
-        try {
-          return await originalResult();
-        } catch (error) {
-          onError(id, dispatchHandle, error);
-          throw error;
-        }
-      },
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    });
-    return execHandle;
-  }
 }
 
 export function createThinkCompatibility(

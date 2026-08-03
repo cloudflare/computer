@@ -1,7 +1,8 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
-import type { ExecEncoding, ExecHandle, WorkspaceShell } from "../shell.js";
+import type { ExecEncoding } from "../shell.js";
 import type {
+  ModuleExecutionEnvelope,
   WorkspaceModuleBackendHandle,
   WorkspaceRuntimeDisposeOptions,
   WorkspaceRuntimeEvent,
@@ -13,10 +14,8 @@ import type {
 } from "./types.js";
 
 interface WorkspaceRuntimeRouterOptions {
-  commandBackendIds: ReadonlySet<string>;
   callableBackendIds: ReadonlySet<string>;
-  shell: () => WorkspaceShell;
-  moduleHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
+  backendHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
 }
 
@@ -47,31 +46,7 @@ export class WorkspaceRuntime {
         `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
       );
     }
-    if (this.#options.commandBackendIds.has(backend)) {
-      if (options.input !== undefined) {
-        throw new Error(
-          `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
-        );
-      }
-      const shell = this.#options.shell();
-      const handle = await (
-        shell.exec as unknown as (
-          command: string,
-          options: Record<string, unknown>,
-        ) => Promise<ExecHandle<E>>
-      )(source, {
-        backend,
-        cwd: options.cwd,
-        encoding: options.encoding,
-        id: options.id,
-        timeoutMs: options.timeoutMs,
-        env: options.env,
-        stdin: options.stdin,
-      });
-      return wrapCommandHandle(handle, backend);
-    }
-
-    const runtime = await this.#options.moduleHandle(backend);
+    const runtime = await this.#options.backendHandle(backend);
     const envelope = await runtime.exec({
       id: options.id,
       source,
@@ -81,7 +56,15 @@ export class WorkspaceRuntime {
       stdin: options.stdin,
       timeoutMs: options.timeoutMs,
     });
-    return wrapModuleHandle(runtime, backend, envelope.id, envelope.events, options.encoding);
+    return wrapModuleHandle(
+      runtime,
+      backend,
+      envelope.id,
+      envelope.events,
+      options.encoding,
+      true,
+      envelope.sync,
+    );
   }
 
   getExec(id: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;
@@ -99,36 +82,7 @@ export class WorkspaceRuntime {
   ): Promise<WorkspaceRuntimeExecHandle<E>> {
     assertExecutionId(id);
     const backend = this.#backend(options.backend);
-    if (this.#options.commandBackendIds.has(backend)) {
-      const shell = this.#options.shell();
-      const handle = await (
-        shell.get as unknown as (
-          id: string,
-          options: Record<string, unknown>,
-        ) => Promise<ExecHandle<E>>
-      )(id, {
-        backend,
-        encoding: options.encoding,
-        resume: options.resume,
-      });
-      const resultHandle =
-        options.resume === undefined || options.resume === "full"
-          ? undefined
-          : () =>
-              (
-                shell.get as unknown as (
-                  id: string,
-                  options: Record<string, unknown>,
-                ) => Promise<ExecHandle<E>>
-              )(id, {
-                backend,
-                encoding: options.encoding,
-                resume: "full",
-              });
-      return wrapCommandHandle(handle, backend, resultHandle);
-    }
-
-    const runtime = await this.#options.moduleHandle(backend);
+    const runtime = await this.#options.backendHandle(backend);
     const envelope = await runtime.getExec({ id, after: resumeToAfter(options.resume) });
     return wrapModuleHandle(
       runtime,
@@ -137,27 +91,20 @@ export class WorkspaceRuntime {
       envelope.events,
       options.encoding,
       options.resume === undefined || options.resume === "full",
+      envelope.sync,
     );
   }
 
   async killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {
     assertExecutionId(id);
     const backend = this.#backend(options.backend);
-    if (this.#options.commandBackendIds.has(backend)) {
-      await this.#options.shell().kill(id, options.signal, { backend });
-      return;
-    }
-    await (await this.#options.moduleHandle(backend)).killExec({ id, signal: options.signal });
+    await (await this.#options.backendHandle(backend)).killExec({ id, signal: options.signal });
   }
 
   async disposeExec(id: string, options: WorkspaceRuntimeDisposeOptions = {}): Promise<void> {
     assertExecutionId(id);
     const backend = this.#backend(options.backend);
-    if (this.#options.commandBackendIds.has(backend)) {
-      await this.#options.shell().dispose(id, { backend });
-      return;
-    }
-    await (await this.#options.moduleHandle(backend)).disposeExec({ id });
+    await (await this.#options.backendHandle(backend)).disposeExec({ id });
   }
 
   #backend(requested: string | undefined): string {
@@ -171,84 +118,6 @@ export class WorkspaceRuntime {
   }
 }
 
-function wrapCommandHandle<E extends ExecEncoding>(
-  handle: ExecHandle<E>,
-  backend: string,
-  lazyResultHandle?: () => Promise<ExecHandle<E>>,
-): WorkspaceRuntimeExecHandle<E> {
-  let claimed: "result" | "stream" | undefined;
-  let reader: ReadableStreamDefaultReader<WorkspaceRuntimeEvent<E>> | undefined;
-  let resultPromise: Promise<WorkspaceRuntimeResult<E>> | undefined;
-  const stream = new ReadableStream<WorkspaceRuntimeEvent<E>>(
-    {
-      async pull(controller) {
-        if (claimed === "result") {
-          controller.error(new Error("runtime handle already consumed by result()"));
-          return;
-        }
-        claimed = "stream";
-        reader ??= handle.getReader() as ReadableStreamDefaultReader<WorkspaceRuntimeEvent<E>>;
-        try {
-          const next = await reader.read();
-          if (next.done) {
-            reader.releaseLock();
-            reader = undefined;
-            controller.close();
-          } else controller.enqueue(next.value);
-        } catch (error) {
-          reader?.releaseLock();
-          reader = undefined;
-          controller.error(error);
-        }
-      },
-      async cancel(reason) {
-        if (reader) {
-          try {
-            await reader.cancel(reason);
-          } finally {
-            reader.releaseLock();
-            reader = undefined;
-          }
-        } else await handle.cancel(reason);
-      },
-    },
-    { highWaterMark: 0 },
-  ) as WorkspaceRuntimeExecHandle<E>;
-  Object.defineProperties(stream, {
-    id: { value: handle.id, enumerable: false },
-    backend: { value: backend, enumerable: false },
-    result: {
-      value: (): Promise<WorkspaceRuntimeResult<E>> => {
-        if (claimed === "stream") {
-          throw new Error("runtime handle already streaming: result() and streaming are exclusive");
-        }
-        claimed = "result";
-        resultPromise ??= (async () => {
-          if (lazyResultHandle) await handle.cancel("result() requested a full replay");
-          const result = lazyResultHandle
-            ? await (await lazyResultHandle()).result()
-            : await handle.result();
-          return {
-            status:
-              result.exitCode === 0
-                ? "completed"
-                : isCancellationExitCode(result.exitCode)
-                  ? "cancelled"
-                  : "failed",
-            ...result,
-          };
-        })();
-        return resultPromise;
-      },
-    },
-    kill: {
-      value: (signal?: WorkspaceRuntimeKillOptions["signal"]) => handle.kill(signal),
-    },
-    [Symbol.dispose]: { value: () => handle[Symbol.dispose]() },
-  });
-  return stream;
-}
-
 function wrapModuleHandle<E extends ExecEncoding>(
   runtime: WorkspaceModuleBackendHandle,
   backend: string,
@@ -256,6 +125,7 @@ function wrapModuleHandle<E extends ExecEncoding>(
   source: ReadableStream<WorkspaceRuntimeEvent>,
   encoding: E | undefined,
   resultMayUseSource = true,
+  sync?: ModuleExecutionEnvelope["sync"],
 ): WorkspaceRuntimeExecHandle<E> {
   let claimed: "result" | "stream" | undefined;
   let sourceCancelled = false;
@@ -314,10 +184,11 @@ function wrapModuleHandle<E extends ExecEncoding>(
             resultReader = active;
           };
           if (resultMayUseSource && !sourceCancelled) {
-            return drainModuleResult<E>(source, encoding, setReader);
+            return drainModuleResult<E>(source, encoding, setReader, sync);
           }
           if (!sourceCancelled) await source.cancel("result() requested a full replay");
-          return drainModuleResult<E>((await runtime.getExec({ id })).events, encoding, setReader);
+          const replay = await runtime.getExec({ id });
+          return drainModuleResult<E>(replay.events, encoding, setReader, replay.sync);
         })();
         return resultPromise;
       },
@@ -414,6 +285,7 @@ async function drainModuleResult<E extends ExecEncoding>(
   events: ReadableStream<WorkspaceRuntimeEvent>,
   encoding: E | undefined,
   setReader: (reader: ReadableStreamDefaultReader<WorkspaceRuntimeEvent> | undefined) => void,
+  sync?: ModuleExecutionEnvelope["sync"],
 ): Promise<WorkspaceRuntimeResult<E>> {
   const stdout: Uint8Array[] = [];
   const stderr: Uint8Array[] = [];
@@ -437,16 +309,20 @@ async function drainModuleResult<E extends ExecEncoding>(
     reader.releaseLock();
     setReader(undefined);
   }
+  // A backend with a remote store reports its sync bracket stats;
+  // the pull outcome settles once the event stream above drains.
+  const pull = sync ? await sync.outcome : undefined;
   return {
-    status: exitCode === 0 ? "completed" : exitCode === 130 ? "cancelled" : "failed",
+    status:
+      exitCode === 0 ? "completed" : isCancellationExitCode(exitCode) ? "cancelled" : "failed",
     exitCode,
     stdout: join(stdout, encoding) as WorkspaceRuntimeResult<E>["stdout"],
     stderr: join(stderr, encoding) as WorkspaceRuntimeResult<E>["stderr"],
     ...(value === undefined ? {} : { value }),
-    pushed: 0,
-    pulled: 0,
-    skipped: [] as SkippedEntry[],
-    sync: { status: "complete", applied: 0, skipped: [] },
+    pushed: sync?.pushed ?? 0,
+    pulled: pull?.applied ?? 0,
+    skipped: pull?.skipped ?? ([] as SkippedEntry[]),
+    sync: pull?.sync ?? { status: "complete", applied: 0, skipped: [] },
   };
 }
 

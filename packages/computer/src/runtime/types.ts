@@ -149,6 +149,15 @@ export interface ModuleExecutionInput {
 export interface ModuleExecutionEnvelope {
   id: string;
   events: ReadableStream<WorkspaceRuntimeEvent>;
+  // Sync bracket stats for a backend that pairs with a remote store.
+  // The pre-exec push count is known when the envelope is created;
+  // the post-drain pull outcome settles once `events` is consumed to
+  // its end. Absent for backends that reuse the host store, whose
+  // result reports zeroed stats.
+  sync?: {
+    pushed: number;
+    outcome: Promise<{ applied: number; skipped: SkippedEntry[]; sync: ExecSyncResult }>;
+  };
 }
 
 export interface WorkspaceModuleBackendHandle {

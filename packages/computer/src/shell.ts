@@ -219,6 +219,78 @@ export class WorkspaceShell {
     return wrapHandle<E>(this.#shell, this.#sync, id, events, options.encoding, 0);
   }
 
+  // Envelope form of exec / get for the unified backend handle. Returns
+  // raw (unencoded) events plus the sync bracket stats, matching
+  // ModuleExecutionEnvelope. The runtime applies encoding and drains
+  // the result the same way it does for module backends. `outcome`
+  // settles when `events` reaches its end, carrying the post-drain
+  // pull result.
+  async execution(
+    source: string,
+    options: ExecOptions<undefined> = {},
+  ): Promise<{
+    id: string;
+    events: ReadableStream<ExecEvent>;
+    sync: { pushed: number; outcome: Promise<PostPullOutcome> };
+  }> {
+    assertNotTemplate(source);
+    let pushed = 0;
+    try {
+      pushed = await this.#sync.push();
+    } catch {
+      // pushed stays 0
+    }
+    const envelope = await withSpan(
+      this.#observer,
+      "workspace.runtime.exec.spawn",
+      {
+        "workspace.runtime.cwd": options.cwd,
+        "workspace.runtime.timeout_ms": options.timeoutMs,
+        "workspace.runtime.id": options.id,
+      },
+      () =>
+        this.#shell.exec({
+          source,
+          id: options.id,
+          cwd: options.cwd,
+          timeoutMs: options.timeoutMs,
+          env: options.env,
+          stdin:
+            typeof options.stdin === "string"
+              ? new TextEncoder().encode(options.stdin)
+              : options.stdin,
+        }),
+      (span, outcome) => {
+        if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
+      },
+    );
+    const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
+    const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
+    return {
+      id: envelope.id,
+      events: stream as ReadableStream<ExecEvent>,
+      sync: { pushed, outcome },
+    };
+  }
+
+  // Envelope form of get / reattach. Reattach does not own the
+  // original push frame, so pushed = 0; the post-drain pull still
+  // fires scoped to whatever lands between reattach and drain.
+  async getExecution(
+    id: string,
+    options: GetExecOptions<undefined> = {},
+  ): Promise<{
+    id: string;
+    events: ReadableStream<ExecEvent>;
+    sync: { pushed: number; outcome: Promise<PostPullOutcome> };
+  }> {
+    const after = resumeToAfter(options.resume);
+    const envelope = await this.#shell.getExec({ id, after });
+    const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
+    const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
+    return { id, events: stream as ReadableStream<ExecEvent>, sync: { pushed: 0, outcome } };
+  }
+
   kill(id: string, signal?: KillSignal, _options: { backend?: string } = {}): Promise<void> {
     return this.#shell.killExec({ id, signal });
   }
@@ -369,13 +441,13 @@ function pipeEvents<E extends ExecEncoding>(
   );
 }
 
-interface PostPullOutcome {
+export interface PostPullOutcome {
   applied: number;
   skipped: SkippedEntry[];
   sync: ExecSyncResult;
 }
 
-function withPostPull<E extends ExecEncoding>(
+export function withPostPull<E extends ExecEncoding>(
   source: ReadableStream<WorkspaceExecEvent<E>>,
   sync: Sync,
 ): { stream: ReadableStream<WorkspaceExecEvent<E>>; outcome: Promise<PostPullOutcome> } {
@@ -506,7 +578,7 @@ function joinParts<E extends ExecEncoding>(
 
 // Wrap `stream` so its capnweb envelope is released exactly once on clean
 // completion, source failure, or consumer cancellation.
-function disposeOnDone<T>(stream: ReadableStream<T>, onDone: () => void): ReadableStream<T> {
+export function disposeOnDone<T>(stream: ReadableStream<T>, onDone: () => void): ReadableStream<T> {
   const reader = stream.getReader();
   let finished = false;
   const finish = () => {
@@ -552,7 +624,7 @@ function disposeOnDone<T>(stream: ReadableStream<T>, onDone: () => void): Readab
 // Best-effort dispose of a capnweb result envelope. Real envelopes
 // expose [Symbol.dispose]; test fakes return plain objects, so the
 // symbol may be absent.
-function maybeDispose(value: unknown): void {
+export function maybeDispose(value: unknown): void {
   const d = (value as { [Symbol.dispose]?: () => void } | null | undefined)?.[Symbol.dispose];
   if (typeof d === "function") d.call(value);
 }
