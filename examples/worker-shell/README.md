@@ -101,14 +101,32 @@ POST /c/<name>/exec                    { command | argv, cwd?, encoding? }
 
 ## Run it locally
 
-No Docker, no extra build step. The shell ships as a record of
-pre-bundled modules (`SHELL_MODULES`) inside
-`@cloudflare/computer/backends/worker-shell`; `WorkerShellBackend` spreads
-the whole record into the Loader callback internally so the DO
-constructor stays a three-line backend invocation. The entry
-module parses on cold start; the dynamic chunks (python, js-exec,
-sqlite, curl, html-to-markdown) stay cold until a script reaches
-for them.
+No Docker, no extra build step. The shell ships as pre-bundled
+feature groups inside `@cloudflare/computer/backends/worker-shell`: an
+always-on core plus one optional group per command at
+`@cloudflare/computer/shell/<feature>`. `WorkerShellBackend` assembles
+core with whatever groups you pass to its `commands` option and
+spreads the result into the Loader callback internally. This
+example opts `curl` and `sqlite` in:
+
+```ts
+import curlModules from "@cloudflare/computer/shell/curl";
+import sqliteModules from "@cloudflare/computer/shell/sqlite";
+
+new WorkerShellBackend({
+  loader: env.LOADER,
+  workspace: { binding: "ContainerExample", id: ctx.id.toString() },
+  ctx,
+  commands: [curlModules, sqliteModules],
+});
+```
+
+A group you never import (`html-to-markdown`, `python`, `js-exec`,
+`yq`, `file`, `xan`, `jq`, or either of the two above) is
+unreachable in the bundle and the bundler drops it — opting a
+command in is a single import, and opting out is deleting it. The
+core entry module parses on cold start; each opted-in group's
+chunks stay cold until a script reaches for them.
 
 ```sh
 npm run dev --workspace @example/computer-worker-shell

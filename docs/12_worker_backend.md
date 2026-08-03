@@ -249,22 +249,58 @@ network-bound `git` subcommands do. See
 - `src/index.ts` holds the DO and the HTTP surface (the
   `/c/<name>/file/...` and `/c/<name>/exec` routes the container
   example also exposes).
-- No Dockerfile, no build script. The shell bundle ships with
-  `@cloudflare/computer/backends/worker-shell` as `SHELL_MODULES`
-  (a record of module name → source covering the entry plus
-  every code-split chunk); the backend hands the whole record
-  to the Loader callback itself.
+- No Dockerfile, no build script. The shell ships with
+  `@cloudflare/computer/backends/worker-shell` as feature groups: an
+  always-on core (`SHELL_CORE_MODULES`) plus one optional group per
+  command at `@cloudflare/computer/shell/<feature>`. The backend
+  assembles core with whatever groups you opt into and hands the
+  result to the Loader callback itself.
 
-The DO's backend wiring fits in three lines:
+The DO's backend wiring:
 
 ```ts
+import curlModules from "@cloudflare/computer/shell/curl";
+import sqliteModules from "@cloudflare/computer/shell/sqlite";
+
 new WorkerShellBackend({
   loader: env.LOADER,
   workspace: { binding: "ContainerExample", id: ctx.id.toString() },
   ctx,
+  commands: [curlModules, sqliteModules],
 })
 ```
 
 Run with `npm run dev --workspace @example/computer-worker`.
-The same `curl` recipes from the container example work without
-changes.
+The same `curl` recipes from the container example work once
+`curlModules` is passed to `commands`.
+
+## Optional shell commands
+
+Core carries the always-on command set (`cat`, `ls`, `grep`, `sed`,
+`awk`, `sort`, …). The heavier commands are split into optional
+groups that are opt-in by import: import a group from
+`@cloudflare/computer/shell/<feature>` and pass it to the
+`commands` option, and only then does its code enter your bundle.
+
+```ts
+import curlModules from "@cloudflare/computer/shell/curl";
+import htmlToMarkdownModules from "@cloudflare/computer/shell/html-to-markdown";
+
+// commands: [curlModules, htmlToMarkdownModules]
+```
+
+A group you never import is unreachable in your module graph, so
+the bundler drops it — there is no build-time flag to set and no
+default-on cost to opt out of. The full set of optional groups is
+`curl`, `html-to-markdown`, `python`, `sqlite`, `js-exec`, `yq`,
+`file`, `xan`, and `jq`.
+
+`curl` runs on a `SecureFetch` adapter over the isolate's global
+`fetch` — `undici` is redirected to a throwing stub at build time
+and never ships. Egress stays governed by the Dynamic Worker's
+`globalOutbound` (left `null`, i.e. closed), not by the shell, so
+enabling `curl` does not by itself open the network.
+
+Consumers that build the Loader callback by hand (the `fetcher`
+path) assemble the modules table themselves with
+`assembleShellModules([...groups])` from the same package.

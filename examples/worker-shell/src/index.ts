@@ -36,6 +36,14 @@ import {
   withWorkspace,
 } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
+// Opt-in shell commands. Each import pulls one command group into
+// this Worker's bundle; a group you do not import is unreachable
+// and the bundler drops it. Pass the ones you want to the
+// WorkerShellBackend `commands` option below. Other importable groups:
+// @cloudflare/computer/shell/{html-to-markdown,python,js-exec,yq,
+// file,xan,jq}.
+import curl from "@cloudflare/computer/shell/curl";
+import jq from "@cloudflare/computer/shell/jq";
 
 // Re-export so the runtime can wrap WorkspaceServiceProxy into a
 // loopback Fetcher binding. The DO reaches the wrapped class
@@ -60,6 +68,10 @@ export class ContainerExample extends withWorkspace(class extends DurableObject<
         loader: env.LOADER,
         workspace: { binding: "ContainerExample", id: ctx.id.toString() },
         ctx,
+        // Only the groups listed here ship. Core (cat, ls, grep,
+        // sed, …) is always included; drop an import above to
+        // shrink the bundle by that command's cost.
+        commands: [curl, jq],
       }),
     ],
     // Mount the Bucket binding at /workspace/r2. Seed it with
