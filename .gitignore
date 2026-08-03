@@ -6,10 +6,11 @@ PLAN.md
 # tracked code and must not be caught by this rule.
 /artifacts/
 
-# Generated bundle for the worker backend's ShellWorker. Built
-# by packages/computer/src/backends/worker/script/build-bundle.mjs
-# on prepare / pretest / pretypecheck.
-packages/computer/src/backends/worker-shell/generated-bundle.ts
+# Generated shell-module groups for the worker backend's
+# ShellWorker (core plus one file per optional feature). Built by
+# packages/computer/src/backends/worker-shell/script/build-bundle.mjs on
+# prepare / pretest / pretypecheck.
+packages/computer/src/backends/worker-shell/generated/
 
 # SEA binary destinations populated at publish time from
 # artifacts/computerd/ via the build-bin step. The @cloudflare/computer

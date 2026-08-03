@@ -120,6 +120,22 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(result.stdout).toMatch(/done/);
   });
 
+  it("registers curl on the fetch path when its group is imported", async () => {
+    // The harness opts curl in by passing the imported curl group
+    // to WorkerBackend's `commands`. ShellWorker wires curl to a
+    // SecureFetch over the isolate's global fetch (no undici). A
+    // registered curl with no URL fails its own arg check ("curl:
+    // no URL specified"); an unregistered command would instead be
+    // reported as not found. This proves the fetch-path curl is
+    // wired without depending on egress, which globalOutbound keeps
+    // closed.
+    const id = freshId();
+    const result = await exec(id, "curl 2>&1; echo done");
+    expect(result.stdout).toMatch(/done/);
+    expect(result.stdout).toMatch(/curl: no URL specified/);
+    expect(result.stdout).not.toMatch(/command not found/);
+  });
+
   it("isolates state between separate workspace ids", async () => {
     // Two host-DO names → two distinct workspaces, two distinct
     // Dynamic Worker isolates (the loader caches by

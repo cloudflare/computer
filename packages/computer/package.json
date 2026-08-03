@@ -13,6 +13,7 @@
   "publishConfig": {
     "tag": "unreleased"
   },
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -45,6 +46,46 @@
     "./backends/worker-shell": {
       "types": "./dist/backends/worker-shell/index.d.ts",
       "import": "./dist/backends/worker-shell/index.js"
+    },
+    "./shell/core": {
+      "types": "./dist/backends/worker-shell/shell/core.d.ts",
+      "default": "./dist/backends/worker-shell/shell/core.js"
+    },
+    "./shell/curl": {
+      "types": "./dist/backends/worker-shell/shell/curl.d.ts",
+      "default": "./dist/backends/worker-shell/shell/curl.js"
+    },
+    "./shell/html-to-markdown": {
+      "types": "./dist/backends/worker-shell/shell/html-to-markdown.d.ts",
+      "default": "./dist/backends/worker-shell/shell/html-to-markdown.js"
+    },
+    "./shell/python": {
+      "types": "./dist/backends/worker-shell/shell/python.d.ts",
+      "default": "./dist/backends/worker-shell/shell/python.js"
+    },
+    "./shell/sqlite": {
+      "types": "./dist/backends/worker-shell/shell/sqlite.d.ts",
+      "default": "./dist/backends/worker-shell/shell/sqlite.js"
+    },
+    "./shell/js-exec": {
+      "types": "./dist/backends/worker-shell/shell/js-exec.d.ts",
+      "default": "./dist/backends/worker-shell/shell/js-exec.js"
+    },
+    "./shell/yq": {
+      "types": "./dist/backends/worker-shell/shell/yq.d.ts",
+      "default": "./dist/backends/worker-shell/shell/yq.js"
+    },
+    "./shell/file": {
+      "types": "./dist/backends/worker-shell/shell/file.d.ts",
+      "default": "./dist/backends/worker-shell/shell/file.js"
+    },
+    "./shell/xan": {
+      "types": "./dist/backends/worker-shell/shell/xan.d.ts",
+      "default": "./dist/backends/worker-shell/shell/xan.js"
+    },
+    "./shell/jq": {
+      "types": "./dist/backends/worker-shell/shell/jq.d.ts",
+      "default": "./dist/backends/worker-shell/shell/jq.js"
     },
     "./observe/cloudflare": {
       "types": "./dist/observe/cloudflare.d.ts",

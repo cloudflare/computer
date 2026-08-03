@@ -34,6 +34,23 @@ export default defineConfig({
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",
     "backends/worker-shell/index": "src/backends/worker-shell/index.ts",
+    // The shell-module groups build-bundle.mjs emits. Each is its
+    // own entry so it lands at the dist path the ./shell/* package
+    // exports point at; shell-modules.ts imports the core group by
+    // subpath (kept external below) and a consumer imports the
+    // optional ones it wants, so the bundler tree-shakes any group
+    // that is never imported.
+    "backends/worker-shell/shell/core": "src/backends/worker-shell/generated/core.ts",
+    "backends/worker-shell/shell/curl": "src/backends/worker-shell/generated/curl.ts",
+    "backends/worker-shell/shell/html-to-markdown":
+      "src/backends/worker-shell/generated/html-to-markdown.ts",
+    "backends/worker-shell/shell/python": "src/backends/worker-shell/generated/python.ts",
+    "backends/worker-shell/shell/sqlite": "src/backends/worker-shell/generated/sqlite.ts",
+    "backends/worker-shell/shell/js-exec": "src/backends/worker-shell/generated/js-exec.ts",
+    "backends/worker-shell/shell/yq": "src/backends/worker-shell/generated/yq.ts",
+    "backends/worker-shell/shell/file": "src/backends/worker-shell/generated/file.ts",
+    "backends/worker-shell/shell/xan": "src/backends/worker-shell/generated/xan.ts",
+    "backends/worker-shell/shell/jq": "src/backends/worker-shell/generated/jq.ts",
     "observe/cloudflare": "src/observe/cloudflare.ts",
   },
   external: [
@@ -44,6 +61,12 @@ export default defineConfig({
     "zod",
     "just-bash",
     /^node:/,
+    // shell-modules.ts imports the generated groups by their
+    // published subpath. Keep the specifiers intact in the emitted
+    // bundle rather than inlining the group here so the consumer's
+    // bundler sees each group as its own module and can drop one it
+    // never imports; each group is built as its own entry above.
+    /^@cloudflare\/computer\/shell\//,
   ],
   resolve: {
     alias: {

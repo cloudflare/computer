@@ -18,7 +18,7 @@
 // workspace stub; there's no shared instance state to race.
 
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { Bash, type CustomCommand } from "just-bash";
+import { Bash, type CustomCommand, type SecureFetch } from "just-bash";
 
 import { WorkspaceFsAdapter } from "./adapter.js";
 import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
@@ -40,7 +40,44 @@ export interface ShellWorkerOptions {
   // container backend uses, so scripts that hard-code that path
   // keep working.
   cwd?: string;
+  // Fetch implementation backing `curl`. just-bash registers curl
+  // whenever a fetch is supplied and calls it directly — no undici,
+  // no in-isolate DNS pinning (undici is excluded from the bundle
+  // at build time). Defaults to defaultSecureFetch below, a thin
+  // wrapper over the isolate's global `fetch`, so curl is enabled
+  // by default. Egress is governed by the Dynamic Worker's
+  // globalOutbound, not by this fetch (see worker.ts). Pass a
+  // custom SecureFetch to add an allow-list or credential
+  // injection, or `null` to drop curl entirely.
+  fetch?: SecureFetch | null;
 }
+
+// Default curl fetch: adapt the isolate's global `fetch` to
+// just-bash's SecureFetch contract. No allow-list or private-range
+// checks run here — the Dynamic Worker's globalOutbound is the
+// egress boundary, so requests only leave the isolate once a
+// consumer wires a trusted outbound gateway; policy belongs in
+// that gateway, not the untrusted shell.
+const defaultSecureFetch: SecureFetch = async (url, options) => {
+  const response = await fetch(url, {
+    method: options?.method,
+    headers: options?.headers,
+    body: options?.body,
+    redirect: options?.followRedirects === false ? "manual" : "follow",
+    signal: options?.signal,
+  });
+  const headers: Record<string, string> = Object.create(null);
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+    body: new Uint8Array(await response.arrayBuffer()),
+    url: response.url || url,
+  };
+};
 
 // Env shape the host Worker is expected to wire through the
 // Loader callback. The shell calls env.HOST.getWorkspace() on
@@ -186,6 +223,10 @@ export class ShellWorker<
             ConstructorParameters<typeof Bash>[0]
           >["fs"],
           cwd,
+          fetch:
+            this.shellOptions.fetch === null
+              ? undefined
+              : (this.shellOptions.fetch ?? defaultSecureFetch),
           customCommands,
           // just-bash's in-process DefenseInDepthBox activates by
           // registering ESM loader hooks through node:module's

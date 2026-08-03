@@ -18,6 +18,7 @@
 //     SELF.fetch instead of holding a DO reference itself.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import curlModules from "@cloudflare/computer/shell/curl";
 import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
 import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
@@ -42,6 +43,9 @@ export class HostDO extends DurableObject<Env> {
           loader: env.LOADER,
           workspace: { binding: "HOST", id: ctx.id.toString() },
           ctx,
+          // Opt curl in by importing its group and passing it; the
+          // fetch-path curl integration test exercises the wiring.
+          commands: [curlModules],
         }),
       ],
     });

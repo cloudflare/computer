@@ -10,7 +10,21 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "vitest/globals", "node"]
+    "types": ["@cloudflare/workers-types", "vitest/globals", "node"],
+    "paths": {
+      "@cloudflare/computer/shell/core": ["./src/backends/worker-shell/generated/core.ts"],
+      "@cloudflare/computer/shell/curl": ["./src/backends/worker-shell/generated/curl.ts"],
+      "@cloudflare/computer/shell/html-to-markdown": [
+        "./src/backends/worker-shell/generated/html-to-markdown.ts"
+      ],
+      "@cloudflare/computer/shell/python": ["./src/backends/worker-shell/generated/python.ts"],
+      "@cloudflare/computer/shell/sqlite": ["./src/backends/worker-shell/generated/sqlite.ts"],
+      "@cloudflare/computer/shell/js-exec": ["./src/backends/worker-shell/generated/js-exec.ts"],
+      "@cloudflare/computer/shell/yq": ["./src/backends/worker-shell/generated/yq.ts"],
+      "@cloudflare/computer/shell/file": ["./src/backends/worker-shell/generated/file.ts"],
+      "@cloudflare/computer/shell/xan": ["./src/backends/worker-shell/generated/xan.ts"],
+      "@cloudflare/computer/shell/jq": ["./src/backends/worker-shell/generated/jq.ts"]
+    }
   },
   "include": ["src/**/*.ts", "*.ts"]
 }

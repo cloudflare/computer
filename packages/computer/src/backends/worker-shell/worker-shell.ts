@@ -5,7 +5,8 @@
 // caller hands the backend a Loader binding plus a {binding, id}
 // reference to the host DO, and the backend takes care of the
 // rest. It builds the Worker Loader callback's modules table
-// (SHELL_MODULES plus the runtime stubs), wires a
+// (core plus any opted-in command groups, plus the runtime
+// stubs), wires a
 // WorkspaceServiceProxy loopback into the loaded Worker's env so
 // the shell can call env.HOST.getWorkspace() back into the host
 // DO, mints the Dynamic Worker stub through env.LOADER.get(...),
@@ -26,8 +27,8 @@ import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "@cloudflare/com
 
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import type { WorkspaceServiceProxyProps } from "../../proxy.js";
-import { SHELL_MODULES } from "./generated-bundle.js";
 import { SHELL_RUNTIME_MODULES } from "./runtime-modules.js";
+import { assembleShellModules, type ShellModuleGroup } from "./shell-modules.js";
 
 // The shape the loaded ShellWorker exposes. The host-side
 // implementation lives in ./entrypoint.ts; the backend consumes
@@ -136,6 +137,17 @@ export interface WorkerShellBackendOptions {
   // workers on different loaders or with different shell
   // configurations).
   id?: string;
+
+  // Optional shell command groups to include beyond the always-on
+  // core. Import the groups you want from
+  // @cloudflare/computer/shell/<feature> and pass them here; the
+  // backend folds them into the Loader modules table on top of
+  // core. A group you never import is unreachable in your bundle
+  // and the bundler drops it, so this is how you opt a command in
+  // without shipping the rest. Ignored on the `fetcher` path,
+  // where the caller assembles the modules table itself (use
+  // assembleShellModules there).
+  commands?: readonly ShellModuleGroup[];
 }
 
 const DEFAULT_COMPAT_DATE = "2026-06-17";
@@ -227,7 +239,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
       compatibilityFlags,
       mainModule: "shell.js",
       modules: {
-        ...SHELL_MODULES,
+        ...assembleShellModules(this.#options.commands),
         ...SHELL_RUNTIME_MODULES,
       },
       env: {

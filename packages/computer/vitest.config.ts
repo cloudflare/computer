@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 
 import { defineConfig } from "vitest/config";
 
+import { shellModuleAliases } from "./test-helpers/shell-module-aliases.js";
+
 export default defineConfig({
   resolve: {
     alias: [
@@ -27,6 +29,12 @@ export default defineConfig({
         find: "pako",
         replacement: resolve(__dirname, "src/git/pako-zlib-shim.ts"),
       },
+      // shell-modules.ts imports the generated groups by their
+      // published @cloudflare/computer/shell/* subpath. Those
+      // subpaths resolve through the package's dist exports, which
+      // don't exist under the src test runner — point them at the
+      // generated src files instead.
+      ...shellModuleAliases,
     ],
   },
   test: {

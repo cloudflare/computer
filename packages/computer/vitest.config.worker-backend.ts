@@ -8,12 +8,22 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
+import { shellModuleAliases } from "./test-helpers/shell-module-aliases.js";
+
 export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./tests/wrangler.worker-backend.jsonc" },
     }),
   ],
+  resolve: {
+    // The backend imports the core shell group, and the harness
+    // imports the curl group it opts in, both by their
+    // @cloudflare/computer/shell/* subpath. Those resolve through
+    // dist exports that this src test run doesn't build; map them
+    // to the generated src files.
+    alias: shellModuleAliases,
+  },
   test: {
     globals: true,
     include: ["tests/worker-backend.test.ts"],
