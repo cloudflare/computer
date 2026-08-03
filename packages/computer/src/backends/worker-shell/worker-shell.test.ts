@@ -142,7 +142,7 @@ describe("WorkerShellBackend", () => {
     const backend = new WorkerShellBackend({ fetcher: () => fetcher });
     const handle = await backend.connect();
 
-    const envelope = await handle.rpc.shell.exec({ command: "echo hello" });
+    const envelope = await handle.rpc.shell.exec({ source: "echo hello" });
     const reader = envelope.events.getReader();
     const seen: unknown[] = [];
     while (true) {
@@ -172,7 +172,7 @@ describe("WorkerShellBackend", () => {
     const backend = new WorkerShellBackend({ fetcher: () => fetcher });
     const handle = await backend.connect();
     const envelope = await handle.rpc.shell.exec({
-      command: "printenv TOKEN",
+      source: "printenv TOKEN",
       env: { TOKEN: "secret", EMPTY: "" },
     });
     const reader = envelope.events.getReader();
@@ -194,7 +194,7 @@ describe("WorkerShellBackend", () => {
       }),
     }));
     const handle = await new WorkerShellBackend({ fetcher: () => fetcher }).connect();
-    const envelope = await handle.rpc.shell.exec({ command: "bad" });
+    const envelope = await handle.rpc.shell.exec({ source: "bad" });
     await expect(envelope.events.getReader().read()).rejects.toMatchObject({ code: "EPROTOCOL" });
   });
 
@@ -214,7 +214,7 @@ describe("WorkerShellBackend", () => {
     await ws.ready();
     const backend = new WorkerShellBackend({ fetcher: () => fetcher });
     const handle = await backend.connect();
-    await handle.rpc.shell.exec({ command: "x", cwd: "/workspace/src", id: "fixed" });
+    await handle.rpc.shell.exec({ source: "x", cwd: "/workspace/src", id: "fixed" });
     expect(observed?.cwd).toBe("/workspace/src");
     expect(observed?.id).toBe("fixed");
   });
@@ -358,8 +358,8 @@ describe("WorkerShellBackend", () => {
       },
     });
     const handle = await backend.connect();
-    await handle.rpc.shell.exec({ command: "true" });
-    await handle.rpc.shell.exec({ command: "true" });
+    await handle.rpc.shell.exec({ source: "true" });
+    await handle.rpc.shell.exec({ source: "true" });
     expect(factoryCalls).toBe(1);
   });
 });

@@ -180,7 +180,7 @@ export class WorkspaceShell {
       },
       () =>
         this.#shell.exec({
-          command,
+          source: command,
           id: options.id,
           cwd: options.cwd,
           timeoutMs: options.timeoutMs,

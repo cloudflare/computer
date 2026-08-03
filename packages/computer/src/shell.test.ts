@@ -129,7 +129,7 @@ function fakeRpc(options: FakeRpcOptions = {}): FakeRpc {
   const shell: ShellRPC = {
     async exec(input) {
       calls.exec.push({
-        command: input.command,
+        command: input.source,
         id: input.id,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs,

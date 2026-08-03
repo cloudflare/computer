@@ -237,9 +237,10 @@ class ShellRPCServer extends RpcTarget implements ShellRPC {
   }
 
   async exec(input: {
-    command: string;
+    source: string;
     cwd?: string;
     id?: string;
+    input?: unknown;
     timeoutMs?: number;
     env?: Record<string, string>;
     stdin?: Uint8Array;
@@ -247,7 +248,7 @@ class ShellRPCServer extends RpcTarget implements ShellRPC {
     id: string;
     events: ReadableStream<ExecEvent>;
   }> {
-    return this.runner.exec(input.command, {
+    return this.runner.exec(input.source, {
       id: input.id,
       cwd: input.cwd,
       timeoutMs: input.timeoutMs,

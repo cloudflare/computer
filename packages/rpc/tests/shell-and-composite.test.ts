@@ -158,7 +158,7 @@ describe("ShellRPC over a real WebSocket", () => {
       // `client.exec(...)` lands on it directly. createWorkspaceClient
       // proxies all property access through; capnweb routes by name.
       // biome-ignore lint/suspicious/noExplicitAny: client targets ShellRPC for this harness, not WorkspaceRPC
-      const handle = await (client as any).exec({ command: "echo hi" });
+      const handle = await (client as any).exec({ source: "echo hi" });
       const events = await drainExec(handle.events);
       expect(events).toHaveLength(2);
       expect(events[0]?.name).toBe("stdout");
@@ -178,7 +178,7 @@ describe("ShellRPC over a real WebSocket", () => {
     const client = createWorkspaceClient({ url: harness.url });
     try {
       // biome-ignore lint/suspicious/noExplicitAny: see above
-      const handle = await (client as any).exec({ command: "sleep", id: "fixed" });
+      const handle = await (client as any).exec({ source: "sleep", id: "fixed" });
       await drainExec(handle.events);
 
       // biome-ignore lint/suspicious/noExplicitAny: see above
@@ -198,7 +198,7 @@ describe("ShellRPC over a real WebSocket", () => {
     const client = createWorkspaceClient({ url: harness.url });
     try {
       // biome-ignore lint/suspicious/noExplicitAny: see above
-      const first = await (client as any).exec({ command: "first", id: "repeat" });
+      const first = await (client as any).exec({ source: "first", id: "repeat" });
       await drainExec(first.events);
 
       // biome-ignore lint/suspicious/noExplicitAny: see above
@@ -266,7 +266,7 @@ describe("Composite WorkspaceRPC (sync + shell on one session)", () => {
       expect(typeof wm.currentRev).toBe("number");
       expect(wm.currentRev).toBeGreaterThanOrEqual(0);
 
-      const handle = await client.shell.exec({ command: "ls" });
+      const handle = await client.shell.exec({ source: "ls" });
       const events = await drainExec(handle.events);
       expect(events).toHaveLength(2);
       expect(events[1]).toMatchObject({ name: "exit", value: 0 });
@@ -287,7 +287,7 @@ describe("Composite WorkspaceRPC (sync + shell on one session)", () => {
     try {
       expect(await client.sync.readEntry("/none")).toBeNull();
 
-      const handle = await client.shell.exec({ command: "noop" });
+      const handle = await client.shell.exec({ source: "noop" });
       await drainExec(handle.events);
       expect(harness.runner.records.size).toBe(1);
 
@@ -304,7 +304,7 @@ describe("Composite WorkspaceRPC (sync + shell on one session)", () => {
     harness = await startCompositeHarness();
     const client = createWorkspaceClient({ url: harness.url });
     try {
-      const handle = await client.shell.exec({ command: "x" });
+      const handle = await client.shell.exec({ source: "x" });
       await drainExec(handle.events);
       const wm = await client.sync.watermarks();
       expect(typeof wm.currentRev).toBe("number");

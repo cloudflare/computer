@@ -171,7 +171,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
     const shell: ShellRPC = {
       async exec(input) {
         const envelope = await fetcher.exec({
-          command: input.command,
+          command: input.source,
           cwd: input.cwd,
           id: input.id,
           timeoutMs: input.timeoutMs,
