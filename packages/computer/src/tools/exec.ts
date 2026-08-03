@@ -4,13 +4,19 @@ import { z } from "zod";
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 
 // One event drained from a running execution. stdout / stderr carry
-// output chunks as they arrive; result carries a callable backend's
-// structured return value; exit carries the process exit code.
+// output chunks as they arrive; exit carries the process exit code and,
+// for a callable backend, the structured return value on `result`. The
+// value settles at the same instant as the exit code, so it rides the
+// same terminal event rather than a separate one.
+//
+// The standalone `result` event is the shape the runtime wire still
+// emits today. The tool accepts it so it keeps working until the wire is
+// consolidated, but callers should read the value from the exit event.
 export type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
   | { name: "result"; value: unknown }
-  | { name: "exit"; value: number };
+  | { name: "exit"; value: number; result?: unknown };
 
 // A detached execution handle. The tool streams stdout / stderr
 // chunks by iterating the handle when it is async-iterable, and
@@ -199,6 +205,10 @@ export function createExecTool(options: ExecToolOptions): Tool<
               continue;
             } else {
               exitCode = event.value;
+              if ("result" in event) {
+                value = event.result;
+                hasValue = true;
+              }
               continue;
             }
             // A stdout / stderr chunk arrived: emit a running snapshot

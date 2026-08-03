@@ -43,7 +43,7 @@ type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
   | { name: "result"; value: unknown }
-  | { name: "exit"; value: number };
+  | { name: "exit"; value: number; result?: unknown };
 
 function streamingHandle(events: ExecStreamEvent[]) {
   return {
@@ -747,6 +747,41 @@ describe("createAITools exec streaming", () => {
             { name: "stdout", value: "working\n" },
             { name: "result", value: { ok: true } },
             { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "js",
+        backends: { js: { description: "JavaScript module runtime", callable: true } },
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, {
+      command: "export default () => ({ ok: true })",
+      input: {},
+    });
+    expect(chunks).toHaveLength(2);
+    expect(chunks.at(-1)).toEqual({
+      command: "export default () => ({ ok: true })",
+      cwd: null,
+      backend: "js",
+      exitCode: 0,
+      stdout: "working\n",
+      stderr: "",
+      result: { ok: true },
+    });
+  });
+
+  it("reads a callable backend's result folded onto the exit event", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "working\n" },
+            { name: "exit", value: 0, result: { ok: true } },
           ]);
         },
       },
