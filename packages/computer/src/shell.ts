@@ -1,30 +1,24 @@
-// Host-side WorkspaceShell facade.
+// Host-side command executor.
 //
-// Wraps the ShellRPC half of a WorkspaceRPC stub. The docs/05
-// contract: one entry point — exec() — that returns a detached
-// handle. Callers either await `result()` (run-and-wait) or
-// consume the ReadableStream directly (run-and-stream), or drop
-// the handle entirely (fire-and-forget).
+// Wraps the ShellRPC half of a WorkspaceRPC stub and presents it as
+// the unified execution surface the Workspace runtime consumes:
+// exec() spawns a command, get() reattaches to one, and both return
+// an envelope of raw events plus the docs/05 sync bracket stats.
 //
-// Every exec() call brackets the spawn with the docs/05 sync
-// frames:
-//   - pushOnce(db, rpc.sync) runs *before* the spawn so any
-//     host-side writes since the last push are visible to the
-//     command.
-//   - pullOnce(db, rpc.sync) runs *after* the stream drains (i.e.
-//     after the exit event), so anything the command produced is
-//     visible to subsequent Workspace.fs reads.
-// The pushed / pulled counts land in ExecResult.
+// Every exec() call brackets the spawn with the docs/05 sync frames:
+//   - the pre-exec push ships any host-side writes since the last
+//     push so the spawned command sees them.
+//   - the post-drain pull runs after the event stream reaches its
+//     end, so anything the command produced is visible to subsequent
+//     Workspace.fs reads.
+// The pushed count is known when the envelope is built; the pull
+// outcome settles once the events stream drains. The runtime applies
+// encoding and accumulates the result from the raw events.
 //
-// Pull fires after either result() or direct stream consumption drains
-// the execution events. The stream does not close until that pull settles.
-//
-// get() (reattach) is intentionally not bracketed. Reattaching
-// to an already-running exec doesn't represent a new push frame.
-// The result() of a reattached handle reports pushed = 0 and the
-// pulled count from a pull that runs after its own drain — best-
-// effort, can be 0 if nothing landed in computerd between reattach and
-// drain.
+// get() (reattach) is intentionally not push-bracketed. Reattaching
+// to an already-running exec doesn't represent a new push frame, so
+// it reports pushed = 0; the post-drain pull still fires, scoped to
+// whatever landed between reattach and drain.
 
 import type { ExecEvent, ShellRPC } from "@cloudflare/computer-rpc";
 import type { ApplyResult, SkippedEntry } from "@cloudflare/dofs";
@@ -47,46 +41,16 @@ export type ExecSyncResult =
   | { status: "complete"; applied: number; skipped: SkippedEntry[] }
   | { status: "pending"; applied: number; skipped: SkippedEntry[]; error: string };
 
-export interface ExecResult<E extends ExecEncoding = undefined> {
-  exitCode: number;
-  stdout: Chunk<E>;
-  stderr: Chunk<E>;
-  // VFS sync stats from the docs/05 bracket.
-  //   pushed  — entries shipped by the pre-exec pushOnce.
-  //   pulled  — entries the post-drain pullOnce applied locally.
-  //   skipped — entries the post-drain pullOnce did NOT apply
-  //             because they targeted a read-only mount root.
-  //             Empty when no read-only mounts are registered or
-  //             the container stayed clear of them.
-  // pushed is observed before the stream is returned. The remaining
-  // fields describe the post-command pull when result() is used.
-  pushed: number;
-  pulled: number;
-  skipped: SkippedEntry[];
-  // Structured post-command sync outcome. The legacy pulled and
-  // skipped fields remain available for existing callers.
-  sync: ExecSyncResult;
-}
-
 export type KillSignal = "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
 
-// ExecHandle is a ReadableStream<WorkspaceExecEvent> with three
-// extras tacked on. Implemented as the wire stream + extra own
-// properties (id / result / kill) rather than a subclass for two
-// reasons:
-//
-//   1. The wire stream comes back from capnweb already built;
-//      subclassing means a pump-through layer that copies every
-//      chunk for no behavioural gain.
-//   2. pipeThrough (used for the utf8 transform) returns a plain
-//      ReadableStream, so the subclass identity gets lost on the
-//      first transform anyway.
-export interface ExecHandle<E extends ExecEncoding = undefined>
-  extends ReadableStream<WorkspaceExecEvent<E>> {
-  readonly id: string;
-  result(): Promise<ExecResult<E>>;
-  kill(signal?: KillSignal): Promise<void>;
-  [Symbol.dispose](): void;
+// The envelope both exec() and get() return: an execution id, the
+// raw (unencoded) event stream, and the sync bracket stats. The
+// pushed count is known up front; `outcome` settles when `events`
+// reaches its end, carrying the post-drain pull result.
+export interface CommandExecution {
+  id: string;
+  events: ReadableStream<ExecEvent>;
+  sync: { pushed: number; outcome: Promise<PostPullOutcome> };
 }
 
 export interface ExecOptions<E extends ExecEncoding = undefined> {
@@ -129,20 +93,20 @@ export interface GetExecOptions<E extends ExecEncoding = undefined> {
   backend?: string;
 }
 
-// Push/pull bracket plumbing. WorkspaceShell doesn't know about
+// Push/pull bracket plumbing. CommandExecutor doesn't know about
 // the local Database or the SyncRPC wire — the host wires both
 // behind a Sync object that exposes the entry counts.
 // Workspace itself satisfies this interface (push() / pull() are
 // public methods); tests pass a plain { push, pull } object.
-// pull() returns the dofs ApplyResult so the shell can surface
-// skipped read-only entries on ExecResult.
+// pull() returns the dofs ApplyResult so the executor can surface
+// skipped read-only entries on the sync outcome.
 export interface Sync {
   push(): Promise<number>;
   pull(): Promise<ApplyResult>;
   onPullPending?(error: unknown): Promise<void>;
 }
 
-export class WorkspaceShell {
+export class CommandExecutor {
   readonly #shell: ShellRPC;
   readonly #sync: Sync;
   readonly #observer: WorkspaceObserver;
@@ -153,86 +117,11 @@ export class WorkspaceShell {
     this.#observer = observer;
   }
 
-  exec(command: string): Promise<ExecHandle<undefined>>;
-  exec(command: string, options: ExecOptions<undefined>): Promise<ExecHandle<undefined>>;
-  exec(command: string, options: ExecOptions<"utf8">): Promise<ExecHandle<"utf8">>;
-  async exec<E extends ExecEncoding>(
-    command: string,
-    options: ExecOptions<E> = {},
-  ): Promise<ExecHandle<E>> {
-    assertNotTemplate(command);
-    // Pre-exec push: ship anything the host wrote since the last
-    // push so the spawned command sees it. Failures non-fatal per
-    // docs/05 — the command still runs; pushed reports 0.
-    let pushed = 0;
-    try {
-      pushed = await this.#sync.push();
-    } catch {
-      // pushed stays 0
-    }
-    const envelope = await withSpan(
-      this.#observer,
-      "workspace.runtime.exec.spawn",
-      {
-        "workspace.runtime.cwd": options.cwd,
-        "workspace.runtime.timeout_ms": options.timeoutMs,
-        "workspace.runtime.id": options.id,
-      },
-      () =>
-        this.#shell.exec({
-          source: command,
-          id: options.id,
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          stdin:
-            typeof options.stdin === "string"
-              ? new TextEncoder().encode(options.stdin)
-              : options.stdin,
-        }),
-      (span, outcome) => {
-        if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
-      },
-    );
-    // Dispose the result envelope when the event stream finishes
-    // draining. Without this, capnweb's exports table holds onto
-    // the envelope for the life of the session — one entry per
-    // exec call — because we hand the inner stream off to the
-    // caller and can't `using` the envelope ourselves.
-    const events = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    return wrapHandle<E>(this.#shell, this.#sync, envelope.id, events, options.encoding, pushed);
-  }
-
-  get(id: string): Promise<ExecHandle<undefined>>;
-  get(id: string, options: GetExecOptions<undefined>): Promise<ExecHandle<undefined>>;
-  get(id: string, options: GetExecOptions<"utf8">): Promise<ExecHandle<"utf8">>;
-  async get<E extends ExecEncoding>(
-    id: string,
-    options: GetExecOptions<E> = {},
-  ): Promise<ExecHandle<E>> {
-    const after = resumeToAfter(options.resume);
-    const envelope = await this.#shell.getExec({ id, after });
-    const events = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    // Reattach doesn't own the original push frame: pushed = 0.
-    // The post-drain pull still fires, scoped to whatever lands
-    // between reattach and the next drain.
-    return wrapHandle<E>(this.#shell, this.#sync, id, events, options.encoding, 0);
-  }
-
-  // Envelope form of exec / get for the unified backend handle. Returns
-  // raw (unencoded) events plus the sync bracket stats, matching
-  // ModuleExecutionEnvelope. The runtime applies encoding and drains
-  // the result the same way it does for module backends. `outcome`
-  // settles when `events` reaches its end, carrying the post-drain
-  // pull result.
-  async execution(
-    source: string,
-    options: ExecOptions<undefined> = {},
-  ): Promise<{
-    id: string;
-    events: ReadableStream<ExecEvent>;
-    sync: { pushed: number; outcome: Promise<PostPullOutcome> };
-  }> {
+  // Spawn a command. Pushes host-side writes first so the command
+  // sees them, then returns the raw event stream and the sync
+  // bracket stats. The push failure is non-fatal per docs/05 — the
+  // command still runs and pushed reports 0.
+  async exec(source: string, options: ExecOptions<undefined> = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
     let pushed = 0;
     try {
@@ -264,40 +153,33 @@ export class WorkspaceShell {
         if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
       },
     );
+    // Dispose the RPC envelope when the event stream finishes
+    // draining. Without this, capnweb's exports table holds onto
+    // the envelope for the life of the session — one entry per exec
+    // call — because the inner stream is handed off to the caller
+    // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
     const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
-    return {
-      id: envelope.id,
-      events: stream as ReadableStream<ExecEvent>,
-      sync: { pushed, outcome },
-    };
+    return { id: envelope.id, events: stream, sync: { pushed, outcome } };
   }
 
-  // Envelope form of get / reattach. Reattach does not own the
-  // original push frame, so pushed = 0; the post-drain pull still
-  // fires scoped to whatever lands between reattach and drain.
-  async getExecution(
-    id: string,
-    options: GetExecOptions<undefined> = {},
-  ): Promise<{
-    id: string;
-    events: ReadableStream<ExecEvent>;
-    sync: { pushed: number; outcome: Promise<PostPullOutcome> };
-  }> {
+  // Reattach to an in-flight or recently-completed exec. Reattach
+  // does not own the original push frame, so pushed = 0; the
+  // post-drain pull still fires, scoped to whatever landed between
+  // reattach and drain.
+  async get(id: string, options: GetExecOptions<undefined> = {}): Promise<CommandExecution> {
     const after = resumeToAfter(options.resume);
     const envelope = await this.#shell.getExec({ id, after });
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
     const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
-    return { id, events: stream as ReadableStream<ExecEvent>, sync: { pushed: 0, outcome } };
+    return { id, events: stream, sync: { pushed: 0, outcome } };
   }
 
-  kill(id: string, signal?: KillSignal, _options: { backend?: string } = {}): Promise<void> {
+  kill(id: string, signal?: KillSignal): Promise<void> {
     return this.#shell.killExec({ id, signal });
   }
 
-  dispose(id: string): Promise<void>;
-  dispose(id: string, options: { backend?: string }): Promise<void>;
-  dispose(id: string, _options: { backend?: string } = {}): Promise<void> {
+  dispose(id: string): Promise<void> {
     return this.#shell.disposeExec({ id });
   }
 }
@@ -306,139 +188,6 @@ function resumeToAfter(resume: "tail" | "full" | number | undefined): number | "
   if (resume === undefined || resume === "full") return undefined;
   if (resume === "tail") return "tail";
   return resume;
-}
-
-// Stitch the runtime extras (id, result, kill) onto a fresh
-// ReadableStream that pipes from the wire stream and applies any
-// encoding conversion in flight.
-//
-// The user stream remains the only reader so backpressure reaches the backend.
-// kill() requests a signal; result() or stream completion observes the exit.
-function wrapHandle<E extends ExecEncoding>(
-  shell: ShellRPC,
-  sync: Sync,
-  id: string,
-  wireEvents: ReadableStream<ExecEvent>,
-  encoding: E | undefined,
-  pushed: number,
-): ExecHandle<E> {
-  const postPull = withPostPull(pipeEvents<E>(wireEvents, encoding), sync);
-  const stream = postPull.stream;
-  const handle = stream as ExecHandle<E>;
-  let resultPromise: Promise<ExecResult<E>> | undefined;
-  let resultReader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined;
-  // configurable: true on result/kill lets the Workspace-level
-  // router redefine them to add cross-cutting concerns (transport
-  // failure invalidation on result(); future kill hooks). The id
-  // slot stays non-configurable — nothing should rewrite it.
-  Object.defineProperties(handle, {
-    id: { value: id, enumerable: false, writable: false, configurable: false },
-    result: {
-      value: () => {
-        resultPromise ??= drainToResult<E>(stream, encoding, pushed, postPull.outcome, (reader) => {
-          resultReader = reader;
-        });
-        return resultPromise;
-      },
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    },
-    kill: {
-      value: (signal?: KillSignal) => shell.killExec({ id, signal }),
-      enumerable: false,
-      writable: false,
-      configurable: true,
-    },
-    [Symbol.dispose]: {
-      value: () => {
-        if (resultReader) void resultReader.cancel().catch(() => undefined);
-        else void stream.cancel().catch(() => undefined);
-      },
-    },
-  });
-  return handle;
-}
-
-function pipeEvents<E extends ExecEncoding>(
-  source: ReadableStream<ExecEvent>,
-  encoding: E | undefined,
-): ReadableStream<WorkspaceExecEvent<E>> {
-  if (encoding !== "utf8") {
-    // Identity pipe — the wire shape already matches.
-    return source as unknown as ReadableStream<WorkspaceExecEvent<E>>;
-  }
-  // Per-stream TextDecoders preserve multi-byte boundaries
-  // across chunk splits.
-  const stdoutDec = new TextDecoder("utf-8", { fatal: false });
-  const stderrDec = new TextDecoder("utf-8", { fatal: false });
-  let stdoutMeta: { id: string; seq: number } | undefined;
-  let stderrMeta: { id: string; seq: number } | undefined;
-  let lastSeq = 0;
-  const enqueue = (
-    controller: TransformStreamDefaultController<WorkspaceExecEvent<E>>,
-    event: WorkspaceExecEvent<E>,
-  ) => {
-    lastSeq = event.seq;
-    controller.enqueue(event);
-  };
-  const flushPending = (
-    controller: TransformStreamDefaultController<WorkspaceExecEvent<E>>,
-    beforeSeq?: number,
-  ) => {
-    const pending: Array<{
-      id: string;
-      seq: number;
-      name: "stdout" | "stderr";
-      value: Chunk<E>;
-    }> = [];
-    const stdout = stdoutDec.decode();
-    const stderr = stderrDec.decode();
-    if (stdout && stdoutMeta) {
-      pending.push({ ...stdoutMeta, name: "stdout", value: stdout as Chunk<E> });
-    }
-    if (stderr && stderrMeta) {
-      pending.push({ ...stderrMeta, name: "stderr", value: stderr as Chunk<E> });
-    }
-    pending.sort((a, b) => a.seq - b.seq);
-    const span = beforeSeq !== undefined && beforeSeq > lastSeq ? beforeSeq - lastSeq : 1;
-    for (let index = 0; index < pending.length; index++) {
-      const event = pending[index];
-      enqueue(controller, {
-        ...event,
-        seq: lastSeq + (span * (index + 1)) / (pending.length + 1),
-      });
-    }
-    stdoutMeta = undefined;
-    stderrMeta = undefined;
-  };
-  return source.pipeThrough(
-    new TransformStream<ExecEvent, WorkspaceExecEvent<E>>({
-      transform(event, controller) {
-        if (event.name === "stdout") {
-          stdoutMeta = { id: event.id, seq: event.seq };
-          enqueue(controller, {
-            id: event.id,
-            seq: event.seq,
-            name: "stdout",
-            value: stdoutDec.decode(event.value, { stream: true }) as Chunk<E>,
-          });
-        } else if (event.name === "stderr") {
-          stderrMeta = { id: event.id, seq: event.seq };
-          enqueue(controller, {
-            id: event.id,
-            seq: event.seq,
-            name: "stderr",
-            value: stderrDec.decode(event.value, { stream: true }) as Chunk<E>,
-          });
-        } else {
-          flushPending(controller, event.seq);
-          enqueue(controller, event as WorkspaceExecEvent<E>);
-        }
-      },
-      flush: flushPending,
-    }),
-  );
 }
 
 export interface PostPullOutcome {
@@ -517,63 +266,6 @@ async function runPostPull(sync: Sync): Promise<PostPullOutcome> {
       sync: { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(error) },
     };
   }
-}
-
-async function drainToResult<E extends ExecEncoding>(
-  stream: ReadableStream<WorkspaceExecEvent<E>>,
-  encoding: E | undefined,
-  pushed: number,
-  postPull: Promise<PostPullOutcome>,
-  setReader: (reader: ReadableStreamDefaultReader<WorkspaceExecEvent<E>> | undefined) => void,
-): Promise<ExecResult<E>> {
-  const reader = stream.getReader();
-  setReader(reader);
-  const stdoutParts: Array<Chunk<E>> = [];
-  const stderrParts: Array<Chunk<E>> = [];
-  let exitCode = -1;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value.name === "stdout") stdoutParts.push(value.value);
-      else if (value.name === "stderr") stderrParts.push(value.value);
-      else exitCode = value.value;
-    }
-  } finally {
-    reader.releaseLock();
-    setReader(undefined);
-  }
-  const pulled = await postPull;
-  return {
-    exitCode,
-    stdout: joinParts<E>(stdoutParts, encoding),
-    stderr: joinParts<E>(stderrParts, encoding),
-    pushed,
-    pulled: pulled.applied,
-    skipped: pulled.skipped,
-    sync: pulled.sync,
-  };
-}
-
-function joinParts<E extends ExecEncoding>(
-  parts: Array<Chunk<E>>,
-  encoding: E | undefined,
-): Chunk<E> {
-  if (parts.length === 0) {
-    return (encoding === "utf8" ? "" : new Uint8Array(0)) as Chunk<E>;
-  }
-  if (typeof parts[0] === "string") {
-    return (parts as string[]).join("") as Chunk<E>;
-  }
-  const arrays = parts as Uint8Array[];
-  const total = arrays.reduce((acc, a) => acc + a.byteLength, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const a of arrays) {
-    out.set(a, offset);
-    offset += a.byteLength;
-  }
-  return out as Chunk<E>;
 }
 
 // Wrap `stream` so its capnweb envelope is released exactly once on clean

@@ -1,6 +1,6 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
-import type { ExecHandle, ExecResult } from "../shell.js";
+import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
 import { Workspace } from "../workspace.js";
 import {
   createAITools,
@@ -293,7 +293,7 @@ describe("createAITools exec tool", () => {
       runtime: {
         async exec(command: string, options: { cwd?: string; encoding: "utf8"; backend?: string }) {
           calls.push({ command, cwd: options.cwd, backend: options.backend });
-          const result: ExecResult<"utf8"> = {
+          const result: WorkspaceRuntimeResult<"utf8"> = {
             exitCode: 2,
             stdout: "abcdef",
             stderr: "uvwxyz",
@@ -301,7 +301,7 @@ describe("createAITools exec tool", () => {
             pulled: 0,
             skipped: [],
           };
-          return { result: async () => result } as ExecHandle<"utf8">;
+          return { result: async () => result } as unknown as WorkspaceRuntimeExecHandle<"utf8">;
         },
       },
     };
@@ -334,7 +334,7 @@ describe("createAITools exec tool", () => {
     const workspace = {
       runtime: {
         async exec() {
-          const result: ExecResult<"utf8"> = {
+          const result: WorkspaceRuntimeResult<"utf8"> = {
             exitCode: 0,
             stdout: "a🙂b",
             stderr: "🙂🙂",
@@ -342,7 +342,7 @@ describe("createAITools exec tool", () => {
             pulled: 0,
             skipped: [],
           };
-          return { result: async () => result } as ExecHandle<"utf8">;
+          return { result: async () => result } as unknown as WorkspaceRuntimeExecHandle<"utf8">;
         },
       },
     };
@@ -367,7 +367,7 @@ describe("createAITools exec tool", () => {
       runtime: {
         async exec(command: string, options: { encoding: "utf8"; backend?: string }) {
           calls.push({ command, backend: options.backend });
-          const result: ExecResult<"utf8"> = {
+          const result: WorkspaceRuntimeResult<"utf8"> = {
             exitCode: 0,
             stdout: "ok",
             stderr: "",
@@ -375,7 +375,7 @@ describe("createAITools exec tool", () => {
             pulled: 0,
             skipped: [],
           };
-          return { result: async () => result } as ExecHandle<"utf8">;
+          return { result: async () => result } as unknown as WorkspaceRuntimeExecHandle<"utf8">;
         },
       },
     };

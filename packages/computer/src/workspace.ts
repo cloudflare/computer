@@ -40,7 +40,7 @@ import {
   type WorkspaceRegisteredBackend,
   type WorkspaceRuntimeEvent,
 } from "./runtime/types.js";
-import { WorkspaceShell } from "./shell.js";
+import { CommandExecutor } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
 import { isWorkspaceTransportFailure } from "./transport-failure.js";
 
@@ -237,9 +237,9 @@ export class Workspace {
   // In-flight connect promises keyed by backend id, so concurrent
   // callers for the same backend share one connect pass.
   readonly #connecting = new Map<string, Promise<BackendHandle>>();
-  // Per-backend WorkspaceShell facades. Constructed alongside each
+  // Per-backend CommandExecutor facades. Constructed alongside each
   // handle; reused for the life of the handle.
-  readonly #shells = new Map<string, WorkspaceShell>();
+  readonly #shells = new Map<string, CommandExecutor>();
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
@@ -521,7 +521,7 @@ export class Workspace {
   // push() ships everything the host has written since the last
   // push to that backend; pull() applies everything the backend
   // has produced since the last pull. Both are explicit — the
-  // package doesn't run a background loop. WorkspaceShell.exec
+  // package doesn't run a background loop. CommandExecutor.exec
   // brackets each call automatically against the backend it
   // selects; reach for push() / pull() directly only when an
   // FS-only flow needs the bracket without an exec.
@@ -768,7 +768,7 @@ export class Workspace {
   // Unified backend handle used by the runtime. Module backends
   // return their native handle; command backends are presented
   // through the same interface by an adapter over their
-  // WorkspaceShell, so the runtime has a single execution path.
+  // its CommandExecutor, so the runtime has a single execution path.
   async #backendHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
     if (this.#moduleBackendsById.has(id)) return this.#moduleHandleFor(id);
     return this.#commandHandleFor(id);
@@ -779,9 +779,9 @@ export class Workspace {
     const onError = (error: unknown) => this.#onShellError(id, handle, error);
     return {
       exec: async (input) => {
-        let envelope: Awaited<ReturnType<WorkspaceShell["execution"]>>;
+        let envelope: Awaited<ReturnType<CommandExecutor["exec"]>>;
         try {
-          envelope = await shell.execution(input.source, {
+          envelope = await shell.exec(input.source, {
             id: input.id,
             cwd: input.cwd,
             timeoutMs: input.timeoutMs,
@@ -803,9 +803,9 @@ export class Workspace {
       },
       getExec: async ({ id: execId, after }) => {
         const resume = after === undefined ? "full" : after;
-        let envelope: Awaited<ReturnType<WorkspaceShell["getExecution"]>>;
+        let envelope: Awaited<ReturnType<CommandExecutor["get"]>>;
         try {
-          envelope = await shell.getExecution(execId, { resume });
+          envelope = await shell.get(execId, { resume });
         } catch (error) {
           onError(error);
           throw error;
@@ -957,18 +957,18 @@ export class Workspace {
     return promise;
   }
 
-  // Per-backend WorkspaceShell, constructed on demand and cached
+  // Per-backend CommandExecutor, constructed on demand and cached
   // for the life of the handle. Returns both the shell and the
   // BackendHandle it was built against so the caller can hold the
   // handle reference for a later identity check; #invalidateHandle
   // clears both caches together, so a shell pulled from #shells is
   // always paired with the live handle for that id at the moment
   // of the lookup.
-  async #shellFor(id: string): Promise<{ shell: WorkspaceShell; handle: BackendHandle }> {
+  async #shellFor(id: string): Promise<{ shell: CommandExecutor; handle: BackendHandle }> {
     const handle = await this.#handleFor(id);
     const cached = this.#shells.get(id);
     if (cached !== undefined) return { shell: cached, handle };
-    const shell = new WorkspaceShell(
+    const shell = new CommandExecutor(
       handle.rpc.shell,
       {
         push: () => this.push(id),
