@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { WorkspaceShell } from "../shell.js";
 import { WorkspaceRuntime } from "./runtime.js";
 import type { ModuleExecutionEnvelope, WorkspaceModuleBackendHandle } from "./types.js";
 
@@ -28,10 +27,8 @@ function moduleHandleStub(): WorkspaceModuleBackendHandle {
 describe("WorkspaceRuntime callable gate", () => {
   it("rejects structured input for a non-callable backend", async () => {
     const runtime = new WorkspaceRuntime({
-      commandBackendIds: new Set(["worker-shell"]),
       callableBackendIds: new Set(),
-      shell: () => ({}) as unknown as WorkspaceShell,
-      moduleHandle: async () => moduleHandleStub(),
+      backendHandle: async () => moduleHandleStub(),
       resolveBackendId: () => "worker-shell",
     });
 
@@ -43,10 +40,8 @@ describe("WorkspaceRuntime callable gate", () => {
   it("accepts structured input for a callable module backend", async () => {
     const handle = moduleHandleStub();
     const runtime = new WorkspaceRuntime({
-      commandBackendIds: new Set(),
       callableBackendIds: new Set(["worker-javascript"]),
-      shell: () => ({}) as unknown as WorkspaceShell,
-      moduleHandle: async () => handle,
+      backendHandle: async () => handle,
       resolveBackendId: () => "worker-javascript",
     });
 

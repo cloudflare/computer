@@ -242,7 +242,7 @@ describe("Workspace observer — runtime stub", () => {
     const execed: string[] = [];
     const shellRpc: import("@cloudflare/computer-rpc").ShellRPC = {
       async exec(input) {
-        execed.push(input.command);
+        execed.push(input.source);
         return {
           id: "exec-1",
           events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
