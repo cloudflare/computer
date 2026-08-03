@@ -7,7 +7,7 @@
 //                                  connect() + watermark reconcile.
 //   workspace.sync.push          — one per `Workspace.push()` call.
 //   workspace.sync.pull          — one per `Workspace.pull()` call.
-//   workspace.runtime.exec         — one per `WorkspaceShell.exec()` call,
+//   workspace.runtime.exec         — one per command executor exec() call,
 //                                  covering pre-exec push, the spawn
 //                                  request, and (when `result()` is
 //                                  awaited) the post-drain pull.
