@@ -234,6 +234,34 @@ describe("WorkerJavaScriptBackend", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
+  it("rejects env larger than the configured ceiling", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load }, maxEnvBytes: 8 })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", { env: { KEY: "x".repeat(64) } }),
+    ).rejects.toThrow(/env exceeds 8 bytes/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-string env values", async () => {
+    const load = vi.fn();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", {
+        env: { KEY: 42 as unknown as string },
+      }),
+    ).rejects.toThrow(/env value for "KEY" must be a string/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it("checks limits against the complete loader map including the runtime runner", async () => {
     const load = vi.fn();
     const workspace = new Workspace({

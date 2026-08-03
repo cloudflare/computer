@@ -30,6 +30,7 @@ export interface WorkerJavaScriptBackendOptions {
   maxSourceBytes?: number;
   maxInputBytes?: number;
   maxStdinBytes?: number;
+  maxEnvBytes?: number;
   maxResultBytes?: number;
   maxLogBytes?: number;
   maxLogEvents?: number;
@@ -69,6 +70,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "maxSourceBytes"
     | "maxInputBytes"
     | "maxStdinBytes"
+    | "maxEnvBytes"
     | "maxResultBytes"
     | "maxLogBytes"
     | "maxLogEvents"
@@ -149,6 +151,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(options.maxSourceBytes ?? 256 * 1024, "maxSourceBytes");
     assertPositiveFinite(options.maxInputBytes ?? 256 * 1024, "maxInputBytes");
     assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
+    assertPositiveFinite(options.maxEnvBytes ?? 1024 * 1024, "maxEnvBytes");
     assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
     assertPositiveFinite(options.maxLogBytes ?? 256 * 1024, "maxLogBytes");
     assertPositiveInteger(options.maxLogEvents ?? 1024, "maxLogEvents");
@@ -191,6 +194,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxSourceBytes: options.maxSourceBytes ?? 256 * 1024,
       maxInputBytes: options.maxInputBytes ?? 256 * 1024,
       maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
+      maxEnvBytes: options.maxEnvBytes ?? 1024 * 1024,
       maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
       maxLogBytes: options.maxLogBytes ?? 256 * 1024,
       maxLogEvents: options.maxLogEvents ?? 1024,
@@ -318,6 +322,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     if (stdinBytes.byteLength > this.#options.maxStdinBytes) {
       throw new Error(`Workspace runtime stdin exceeds ${this.#options.maxStdinBytes} bytes.`);
     }
+    assertEnv(input.env, this.#options.maxEnvBytes);
     if (new TextEncoder().encode(input.source).byteLength > this.#options.maxSourceBytes) {
       throw new Error(`Workspace runtime source exceeds ${this.#options.maxSourceBytes} bytes.`);
     }
@@ -1170,7 +1175,26 @@ function assertEncodedSize(value: WorkspaceRuntimeValue, maxBytes: number, name:
 function normalizeStdin(stdin: Uint8Array | string | undefined): Uint8Array {
   if (stdin === undefined) return new Uint8Array(0);
   if (typeof stdin === "string") return new TextEncoder().encode(stdin);
-  return stdin;
+  if (stdin instanceof Uint8Array) return stdin;
+  throw new Error("Workspace runtime stdin must be a string or Uint8Array.");
+}
+
+function assertEnv(env: Record<string, string> | undefined, maxBytes: number): void {
+  if (env === undefined) return;
+  if (typeof env !== "object" || env === null || Array.isArray(env)) {
+    throw new Error("Workspace runtime env must be a string-to-string record.");
+  }
+  let bytes = 0;
+  const encoder = new TextEncoder();
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== "string") {
+      throw new Error(`Workspace runtime env value for ${JSON.stringify(key)} must be a string.`);
+    }
+    bytes += encoder.encode(key).byteLength + encoder.encode(value).byteLength;
+  }
+  if (bytes > maxBytes) {
+    throw new Error(`Workspace runtime env exceeds ${maxBytes} bytes.`);
+  }
 }
 
 function assertPositiveFinite(value: number, name: string) {
