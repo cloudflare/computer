@@ -48,6 +48,11 @@ export class WorkspaceRuntime {
       );
     }
     if (this.#options.commandBackendIds.has(backend)) {
+      if (options.input !== undefined) {
+        throw new Error(
+          `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
+        );
+      }
       const shell = this.#options.shell();
       const handle = await (
         shell.exec as unknown as (

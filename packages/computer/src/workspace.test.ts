@@ -243,6 +243,14 @@ describe("Workspace backend selection", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
   });
 
+  it("rejects structured input for a non-callable command backend", async () => {
+    const backend = execBackend("command", () => {});
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await expect(
+      ws.runtime.exec("true", { backend: "command", input: { a: 1 } }),
+    ).rejects.toThrow(/not callable/);
+  });
+
   it("flushes incomplete trailing UTF-8 from command execution", async () => {
     const id = "utf8-command";
     const shell: import("@cloudflare/computer-rpc").ShellRPC = {
