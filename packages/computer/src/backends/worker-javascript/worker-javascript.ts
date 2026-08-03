@@ -659,7 +659,23 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       ]);
       return;
     }
-    const exitCode = record.exitCode ?? 0;
+    // No exit frame means the runner never reported a terminal state:
+    // the output stream closed early, a frame write was dropped, or the
+    // isolate crashed. Settle as a failure rather than a silent exit 0
+    // with no result.
+    if (record.exitCode === undefined) {
+      this.#finish(record, "failed", [
+        {
+          id: record.id,
+          seq: record.events.length + 1,
+          name: "stderr",
+          value: new TextEncoder().encode("Execution ended without reporting a result.\n"),
+        },
+        { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+      ]);
+      return;
+    }
+    const exitCode = record.exitCode;
     const terminal: WorkspaceRuntimeEvent[] = [];
     if (exitCode === 0 && record.hasResult) {
       terminal.push({
@@ -1054,10 +1070,14 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           }
           return btoa(binary);
         };
+        // Serialize writes on a chain so a rejected write (the host
+        // cancelled or the stream errored) is caught here rather than
+        // surfacing as an unhandled rejection inside the isolate. The
+        // task awaits writeChain before closing.
+        let writeChain = Promise.resolve();
         const enqueue = (frame) => {
-          try {
-            writer.write(encoder.encode(JSON.stringify(frame) + "\\n"));
-          } catch {}
+          const bytes = encoder.encode(JSON.stringify(frame) + "\\n");
+          writeChain = writeChain.then(() => writer.write(bytes)).catch(() => {});
         };
         let stdioBytes = 0;
         let stdioTruncated = false;
@@ -1145,6 +1165,7 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
           enqueue({ name: "exit", value: 1 });
         }
+        await writeChain;
         try {
           await writer.close();
         } catch {}

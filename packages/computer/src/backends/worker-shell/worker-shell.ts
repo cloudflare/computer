@@ -39,6 +39,7 @@ export interface WorkerShellFetcher {
     id?: string;
     timeoutMs?: number;
     env?: Record<string, string>;
+    stdin?: Uint8Array;
   }): Promise<{
     id: string;
     events: ReadableStream<Uint8Array>;
@@ -175,6 +176,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
           id: input.id,
           timeoutMs: input.timeoutMs,
           env: input.env,
+          stdin: input.stdin,
         });
         return { id: envelope.id, events: decodeFramedEvents(envelope.events) };
       },

@@ -66,6 +66,7 @@ export class WorkspaceRuntime {
         id: options.id,
         timeoutMs: options.timeoutMs,
         env: options.env,
+        stdin: options.stdin,
       });
       return wrapCommandHandle(handle, backend);
     }

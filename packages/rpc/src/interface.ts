@@ -106,6 +106,8 @@ export interface ShellRPC {
     timeoutMs?: number;
     // Environment variables inherited by this command only.
     env?: Record<string, string>;
+    // Standard input bytes fed to the command.
+    stdin?: Uint8Array;
   }): Promise<{
     id: string;
     events: ReadableStream<ExecEvent>;

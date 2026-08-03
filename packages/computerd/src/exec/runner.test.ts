@@ -103,6 +103,23 @@ test("per-execution env overrides the base env without leaking to later commands
   }
 });
 
+test("feeds per-execution stdin to the child and closes it", async () => {
+  const { runner, dispose } = fixture();
+  try {
+    const handle = runner.exec("cat", { stdin: new TextEncoder().encode("piped-input") });
+    const events = await drain(handle.events);
+    const stdout = events
+      .filter((event) => event.name === "stdout")
+      .map((event) => decode(event.value as Uint8Array))
+      .join("");
+    const exit = events.find((event) => event.name === "exit");
+    expect(stdout).toBe("piped-input");
+    expect(exit?.value).toBe(0);
+  } finally {
+    dispose();
+  }
+});
+
 test("reusing a live id throws EEXEC_BUSY", async () => {
   const { runner, dispose } = fixture();
   try {

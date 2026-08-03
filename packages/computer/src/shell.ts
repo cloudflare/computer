@@ -109,6 +109,9 @@ export interface ExecOptions<E extends ExecEncoding = undefined> {
   // override the backend's base environment without changing later
   // executions.
   env?: Record<string, string>;
+  // Standard input fed to the command. Bytes, or a string encoded
+  // as UTF-8.
+  stdin?: Uint8Array | string;
   // Backend selector. Omit to use the default backend (the first
   // one passed to the Workspace constructor); pass the id of
   // another configured backend to route this call there.
@@ -182,6 +185,10 @@ export class WorkspaceShell {
           cwd: options.cwd,
           timeoutMs: options.timeoutMs,
           env: options.env,
+          stdin:
+            typeof options.stdin === "string"
+              ? new TextEncoder().encode(options.stdin)
+              : options.stdin,
         }),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);

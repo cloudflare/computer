@@ -37,6 +37,8 @@ export interface ExecOptions {
   timeoutMs?: number;
   // Inherited by the child. Merged on top of the runner's base env.
   env?: Record<string, string>;
+  // Standard input bytes written to the child's stdin, then closed.
+  stdin?: Uint8Array;
 }
 
 export interface RunnerOptions {

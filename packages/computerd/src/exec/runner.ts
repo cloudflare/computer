@@ -144,8 +144,15 @@ export class Runner {
     const wrapped = cwd !== undefined ? `cd ${shellQuote(cwd)} && ${command}` : command;
     const child = spawn("/bin/sh", ["-c", wrapped], {
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (options.stdin !== undefined && child.stdin) {
+      // Feed the caller's bytes then close so the child sees EOF.
+      // Ignore write/EPIPE errors: a command that never reads stdin
+      // (or exits first) must not fail the run.
+      child.stdin.on("error", () => {});
+      child.stdin.end(Buffer.from(options.stdin));
+    }
     const log = createLog(this.db, id, {
       maxBytes: this.opts.logMaxBytes,
       now: this.opts.now,

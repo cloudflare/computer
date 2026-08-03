@@ -33,7 +33,12 @@ class TestShellWorker extends ShellWorker {
     env: E,
     bashFactory: (
       command: string,
-      options: { cwd?: string; env?: Record<string, string>; signal?: AbortSignal },
+      options: {
+        cwd?: string;
+        env?: Record<string, string>;
+        stdin?: Uint8Array;
+        signal?: AbortSignal;
+      },
     ) => Promise<{ stdout: string; stderr: string; exitCode: number }>,
   ): TestShellWorker {
     const w = new TestShellWorker(undefined as never, env as never);
@@ -201,6 +206,17 @@ describe("ShellWorker", () => {
         .events,
     );
     expect(observedEnv).toEqual({ TOKEN: "secret", EMPTY: "" });
+  });
+
+  it("forwards per-execution stdin bytes to Bash", async () => {
+    let observedStdin: Uint8Array | undefined;
+    const worker = TestShellWorker.withFakeBash(fakeEnv(), async (_command, options) => {
+      observedStdin = options.stdin;
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    const bytes = new TextEncoder().encode("piped");
+    await drain((await worker.exec({ command: "cat", stdin: bytes })).events);
+    expect(observedStdin).toEqual(bytes);
   });
 
   it("getExec without a prior exec throws ENOENT", async () => {

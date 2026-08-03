@@ -243,6 +243,46 @@ describe("Workspace backend selection", () => {
     expect(result).toMatchObject({ status: "completed", exitCode: 0 });
   });
 
+  it("rejects structured input for a non-callable command backend", async () => {
+    const backend = execBackend("command", () => {});
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await expect(ws.runtime.exec("true", { backend: "command", input: { a: 1 } })).rejects.toThrow(
+      /not callable/,
+    );
+  });
+
+  it("forwards per-execution stdin to command backends", async () => {
+    let receivedStdin: Uint8Array | undefined;
+    const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec(input) {
+        receivedStdin = input.stdin;
+        const id = input.id ?? "stdin-command";
+        return {
+          id,
+          events: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ id, seq: 1, name: "exit", value: 0 });
+              controller.close();
+            },
+          }),
+        };
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: async () => undefined,
+    };
+    const backend: WorkspaceBackend = {
+      id: "command",
+      type: "fake",
+      async connect() {
+        return { rpc: { sync: fakeRpc(), shell }, sync: "none", close: async () => undefined };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await drainExec(await ws.runtime.exec("cat", { backend: "command", stdin: "piped" }));
+    expect(receivedStdin).toEqual(new TextEncoder().encode("piped"));
+  });
+
   it("forwards per-execution environment variables to command backends", async () => {
     let receivedEnv: Record<string, string> | undefined;
     const shell: import("@cloudflare/computer-rpc").ShellRPC = {

@@ -638,6 +638,57 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close();
   });
 
+  it("settles as failed when the output stream closes without an exit frame", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const encoder = new TextEncoder();
+    const backend = new WorkerJavaScriptBackend({
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { attachOutput(readable: ReadableStream<Uint8Array>): Promise<void> },
+                ) {
+                  // Emit stdout, then close the stream with no result or
+                  // exit frame, mimicking a dropped terminal write.
+                  const readable = new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.enqueue(
+                        encoder.encode(
+                          `${JSON.stringify({ name: "stdout", b64: btoa("partial\n") })}\n`,
+                        ),
+                      );
+                      controller.close();
+                    },
+                  });
+                  await host.attachOutput(readable);
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "no-exit", source: "export default 1" });
+    const events = [];
+    for await (const event of execution.events) events.push(event);
+    const exit = events.find((event) => event.name === "exit");
+    expect(exit).toMatchObject({ name: "exit", value: 1 });
+    expect(events.some((event) => event.name === "result")).toBe(false);
+    await handle.close();
+  });
+
   it("aborts cooperative trusted-module calls at their deadline", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);

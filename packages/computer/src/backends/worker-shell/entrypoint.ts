@@ -31,6 +31,7 @@ export interface ExecInput {
   id?: string;
   timeoutMs?: number;
   env?: Record<string, string>;
+  stdin?: Uint8Array;
 }
 
 export interface ShellWorkerOptions {
@@ -107,6 +108,7 @@ export class ShellWorker<
         options: {
           cwd?: string;
           env?: Record<string, string>;
+          stdin?: Uint8Array;
           signal?: AbortSignal;
           customCommands: CustomCommand[];
         },
@@ -174,6 +176,7 @@ export class ShellWorker<
         result = await this.bashFactoryOverride(input.command, {
           cwd,
           env: input.env,
+          stdin: input.stdin,
           signal: controller.signal,
           customCommands,
         });
@@ -195,7 +198,14 @@ export class ShellWorker<
           defenseInDepth: { enabled: false },
           executionLimits: { maxOutputSize: MAX_OUTPUT_BYTES },
         });
-        result = await bash.exec(input.command, { cwd, env: input.env, signal: controller.signal });
+        result = await bash.exec(input.command, {
+          cwd,
+          env: input.env,
+          ...(input.stdin !== undefined
+            ? { stdin: latin1FromBytes(input.stdin), stdinKind: "bytes" as const }
+            : {}),
+          signal: controller.signal,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -261,6 +271,16 @@ function framedStream(events: WireEvent[]): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+// just-bash's `stdin` with `stdinKind: "bytes"` carries each byte as one
+// latin1 char. Pack the caller's bytes into that shape.
+function latin1FromBytes(bytes: Uint8Array): string {
+  let result = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    result += String.fromCharCode(bytes[index]);
+  }
+  return result;
 }
 
 function createShellError(code: string, message: string): Error & { code: string } {
