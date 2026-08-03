@@ -94,10 +94,6 @@ export interface WorkspaceOptions {
   // to Date.now. Override for deterministic tests.
   now?: () => number;
 
-  // Attach detached module execution to the Durable Object event lifetime.
-  // Pass `ctx.waitUntil.bind(ctx)` when using module backends in production.
-  waitUntil?: (promise: Promise<unknown>) => void;
-
   // Identifier for this workspace / session. Forwarded to mount
   // factories via MountContext.sessionId. Optional; defaults to "".
   sessionId?: string;
@@ -219,7 +215,6 @@ export class Workspace {
   readonly #defaultCommandBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
-  readonly #waitUntil: ((promise: Promise<unknown>) => void) | undefined;
   readonly #retryScheduler: SyncRetryScheduler | undefined;
   readonly #retryInitialDelayMs: number;
   readonly #retryMaxDelayMs: number;
@@ -270,7 +265,6 @@ export class Workspace {
 
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
-    this.#waitUntil = options.waitUntil;
     this.#retryScheduler = options.retryScheduler;
     this.#retryInitialDelayMs = positiveRetryOption(
       options.retry?.initialDelayMs,
@@ -301,13 +295,6 @@ export class Workspace {
     initializeSchema(this.#db, this.#now);
     this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
     const registered = (options.backends ?? []).slice();
-    if (registered.some((backend) => isModuleBackend(backend) && backend.requiresWaitUntil)) {
-      if (!options.waitUntil) {
-        throw new Error(
-          "Workspace module backend requires waitUntil; pass ctx.waitUntil.bind(ctx).",
-        );
-      }
-    }
     this.#backends = registered.filter(
       (backend): backend is WorkspaceBackend => !isModuleBackend(backend),
     );
@@ -815,7 +802,6 @@ export class Workspace {
       () =>
         backend.connect({
           db: this.#db,
-          waitUntil: this.#waitUntil,
           fs: this.#fs,
           git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
           artifacts: this.#artifacts,
@@ -860,7 +846,6 @@ export class Workspace {
         () =>
           backend.connect({
             db: this.#db,
-            waitUntil: this.#waitUntil,
             fs: this.#fs,
             git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
             artifacts: this.#artifacts,

@@ -133,7 +133,6 @@ interface ExecutionRecord {
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
-  readonly requiresWaitUntil = true;
   readonly type = "worker-javascript";
   readonly callable = true;
   readonly id: string;
@@ -211,11 +210,6 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   }
 
   async connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle> {
-    if (!host.waitUntil) {
-      throw new Error(
-        "WorkerJavaScriptBackend requires WorkspaceOptions.waitUntil; pass ctx.waitUntil.bind(ctx).",
-      );
-    }
     return new JavaScriptBackendHandle(this.#options, host);
   }
 }
@@ -415,7 +409,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           onComplete: () => this.#finalize(record),
           onError: (message) => this.#finalize(record, message),
         });
-        this.#host.waitUntil?.(record.control.completion);
       } catch (error) {
         record.control?.cancel();
         await record.control?.completion.catch(() => undefined);
