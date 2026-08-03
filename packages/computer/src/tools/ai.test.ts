@@ -552,6 +552,7 @@ describe("createAITools callable exec", () => {
             }),
           };
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
@@ -559,7 +560,7 @@ describe("createAITools callable exec", () => {
       shell: {
         defaultBackend: "js",
         backends: {
-          js: { description: "JavaScript module runtime", callable: true },
+          js: { description: "JavaScript module runtime" },
         },
       },
     });
@@ -597,13 +598,14 @@ describe("createAITools callable exec", () => {
             result: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
           };
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
       workspace,
       shell: {
         defaultBackend: "js",
-        backends: { js: { description: "JavaScript module runtime", callable: true } },
+        backends: { js: { description: "JavaScript module runtime" } },
       },
     });
 
@@ -620,6 +622,7 @@ describe("createAITools callable exec", () => {
           called = true;
           return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
@@ -628,7 +631,7 @@ describe("createAITools callable exec", () => {
         defaultBackend: "shell",
         backends: {
           shell: { description: "fast shell" },
-          js: { description: "JavaScript module runtime", callable: true },
+          js: { description: "JavaScript module runtime" },
         },
       },
     });
@@ -674,13 +677,14 @@ describe("createAITools callable exec", () => {
         async exec() {
           throw new Error("not used");
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
       workspace,
       shell: {
         defaultBackend: "js",
-        backends: { js: { description: "JavaScript module runtime", callable: true } },
+        backends: { js: { description: "JavaScript module runtime" } },
       },
     });
 
@@ -749,13 +753,14 @@ describe("createAITools exec streaming", () => {
             { name: "exit", value: 0 },
           ]);
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
       workspace,
       shell: {
         defaultBackend: "js",
-        backends: { js: { description: "JavaScript module runtime", callable: true } },
+        backends: { js: { description: "JavaScript module runtime" } },
       },
     });
 
@@ -784,13 +789,14 @@ describe("createAITools exec streaming", () => {
             { name: "exit", value: 0, result: { ok: true } },
           ]);
         },
+        isCallable: (id: string) => id === "js",
       },
     };
     const tools = createAITools({
       workspace,
       shell: {
         defaultBackend: "js",
-        backends: { js: { description: "JavaScript module runtime", callable: true } },
+        backends: { js: { description: "JavaScript module runtime" } },
       },
     });
 
