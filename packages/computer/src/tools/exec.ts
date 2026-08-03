@@ -40,15 +40,16 @@ export interface ExecWorkspaceLike {
         input?: unknown;
       },
     ): Promise<ExecRuntimeHandle>;
+    // Whether a backend accepts a structured `input` value and returns
+    // a structured result. The tool asks this to know which backends
+    // are callable; the runtime derives it from each backend's
+    // `callable` flag. Omit when no backend is callable.
+    isCallable?(id: string): boolean;
   };
 }
 
 export interface ExecBackendDescription {
   description: string;
-  // Whether the backend accepts a structured `input` value and
-  // returns a structured `result` value. When false or omitted the
-  // tool rejects `input` for this backend before touching the wire.
-  callable?: boolean;
 }
 
 export interface ExecToolOptions {
@@ -97,9 +98,8 @@ export function createExecTool(options: ExecToolOptions): Tool<
     );
   }
 
-  const callableBackendIds = new Set(
-    backendIds.filter((id) => options.backends[id].callable === true),
-  );
+  const isCallable = options.workspace.runtime.isCallable?.bind(options.workspace.runtime);
+  const callableBackendIds = new Set(backendIds.filter((id) => isCallable?.(id) === true));
   const backendGuidance = backendIds
     .map((id) => {
       const suffix = callableBackendIds.has(id) ? " (callable)" : "";

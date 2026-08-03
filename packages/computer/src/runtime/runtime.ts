@@ -26,6 +26,14 @@ export class WorkspaceRuntime {
     this.#options = options;
   }
 
+  // Whether the named backend accepts a structured `input` value and
+  // returns a structured result. Consumers such as the exec tool ask
+  // this to know whether a backend is callable without the caller
+  // having to declare it a second time.
+  isCallable(id: string): boolean {
+    return this.#options.callableBackendIds.has(id);
+  }
+
   exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;
   exec(
     source: string,
@@ -41,7 +49,7 @@ export class WorkspaceRuntime {
   ): Promise<WorkspaceRuntimeExecHandle<E>> {
     if (options.id !== undefined) assertExecutionId(options.id);
     const backend = this.#backend(options.backend);
-    if (options.input !== undefined && !this.#options.callableBackendIds.has(backend)) {
+    if (options.input !== undefined && !this.isCallable(backend)) {
       throw new Error(
         `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
       );
