@@ -428,8 +428,10 @@ async function drainModuleResult<E extends ExecEncoding>(
       const event = next.value;
       if (event.name === "stdout") stdout.push(event.value);
       if (event.name === "stderr") stderr.push(event.value);
-      if (event.name === "result") value = event.value;
-      if (event.name === "exit") exitCode = event.value;
+      if (event.name === "exit") {
+        exitCode = event.value;
+        if ("result" in event) value = event.result;
+      }
     }
   } finally {
     reader.releaseLock();

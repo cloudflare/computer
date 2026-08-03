@@ -34,8 +34,7 @@ async function evaluateResult(
   const frames: string[] = [];
   try {
     await host.assertResult(value);
-    frames.push(JSON.stringify({ name: "result", value }));
-    frames.push(JSON.stringify({ name: "exit", value: 0 }));
+    frames.push(JSON.stringify({ name: "exit", value: 0, result: value }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     frames.push(JSON.stringify({ name: "stderr", b64: btoa(`${message}\n`) }));
