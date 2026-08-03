@@ -1,6 +1,27 @@
 import { type Tool, tool } from "ai";
 import { z } from "zod";
 
+// One event drained from a running execution. stdout / stderr carry
+// output chunks as they arrive; result carries a callable backend's
+// structured return value; exit carries the process exit code.
+export type ExecStreamEvent =
+  | { name: "stdout"; value: string }
+  | { name: "stderr"; value: string }
+  | { name: "result"; value: unknown }
+  | { name: "exit"; value: number };
+
+// A detached execution handle. The tool streams stdout / stderr
+// chunks by iterating the handle when it is async-iterable, and
+// falls back to draining result() when it is not.
+export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent>> {
+  result(): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    value?: unknown;
+  }>;
+}
+
 export interface ExecWorkspaceLike {
   runtime: {
     exec(
@@ -12,14 +33,7 @@ export interface ExecWorkspaceLike {
         env?: Record<string, string>;
         input?: unknown;
       },
-    ): Promise<{
-      result(): Promise<{
-        exitCode: number;
-        stdout: string;
-        stderr: string;
-        value?: unknown;
-      }>;
-    }>;
+    ): Promise<ExecRuntimeHandle>;
   };
 }
 
@@ -40,13 +54,32 @@ export interface ExecToolOptions {
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
 
-export function createExecTool(options: ExecToolOptions): Tool<{
-  command: string;
-  cwd?: string;
-  backend?: string;
-  env?: Record<string, string>;
-  input?: unknown;
-}> {
+// Progressive snapshot emitted while a command streams (exitCode
+// null until the run ends), and the terminal snapshot once the exit
+// code lands. `result` appears only when a callable backend returned
+// a value; `error` replaces the run fields when the exec fails.
+export type ExecToolOutput =
+  | {
+      command: string;
+      cwd: string | null;
+      backend: string;
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      result?: unknown;
+    }
+  | { command: string; cwd: string | null; backend: string; error: string };
+
+export function createExecTool(options: ExecToolOptions): Tool<
+  {
+    command: string;
+    cwd?: string;
+    backend?: string;
+    env?: Record<string, string>;
+    input?: unknown;
+  },
+  ExecToolOutput
+> {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const backendIds = Object.keys(options.backends);
   if (backendIds.length === 0) {
@@ -120,44 +153,94 @@ export function createExecTool(options: ExecToolOptions): Tool<{
           "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
         ),
     }),
-    execute: async ({ command, cwd, backend, env, input }) => {
+    execute: async function* ({ command, cwd, backend, env, input }) {
       const selectedBackend = backend ?? options.defaultBackend;
+      const base = { command, cwd: cwd ?? null, backend: selectedBackend };
       if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
-        return {
-          command,
-          cwd: cwd ?? null,
-          backend: selectedBackend,
+        yield {
+          ...base,
           error: `Backend ${JSON.stringify(selectedBackend)} is not callable; it does not accept structured input.`,
         };
+        return;
       }
+      let handle: ExecRuntimeHandle;
       try {
-        const handle = await options.workspace.runtime.exec(command, {
+        handle = await options.workspace.runtime.exec(command, {
           cwd,
           encoding: "utf8",
           backend: selectedBackend,
           env,
           input,
         });
+      } catch (err) {
+        yield { ...base, error: errorMessage(err) };
+        return;
+      }
+
+      // Stream stdout / stderr chunks as they arrive when the handle
+      // is iterable. Each chunk yields a fresh snapshot with the
+      // running output so the model sees progress before the run
+      // ends; the exit event settles the terminal snapshot.
+      if (typeof handle[Symbol.asyncIterator] === "function") {
+        let stdout = "";
+        let stderr = "";
+        let exitCode: number | null = null;
+        let value: unknown;
+        let hasValue = false;
+        try {
+          for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
+            if (event.name === "stdout") stdout += event.value;
+            else if (event.name === "stderr") stderr += event.value;
+            else if (event.name === "result") {
+              value = event.value;
+              hasValue = true;
+              continue;
+            } else {
+              exitCode = event.value;
+              continue;
+            }
+            // A stdout / stderr chunk arrived: emit a running snapshot
+            // so the model sees output before the run ends.
+            yield {
+              ...base,
+              exitCode: null,
+              stdout: truncate(stdout, maxBytes),
+              stderr: truncate(stderr, maxBytes),
+            };
+          }
+        } catch (err) {
+          yield { ...base, error: errorMessage(err) };
+          return;
+        }
+        yield {
+          ...base,
+          exitCode,
+          stdout: truncate(stdout, maxBytes),
+          stderr: truncate(stderr, maxBytes),
+          ...(hasValue ? { result: value } : {}),
+        };
+        return;
+      }
+
+      // Non-streaming handle: drain the aggregate result.
+      try {
         const result = await handle.result();
-        return {
-          command,
-          cwd: cwd ?? null,
-          backend: selectedBackend,
+        yield {
+          ...base,
           exitCode: result.exitCode,
           stdout: truncate(result.stdout, maxBytes),
           stderr: truncate(result.stderr, maxBytes),
           ...(result.value === undefined ? {} : { result: result.value }),
         };
       } catch (err) {
-        return {
-          command,
-          cwd: cwd ?? null,
-          backend: selectedBackend,
-          error: err instanceof Error ? err.message : String(err),
-        };
+        yield { ...base, error: errorMessage(err) };
       }
     },
   });
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 const encoder = new TextEncoder();
