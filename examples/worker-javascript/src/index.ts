@@ -13,7 +13,6 @@ export class ContainerExample extends withWorkspace(class extends DurableObject<
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
     storage: ctx.storage as unknown as DurableObjectStorageLike,
-    waitUntil: ctx.waitUntil.bind(ctx),
     backends: [new WorkerJavaScriptBackend({ loader: env.LOADER })],
     mounts: {
       "/workspace/r2": R2Bucket(env.Bucket),

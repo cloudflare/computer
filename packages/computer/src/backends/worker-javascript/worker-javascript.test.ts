@@ -3,15 +3,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import { Workspace } from "../../workspace.js";
-import { WorkerJavaScriptBackend as ProductionWorkerJavaScriptBackend } from "./worker-javascript.js";
-
-class WorkerJavaScriptBackend extends ProductionWorkerJavaScriptBackend {
-  override readonly requiresWaitUntil = false;
-
-  override connect(host: Parameters<ProductionWorkerJavaScriptBackend["connect"]>[0]) {
-    return super.connect({ ...host, waitUntil: host.waitUntil ?? (() => {}) });
-  }
-}
+import { WorkerJavaScriptBackend } from "./worker-javascript.js";
 
 function throwingLoader(message: string) {
   return {
@@ -51,18 +43,6 @@ async function evaluateResult(
 }
 
 describe("WorkerJavaScriptBackend", () => {
-  it("requires a host event-lifetime hook", async () => {
-    const backend = new ProductionWorkerJavaScriptBackend({ loader: throwingLoader("unused") });
-    await expect(
-      backend.connect({
-        db: undefined as never,
-        fs: undefined as never,
-        git: undefined as never,
-        artifacts: undefined as never,
-      }),
-    ).rejects.toThrow(/requires WorkspaceOptions.waitUntil/);
-  });
-
   it("validates timeout configuration", () => {
     expect(
       () =>
@@ -80,52 +60,11 @@ describe("WorkerJavaScriptBackend", () => {
     ).toThrow(/positive finite/);
   });
 
-  it("cancels a started worker when waitUntil registration fails", async () => {
-    let entrypointDisposals = 0;
-    let workerDisposals = 0;
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      waitUntil() {
-        throw new Error("waitUntil unavailable");
-      },
-      backends: [
-        new WorkerJavaScriptBackend({
-          loader: {
-            load() {
-              return {
-                getEntrypoint() {
-                  return {
-                    evaluate: () => new Promise(() => undefined),
-                    [Symbol.dispose]() {
-                      entrypointDisposals += 1;
-                    },
-                  };
-                },
-                [Symbol.dispose]() {
-                  workerDisposals += 1;
-                },
-              };
-            },
-          },
-        }),
-      ],
-    });
-    await workspace.fs.mkdir("/workspace", { recursive: true });
-    const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
-    await expect(execution.result()).resolves.toMatchObject({
-      status: "failed",
-      stderr: expect.stringContaining("waitUntil unavailable"),
-    });
-    expect(entrypointDisposals).toBe(1);
-    expect(workerDisposals).toBe(1);
-  });
-
   it("disposes Loader resources when evaluate throws synchronously", async () => {
     let entrypointDisposals = 0;
     let workerDisposals = 0;
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      waitUntil() {},
       backends: [
         new WorkerJavaScriptBackend({
           loader: {
@@ -410,15 +349,13 @@ describe("WorkerJavaScriptBackend", () => {
     await workspace.close();
   });
 
-  it("limits concurrent Dynamic Workers and attaches execution to waitUntil", async () => {
+  it("limits concurrent Dynamic Workers", async () => {
     let resolveEvaluation!: (value: { result: number }) => void;
     const evaluation = new Promise<{ result: number }>((resolve) => {
       resolveEvaluation = resolve;
     });
-    const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      waitUntil,
       backends: [
         new WorkerJavaScriptBackend({
           maxConcurrentExecutions: 1,
@@ -444,7 +381,6 @@ describe("WorkerJavaScriptBackend", () => {
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     const first = await workspace.runtime.exec("export default 1", { id: "first" });
-    expect(waitUntil).toHaveBeenCalledOnce();
     await expect(
       workspace.runtime.exec("export default 2", { id: "second" }),
     ).rejects.toMatchObject({ code: "EEXEC_BUSY" });

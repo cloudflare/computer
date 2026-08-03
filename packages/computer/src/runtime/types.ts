@@ -164,7 +164,6 @@ export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBacken
 export interface WorkspaceModuleBackend {
   readonly protocol: "module";
   readonly id: string;
-  readonly requiresWaitUntil?: boolean;
   readonly type: string;
   readonly callable?: boolean;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
