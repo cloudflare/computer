@@ -417,8 +417,7 @@ describe("Workspace backend selection", () => {
             name: "stdout",
             value: new Uint8Array([0xe2]),
           });
-          controller.enqueue({ id: "module-exec", seq: 3, name: "result", value: 42 });
-          controller.enqueue({ id: "module-exec", seq: 4, name: "exit", value: 0 });
+          controller.enqueue({ id: "module-exec", seq: 3, name: "exit", value: 0, result: 42 });
           controller.close();
         },
       });

@@ -4,8 +4,7 @@ import type { WorkspaceRuntimeEvent, WorkspaceRuntimeValue } from "./types.js";
 type RuntimeFrame =
   | { id: string; seq: number; name: "stdout" | "stderr"; enc: "utf8"; value: string }
   | { id: string; seq: number; name: "stdout" | "stderr"; enc: "b64"; value: string }
-  | { id: string; seq: number; name: "result"; value: WorkspaceRuntimeValue }
-  | { id: string; seq: number; name: "exit"; value: number };
+  | { id: string; seq: number; name: "exit"; value: number; result?: WorkspaceRuntimeValue };
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -24,7 +23,7 @@ function fromBase64(text: string): Uint8Array {
 
 export function encodeRuntimeEvent(event: WorkspaceRuntimeEvent<ExecEncoding>): Uint8Array {
   let frame: RuntimeFrame;
-  if (event.name === "exit" || event.name === "result") frame = event;
+  if (event.name === "exit") frame = event;
   else if (typeof event.value === "string") {
     frame = { id: event.id, seq: event.seq, name: event.name, enc: "utf8", value: event.value };
   } else {
@@ -40,7 +39,7 @@ export function encodeRuntimeEvent(event: WorkspaceRuntimeEvent<ExecEncoding>): 
 }
 
 function decodeFrame(frame: RuntimeFrame): WorkspaceRuntimeEvent<ExecEncoding> {
-  if (frame.name === "exit" || frame.name === "result") return frame;
+  if (frame.name === "exit") return frame;
   return {
     id: frame.id,
     seq: frame.seq,

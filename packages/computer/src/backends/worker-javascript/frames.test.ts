@@ -36,14 +36,19 @@ describe("parseRuntimeFrame", () => {
     expect(frame).toEqual({ name: "stderr", value: new TextEncoder().encode("oops") });
   });
 
-  it("decodes a result frame carrying a structured value", () => {
-    const frame = parseRuntimeFrame(`{"name":"result","value":{"a":[1,2,null]}}`);
-    expect(frame).toEqual({ name: "result", value: { a: [1, 2, null] } });
-  });
-
   it("decodes an exit frame carrying an integer", () => {
     expect(parseRuntimeFrame(`{"name":"exit","value":0}`)).toEqual({ name: "exit", value: 0 });
     expect(parseRuntimeFrame(`{"name":"exit","value":130}`)).toEqual({ name: "exit", value: 130 });
+  });
+
+  it("decodes an exit frame carrying a structured result", () => {
+    const frame = parseRuntimeFrame(`{"name":"exit","value":0,"result":{"a":[1,2,null]}}`);
+    expect(frame).toEqual({ name: "exit", value: 0, result: { a: [1, 2, null] } });
+  });
+
+  it("decodes an exit frame carrying a null result", () => {
+    const frame = parseRuntimeFrame(`{"name":"exit","value":0,"result":null}`);
+    expect(frame).toEqual({ name: "exit", value: 0, result: null });
   });
 
   it("rejects invalid JSON", () => {

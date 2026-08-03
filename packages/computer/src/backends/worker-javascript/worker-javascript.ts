@@ -612,11 +612,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         name: frame.name,
         value: frame.value,
       });
-    } else if (frame.name === "result") {
-      record.result = frame.value;
-      record.hasResult = true;
     } else {
       record.exitCode = frame.value;
+      if ("result" in frame) {
+        record.result = frame.result;
+        record.hasResult = true;
+      }
     }
   }
 
@@ -676,22 +677,17 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       return;
     }
     const exitCode = record.exitCode;
-    const terminal: WorkspaceRuntimeEvent[] = [];
-    if (exitCode === 0 && record.hasResult) {
-      terminal.push({
-        id: record.id,
-        seq: record.events.length + 1,
-        name: "result",
-        value: record.result as WorkspaceRuntimeValue,
-      });
-    }
-    terminal.push({
-      id: record.id,
-      seq: record.events.length + terminal.length + 1,
-      name: "exit",
-      value: exitCode,
-    });
-    this.#finish(record, exitCode === 0 ? "completed" : "failed", terminal);
+    const exit: WorkspaceRuntimeEvent =
+      exitCode === 0 && record.hasResult
+        ? {
+            id: record.id,
+            seq: record.events.length + 1,
+            name: "exit",
+            value: exitCode,
+            result: record.result as WorkspaceRuntimeValue,
+          }
+        : { id: record.id, seq: record.events.length + 1, name: "exit", value: exitCode };
+    this.#finish(record, exitCode === 0 ? "completed" : "failed", [exit]);
   }
 
   #stream(record: ExecutionRecord, after?: number | "tail") {
@@ -889,7 +885,9 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
 function encodeEvent(event: WorkspaceRuntimeEvent): Uint8Array {
   if (event.name === "stdout" || event.name === "stderr") return event.value;
-  return new TextEncoder().encode(JSON.stringify(event.value));
+  const payload =
+    "result" in event ? { value: event.value, result: event.result } : { value: event.value };
+  return new TextEncoder().encode(JSON.stringify(payload));
 }
 
 function decodeEvent(
@@ -899,10 +897,16 @@ function decodeEvent(
   payload: Uint8Array,
 ): WorkspaceRuntimeEvent {
   if (name === "stdout" || name === "stderr") return { id, seq, name, value: payload };
-  const value = JSON.parse(new TextDecoder().decode(payload)) as unknown;
-  if (name === "exit") return { id, seq, name, value: Number(value) };
-  assertRuntimeValue(value);
-  return { id, seq, name: "result", value };
+  const decoded = JSON.parse(new TextDecoder().decode(payload)) as unknown;
+  if (typeof decoded === "object" && decoded !== null && "value" in decoded) {
+    const record = decoded as { value: unknown; result?: unknown };
+    if ("result" in record) {
+      assertRuntimeValue(record.result);
+      return { id, seq, name: "exit", value: Number(record.value), result: record.result };
+    }
+    return { id, seq, name: "exit", value: Number(record.value) };
+  }
+  return { id, seq, name: "exit", value: Number(decoded) };
 }
 
 function startJavaScriptExecution(options: {
@@ -1158,8 +1162,7 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             : module.default ?? null;
           const value = result ?? null;
           await host.assertResult(value);
-          enqueue({ name: "result", value });
-          enqueue({ name: "exit", value: 0 });
+          enqueue({ name: "exit", value: 0, result: value });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
