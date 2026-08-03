@@ -481,6 +481,177 @@ describe("createAITools exec tool", () => {
   });
 });
 
+describe("createAITools callable exec", () => {
+  it("forwards env and input to the runtime and returns the result value", async () => {
+    const calls: Array<{
+      command: string;
+      env: Record<string, string> | undefined;
+      input: unknown;
+      backend: string | undefined;
+    }> = [];
+    const workspace = {
+      runtime: {
+        async exec(
+          command: string,
+          options: {
+            cwd?: string;
+            encoding: "utf8";
+            backend?: string;
+            env?: Record<string, string>;
+            input?: unknown;
+          },
+        ) {
+          calls.push({
+            command,
+            env: options.env,
+            input: options.input,
+            backend: options.backend,
+          });
+          return {
+            result: async () => ({
+              exitCode: 0,
+              stdout: "ran",
+              stderr: "",
+              value: { doubled: 84 },
+            }),
+          };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "js",
+        backends: {
+          js: { description: "JavaScript module runtime", callable: true },
+        },
+      },
+    });
+
+    await expect(
+      executeTool(tools.exec, {
+        command: "export default (input) => ({ doubled: input.value * 2 })",
+        env: { API_KEY: "secret" },
+        input: { value: 42 },
+      }),
+    ).resolves.toEqual({
+      command: "export default (input) => ({ doubled: input.value * 2 })",
+      cwd: null,
+      backend: "js",
+      exitCode: 0,
+      stdout: "ran",
+      stderr: "",
+      result: { doubled: 84 },
+    });
+    expect(calls).toEqual([
+      {
+        command: "export default (input) => ({ doubled: input.value * 2 })",
+        env: { API_KEY: "secret" },
+        input: { value: 42 },
+        backend: "js",
+      },
+    ]);
+  });
+
+  it("omits the result field when the backend returns no value", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return {
+            result: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
+          };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "js",
+        backends: { js: { description: "JavaScript module runtime", callable: true } },
+      },
+    });
+
+    const output = (await executeTool(tools.exec, { command: "noop" })) as Record<string, unknown>;
+    expect(output).not.toHaveProperty("result");
+    expect(output).toMatchObject({ backend: "js", exitCode: 0, stdout: "ok" });
+  });
+
+  it("errors quickly without calling the backend when input targets a non-callable backend", async () => {
+    let called = false;
+    const workspace = {
+      runtime: {
+        async exec() {
+          called = true;
+          return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: {
+          shell: { description: "fast shell" },
+          js: { description: "JavaScript module runtime", callable: true },
+        },
+      },
+    });
+
+    await expect(
+      executeTool(tools.exec, { command: "echo hi", input: { value: 1 }, backend: "shell" }),
+    ).resolves.toEqual({
+      command: "echo hi",
+      cwd: null,
+      backend: "shell",
+      error: 'Backend "shell" is not callable; it does not accept structured input.',
+    });
+    expect(called).toBe(false);
+  });
+
+  it("allows env on non-callable backends", async () => {
+    const calls: Array<{ env: Record<string, string> | undefined; input: unknown }> = [];
+    const workspace = {
+      runtime: {
+        async exec(_command: string, options: { env?: Record<string, string>; input?: unknown }) {
+          calls.push({ env: options.env, input: options.input });
+          return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    await expect(
+      executeTool(tools.exec, { command: "env", env: { FOO: "bar" } }),
+    ).resolves.toMatchObject({ backend: "shell", exitCode: 0 });
+    expect(calls).toEqual([{ env: { FOO: "bar" }, input: undefined }]);
+  });
+
+  it("describes callable backends in the tool description", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "js",
+        backends: { js: { description: "JavaScript module runtime", callable: true } },
+      },
+    });
+
+    expect(toolDescription(tools.exec)).toContain("callable");
+  });
+});
+
 describe("createAITools publish tool", () => {
   it("adds publish by default when assets are configured", async () => {
     const calls: Array<{ path: string; expiresAfter: number; prefix?: string }> = [];
