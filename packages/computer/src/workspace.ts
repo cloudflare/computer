@@ -862,7 +862,7 @@ export class Workspace {
             db: this.#db,
             waitUntil: this.#waitUntil,
             fs: this.#fs,
-            git: this.git,
+            git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
             artifacts: this.#artifacts,
           }),
       );
