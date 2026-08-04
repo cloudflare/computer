@@ -3,6 +3,23 @@ import { z } from "zod";
 
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 
+// A finite JSON value: what a callable backend accepts as `input` and
+// returns as `result`. Declared as a concrete recursive schema rather
+// than z.unknown() so the tool validates `input` at its own boundary
+// and the generated JSON Schema describes a real shape (z.unknown()
+// serializes to an empty schema that some providers reject under
+// strict function calling).
+const jsonValueSchema: z.ZodType<WorkspaceRuntimeValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
+
 // One event drained from a running execution. stdout / stderr carry
 // output chunks as they arrive; exit carries the process exit code and,
 // for a callable backend, the structured return value on `result`. The
@@ -94,7 +111,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
     cwd?: string;
     backend?: string;
     env?: Record<string, string>;
-    input?: unknown;
+    input?: WorkspaceRuntimeValue;
   },
   ExecToolOutput
 > {
@@ -165,8 +182,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
         .describe(
           "Environment variables for this run only. Values override the backend's base environment without affecting later runs.",
         ),
-      input: z
-        .unknown()
+      input: jsonValueSchema
         .optional()
         .describe(
           "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
@@ -189,7 +205,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
           encoding: "utf8",
           backend: selectedBackend,
           env,
-          input: input as WorkspaceRuntimeValue,
+          input,
         });
       } catch (err) {
         yield { ...base, error: errorMessage(err) };
