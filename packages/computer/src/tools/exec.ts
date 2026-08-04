@@ -1,6 +1,7 @@
 import { type Tool, tool } from "ai";
 import { z } from "zod";
 
+import { notCallableMessage } from "../runtime/runtime.js";
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
@@ -40,6 +41,10 @@ export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent
     stderr: string;
     value?: unknown;
   }>;
+  // Signal the running execution. The tool calls it when the model
+  // turn aborts, so the backend stops rather than running on after
+  // the tool stops iterating.
+  kill?(): Promise<void>;
 }
 
 export interface ExecWorkspaceLike {
@@ -188,14 +193,11 @@ export function createExecTool(options: ExecToolOptions): Tool<
           "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
         ),
     }),
-    execute: async function* ({ command, cwd, backend, env, input }) {
+    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal }) {
       const selectedBackend = backend ?? options.defaultBackend;
       const base = { command, cwd: cwd ?? null, backend: selectedBackend };
       if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
-        yield {
-          ...base,
-          error: `Backend ${JSON.stringify(selectedBackend)} is not callable; it does not accept structured input.`,
-        };
+        yield { ...base, error: notCallableMessage(selectedBackend) };
         return;
       }
       let handle: ExecRuntimeHandle;
@@ -212,68 +214,84 @@ export function createExecTool(options: ExecToolOptions): Tool<
         return;
       }
 
-      // Stream stdout / stderr chunks as they arrive when the handle
-      // is iterable. Each chunk yields a fresh snapshot with the
-      // running output so the model sees progress before the run
-      // ends; the exit event settles the terminal snapshot.
-      if (typeof handle[Symbol.asyncIterator] === "function") {
-        const stdout = new StreamBuffer(streamMaxBytes);
-        const stderr = new StreamBuffer(streamMaxBytes);
-        let exitCode: number | null = null;
-        let value: unknown;
-        let hasValue = false;
-        // Coalesce running snapshots to at most one per interval. A
-        // chatty command would otherwise yield a full-buffer snapshot
-        // per chunk; the terminal snapshot below always fires.
-        let lastSnapshot = 0;
-        try {
-          for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
-            if (event.name === "stdout") stdout.push(event.value);
-            else if (event.name === "stderr") stderr.push(event.value);
-            else {
-              exitCode = event.code;
-              if ("result" in event) {
-                value = event.result;
-                hasValue = true;
-              }
-              continue;
-            }
-            const at = now();
-            if (at - lastSnapshot < STREAM_COALESCE_MS) continue;
-            lastSnapshot = at;
-            yield {
-              ...base,
-              exitCode: null,
-              stdout: stdout.render(maxBytes),
-              stderr: stderr.render(maxBytes),
-            };
-          }
-        } catch (err) {
-          yield { ...base, error: errorMessage(err) };
-          return;
-        }
-        yield {
-          ...base,
-          exitCode,
-          stdout: stdout.render(maxBytes),
-          stderr: stderr.render(maxBytes),
-          ...(hasValue ? { result: value } : {}),
-        };
-        return;
+      // Aborting the model turn kills the backend execution so it does
+      // not run on unobserved after the tool stops iterating. The run
+      // then emits its terminal event and the stream closes normally.
+      const onAbort = () => void handle.kill?.().catch(() => undefined);
+      if (abortSignal?.aborted) onAbort();
+      else abortSignal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        yield* runExecution();
+      } finally {
+        abortSignal?.removeEventListener("abort", onAbort);
       }
 
-      // Non-streaming handle: drain the aggregate result.
-      try {
-        const result = await handle.result();
-        yield {
-          ...base,
-          exitCode: result.exitCode,
-          stdout: truncate(result.stdout, maxBytes),
-          stderr: truncate(result.stderr, maxBytes),
-          ...(result.value === undefined ? {} : { result: result.value }),
-        };
-      } catch (err) {
-        yield { ...base, error: errorMessage(err) };
+      // Produce the run's snapshots. Streams the raw events when the
+      // handle is iterable; otherwise drains the aggregate result.
+      async function* runExecution(): AsyncGenerator<ExecToolOutput> {
+        // Stream stdout / stderr chunks as they arrive when the handle
+        // is iterable. Each chunk yields a fresh snapshot with the
+        // running output so the model sees progress before the run
+        // ends; the exit event settles the terminal snapshot.
+        if (typeof handle[Symbol.asyncIterator] === "function") {
+          const stdout = new StreamBuffer(streamMaxBytes);
+          const stderr = new StreamBuffer(streamMaxBytes);
+          let exitCode: number | null = null;
+          let value: unknown;
+          let hasValue = false;
+          // Coalesce running snapshots to at most one per interval. A
+          // chatty command would otherwise yield a full-buffer snapshot
+          // per chunk; the terminal snapshot below always fires.
+          let lastSnapshot = 0;
+          try {
+            for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
+              if (event.name === "stdout") stdout.push(event.value);
+              else if (event.name === "stderr") stderr.push(event.value);
+              else {
+                exitCode = event.code;
+                if ("result" in event) {
+                  value = event.result;
+                  hasValue = true;
+                }
+                continue;
+              }
+              const at = now();
+              if (at - lastSnapshot < STREAM_COALESCE_MS) continue;
+              lastSnapshot = at;
+              yield {
+                ...base,
+                exitCode: null,
+                stdout: stdout.render(maxBytes),
+                stderr: stderr.render(maxBytes),
+              };
+            }
+          } catch (err) {
+            yield { ...base, error: errorMessage(err) };
+            return;
+          }
+          yield {
+            ...base,
+            exitCode,
+            stdout: stdout.render(maxBytes),
+            stderr: stderr.render(maxBytes),
+            ...(hasValue ? { result: value } : {}),
+          };
+          return;
+        }
+
+        // Non-streaming handle: drain the aggregate result.
+        try {
+          const result = await handle.result();
+          yield {
+            ...base,
+            exitCode: result.exitCode,
+            stdout: truncate(result.stdout, maxBytes),
+            stderr: truncate(result.stderr, maxBytes),
+            ...(result.value === undefined ? {} : { result: result.value }),
+          };
+        } catch (err) {
+          yield { ...base, error: errorMessage(err) };
+        }
       }
     },
   });

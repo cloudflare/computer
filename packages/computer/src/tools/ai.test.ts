@@ -988,6 +988,57 @@ describe("createAITools exec streaming", () => {
       stdout: "aaaaaaaa\n\n[truncated, 12 more bytes]",
     });
   });
+
+  it("kills the backend execution when the turn aborts", async () => {
+    let killed = 0;
+    const controller = new AbortController();
+    const workspace = {
+      runtime: {
+        async exec() {
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { name: "stdout", value: "working\n" } as ExecStreamEvent;
+              controller.abort();
+              // The abort listener calls kill(); yield once more so
+              // the iteration observes the signal before the stream
+              // ends on its own.
+              yield { name: "exit", code: 130 } as ExecStreamEvent;
+            },
+            result: async () => {
+              throw new Error("result() must not be called on a streamed handle");
+            },
+            kill: async () => {
+              killed += 1;
+            },
+          };
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    const execute = (
+      tools.exec as {
+        execute: (
+          input: unknown,
+          options: { toolCallId: string; messages: []; abortSignal: AbortSignal },
+        ) => AsyncIterable<unknown>;
+      }
+    ).execute;
+    const output = execute(
+      { command: "sleep" },
+      { toolCallId: "t", messages: [], abortSignal: controller.signal },
+    );
+    for await (const _chunk of output) {
+      // Drain to completion.
+    }
+    expect(killed).toBe(1);
+  });
 });
 
 describe("createAITools publish tool", () => {
