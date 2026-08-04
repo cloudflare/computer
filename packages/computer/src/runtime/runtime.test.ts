@@ -111,6 +111,13 @@ describe("WorkspaceRuntime result accumulation", () => {
       expect(result.exitCode).toBe(code);
     }
   });
+
+  it("reports exit code -1 when the stream closes without an exit event", async () => {
+    const runtime = runtimeFor(replayBackend([stdout(1, bytes("partial"))]));
+    const result = await (await runtime.exec("noop")).result();
+    expect(result.exitCode).toBe(-1);
+    expect(result.status).toBe("failed");
+  });
 });
 
 describe("WorkspaceRuntime utf8 encoding", () => {

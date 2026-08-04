@@ -293,7 +293,9 @@ async function drainModuleResult<E extends ExecEncoding>(
   const stdout: Uint8Array[] = [];
   const stderr: Uint8Array[] = [];
   let value: WorkspaceRuntimeResult<E>["value"];
-  let exitCode = 1;
+  // -1 marks a stream that closed without an exit frame, keeping that
+  // case distinct from a genuine exit 1. Both settle as "failed".
+  let exitCode = -1;
   const reader = events.getReader();
   setReader(reader);
   try {
