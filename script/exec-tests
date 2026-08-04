@@ -80,7 +80,7 @@ const assert = (cond, msg) => {
 const client = createWorkspaceClient({ url: `ws://localhost:${port}/ws` });
 try {
   // 1. echo + exit code.
-  const h = await client.shell.exec({ command: "echo hello && exit 7" });
+  const h = await client.shell.exec({ source: "echo hello && exit 7" });
   const dec = new TextDecoder();
   const events = [];
   const reader = h.events.getReader();
@@ -93,17 +93,17 @@ try {
     .map(e => dec.decode(e.value)).join("");
   const exit = events.find(e => e.name === "exit");
   assert(stdout === "hello\n", `unexpected stdout: ${JSON.stringify(stdout)}`);
-  assert(exit && exit.value === 7, `unexpected exit: ${JSON.stringify(exit)}`);
+  assert(exit && exit.code === 7, `unexpected exit: ${JSON.stringify(exit)}`);
   console.log("  PASS  exec captures stdout + exit code");
 
   // 1b. EEXEC_BUSY surfaces with the right code over the wire.
   // The runner refuses a second exec on a live id; the host
   // catches a plain Error with err.code intact (capnweb copies
   // own enumerable props on Error subclasses).
-  const live = await client.shell.exec({ command: "sleep 30", id: "busy" });
+  const live = await client.shell.exec({ source: "sleep 30", id: "busy" });
   let busyErr;
   try {
-    await client.shell.exec({ command: "echo nope", id: "busy" });
+    await client.shell.exec({ source: "echo nope", id: "busy" });
   } catch (err) {
     busyErr = err;
   }
@@ -120,14 +120,14 @@ try {
   console.log("  PASS  EEXEC_BUSY propagates with err.code");
 
   // 2. kill a long-running process.
-  const long = await client.shell.exec({ command: "sleep 30", id: "killme" });
+  const long = await client.shell.exec({ source: "sleep 30", id: "killme" });
   await client.shell.killExec({ id: "killme", signal: "SIGTERM" });
   const longReader = long.events.getReader();
   let killExit;
   while (true) {
     const { value, done } = await longReader.read();
     if (done) break;
-    if (value.name === "exit") killExit = value.value;
+    if (value.name === "exit") killExit = value.code;
   }
   // SIGTERM → 143 per Runner mapping.
   assert(killExit === 143, `kill exit code was ${killExit}`);
@@ -161,7 +161,7 @@ try {
   // overflowed the cap raises ELOG_TRUNCATED. EXEC_LOG_MAX_BYTES=256
   // on the container makes the cap tiny so even an echo trips it.
   const big = await client.shell.exec({
-    command: "head -c 2048 /dev/urandom | base64",
+    source: "head -c 2048 /dev/urandom | base64",
     id: "big",
   });
   // Drain the live stream first — eviction does not gate live.
@@ -214,7 +214,7 @@ try {
   // flow-control window stalls for long — a real test of pipe
   // pause needs a capnweb upgrade or a different observable.
   const chatty = await client.shell.exec({
-    command: "head -c 8192 /dev/urandom | base64",
+    source: "head -c 8192 /dev/urandom | base64",
     id: "chatty",
   });
   let totalBytes = 0;

@@ -283,7 +283,7 @@ async function main() {
     // pattern as fetchChanges.
     console.error(`[soak] ${EXEC_CALLS} exec calls (no disposal)…`);
     for (let i = 0; i < EXEC_CALLS; i++) {
-      const result = await stub.shell.exec({ command: "true" });
+      const result = await stub.shell.exec({ source: "true" });
       const reader = result.events.getReader();
       try {
         while (true) {
@@ -324,7 +324,7 @@ async function main() {
 
     console.error(`[soak] ${EXEC_CALLS} exec calls (with disposal)…`);
     for (let i = 0; i < EXEC_CALLS; i++) {
-      const result = await stub.shell.exec({ command: "true" });
+      const result = await stub.shell.exec({ source: "true" });
       const reader = result.events.getReader();
       try {
         while (true) {
