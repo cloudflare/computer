@@ -55,6 +55,17 @@ function streamingHandle(events: ExecStreamEvent[]) {
   };
 }
 
+// A clock that advances 200ms per read, past the 100ms coalescing
+// floor, so every chunk produces its own running snapshot. Streaming
+// tests that assert per-chunk output inject this to defeat coalescing.
+function steppingClock(stepMs = 200): () => number {
+  let t = 0;
+  return () => {
+    t += stepMs;
+    return t;
+  };
+}
+
 function toolDescription(tool: unknown): string {
   const description = (tool as { description?: unknown }).description;
   if (typeof description !== "string") throw new Error("tool has no description");
@@ -710,6 +721,7 @@ describe("createAITools exec streaming", () => {
       shell: {
         defaultBackend: "shell",
         backends: { shell: { description: "fast shell" } },
+        now: steppingClock(),
       },
     });
 
@@ -835,6 +847,69 @@ describe("createAITools exec streaming", () => {
       cwd: null,
       backend: "shell",
       error: "stream broke",
+    });
+  });
+
+  it("coalesces running snapshots to at most one per interval", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "a" },
+            { name: "stdout", value: "b" },
+            { name: "stdout", value: "c" },
+            { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    // A frozen clock never advances past the coalescing floor. The
+    // first chunk still yields a running snapshot for responsiveness;
+    // the later chunks coalesce into the terminal snapshot.
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+        now: () => 1000,
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "run" });
+    expect(chunks).toEqual([
+      { command: "run", cwd: null, backend: "shell", exitCode: null, stdout: "a", stderr: "" },
+      { command: "run", cwd: null, backend: "shell", exitCode: 0, stdout: "abc", stderr: "" },
+    ]);
+  });
+
+  it("caps streamed output in memory at streamMaxBytes", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "a".repeat(10) },
+            { name: "stdout", value: "b".repeat(10) },
+            { name: "exit", value: 0 },
+          ]);
+        },
+      },
+    };
+    // Hold at most 12 bytes; show at most 8. The marker counts every
+    // byte seen (20), not just the 12 retained.
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+        maxBytes: 8,
+        streamMaxBytes: 12,
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "run" });
+    expect(chunks.at(-1)).toMatchObject({
+      exitCode: 0,
+      stdout: "aaaaaaaa\n\n[truncated, 12 more bytes]",
     });
   });
 });

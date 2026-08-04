@@ -53,10 +53,24 @@ export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
   backends: Record<string, ExecBackendDescription>;
   defaultBackend: string;
+  // Per-snapshot display cap for each of stdout and stderr, in bytes.
+  // Output past it is shown as a truncation marker. Defaults to 64 KiB.
   maxBytes?: number;
+  // In-memory cap per stream while streaming, in bytes. Output past it
+  // is counted toward the truncation marker but not retained, so a long
+  // run does not grow the buffer without bound. Defaults to 512 KiB.
+  streamMaxBytes?: number;
+  // Clock backing the running-snapshot coalescing floor. Defaults to
+  // Date.now; injectable so tests can drive the interval deterministically.
+  now?: () => number;
 }
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
+const DEFAULT_STREAM_MAX_BYTES = 512 * 1024;
+// Minimum wall-clock gap between running snapshots. A chatty command
+// yields at most one snapshot per interval instead of one per chunk;
+// the terminal snapshot always fires regardless.
+const STREAM_COALESCE_MS = 100;
 
 // Progressive snapshot emitted while a command streams (exitCode
 // null until the run ends), and the terminal snapshot once the exit
@@ -85,6 +99,8 @@ export function createExecTool(options: ExecToolOptions): Tool<
   ExecToolOutput
 > {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
+  const now = options.now ?? Date.now;
   const backendIds = Object.keys(options.backends);
   if (backendIds.length === 0) {
     throw new Error("createExecTool: pass at least one backend in `backends`");
@@ -185,15 +201,19 @@ export function createExecTool(options: ExecToolOptions): Tool<
       // running output so the model sees progress before the run
       // ends; the exit event settles the terminal snapshot.
       if (typeof handle[Symbol.asyncIterator] === "function") {
-        let stdout = "";
-        let stderr = "";
+        const stdout = new StreamBuffer(streamMaxBytes);
+        const stderr = new StreamBuffer(streamMaxBytes);
         let exitCode: number | null = null;
         let value: unknown;
         let hasValue = false;
+        // Coalesce running snapshots to at most one per interval. A
+        // chatty command would otherwise yield a full-buffer snapshot
+        // per chunk; the terminal snapshot below always fires.
+        let lastSnapshot = 0;
         try {
           for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
-            if (event.name === "stdout") stdout += event.value;
-            else if (event.name === "stderr") stderr += event.value;
+            if (event.name === "stdout") stdout.push(event.value);
+            else if (event.name === "stderr") stderr.push(event.value);
             else {
               exitCode = event.value;
               if ("result" in event) {
@@ -202,13 +222,14 @@ export function createExecTool(options: ExecToolOptions): Tool<
               }
               continue;
             }
-            // A stdout / stderr chunk arrived: emit a running snapshot
-            // so the model sees output before the run ends.
+            const at = now();
+            if (at - lastSnapshot < STREAM_COALESCE_MS) continue;
+            lastSnapshot = at;
             yield {
               ...base,
               exitCode: null,
-              stdout: truncate(stdout, maxBytes),
-              stderr: truncate(stderr, maxBytes),
+              stdout: stdout.render(maxBytes),
+              stderr: stderr.render(maxBytes),
             };
           }
         } catch (err) {
@@ -218,8 +239,8 @@ export function createExecTool(options: ExecToolOptions): Tool<
         yield {
           ...base,
           exitCode,
-          stdout: truncate(stdout, maxBytes),
-          stderr: truncate(stderr, maxBytes),
+          stdout: stdout.render(maxBytes),
+          stderr: stderr.render(maxBytes),
           ...(hasValue ? { result: value } : {}),
         };
         return;
@@ -247,6 +268,60 @@ function errorMessage(err: unknown): string {
 }
 
 const encoder = new TextEncoder();
+
+// A bounded, incrementally-counted accumulator for one output stream.
+// It keeps at most `cap` bytes of head text in memory while tracking
+// the total bytes seen, so a long run neither grows without bound nor
+// re-encodes the whole buffer on every snapshot. `render` returns the
+// display-capped view with a marker for the bytes not shown.
+class StreamBuffer {
+  #head = "";
+  #headBytes = 0;
+  #totalBytes = 0;
+  readonly #cap: number;
+
+  constructor(cap: number) {
+    this.#cap = cap;
+  }
+
+  push(chunk: string): void {
+    const chunkBytes = encoder.encode(chunk).byteLength;
+    this.#totalBytes += chunkBytes;
+    if (this.#headBytes >= this.#cap) return;
+    if (this.#headBytes + chunkBytes <= this.#cap) {
+      this.#head += chunk;
+      this.#headBytes += chunkBytes;
+      return;
+    }
+    // The chunk crosses the cap: keep the largest whole-character
+    // prefix that fits, then stop growing the head.
+    let used = this.#headBytes;
+    let end = 0;
+    for (const char of chunk) {
+      const charBytes = encoder.encode(char).byteLength;
+      if (used + charBytes > this.#cap) break;
+      used += charBytes;
+      end += char.length;
+    }
+    this.#head += chunk.slice(0, end);
+    this.#headBytes = used;
+  }
+
+  render(maxBytes: number): string {
+    if (this.#totalBytes <= maxBytes && this.#totalBytes === this.#headBytes) {
+      return this.#head;
+    }
+    let used = 0;
+    let end = 0;
+    for (const char of this.#head) {
+      const charBytes = encoder.encode(char).byteLength;
+      if (used + charBytes > maxBytes) break;
+      used += charBytes;
+      end += char.length;
+    }
+    return `${this.#head.slice(0, end)}\n\n[truncated, ${this.#totalBytes - used} more bytes]`;
+  }
+}
 
 function truncate(value: string, maxBytes: number): string {
   if (!value) return value;
