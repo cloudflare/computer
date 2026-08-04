@@ -8,14 +8,9 @@ import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 // for a callable backend, the structured return value on `result`. The
 // value settles at the same instant as the exit code, so it rides the
 // same terminal event rather than a separate one.
-//
-// The standalone `result` event is the shape the runtime wire still
-// emits today. The tool accepts it so it keeps working until the wire is
-// consolidated, but callers should read the value from the exit event.
 export type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
-  | { name: "result"; value: unknown }
   | { name: "exit"; value: number; result?: unknown };
 
 // A detached execution handle. The tool streams stdout / stderr
@@ -199,11 +194,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
           for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
             if (event.name === "stdout") stdout += event.value;
             else if (event.name === "stderr") stderr += event.value;
-            else if (event.name === "result") {
-              value = event.value;
-              hasValue = true;
-              continue;
-            } else {
+            else {
               exitCode = event.value;
               if ("result" in event) {
                 value = event.result;
