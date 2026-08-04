@@ -43,9 +43,11 @@
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, relative, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+
+import { buildModuleGraph, parseCommandRegistry, partitionModules } from "./partition.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Script lives at .../backends/worker-shell/script/build-bundle.mjs;
@@ -173,6 +175,10 @@ try {
     define: {
       "import.meta.url": JSON.stringify("file:///shell.js"),
     },
+    // Emit the module graph as structured data so the partitioner
+    // reads import edges (and their static/dynamic kind) from
+    // esbuild rather than scraping the emitted source with regexes.
+    metafile: true,
   });
 } finally {
   // The scratch outdir is only used to anchor relative paths.
@@ -186,12 +192,13 @@ if (!result.outputFiles || result.outputFiles.length === 0) {
 }
 
 // Collect each emitted file into a modules record keyed by its
-// scratch-relative path. esbuild writes the entry as shell.js and
-// chunks as chunk-<hash>.js per entryNames / chunkNames above.
+// output basename. esbuild writes the entry as shell.js and chunks
+// as chunk-<hash>.js per entryNames / chunkNames above; the
+// basenames are unique and match the keys the module graph and
+// partitioner use.
 const modules = {};
 for (const file of result.outputFiles) {
-  const name = relative(scratch, file.path).split(/[\\/]/).join("/");
-  modules[name] = file.text;
+  modules[basename(file.path)] = file.text;
 }
 
 if (!modules["shell.js"]) {
@@ -200,7 +207,14 @@ if (!modules["shell.js"]) {
   );
 }
 
-const partition = partitionModules(modules);
+// The graph (import edges) comes from esbuild's metafile; command
+// identity (which chunks are just-bash commands vs internal
+// diagnostics) comes from parsing shell.js's { name, load }
+// registry. partitionModules combines the two and throws if any
+// optional feature resolves to no command chunk.
+const graph = buildModuleGraph(result.metafile.outputs);
+const registry = parseCommandRegistry(modules["shell.js"]);
+const partition = partitionModules({ graph, registry, optionalFeatures: OPTIONAL_FEATURES });
 
 // Emit one generated file per group. shell-modules.ts imports
 // each by its @cloudflare/computer/shell/<group> subpath and
@@ -234,107 +248,3 @@ console.log(
   `Wrote ${outDir} (core ${coreCount} modules, shell.js ${mainBytes} bytes, ` +
     `features: ${featureSummary}, total ${totalBytes} bytes)`,
 );
-
-// Assign every emitted module to exactly one group: "core" or one
-// of the OPTIONAL_FEATURES keys. A module belongs to a feature
-// only when that feature is its sole reacher and core can't reach
-// it; everything else — shared chunks, chunks reachable from a
-// kept command, the shell.js entry itself — stays in core.
-function partitionModules(mods) {
-  const names = Object.keys(mods);
-  const staticEdges = new Map();
-  const dynamicEdges = new Map();
-  for (const name of names) {
-    staticEdges.set(name, moduleEdges(mods[name], /* dynamic */ false));
-    dynamicEdges.set(name, moduleEdges(mods[name], /* dynamic */ true));
-  }
-
-  const closure = (starts, followDynamic) => {
-    const seen = new Set();
-    const stack = [...starts];
-    while (stack.length > 0) {
-      const cur = stack.pop();
-      if (seen.has(cur) || !mods[cur]) continue;
-      seen.add(cur);
-      for (const next of staticEdges.get(cur) ?? []) stack.push(next);
-      if (followDynamic) for (const next of dynamicEdges.get(cur) ?? []) stack.push(next);
-    }
-    return seen;
-  };
-
-  const registry = parseCommandChunks(mods["shell.js"]);
-
-  const optionalCommands = new Set(Object.values(OPTIONAL_FEATURES).flat());
-
-  // Core reach: everything statically pulled by shell.js (the
-  // always-parsed entry) plus the full closure of every command
-  // that isn't optional. Dynamic edges out of shell.js are the
-  // per-command import() fan-out — following them would drag every
-  // optional chunk into core, so core uses shell.js's static edges
-  // only.
-  const coreReach = closure(["shell.js"], /* dynamic */ false);
-  for (const [command, chunk] of Object.entries(registry)) {
-    if (!optionalCommands.has(command)) {
-      for (const m of closure([chunk], /* dynamic */ true)) coreReach.add(m);
-    }
-  }
-
-  // Each feature reaches the full closure of its command entry
-  // chunks.
-  const featureReach = new Map();
-  for (const [feature, commands] of Object.entries(OPTIONAL_FEATURES)) {
-    const roots = commands.map((c) => registry[c]).filter(Boolean);
-    featureReach.set(feature, closure(roots, /* dynamic */ true));
-  }
-
-  const partition = { core: [] };
-  for (const feature of Object.keys(OPTIONAL_FEATURES)) partition[feature] = [];
-  for (const name of names) {
-    const owners = [];
-    if (coreReach.has(name)) owners.push("core");
-    for (const feature of Object.keys(OPTIONAL_FEATURES)) {
-      if (featureReach.get(feature).has(name)) owners.push(feature);
-    }
-    const optionalOwners = owners.filter((o) => o !== "core");
-    if (!owners.includes("core") && optionalOwners.length === 1) {
-      partition[optionalOwners[0]].push(name);
-    } else {
-      partition.core.push(name);
-    }
-  }
-  return partition;
-}
-
-// Import specifiers a module references. Static edges are the
-// top-level `import`/`export … from` and bare side-effect
-// imports; dynamic edges are `import(...)` calls. Only relative
-// chunk specifiers matter — externals resolve at runtime.
-function moduleEdges(source, dynamic) {
-  const targets = new Set();
-  if (dynamic) {
-    for (const m of source.matchAll(/import\("(\.\/[^"]+)"\)/g)) {
-      targets.add(m[1].replace(/^\.\//, ""));
-    }
-    return targets;
-  }
-  for (const m of source.matchAll(/(?:import|export)[^;]*?from\s*"(\.\/[^"]+)"/g)) {
-    targets.add(m[1].replace(/^\.\//, ""));
-  }
-  for (const m of source.matchAll(/import\s*"(\.\/[^"]+)"/g)) {
-    targets.add(m[1].replace(/^\.\//, ""));
-  }
-  return targets;
-}
-
-// Map each just-bash command to the chunk its lazy loader
-// imports. The registry entries look like
-//   { name: "curl", load: async () => (await import("./chunk-…js")).curlCommand }
-function parseCommandChunks(shellSource) {
-  const registry = {};
-  const re =
-    /\{\s*name:\s*"([^"]+)",\s*load:\s*async\s*\(\)\s*=>\s*\(await import\("(\.\/chunk-[^"]+)"\)\)/g;
-  for (const m of shellSource.matchAll(re)) {
-    registry[m[1]] = m[2].replace(/^\.\//, "");
-  }
-  return registry;
-}
