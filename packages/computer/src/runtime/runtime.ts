@@ -19,6 +19,14 @@ interface WorkspaceRuntimeRouterOptions {
   resolveBackendId: (id: string | undefined) => string;
 }
 
+// The error a caller sees when it hands structured `input` to a
+// backend that does not accept it. Exported so the exec tool rejects
+// with the same wording the runtime raises, instead of a second copy
+// that could drift.
+export function notCallableMessage(backend: string): string {
+  return `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`;
+}
+
 export class WorkspaceRuntime {
   readonly #options: WorkspaceRuntimeRouterOptions;
 
@@ -42,9 +50,7 @@ export class WorkspaceRuntime {
     if (options.id !== undefined) assertExecutionId(options.id);
     const backend = this.#backend(options.backend);
     if (options.input !== undefined && !this.#options.callableBackendIds.has(backend)) {
-      throw new Error(
-        `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`,
-      );
+      throw new Error(notCallableMessage(backend));
     }
     const runtime = await this.#options.backendHandle(backend);
     const envelope = await runtime.exec({
