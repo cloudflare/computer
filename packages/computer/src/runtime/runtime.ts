@@ -272,7 +272,10 @@ function transformModuleEvents<E extends ExecEncoding>(
             }),
           } as WorkspaceRuntimeEvent<E>);
         } else {
-          if (event.name === "exit") flushPending(controller, event.seq);
+          // `exit` is the only non-stdio event; flush any buffered
+          // partial output before the terminal event so a trailing
+          // multi-byte remainder lands ahead of it.
+          flushPending(controller, event.seq);
           enqueue(controller, event as WorkspaceRuntimeEvent<E>);
         }
       },

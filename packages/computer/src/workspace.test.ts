@@ -147,8 +147,8 @@ function makeBackend(
 
 // Backend with a wired shell.exec that pings a counter on every
 // call. exec resolves immediately with an empty event stream so
-// the WorkspaceShell exec bracket settles right away. Used by the
-// multi-backend selection tests.
+// the command executor's exec bracket settles right away. Used by
+// the multi-backend selection tests.
 function execBackend(id: string, onExec: (command: string) => void): WorkspaceBackend {
   const shell: import("@cloudflare/computer-rpc").ShellRPC = {
     async exec(input) {
@@ -182,8 +182,9 @@ function execBackend(id: string, onExec: (command: string) => void): WorkspaceBa
 }
 
 // Drain an ExecHandle (or its result()-aware wrapper) to settle
-// the WorkspaceShell push/pull bracket. The selection tests don't
-// care about the values — only that exec ran on the right backend.
+// the command executor's push/pull bracket. The selection tests
+// don't care about the values — only that exec ran on the right
+// backend.
 async function drainExec(handle: { result(): Promise<unknown> }): Promise<void> {
   await handle.result();
 }

@@ -240,6 +240,10 @@ export class Workspace {
   // Per-backend CommandExecutor facades. Constructed alongside each
   // handle; reused for the life of the handle.
   readonly #shells = new Map<string, CommandExecutor>();
+  // Cached command adapters presenting a CommandExecutor as the
+  // unified backend handle. Cleared alongside #shells so an adapter
+  // never outlives the shell it wraps.
+  readonly #commandHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
@@ -670,6 +674,7 @@ export class Workspace {
     if (this.#handles.get(id) !== handle) return false;
     this.#handles.delete(id);
     this.#shells.delete(id);
+    this.#commandHandles.delete(id);
     return true;
   }
 
@@ -749,6 +754,7 @@ export class Workspace {
     const moduleHandles = [...this.#moduleHandles.values()];
     this.#handles.clear();
     this.#shells.clear();
+    this.#commandHandles.clear();
     this.#connecting.clear();
     this.#moduleHandles.clear();
     this.#connectingModuleHandles.clear();
@@ -768,16 +774,22 @@ export class Workspace {
   // Unified backend handle used by the runtime. Module backends
   // return their native handle; command backends are presented
   // through the same interface by an adapter over their
-  // its CommandExecutor, so the runtime has a single execution path.
+  // CommandExecutor, so the runtime has a single execution path.
   async #backendHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
     if (this.#moduleBackendsById.has(id)) return this.#moduleHandleFor(id);
     return this.#commandHandleFor(id);
   }
 
+  // Command adapters are cached per backend so the module and
+  // command paths are symmetric. The cache is cleared alongside
+  // #shells whenever a handle is invalidated, so an adapter never
+  // outlives the shell it closed over.
   async #commandHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
+    const cached = this.#commandHandles.get(id);
+    if (cached) return cached;
     const { shell, handle } = await this.#shellFor(id);
     const onError = (error: unknown) => this.#onShellError(id, handle, error);
-    return {
+    const adapter: WorkspaceModuleBackendHandle = {
       exec: async (input) => {
         let envelope: Awaited<ReturnType<CommandExecutor["exec"]>>;
         try {
@@ -840,6 +852,8 @@ export class Workspace {
         // through the Workspace's own close path.
       },
     };
+    this.#commandHandles.set(id, adapter);
+    return adapter;
   }
 
   #moduleHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
@@ -944,6 +958,7 @@ export class Workspace {
             if (this.#handles.get(id) === handle) {
               this.#handles.delete(id);
               this.#shells.delete(id);
+              this.#commandHandles.delete(id);
             }
           });
       }

@@ -191,7 +191,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
         // The user Worker has no DB-backed log to dispose; the
         // event stream itself is the only resource and it ends
         // with the run. Treated as a no-op on this backend so
-        // the WorkspaceShell surface stays uniform.
+        // the ShellRPC surface stays uniform.
       },
     };
 
@@ -262,7 +262,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
 }
 
 // Decode a byte-framed event stream produced by ShellWorker
-// into the structured ExecEvent shape WorkspaceShell expects.
+// into the structured ExecEvent shape the runtime expects.
 // Frames are newline-delimited JSON objects.
 function decodeFramedEvents(source: ReadableStream<Uint8Array>): ReadableStream<ExecEvent> {
   const decoder = new TextDecoder();
@@ -337,8 +337,8 @@ function reshape(event: {
 }): ExecEvent {
   // ShellWorker ships stdout / stderr values as utf8 strings;
   // ExecEvent on the wire carries Uint8Array. Re-encode so the
-  // existing WorkspaceShell utf8 decoder transforms in shell.ts
-  // see the shape they already handle.
+  // runtime's utf8 decoder transforms see the shape they already
+  // handle.
   if (event.name === "stdout" || event.name === "stderr") {
     return {
       id: event.id,

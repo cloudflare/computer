@@ -53,17 +53,13 @@ export interface CommandExecution {
   sync: { pushed: number; outcome: Promise<PostPullOutcome> };
 }
 
-export interface ExecOptions<E extends ExecEncoding = undefined> {
+export interface ExecOptions {
   // Stable id. If omitted the runner mints a UUID. Reusing an id
   // while a previous run is still active throws EEXEC_BUSY.
   id?: string;
   // Absolute path inside the container. Defaults to the
   // workspace root.
   cwd?: string;
-  // Encoding for stdout/stderr value payloads. Default is
-  // Uint8Array; "utf8" decodes per-chunk through a stream-mode
-  // TextDecoder so multi-byte boundaries survive.
-  encoding?: E;
   // Per-call timeout in milliseconds. Past this duration the
   // container sends SIGTERM (then SIGKILL after a short grace).
   // Omit to use the runner's default (typically 320_000). Pass 0
@@ -76,21 +72,13 @@ export interface ExecOptions<E extends ExecEncoding = undefined> {
   // Standard input fed to the command. Bytes, or a string encoded
   // as UTF-8.
   stdin?: Uint8Array | string;
-  // Backend selector. Omit to use the default backend (the first
-  // one passed to the Workspace constructor); pass the id of
-  // another configured backend to route this call there.
-  backend?: string;
 }
 
-export interface GetExecOptions<E extends ExecEncoding = undefined> {
-  encoding?: E;
+export interface GetExecOptions {
   // "tail" yields only events produced after this call. A
   // number resumes from that seq+1. Omit to receive every
   // event from the start of the run (replays the whole log).
   resume?: "tail" | "full" | number;
-  // Backend selector. Same shape as ExecOptions.backend; routes
-  // the get / reattach to the named backend.
-  backend?: string;
 }
 
 // Push/pull bracket plumbing. CommandExecutor doesn't know about
@@ -121,7 +109,7 @@ export class CommandExecutor {
   // sees them, then returns the raw event stream and the sync
   // bracket stats. The push failure is non-fatal per docs/05 — the
   // command still runs and pushed reports 0.
-  async exec(source: string, options: ExecOptions<undefined> = {}): Promise<CommandExecution> {
+  async exec(source: string, options: ExecOptions = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
     let pushed = 0;
     try {
@@ -159,7 +147,7 @@ export class CommandExecutor {
     // call — because the inner stream is handed off to the caller
     // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
+    const { stream, outcome } = withPostPull(drained, this.#sync);
     return { id: envelope.id, events: stream, sync: { pushed, outcome } };
   }
 
@@ -167,11 +155,11 @@ export class CommandExecutor {
   // does not own the original push frame, so pushed = 0; the
   // post-drain pull still fires, scoped to whatever landed between
   // reattach and drain.
-  async get(id: string, options: GetExecOptions<undefined> = {}): Promise<CommandExecution> {
+  async get(id: string, options: GetExecOptions = {}): Promise<CommandExecution> {
     const after = resumeToAfter(options.resume);
     const envelope = await this.#shell.getExec({ id, after });
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    const { stream, outcome } = withPostPull<undefined>(drained, this.#sync);
+    const { stream, outcome } = withPostPull(drained, this.#sync);
     return { id, events: stream, sync: { pushed: 0, outcome } };
   }
 
@@ -196,16 +184,16 @@ export interface PostPullOutcome {
   sync: ExecSyncResult;
 }
 
-export function withPostPull<E extends ExecEncoding>(
-  source: ReadableStream<WorkspaceExecEvent<E>>,
+export function withPostPull(
+  source: ReadableStream<ExecEvent>,
   sync: Sync,
-): { stream: ReadableStream<WorkspaceExecEvent<E>>; outcome: Promise<PostPullOutcome> } {
+): { stream: ReadableStream<ExecEvent>; outcome: Promise<PostPullOutcome> } {
   const reader = source.getReader();
   let resolveOutcome!: (outcome: PostPullOutcome) => void;
   const outcome = new Promise<PostPullOutcome>((resolve) => {
     resolveOutcome = resolve;
   });
-  const stream = new ReadableStream<WorkspaceExecEvent<E>>(
+  const stream = new ReadableStream<ExecEvent>(
     {
       async pull(controller) {
         try {
