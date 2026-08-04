@@ -111,6 +111,10 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
   timeoutMs?: number;
+  // Whether this execution may modify the workspace. Defaults to
+  // true. Narrows the backend's own access rather than widening it:
+  // a backend registered read-only stays read-only regardless.
+  writable?: boolean;
 }
 
 export interface WorkspaceRuntimeGetOptions<E extends ExecEncoding = undefined> {
@@ -145,6 +149,10 @@ export interface ModuleExecutionInput {
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
   timeoutMs?: number;
+  // Whether this execution may modify the workspace. Defaults to
+  // true. Intersected with the backend's configured access, so a
+  // backend registered read-only stays read-only.
+  writable?: boolean;
 }
 
 export interface ModuleExecutionEnvelope {

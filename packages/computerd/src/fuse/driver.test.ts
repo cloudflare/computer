@@ -1,6 +1,10 @@
+import { invalidateReadOnlyMountCache } from "@cloudflare/dofs";
 import { expect, test } from "vitest";
 
 import { createNodeVirtualFileSystem, makeFUSEOps } from "./index.js";
+
+const EROFS = -30;
+const EACCES = -13;
 
 const callback = (fn: (cb: (errno: number, result: unknown) => void) => void) =>
   new Promise<{ errno: number; result: unknown }>((resolve) =>
@@ -1043,4 +1047,34 @@ test("FUSE ftruncate does not depend on fuse-native binding this", async () => {
   expect(await status((cb) => ftruncate.call(undefined, "/ftruncate-this.txt", fh, 3, cb))).toBe(0);
   expect(await status((cb) => ops.flush("/ftruncate-this.txt", fh, cb))).toBe(0);
   expect(Buffer.from(vfs.readFileSync("/ftruncate-this.txt")).toString("utf8")).toBe("abc");
+});
+
+// A write into a read-only mount root is refused by dofs with EROFS.
+// The guest has to see that code: EROFS says "this tree does not take
+// writes", which is a fact about the workspace the caller can act on,
+// while EIO says the daemon or the disk is broken, which invites a
+// retry that will fail the same way forever.
+test("FUSE reports a refused write into a read-only mount as EROFS", async () => {
+  const { vfs, db } = await createNodeVirtualFileSystem();
+  vfs.mkdirSync("/ro", { recursive: true });
+  db.run("INSERT INTO _vfs_mounts (root, kind, mode) VALUES (?, ?, ?)", "/ro", "r2", "read-only");
+  invalidateReadOnlyMountCache(db);
+  const ops = makeFUSEOps(vfs);
+
+  expect(await status((cb) => ops.mkdir("/ro/nested", 0o755, cb))).toBe(EROFS);
+  expect(await status((cb) => ops.unlink("/ro/gone.txt", cb))).toBe(EROFS);
+});
+
+// Same reasoning for a path the caller is not permitted to touch:
+// EACCES is actionable, EIO is not.
+test("FUSE preserves EACCES rather than flattening it to EIO", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const denied = Object.assign(Object.create(Object.getPrototypeOf(vfs)), vfs, {
+    mkdirSync() {
+      throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+    },
+  });
+  const ops = makeFUSEOps(denied);
+
+  expect(await status((cb) => ops.mkdir("/denied", 0o755, cb))).toBe(EACCES);
 });

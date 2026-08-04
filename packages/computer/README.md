@@ -470,6 +470,44 @@ default is a zero-cost no-op, so there's no overhead unless you opt in.
 An adapter for the Cloudflare runtime lives at
 `@cloudflare/computer/observe/cloudflare`.
 
+### Write access and approval
+
+Pass `writable: false` to an exec call for a command you expect to only
+read. A write it attempts then fails instead of landing, which is what
+makes a wrong guess about a command safe:
+
+```ts
+await workspace.runtime.exec("git log --oneline", { writable: false });
+```
+
+`worker-shell` and `worker-javascript` share the host store, so the
+write fails inside the command. A container has its own copy and writes
+there first, so the change is refused on the way back and reported in
+`result.skipped` with reason `no-write-access`.
+
+Pass a `gate` to be consulted before each command and each mutating
+`workspace.fs` call, with the option to refuse it or to withdraw its
+write access, and an `audit` hook to be told what was decided:
+
+```ts
+new Workspace({
+  storage: ctx.storage,
+  gate: {
+    check(action) {
+      if (action.kind === "shell.exec" && isDestructive(action.command)) {
+        return { allow: false, reason: "needs review" };
+      }
+      return { allow: true };
+    },
+  },
+  audit: { record: (action, outcome) => log(action, outcome) },
+});
+```
+
+Both default to no-ops. They are separate from `observer` because an
+observer must not change what happens and a gate exists to. See
+[20. Write access and approval](../../docs/20_approval.md).
+
 ## Examples
 
 - [`examples/worker-shell`](../../examples/worker-shell) — the

@@ -5,14 +5,55 @@ export interface ExecWorkspaceLike {
   runtime: {
     exec(
       command: string,
-      options: { cwd?: string; encoding: "utf8"; backend?: string },
+      options: { cwd?: string; encoding: "utf8"; backend?: string; writable?: boolean },
     ): Promise<{
       result(): Promise<{
         exitCode: number;
         stdout: string;
         stderr: string;
+        // Changes the post-command pull refused. Optional because a
+        // backend that shares the workspace store never produces any:
+        // its writes fail where they happen, so there is nothing left
+        // to refuse on the way back.
+        skipped?: ReadonlyArray<{ path: string; op: "write" | "delete"; reason: string }>;
       }>;
     }>;
+  };
+}
+
+// Refused writes reported back to the model.
+//
+// A backend that keeps its own copy of the files cannot be stopped
+// from writing when it has no write access. It writes, exits zero,
+// and the changes are dropped when they are pulled back. Nothing in
+// the exit code or the output says so, so a model that is not told
+// reports work it did not do.
+//
+// `count` is every refused entry; `paths` is a capped sample, because
+// one entry per file means a recursive change can produce thousands
+// and the model is paying for each one.
+export interface DiscardedWrites {
+  count: number;
+  // "no-write-access" — the command ran without the capability.
+  // "read-only"       — it reached into a read-only mount root.
+  // Different fixes, so they are not collapsed into one word.
+  reason: "no-write-access" | "read-only" | "mixed";
+  paths: string[];
+}
+
+const MAX_REPORTED_PATHS = 10;
+
+function summarizeSkipped(
+  skipped: ReadonlyArray<{ path: string; reason: string }> | undefined,
+): DiscardedWrites | undefined {
+  if (skipped === undefined || skipped.length === 0) return undefined;
+  const reasons = new Set(skipped.map((entry) => entry.reason));
+  const reason =
+    reasons.size === 1 ? (skipped[0].reason as DiscardedWrites["reason"]) : ("mixed" as const);
+  return {
+    count: skipped.length,
+    reason,
+    paths: skipped.slice(0, MAX_REPORTED_PATHS).map((entry) => entry.path),
   };
 }
 
@@ -20,11 +61,33 @@ export interface ExecBackendDescription {
   description: string;
 }
 
+export interface ExecToolInput {
+  command: string;
+  cwd?: string;
+  backend: string;
+}
+
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
   backends: Record<string, ExecBackendDescription>;
   defaultBackend: string;
   maxBytes?: number;
+
+  // Decides whether a command may modify the workspace. Omit to let
+  // every command write, which is the behaviour without this option.
+  //
+  // Deliberately not part of the input schema, so the model cannot
+  // set it. A model that classifies its own command is the failure
+  // this is meant to catch: the whole point is the command mislabelled
+  // as read-only, and asking the same model that mislabelled it to
+  // declare the label would make the flag agree with the mistake. The
+  // host decides — from an allowlist, a plan step, a human, whatever
+  // it already trusts — and the model finds out by the write failing.
+  //
+  // The classification is still allowed to be wrong. It fails safe in
+  // that direction: a read command marked read-only runs fine, and a
+  // write command marked read-only fails visibly instead of writing.
+  writable?: (input: ExecToolInput) => boolean;
 }
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
@@ -77,26 +140,43 @@ export function createExecTool(
     }),
     execute: async ({ command, cwd, backend }) => {
       const selectedBackend = backend ?? options.defaultBackend;
+      const writable = options.writable?.({ command, cwd, backend: selectedBackend }) ?? true;
       try {
         const handle = await options.workspace.runtime.exec(command, {
           cwd,
           encoding: "utf8",
           backend: selectedBackend,
+          writable,
         });
         const result = await handle.result();
+        const discardedWrites = summarizeSkipped(result.skipped);
         return {
           command,
           cwd: cwd ?? null,
           backend: selectedBackend,
+          // Reported so the model can tell a refused write from a
+          // broken command. Without it a read-only run looks like an
+          // arbitrary failure and the model's next move is to retry
+          // the same command.
+          writable,
           exitCode: result.exitCode,
           stdout: truncate(result.stdout, maxBytes),
           stderr: truncate(result.stderr, maxBytes),
+          // Spread so the key is absent rather than null on the
+          // common path. Every key here is context the model reads on
+          // every call, and "nothing was refused" is the usual case.
+          ...(discardedWrites !== undefined ? { discardedWrites } : {}),
         };
       } catch (err) {
+        // A gate refusing the command arrives here. It is returned as
+        // a tool result rather than thrown, like every other failure,
+        // so the model reads the refusal and can respond to it instead
+        // of the agent loop tearing down.
         return {
           command,
           cwd: cwd ?? null,
           backend: selectedBackend,
+          writable,
           error: err instanceof Error ? err.message : String(err),
         };
       }

@@ -8,6 +8,13 @@
 import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "@cloudflare/computer-rpc";
 import { describe, expect, it } from "vitest";
 
+import {
+  ActionDeniedError,
+  type AuditOutcome,
+  type WorkspaceAction,
+  type WorkspaceAudit,
+  type WorkspaceGate,
+} from "./gate.js";
 import type { KillSignal } from "./shell.js";
 import { type Sync, WorkspaceShell } from "./shell.js";
 
@@ -46,6 +53,7 @@ interface ExecCall {
   id: string | undefined;
   cwd: string | undefined;
   timeoutMs: number | undefined;
+  writable: boolean | undefined;
 }
 
 interface GetExecCall {
@@ -133,6 +141,7 @@ function fakeRpc(options: FakeRpcOptions = {}): FakeRpc {
         id: input.id,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs,
+        writable: input.writable,
       });
       if (options.throwOnExec !== undefined) throw options.throwOnExec;
       const id = input.id ?? mintedId;
@@ -900,3 +909,219 @@ function liveRpc(): {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// exec() — write access and the gate
+// ---------------------------------------------------------------------------
+
+describe("WorkspaceShell.exec — write access", () => {
+  function recordingSync(): Sync & { pulls: (boolean | undefined)[] } {
+    const pulls: (boolean | undefined)[] = [];
+    return {
+      pulls,
+      async push() {
+        return 0;
+      },
+      async pull(options) {
+        pulls.push(options?.writable);
+        return applied(0);
+      },
+    };
+  }
+
+  it("sends writable: true when the caller says nothing", async () => {
+    const fake = fakeRpc();
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync());
+    await (await shell.exec("ls")).result();
+    expect(fake.calls.exec[0].writable).toBe(true);
+  });
+
+  it("forwards writable: false to the runner", async () => {
+    const fake = fakeRpc();
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync());
+    await (await shell.exec("ls", { writable: false })).result();
+    expect(fake.calls.exec[0].writable).toBe(false);
+  });
+
+  it("carries the command's write access into its own post-command pull", async () => {
+    // Without this the bracket after the command would apply exactly
+    // the changes the command was not allowed to make.
+    const fake = fakeRpc();
+    const sync = recordingSync();
+    const shell = new WorkspaceShell(fake.rpc.shell, sync);
+
+    await (await shell.exec("ls", { writable: false })).result();
+
+    expect(sync.pulls).toEqual([false]);
+  });
+
+  it("pulls with write access for an ordinary command", async () => {
+    const fake = fakeRpc();
+    const sync = recordingSync();
+    const shell = new WorkspaceShell(fake.rpc.shell, sync);
+
+    await (await shell.exec("ls")).result();
+
+    expect(sync.pulls).toEqual([true]);
+  });
+
+  it("consults the gate once per command, before the push", async () => {
+    const order: string[] = [];
+    const fake = fakeRpc();
+    const sync: Sync = {
+      async push() {
+        order.push("push");
+        return 0;
+      },
+      async pull() {
+        order.push("pull");
+        return applied(0);
+      },
+    };
+    const gate: WorkspaceGate = {
+      check(action) {
+        order.push(`gate:${action.kind}`);
+        return { allow: true };
+      },
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, sync, undefined, { gate });
+
+    await (await shell.exec("ls")).result();
+
+    expect(order).toEqual(["gate:shell.exec", "push", "pull"]);
+  });
+
+  it("does not spawn or push when the gate denies", async () => {
+    const fake = fakeRpc();
+    const sync = recordingSync();
+    const gate: WorkspaceGate = {
+      check: () => ({ allow: false, reason: "not allowed" }),
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, sync, undefined, { gate });
+
+    await expect(shell.exec("rm -rf /")).rejects.toThrow(ActionDeniedError);
+    expect(fake.calls.exec).toEqual([]);
+    expect(sync.pulls).toEqual([]);
+  });
+
+  it("runs a command the gate allowed but withdrew write access from", async () => {
+    // The middle answer: the command runs, and neither the runner nor
+    // the pull that follows it gets write access.
+    const fake = fakeRpc();
+    const sync = recordingSync();
+    const gate: WorkspaceGate = {
+      check: () => ({ allow: true, writable: false }),
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, sync, undefined, { gate });
+
+    await (await shell.exec("git log")).result();
+
+    expect(fake.calls.exec[0].writable).toBe(false);
+    expect(sync.pulls).toEqual([false]);
+  });
+
+  it("shows the gate the command and its requested write access", async () => {
+    const seen: WorkspaceAction[] = [];
+    const fake = fakeRpc();
+    const gate: WorkspaceGate = {
+      check(action) {
+        seen.push(action);
+        return { allow: true };
+      },
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync(), undefined, { gate });
+
+    await (await shell.exec("cat f", { cwd: "/workspace/sub", writable: false })).result();
+
+    expect(seen).toEqual([
+      {
+        kind: "shell.exec",
+        command: "cat f",
+        cwd: "/workspace/sub",
+        writable: false,
+        backend: undefined,
+      },
+    ]);
+  });
+
+  it("reports the spawn to the audit hook with the effective write access", async () => {
+    const entries: AuditOutcome[] = [];
+    const fake = fakeRpc();
+    const audit: WorkspaceAudit = {
+      record(_action, outcome) {
+        entries.push(outcome);
+      },
+    };
+    const gate: WorkspaceGate = { check: () => ({ allow: true, writable: false }) };
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync(), undefined, { gate, audit });
+
+    await (await shell.exec("ls")).result();
+
+    expect(entries).toEqual([{ status: "allowed", writable: false }]);
+  });
+
+  it("reports a refused command to the audit hook", async () => {
+    const entries: [string, AuditOutcome][] = [];
+    const fake = fakeRpc();
+    const audit: WorkspaceAudit = {
+      record(action, outcome) {
+        entries.push([action.kind, outcome]);
+      },
+    };
+    const gate: WorkspaceGate = { check: () => ({ allow: false, reason: "no" }) };
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync(), undefined, { gate, audit });
+
+    await shell.exec("rm -rf /").catch(() => {});
+
+    expect(entries).toEqual([["shell.exec", { status: "denied", reason: "no" }]]);
+  });
+
+  it("reports a failed spawn to the audit hook", async () => {
+    const failure = new Error("spawn failed");
+    const entries: AuditOutcome[] = [];
+    const fake = fakeRpc({ throwOnExec: failure });
+    const audit: WorkspaceAudit = {
+      record(_action, outcome) {
+        entries.push(outcome);
+      },
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, makeSync(), undefined, { audit });
+
+    await expect(shell.exec("ls")).rejects.toBe(failure);
+    expect(entries).toEqual([{ status: "failed", error: failure }]);
+  });
+
+  it("surfaces entries the read-only pull refused on the result", async () => {
+    // The reporting path a caller actually reads: a command that ran
+    // without write access, against a backend that wrote to its own
+    // copy anyway, comes back with those entries in skipped.
+    const fake = fakeRpc();
+    const sync: Sync = {
+      async push() {
+        return 0;
+      },
+      async pull(options) {
+        if (options?.writable === false) {
+          return {
+            applied: 0,
+            skipped: [{ path: "/workspace/out.txt", rev: 4, reason: "no-write-access" as const }],
+          };
+        }
+        return applied(1);
+      },
+    };
+    const shell = new WorkspaceShell(fake.rpc.shell, sync);
+
+    const result = await (await shell.exec("touch out.txt", { writable: false })).result();
+
+    expect(result.pulled).toBe(0);
+    expect(result.skipped).toEqual([
+      { path: "/workspace/out.txt", rev: 4, reason: "no-write-access" },
+    ]);
+    expect(result.sync).toEqual({
+      status: "complete",
+      applied: 0,
+      skipped: [{ path: "/workspace/out.txt", rev: 4, reason: "no-write-access" }],
+    });
+  });
+});

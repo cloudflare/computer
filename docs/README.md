@@ -243,6 +243,7 @@ above, then dive into the area you're working on.
 | [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
+| [20. Write access and approval](./20_approval.md) | Per-command write access, the gate consulted before an action, and the audit hook notified after it. |
 
 ## High-level API
 

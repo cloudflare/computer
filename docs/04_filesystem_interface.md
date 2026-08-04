@@ -282,7 +282,7 @@ so handlers from Node code port over directly.
 | `EPERM` | Operation is forbidden, e.g. deleting the workspace root. |
 | `EIO` | Backing storage failed unexpectedly. |
 | `EACCES` | *Reserved for future mount layer (see [06. Mount Interface](./06_mount_interface.md)).* No code path in `workspace-fs` currently throws it. |
-| `EROFS` | *Reserved for future mount layer (see [06. Mount Interface](./06_mount_interface.md)).* No code path in `workspace-fs` currently throws it. |
+| `EROFS` | The write was refused. Either the path is under a read-only mount root (see [06. Mount Interface](./06_mount_interface.md)), or the filesystem handle has no write access because the command holding it is running read-only (see [20. Write access and approval](./20_approval.md)). |
 
 ### Example: handle "file missing" and bubble everything else
 

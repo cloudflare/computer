@@ -333,10 +333,16 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#pendingIds.add(id);
     let admittedRecord: ExecutionRecord | undefined;
     try {
+      // Intersection, not replacement: a backend configured read-only
+      // stays read-only however this execution was called, and an
+      // execution asking to be read-only gets that even on a
+      // read-write backend. Neither side can widen the other.
+      const access: WorkspaceRuntimeAccess =
+        input.writable === false ? "read" : this.#options.access;
       const capability = new WorkspaceRuntimeCapability(
         this.#host.fs,
         this.#options.root,
-        this.#options.access,
+        access,
         this.#options.maxCapabilityBytes,
         this.#options.maxDirectoryEntries,
       );

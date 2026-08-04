@@ -32,6 +32,14 @@ export interface ExecInput {
   timeoutMs?: number;
   env?: Record<string, string>;
   stdin?: Uint8Array;
+  // Whether this command may modify the workspace. Defaults to true.
+  //
+  // Enforced by asking the host for a workspace stub without write
+  // access, so the shell never holds a writable capability for the
+  // duration of the command. A write then fails inside the command
+  // with EROFS, which the command sees and reports like any other
+  // filesystem error, and nothing is applied to undo afterwards.
+  writable?: boolean;
 }
 
 export interface ShellWorkerOptions {
@@ -59,7 +67,7 @@ export interface ShellWorkerEnv {
 // Subset of the WorkspaceServiceProxy Fetcher the shell uses.
 // Declared structurally so tests can swap in a fake.
 export interface ShellHostFetcher {
-  getWorkspace(): Promise<HostWorkspaceStub>;
+  getWorkspace(options?: { writable?: boolean }): Promise<HostWorkspaceStub>;
 }
 
 // The shape getWorkspace() returns. The shell touches .fs (for
@@ -154,9 +162,15 @@ export class ShellWorker<
 
     // Reach the host workspace on each call. Concurrent execs get separate
     // stubs; only their cancellation controllers share this entrypoint.
+    // The write access is requested here rather than checked later.
+    // Asking for a read-only stub means every path into the workspace
+    // for this command — the shell's own builtins, the git command,
+    // anything a subclass adds — is refused by the handle itself. A
+    // check at one call site would only cover that call site.
+    const writable = input.writable ?? true;
     let ws: HostWorkspaceStub;
     try {
-      ws = await this.env.HOST.getWorkspace();
+      ws = await this.env.HOST.getWorkspace({ writable });
     } catch (error) {
       if (timer !== undefined) clearTimeout(timer);
       if (this.#executions.get(id) === controller) this.#executions.delete(id);

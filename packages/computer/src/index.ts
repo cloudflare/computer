@@ -34,6 +34,18 @@ export {
   type WorkspaceRuntimeClient,
 } from "./client.js";
 export { decodeExecEvents, encodeExecEvents } from "./exec-wire.js";
+export {
+  ActionDeniedError,
+  type AuditOutcome,
+  type GateDecision,
+  noopAudit,
+  openGate,
+  type WorkspaceAction,
+  type WorkspaceActionKind,
+  type WorkspaceAudit,
+  type WorkspaceGate,
+} from "./gate.js";
+export { type GatedFilesystemOptions, GatedWorkspaceFilesystem } from "./gated-fs.js";
 export { R2Bucket, type R2BucketBinding, type R2BucketOptions } from "./mounts/providers/r2.js";
 export type {
   EagerMount,

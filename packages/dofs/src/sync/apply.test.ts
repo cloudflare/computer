@@ -821,7 +821,12 @@ describe("applyChanges with read-only mount roots", () => {
       );
 
       expect(result.applied).toBe(0);
-      expect(result.skipped[0]?.mountRoot).toBe("/workspace/r2");
+      expect(result.skipped[0]).toEqual({
+        path: "/workspace/r2",
+        mountRoot: "/workspace/r2",
+        op: "write",
+        reason: "read-only",
+      });
     });
   });
 
@@ -1116,5 +1121,142 @@ describe("applyChanges mtime propagation (auto_cache contract)", () => {
         expect(await readFile(b, "/sync.txt", "utf8")).toBe("SECOND");
       },
     );
+  });
+});
+
+// An apply that runs without write access is how a read-only command
+// is enforced for a backend that keeps its own copy of the files. The
+// command has already written to that copy by the time the changes
+// reach here, so this is where they stop. Unlike the worker-shell
+// lane, this is after the fact rather than preventive, and the skipped
+// entries are what tells the caller so.
+describe("applyChanges without write access", () => {
+  const fileEntry = (path: string, rev: number): ChangeEntry => ({
+    kind: "file",
+    rev,
+    path,
+    mode: 0o644,
+    mtime: 1,
+    size: 0,
+    chunks: [],
+  });
+
+  it("applies nothing and reports every entry it was handed", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace", { recursive: true }, () => 0);
+
+      const result = await applyChanges(
+        db,
+        [
+          fileEntry("/workspace/a.txt", 100),
+          { kind: "dir", rev: 101, path: "/workspace/sub", mode: 0o755, mtime: 1 },
+          { kind: "delete", rev: 102, path: "/workspace/gone.txt" },
+        ],
+        new Map(),
+        { writable: false },
+      );
+
+      expect(result.applied).toBe(0);
+      expect(result.skipped).toEqual([
+        { path: "/workspace/a.txt", op: "write", reason: "no-write-access" },
+        { path: "/workspace/sub", op: "write", reason: "no-write-access" },
+        { path: "/workspace/gone.txt", op: "delete", reason: "no-write-access" },
+      ]);
+
+      expect(resolveInode(db, "/workspace/a.txt")).toBeNull();
+      expect(resolveInode(db, "/workspace/sub")).toBeNull();
+    });
+  });
+
+  // A zero-chunk entry would truncate the file it lands on, so the
+  // original contents surviving is proof the apply did not run.
+  it("leaves a file the entry would have truncated untouched", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace", { recursive: true }, () => 0);
+      writeFileSync(db, "/workspace/a.txt", new TextEncoder().encode("original"), {}, () => 0);
+      const revBefore = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'");
+
+      const result = await applyChanges(db, [fileEntry("/workspace/a.txt", 200)], new Map(), {
+        writable: false,
+      });
+
+      expect(result.applied).toBe(0);
+      expect(result.skipped).toHaveLength(1);
+      expect(await readFile(db, "/workspace/a.txt", "utf8")).toBe("original");
+      // Nothing was written, so the revision did not move.
+      expect(db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'")).toBe(revBefore);
+    });
+  });
+
+  it("does not delete a file a tombstone would have removed", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace", { recursive: true }, () => 0);
+      writeFileSync(db, "/workspace/keep.txt", new TextEncoder().encode("hi"), {}, () => 0);
+
+      const result = await applyChanges(
+        db,
+        [{ kind: "delete", rev: 300, path: "/workspace/keep.txt" }],
+        new Map(),
+        { writable: false },
+      );
+
+      expect(result.applied).toBe(0);
+      expect(resolveInode(db, "/workspace/keep.txt")).not.toBeNull();
+    });
+  });
+
+  it("defaults to applying so existing callers are unaffected", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace", { recursive: true }, () => 0);
+
+      const result = await applyChanges(db, [fileEntry("/workspace/a.txt", 100)], new Map());
+
+      expect(result.applied).toBe(1);
+      expect(result.skipped).toEqual([]);
+    });
+  });
+
+  // Both guards would refuse this entry. The missing capability is
+  // reported because it is the reason the caller asked for: the
+  // command had no write access, whatever the mount says.
+  it("reports the missing capability rather than the mount when both would refuse", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace/r2", { recursive: true }, () => 0);
+      db.run(
+        "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, 'read-only')",
+        "/workspace/r2",
+        "test",
+      );
+      invalidateReadOnlyMountCache(db);
+
+      const result = await applyChanges(
+        db,
+        [fileEntry("/workspace/r2/hello.txt", 100)],
+        new Map(),
+        {
+          writable: false,
+        },
+      );
+
+      expect(result.skipped).toEqual([
+        { path: "/workspace/r2/hello.txt", op: "write", reason: "no-write-access" },
+      ]);
+    });
+  });
+
+  it("applies nothing through applyChangesSync either", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace", { recursive: true }, () => 0);
+
+      const result = applyChangesSync(db, [fileEntry("/workspace/a.txt", 100)], new Map(), {
+        writable: false,
+      });
+
+      expect(result.applied).toBe(0);
+      expect(result.skipped).toEqual([
+        { path: "/workspace/a.txt", op: "write", reason: "no-write-access" },
+      ]);
+      expect(resolveInode(db, "/workspace/a.txt")).toBeNull();
+    });
   });
 });

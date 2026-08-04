@@ -1274,6 +1274,119 @@ describe("sync driver — reconcileWatermarks", () => {
   });
 });
 
+describe("sync driver — pullOnce without write access", () => {
+  it("applies nothing and reports every entry it was handed", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/one.txt", "one");
+      providerR.writeFileSync("/two.txt", "two");
+
+      const result = await pullOnce(local.db, remote.rpc, undefined, { writable: false });
+
+      expect(result.applied).toBe(0);
+      expect(result.skipped).toHaveLength(2);
+      for (const entry of result.skipped) {
+        expect(entry.reason).toBe("no-write-access");
+      }
+      expect(result.skipped.map((s) => s.path).sort()).toEqual(["/one.txt", "/two.txt"]);
+      expect(fileEntries(local.db)).toEqual([]);
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("stages no object bytes", async () => {
+    // The byte fetch is skipped rather than fetched-and-discarded.
+    // stageBlob writes to the local store directly, so fetching
+    // bytes for entries we are about to refuse would write through
+    // the very capability the pull is missing — and pay for the
+    // transfer to do it.
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/payload.txt", "some bytes worth fetching");
+
+      await pullOnce(local.db, remote.rpc, undefined, { writable: false });
+
+      expect(local.db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(0);
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("advances the fetch cursor so refused changes are not redelivered", async () => {
+    // Refusing is discarding, not deferring. If the cursor stayed
+    // put, the next pull that *does* have write access would apply
+    // the writes this one refused, which would make the refusal a
+    // delay rather than a denial.
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/refused.txt", "refused");
+
+      await pullOnce(local.db, remote.rpc, undefined, { writable: false });
+      expect(readFetchCursor(local.db)).toEqual({ rev: currentRev(remote.db), path: null });
+
+      const second = await pullOnce(local.db, remote.rpc);
+      expect(second.applied).toBe(0);
+      expect(second.skipped).toEqual([]);
+      expect(fileEntries(local.db)).toEqual([]);
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("applies changes made after write access is restored", async () => {
+    // The refusal is scoped to the one pull that lacked the
+    // capability. It does not latch, and it does not poison the
+    // cursor for later work.
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/refused.txt", "refused");
+      await pullOnce(local.db, remote.rpc, undefined, { writable: false });
+
+      providerR.writeFileSync("/allowed.txt", "allowed");
+      const second = await pullOnce(local.db, remote.rpc);
+
+      expect(second.applied).toBe(1);
+      expect(second.skipped).toEqual([]);
+      expect(fileEntries(local.db)).toEqual(["allowed.txt"]);
+      const providerL = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      expect(providerL.readFileSync("/allowed.txt", "utf8")).toBe("allowed");
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+
+  it("pulls normally when the option is omitted or true", async () => {
+    const remote = makePeer();
+    const local = makePeer();
+    try {
+      const providerR = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      providerR.writeFileSync("/one.txt", "one");
+
+      const result = await pullOnce(local.db, remote.rpc, undefined, { writable: true });
+
+      expect(result.applied).toBe(1);
+      expect(result.skipped).toEqual([]);
+      expect(fileEntries(local.db)).toEqual(["one.txt"]);
+    } finally {
+      remote.close();
+      local.close();
+    }
+  });
+});
+
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   const { createHash } = await import("node:crypto");
   const hash = createHash("sha256");

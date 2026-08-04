@@ -81,7 +81,7 @@ interface FakeWorkspace {
 
 interface FakeEnv {
   HOST: {
-    getWorkspace(): Promise<FakeWorkspace>;
+    getWorkspace(options?: { writable?: boolean }): Promise<FakeWorkspace>;
   };
 }
 
@@ -270,6 +270,163 @@ describe("ShellWorker", () => {
     const response = await worker.fetch(new Request("http://shell/", { method: "GET" }));
     expect(response.status).toBe(426);
     expect(await response.text()).toMatch(/Workers RPC/);
+  });
+
+  // ---------------------------------------------------------------
+  // write access
+  // ---------------------------------------------------------------
+  //
+  // Real just-bash against a real Workspace, because the claim being
+  // tested is about what a real command does to a real store. The env
+  // here calls workspace.stub(options), which is what production does
+  // over RPC, so the read-only path under test is the shipped one and
+  // not a flag this test set by hand.
+  describe("write access", () => {
+    let workspace: Workspace;
+    const stubs: WorkspaceStub[] = [];
+
+    beforeEach(async () => {
+      workspace = new Workspace({
+        storage: new SQLiteTestStorage() as never,
+        backends: [noopBackend()],
+        git: createGitClient(),
+      });
+      await workspace.ready();
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+    });
+
+    afterEach(async () => {
+      for (const stub of stubs.splice(0)) stub[Symbol.dispose]();
+      await workspace.close();
+    });
+
+    function envForWorkspace(): FakeEnv {
+      return {
+        HOST: {
+          async getWorkspace(options?: { writable?: boolean }) {
+            const stub = workspace.stub(options);
+            stubs.push(stub);
+            return stub as unknown as FakeWorkspace;
+          },
+        },
+      };
+    }
+
+    async function run(command: string, writable?: boolean) {
+      const worker = new ShellWorker(undefined as never, envForWorkspace() as never);
+      const envelope = await worker.exec({
+        command,
+        cwd: "/workspace",
+        id: `run-${Math.random().toString(36).slice(2)}`,
+        writable,
+      });
+      const events = (await drain(envelope.events)) as { name: string; value: string | number }[];
+      return {
+        stdout: events
+          .filter((e) => e.name === "stdout")
+          .map((e) => String(e.value))
+          .join(""),
+        stderr: events
+          .filter((e) => e.name === "stderr")
+          .map((e) => String(e.value))
+          .join(""),
+        exitCode: events.find((e) => e.name === "exit")?.value,
+      };
+    }
+
+    it("does not delete the workspace when a read-only command tries to", async () => {
+      // The case the whole feature exists for. `find -delete` is one
+      // command issuing a delete per entry, so a per-write refusal
+      // would stop partway and leave a half-deleted tree. Refusing
+      // the capability up front means the first delete fails and
+      // every file is still there.
+      await workspace.fs.writeFile("/workspace/keep.txt", "keep");
+      await workspace.fs.mkdir("/workspace/dir", { recursive: true });
+      await workspace.fs.writeFile("/workspace/dir/nested.txt", "nested");
+
+      const result = await run("find /workspace -mindepth 1 -delete", false);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(await workspace.fs.readFile("/workspace/keep.txt", "utf8")).toBe("keep");
+      expect(await workspace.fs.readFile("/workspace/dir/nested.txt", "utf8")).toBe("nested");
+    });
+
+    it("deletes the workspace when the same command is allowed to", async () => {
+      // The control. Without it the test above would pass just as
+      // well against a command that never worked.
+      await workspace.fs.writeFile("/workspace/keep.txt", "keep");
+
+      const result = await run("find /workspace -mindepth 1 -delete", true);
+
+      expect(result.exitCode).toBe(0);
+      await expect(workspace.fs.readFile("/workspace/keep.txt", "utf8")).rejects.toThrow();
+    });
+
+    it("fails a redirect into a new file and creates nothing", async () => {
+      const result = await run("echo written > /workspace/new.txt", false);
+
+      expect(result.exitCode).not.toBe(0);
+      await expect(workspace.fs.stat("/workspace/new.txt")).rejects.toThrow();
+    });
+
+    it("leaves an existing file untouched when a read-only command overwrites it", async () => {
+      await workspace.fs.writeFile("/workspace/existing.txt", "original");
+
+      const result = await run("echo replaced > /workspace/existing.txt", false);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(await workspace.fs.readFile("/workspace/existing.txt", "utf8")).toBe("original");
+    });
+
+    it("still reads while refusing to write", async () => {
+      // Read-only has to mean read-only, not broken. A command that
+      // only reads must behave exactly as it would with access.
+      await workspace.fs.writeFile("/workspace/readable.txt", "contents\n");
+
+      const result = await run("cat /workspace/readable.txt", false);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("contents");
+    });
+
+    it("reports the refusal to the command rather than failing silently", async () => {
+      // The point of failing the write inside the command: the
+      // command sees an error it can act on, and a caller reading
+      // stderr can tell what happened.
+      await workspace.fs.writeFile("/workspace/existing.txt", "original");
+
+      const result = await run("echo replaced > /workspace/existing.txt", false);
+
+      // Pinned to the reason, not just to non-empty output: a
+      // non-zero exit and some stderr would also be produced by the
+      // stub being broken, which would make the tests above pass for
+      // the wrong reason.
+      expect(result.stderr).toMatch(/read-only|EROFS/i);
+    });
+
+    it("defaults to writable when the caller does not say", async () => {
+      const result = await run("echo written > /workspace/default.txt");
+
+      expect(result.exitCode).toBe(0);
+      expect(await workspace.fs.readFile("/workspace/default.txt", "utf8")).toBe("written\n");
+    });
+
+    it("keeps concurrent commands' access independent", async () => {
+      // Two commands overlap in production, and the capability is
+      // per-handle precisely so a read-only one cannot disarm a
+      // writable one running beside it.
+      await workspace.fs.writeFile("/workspace/shared.txt", "original");
+
+      const [readOnly, writable] = await Promise.all([
+        run("echo denied > /workspace/blocked.txt", false),
+        run("echo allowed > /workspace/allowed.txt", true),
+      ]);
+
+      expect(readOnly.exitCode).not.toBe(0);
+      expect(writable.exitCode).toBe(0);
+      await expect(workspace.fs.stat("/workspace/blocked.txt")).rejects.toThrow();
+      expect(await workspace.fs.readFile("/workspace/allowed.txt", "utf8")).toBe("allowed\n");
+    });
   });
 
   // ---------------------------------------------------------------

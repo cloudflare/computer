@@ -108,6 +108,19 @@ export interface ShellRPC {
     env?: Record<string, string>;
     // Standard input bytes fed to the command.
     stdin?: Uint8Array;
+    // Whether this command may modify the workspace. Defaults to
+    // true. False means the caller expects the command to only read,
+    // and asks that any write it attempts fail rather than land.
+    //
+    // How completely that holds depends on where the files live. A
+    // runner working directly against the workspace store gets a
+    // filesystem handle without write access, so a write fails inside
+    // the command with EROFS and the command sees the error. A runner
+    // with its own copy of the files cannot be stopped that way: the
+    // write lands in its copy, and is refused on the way back, which
+    // leaves the two copies disagreeing. The refusal is reported
+    // either way, but only the first shape prevents the write.
+    writable?: boolean;
   }): Promise<{
     id: string;
     events: ReadableStream<ExecEvent>;

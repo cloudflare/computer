@@ -1,11 +1,30 @@
-// Read-only mount guard.
+// Write guard.
 //
-// Every dofs mutating entry point (writeFile, mkdir, rm, and the
-// apply path in sync/apply.ts) consults this module to reject
-// writes that fall under a registered read-only mount root. The
-// guard lives at the data layer so container-side writes that
-// arrive via pullOnce -> applyChanges are caught too — the
-// workspace-side surface wrapper alone cannot see them.
+// Two separate things can refuse a write, and both report EROFS.
+//
+// The first is a read-only mount root. Every dofs mutating entry
+// point (writeFile, mkdir, rm, and the apply path in sync/apply.ts)
+// consults this module to reject writes that fall under a
+// registered read-only mount root. That check lives at the data
+// layer so container-side writes arriving via pullOnce ->
+// applyChanges are caught too, which a surface wrapper alone
+// cannot see.
+//
+// The second is a write capability, and it belongs to whoever holds
+// the filesystem handle rather than to the data. A caller that
+// builds a WorkspaceFilesystem or SQLiteWorkspaceProvider with
+// `writable: false` gets a handle that refuses every mutation for
+// as long as it exists. The point is to run one command without
+// write access: a command is not atomic, so deciding per write
+// would let the first forty writes land before the forty-first is
+// refused. A capability fixed for the handle's lifetime cannot
+// produce that state.
+//
+// Each check sits at the layer that owns its state. The mount mode
+// is a property of the stored tree, so it is enforced next to the
+// tree. The capability is a property of the handle, so it is
+// enforced on the handle's own methods, where the flag is
+// immutable and cannot be flipped part-way through a write.
 //
 // The set of read-only roots is small (one row per registered
 // mount per workspace, typically <10) and changes only at indexer
@@ -16,6 +35,34 @@
 
 import { createWorkspaceError } from "../errors.js";
 import type { Database } from "../storage.js";
+
+/**
+ * A handle's write access. `WorkspaceFilesystem` and
+ * `SQLiteWorkspaceProvider` both satisfy this, so they can pass
+ * themselves to `assertWritable`.
+ *
+ * The field is deliberately immutable on both. A mutable flag would
+ * reopen the window the capability exists to close: `writeFile`
+ * checks once and then awaits its source stream many times before
+ * committing, so a flag that could change mid-call would let a write
+ * that was refused on entry still land.
+ */
+export interface WriteCapability {
+  readonly writable: boolean;
+}
+
+/**
+ * Throws EROFS when the handle has no write access. Call this before
+ * any mutation on a surface that carries a capability.
+ *
+ * The message is distinct from the mount-root message below so a
+ * caller reading `error.message` can tell a command that was denied
+ * write access from a command that reached into a read-only mount.
+ */
+export function assertWritable(capability: WriteCapability, path: string): void {
+  if (capability.writable) return;
+  throw createWorkspaceError("EROFS", "read-only access: cannot modify", path);
+}
 
 // undefined sentinel = "not loaded yet"; an empty array means
 // "loaded, no read-only mounts registered". The two are not the

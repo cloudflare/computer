@@ -36,7 +36,9 @@ export const WORKSPACE = Symbol("workspace");
 // The prototype method `getWorkspace(stub)` calls over RPC. Exported
 // so the client and its tests can name the shape.
 export interface WorkspaceStubHost {
-  __getWorkspaceStub(): Promise<import("./stub.js").WorkspaceStub>;
+  __getWorkspaceStub(
+    options?: import("./stub.js").WorkspaceStubOptions,
+  ): Promise<import("./stub.js").WorkspaceStub>;
 }
 
 // A host that carries the symbol-stashed Workspace. Used by the
@@ -68,11 +70,19 @@ export function withWorkspace<TBase extends DOCtor>(
       (this as unknown as WorkspaceLocalHost)[WORKSPACE] = new Workspace(options(self));
     }
 
-    __getWorkspaceStub(): Promise<import("./stub.js").WorkspaceStub> {
+    // `options.writable: false` returns a stub that cannot write.
+    // This is how a command running without write access gets a
+    // handle that refuses writes rather than a handle it is merely
+    // asked not to use: the worker-shell backend passes the flag
+    // here, and the shell inside the Dynamic Worker never holds a
+    // writable capability at all.
+    __getWorkspaceStub(
+      options?: import("./stub.js").WorkspaceStubOptions,
+    ): Promise<import("./stub.js").WorkspaceStub> {
       const ws = (this as unknown as WorkspaceLocalHost)[WORKSPACE];
       return (async () => {
         await ws.ready();
-        return ws.stub();
+        return ws.stub(options);
       })();
     }
   }

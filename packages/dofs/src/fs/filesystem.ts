@@ -19,6 +19,7 @@ import { find, type WorkspaceFoundEntry } from "./find.js";
 import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep.js";
 import { ls } from "./ls.js";
 import { type MkdirOptions, mkdir } from "./mkdir.js";
+import { assertWritable } from "./mount-guard.js";
 import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir.js";
 import { type ReadFileOptions, readFile } from "./readFile.js";
 import { readlink } from "./readlink.js";
@@ -31,15 +32,28 @@ export interface WorkspaceFilesystemOptions {
   // Clock used for mtime / last_seen. Defaults to Date.now.
   // Override for deterministic tests.
   now?: () => number;
+
+  // Write access for this handle. Defaults to true. Pass false to
+  // get a handle whose mutating methods all reject with EROFS,
+  // which is how a single command runs without write access.
+  //
+  // The capability belongs to the handle, not to the database, so
+  // two handles over one database can disagree. That matters
+  // because commands overlap: a read-only command must not be able
+  // to disarm a writable one running beside it, and a writable one
+  // must not lend its access to a read-only one.
+  writable?: boolean;
 }
 
 export class WorkspaceFilesystem {
   readonly db: Database;
   readonly now: () => number;
+  readonly writable: boolean;
 
   constructor(db: Database, options: WorkspaceFilesystemOptions = {}) {
     this.db = db;
     this.now = options.now ?? Date.now;
+    this.writable = options.writable ?? true;
   }
 
   // --- Reads -------------------------------------------------------
@@ -96,19 +110,26 @@ export class WorkspaceFilesystem {
 
   // --- Mutations ---------------------------------------------------
 
-  writeFile(
+  // Declared async so a refusal arrives as a rejected promise. The
+  // guard throws, and a plain `return writeFile(...)` would let that
+  // throw escape synchronously out of a method whose signature
+  // promises otherwise, which a caller using `.catch()` would miss.
+  async writeFile(
     path: string,
     content: WriteFileContent,
     options: WriteFileOptions = {},
   ): Promise<void> {
+    assertWritable(this, path);
     return writeFile(this.db, path, content, options, this.now);
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
+    assertWritable(this, path);
     mkdir(this.db, path, options, this.now);
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
+    assertWritable(this, path);
     rm(this.db, path, options);
   }
 
@@ -116,6 +137,7 @@ export class WorkspaceFilesystem {
   // POSIX chmod — the change lands on the target, not the link.
   // The supplied mode is masked to twelve bits.
   async chmod(path: string, mode: number): Promise<void> {
+    assertWritable(this, path);
     chmod(this.db, path, mode, this.now);
   }
 
@@ -123,6 +145,7 @@ export class WorkspaceFilesystem {
   // target is stored verbatim; it can be relative or absolute and
   // is allowed to dangle.
   async symlink(target: string, path: string): Promise<void> {
+    assertWritable(this, path);
     symlink(this.db, target, path, this.now);
   }
 }

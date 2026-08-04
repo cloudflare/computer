@@ -204,6 +204,7 @@ createExecTool({
   backends,
   defaultBackend,
   maxBytes?,
+  writable?,
 });
 ```
 
@@ -212,6 +213,7 @@ createExecTool({
 | `backends` | required | Map of backend id to a model-facing description. |
 | `defaultBackend` | required | Backend used when the model omits `backend`. Must be a key in `backends`. |
 | `maxBytes` | 64 KiB | UTF-8 byte cap for each of stdout and stderr. |
+| `writable` | every command may write | `({ command, cwd, backend }) => boolean`. Decides whether a command may modify the workspace. |
 
 Schema:
 
@@ -223,22 +225,25 @@ Schema:
 }
 ```
 
-Calls `workspace.runtime.exec(command, { cwd, encoding: "utf8", backend })`, waits for `result()`, and returns:
+Calls `workspace.runtime.exec(command, { cwd, encoding: "utf8", backend, writable })`, waits for `result()`, and returns:
 
 ```ts
 {
   command: string;
   cwd: string | null;
   backend: string;
+  writable: boolean;
   exitCode: number;
   stdout: string;
   stderr: string;
 }
 ```
 
+`writable` is resolved by the host, not by the model, and is deliberately absent from the schema. The case it defends against is the command mislabelled as read-only, so a label the model supplies would agree with the mistake. It is reported back on the result so the model can tell a refused write from a broken command instead of retrying the same thing. A gate refusal arrives as an `error` field rather than a thrown error, so the agent loop survives it. See [20. Write access and approval](./20_approval.md).
+
 `exec` is opt-in. `createAITools()` includes it only when the caller passes `shell` options and `readonly` is not true. The backend descriptions are included in the tool description so the model can choose the cheapest backend that can run the command.
 
-Wire this tool up carefully: it executes arbitrary shell commands inside the configured backend. Use `readonly: true` for inspection-only agents, or omit `shell` when command execution is not part of the agent's job.
+Wire this tool up carefully: it executes arbitrary shell commands inside the configured backend. Use `readonly: true` for inspection-only agents, or omit `shell` when command execution is not part of the agent's job. A `writable` resolver narrows what a command can do but is not a substitute for either: it stops a command classified read-only from writing, and does nothing about one classified writable.
 
 ## `publish`
 

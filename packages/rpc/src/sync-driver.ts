@@ -66,15 +66,29 @@ const PULL_BATCH_SIZE = 256;
 // (rev, path), so a retry can resume inside a single large rev. The
 // cursor is read and written per backend so concurrent backends keep
 // independent resume points.
+//
+// `writable: false` pulls the entries and refuses all of them. The
+// stream is still drained so the caller learns what the remote tried
+// to send, reported as skipped entries with reason no-write-access.
+// This is the only enforcement point available against a remote that
+// keeps its own copy of the files: it has already written to that
+// copy by the time we hear about it.
 export async function pullOnce(
   db: Database,
   remote: SyncRPC,
   backend?: string,
+  options?: PullOptions,
 ): Promise<ApplyResult> {
   // Delegate to the inner implementation with retried=false. See
   // pullOnceImpl for the fetchChanges round trip, invariant check,
   // reset-and-retry path, and batched apply loop.
-  return pullOnceImpl(db, remote, backend, false);
+  return pullOnceImpl(db, remote, backend, false, options?.writable ?? true);
+}
+
+export interface PullOptions {
+  // Whether this pull may write to the local store. Defaults to
+  // true. A pull without write access applies nothing.
+  writable?: boolean;
 }
 
 // Inner pullOnce that knows whether it is already a retry. The
@@ -87,6 +101,7 @@ async function pullOnceImpl(
   remote: SyncRPC,
   backend: string | undefined,
   retried: boolean,
+  writable: boolean,
 ): Promise<ApplyResult> {
   const after = readFetchCursor(db, backend);
   const localPushRev = readWatermark(db, "pushRev", backend);
@@ -164,7 +179,7 @@ async function pullOnceImpl(
       if (fetchDiverged) {
         writeFetchCursor(db, { rev: 0, path: null }, backend);
       }
-      return pullOnceImpl(db, remote, backend, true);
+      return pullOnceImpl(db, remote, backend, true, writable);
     }
     // After the retry path above, this assertion guards a
     // divergence that survived a reset. Tear down rather than loop.
@@ -211,7 +226,12 @@ async function pullOnceImpl(
         // Probe + fetch missing chunk bytes for just this batch. Bytes
         // the receiver already holds (or the remote doesn't have) are
         // skipped, so the per-batch network cost is bounded.
-        if (wantedHashes.length > 0) {
+        //
+        // Skipped entirely without write access. stageBlob writes to
+        // the local store, so fetching bytes for entries we are about
+        // to refuse would write through the capability this pull does
+        // not have — and pay for the transfer to do it.
+        if (writable && wantedHashes.length > 0) {
           const haveSubset = await remote.hasObjects(wantedHashes);
           const remoteHasLocally = new Set<string>();
           for (const h of haveSubset) remoteHasLocally.add(hex(h));
@@ -241,6 +261,7 @@ async function pullOnceImpl(
         const batchResult = await applyChanges(db, batch, new Map(), {
           source: "upstream",
           backend,
+          writable,
         });
         const last = batch[batch.length - 1];
         // Cursor advancement intentionally happens after applyChanges()
@@ -248,6 +269,11 @@ async function pullOnceImpl(
         // checkpoint re-fetches the batch; upstream apply is idempotent
         // because alreadyApplied() drops entries whose live state
         // already matches.
+        //
+        // The cursor advances over refused entries too. Refusing is
+        // discarding, not deferring: leaving the cursor behind would
+        // hand the same writes to the next pull that does have write
+        // access, turning a denial into a delay.
         writeFetchCursorIfAhead(db, { rev: last.rev, path: last.path }, backend);
         totalApplied += batchResult.applied;
         if (batchResult.skipped.length > 0) {

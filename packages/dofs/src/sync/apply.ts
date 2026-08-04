@@ -12,23 +12,41 @@ import type { Database } from "../storage.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
 
-// One container-side change that landed under a read-only mount and
-// was therefore skipped rather than applied. Callers (the workspace
-// pull surface, the shell exec bracket) surface these so the user
-// learns the mount stayed authoritative.
-export interface SkippedEntry {
+// One incoming change that was refused rather than applied. Callers
+// (the workspace pull surface, the shell exec bracket) surface these
+// so the user learns what did not land.
+//
+// Discriminated on `reason` because the two refusals carry different
+// information. A read-only mount names the mount that owns the path,
+// which lets a caller group entries by mount. A missing write
+// capability has no mount to name: the apply itself had no write
+// access, so every entry is refused wherever it pointed.
+export type SkippedEntry = SkippedByMount | SkippedWithoutWriteAccess;
+
+// Common fields. Split out so both members stay in step.
+interface SkippedEntryBase {
   // Absolute VFS path the change targeted.
   path: string;
-  // Mount root that owns the path (the one whose mode is
-  // read-only). Lets callers group skipped entries by mount.
-  mountRoot: string;
   // 'write' covers file / dir / symlink create-or-update; 'delete'
   // covers tombstones. The single field is enough for callers to
   // decide messaging.
   op: "write" | "delete";
-  // Open shape: future skip reasons can join this union without
-  // breaking callers that match on 'read-only' today.
+}
+
+// The path falls under a registered read-only mount root.
+export interface SkippedByMount extends SkippedEntryBase {
   reason: "read-only";
+  // Mount root that owns the path (the one whose mode is
+  // read-only). Lets callers group skipped entries by mount.
+  mountRoot: string;
+}
+
+// The apply ran without write access, so nothing was applied at all.
+// This is the after-the-fact half of a read-only command: the sender
+// has already written to its own copy of the files, and the changes
+// stop here on the way in.
+export interface SkippedWithoutWriteAccess extends SkippedEntryBase {
+  reason: "no-write-access";
 }
 
 // Return shape of applyChanges / applyChangesSync. Existing callers
@@ -68,6 +86,28 @@ export interface ApplyOptions {
   // which is fine for the container backend the package shipped
   // with first.
   backend?: string;
+  // Write access for this apply. Defaults to true. Pass false and
+  // nothing is applied: every entry comes back in `skipped` with
+  // reason 'no-write-access'.
+  //
+  // This is how a command that ran without write access is enforced
+  // for a backend that keeps its own copy of the files. The command
+  // wrote to that copy already, so refusing here is after the fact
+  // rather than preventive — the copies diverge, and the skipped
+  // entries are what tells the caller so. A backend that writes this
+  // store directly gets the preventive version instead, through a
+  // filesystem handle built without write access.
+  writable?: boolean;
+}
+
+// Shape one refused entry for an apply that has no write access.
+// Shared by both apply variants so they cannot drift.
+function refusedWithoutWriteAccess(entry: ChangeEntry): SkippedWithoutWriteAccess {
+  return {
+    path: entry.path,
+    op: entry.kind === "delete" ? "delete" : "write",
+    reason: "no-write-access",
+  };
 }
 
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -229,6 +269,7 @@ export async function applyChanges(
 ): Promise<ApplyResult> {
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
+  const writable = options.writable ?? true;
 
   let bytesInBatch = 0;
   let pathsInBatch = 0;
@@ -240,6 +281,13 @@ export async function applyChanges(
   };
 
   for await (const entry of entries) {
+    // Write capability. Checked ahead of everything else so a
+    // read-only apply reports every entry it was handed rather than
+    // quietly dropping the ones that happened to match local state.
+    if (writable === false) {
+      skipped.push(refusedWithoutWriteAccess(entry));
+      continue;
+    }
     // Idempotent skip: if the entry already matches the local
     // state, drop it on the floor. The check is what stops a
     // pull from bumping vfs_meta.rev for entries that are
@@ -358,6 +406,7 @@ export function applyChangesSync(
 ): ApplyResult {
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
+  const writable = options.writable ?? true;
 
   let bytesInBatch = 0;
   let pathsInBatch = 0;
@@ -369,6 +418,10 @@ export function applyChangesSync(
   };
 
   for (const entry of entries) {
+    if (writable === false) {
+      skipped.push(refusedWithoutWriteAccess(entry));
+      continue;
+    }
     if (options.source === "upstream" && entry.kind !== "delete") {
       if (alreadyApplied(db, entry)) continue;
     }

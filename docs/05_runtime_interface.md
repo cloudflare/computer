@@ -33,6 +33,7 @@ interface WorkspaceRuntimeExecOptions {
   timeoutMs?: number;
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
+  writable?: boolean;
 }
 
 interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEvent> {
@@ -87,6 +88,10 @@ await workspace.runtime.exec(
 ```
 
 Omitting `backend` selects the first configured backend. Backend selection is routing, not authorization; public gateways must validate it against server-side policy.
+
+## Write access
+
+`writable` defaults to true. Pass `false` for a command expected only to read, and a write it attempts fails rather than lands. What that costs the command depends on the backend: `worker-shell` and `worker-javascript` share the host store and refuse the write where it happens, while a Container writes to its own copy and has the change refused on the way back, reported in `skipped` with reason `no-write-access`. A configured gate can also withdraw write access from a command that asked for it. See [20. Write access and approval](./20_approval.md).
 
 ## Command synchronization
 

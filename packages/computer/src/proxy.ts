@@ -163,9 +163,11 @@ export class WorkspaceServiceProxy extends WorkerEntrypoint<unknown, WorkspaceSe
   // Forward to the host DO's Workspace stub accessor. The method
   // name is intentionally private-looking so user code reaches for
   // `getWorkspace(stub)` instead of calling it directly.
-  async getWorkspace(): Promise<unknown> {
-    const stub = this.#hostStub<{ __getWorkspaceStub(): Promise<unknown> }>();
-    return stub.__getWorkspaceStub();
+  async getWorkspace(options?: { writable?: boolean }): Promise<unknown> {
+    const stub = this.#hostStub<{
+      __getWorkspaceStub(options?: { writable?: boolean }): Promise<unknown>;
+    }>();
+    return stub.__getWorkspaceStub(options);
   }
 
   // Optional Artifacts CLI hook used by the worker-backend shell.

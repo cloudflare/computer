@@ -516,6 +516,90 @@ describe("WorkerJavaScriptBackend", () => {
     expect(events.at(-1)).toMatchObject({ name: "exit", value: 0 });
   });
 
+  it("refuses a host write when the execution has no write access", async () => {
+    // The module backend shares the host store, so the refusal
+    // happens where the write is attempted rather than afterwards.
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const refusal: string[] = [];
+    const backend = new WorkerJavaScriptBackend({ loader: writingLoader(refusal) });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+
+    const execution = await handle.exec({
+      id: "read-only-write",
+      source: "export default 1",
+      writable: false,
+    });
+    for await (const _event of execution.events) {
+      // drain
+    }
+
+    await expect(fs.stat("/workspace/output.txt")).rejects.toThrow();
+    // The bridge answers a refused capability call with an error
+    // payload; the generated guest shim is what turns that into a
+    // thrown error inside the module. This asserts the payload, since
+    // the fake module here stands in for the shim.
+    expect(refusal).toHaveLength(1);
+    expect(JSON.parse(refusal[0]).error.message).toMatch(/write access is not available/);
+  });
+
+  it("allows the same host write when the execution has write access", async () => {
+    // The control: without it the test above would pass against a
+    // module that never managed to write in the first place.
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const backend = new WorkerJavaScriptBackend({ loader: writingLoader() });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+
+    const execution = await handle.exec({ id: "writable-write", source: "export default 1" });
+    for await (const _event of execution.events) {
+      // drain
+    }
+
+    expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
+  });
+
+  it("keeps a read-only backend read-only when an execution asks to write", async () => {
+    // Intersection, not replacement. A backend registered read-only
+    // cannot be talked into write access by the call.
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    const backend = new WorkerJavaScriptBackend({ loader: writingLoader(), access: "read" });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+
+    const execution = await handle.exec({
+      id: "read-backend",
+      source: "export default 1",
+      writable: true,
+    });
+    for await (const _event of execution.events) {
+      // drain
+    }
+
+    await expect(fs.stat("/workspace/output.txt")).rejects.toThrow();
+  });
+
   it("streams stdout before user code returns", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
@@ -992,3 +1076,33 @@ describe("WorkerJavaScriptBackend", () => {
     expect(load).not.toHaveBeenCalled();
   });
 });
+
+// A loader whose module asks the host to write one file. Used by the
+// write-access tests: whether the file exists afterwards is the whole
+// assertion. `payloads` collects the raw bridge responses so a test can
+// check the refusal the guest shim would have thrown on.
+function writingLoader(payloads: string[] = []) {
+  return {
+    load() {
+      return {
+        getEntrypoint() {
+          return {
+            async evaluate(
+              _input: unknown,
+              host: {
+                call(name: string, args: string): Promise<string>;
+                assertResult(value: unknown): Promise<void>;
+                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+              },
+            ) {
+              payloads.push(
+                await host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"])),
+              );
+              return evaluateResult(host, 1);
+            },
+          };
+        },
+      };
+    },
+  };
+}

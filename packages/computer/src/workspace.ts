@@ -27,6 +27,8 @@ import {
 } from "./artifacts/index.js";
 import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { noopAudit, openGate, type WorkspaceAudit, type WorkspaceGate } from "./gate.js";
+import { GatedWorkspaceFilesystem } from "./gated-fs.js";
 import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
@@ -40,7 +42,7 @@ import {
   type WorkspaceRegisteredBackend,
 } from "./runtime/types.js";
 import { WorkspaceShell } from "./shell.js";
-import { WorkspaceStub } from "./stub.js";
+import { WorkspaceStub, type WorkspaceStubOptions } from "./stub.js";
 import { isWorkspaceTransportFailure } from "./transport-failure.js";
 
 export interface SyncRetryIntent {
@@ -59,6 +61,13 @@ export interface SyncRetryScheduler {
   get(backend: string): Promise<SyncRetryIntent | undefined>;
   schedule(intent: SyncRetryIntent): Promise<void>;
   clear(backend: string): Promise<void>;
+}
+
+export interface WorkspacePullOptions {
+  // Whether this pull may write to the local store. Defaults to true.
+  // A pull without write access applies nothing and reports every
+  // entry it was offered as skipped.
+  writable?: boolean;
 }
 
 export interface SyncRetryOptions {
@@ -117,6 +126,21 @@ export interface WorkspaceOptions {
   // do not opt in. See `./observe.ts` for the contract and the
   // adapter subpaths for the Cloudflare runtime and OpenTelemetry.
   observer?: WorkspaceObserver;
+
+  // Consulted before each gated action — one call per shell.exec and
+  // one per mutating Workspace.fs call — and able to refuse it or to
+  // withdraw its write access. The default permits everything, so the
+  // package behaves exactly as before for callers who do not opt in.
+  //
+  // This is a separate seam from `observer` on purpose: an observer
+  // must not change what happens, and a gate exists to. See
+  // `./gate.ts`.
+  gate?: WorkspaceGate;
+
+  // Notified after each gated action with what was decided and how it
+  // turned out, including the ones that were refused. Cannot deny
+  // anything; errors it throws are swallowed.
+  audit?: WorkspaceAudit;
 
   // Optional durable retry boundary for failed post-command pulls.
   // The host persists one intent per backend and wakes the Durable
@@ -218,6 +242,9 @@ export class Workspace {
   readonly #defaultBackendId: string | undefined;
   readonly #defaultCommandBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
+  readonly #gate: WorkspaceGate;
+  readonly #audit: WorkspaceAudit;
+  #readOnlyFs: WorkspaceFilesystem | undefined;
   readonly #now: () => number;
   readonly #waitUntil: ((promise: Promise<unknown>) => void) | undefined;
   readonly #retryScheduler: SyncRetryScheduler | undefined;
@@ -299,7 +326,17 @@ export class Workspace {
       : createDisabledArtifactsClient();
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
-    this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
+    this.#gate = options.gate ?? openGate;
+    this.#audit = options.audit ?? noopAudit;
+    // The gated subclass is still a WorkspaceFilesystem, so the mount
+    // index, the think surface, and every caller holding `fs` are
+    // unaffected. With the default open gate the override adds one
+    // comparison per mutation.
+    this.#fs = new GatedWorkspaceFilesystem(this.#db, {
+      now: this.#now,
+      gate: this.#gate,
+      audit: this.#audit,
+    });
     const registered = (options.backends ?? []).slice();
     if (registered.some((backend) => isModuleBackend(backend) && backend.requiresWaitUntil)) {
       if (!options.waitUntil) {
@@ -376,6 +413,17 @@ export class Workspace {
     return this.#observer;
   }
 
+  // Gate and audit hook, exposed for the same reason as the observer:
+  // the shell facade gates its own entry point and needs the pair the
+  // constructor was given rather than a second set of defaults.
+  get gate(): WorkspaceGate {
+    return this.#gate;
+  }
+
+  get audit(): WorkspaceAudit {
+    return this.#audit;
+  }
+
   // Filesystem facade — the documented Workspace.fs surface from
   // docs/04. Available immediately; doesn't need ready() because
   // reads and writes hit the local store, not the wire.
@@ -386,6 +434,12 @@ export class Workspace {
   // wrapper. The same check fires on the apply path used by
   // pullOnce, so container-side writes under a read-only mount are
   // also rejected (and surfaced via Workspace.pull's skipped[]).
+  //
+  // The handle is a GatedWorkspaceFilesystem, so mutations also pass
+  // the configured gate. Mount enforcement and the gate answer
+  // different questions — a mount root is a fixed property of the
+  // workspace, a gate is a decision per action — and both apply.
+  // Neither can be bypassed by going through the other.
   get fs(): WorkspaceFilesystem {
     return this.#fs;
   }
@@ -528,8 +582,31 @@ export class Workspace {
   // across the Workers-RPC boundary (e.g. returned from a DO RPC
   // method). The stub is a lazy RpcTarget — it doesn't own any
   // resources itself; it just delegates back to this workspace.
-  stub(): WorkspaceStub {
-    return new WorkspaceStub(this);
+  stub(options?: WorkspaceStubOptions): WorkspaceStub {
+    return new WorkspaceStub(this, options);
+  }
+
+  // Filesystem handle for a given write access. The writable case is
+  // the workspace's own gated handle; the read-only case is a second
+  // handle over the same store built without the capability.
+  //
+  // Two handles over one database is the point: commands overlap, and
+  // a read-only one must not be able to disarm a writable one running
+  // beside it. The capability lives on the handle for exactly that
+  // reason — it cannot be a property of the database without one
+  // command's access leaking into another's. It also cannot be a
+  // second Database, because dofs assumes exactly one Database wraps
+  // each SqlStorage and its resolve cache depends on that.
+  //
+  // The read-only handle is built once and shared. It holds no
+  // per-command state, and every caller wants the same thing from it.
+  fsWithAccess(writable: boolean): WorkspaceFilesystem {
+    if (writable) return this.#fs;
+    this.#readOnlyFs ??= new WorkspaceFilesystem(this.#db, {
+      now: this.#now,
+      writable: false,
+    });
+    return this.#readOnlyFs;
   }
 
   // Sync the local store with a configured backend.
@@ -580,8 +657,15 @@ export class Workspace {
     );
   }
 
-  pull(id?: string): Promise<ApplyResult> {
-    return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId));
+  // `writable: false` pulls without write access: nothing is
+  // applied and every entry comes back in `skipped`. This is how a
+  // command that ran without write access has its changes refused
+  // when the backend keeps its own copy of the files and wrote to
+  // that copy before we heard about it.
+  pull(id?: string, options?: WorkspacePullOptions): Promise<ApplyResult> {
+    return this.#serialize(id, (resolvedId) =>
+      this.#pullResolved(resolvedId, options?.writable ?? true),
+    );
   }
 
   /**
@@ -612,7 +696,7 @@ export class Workspace {
         };
       }
       try {
-        const result = await this.#pullResolved(resolvedId);
+        const result = await this.#pullResolved(resolvedId, true);
         await scheduler.clear(resolvedId);
         return {
           status: "complete",
@@ -637,11 +721,11 @@ export class Workspace {
     });
   }
 
-  #pullResolved(resolvedId: string | undefined): Promise<ApplyResult> {
+  #pullResolved(resolvedId: string | undefined, writable: boolean): Promise<ApplyResult> {
     return withSpan(
       this.#observer,
       "workspace.sync.pull",
-      { "workspace.sync.backend": resolvedId },
+      { "workspace.sync.backend": resolvedId, "workspace.sync.writable": writable },
       async () => {
         if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
           return { applied: 0, skipped: [] };
@@ -649,7 +733,7 @@ export class Workspace {
         const handle = await this.#handleFor(resolvedId);
         if (handle.sync === "none") return { applied: 0, skipped: [] };
         return this.#runWithInvalidation(resolvedId, handle, () =>
-          pullOnce(this.#db, handle.rpc.sync, resolvedId),
+          pullOnce(this.#db, handle.rpc.sync, resolvedId, { writable }),
         );
       },
       (span, outcome) => {
@@ -927,10 +1011,11 @@ export class Workspace {
       handle.rpc.shell,
       {
         push: () => this.push(id),
-        pull: () => this.pull(id),
+        pull: (options) => this.pull(id, options),
         onPullPending: () => this.#schedulePendingSync(id),
       },
       this.#observer,
+      { gate: this.#gate, audit: this.#audit },
     );
     this.#shells.set(id, shell);
     return { shell, handle };
@@ -1026,12 +1111,19 @@ class WorkspaceShellRouter {
     // swapped in a newer handle that we must not clobber.
     const { shell, handle: dispatchHandle } = await this.#shellFor(id);
     const { backend: _backend, ...rest } = options;
+    // The caller's selector is replaced with the id it resolved to,
+    // rather than dropped. The per-backend shell does not need it to
+    // route — it is already the right shell — but the gate is handed
+    // this and a gate deciding whether to trust a command with write
+    // access wants to know which backend will run it, since that is
+    // what determines whether a refused write is prevented or merely
+    // reported.
+    const forwarded = { ...rest, backend: id };
     let execHandle: unknown;
     try {
-      execHandle = await (shell.exec as unknown as (c: string, o: typeof rest) => Promise<unknown>)(
-        command,
-        rest,
-      );
+      execHandle = await (
+        shell.exec as unknown as (c: string, o: typeof forwarded) => Promise<unknown>
+      )(command, forwarded);
     } catch (error) {
       this.#onError(id, dispatchHandle, error);
       throw error;

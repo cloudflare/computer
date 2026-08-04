@@ -29,6 +29,7 @@
 import type { ExecEvent, ShellRPC } from "@cloudflare/computer-rpc";
 import type { ApplyResult, SkippedEntry } from "@cloudflare/dofs";
 
+import { noopAudit, openGate, type WorkspaceAudit, type WorkspaceGate, withGate } from "./gate.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { assertNotTemplate } from "./sh.js";
 
@@ -116,6 +117,23 @@ export interface ExecOptions<E extends ExecEncoding = undefined> {
   // one passed to the Workspace constructor); pass the id of
   // another configured backend to route this call there.
   backend?: string;
+  // Whether this command may modify the workspace. Defaults to true.
+  // Pass false for a command expected only to read: writes it
+  // attempts then fail rather than land silently.
+  //
+  // The point is the misclassified command. A caller that decides
+  // `git log` is read-only and is wrong about it — an alias, a shell
+  // function, a `;` it did not parse — gets a failure it can see
+  // instead of a mutation it did not intend. Which failure depends on
+  // the backend: one that works directly against the workspace store
+  // fails the write inside the command with EROFS, and one with its
+  // own copy of the files has the change refused on the way back,
+  // reported in `skipped`.
+  //
+  // A configured gate can withdraw write access even when this is
+  // true, so a command may end up read-only without the caller
+  // asking. It can never gain access this way.
+  writable?: boolean;
 }
 
 export interface GetExecOptions<E extends ExecEncoding = undefined> {
@@ -138,19 +156,36 @@ export interface GetExecOptions<E extends ExecEncoding = undefined> {
 // skipped read-only entries on ExecResult.
 export interface Sync {
   push(): Promise<number>;
-  pull(): Promise<ApplyResult>;
+  // The post-command pull carries the command's write access, so a
+  // command that ran read-only cannot have its changes applied by the
+  // bracket that follows it.
+  pull(options?: { writable?: boolean }): Promise<ApplyResult>;
   onPullPending?(error: unknown): Promise<void>;
+}
+
+export interface WorkspaceShellHooks {
+  gate?: WorkspaceGate;
+  audit?: WorkspaceAudit;
 }
 
 export class WorkspaceShell {
   readonly #shell: ShellRPC;
   readonly #sync: Sync;
   readonly #observer: WorkspaceObserver;
+  readonly #gate: WorkspaceGate;
+  readonly #audit: WorkspaceAudit;
 
-  constructor(shell: ShellRPC, sync: Sync, observer: WorkspaceObserver = noopObserver) {
+  constructor(
+    shell: ShellRPC,
+    sync: Sync,
+    observer: WorkspaceObserver = noopObserver,
+    hooks: WorkspaceShellHooks = {},
+  ) {
     this.#shell = shell;
     this.#sync = sync;
     this.#observer = observer;
+    this.#gate = hooks.gate ?? openGate;
+    this.#audit = hooks.audit ?? noopAudit;
   }
 
   exec(command: string): Promise<ExecHandle<undefined>>;
@@ -161,6 +196,34 @@ export class WorkspaceShell {
     options: ExecOptions<E> = {},
   ): Promise<ExecHandle<E>> {
     assertNotTemplate(command);
+    // The gate runs before the push, so a denied command does not
+    // move data. It is consulted once for the whole command; see
+    // ./gate.ts for why a write-by-write gate would be worse.
+    //
+    // The audit hook fires here too, on the spawn, rather than after
+    // the command exits. exec() returns a detached handle that the
+    // caller may never drain, so there is no later point that is
+    // guaranteed to arrive. What the command then did is on the
+    // observer's span and on ExecResult.
+    return withGate(
+      this.#gate,
+      this.#audit,
+      {
+        kind: "shell.exec",
+        command,
+        cwd: options.cwd,
+        writable: options.writable ?? true,
+        backend: options.backend,
+      },
+      (writable) => this.#spawn<E>(command, options, writable),
+    );
+  }
+
+  async #spawn<E extends ExecEncoding>(
+    command: string,
+    options: ExecOptions<E>,
+    writable: boolean,
+  ): Promise<ExecHandle<E>> {
     // Pre-exec push: ship anything the host wrote since the last
     // push so the spawned command sees it. Failures non-fatal per
     // docs/05 — the command still runs; pushed reports 0.
@@ -177,6 +240,7 @@ export class WorkspaceShell {
         "workspace.runtime.cwd": options.cwd,
         "workspace.runtime.timeout_ms": options.timeoutMs,
         "workspace.runtime.id": options.id,
+        "workspace.runtime.writable": writable,
       },
       () =>
         this.#shell.exec({
@@ -189,6 +253,7 @@ export class WorkspaceShell {
             typeof options.stdin === "string"
               ? new TextEncoder().encode(options.stdin)
               : options.stdin,
+          writable,
         }),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
@@ -200,7 +265,15 @@ export class WorkspaceShell {
     // exec call — because we hand the inner stream off to the
     // caller and can't `using` the envelope ourselves.
     const events = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    return wrapHandle<E>(this.#shell, this.#sync, envelope.id, events, options.encoding, pushed);
+    return wrapHandle<E>(
+      this.#shell,
+      this.#sync,
+      envelope.id,
+      events,
+      options.encoding,
+      pushed,
+      writable,
+    );
   }
 
   get(id: string): Promise<ExecHandle<undefined>>;
@@ -249,8 +322,9 @@ function wrapHandle<E extends ExecEncoding>(
   wireEvents: ReadableStream<ExecEvent>,
   encoding: E | undefined,
   pushed: number,
+  writable = true,
 ): ExecHandle<E> {
-  const postPull = withPostPull(pipeEvents<E>(wireEvents, encoding), sync);
+  const postPull = withPostPull(pipeEvents<E>(wireEvents, encoding), sync, writable);
   const stream = postPull.stream;
   const handle = stream as ExecHandle<E>;
   let resultPromise: Promise<ExecResult<E>> | undefined;
@@ -378,6 +452,7 @@ interface PostPullOutcome {
 function withPostPull<E extends ExecEncoding>(
   source: ReadableStream<WorkspaceExecEvent<E>>,
   sync: Sync,
+  writable: boolean,
 ): { stream: ReadableStream<WorkspaceExecEvent<E>>; outcome: Promise<PostPullOutcome> } {
   const reader = source.getReader();
   let resolveOutcome!: (outcome: PostPullOutcome) => void;
@@ -394,7 +469,7 @@ function withPostPull<E extends ExecEncoding>(
             return;
           }
           reader.releaseLock();
-          const pulled = await runPostPull(sync);
+          const pulled = await runPostPull(sync, writable);
           resolveOutcome(pulled);
           controller.close();
         } catch (error) {
@@ -427,9 +502,12 @@ function withPostPull<E extends ExecEncoding>(
   return { stream, outcome };
 }
 
-async function runPostPull(sync: Sync): Promise<PostPullOutcome> {
+async function runPostPull(sync: Sync, writable: boolean): Promise<PostPullOutcome> {
   try {
-    const result = await sync.pull();
+    // The command's write access travels with its own post-command
+    // pull. Without this the bracket would apply exactly the changes
+    // the command was not allowed to make.
+    const result = await sync.pull({ writable });
     return {
       applied: result.applied,
       skipped: result.skipped,

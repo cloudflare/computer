@@ -9,16 +9,26 @@ export type { WorkspaceFoundEntry } from "./fs/find.js";
 export type { GrepOptions, WorkspaceGrepMatch } from "./fs/grep.js";
 export { link } from "./fs/link.js";
 export type { MkdirOptions } from "./fs/mkdir.js";
-// Read-only mount enforcement. The workspace-side indexer writes
-// _vfs_mounts; the helpers here let it invalidate the in-Database
-// cache after a write, and let dofs callers (and tests) inspect or
-// assert against the registered roots without re-implementing the
-// overlap check.
+// Write enforcement. Two things refuse a write, and both report
+// EROFS: a registered read-only mount root, and a handle built
+// without write access.
+//
+// For mounts, the workspace-side indexer writes _vfs_mounts; the
+// helpers here let it invalidate the in-Database cache after a write,
+// and let dofs callers (and tests) inspect or assert against the
+// registered roots without re-implementing the overlap check.
+//
+// For handles, `assertWritable` is what `WorkspaceFilesystem` and
+// `SQLiteWorkspaceProvider` call on every mutation, and
+// `WriteCapability` is the shape any other surface can adopt to join
+// in.
 export {
   assertNotReadOnly,
+  assertWritable,
   getReadOnlyMountRoots,
   invalidateReadOnlyMountCache,
   readOnlyRootFor,
+  type WriteCapability,
 } from "./fs/mount-guard.js";
 export type { ReaddirOptions, WorkspaceDirentResult } from "./fs/readdir.js";
 export type { ReadFileOptions } from "./fs/readFile.js";
@@ -31,7 +41,13 @@ export type { SQLiteWorkspaceProviderOptions } from "./provider.js";
 export { SQLiteWorkspaceProvider } from "./provider.js";
 export { initializeSchema, ROOT_INODE, SCHEMA_VERSION } from "./schema/index.js";
 export { Database } from "./storage.js";
-export type { ApplyOptions, ApplyResult, SkippedEntry } from "./sync/apply.js";
+export type {
+  ApplyOptions,
+  ApplyResult,
+  SkippedByMount,
+  SkippedEntry,
+  SkippedWithoutWriteAccess,
+} from "./sync/apply.js";
 // Sync protocol building blocks. The wire wiring lives in
 // @cloudflare/computer-rpc; these are the helpers that wiring binds
 // to a Database.

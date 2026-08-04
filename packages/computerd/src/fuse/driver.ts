@@ -13,6 +13,8 @@ const ERRNO = {
   EISDIR: -21,
   EINVAL: -22,
   EPERM: -1,
+  EACCES: -13,
+  EROFS: -30,
   EFBIG: -27,
   ENOTEMPTY: -39,
   ENODATA: -61,
@@ -1078,6 +1080,13 @@ function statNode(stat: {
   };
 }
 
+// Falling back to EIO is right for an error this layer does not
+// recognise, and wrong for a refusal. A refusal is a fact about the
+// workspace that the caller can act on — the tree does not take
+// writes, or this caller may not make them — while EIO reads as a
+// broken daemon and invites a retry that fails identically. dofs
+// raises EROFS for both a read-only mount root and a handle without
+// the write capability, so those have to survive the translation.
 function toErrno(error: unknown): number {
   const code =
     typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
@@ -1088,5 +1097,7 @@ function toErrno(error: unknown): number {
   if (code === "ENOTEMPTY") return ERRNO.ENOTEMPTY;
   if (code === "EINVAL") return ERRNO.EINVAL;
   if (code === "EPERM") return ERRNO.EPERM;
+  if (code === "EACCES") return ERRNO.EACCES;
+  if (code === "EROFS") return ERRNO.EROFS;
   return ERRNO.EIO;
 }

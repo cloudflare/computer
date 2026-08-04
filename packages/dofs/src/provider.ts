@@ -12,6 +12,7 @@ import { getBlobBytes } from "./fs/blobCache.js";
 import { link as linkImpl } from "./fs/link.js";
 import type { MkdirOptions } from "./fs/mkdir.js";
 import { mkdir as mkdirImpl } from "./fs/mkdir.js";
+import { assertWritable } from "./fs/mount-guard.js";
 import { readdir as readdirImpl } from "./fs/readdir.js";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile.js";
 import { readlink as readlinkImpl } from "./fs/readlink.js";
@@ -56,6 +57,12 @@ export interface SQLiteWorkspaceProviderOptions {
   // to match node's fs.watch on most filesystems; tests can lower
   // it to keep durations short.
   watchIntervalMs?: number;
+  // Write access for this provider. Defaults to true. Pass false to
+  // get a provider whose mutating calls all reject with EROFS, which
+  // is how a single command runs without write access. The flag also
+  // shows up as `readonly` for @platformatic/vfs callers that ask
+  // before they write.
+  writable?: boolean;
 }
 
 interface VirtualStatsLike {
@@ -113,8 +120,13 @@ export class SQLiteWorkspaceProvider {
   readonly db: Database;
   readonly now: () => number;
 
+  // Write access for this provider, fixed at construction. Every
+  // mutating method checks it, so a `writable: false` provider
+  // refuses the whole command rather than part of it.
+  readonly writable: boolean;
+
   // Capability flags consulted by @platformatic/vfs callers.
-  readonly readonly = false;
+  readonly readonly: boolean;
   readonly supportsSymlinks = true;
   readonly supportsWatch = true;
 
@@ -130,6 +142,8 @@ export class SQLiteWorkspaceProvider {
     this.db = db;
     this.now = options.now ?? Date.now;
     this.watchIntervalMs = options.watchIntervalMs ?? 100;
+    this.writable = options.writable ?? true;
+    this.readonly = !this.writable;
   }
 
   // -- Essential primitives ------------------------------------------
@@ -140,6 +154,10 @@ export class SQLiteWorkspaceProvider {
 
   openSync(path: string, flags: string = "r", _mode?: number): number {
     const { read, write, truncate, append, create, exclusive } = parseFlags(flags);
+    // A read-only provider refuses to hand out a writable
+    // descriptor at all, the way opening for write on a read-only
+    // filesystem fails rather than failing later on the first write.
+    if (write || truncate || create) assertWritable(this, path);
     const existing = resolveInode(this.db, path);
 
     if (existing === null) {
@@ -253,6 +271,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   mkdirSync(path: string, options?: MkdirOptions): string | undefined {
+    assertWritable(this, path);
     mkdirImpl(this.db, path, options ?? {}, this.now);
     return undefined;
   }
@@ -263,6 +282,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   rmdirSync(path: string): void {
+    assertWritable(this, path);
     rmImpl(this.db, path, {});
   }
 
@@ -272,6 +292,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   unlinkSync(path: string): void {
+    assertWritable(this, path);
     // If a buffered create is still pending for this path, commit
     // it first so rm sees a real inode to unlink (and so the
     // resulting GC sees the orphaned blob, matching the non-buffered
@@ -301,6 +322,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   linkSync(existingPath: string, newPath: string): void {
+    assertWritable(this, newPath);
     // Commit a still-pending source before adding the second dirent,
     // otherwise link has nothing real to point at. Also commit a
     // still-pending destination: link's existence check looks at
@@ -319,6 +341,8 @@ export class SQLiteWorkspaceProvider {
   }
 
   renameSync(oldPath: string, newPath: string): void {
+    assertWritable(this, oldPath);
+    assertWritable(this, newPath);
     // Commit any still-pending creates at either end before the rename
     // touches dirents: the source needs a real inode to move, and a
     // pending buffer at the destination would otherwise slip past
@@ -411,6 +435,7 @@ export class SQLiteWorkspaceProvider {
     data: string | Buffer,
     options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
   ): void {
+    assertWritable(this, path);
     const mode = typeof options === "string" ? undefined : options?.mode;
     const bytes =
       typeof data === "string"
@@ -425,6 +450,7 @@ export class SQLiteWorkspaceProvider {
     ranges: WriteFileRange[],
     options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
   ): void {
+    assertWritable(this, path);
     const mode = typeof options === "string" ? undefined : options?.mode;
     const bytes =
       typeof data === "string"
@@ -434,6 +460,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   createFileSync(path: string, options?: { mode?: number }): void {
+    assertWritable(this, path);
     createFileSyncImpl(this.db, path, { mode: options?.mode }, this.now);
   }
 
@@ -443,6 +470,7 @@ export class SQLiteWorkspaceProvider {
     offset: number,
     options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
   ): number {
+    assertWritable(this, path);
     const mode = typeof options === "string" ? undefined : options?.mode;
     const bytes =
       typeof data === "string"
@@ -452,22 +480,27 @@ export class SQLiteWorkspaceProvider {
   }
 
   truncateFileSync(path: string, len: number): void {
+    assertWritable(this, path);
     truncateFileSyncImpl(this.db, path, len, this.now);
   }
 
   openWriteBufferSync(path: string): void {
+    assertWritable(this, path);
     openWriteBufferSyncImpl(this.db, path);
   }
 
   openWriteBufferForCreateSync(path: string, options?: { mode?: number }): void {
+    assertWritable(this, path);
     openWriteBufferForCreateSyncImpl(this.db, path, { mode: options?.mode }, this.now);
   }
 
   releaseWriteBufferSync(path: string): void {
+    assertWritable(this, path);
     releaseWriteBufferSyncImpl(this.db, path, this.now);
   }
 
   chmodSync(path: string, mode: number): void {
+    assertWritable(this, path);
     const { path: canonical } = canonicalizePath(path);
     const pending = getPendingWriteBufferByPath(this.db, canonical);
     if (pending !== undefined) {
@@ -605,6 +638,11 @@ export class SQLiteWorkspaceProvider {
     if (!state.writable) {
       throw createWorkspaceError("EBADF", `fd ${fd} is not writable`);
     }
+    // A read-only provider refuses to open for write, so it should
+    // never hold a writable descriptor to begin with. Check anyway:
+    // if some later change adds another way to mint one, the write
+    // still stops here rather than reaching the database.
+    assertWritable(this, state.path);
     // Append needs the current EOF, so stat only then. A non-append
     // write of >0 bytes doesn't need it: writeRangeSyncImpl resolves the
     // path and raises ENOENT/EISDIR. A zero-length write short-circuits
@@ -635,6 +673,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   truncateSync(path: string, len: number): void {
+    assertWritable(this, path);
     const node = resolveInode(this.db, path);
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
@@ -674,6 +713,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   symlinkSync(target: string, path: string, _type?: string): void {
+    assertWritable(this, path);
     symlinkImpl(this.db, target, path, this.now);
   }
 

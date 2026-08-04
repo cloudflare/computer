@@ -1,7 +1,14 @@
+import { WorkspaceFilesystem } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import {
+  ActionDeniedError,
+  type WorkspaceAction,
+  type WorkspaceAudit,
+  type WorkspaceGate,
+} from "./gate.js";
 import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
@@ -1507,5 +1514,125 @@ describe("Workspace Think compatibility", () => {
     expect(ws).not.toHaveProperty("mkdir");
     expect(ws).not.toHaveProperty("rm");
     expect(ws).not.toHaveProperty("stat");
+  });
+});
+
+describe("Workspace gate — filesystem facade", () => {
+  function gateDenying(kinds: string[]): {
+    gate: WorkspaceGate;
+    seen: WorkspaceAction[];
+  } {
+    const seen: WorkspaceAction[] = [];
+    return {
+      seen,
+      gate: {
+        check(action) {
+          seen.push(action);
+          return kinds.includes(action.kind)
+            ? { allow: false, reason: "denied by policy" }
+            : { allow: true };
+        },
+      },
+    };
+  }
+
+  it("permits everything when no gate is configured", async () => {
+    const ws = new Workspace({ storage: makeStorage() });
+    await ws.fs.writeFile("/a.txt", "hello");
+    expect(await ws.fs.readFile("/a.txt", "utf8")).toBe("hello");
+  });
+
+  it("refuses a write the gate denies, and does not write it", async () => {
+    // Workspace.fs writes to the local store without crossing the
+    // wire, so a gate that only covered shell.exec could be walked
+    // around by writing the file directly.
+    const { gate, seen } = gateDenying(["fs.write"]);
+    const ws = new Workspace({ storage: makeStorage(), gate });
+
+    await expect(ws.fs.writeFile("/blocked.txt", "nope")).rejects.toThrow(ActionDeniedError);
+    await expect(ws.fs.readFile("/blocked.txt", "utf8")).rejects.toThrow();
+    expect(seen).toEqual([{ kind: "fs.write", path: "/blocked.txt", size: 4 }]);
+  });
+
+  it("leaves reads ungated", async () => {
+    const { gate, seen } = gateDenying(["fs.write", "fs.mkdir", "fs.rm"]);
+    const ws = new Workspace({ storage: makeStorage() });
+    await ws.fs.writeFile("/readable.txt", "content");
+
+    const gated = new Workspace({ storage: makeStorage(), gate });
+    await expect(gated.fs.readFile("/missing.txt", "utf8")).rejects.toThrow();
+    // The read reached the store and failed there, not at the gate.
+    expect(seen).toEqual([]);
+  });
+
+  it("gates mkdir, rm, chmod and symlink", async () => {
+    const { gate, seen } = gateDenying([]);
+    const ws = new Workspace({ storage: makeStorage(), gate });
+
+    await ws.fs.mkdir("/dir");
+    await ws.fs.writeFile("/dir/f.txt", "x");
+    await ws.fs.chmod("/dir/f.txt", 0o600);
+    await ws.fs.symlink("/dir/f.txt", "/link");
+    await ws.fs.rm("/dir", { recursive: true });
+
+    expect(seen.map((a) => a.kind)).toEqual([
+      "fs.mkdir",
+      "fs.write",
+      "fs.chmod",
+      "fs.symlink",
+      "fs.rm",
+    ]);
+  });
+
+  it("gates a recursive rm once, on the path the caller named", async () => {
+    // Not once per descendant: a gate cannot usefully refuse half a
+    // tree, and asking it to would reintroduce the partial-delete
+    // problem the design avoids.
+    const { gate, seen } = gateDenying([]);
+    const ws = new Workspace({ storage: makeStorage(), gate });
+    await ws.fs.mkdir("/tree/nested", { recursive: true });
+    await ws.fs.writeFile("/tree/nested/a.txt", "a");
+    await ws.fs.writeFile("/tree/nested/b.txt", "b");
+    seen.length = 0;
+
+    await ws.fs.rm("/tree", { recursive: true });
+
+    expect(seen).toEqual([{ kind: "fs.rm", path: "/tree" }]);
+  });
+
+  it("reports each mutation to the audit hook, including refusals", async () => {
+    const entries: [string, string][] = [];
+    const audit: WorkspaceAudit = {
+      record(action, outcome) {
+        entries.push([action.kind, outcome.status]);
+      },
+    };
+    const { gate } = gateDenying(["fs.rm"]);
+    const ws = new Workspace({ storage: makeStorage(), gate, audit });
+
+    await ws.fs.writeFile("/a.txt", "a");
+    await ws.fs.rm("/a.txt").catch(() => {});
+
+    expect(entries).toEqual([
+      ["fs.write", "allowed"],
+      ["fs.rm", "denied"],
+    ]);
+  });
+
+  it("stays a WorkspaceFilesystem so mount and think surfaces are unaffected", async () => {
+    const ws = new Workspace({ storage: makeStorage(), gate: gateDenying([]).gate });
+    expect(ws.fs).toBeInstanceOf(WorkspaceFilesystem);
+  });
+
+  it("reports no size for a streamed write rather than a wrong one", async () => {
+    // Measuring the stream would consume the bytes the write needs.
+    const { gate, seen } = gateDenying([]);
+    const ws = new Workspace({ storage: makeStorage(), gate });
+    const stream = new Blob(["streamed"]).stream();
+
+    await ws.fs.writeFile("/streamed.txt", stream);
+
+    expect(seen).toEqual([{ kind: "fs.write", path: "/streamed.txt", size: undefined }]);
+    expect(await ws.fs.readFile("/streamed.txt", "utf8")).toBe("streamed");
   });
 });

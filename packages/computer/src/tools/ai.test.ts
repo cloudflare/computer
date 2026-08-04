@@ -323,6 +323,7 @@ describe("createAITools exec tool", () => {
       command: "npm test",
       cwd: "/workspace",
       backend: "container",
+      writable: true,
       exitCode: 2,
       stdout: "abc\n\n[truncated, 3 more bytes]",
       stderr: "uvw\n\n[truncated, 3 more bytes]",
@@ -437,6 +438,7 @@ describe("createAITools exec tool", () => {
       command: "npm test",
       cwd: null,
       backend: "shell",
+      writable: true,
       error: "backend unavailable",
     });
   });
@@ -465,6 +467,7 @@ describe("createAITools exec tool", () => {
       command: "npm test",
       cwd: null,
       backend: "shell",
+      writable: true,
       error: "transport closed",
     });
   });

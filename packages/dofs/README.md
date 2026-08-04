@@ -59,3 +59,12 @@ export class WorkspaceDO extends DurableObject {
   Repeated reads of dedup'd chunks (a file of zeroes, a re-used
   package payload) skip SQLite after the first fetch.
 - Sync protocol building blocks implemented and exported; the typed RPC surface on top of them lives in `@cloudflare/computer-rpc`.
+- Two independent write guards, both reporting `EROFS`. A registered
+  read-only mount root is enforced next to the stored tree, so writes
+  arriving through the sync apply path are caught as well as direct
+  ones. A write capability is enforced on the handle: build a
+  `WorkspaceFilesystem` or `SQLiteWorkspaceProvider` with
+  `writable: false` and every mutating method on it refuses. The
+  capability is fixed for the life of the handle, which is what lets a
+  caller run one whole command without write access instead of
+  stopping it part-way through.

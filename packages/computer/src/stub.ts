@@ -47,6 +47,7 @@ import type {
   ReadFileOptions,
   RmOptions,
   WorkspaceDirentResult,
+  WorkspaceFilesystem,
   WorkspaceFoundEntry,
   WorkspaceGrepMatch,
   WorkspaceStatResult,
@@ -89,10 +90,18 @@ import type { Workspace } from "./workspace.js";
 // the same reason.
 export class WorkspaceFilesystemStub extends RpcTarget {
   readonly #ws: Workspace;
+  // The handle this stub's mutations go through. A stub made without
+  // write access gets a read-only handle, so a caller holding it
+  // cannot write no matter which method it reaches for. The handle
+  // carries the capability rather than this class checking a flag per
+  // method, which is what keeps a new method from being added without
+  // the check.
+  readonly #fs: WorkspaceFilesystem;
 
-  constructor(ws: Workspace) {
+  constructor(ws: Workspace, writable = true) {
     super();
     this.#ws = ws;
+    this.#fs = ws.fsWithAccess(writable);
     trackStub(this);
   }
 
@@ -110,7 +119,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
     optionsOrEncoding?: "utf8" | ReadFileOptions,
   ): Promise<string | ReadableStream<Uint8Array>> {
     return withSpan(this.#ws.observer, "workspace.fs.readFile", { "workspace.fs.path": path }, () =>
-      this.#ws.fs.readFile(path, optionsOrEncoding as ReadFileOptions),
+      this.#fs.readFile(path, optionsOrEncoding as ReadFileOptions),
     );
   }
 
@@ -125,7 +134,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
 
   stat(path: string): Promise<WorkspaceStatResult> {
     return withSpan(this.#ws.observer, "workspace.fs.stat", { "workspace.fs.path": path }, () =>
-      this.#ws.fs.stat(path),
+      this.#fs.stat(path),
     );
   }
 
@@ -136,7 +145,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       { "workspace.fs.path": path },
       async () => {
         try {
-          return await this.#ws.fs.stat(path);
+          return await this.#fs.stat(path);
         } catch (error) {
           if ((error as { code?: string }).code === "ENOENT") return null;
           throw error;
@@ -147,7 +156,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
 
   lstat(path: string): Promise<WorkspaceStatResult> {
     return withSpan(this.#ws.observer, "workspace.fs.lstat", { "workspace.fs.path": path }, () =>
-      this.#ws.fs.lstat(path),
+      this.#fs.lstat(path),
     );
   }
 
@@ -158,7 +167,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       { "workspace.fs.path": path },
       async () => {
         try {
-          return await this.#ws.fs.lstat(path);
+          return await this.#fs.lstat(path);
         } catch (error) {
           if ((error as { code?: string }).code === "ENOENT") return null;
           throw error;
@@ -169,7 +178,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
 
   readlink(path: string): Promise<string> {
     return withSpan(this.#ws.observer, "workspace.fs.readlink", { "workspace.fs.path": path }, () =>
-      this.#ws.fs.readlink(path),
+      this.#fs.readlink(path),
     );
   }
 
@@ -178,7 +187,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.readdir",
       { "workspace.fs.path": path },
-      () => this.#ws.fs.readdir(path, options),
+      () => this.#fs.readdir(path, options),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.fs.entries", outcome.value.length);
       },
@@ -190,7 +199,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.find",
       { "workspace.fs.path": directory, "workspace.fs.pattern": pattern },
-      () => this.#ws.fs.find(directory, pattern),
+      () => this.#fs.find(directory, pattern),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.fs.matches", outcome.value.length);
       },
@@ -202,7 +211,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.ls",
       { "workspace.fs.path": prefix },
-      () => this.#ws.fs.ls(prefix),
+      () => this.#fs.ls(prefix),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.fs.entries", outcome.value.length);
       },
@@ -214,7 +223,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.grep",
       { "workspace.fs.path": path, "workspace.fs.pattern": pattern },
-      () => this.#ws.fs.grep(pattern, path, options),
+      () => this.#fs.grep(pattern, path, options),
       (span, outcome) => {
         if (outcome.ok) span.setAttribute("workspace.fs.matches", outcome.value.length);
       },
@@ -232,7 +241,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.writeFile",
       { "workspace.fs.path": path },
-      () => this.#ws.fs.writeFile(path, content, options),
+      () => this.#fs.writeFile(path, content, options),
     );
   }
 
@@ -241,7 +250,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.mkdir",
       { "workspace.fs.path": path, "workspace.fs.recursive": options.recursive },
-      () => this.#ws.fs.mkdir(path, options),
+      () => this.#fs.mkdir(path, options),
     );
   }
 
@@ -254,7 +263,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
         "workspace.fs.recursive": options.recursive,
         "workspace.fs.force": options.force,
       },
-      () => this.#ws.fs.rm(path, options),
+      () => this.#fs.rm(path, options),
     );
   }
 
@@ -263,7 +272,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.chmod",
       { "workspace.fs.path": path, "workspace.fs.mode": mode },
-      () => this.#ws.fs.chmod(path, mode),
+      () => this.#fs.chmod(path, mode),
     );
   }
 
@@ -272,7 +281,7 @@ export class WorkspaceFilesystemStub extends RpcTarget {
       this.#ws.observer,
       "workspace.fs.symlink",
       { "workspace.fs.path": path, "workspace.fs.target": target },
-      () => this.#ws.fs.symlink(target, path),
+      () => this.#fs.symlink(target, path),
     );
   }
 }
@@ -373,10 +382,15 @@ export class WorkspaceRuntimeExecHandleStub<
 
 export class WorkspaceRuntimeStub extends RpcTarget {
   readonly #ws: Workspace;
+  // Ceiling on the write access of commands spawned through this
+  // stub. A read-only stub narrows every exec it is asked for; it
+  // cannot be talked into granting more by passing writable: true.
+  readonly #writable: boolean;
 
-  constructor(ws: Workspace) {
+  constructor(ws: Workspace, writable = true) {
     super();
     this.#ws = ws;
+    this.#writable = writable;
     trackStub(this);
   }
 
@@ -403,7 +417,10 @@ export class WorkspaceRuntimeStub extends RpcTarget {
         source: string,
         options: WorkspaceRuntimeExecOptions<"utf8" | undefined>,
       ) => Promise<WorkspaceRuntimeExecHandle<"utf8" | undefined>>
-    )(source, options);
+    )(source, {
+      ...options,
+      writable: this.#writable && (options.writable ?? true),
+    });
     if (options.id !== undefined && handle.id !== options.id) {
       throw new Error(`backend ran exec as ${handle.id}, not the requested id ${options.id}`);
     }
@@ -580,6 +597,12 @@ export class WorkspaceGitStub extends RpcTarget {
 // between wsd and the DO. WorkspaceStub here is a different thing
 // (the Workers-RPC value carried between the DO and a Worker), so
 // the name doesn't clash.
+export interface WorkspaceStubOptions {
+  // Whether the holder of this stub may modify the workspace.
+  // Defaults to true.
+  writable?: boolean;
+}
+
 export class WorkspaceStub extends RpcTarget {
   // Getters rather than instance properties so Workers RPC
   // exposes them through the stub proxy. Plain readonly fields
@@ -592,10 +615,14 @@ export class WorkspaceStub extends RpcTarget {
   readonly #artifacts: WorkspaceArtifactsStub;
   readonly #useThink: boolean;
 
-  constructor(ws: Workspace) {
+  // `writable: false` hands out a stub that cannot write. The whole
+  // stub, not just its fs: a read-only stub whose runtime could still
+  // spawn a writing command would not be read-only.
+  constructor(ws: Workspace, options: WorkspaceStubOptions = {}) {
     super();
-    this.#fs = new WorkspaceFilesystemStub(ws);
-    this.#runtime = new WorkspaceRuntimeStub(ws);
+    const writable = options.writable ?? true;
+    this.#fs = new WorkspaceFilesystemStub(ws, writable);
+    this.#runtime = new WorkspaceRuntimeStub(ws, writable);
     this.#git = new WorkspaceGitStub(ws);
     this.#assets = ws.assets === undefined ? undefined : new WorkspaceAssetsStub(ws);
     this.#artifacts = new WorkspaceArtifactsStub(ws.artifacts);
