@@ -75,7 +75,7 @@ function makeFakeRunner(): FakeRunner {
             name: "stdout",
             value: new TextEncoder().encode(`ran:${command}\n`),
           },
-          { id, seq: 2, name: "exit", value: 0 },
+          { id, seq: 2, name: "exit", code: 0 },
         ],
       };
       records.set(id, rec);
@@ -163,7 +163,7 @@ describe("ShellRPC over a real WebSocket", () => {
       expect(events).toHaveLength(2);
       expect(events[0]?.name).toBe("stdout");
       expect(new TextDecoder().decode(events[0]?.value as Uint8Array)).toBe("ran:echo hi\n");
-      expect(events[1]).toMatchObject({ name: "exit", value: 0 });
+      expect(events[1]).toMatchObject({ name: "exit", code: 0 });
 
       // Server-side: the runner saw the call.
       const rec = harness.runner.records.get(handle.id);
@@ -269,7 +269,7 @@ describe("Composite WorkspaceRPC (sync + shell on one session)", () => {
       const handle = await client.shell.exec({ source: "ls" });
       const events = await drainExec(handle.events);
       expect(events).toHaveLength(2);
-      expect(events[1]).toMatchObject({ name: "exit", value: 0 });
+      expect(events[1]).toMatchObject({ name: "exit", code: 0 });
 
       // Sanity check: server side records both interactions.
       expect(harness.runner.records.get(handle.id)?.command).toBe("ls");

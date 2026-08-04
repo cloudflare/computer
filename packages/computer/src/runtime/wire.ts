@@ -4,7 +4,7 @@ import type { WorkspaceRuntimeEvent, WorkspaceRuntimeValue } from "./types.js";
 type RuntimeFrame =
   | { id: string; seq: number; name: "stdout" | "stderr"; enc: "utf8"; value: string }
   | { id: string; seq: number; name: "stdout" | "stderr"; enc: "b64"; value: string }
-  | { id: string; seq: number; name: "exit"; value: number; result?: WorkspaceRuntimeValue };
+  | { id: string; seq: number; name: "exit"; code: number; result?: WorkspaceRuntimeValue };
 
 function toBase64(bytes: Uint8Array): string {
   let binary = "";

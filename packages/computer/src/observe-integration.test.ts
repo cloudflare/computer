@@ -247,7 +247,7 @@ describe("Workspace observer — runtime stub", () => {
           id: "exec-1",
           events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
             start(c) {
-              c.enqueue({ id: "exec-1", seq: 0, name: "exit", value: 0 });
+              c.enqueue({ id: "exec-1", seq: 0, name: "exit", code: 0 });
               c.close();
             },
           }),

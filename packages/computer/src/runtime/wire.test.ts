@@ -29,18 +29,18 @@ describe("runtime wire codec", () => {
   it("round-trips an exit event carrying a structured result", async () => {
     const events = await collect(
       decodeRuntimeEvents(
-        streamOf({ id: "e-1", seq: 2, name: "exit", value: 0, result: { a: [1, 2, null] } }),
+        streamOf({ id: "e-1", seq: 2, name: "exit", code: 0, result: { a: [1, 2, null] } }),
       ),
     );
     expect(events).toEqual([
-      { id: "e-1", seq: 2, name: "exit", value: 0, result: { a: [1, 2, null] } },
+      { id: "e-1", seq: 2, name: "exit", code: 0, result: { a: [1, 2, null] } },
     ]);
   });
 
   it("round-trips an exit event with no result", async () => {
     const events = await collect(
-      decodeRuntimeEvents(streamOf({ id: "e-1", seq: 1, name: "exit", value: 1 })),
+      decodeRuntimeEvents(streamOf({ id: "e-1", seq: 1, name: "exit", code: 1 })),
     );
-    expect(events).toEqual([{ id: "e-1", seq: 1, name: "exit", value: 1 }]);
+    expect(events).toEqual([{ id: "e-1", seq: 1, name: "exit", code: 1 }]);
   });
 });

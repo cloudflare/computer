@@ -119,7 +119,7 @@ describeIfReal("Runner shell.exec under real FUSE", () => {
       const result = await Promise.race([
         client.shell
           .exec({
-            command: "echo hello && pwd",
+            source: "echo hello && pwd",
             cwd: "/workspace",
             timeoutMs: 5_000,
           })
@@ -149,7 +149,7 @@ describeIfReal("Runner shell.exec under real FUSE", () => {
         .join("");
       const exit = events.find((e) => e.name === "exit");
       expect(stdout).toBe("hello\n/workspace\n");
-      expect(exit?.value).toBe(0);
+      expect(exit?.code).toBe(0);
     } finally {
       await client.close();
     }

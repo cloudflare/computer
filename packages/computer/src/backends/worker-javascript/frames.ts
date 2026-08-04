@@ -3,7 +3,7 @@ import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
 export type RuntimeFrame =
   | { name: "stdout"; value: Uint8Array }
   | { name: "stderr"; value: Uint8Array }
-  | { name: "exit"; value: number; result?: WorkspaceRuntimeValue };
+  | { name: "exit"; code: number; result?: WorkspaceRuntimeValue };
 
 export function parseRuntimeFrame(line: string): RuntimeFrame {
   let record: Record<string, unknown>;
@@ -20,17 +20,17 @@ export function parseRuntimeFrame(line: string): RuntimeFrame {
     return { name, value: decodeBase64(record.b64) };
   }
   if (name === "exit") {
-    if (!Number.isSafeInteger(record.value)) {
+    if (!Number.isSafeInteger(record.code)) {
       throw new Error("WorkerJavaScriptBackend received a malformed exit frame");
     }
     if ("result" in record) {
       return {
         name,
-        value: record.value as number,
+        code: record.code as number,
         result: record.result as WorkspaceRuntimeValue,
       };
     }
-    return { name, value: record.value as number };
+    return { name, code: record.code as number };
   }
   throw new Error("WorkerJavaScriptBackend received an unknown execution frame");
 }

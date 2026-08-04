@@ -37,7 +37,7 @@ function fakeRuntime(promisedProperties = false) {
       const stream = new ReadableStream<Uint8Array>({
         start(c) {
           c.enqueue(
-            new TextEncoder().encode(`${JSON.stringify({ id, seq: 0, name: "exit", value: 0 })}\n`),
+            new TextEncoder().encode(`${JSON.stringify({ id, seq: 0, name: "exit", code: 0 })}\n`),
           );
           c.close();
         },
@@ -149,7 +149,7 @@ describe("getWorkspace — remote dispatch", () => {
     const handle = await ws.runtime.exec("echo ok");
     const events = [];
     for await (const event of handle) events.push(event);
-    expect(events).toEqual([{ id: expect.any(String), seq: 0, name: "exit", value: 0 }]);
+    expect(events).toEqual([{ id: expect.any(String), seq: 0, name: "exit", code: 0 }]);
   });
 
   it("exposes the complete runtime lifecycle and preserves handle ids", async () => {
@@ -297,11 +297,16 @@ describe("client runtime.exec — remote handle rebuild", () => {
     const { host } = fakeRemote();
     const ws = await getWorkspace(host);
     const handle = await ws.runtime.exec("echo hi");
-    const events: Array<{ name: string; value: unknown }> = [];
-    for await (const event of handle as AsyncIterable<{ name: string; value: unknown }>) {
-      events.push({ name: event.name, value: event.value });
+    type Collected = { name: "stdout" | "stderr"; value: unknown } | { name: "exit"; code: number };
+    const events: Collected[] = [];
+    for await (const event of handle as AsyncIterable<Collected>) {
+      events.push(
+        event.name === "exit"
+          ? { name: "exit", code: event.code }
+          : { name: event.name, value: event.value },
+      );
     }
-    expect(events).toEqual([{ name: "exit", value: 0 }]);
+    expect(events).toEqual([{ name: "exit", code: 0 }]);
   });
 
   it("throws if result() is called after the stream has started", async () => {

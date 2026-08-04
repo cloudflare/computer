@@ -278,7 +278,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             "Execution was interrupted when its Workspace runtime restarted.\n",
           ),
         },
-        { id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
     }
   }
@@ -500,7 +500,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
               `${error instanceof Error ? error.message : String(error)}\n`,
             ),
           },
-          { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+          { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
         ]);
         return;
       }
@@ -511,7 +511,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           name: "stderr",
           value: new TextEncoder().encode(message),
         },
-        { id: record.id, seq: record.events.length + 2, name: "exit", value: 130 },
+        { id: record.id, seq: record.events.length + 2, name: "exit", code: 130 },
       ]);
     })();
     record.finalization = finalization;
@@ -555,7 +555,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             "Execution was interrupted when its Workspace runtime restarted or before its terminal state was persisted.\n",
           ),
         },
-        { id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
     }
     return record;
@@ -606,7 +606,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         value: frame.value,
       });
     } else {
-      record.exitCode = frame.value;
+      record.exitCode = frame.code;
       if ("result" in frame) {
         record.result = frame.result;
         record.hasResult = true;
@@ -635,7 +635,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             `${error instanceof Error ? error.message : String(error)}\n`,
           ),
         },
-        { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
       return;
     }
@@ -649,7 +649,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             `${truncateUtf8(errorMessage, Math.max(0, this.#options.maxStdioBytes - 1))}\n`,
           ),
         },
-        { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
       return;
     }
@@ -665,7 +665,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           name: "stderr",
           value: new TextEncoder().encode("Execution ended without reporting a result.\n"),
         },
-        { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
       return;
     }
@@ -676,10 +676,10 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             id: record.id,
             seq: record.events.length + 1,
             name: "exit",
-            value: exitCode,
+            code: exitCode,
             result: record.result as WorkspaceRuntimeValue,
           }
-        : { id: record.id, seq: record.events.length + 1, name: "exit", value: exitCode };
+        : { id: record.id, seq: record.events.length + 1, name: "exit", code: exitCode };
     this.#finish(record, exitCode === 0 ? "completed" : "failed", [exit]);
   }
 
@@ -763,7 +763,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             "Execution failed because its terminal state could not be persisted.\n",
           ),
         },
-        { id: record.id, seq: record.events.length + 2, name: "exit", value: 1 },
+        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
       ];
     }
     record.status = settledStatus;
@@ -879,7 +879,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 function encodeEvent(event: WorkspaceRuntimeEvent): Uint8Array {
   if (event.name === "stdout" || event.name === "stderr") return event.value;
   const payload =
-    "result" in event ? { value: event.value, result: event.result } : { value: event.value };
+    "result" in event ? { code: event.code, result: event.result } : { code: event.code };
   return new TextEncoder().encode(JSON.stringify(payload));
 }
 
@@ -891,15 +891,15 @@ function decodeEvent(
 ): WorkspaceRuntimeEvent {
   if (name === "stdout" || name === "stderr") return { id, seq, name, value: payload };
   const decoded = JSON.parse(new TextDecoder().decode(payload)) as unknown;
-  if (typeof decoded === "object" && decoded !== null && "value" in decoded) {
-    const record = decoded as { value: unknown; result?: unknown };
+  if (typeof decoded === "object" && decoded !== null && "code" in decoded) {
+    const record = decoded as { code: unknown; result?: unknown };
     if ("result" in record) {
       assertRuntimeValue(record.result);
-      return { id, seq, name: "exit", value: Number(record.value), result: record.result };
+      return { id, seq, name: "exit", code: Number(record.code), result: record.result };
     }
-    return { id, seq, name: "exit", value: Number(record.value) };
+    return { id, seq, name: "exit", code: Number(record.code) };
   }
-  return { id, seq, name: "exit", value: Number(decoded) };
+  return { id, seq, name: "exit", code: Number(decoded) };
 }
 
 function startJavaScriptExecution(options: {
@@ -1155,11 +1155,11 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             : module.default ?? null;
           const value = result ?? null;
           await host.assertResult(value);
-          enqueue({ name: "exit", value: 0, result: value });
+          enqueue({ name: "exit", code: 0, result: value });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
-          enqueue({ name: "exit", value: 1 });
+          enqueue({ name: "exit", code: 1 });
         }
         await writeChain;
         try {

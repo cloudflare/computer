@@ -212,7 +212,7 @@ function materialise(id: string, row: EventRow): ExecEvent {
     // node:sqlite returns BLOB as Uint8Array; we need the bytes
     // view to read the int32.
     const view = new DataView(row.value.buffer, row.value.byteOffset, row.value.byteLength);
-    return { id, seq: row.seq, name: "exit", value: view.getInt32(0, true) };
+    return { id, seq: row.seq, name: "exit", code: view.getInt32(0, true) };
   }
   const name = row.kind === KIND_STDOUT ? "stdout" : "stderr";
   return { id, seq: row.seq, name, value: row.value };

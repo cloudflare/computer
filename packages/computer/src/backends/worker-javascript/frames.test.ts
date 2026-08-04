@@ -37,18 +37,18 @@ describe("parseRuntimeFrame", () => {
   });
 
   it("decodes an exit frame carrying an integer", () => {
-    expect(parseRuntimeFrame(`{"name":"exit","value":0}`)).toEqual({ name: "exit", value: 0 });
-    expect(parseRuntimeFrame(`{"name":"exit","value":130}`)).toEqual({ name: "exit", value: 130 });
+    expect(parseRuntimeFrame(`{"name":"exit","code":0}`)).toEqual({ name: "exit", code: 0 });
+    expect(parseRuntimeFrame(`{"name":"exit","code":130}`)).toEqual({ name: "exit", code: 130 });
   });
 
   it("decodes an exit frame carrying a structured result", () => {
-    const frame = parseRuntimeFrame(`{"name":"exit","value":0,"result":{"a":[1,2,null]}}`);
-    expect(frame).toEqual({ name: "exit", value: 0, result: { a: [1, 2, null] } });
+    const frame = parseRuntimeFrame(`{"name":"exit","code":0,"result":{"a":[1,2,null]}}`);
+    expect(frame).toEqual({ name: "exit", code: 0, result: { a: [1, 2, null] } });
   });
 
   it("decodes an exit frame carrying a null result", () => {
-    const frame = parseRuntimeFrame(`{"name":"exit","value":0,"result":null}`);
-    expect(frame).toEqual({ name: "exit", value: 0, result: null });
+    const frame = parseRuntimeFrame(`{"name":"exit","code":0,"result":null}`);
+    expect(frame).toEqual({ name: "exit", code: 0, result: null });
   });
 
   it("rejects invalid JSON", () => {
@@ -64,7 +64,7 @@ describe("parseRuntimeFrame", () => {
   });
 
   it("rejects an exit frame whose value is not an integer", () => {
-    expect(() => parseRuntimeFrame(`{"name":"exit","value":"x"}`)).toThrow();
+    expect(() => parseRuntimeFrame(`{"name":"exit","code":"x"}`)).toThrow();
   });
 });
 
@@ -72,12 +72,12 @@ describe("decodeRuntimeFrames", () => {
   it("decodes newline-delimited frames arriving in one chunk", async () => {
     const frames = await collect(
       decodeRuntimeFrames(
-        streamOf(`{"name":"stdout","b64":"${b64("hi")}"}\n{"name":"exit","value":0}\n`),
+        streamOf(`{"name":"stdout","b64":"${b64("hi")}"}\n{"name":"exit","code":0}\n`),
       ),
     );
     expect(frames).toEqual([
       { name: "stdout", value: new TextEncoder().encode("hi") },
-      { name: "exit", value: 0 },
+      { name: "exit", code: 0 },
     ]);
   });
 
@@ -91,13 +91,13 @@ describe("decodeRuntimeFrames", () => {
   });
 
   it("emits a trailing frame that arrives without a final newline", async () => {
-    const frames = await collect(decodeRuntimeFrames(streamOf(`{"name":"exit","value":1}`)));
-    expect(frames).toEqual([{ name: "exit", value: 1 }]);
+    const frames = await collect(decodeRuntimeFrames(streamOf(`{"name":"exit","code":1}`)));
+    expect(frames).toEqual([{ name: "exit", code: 1 }]);
   });
 
   it("skips blank lines between frames", async () => {
-    const frames = await collect(decodeRuntimeFrames(streamOf(`{"name":"exit","value":0}\n\n`)));
-    expect(frames).toEqual([{ name: "exit", value: 0 }]);
+    const frames = await collect(decodeRuntimeFrames(streamOf(`{"name":"exit","code":0}\n\n`)));
+    expect(frames).toEqual([{ name: "exit", code: 0 }]);
   });
 
   it("errors the stream on a malformed frame", async () => {

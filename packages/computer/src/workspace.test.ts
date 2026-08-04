@@ -152,13 +152,13 @@ function makeBackend(
 function execBackend(id: string, onExec: (command: string) => void): WorkspaceBackend {
   const shell: import("@cloudflare/computer-rpc").ShellRPC = {
     async exec(input) {
-      onExec(input.command);
+      onExec(input.source);
       const execId = input.id ?? `${id}-${Math.random().toString(36).slice(2)}`;
       return {
         id: execId,
         events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
           start(c) {
-            c.enqueue({ id: execId, seq: 1, name: "exit", value: 0 });
+            c.enqueue({ id: execId, seq: 1, name: "exit", code: 0 });
             c.close();
           },
         }),
@@ -262,7 +262,7 @@ describe("Workspace backend selection", () => {
           id,
           events: new ReadableStream({
             start(controller) {
-              controller.enqueue({ id, seq: 1, name: "exit", value: 0 });
+              controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
               controller.close();
             },
           }),
@@ -294,7 +294,7 @@ describe("Workspace backend selection", () => {
           id,
           events: new ReadableStream({
             start(controller) {
-              controller.enqueue({ id, seq: 1, name: "exit", value: 0 });
+              controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
               controller.close();
             },
           }),
@@ -330,7 +330,7 @@ describe("Workspace backend selection", () => {
           events: new ReadableStream({
             start(controller) {
               controller.enqueue({ id, seq: 1, name: "stdout", value: new Uint8Array([0xe2]) });
-              controller.enqueue({ id, seq: 2, name: "exit", value: 0 });
+              controller.enqueue({ id, seq: 2, name: "exit", code: 0 });
               controller.close();
             },
           }),
@@ -375,7 +375,7 @@ describe("Workspace backend selection", () => {
         return { id, events: events() };
       },
       async killExec() {
-        exit = { id, seq: 1, name: "exit", value: 143 };
+        exit = { id, seq: 1, name: "exit", code: 143 };
         for (const controller of controllers) {
           controller.enqueue(exit);
           controller.close();
@@ -418,7 +418,7 @@ describe("Workspace backend selection", () => {
             name: "stdout",
             value: new Uint8Array([0xe2]),
           });
-          controller.enqueue({ id: "module-exec", seq: 3, name: "exit", value: 0, result: 42 });
+          controller.enqueue({ id: "module-exec", seq: 3, name: "exit", code: 0, result: 42 });
           controller.close();
         },
       });
@@ -474,7 +474,7 @@ describe("Workspace backend selection", () => {
                     name: "stdout",
                     value: new Uint8Array([0xf0, 0x9f]),
                   });
-                  controller.enqueue({ id: "module-exec", seq: 2, name: "exit", value: 0 });
+                  controller.enqueue({ id: "module-exec", seq: 2, name: "exit", code: 0 });
                   controller.close();
                 },
               }),
@@ -491,15 +491,22 @@ describe("Workspace backend selection", () => {
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
     const execution = await ws.runtime.exec("export default 42", { encoding: "utf8" });
-    const seen: Array<{ seq: number; name: string; value: unknown }> = [];
+    type Collected =
+      | { seq: number; name: "stdout" | "stderr"; value: unknown }
+      | { seq: number; name: "exit"; code: number };
+    const seen: Collected[] = [];
     for await (const event of execution) {
-      seen.push({ seq: event.seq, name: event.name, value: event.value });
+      seen.push(
+        event.name === "exit"
+          ? { seq: event.seq, name: "exit", code: event.code }
+          : { seq: event.seq, name: event.name, value: event.value },
+      );
     }
 
     expect(seen).toEqual([
       { seq: 1, name: "stdout", value: "" },
       { seq: 1.5, name: "stdout", value: "�" },
-      { seq: 2, name: "exit", value: 0 },
+      { seq: 2, name: "exit", code: 0 },
     ]);
   });
 

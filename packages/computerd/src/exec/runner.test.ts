@@ -7,7 +7,7 @@ import { Runner } from "./runner.js";
 type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit"; value: number };
+  | { id: string; seq: number; name: "exit"; code: number };
 
 function fixture(options: Record<string, unknown> = {}): {
   runner: InstanceType<typeof Runner>;
@@ -66,7 +66,7 @@ test("exec captures stdout and propagates exit code", async () => {
     const exit = events.find((e) => e.name === "exit");
     expect(stdout).toBe("hello\n");
     expect(stderr).toBe("world\n");
-    expect(exit?.value).toBe(3);
+    expect(exit?.code).toBe(3);
     // seq is monotonic per-id starting at 1.
     const seqs = events.map((e) => e.seq);
     for (let i = 1; i < seqs.length; i++) {
@@ -114,7 +114,7 @@ test("feeds per-execution stdin to the child and closes it", async () => {
       .join("");
     const exit = events.find((event) => event.name === "exit");
     expect(stdout).toBe("piped-input");
-    expect(exit?.value).toBe(0);
+    expect(exit?.code).toBe(0);
   } finally {
     dispose();
   }
@@ -180,7 +180,7 @@ test("kill() terminates a running exec", async () => {
     const exit = events.find((e) => e.name === "exit");
     expect(exit !== undefined).toBeTruthy();
     // SIGTERM → 143 per the mapping in runner.ts.
-    expect(exit?.value).toBe(143);
+    expect(exit?.code).toBe(143);
   } finally {
     dispose();
   }
@@ -196,7 +196,7 @@ test("exec times out at timeoutMs and exits 143", async () => {
     const exit = events.find((e) => e.name === "exit");
     expect(exit !== undefined).toBeTruthy();
     // SIGTERM → 143 per mapExitCode.
-    expect(exit?.value).toBe(143);
+    expect(exit?.code).toBe(143);
   } finally {
     dispose();
   }
@@ -209,7 +209,7 @@ test("exec uses defaultTimeoutMs from the runner when no per-call value", async 
     const events = await drain(handle.events);
     const exit = events.find((e) => e.name === "exit");
     expect(exit !== undefined).toBeTruthy();
-    expect(exit?.value).toBe(143);
+    expect(exit?.code).toBe(143);
   } finally {
     dispose();
   }
@@ -235,7 +235,7 @@ test("timeoutMs: 0 disables the timeout", async () => {
     const handle = runner.exec("echo hi", { id: "noto", timeoutMs: 0 });
     const events = await drain(handle.events);
     const exit = events.find((e) => e.name === "exit");
-    expect(exit?.value).toBe(0);
+    expect(exit?.code).toBe(0);
   } finally {
     dispose();
   }
@@ -361,7 +361,7 @@ test("exec(cwd) does not pass cwd to spawn; threads it through the shell", async
       .join("");
     const exit = events.find((e) => e.name === "exit");
     expect(stdout.trim()).toBe("/tmp");
-    expect(exit?.value).toBe(0);
+    expect(exit?.code).toBe(0);
   } finally {
     dispose();
   }
@@ -384,7 +384,7 @@ test("exec(cwd) with a missing path synthesises a spawn-failed shape", async () 
     const exit = events.find((e) => e.name === "exit");
     expect(stderr).toMatch(/^spawn failed: /);
     expect(stderr).toMatch(/no such path|ENOENT/i);
-    expect(exit?.value).toBe(-1);
+    expect(exit?.code).toBe(-1);
   } finally {
     dispose();
   }
@@ -410,7 +410,7 @@ test("exec(cwd) quotes path segments with spaces and single quotes", async () =>
       .join("");
     const exit = events.find((e) => e.name === "exit");
     expect(stdout.trim()).toBe(tricky);
-    expect(exit?.value).toBe(0);
+    expect(exit?.code).toBe(0);
   } finally {
     dispose();
   }

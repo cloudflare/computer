@@ -150,7 +150,7 @@ export interface WorkspaceRPC {
 export type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit"; value: number; result?: unknown };
+  | { id: string; seq: number; name: "exit"; code: number; result?: unknown };
 
 // Error codes carried over the wire. The client adapter rethrows as
 // WorkspaceError preserving `code`, so application code can branch

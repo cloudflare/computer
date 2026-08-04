@@ -87,7 +87,7 @@ type RuntimeChunk<E extends ExecEncoding> = E extends "utf8" ? string : Uint8Arr
 export type WorkspaceRuntimeEvent<E extends ExecEncoding = undefined> =
   | { id: string; seq: number; name: "stdout"; value: RuntimeChunk<E> }
   | { id: string; seq: number; name: "stderr"; value: RuntimeChunk<E> }
-  | { id: string; seq: number; name: "exit"; value: number; result?: WorkspaceRuntimeValue };
+  | { id: string; seq: number; name: "exit"; code: number; result?: WorkspaceRuntimeValue };
 
 export interface WorkspaceRuntimeResult<E extends ExecEncoding = undefined> {
   status: WorkspaceRuntimeStatus;

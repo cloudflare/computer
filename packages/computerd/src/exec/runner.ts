@@ -230,7 +230,7 @@ export class Runner {
         this.scheduleSweep();
         return;
       }
-      record.subscriber?.enqueue({ id, seq, name: "exit", value: exitCode });
+      record.subscriber?.enqueue({ id, seq, name: "exit", code: exitCode });
       record.subscriber?.close();
       record.subscriber = undefined;
       this.scheduleSweep();
@@ -466,7 +466,7 @@ export class Runner {
     const events = new ReadableStream<ExecEvent>({
       start(controller) {
         controller.enqueue({ id, seq: stderrSeq, name: "stderr", value });
-        controller.enqueue({ id, seq: exitSeq, name: "exit", value: -1 });
+        controller.enqueue({ id, seq: exitSeq, name: "exit", code: -1 });
         controller.close();
       },
     });

@@ -304,7 +304,7 @@ async function drainModuleResult<E extends ExecEncoding>(
       if (event.name === "stdout") stdout.push(event.value);
       if (event.name === "stderr") stderr.push(event.value);
       if (event.name === "exit") {
-        exitCode = event.value;
+        exitCode = event.code;
         if ("result" in event) value = event.result;
       }
     }

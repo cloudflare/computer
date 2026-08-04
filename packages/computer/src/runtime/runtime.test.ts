@@ -75,7 +75,7 @@ describe("WorkspaceRuntime result accumulation", () => {
         stdout(1, bytes("one")),
         stdout(2, bytes("two")),
         stdout(3, bytes("three")),
-        { id: "e", seq: 4, name: "exit", value: 0 },
+        { id: "e", seq: 4, name: "exit", code: 0 },
       ]),
     );
     const result = await (await runtime.exec("noop")).result();
@@ -89,7 +89,7 @@ describe("WorkspaceRuntime result accumulation", () => {
         stdout(1, bytes("out")),
         stderr(2, bytes("err")),
         stdout(3, bytes("out2")),
-        { id: "e", seq: 4, name: "exit", value: 0 },
+        { id: "e", seq: 4, name: "exit", code: 0 },
       ]),
     );
     const result = await (await runtime.exec("noop")).result();
@@ -98,14 +98,14 @@ describe("WorkspaceRuntime result accumulation", () => {
   });
 
   it("captures the exit code from the exit event", async () => {
-    const runtime = runtimeFor(replayBackend([{ id: "e", seq: 1, name: "exit", value: 42 }]));
+    const runtime = runtimeFor(replayBackend([{ id: "e", seq: 1, name: "exit", code: 42 }]));
     const result = await (await runtime.exec("noop")).result();
     expect(result.exitCode).toBe(42);
   });
 
   it("maps signal exit codes to a cancelled status", async () => {
     for (const code of [129, 130, 137, 143]) {
-      const runtime = runtimeFor(replayBackend([{ id: "e", seq: 1, name: "exit", value: code }]));
+      const runtime = runtimeFor(replayBackend([{ id: "e", seq: 1, name: "exit", code: code }]));
       const result = await (await runtime.exec("noop")).result();
       expect(result.status).toBe("cancelled");
       expect(result.exitCode).toBe(code);
@@ -120,7 +120,7 @@ describe("WorkspaceRuntime utf8 encoding", () => {
         stdout(1, bytes("hello ")),
         stderr(2, bytes("warn")),
         stdout(3, bytes("world")),
-        { id: "e", seq: 4, name: "exit", value: 0 },
+        { id: "e", seq: 4, name: "exit", code: 0 },
       ]),
     );
     const result = await (await runtime.exec("noop", { encoding: "utf8" })).result();
@@ -134,7 +134,7 @@ describe("WorkspaceRuntime utf8 encoding", () => {
       replayBackend([
         stdout(1, partyHat.subarray(0, 3)),
         stdout(2, partyHat.subarray(3)),
-        { id: "e", seq: 3, name: "exit", value: 0 },
+        { id: "e", seq: 3, name: "exit", code: 0 },
       ]),
     );
     const result = await (await runtime.exec("noop", { encoding: "utf8" })).result();
@@ -150,7 +150,7 @@ describe("WorkspaceRuntime utf8 encoding", () => {
         stderr(2, heart.subarray(0, 2)),
         stdout(3, partyHat.subarray(2)),
         stderr(4, heart.subarray(2)),
-        { id: "e", seq: 5, name: "exit", value: 0 },
+        { id: "e", seq: 5, name: "exit", code: 0 },
       ]),
     );
     const result = await (await runtime.exec("noop", { encoding: "utf8" })).result();
@@ -160,7 +160,7 @@ describe("WorkspaceRuntime utf8 encoding", () => {
 
   it("preserves encoding when consuming the stream directly", async () => {
     const runtime = runtimeFor(
-      replayBackend([stdout(1, bytes("stream-mode")), { id: "e", seq: 2, name: "exit", value: 0 }]),
+      replayBackend([stdout(1, bytes("stream-mode")), { id: "e", seq: 2, name: "exit", code: 0 }]),
     );
     const handle = await runtime.exec("noop", { encoding: "utf8" });
     const seen: unknown[] = [];

@@ -68,7 +68,7 @@ function retryBackend(options: {
                 id: "command-1",
                 events: new ReadableStream({
                   start(controller) {
-                    controller.enqueue({ id: "command-1", seq: 1, name: "exit", value: 0 });
+                    controller.enqueue({ id: "command-1", seq: 1, name: "exit", code: 0 });
                     controller.close();
                   },
                 }),

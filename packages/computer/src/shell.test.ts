@@ -64,7 +64,7 @@ interface FakeRpcOptions {
 }
 
 function fakeRpc(options: FakeRpcOptions = {}): FakeRpc {
-  const events = options.events ?? [{ id: "_", seq: 1, name: "exit", value: 0 }];
+  const events = options.events ?? [{ id: "_", seq: 1, name: "exit", code: 0 }];
   const mintedId = options.mintedId ?? "runner-minted-id";
   const calls: FakeRpc["calls"] = { exec: [], getExec: [], killExec: [] };
 
@@ -134,7 +134,7 @@ function stdout(seq: number, text: string): ExecEvent {
   return { id: "_", seq, name: "stdout", value: new TextEncoder().encode(text) };
 }
 function exit(seq: number, code: number): ExecEvent {
-  return { id: "_", seq, name: "exit", value: code };
+  return { id: "_", seq, name: "exit", code: code };
 }
 
 // Drain an execution's events to completion and settle its sync

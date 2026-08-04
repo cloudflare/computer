@@ -155,7 +155,7 @@ describe("WorkerShellBackend", () => {
     expect(observedCommand).toBe("echo hello");
     expect(seen).toEqual([
       { id: "run-1", seq: 1, name: "stdout", value: encoder.encode("hello\n") },
-      { id: "run-1", seq: 2, name: "exit", value: 0 },
+      { id: "run-1", seq: 2, name: "exit", code: 0 },
     ]);
     expect(envelope.id).toBe("run-1");
   });

@@ -26,11 +26,11 @@ async function evaluateResult(
   const frames: string[] = [];
   try {
     await host.assertResult(value);
-    frames.push(JSON.stringify({ name: "exit", value: 0, result: value }));
+    frames.push(JSON.stringify({ name: "exit", code: 0, result: value }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     frames.push(JSON.stringify({ name: "stderr", b64: btoa(`${message}\n`) }));
-    frames.push(JSON.stringify({ name: "exit", value: 1 }));
+    frames.push(JSON.stringify({ name: "exit", code: 1 }));
   }
   const encoder = new TextEncoder();
   const readable = new ReadableStream<Uint8Array>({
@@ -448,7 +448,7 @@ describe("WorkerJavaScriptBackend", () => {
     releaseWrite();
     const events = await terminal;
     expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
-    expect(events.at(-1)).toMatchObject({ name: "exit", value: 0 });
+    expect(events.at(-1)).toMatchObject({ name: "exit", code: 0 });
   });
 
   it("streams stdout before user code returns", async () => {
@@ -480,7 +480,7 @@ describe("WorkerJavaScriptBackend", () => {
                       );
                       await exitReleased;
                       controller.enqueue(
-                        encoder.encode(`${JSON.stringify({ name: "exit", value: 0 })}\n`),
+                        encoder.encode(`${JSON.stringify({ name: "exit", code: 0 })}\n`),
                       );
                       controller.close();
                     },
@@ -567,7 +567,7 @@ describe("WorkerJavaScriptBackend", () => {
     for await (const event of execution.events) events.push(event);
     const exitIndex = events.findIndex((event) => event.name === "exit");
     expect(exitIndex).toBeGreaterThanOrEqual(0);
-    expect(events[exitIndex]).toMatchObject({ name: "exit", value: 130 });
+    expect(events[exitIndex]).toMatchObject({ name: "exit", code: 130 });
     // The exit event is terminal: no stdout, stderr, or result follows it.
     expect(events.slice(exitIndex + 1)).toEqual([]);
     await handle.close();
@@ -619,7 +619,7 @@ describe("WorkerJavaScriptBackend", () => {
     const events = [];
     for await (const event of execution.events) events.push(event);
     const exit = events.find((event) => event.name === "exit");
-    expect(exit).toMatchObject({ name: "exit", value: 1 });
+    expect(exit).toMatchObject({ name: "exit", code: 1 });
     expect(events.some((event) => event.name === "result")).toBe(false);
     await handle.close();
   });
@@ -671,7 +671,7 @@ describe("WorkerJavaScriptBackend", () => {
     const events = [];
     for await (const event of execution.events) events.push(event);
     expect(aborted).toBe(true);
-    expect(events.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    expect(events.at(-1)).toMatchObject({ name: "exit", code: 1 });
   });
 
   it("waits for accepted host calls before reporting cancellation", async () => {
@@ -741,7 +741,7 @@ describe("WorkerJavaScriptBackend", () => {
     expect(await fs.readFile("/workspace/output.txt", "utf8")).toBe("done");
     const events = [];
     for await (const event of execution.events) events.push(event);
-    expect(events.at(-1)).toMatchObject({ name: "exit", value: 130 });
+    expect(events.at(-1)).toMatchObject({ name: "exit", code: 130 });
   });
 
   it("settles subscribers when terminal persistence fails and repairs on reconnect", async () => {
@@ -785,18 +785,18 @@ describe("WorkerJavaScriptBackend", () => {
     finish({ result: 1 });
     const events = [];
     for await (const event of execution.events) events.push(event);
-    expect(events.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    expect(events.at(-1)).toMatchObject({ name: "exit", code: 1 });
     const sameSessionReplay = await handle.getExec({ id: "storage-failure" });
     const sameSessionEvents = [];
     for await (const event of sameSessionReplay.events) sameSessionEvents.push(event);
-    expect(sameSessionEvents.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    expect(sameSessionEvents.at(-1)).toMatchObject({ name: "exit", code: 1 });
     db.run = originalRun as typeof db.run;
 
     const reconnected = await backend.connect(host);
     const replay = await reconnected.getExec({ id: "storage-failure" });
     const repaired = [];
     for await (const event of replay.events) repaired.push(event);
-    expect(repaired.at(-1)).toMatchObject({ name: "exit", value: 1 });
+    expect(repaired.at(-1)).toMatchObject({ name: "exit", code: 1 });
   });
 
   it("bounds durable completed-execution retention", async () => {

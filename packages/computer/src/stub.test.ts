@@ -248,7 +248,7 @@ describe("WorkspaceStub", () => {
           id: "e-1",
           events: new ReadableStream({
             start(c) {
-              c.enqueue({ id: "e-1", seq: 1, name: "exit", value: 0 });
+              c.enqueue({ id: "e-1", seq: 1, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -279,7 +279,7 @@ describe("WorkspaceStub", () => {
           id: "other-id",
           events: new ReadableStream({
             start(c) {
-              c.enqueue({ id: "other-id", seq: 1, name: "exit", value: 0 });
+              c.enqueue({ id: "other-id", seq: 1, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -317,7 +317,7 @@ describe("WorkspaceStub", () => {
           id: `e-${execCalls}`,
           events: new ReadableStream({
             start(c) {
-              c.enqueue({ id: `e-${execCalls}`, seq: 1, name: "exit", value: 0 });
+              c.enqueue({ id: `e-${execCalls}`, seq: 1, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -486,7 +486,7 @@ describe("WorkspaceStub", () => {
           events: new ReadableStream({
             start(c) {
               c.enqueue({ id: `e-${execCalls}`, seq: 1, name: "stdout", value: new Uint8Array() });
-              c.enqueue({ id: `e-${execCalls}`, seq: 2, name: "exit", value: 0 });
+              c.enqueue({ id: `e-${execCalls}`, seq: 2, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -524,7 +524,7 @@ describe("WorkspaceStub", () => {
           events: new ReadableStream({
             start(c) {
               c.enqueue({ id: "e-1", seq: 1, name: "stdout", value: payload });
-              c.enqueue({ id: "e-1", seq: 2, name: "exit", value: 0 });
+              c.enqueue({ id: "e-1", seq: 2, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -538,19 +538,27 @@ describe("WorkspaceStub", () => {
       async (ws) => {
         const stub = ws.stub();
         const handle = await stub.runtime.exec("noop");
-        const events: Array<{ name: string; value: unknown }> = [];
+        type Collected =
+          | { name: "stdout" | "stderr"; value: Uint8Array }
+          | { name: "exit"; code: number };
+        const events: Collected[] = [];
         const decoded = decodeRuntimeEvents(handle.stream());
         const reader = decoded.getReader();
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          events.push({ name: value.name, value: value.value });
+          events.push(
+            value.name === "exit"
+              ? { name: "exit", code: value.code }
+              : { name: value.name, value: value.value as Uint8Array },
+          );
         }
         reader.releaseLock();
         expect(events).toHaveLength(2);
-        expect(events[0].name).toBe("stdout");
-        expect(Array.from(events[0].value as Uint8Array)).toEqual(Array.from(payload));
-        expect(events[1]).toEqual({ name: "exit", value: 0 });
+        const first = events[0];
+        if (first.name !== "stdout") throw new Error("expected stdout first");
+        expect(Array.from(first.value)).toEqual(Array.from(payload));
+        expect(events[1]).toEqual({ name: "exit", code: 0 });
       },
       { backend: backend({ shell: shellRpc }) },
     );
@@ -574,7 +582,7 @@ describe("WorkspaceStub", () => {
                 });
                 return;
               }
-              c.enqueue({ id: "e-1", seq: 10, name: "exit", value: 0 });
+              c.enqueue({ id: "e-1", seq: 10, name: "exit", code: 0 });
               c.close();
             },
           }),
@@ -613,7 +621,7 @@ describe("WorkspaceStub", () => {
           id: "e-1",
           events: new ReadableStream({
             start(c) {
-              c.enqueue({ id: "e-1", seq: 1, name: "exit", value: 0 });
+              c.enqueue({ id: "e-1", seq: 1, name: "exit", code: 0 });
               c.close();
             },
           }),

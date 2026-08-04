@@ -347,7 +347,7 @@ function reshape(event: {
       value: new TextEncoder().encode(event.value as string),
     };
   }
-  return { id: event.id, seq: event.seq, name: "exit", value: event.value as number };
+  return { id: event.id, seq: event.seq, name: "exit", code: event.value as number };
 }
 
 function disposeQuietly(value: { [Symbol.dispose]?: () => void }) {

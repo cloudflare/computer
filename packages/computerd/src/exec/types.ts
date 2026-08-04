@@ -20,7 +20,7 @@ export type HeartbeatValue = {
 export type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit"; value: number }
+  | { id: string; seq: number; name: "exit"; code: number }
   | { id: string; seq: number; name: "heartbeat"; value: HeartbeatValue };
 
 export interface ExecOptions {
