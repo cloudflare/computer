@@ -57,8 +57,8 @@ client ─► Worker /c/<name>/{file,exec}
    and one workspace per DO is the natural boundary.
 5. `BackendHandle.sync` is `"none"`. There's a single
    authoritative store (the DO's SQLite); push and pull
-   short-circuit. `ExecResult.pushed` / `pulled` are always
-   zero.
+   short-circuit. The runtime result's `pushed` / `pulled`
+   counts are always zero.
 
 The DO is a thin host. There's no Dockerfile; the Dynamic Worker
 lifecycle is the loader's problem.

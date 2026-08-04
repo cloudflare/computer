@@ -242,9 +242,8 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 - **Worker JavaScript** evaluates a module with structured
   input/results, durable relative imports, configured libraries,
   Workspace-backed `node:fs/promises`, and trusted `ws:git` /
-  `ws:artifacts` modules. It runs after `runtime.exec()` returns, so
-  pass `waitUntil: ctx.waitUntil.bind(ctx)` to `Workspace`; the backend
-  refuses to connect without it. See
+  `ws:artifacts` modules. It runs after `runtime.exec()` returns; the
+  run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
 

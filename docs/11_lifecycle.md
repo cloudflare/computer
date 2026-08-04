@@ -340,7 +340,7 @@ Two things have to change for capnweb + hibernation to work:
      is dropped by the idempotent apply path. No attachment write is
      required.
    - **Exec streams: store `{ [id]: seq }` per in-flight exec.**
-     The `WorkspaceShell` driver inside the DO is the only place
+     The `CommandExecutor` driver inside the DO is the only place
      that knows where the consumer got to in the event stream.
      Every time it surfaces an event to the caller (or on some
      reasonable debounce) it has to update the attachment so the

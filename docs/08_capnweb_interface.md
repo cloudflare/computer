@@ -162,15 +162,19 @@ See SUMMARY §0 'Investigation notes' (commits dc692c0, c95c74d,
 
 ```ts
 interface ShellRPC {
-  // Spawn a command. Returns a handle whose `events` stream
-  // yields stdout / stderr / exit frames. The stream is the
-  // single source of truth — there is no buffered-return
-  // variant. The handle's id can be passed to getExec to
-  // reattach after a reconnect.
+  // Spawn an execution. `source` is a shell command line for a
+  // command backend, or module source for a callable backend.
+  // Returns a handle whose `events` stream yields stdout / stderr /
+  // exit frames. The stream is the single source of truth — there
+  // is no buffered-return variant. The handle's id can be passed to
+  // getExec to reattach after a reconnect. `input` carries a
+  // structured value for a callable backend; command backends
+  // ignore it.
   exec(input: {
-    command: string;
-    cwd?:    string;
-    id?:     string;
+    source: string;
+    cwd?:   string;
+    id?:    string;
+    input?: unknown;
   }): Promise<{ id: string; events: ReadableStream<ExecEvent> }>;
 
   // Reattach to an in-flight or recently-completed exec by id.
@@ -195,8 +199,14 @@ interface ShellRPC {
 type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit";   value: number };
+  | { id: string; seq: number; name: "exit";   value: number; result?: unknown };
 ```
+
+The `exit` frame carries the process exit code and, for a callable
+backend that ran to a zero exit, the structured return value on
+`result`. The value and the exit code settle together, so a single
+terminal frame carries both rather than splitting them across two
+frames. Command backends never set `result`.
 
 All payloads on the wire are binary. The host-side `Workspace.runtime`
 converts to `string` when the caller passes `encoding: "utf8"`. Every

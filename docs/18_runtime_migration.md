@@ -12,7 +12,7 @@ This change is a breaking preview-API migration. Public execution now uses one r
 | `workspace.shell.dispose(id, options)` | `workspace.runtime.disposeExec(id, options)` |
 | `workspace.code` / script execution | `workspace.runtime.exec(source, { backend: "worker-javascript", input })` |
 
-`WorkspaceShell` still exists internally to implement command backends. It is not a public Workspace property.
+`CommandExecutor` exists internally to implement command backends. It is not a public Workspace property.
 
 ## Default backend IDs
 

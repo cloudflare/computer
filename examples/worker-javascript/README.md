@@ -50,9 +50,10 @@ client ─► Worker /c/<name>/{file,exec}
    store (the DO's SQLite); push and pull short-circuit.
    `pushed` / `pulled` are always zero.
 
-The backend requires `waitUntil`, so the DO passes
-`ctx.waitUntil.bind(ctx)` into the Workspace options. The DO is a
-thin host; the Dynamic Worker lifecycle is the loader's problem.
+The DO is a thin host; the Dynamic Worker lifecycle is the loader's
+problem. A run keeps advancing while its event stream is consumed, so
+the request that drains the handle holds the object resident until the
+run finishes.
 
 ## Paths
 

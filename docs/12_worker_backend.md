@@ -138,9 +138,9 @@ the same.
 `BackendHandle.sync` is `"none"`. With a single authoritative
 store there's nothing to ship or fetch; `Workspace.push` and
 `Workspace.pull` short-circuit on the bit and the reconcile pass
-on connect is skipped. The shell exec bracket still calls them so
-the surface stays uniform — every `ExecResult.pushed`, `pulled`,
-and `skipped` is empty.
+on connect is skipped. The exec sync bracket still calls them so
+the surface stays uniform — the pushed, pulled, and skipped counts
+on the runtime result are empty.
 
 ## Event stream framing
 
@@ -152,9 +152,9 @@ shape across the isolate hop.
 
 The backend decodes the frames into structured `ExecEvent` values
 and re-encodes string payloads (`stdout` / `stderr`) into
-`Uint8Array` so the existing `WorkspaceShell` utf8 decoder
-transforms in `packages/computer/src/shell.ts` see the shape
-they already handle.
+`Uint8Array` so the runtime's utf8 decoder transforms, which
+accumulate the result from raw events, see the shape they already
+handle.
 
 ## Fetcher factory escape hatch
 
