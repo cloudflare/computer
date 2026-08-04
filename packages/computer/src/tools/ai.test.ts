@@ -76,6 +76,50 @@ function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
 }
 
+// An in-process command backend that streams a fixed event sequence.
+// Registered on a real Workspace so the exec tool runs against the
+// genuine WorkspaceRuntime handle rather than a hand-shaped fake:
+// this pins the ExecWorkspaceLike binding and the assumption that the
+// real handle is async-iterable.
+function streamingCommandBackend(events: import("@cloudflare/computer-rpc").ExecEvent[]): {
+  id: string;
+  type: string;
+  connect(): Promise<{
+    rpc: import("@cloudflare/computer-rpc").WorkspaceRPC;
+    sync: "none";
+    close(): Promise<void>;
+  }>;
+} {
+  const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+    async exec(input) {
+      const id = input.id ?? "cmd-1";
+      return {
+        id,
+        events: new ReadableStream({
+          start(controller) {
+            for (const event of events) controller.enqueue({ ...event, id });
+            controller.close();
+          },
+        }),
+      };
+    },
+    getExec: () => Promise.reject(new Error("not used")),
+    killExec: () => Promise.resolve(),
+    disposeExec: () => Promise.resolve(),
+  };
+  const noopSync = new Proxy(
+    {},
+    { get: () => () => Promise.reject(new Error("sync: none")) },
+  ) as import("@cloudflare/computer-rpc").SyncRPC;
+  return {
+    id: "shell",
+    type: "fake-command",
+    async connect() {
+      return { rpc: { sync: noopSync, shell }, sync: "none", close: async () => {} };
+    },
+  };
+}
+
 function bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
@@ -699,6 +743,38 @@ describe("createAITools callable exec", () => {
     });
 
     expect(toolDescription(tools.exec)).toContain("callable");
+  });
+});
+
+describe("createAITools exec against a real Workspace", () => {
+  it("streams a real runtime handle end to end", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        streamingCommandBackend([
+          { id: "cmd-1", seq: 1, name: "stdout", value: new TextEncoder().encode("hello\n") },
+          { id: "cmd-1", seq: 2, name: "exit", code: 0 },
+        ]) as never,
+      ],
+    });
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "echo hello" });
+    expect(chunks.at(-1)).toEqual({
+      command: "echo hello",
+      cwd: null,
+      backend: "shell",
+      exitCode: 0,
+      stdout: "hello\n",
+      stderr: "",
+    });
+    await workspace.close();
   });
 });
 
