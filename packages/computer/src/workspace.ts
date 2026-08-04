@@ -762,7 +762,7 @@ export class Workspace {
     await Promise.all(
       [...handles, ...moduleHandles].map(async (h) => {
         try {
-          await h.close();
+          await h.close?.();
         } catch {
           // close() is best-effort; a transport that's already
           // gone shouldn't take the workspace down with it.
@@ -847,10 +847,6 @@ export class Workspace {
           throw error;
         }
       },
-      close: async () => {
-        // The backend handle owns the transport; closing happens
-        // through the Workspace's own close path.
-      },
     };
     this.#commandHandles.set(id, adapter);
     return adapter;
@@ -883,7 +879,7 @@ export class Workspace {
     )
       .then(async (handle) => {
         if (generation !== this.#connectionGeneration) {
-          await handle.close().catch(() => undefined);
+          await handle.close?.().catch(() => undefined);
           throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
         }
         this.#moduleHandles.set(id, handle);

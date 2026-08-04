@@ -165,7 +165,10 @@ export interface WorkspaceModuleBackendHandle {
   getExec(input: { id: string; after?: number | "tail" }): Promise<ModuleExecutionEnvelope>;
   killExec(input: { id: string; signal?: KillSignal }): Promise<void>;
   disposeExec(input: { id: string }): Promise<void>;
-  close(): Promise<void>;
+  // Tear down a backend-owned transport. The command adapter omits
+  // it: a command backend's transport is closed through its
+  // BackendHandle, not through the adapter the runtime consumes.
+  close?(): Promise<void>;
 }
 
 export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost;
