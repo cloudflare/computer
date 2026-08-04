@@ -42,7 +42,7 @@ async function collectTool(tool: unknown, input: unknown): Promise<unknown[]> {
 type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
-  | { name: "exit"; value: number; result?: unknown };
+  | { name: "exit"; code: number; result?: unknown };
 
 function streamingHandle(events: ExecStreamEvent[]) {
   return {
@@ -711,7 +711,7 @@ describe("createAITools exec streaming", () => {
             { name: "stdout", value: "one\n" },
             { name: "stderr", value: "warn\n" },
             { name: "stdout", value: "two\n" },
-            { name: "exit", value: 0 },
+            { name: "exit", code: 0 },
           ]);
         },
       },
@@ -760,7 +760,7 @@ describe("createAITools exec streaming", () => {
         async exec() {
           return streamingHandle([
             { name: "stdout", value: "working\n" },
-            { name: "exit", value: 0, result: { ok: true } },
+            { name: "exit", code: 0, result: { ok: true } },
           ]);
         },
         isCallable: (id: string) => id === "js",
@@ -796,7 +796,7 @@ describe("createAITools exec streaming", () => {
         async exec() {
           return streamingHandle([
             { name: "stdout", value: "a\u{1f642}b" },
-            { name: "exit", value: 0 },
+            { name: "exit", code: 0 },
           ]);
         },
       },
@@ -858,7 +858,7 @@ describe("createAITools exec streaming", () => {
             { name: "stdout", value: "a" },
             { name: "stdout", value: "b" },
             { name: "stdout", value: "c" },
-            { name: "exit", value: 0 },
+            { name: "exit", code: 0 },
           ]);
         },
       },
@@ -889,7 +889,7 @@ describe("createAITools exec streaming", () => {
           return streamingHandle([
             { name: "stdout", value: "a".repeat(10) },
             { name: "stdout", value: "b".repeat(10) },
-            { name: "exit", value: 0 },
+            { name: "exit", code: 0 },
           ]);
         },
       },

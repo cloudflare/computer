@@ -11,7 +11,7 @@ import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 export type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
-  | { name: "exit"; value: number; result?: unknown };
+  | { name: "exit"; code: number; result?: unknown };
 
 // A detached execution handle. The tool streams stdout / stderr
 // chunks by iterating the handle when it is async-iterable, and
@@ -215,7 +215,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
             if (event.name === "stdout") stdout.push(event.value);
             else if (event.name === "stderr") stderr.push(event.value);
             else {
-              exitCode = event.value;
+              exitCode = event.code;
               if ("result" in event) {
                 value = event.result;
                 hasValue = true;
