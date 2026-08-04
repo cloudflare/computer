@@ -409,6 +409,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           onComplete: () => this.#finalize(record),
           onError: (message) => this.#finalize(record, message),
         });
+        // The completion promise drives finalize (which writes the
+        // terminal SQL) and is no longer handed to a host lifetime
+        // hook. Observe it so a finalize rejection surfaces as a
+        // swallowed error rather than an unhandled rejection in the
+        // Durable Object.
+        void record.control.completion.catch(() => undefined);
       } catch (error) {
         record.control?.cancel();
         await record.control?.completion.catch(() => undefined);
