@@ -34,11 +34,11 @@ Three backends ship today on tree-shakeable subpaths:
   `node:fs/promises`, and trusted `ws:git` / `ws:artifacts` modules. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md).
 
-The worker-JavaScript backend runs after `runtime.exec()` returns. Pass
-`waitUntil: ctx.waitUntil.bind(ctx)` to `Workspace` so completion remains
-attached to the Durable Object event. The backend refuses to connect without
-this lifecycle hook. It admits one execution at a time by default and bounds
-completed execution retention by time and count.
+The worker-JavaScript backend runs after `runtime.exec()` returns. The run
+keeps advancing while its event stream is consumed, which holds the Durable
+Object resident; a handle that is never read can be evicted once the object
+goes idle. It admits one execution at a time by default and bounds completed
+execution retention by time and count.
 
 A backend can declare `sync: "none"` on the handle it returns to
 opt out of the push/pull bracket entirely — the worker backend

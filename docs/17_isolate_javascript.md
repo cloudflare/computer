@@ -8,7 +8,6 @@ import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-ja
 
 const workspace = new Workspace({
   storage: ctx.storage,
-  waitUntil: ctx.waitUntil.bind(ctx),
   backends: [
     new WorkerJavaScriptBackend({
       loader: env.LOADER,
@@ -52,7 +51,7 @@ const result = await handle.result();
 
 The source is a real ES module. Static imports, literal dynamic imports, and top-level await are supported. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
 
-`waitUntil` is required for this backend. `runtime.exec()` returns before the Dynamic Worker finishes, so the host must attach completion to the Durable Object event lifetime. Construction fails when a module backend connects without this hook.
+`runtime.exec()` returns before the Dynamic Worker finishes: the run keeps advancing while its event stream is consumed and the host call into the Dynamic Worker stays in flight. That pending work keeps the Durable Object resident on its own. A run whose handle is returned but never read can be evicted once the object goes idle; drain the event stream (or `result()`) to keep the run alive, and schedule an alarm through `ctx.storage.setAlarm()` for work that must survive eviction.
 
 ## Durable relative imports
 
