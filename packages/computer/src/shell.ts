@@ -55,10 +55,13 @@ export interface ExecResult<E extends ExecEncoding = undefined> {
   // VFS sync stats from the docs/05 bracket.
   //   pushed  — entries shipped by the pre-exec pushOnce.
   //   pulled  — entries the post-drain pullOnce applied locally.
-  //   skipped — entries the post-drain pullOnce did NOT apply
-  //             because they targeted a read-only mount root.
-  //             Empty when no read-only mounts are registered or
-  //             the container stayed clear of them.
+  //   skipped — entries the post-drain pullOnce did not apply,
+  //             either because they targeted a read-only mount
+  //             root or because the command ran without write
+  //             access and the pull refused everything it was
+  //             offered. Always empty for a backend that shares
+  //             the workspace store: there is no pull to refuse,
+  //             and a write fails inside the command instead.
   // pushed is observed before the stream is returned. The remaining
   // fields describe the post-command pull when result() is used.
   pushed: number;

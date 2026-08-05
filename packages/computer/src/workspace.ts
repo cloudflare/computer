@@ -626,7 +626,8 @@ export class Workspace {
   // pull() returns the dofs ApplyResult { applied, skipped } —
   // `applied` is the number of entries written into the local
   // store, `skipped` surfaces remote-side writes the apply path
-  // rejected because they targeted a read-only mount root.
+  // rejected, either because they targeted a read-only mount root
+  // or because the pull ran without write access.
   //
   // Both methods emit a `workspace.sync.push` / `workspace.sync.pull`
   // span on the configured observer, tagged with the resolved
