@@ -1,0 +1,51 @@
+examples/codemode/wrangler.test.jsonc
+  s_3bac4a8ecb5284::t_0314d7c5892de7 1-12
+docs/18_runtime_migration.md
+  s_3bac4a8ecb5284::t_693923af5706ff 14
+README.md
+  s_3bac4a8ecb5284::t_4cd51d1bd0dee8 65-66
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_5f90af5a150ade 1-13
+examples/codemode/.gitignore
+  s_3bac4a8ecb5284::t_7f4e67ca3fd77a 1-3
+examples/codemode/wrangler.jsonc
+  s_3bac4a8ecb5284::t_1f7292cb5d910c 1-12
+examples/codemode/README.md
+  s_3bac4a8ecb5284::t_46bc18958f7a8b 1-53
+examples/codemode/src/index.ts
+  s_3bac4a8ecb5284::t_133cdf24386fb8 1-127
+examples/codemode/vitest.config.ts
+  s_3bac4a8ecb5284::t_2ef7485edcf8c5 1-13
+examples/codemode/src/test-worker.ts
+  s_3bac4a8ecb5284::t_83eeff23c958dd 1-118
+examples/codemode/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_85da548e1e138a 1-14748
+examples/codemode/src/workspace-executor.test.ts
+  s_3bac4a8ecb5284::t_cf6aeeb982b389 1-329
+examples/codemode/src/workspace-executor.ts
+  s_3bac4a8ecb5284::t_e50e2949a8b0bf 1-421
+docs/17_isolate_javascript.md
+  s_3bac4a8ecb5284::t_5fb727f6d9eade 168
+examples/codemode/package.json
+  s_3bac4a8ecb5284::t_9335f69d3db3d5 1-23
+examples/codemode/src/workspace-executor.integration.test.ts
+  s_3bac4a8ecb5284::t_395f724fcf5aa9 1-36
+.github/workflows/ci.yml
+  s_3bac4a8ecb5284::t_a31356035144a1 117-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7f9fa8366dff6989a28ebb189c2a1c2de0b30031",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
