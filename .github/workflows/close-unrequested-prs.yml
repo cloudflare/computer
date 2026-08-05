@@ -17,10 +17,18 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const pullRequest = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const issue_number = pull_number;
             const allowedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-            const allowedBots = new Set(['dependabot[bot]', 'renovate[bot]']);
+            const allowedBots = new Set(['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]']);
             const allowedLabels = new Set(['allow-pr']);
+
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number,
+            });
 
             if (allowedAssociations.has(pullRequest.author_association)) {
               return;
@@ -35,8 +43,6 @@ jobs:
               return;
             }
 
-            const { owner, repo } = context.repo;
-            const issue_number = pullRequest.number;
             const body = [
               'Thanks for your interest in Cloudflare Computer.',
               '',
@@ -49,4 +55,4 @@ jobs:
             ].join('\n');
 
             await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            await github.rest.pulls.update({ owner, repo, pull_number: issue_number, state: 'closed' });
+            await github.rest.pulls.update({ owner, repo, pull_number, state: 'closed' });

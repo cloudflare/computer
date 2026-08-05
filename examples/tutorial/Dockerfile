@@ -1,8 +1,8 @@
 # Container image for the recipe card tutorial. Same wiring as
 # examples/think — pull the computerd binary out of the public GHCR image,
 # drop it into a slim debian, and run it as PID 1. The :VERSION tag is
-# rewritten in lockstep with the rest of the monorepo by
-# script/set-versions.mjs.
+# rewritten by the changesets Version Packages PR through
+# .github/changeset-version.mjs.
 #
 # computerd mounts the workspace at MOUNT_POINT, so a file the host writes
 # through the Workspace is on disk for pandoc to read, and the PDF

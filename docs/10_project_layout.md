@@ -20,10 +20,10 @@ computer/
 │   ├── dofs/                           # @cloudflare/dofs — SQLite-backed VFS + sync
 │   ├── rpc/                            # @cloudflare/computer-rpc — capnweb wire interface
 │   ├── computerd/                      # @cloudflare/computerd — in-container daemon (binary)
-│   └── computer-computerd-linux-x64/   # @cloudflare/computer-computerd-linux-x64 — prebuilt binary
+│   └── computer-computerd-linux-x64/   # private Docker image context for the linux-x64 binary
 ├── examples/                           # Runnable Worker examples (see below)
 ├── docs/                               # This documentation set
-└── package.json                        # Workspace root (workspaces: packages/*, examples/*)
+└── package.json                        # Workspace root (explicit package workspaces + examples/*)
 ```
 
 ### Folder rename history

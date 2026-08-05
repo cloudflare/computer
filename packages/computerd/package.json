@@ -18,7 +18,6 @@
     "build:docker": "node ./scripts/build-docker.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "publish:linux-x64": "node ./scripts/publish-linux-x64.mjs",
     "publish:docker": "node ./scripts/build-docker.mjs --push"
   },
   "engines": {

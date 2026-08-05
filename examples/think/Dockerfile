@@ -1,8 +1,8 @@
 # Container image for the think example. Identical wiring to
 # examples/container — we pull a computerd binary out of the public
 # GHCR image, drop it into a slim debian, and run it as PID 1.
-# The :VERSION tag is rewritten in lockstep with the rest of the
-# monorepo by script/set-versions.mjs.
+# The :VERSION tag is rewritten by the changesets Version Packages PR
+# through .github/changeset-version.mjs.
 #
 # computerd mounts a FUSE filesystem at MOUNT_POINT so exec'd commands
 # (git, npm, vitest, …) see the same files the Workspace RPC

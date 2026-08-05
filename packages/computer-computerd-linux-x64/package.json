@@ -1,19 +1,7 @@
 {
   "name": "@cloudflare/computer-computerd-linux-x64",
   "version": "0.1.0-alpha.1",
-  "description": "Prebuilt computerd binary for linux-x64. Single-platform distribution; install on a linux-x64 host or COPY --from a docker build stage that installed it.",
+  "description": "Docker image context for the prebuilt computerd linux-x64 binary.",
   "license": "MIT",
-  "os": [
-    "linux"
-  ],
-  "cpu": [
-    "x64"
-  ],
-  "files": [
-    "bin/",
-    "README.md"
-  ],
-  "bin": {
-    "computerd": "./bin/computerd"
-  }
+  "private": true
 }

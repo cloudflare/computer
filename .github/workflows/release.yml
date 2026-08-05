@@ -1,69 +1,28 @@
-# Tag-triggered release. Push a `v<semver>` tag and CI:
+# Changesets-driven release. A green CI run on main either opens/updates the
+# changesets Version Packages PR, or publishes the release after that PR merges.
 #
-#   1. Builds every workspace.
-#   2. Runs all package tests.
-#   3. Builds the computerd linux-x64 SEA binary (build-only — proves the
-#      release tag still produces a working binary; not published).
-#   4. Stamps the tag's version into the publishable package.
-#   5. Publishes @cloudflare/computer under a dist-tag picked from
-#      the version: prerelease tags (`-alpha.N`, `-beta.N`, `-rc.N`)
-#      publish under the matching suffix (`alpha`, `beta`, `rc`)
-#      so plain `npm i @cloudflare/computer` doesn't pick them up;
-#      stable tags (no suffix) publish under `latest`.
-#   6. Pushes the computerd binary image to two registries: ghcr.io (the
-#      canonical public source the example Dockerfiles reference)
-#      and registry.cloudflare.com (so wrangler / Containers can
-#      pull from inside Cloudflare's platform without an outbound
-#      hop). Stable releases also move each registry's `:latest`
-#      tag; prereleases only push the version-specific tag.
+# Version PR path:
+#   - contributors commit `.changeset/*.md` files;
+#   - changesets/action runs `.github/changeset-version.mjs`;
+#   - the Version Packages PR commits package versions, changelogs, lockfile
+#     updates, and the Dockerfile/docs pins for the computerd image.
 #
-# The computerd binary ships as a single-layer container image,
-# mirrored to both ghcr.io/cloudflare/computer-computerd-linux-x64
-# and registry.cloudflare.com/library/computer-computerd-linux-x64.
-# The example Dockerfiles pin the GHCR coordinate (anonymous pulls,
-# no Cloudflare-account dependency); the CF copy is kept for
-# consumers that prefer to stay on the in-platform registry. It is
-# deliberately NOT bundled inside the @cloudflare/computer npm
-# tarball — nothing in the package resolves it at runtime, and
-# every consumer copies it out of the image via `COPY --from`, so
-# bundling only bloated the tarball by ~120 MB.
-#
-# npm packages use trusted publishing (OIDC); no NPM_TOKEN is
-# needed, only the workflow's `id-token: write` permission plus a
-# trusted publisher config on the @cloudflare scope that names
-# this repo + this workflow file.
-#
-# Image pushes need:
-#   - `packages: write` on the workflow's GITHUB_TOKEN (auto-
-#     injected; used to authenticate to ghcr.io).
-#   - Repository secrets CLOUDFLARE_API_TOKEN (scoped for Container
-#     Registry Write on the target account) and
-#     CLOUDFLARE_ACCOUNT_ID (used by .github/cf-registry-login.sh to
-#     mint a short-lived library_push credential).
-#
-# One manual step is needed once, after the first push of the GHCR
-# package: flip the package visibility to Public at
-#   https://github.com/orgs/cloudflare/packages/container/computer-computerd-linux-x64/settings
-# Subsequent pushes inherit the public visibility automatically.
-#
-# Triggers:
-#   - push: tags ['v*']  — the normal release path
-#   - workflow_dispatch  — manual re-run for a tag that already
-#                          exists, useful when the first run
-#                          failed after a partial publish.
+# Publish path:
+#   - no pending changesets remain on main;
+#   - changesets/action runs `.github/changeset-publish.mjs`;
+#   - the script builds and pushes the computerd container image first, then
+#     runs `changeset publish` for npm. Reruns are safe: pushing the same image
+#     tags again is idempotent, and changeset publish skips npm versions that
+#     already exist.
 
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to release (must already exist, e.g. v0.1.0-alpha.1)"
-        required: true
-        type: string
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}
@@ -71,104 +30,76 @@ concurrency:
 
 jobs:
   release:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') && github.repository_owner == 'cloudflare' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       # Trusted publishing on npm requires the OIDC id-token.
       id-token: write
-      contents: read
+      # changesets/action creates the version PR, release commit, and tags.
+      contents: write
+      pull-requests: write
       # GHCR push uses GITHUB_TOKEN with `packages: write`.
       packages: write
-    if: ${{ github.repository_owner == 'cloudflare' }}
-    env:
-      # Used everywhere a version string is needed below. The push
-      # path takes it from the tag; the manual path takes it from
-      # the dispatch input.
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v6
         with:
-          # On workflow_dispatch we need to check out the named tag
-          # explicitly; the workflow itself runs from the default
-          # branch otherwise.
-          ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 1
 
       - uses: ./.github/actions/install
         with:
           registry-url: "https://registry.npmjs.org"
 
-      # computerd's tests spawn the binary, which dynamically links
-      # libfuse2 (fuse-native) and uses fuse3 helpers for the
-      # FUSE_MOUNT=shim userspace mount path. Without these the computerd test
-      # suite fails with `libfuse.so.2: cannot open shared object
-      # file`. Mirrors the install in ci.yml.
+      # @cloudflare/computer's prepublishOnly runs `npm run build && npm
+      # test`; its tests spawn the computerd binary, which dynamically links
+      # libfuse2 and uses fuse3 helpers for the FUSE_MOUNT=shim path. Without
+      # these the suite fails with `libfuse.so.2: cannot open shared object
+      # file`. Mirrors ci.yml.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libfuse2t64 fuse3
 
+      # Build every workspace's dist/ up front. changesets doesn't run the
+      # build itself (changesets/changesets#860), and package builds/tests
+      # resolve sibling dist/ directories.
       - name: Build all workspaces
         run: npm run build --workspaces --if-present
 
-      - name: Test
-        run: npm test --workspaces --if-present
-
-      - name: Build computerd binary
-        run: npm run build:bin --workspace @cloudflare/computerd
-
-      - name: Sync versions
-        run: node script/set-versions.mjs "${RELEASE_TAG}"
-
-      # Pick the npm dist-tag and decide whether this release moves
-      # the `:latest` pointers. A stable semver (no `-` suffix)
-      # publishes under `latest` and bumps the image's :latest tag;
-      # a prerelease publishes under its prerelease channel
-      # (`alpha`, `beta`, `rc`) and leaves :latest alone so a stale
-      # alpha can't displace a real release.
-      - name: Compute release metadata
-        id: release-meta
+      - name: Detect pending changesets
+        id: pending-changesets
+        shell: bash
         run: |
-          version="${RELEASE_TAG#v}"
-          if [[ "$version" == *-* ]]; then
-            suffix="${version#*-}"
-            npm_tag="${suffix%%.*}"
-            is_stable=false
+          shopt -s nullglob
+          files=()
+          for file in .changeset/*.md; do
+            if [[ "$file" == ".changeset/README.md" ]]; then
+              continue
+            fi
+            files+=("$file")
+          done
+          if [[ ${#files[@]} -gt 0 ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            npm_tag=latest
-            is_stable=true
+            echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "npm_tag=${npm_tag}" >> "$GITHUB_OUTPUT"
-          echo "is_stable=${is_stable}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish @cloudflare/computer
-        run: npm publish --workspace @cloudflare/computer --tag "${{ steps.release-meta.outputs.npm_tag }}" --provenance --access public
-
-      # Stage the SEA binary into the computerd-linux-x64 package's bin/
-      # directory — that package's Dockerfile copies from `bin/computerd`
-      # against a `scratch` base, producing a single-layer image
-      # whose only purpose is to ship the binary at a known path.
-      - name: Stage binary into @cloudflare/computer-computerd-linux-x64
-        run: |
-          mkdir -p packages/computer-computerd-linux-x64/bin
-          cp artifacts/computerd/computerd-linux-x64 packages/computer-computerd-linux-x64/bin/computerd
-          chmod +x packages/computer-computerd-linux-x64/bin/computerd
-
+      # The following Docker setup is only needed on the publish path. The
+      # Version Packages PR path should not need registry credentials.
       - name: Set up buildx
+        if: steps.pending-changesets.outputs.present == 'false'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: steps.pending-changesets.outputs.present == 'false'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Mint a short-lived credential and log docker in to the
-      # Cloudflare registry. The login script handles transient
-      # failures and surfaces permanent ones as ::error::.
       - name: Log in to registry.cloudflare.com
+        if: steps.pending-changesets.outputs.present == 'false'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -178,21 +109,11 @@ jobs:
           echo "$CF_REGISTRY_PASSWORD" | docker login registry.cloudflare.com \
             -u "$CF_REGISTRY_USERNAME" --password-stdin
 
-      # The version-specific tag always goes out to both registries.
-      # The `:latest` tag only moves on stable releases; empty
-      # trailing lines in the `tags` list are tolerated by
-      # build-push-action. One buildx invocation pushes to both
-      # registries in parallel, sharing the layer build.
-      - name: Build and push computerd-linux-x64 image
-        uses: docker/build-push-action@v6
+      - id: changesets
+        uses: changesets/action@v1
         with:
-          context: packages/computer-computerd-linux-x64
-          file: packages/computer-computerd-linux-x64/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/cloudflare/computer-computerd-linux-x64:${{ steps.release-meta.outputs.version }}
-            ${{ steps.release-meta.outputs.is_stable == 'true' && 'ghcr.io/cloudflare/computer-computerd-linux-x64:latest' || '' }}
-            registry.cloudflare.com/library/computer-computerd-linux-x64:${{ steps.release-meta.outputs.version }}
-            ${{ steps.release-meta.outputs.is_stable == 'true' && 'registry.cloudflare.com/library/computer-computerd-linux-x64:latest' || '' }}
-          provenance: false
+          version: node .github/changeset-version.mjs
+          publish: node .github/changeset-publish.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

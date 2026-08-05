@@ -119,6 +119,51 @@ Keep pull requests scoped to one logical change where you can. Do not include li
 
 External pull requests are closed automatically unless they come from an owner, member, collaborator, Dependabot, Renovate, or carry the `allow-pr` label. Add `allow-pr` before reopening an external pull request that should go through review.
 
+## Releases
+
+Releases run on [changesets](https://github.com/changesets/changesets).
+The short version: a change that should ship a new version of
+`@cloudflare/computer` needs a changeset alongside it. Everything after
+that is automated.
+
+When your change alters what a released package or image does, add a
+changeset:
+
+```bash
+npm run changeset
+```
+
+The prompt asks which bump the change warrants — patch, minor, or
+major — and for a one-line summary. It writes a small markdown file
+under `.changeset/`. Commit that file with your change. The summary
+becomes a line in the changelog, so write it for someone reading the
+release notes months from now, not for your reviewer today. A change
+that touches only tests, CI, docs, or an example needs no changeset.
+
+Once your pull request merges to `main`, the release workflow takes
+over in two steps:
+
+1. It gathers the pending changesets into a "Version Packages" pull
+   request that bumps package versions, rewrites changelogs, and updates
+   Dockerfile and documentation pins for the `computerd` image. Private
+   packages such as `@cloudflare/dofs`, `@cloudflare/computer-rpc`, and
+   `@cloudflare/computerd` are versioned and get changelogs, but are not
+   published to npm.
+2. Merging that pull request first builds and pushes the `computerd`
+   binary image to `ghcr.io` and `registry.cloudflare.com`, then publishes
+   public npm packages. Rerunning a failed publish is safe: existing image
+   tags are pushed again and existing npm versions are skipped.
+
+The package publishes under the `unreleased` dist-tag while it's
+pre-1.0, so `npm install @cloudflare/computer` does not yet pick up
+these releases. Promoting it to `latest` is a deliberate maintainer
+step: drop `publishConfig.tag` from `packages/computer/package.json`.
+
+For a prerelease channel (`alpha`, `beta`, `rc`), a maintainer runs
+`npx changeset pre enter <tag>` on `main` before the normal flow, and
+`npx changeset pre exit` to leave it. See the
+[changesets prerelease docs](https://github.com/changesets/changesets/blob/main/docs/prereleases.md).
+
 ## What not to commit
 
 - `node_modules/`, `dist/`, `artifacts/`. These are already ignored, but double-check `git status` before staging.

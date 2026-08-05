@@ -3,8 +3,8 @@
 # Pulls the computerd binary out of the public GHCR image. That image is
 # a single layer over `scratch` whose only contents are the SEA
 # binary at /usr/local/bin/computerd; we COPY it into a slim debian
-# runtime below. The :VERSION tag is rewritten in lockstep with
-# the rest of the monorepo by script/set-versions.mjs.
+# runtime below. The :VERSION tag is rewritten by the changesets
+# Version Packages PR through .github/changeset-version.mjs.
 #
 # computerd mounts a FUSE filesystem at MOUNT_POINT so exec'd commands
 # see the same VFS the RPC surface reads and writes. With

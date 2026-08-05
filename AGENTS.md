@@ -130,8 +130,6 @@ npm workspace package set on purpose — they're tooling, not shipped code.
 [`script/`](script/) holds maintainance scripts and operator-facing harnesses for `computerd` and the sync
 loop. Reach for these when you're chasing a behavior the unit tests don't cover.
 
-- `set-versions.mjs` syncs the version of every published package in
-  lockstep. Invoked from the release pipeline.
 - `shell` boots a debian-slim container with the linux `computerd` binary
   mounted under `/usr/local/bin`. The starting point for anything
   that needs a real FUSE mount.

@@ -94,8 +94,8 @@ package-specific status and usage notes.
   (`@cloudflare/computer`) — the top-level Computer package
   consumed by Durable Objects. Work in progress.
 - [`packages/computer-computerd-linux-x64`](packages/computer-computerd-linux-x64/README.md)
-  (`@cloudflare/computer-computerd-linux-x64`) — the prebuilt `computerd`
-  binary for linux-x64, distributed for use in container images.
+  — private Docker image context for the prebuilt `computerd` linux-x64
+  binary. The image, not an npm package, is the release artifact.
 
 ## Performance
 
