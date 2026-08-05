@@ -42,9 +42,9 @@ If you want to build on Cloudflare Computer, install
 package's README — it has the installation steps, the entrypoint map,
 and worked examples of the `fs` and `runtime` surfaces.
 
-To work on this repository itself, see
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, build, and test
-instructions.
+To contribute feedback, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Approved collaborators should follow [`COLLABORATORS.md`](COLLABORATORS.md)
+for setup, build, and test instructions.
 
 ## Examples
 
@@ -113,8 +113,14 @@ to reproduce them.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, formatting,
-testing, commit message, and pull request conventions.
+We accept bug reports, fix proposals, feature requests, and design
+proposals through issues and discussions. We do not accept unsolicited
+pull requests. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the public
+contribution paths.
+
+Approved collaborators should follow
+[`COLLABORATORS.md`](COLLABORATORS.md) for setup, formatting, testing,
+commit message, and pull request conventions.
 
 If you're working in this repo as an agent, start with
 [`AGENTS.md`](AGENTS.md) and the skills under

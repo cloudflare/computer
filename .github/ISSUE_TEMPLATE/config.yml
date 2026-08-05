@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Feature request or design discussion
+    url: https://github.com/cloudflare/computer/discussions/new?category=feature-request
+    about: Propose and discuss new features, improvements, and design changes.

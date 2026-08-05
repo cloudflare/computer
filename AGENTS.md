@@ -4,7 +4,8 @@
 
 - [`README.md`](README.md) — what this repo is and how the pieces
   fit together.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, checks, commit and
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — public contribution paths.
+- [`COLLABORATORS.md`](COLLABORATORS.md) — setup, checks, commit and
   pull request conventions. The canonical source for the day-to-day
   workflow.
 - [`docs/README.md`](docs/README.md) — design specification. Forward-
@@ -103,11 +104,11 @@ npm test --workspace @cloudflare/dofs -- src/foo.test.ts  # one file
 ```
 
 Full details, including typecheck and build commands, are in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+[`COLLABORATORS.md`](COLLABORATORS.md).
 
 ## Commits and pull requests
 
-Follow [`CONTRIBUTING.md`](CONTRIBUTING.md). The short version:
+Follow [`COLLABORATORS.md`](COLLABORATORS.md). The short version:
 
 - One logical change per commit.
 - Imperative subject prefixed with the scope (`dofs:`, `rpc:`, `computer:`,

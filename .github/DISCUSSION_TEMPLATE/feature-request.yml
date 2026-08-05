@@ -1,0 +1,28 @@
+labels: []
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      value: |
+        # Summary
+
+        A brief explanation of the proposal.
+
+        # Background and motivation
+
+        Include the context that explains why this proposal matters.
+        What problem are you trying to solve? Who is affected?
+
+        # Goals
+
+        List the outcomes this proposal should achieve.
+
+        - 
+
+        # Example
+
+        If the proposal changes an API or workflow, include a small example.
+        Otherwise, omit this section.
+    validations:
+      required: true

@@ -1,0 +1,52 @@
+name: Close unrequested pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  close:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Close pull requests from unapproved contributors
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const allowedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const allowedBots = new Set(['dependabot[bot]', 'renovate[bot]']);
+            const allowedLabels = new Set(['allow-pr']);
+
+            if (allowedAssociations.has(pullRequest.author_association)) {
+              return;
+            }
+
+            if (allowedBots.has(pullRequest.user.login)) {
+              return;
+            }
+
+            const labels = (pullRequest.labels || []).map((label) => label.name);
+            if (labels.some((label) => allowedLabels.has(label))) {
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const issue_number = pullRequest.number;
+            const body = [
+              'Thanks for your interest in Cloudflare Computer.',
+              '',
+              'This repository does not accept unsolicited pull requests. Please use one of the accepted contribution paths instead:',
+              '',
+              '- Bug reports, regressions, and fix proposals: https://github.com/cloudflare/computer/issues/new/choose',
+              '- Feature requests, enhancements, and design proposals: https://github.com/cloudflare/computer/discussions',
+              '',
+              'If a maintainer asked you to open this pull request, they can add the `allow-pr` label and reopen it.'
+            ].join('\n');
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            await github.rest.pulls.update({ owner, repo, pull_number: issue_number, state: 'closed' });
