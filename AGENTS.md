@@ -142,6 +142,10 @@ loop. Reach for these when you're chasing a behavior the unit tests don't cover.
 - `computerd-fuse-flush.mjs` end-to-end checks that the FUSE driver spills
   its in-memory write buffer into the backing VFS, so a capnweb-side
   `pullOnce` actually sees the bytes.
+- `container-mount-probe.sh` asks whether a container can give one command a
+  read-only view of the mount point, which decides whether `writable: false`
+  can be enforced preventively there rather than refused on write-back. Run
+  it inside a deployed container; local Docker is more permissive.
 - `fs-tests.sh` / `run-fs-tests.sh` run the filesystem conformance
   harness against the FUSE mount.
 - `fs-bench.sh` / `run-fs-bench.sh` benchmark common development

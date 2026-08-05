@@ -114,6 +114,16 @@ jobs:
           - name: container
             workspace: "@example/computer-container"
             path: examples/container
+          - name: agent
+            workspace: "@example/computer-agent"
+            path: examples/agent
+            # Checks in a hand-written env shape rather than the
+            # generated file, which also inlines the whole workerd type
+            # library. `wrangler types` refuses to overwrite a file it
+            # did not write, so the generate step is skipped below —
+            # which also means this example's typecheck runs against
+            # the file the repository actually ships.
+            worker_types: hand-written
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,6 +137,7 @@ jobs:
       - run: npm run build --workspaces --if-present
 
       - name: Generate worker types
+        if: matrix.worker_types != 'hand-written'
         run: npx wrangler types
         working-directory: ${{ matrix.path }}
 
@@ -136,8 +147,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck --workspace ${{ matrix.workspace }} --if-present
 
-      # Examples don't ship tests today; --if-present makes this a
-      # no-op until they do.
+      # Only some examples ship tests; --if-present keeps this a no-op
+      # for the ones that don't.
       - name: Test
         run: npm test --workspace ${{ matrix.workspace }} --if-present
 

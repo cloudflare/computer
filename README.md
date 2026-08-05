@@ -60,6 +60,10 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/worker-javascript`](examples/worker-javascript) — mirrors
   `worker-shell`, but `exec` evaluates an ECMAScript module in a Dynamic
   Worker instead of running a shell command.
+- [`examples/agent`](examples/agent) — an agent over all three backends
+  that asks a human before any command whose effect it cannot read off
+  the command's own text, and runs everything else without write
+  access.
 - [`examples/think`](examples/think) — a [`@cloudflare/think`](https://www.npmjs.com/package/@cloudflare/think)
   chat agent that uses the workspace as its working directory, reachable
   from a terminal.

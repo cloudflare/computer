@@ -1,0 +1,33 @@
+{
+  "name": "@example/computer-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example agent that runs shell commands through @cloudflare/computer, asking for approval only when a command's effect cannot be read off its text and running the rest without write access.",
+  "bin": {
+    "computer-agent-chat": "./cli/chat.mjs"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:local": "wrangler dev --config wrangler.local.jsonc",
+    "deploy": "wrangler deploy",
+    "chat": "node ./cli/chat.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@ai-sdk/tui": "^1.0.43",
+    "@cloudflare/computer": "*",
+    "ai": "^7.0.0",
+    "workers-ai-provider": "^4.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "just-bash": "^3.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.107.1"
+  }
+}

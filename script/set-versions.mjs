@@ -27,6 +27,7 @@ const PACKAGES = [
 // `git clone && wrangler dev` against any release tag pulls the
 // matching computerd image.
 const DOCKERFILES = [
+  "examples/agent/Dockerfile",
   "examples/container/Dockerfile",
   "examples/think/Dockerfile",
   "examples/think-compare-runtimes/Dockerfile.workspace",

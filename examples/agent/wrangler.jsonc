@@ -1,0 +1,59 @@
+{
+  // Example: an agent that runs shell commands in a Workspace and
+  // asks a human before any command whose effect it cannot read off
+  // the command's own text.
+  //
+  // Three backends are wired into the one Workspace so the same
+  // policy can be watched deciding across all three: a Dynamic
+  // Worker running just-bash, a Dynamic Worker evaluating ECMAScript
+  // modules, and a container running computerd over real coreutils.
+  // Which one enforces write access preventively and which one only
+  // reports afterwards differs between them, and the example is
+  // arranged so that difference is visible rather than hidden.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-agent-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  // Workers AI, for the model the agent runs on.
+  "ai": {
+    "binding": "AI"
+  },
+
+  // One Worker Loader serves both Dynamic Worker backends: the
+  // shell mints `workspace-shell:<id>`, the JavaScript backend its
+  // own id, so they do not collide.
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "containers": [
+    {
+      "class_name": "AgentExample",
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 5,
+      "rollout_active_grace_period": 0,
+      "rollout_step_percentage": [100]
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AgentExample",
+        "class_name": "AgentExample"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AgentExample"]
+    }
+  ]
+}

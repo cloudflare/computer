@@ -1,0 +1,48 @@
+{
+  // Same as wrangler.jsonc, minus the container backend.
+  //
+  // `wrangler dev` builds the container image before it will start, so
+  // the whole example — including the two backends that need no
+  // container at all — is unavailable on a machine that cannot build
+  // it. This config drops the container so the rest can be run and
+  // demonstrated:
+  //
+  //   npm run dev:local --workspace @example/computer-agent
+  //
+  // Keep the bindings below in step with wrangler.jsonc; this file
+  // differs from it only by the absence of the container.
+  //
+  // The `container-shell` backend is absent here, so asking the agent
+  // for it will fail. Everything else behaves as documented.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-agent-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  "ai": {
+    "binding": "AI"
+  },
+
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AgentExample",
+        "class_name": "AgentExample"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AgentExample"]
+    }
+  ]
+}

@@ -145,6 +145,12 @@ Ask before the command starts. Once it is running there is nowhere to
 suspend it that does not risk a partial result, and a write-by-write
 prompt would ask hundreds of times for one `rm -rf`.
 
+That puts the question at the tool layer rather than at the gate, since
+the tool layer is the only one of the two that runs before the action
+exists. [`examples/agent`](../examples/agent) wires it that way and is
+worth reading for how the two seams divide the work: the tool layer
+asks, and the gate — which cannot ask — narrows.
+
 ## The audit hook
 
 Notified after an action has been decided, and after it has run.
@@ -216,3 +222,7 @@ error, so the agent loop survives it.
   which are a fixed property of a path rather than a per-command
   decision. Both apply, and neither is a way around the other.
 - [09. Tool interface](./09_tool_interface.md) — the agent-facing tools.
+- [`examples/agent`](../examples/agent) — all three used together, with
+  an approval matcher whose only job is to ask fewer questions and a
+  test that runs every command it allows to check that none of them
+  write.
