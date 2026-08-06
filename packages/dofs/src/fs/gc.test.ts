@@ -1,7 +1,12 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
+import { applyChanges } from "../sync/apply.js";
+import { stageBlob } from "../sync/blobs.js";
 import { gc } from "./gc.js";
+import { readFile } from "./readFile.js";
 import { rm } from "./rm.js";
 import { withDB } from "./with-db.js";
 import { writeFile } from "./writeFile.js";
@@ -30,6 +35,44 @@ describe("gc", () => {
         manifestsFreed: 0,
       });
       expect(blobCount(db)).toBe(1);
+    });
+  });
+
+  it("does not free blobs a sync apply linked", async () => {
+    await withDB(async (db) => {
+      // A pull stages chunks before linking them, so vfs_chunks reachability
+      // must protect blobs independently of their staging timestamp.
+      const bytes = new TextEncoder().encode("staged content");
+      const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+      stageBlob(db, hash, bytes, 1000);
+
+      await applyChanges(
+        db,
+        [
+          {
+            kind: "file",
+            rev: 1,
+            path: "/staged.txt",
+            mode: 0o644,
+            mtime: 1000,
+            size: bytes.byteLength,
+            chunks: [{ hash, size: bytes.byteLength }],
+          },
+        ],
+        new Map(),
+        { source: "upstream" },
+      );
+      expect(blobCount(db)).toBe(1);
+
+      // A zero safety window and far-future clock make every blob stale;
+      // only references from vfs_chunks protect this blob and manifest.
+      expect(gc(db, { now: () => 999_999_999, safetyWindowMs: 0 })).toEqual({
+        blobsFreed: 0,
+        manifestsFreed: 0,
+      });
+      expect(blobCount(db)).toBe(1);
+      expect(blobBytesCount(db)).toBe(1);
+      expect(await readFile(db, "/staged.txt", "utf8")).toBe("staged content");
     });
   });
 

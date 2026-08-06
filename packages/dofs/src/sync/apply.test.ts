@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { link } from "../fs/link.js";
 import { mkdir } from "../fs/mkdir.js";
@@ -10,8 +10,9 @@ import { resolveInode } from "../fs/resolve.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
 import { withDB, withTwoDBs } from "../fs/with-db.js";
-import { writeFile, writeFileSync } from "../fs/writeFile.js";
+import { CHUNK_SIZE, writeFile, writeFileSync } from "../fs/writeFile.js";
 import { applyChanges, applyChangesSync } from "./apply.js";
+import { stageBlob } from "./blobs.js";
 import type { ChangeEntry } from "./changes.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchObjects } from "./fetch.js";
@@ -69,6 +70,74 @@ describe("applyChanges", () => {
         await applyChanges(b, entries, objects);
         expect(await readFile(b, "/a.txt", "utf8")).toBe("alpha");
         expect(await readFile(b, "/b.txt", "utf8")).toBe("beta");
+      },
+    );
+  });
+
+  it("links staged chunks without reading payload bytes", async () => {
+    const content = `${"a".repeat(CHUNK_SIZE)}b`;
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/large.txt", content, {}, () => 1);
+        const entries = await drain(coalesceChanges(a, 0));
+        const entry = entries.find((candidate) => candidate.path === "/large.txt");
+        if (entry?.kind !== "file") throw new Error("missing file entry");
+        expect(entry.chunks).toHaveLength(2);
+        return { entry, objects: await collectObjects(a, [entry]) };
+      },
+      async (b, { entry, objects }) => {
+        for (const chunk of entry.chunks) {
+          const bytes = objects.get(hex(chunk.hash));
+          if (bytes === undefined) throw new Error("missing chunk bytes");
+          stageBlob(b, chunk.hash, bytes, 2);
+        }
+
+        const all = vi.spyOn(b, "all");
+        try {
+          await applyChanges(b, [entry], new Map(), { source: "upstream" });
+          const payloadReads = all.mock.calls.filter(([query]) =>
+            query.includes("SELECT bytes FROM vfs_blob_bytes"),
+          );
+          expect(all.mock.calls.length).toBeGreaterThan(0);
+          expect(payloadReads).toHaveLength(0);
+        } finally {
+          all.mockRestore();
+        }
+        expect(await readFile(b, "/large.txt", "utf8")).toBe(content);
+      },
+    );
+  });
+
+  it("links staged chunks synchronously without reading payload bytes", async () => {
+    const content = `${"a".repeat(CHUNK_SIZE)}b`;
+    await withTwoDBs(
+      async (a) => {
+        await writeFile(a, "/large.txt", content, {}, () => 1);
+        const entries = await drain(coalesceChanges(a, 0));
+        const entry = entries.find((candidate) => candidate.path === "/large.txt");
+        if (entry?.kind !== "file") throw new Error("missing file entry");
+        expect(entry.chunks).toHaveLength(2);
+        return { entry, objects: await collectObjects(a, [entry]) };
+      },
+      async (b, { entry, objects }) => {
+        for (const chunk of entry.chunks) {
+          const bytes = objects.get(hex(chunk.hash));
+          if (bytes === undefined) throw new Error("missing chunk bytes");
+          stageBlob(b, chunk.hash, bytes, 2);
+        }
+
+        const all = vi.spyOn(b, "all");
+        try {
+          applyChangesSync(b, [entry], new Map(), { source: "upstream" });
+          const payloadReads = all.mock.calls.filter(([query]) =>
+            query.includes("SELECT bytes FROM vfs_blob_bytes"),
+          );
+          expect(all.mock.calls.length).toBeGreaterThan(0);
+          expect(payloadReads).toHaveLength(0);
+        } finally {
+          all.mockRestore();
+        }
+        expect(await readFile(b, "/large.txt", "utf8")).toBe(content);
       },
     );
   });

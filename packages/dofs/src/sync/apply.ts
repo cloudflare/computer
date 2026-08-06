@@ -5,10 +5,11 @@ import { invalidateResolveSubtree } from "../fs/resolveCache.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
 import { unlinkDirent } from "../fs/unlink.js";
-import { writeFile, writeFileSync } from "../fs/writeFile.js";
+import { linkStagedChunksSync } from "../fs/writeFile.js";
 import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
+import { stageBlob } from "./blobs.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
 
@@ -289,35 +290,7 @@ export async function applyChanges(
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
-    // file: assemble chunk bytes. First check the in-memory map
-    // (the streaming hand-off); fall back to vfs_blob_bytes (the
-    // staged-via-pushObjects path).
-    const parts: Uint8Array[] = [];
-    let total = 0;
-    for (const c of entry.chunks) {
-      const k = hex(c.hash);
-      let bytes = objects.get(k);
-      if (bytes === undefined) {
-        const row = db.one<{ bytes: Uint8Array }>(
-          "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-          c.hash,
-        );
-        bytes = row?.bytes;
-      }
-      if (bytes === undefined) {
-        throw new Error(`applyChanges: missing object ${k} for ${entry.path}`);
-      }
-      parts.push(bytes);
-      total += bytes.byteLength;
-    }
-    const buf = new Uint8Array(total);
-    let off = 0;
-    for (const p of parts) {
-      buf.set(p, off);
-      off += p.byteLength;
-    }
-    removeReplaceableFinalEntry(db, entry.path, "file");
-    await writeFile(db, entry.path, buf, { mode: entry.mode }, () => entry.mtime);
+    const total = applyFileEntry(db, entry, objects);
     applied++;
     bytesInBatch += total;
     pathsInBatch++;
@@ -408,32 +381,7 @@ export function applyChangesSync(
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
-    const parts: Uint8Array[] = [];
-    let total = 0;
-    for (const c of entry.chunks) {
-      const k = hex(c.hash);
-      let bytes = objects.get(k);
-      if (bytes === undefined) {
-        const row = db.one<{ bytes: Uint8Array }>(
-          "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-          c.hash,
-        );
-        bytes = row?.bytes;
-      }
-      if (bytes === undefined) {
-        throw new Error(`applyChanges: missing object ${k} for ${entry.path}`);
-      }
-      parts.push(bytes);
-      total += bytes.byteLength;
-    }
-    const buf = new Uint8Array(total);
-    let off = 0;
-    for (const p of parts) {
-      buf.set(p, off);
-      off += p.byteLength;
-    }
-    removeReplaceableFinalEntry(db, entry.path, "file");
-    writeFileSync(db, entry.path, buf, { mode: entry.mode }, () => entry.mtime);
+    const total = applyFileEntry(db, entry, objects);
     applied++;
     bytesInBatch += total;
     pathsInBatch++;
@@ -446,6 +394,58 @@ export function applyChangesSync(
   // extra push per apply keeps the cross-side invariant intact.
 
   return { applied, skipped };
+}
+
+// Link a file entry to staged chunks without loading payload bytes.
+// In-memory objects are staged individually before the link.
+
+// Validate declared sizes without loading payloads; chunk hashes remain
+// trusted here, matching stageBlob's existing contract.
+function applyFileEntry(
+  db: Database,
+  entry: Extract<ChangeEntry, { kind: "file" }>,
+  objects: Map<string, Uint8Array>,
+): number {
+  let total = 0;
+  for (const c of entry.chunks) {
+    total += c.size;
+    const staged = stagedBlobSize(db, c.hash);
+    if (staged === undefined) {
+      const k = hex(c.hash);
+      const bytes = objects.get(k);
+      if (bytes === undefined) {
+        throw new Error(`applyChanges: missing object ${k} for ${entry.path}`);
+      }
+      assertChunkSize(bytes.byteLength, c.size, c.hash, entry.path);
+      stageBlob(db, c.hash, bytes, entry.mtime);
+      continue;
+    }
+    assertChunkSize(staged, c.size, c.hash, entry.path);
+  }
+  removeReplaceableFinalEntry(db, entry.path, "file");
+  const { parts, path: canonical } = canonicalizePath(entry.path);
+  linkStagedChunksSync(db, canonical, parts, entry.chunks, { mode: entry.mode }, entry.mtime);
+  return total;
+}
+
+// Return a staged chunk's size without loading its payload bytes.
+// A short byte row is treated as an interrupted write.
+function stagedBlobSize(db: Database, hash: Uint8Array): number | undefined {
+  return db.one<{ size: number }>(
+    `SELECT b.size AS size
+       FROM vfs_blobs b
+       JOIN vfs_blob_bytes bb ON bb.hash = b.hash
+      WHERE b.hash = ?
+        AND length(bb.bytes) = b.size`,
+    hash,
+  )?.size;
+}
+
+function assertChunkSize(actual: number, declared: number, hash: Uint8Array, path: string): void {
+  if (actual === declared) return;
+  throw new Error(
+    `applyChanges: chunk ${hex(hash)} for ${path} declares ${declared} bytes but holds ${actual}`,
+  );
 }
 
 // Compare an entry against the local node graph. Returns true when

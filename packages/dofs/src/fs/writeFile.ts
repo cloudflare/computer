@@ -211,10 +211,20 @@ async function writeFileStreaming(
     flush(carry);
   }
 
-  // Wire up the inode against the staged blobs in one short
-  // transaction. From this point on the SQL is the same shape as the
-  // synchronous path — only the chunk-bytes step is skipped because
-  // stageBlob already landed them above.
+  linkStagedChunksSync(db, canonical, parts, chunkRefs, { ...options, mode }, mtime);
+}
+
+// Link a path to chunks already staged in content-addressed storage.
+// This keeps payload bytes out of memory during sync apply.
+export function linkStagedChunksSync(
+  db: Database,
+  canonical: string,
+  parts: string[],
+  chunkRefs: { hash: Uint8Array; size: number }[],
+  options: WriteFileOptions,
+  mtime: number,
+): void {
+  const mode = (options.mode ?? 0o644) & 0o7777;
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);
     const leafName = parts[parts.length - 1];
@@ -251,6 +261,8 @@ async function writeFileStreaming(
         ref.size,
       );
     }
+    // Referenced chunks cannot be collected, so last_seen only protects
+    // blobs during the staging window before this transaction.
     const manifestHash = buildManifest(db, chunkRefs, mtime);
     const rev = incrementRev(db);
     let totalSize = 0;
