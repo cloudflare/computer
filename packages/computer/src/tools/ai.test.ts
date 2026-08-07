@@ -6,6 +6,7 @@ import {
   createAITools,
   createDeleteTool,
   createEditTool,
+  createGrepTool,
   createReadTool,
   createWriteTool,
   type FileStore,
@@ -488,6 +489,28 @@ describe("createAITools filesystem tools", () => {
     releaseRead?.();
     await Promise.all([firstEdit, secondEdit]);
     expect(secondAcquired).toBe(true);
+  });
+
+  it("accepts grep continuation offsets produced after large result sets", () => {
+    const tool = createGrepTool({
+      workspace: {
+        fs: {
+          async find() {
+            return [];
+          },
+          async grep() {
+            return [];
+          },
+        },
+      },
+    });
+    const schema = tool.inputSchema as {
+      safeParse(input: unknown): { success: boolean };
+    };
+
+    expect(schema.safeParse({ path: "/workspace", query: "needle", offset: 10_200 }).success).toBe(
+      true,
+    );
   });
 
   it("finds, greps, and deletes files through a real Workspace", async () => {
