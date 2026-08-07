@@ -29,6 +29,16 @@ async function executeTool(tool: unknown, input: unknown): Promise<unknown> {
   return output;
 }
 
+async function modelOutput(tool: unknown, input: unknown, output: unknown): Promise<unknown> {
+  const toModelOutput = (
+    tool as {
+      toModelOutput?: (options: { input: unknown; output: unknown }) => unknown;
+    }
+  ).toModelOutput;
+  if (!toModelOutput) throw new Error("tool has no toModelOutput function");
+  return toModelOutput({ input, output });
+}
+
 async function collectTool(tool: unknown, input: unknown): Promise<unknown[]> {
   const execute = (tool as { execute?: (input: unknown, options: typeof toolOptions) => unknown })
     .execute;
@@ -890,6 +900,67 @@ describe("createAITools filesystem tools", () => {
 
     expect(first).toMatchObject({ nextOffset: 2, nextByteOffset: 6 });
     expect(offsets).toEqual([0, 6]);
+  });
+
+  it("returns image extensions as file-data model output", async () => {
+    const content = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const store = memoryStore({ size: content.length });
+    store.readAll = async () => content;
+    const tool = createReadTool({ store });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    expect(output).toMatchObject({
+      kind: "image",
+      mediaType: "image/png",
+      sizeBytes: content.length,
+    });
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Read /workspace/image.png (image/png, 4 bytes)." },
+        {
+          type: "file-data",
+          data: "iVBORw==",
+          mediaType: "image/png",
+          filename: "image.png",
+        },
+      ],
+    });
+  });
+
+  it("sniffs only a bounded prefix for files without a known extension", async () => {
+    const content = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, ...bytes("body")]);
+    const ranges: Array<{ offset: number; length: number | undefined }> = [];
+    const store = memoryStore({ size: content.length });
+    store.readChunks = async function* (_path, offset = 0, length) {
+      ranges.push({ offset, length });
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
+    const tool = createReadTool({ store });
+
+    await expect(executeTool(tool, { path: "/workspace/upload" })).resolves.toMatchObject({
+      kind: "file",
+      mediaType: "application/pdf",
+    });
+    expect(ranges).toEqual([{ offset: 0, length: 512 }]);
+  });
+
+  it("rejects oversized inline media before reading the whole file", async () => {
+    let readAll = false;
+    const store = memoryStore({ size: 10 });
+    store.readAll = async () => {
+      readAll = true;
+      return new Uint8Array(10);
+    };
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+      type: "error-text",
+      value:
+        "Read /workspace/image.png (image/png, 10 bytes), but it exceeds the 4-byte inline model output limit.",
+    });
+    expect(readAll).toBe(false);
   });
 });
 
