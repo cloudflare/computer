@@ -70,14 +70,17 @@ export function readdir(
 
   // Pending creates live outside SQLite until their final release. If there
   // are none, let SQLite apply the requested page directly. Otherwise fetch
-  // only enough committed rows to merge the requested page in name order.
-  const queryOffset = pending.length === 0 ? offset : 0;
+  // a narrow committed window around the requested page. Every pending entry
+  // can shift the committed offset by at most one position in either
+  // direction, so this window is sufficient without materializing the whole
+  // prefix before a deep page.
+  const queryOffset = pending.length === 0 ? offset : Math.max(0, offset - pending.length);
   const queryLimit =
     pending.length === 0
       ? limit
       : limit === undefined
         ? undefined
-        : Math.min(Number.MAX_SAFE_INTEGER, offset + limit);
+        : Math.min(Number.MAX_SAFE_INTEGER, limit + pending.length * 2);
   const rows = readRows(db, node.inode, queryLimit, queryOffset);
   const entries = rows.map((row) => toResult(db, canonical, row));
 
@@ -88,7 +91,8 @@ export function readdir(
     if (!seen.has(entry.name)) entries.push(entry);
   }
   entries.sort(compareByName);
-  return entries.slice(offset, limit === undefined ? undefined : offset + limit);
+  const localOffset = offset - queryOffset;
+  return entries.slice(localOffset, limit === undefined ? undefined : localOffset + limit);
 }
 
 function readRows(

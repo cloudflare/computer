@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { mkdir } from "./mkdir.js";
 import { readdir } from "./readdir.js";
@@ -93,6 +93,26 @@ describe("readdir", () => {
       });
 
       releaseWriteBufferSync(db, "/b", () => 12);
+    });
+  });
+
+  it("bounds committed rows fetched for a deep page with a pending file", async () => {
+    await withDB(async (db) => {
+      for (let index = 0; index < 30; index += 1) {
+        const name = `file-${index.toString().padStart(2, "0")}`;
+        await writeFile(db, `/${name}`, name, {}, () => 0);
+      }
+      openWriteBufferForCreateSync(db, "/pending", {}, () => 10);
+
+      const all = vi.spyOn(db, "all");
+      expect(readdir(db, "/", { limit: 2, offset: 25 }).map((entry) => entry.name)).toEqual([
+        "file-25",
+        "file-26",
+      ]);
+      const pageQuery = all.mock.calls.find(([query]) =>
+        String(query).includes("FROM vfs_dirents d"),
+      );
+      expect(pageQuery?.slice(-2)).toEqual([4, 24]);
     });
   });
 
