@@ -52,6 +52,7 @@ class ContainerBase extends withWorkspaceContainer(class extends DurableObject<E
   readonly backend = new CloudflareContainerBackend({
     container: () => this,
     workspace: { binding: "ContainerExample", id: this.ctx.id.toString() },
+    egress: { mode: "direct" },
   });
 }
 
