@@ -42,11 +42,7 @@ import { decodeRuntimeEvents } from "./runtime/wire.js";
 import { type ShellValue, sh } from "./sh.js";
 import type { ExecEncoding } from "./shell.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import {
-  createThinkCompatibility,
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-} from "./workspace.js";
+import { Workspace } from "./workspace.js";
 
 // The remote runtime handle stub: a result / stream / kill surface
 // carried across Workers RPC.
@@ -315,7 +311,7 @@ function withExecutionId(
 // `fs`, `git`, `artifacts`, and `assets` are the underlying surface's
 // members, passed through. The filesystem stub mirrors the local
 // filesystem, so it also serves as the common client type.
-export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
+export interface WorkspaceClient {
   readonly fs: WorkspaceFilesystem;
   readonly runtime: WorkspaceRuntimeClient;
   // biome-ignore lint/suspicious/noExplicitAny: git type differs local vs remote
@@ -332,7 +328,6 @@ function makeClient(
   surface: any,
   rehydrate: (handle: unknown, metadata?: RuntimeHandleMetadata) => unknown,
   dispose: () => void,
-  useThink: boolean,
 ): WorkspaceClient {
   const runtime = makeRuntimeClient(
     surface.runtime as UnderlyingRuntime,
@@ -354,7 +349,6 @@ function makeClient(
     },
     [Symbol.dispose]: dispose,
   };
-  if (useThink) Object.assign(client, createThinkCompatibility(client.fs));
   return client;
 }
 
@@ -383,7 +377,6 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       // Local handle is already a host ExecHandle — pass it through.
       (h) => h,
       () => {},
-      local.useThink,
     );
   }
   // Remote path: fetch the stub over RPC and delegate to it. Handle
@@ -397,7 +390,6 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       () => {
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },
-      await stub.useThink,
     );
   } catch (error) {
     (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();

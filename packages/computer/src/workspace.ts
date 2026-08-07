@@ -149,39 +149,7 @@ export interface WorkspaceOptions {
     binding: Artifacts;
     sessionId?: string;
   };
-
-  // Add Think's string-oriented WorkspaceLike filesystem methods
-  // directly to the Workspace instance. This is off by default so
-  // the primary Workspace API stays on the `workspace.fs` facade;
-  // enable it when assigning a Workspace to `Think.workspace`.
-  useThink?: boolean;
 }
-
-export interface ThinkFileInfo {
-  path: string;
-  name: string;
-  type: "file" | "directory";
-  mimeType: string;
-  size: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface ThinkWorkspaceCompatibility {
-  readFile(path: string): Promise<string | null>;
-  readFileBytes(path: string): Promise<Uint8Array | null>;
-  writeFile(path: string, content: string): Promise<void>;
-  readDir(dir: string, opts?: { limit?: number; offset?: number }): Promise<ThinkFileInfo[]>;
-  rm(path: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void>;
-  glob(pattern: string): Promise<ThinkFileInfo[]>;
-  mkdir(path: string, opts?: { recursive?: boolean }): Promise<void>;
-  stat(path: string): Promise<ThinkFileInfo | null>;
-}
-
-export type ThinkWorkspaceFilesystem = Pick<
-  WorkspaceFilesystem,
-  "find" | "mkdir" | "readFile" | "readdir" | "rm" | "stat" | "writeFile"
->;
 
 export type WorkspaceGitFactory = GitClientFactory;
 
@@ -222,7 +190,6 @@ export class Workspace {
   readonly #sessionId: string;
   readonly #gitFactory: WorkspaceGitFactory | undefined;
   readonly #defaultGitIdentity: GitIdentity | undefined;
-  readonly #useThink: boolean;
   readonly #assets: AssetsClient | undefined;
   readonly #artifacts: ArtifactClient;
   // Lazily-constructed git client, cached so the dynamic
@@ -258,15 +225,6 @@ export class Workspace {
   // and updates it. See docs/02 "Concurrent mutators".
   readonly #mutationTails = new Map<string, Promise<unknown>>();
 
-  declare readonly readFile?: ThinkWorkspaceCompatibility["readFile"];
-  declare readonly readFileBytes?: ThinkWorkspaceCompatibility["readFileBytes"];
-  declare readonly writeFile?: ThinkWorkspaceCompatibility["writeFile"];
-  declare readonly readDir?: ThinkWorkspaceCompatibility["readDir"];
-  declare readonly rm?: ThinkWorkspaceCompatibility["rm"];
-  declare readonly glob?: ThinkWorkspaceCompatibility["glob"];
-  declare readonly mkdir?: ThinkWorkspaceCompatibility["mkdir"];
-  declare readonly stat?: ThinkWorkspaceCompatibility["stat"];
-
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
     this.#retryScheduler = options.retryScheduler;
@@ -288,7 +246,6 @@ export class Workspace {
     this.#sessionId = options.sessionId ?? "";
     this.#gitFactory = options.git;
     this.#defaultGitIdentity = options.defaultGitIdentity;
-    this.#useThink = options.useThink ?? false;
     this.#artifacts = options.artifacts
       ? createArtifact(
           options.artifacts.binding,
@@ -332,10 +289,6 @@ export class Workspace {
       mounts: this.#mounts,
     });
     this.#assets = typeof options.assets === "function" ? options.assets(this) : options.assets;
-    if (this.#useThink) {
-      const think = createThinkCompatibility(this.fs);
-      Object.assign(this, think);
-    }
   }
 
   // Force every registered mount to materialize. Idempotent; safe to
@@ -378,10 +331,6 @@ export class Workspace {
   // also rejected (and surfaced via Workspace.pull's skipped[]).
   get fs(): WorkspaceFilesystem {
     return this.#fs;
-  }
-
-  get useThink(): boolean {
-    return this.#useThink;
   }
 
   // Identifier for this workspace / session, as passed to the
@@ -1060,162 +1009,4 @@ function createDisabledArtifactsClient(): ArtifactClient {
       return runArtifactsCLI(this, input);
     },
   } as ArtifactClient;
-}
-
-export function createThinkCompatibility(
-  fs: ThinkWorkspaceFilesystem,
-): ThinkWorkspaceCompatibility {
-  return {
-    async readFile(path) {
-      try {
-        return await fs.readFile(path, "utf8");
-      } catch (err) {
-        if (isEnoent(err)) return null;
-        throw err;
-      }
-    },
-    async readFileBytes(path) {
-      try {
-        return await drainBytes(await fs.readFile(path));
-      } catch (err) {
-        if (isEnoent(err)) return null;
-        throw err;
-      }
-    },
-    async writeFile(path, content) {
-      await fs.writeFile(path, content);
-    },
-    async readDir(dir, opts) {
-      const entries = await fs.readdir(dir);
-      const offset = opts?.offset ?? 0;
-      const limit = opts?.limit ?? entries.length;
-      return entries.slice(offset, offset + limit).map((entry) =>
-        toThinkFileInfo({
-          path: joinPath(dir, entry.name),
-          name: entry.name,
-          size: 0,
-          mtime: 0,
-          isDirectory: entry.isDirectory,
-          isFile: entry.isFile,
-        }),
-      );
-    },
-    async rm(path, opts) {
-      await fs.rm(path, opts);
-    },
-    async glob(pattern) {
-      const { directory, relativePattern } = splitGlobPattern(pattern);
-      const matches = await fs.find(directory, relativePattern);
-      return matches.map((match) =>
-        toThinkFileInfo({
-          path: match.path,
-          name: basename(match.path),
-          size: 0,
-          mtime: 0,
-          isDirectory: match.type === "dir",
-          isFile: match.type === "file",
-        }),
-      );
-    },
-    async mkdir(path, opts) {
-      await fs.mkdir(path, opts);
-    },
-    async stat(path) {
-      try {
-        const stat = await fs.stat(path);
-        return toThinkFileInfo({ ...stat, path, name: basename(path) });
-      } catch (err) {
-        if (isEnoent(err)) return null;
-        throw err;
-      }
-    },
-  };
-}
-
-async function drainBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const parts: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      parts.push(value);
-      total += value.byteLength;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (parts.length === 1) return parts[0];
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.byteLength;
-  }
-  return out;
-}
-
-function toThinkFileInfo(input: {
-  path: string;
-  name: string;
-  size: number;
-  mtime: number;
-  isDirectory: boolean;
-  isFile: boolean;
-}): ThinkFileInfo {
-  const type = input.isDirectory ? "directory" : "file";
-  return {
-    path: input.path,
-    name: input.name,
-    type,
-    mimeType: type === "directory" ? "inode/directory" : "application/octet-stream",
-    size: input.size,
-    createdAt: input.mtime,
-    updatedAt: input.mtime,
-  };
-}
-
-function splitGlobPattern(pattern: string): { directory: string; relativePattern?: string } {
-  const normalized = pattern.startsWith("/") ? pattern : `/workspace/${pattern}`;
-  const wildcard = firstWildcardIndex(normalized);
-  if (wildcard === -1) {
-    return { directory: dirname(normalized), relativePattern: basename(normalized) };
-  }
-  const slash = normalized.lastIndexOf("/", wildcard);
-  const directory = slash <= 0 ? "/" : normalized.slice(0, slash);
-  const relativePattern = normalized.slice(slash + 1);
-  return { directory, relativePattern };
-}
-
-function firstWildcardIndex(pattern: string): number {
-  const star = pattern.indexOf("*");
-  const question = pattern.indexOf("?");
-  if (star === -1) return question;
-  if (question === -1) return star;
-  return Math.min(star, question);
-}
-
-function joinPath(dir: string, name: string): string {
-  return dir === "/" ? `/${name}` : `${dir}/${name}`;
-}
-
-function dirname(path: string): string {
-  const index = path.lastIndexOf("/");
-  if (index <= 0) return "/";
-  return path.slice(0, index);
-}
-
-function basename(path: string): string {
-  const trimmed = path.endsWith("/") && path !== "/" ? path.slice(0, -1) : path;
-  const index = trimmed.lastIndexOf("/");
-  return index === -1 ? trimmed : trimmed.slice(index + 1);
-}
-
-function isEnoent(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: string; message?: string };
-  if (e.code === "ENOENT") return true;
-  return typeof e.message === "string" && /ENOENT|no such/i.test(e.message);
 }
