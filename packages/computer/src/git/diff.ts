@@ -175,13 +175,13 @@ async function collectDiffEntries(opts: DiffWithDeps): Promise<DiffEntry[]> {
     if (workdirStatus === 1) continue;
     if (!pathFilter(filepath)) continue;
 
-    const oldText =
-      headStatus === 1
-        ? await readBlobAsText(opts.git, opts.fs, dir, head, filepath, opts.cache)
-        : "";
-    const newText =
-      workdirStatus === 2 ? await readWorkdirAsText(opts.readFile, dir, filepath) : "";
-    if (oldText === newText) continue;
+    const oldExists = headStatus === 1;
+    const newExists = workdirStatus > 0;
+    const oldText = oldExists
+      ? await readBlobAsText(opts.git, opts.fs, dir, head, filepath, opts.cache)
+      : "";
+    const newText = newExists ? await readWorkdirAsText(opts.readFile, dir, filepath) : "";
+    if (oldExists === newExists && oldText === newText) continue;
     // headStatus 0 -> not in the base -> added. workdirStatus 0
     // -> gone from the working tree -> deleted. Otherwise it's a
     // content change.
@@ -222,7 +222,7 @@ async function collectRefToRef(
       ? await readBlobAsText(opts.git, opts.fs, dir, fromOid, filepath, opts.cache)
       : "";
     const b = inTo ? await readBlobAsText(opts.git, opts.fs, dir, toOid, filepath, opts.cache) : "";
-    if (a === b) continue;
+    if (inFrom === inTo && a === b) continue;
     const status: DiffEntry["status"] = !inFrom ? "A" : !inTo ? "D" : "M";
     entries.push({ path: filepath, status, oldText: a, newText: b });
   }

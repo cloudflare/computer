@@ -319,12 +319,28 @@ describe("diffSummaryWith (real isomorphic-git + memfs)", () => {
     expect(entries).toEqual([{ path: "b.txt", status: "A", insertions: 2, deletions: 0 }]);
   });
 
+  it("reports an added empty file", async () => {
+    await init();
+    await commitFile("a.txt", "kept\n", "init");
+    await memfs.promises.writeFile(`${DIR}/empty.txt`, "");
+    const entries = await summary();
+    expect(entries).toEqual([{ path: "empty.txt", status: "A", insertions: 0, deletions: 0 }]);
+  });
+
   it("reports a deleted file", async () => {
     await init();
     await commitFile("gone.txt", "a\nb\n", "init");
     await memfs.promises.unlink(`${DIR}/gone.txt`);
     const entries = await summary();
     expect(entries).toEqual([{ path: "gone.txt", status: "D", insertions: 0, deletions: 2 }]);
+  });
+
+  it("reports a deleted empty file", async () => {
+    await init();
+    await commitFile("empty.txt", "", "init");
+    await memfs.promises.unlink(`${DIR}/empty.txt`);
+    const entries = await summary();
+    expect(entries).toEqual([{ path: "empty.txt", status: "D", insertions: 0, deletions: 0 }]);
   });
 
   it("reports added and deleted files between two commits", async () => {
@@ -335,6 +351,26 @@ describe("diffSummaryWith (real isomorphic-git + memfs)", () => {
     const second = await git.commit({ fs: memfs, dir: DIR, message: "add", author: AUTHOR });
     const entries = await summary({ ref: first, to: second });
     expect(entries).toEqual([{ path: "new.txt", status: "A", insertions: 1, deletions: 0 }]);
+  });
+
+  it("reports empty file presence changes between two commits", async () => {
+    await init();
+    const first = await commitFile("removed.txt", "", "v1");
+    await memfs.promises.unlink(`${DIR}/removed.txt`);
+    await memfs.promises.writeFile(`${DIR}/added.txt`, "");
+    await git.remove({ fs: memfs, dir: DIR, filepath: "removed.txt" });
+    await git.add({ fs: memfs, dir: DIR, filepath: "added.txt" });
+    const second = await git.commit({
+      fs: memfs,
+      dir: DIR,
+      message: "empty changes",
+      author: AUTHOR,
+    });
+    const entries = await summary({ ref: first, to: second });
+    expect(entries).toEqual([
+      { path: "added.txt", status: "A", insertions: 0, deletions: 0 },
+      { path: "removed.txt", status: "D", insertions: 0, deletions: 0 },
+    ]);
   });
 
   it("counts content lines that begin with diff header prefixes", async () => {
