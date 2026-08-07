@@ -6,30 +6,27 @@
 //   POST /prompt ──► RecipeAgent (Think + Computer)
 //                      │ fetch_url openstove.org           (host)
 //                      │ write     /workspace/card.md      (host)
-//                      │ bash      pandoc card.md -o card.pdf (container)
+//                      │ exec      pandoc card.md -o card.pdf (container)
 //                      ▼
 //                    R2 ──► signed link, good for a day
 //
 // The write and the pandoc run touch one filesystem: the host writes
 // through the Workspace, the container sees the same bytes on its
 // FUSE mount, and the PDF the container produces is readable back on
-// the host once the shell command finishes.
+// the host once the exec command finishes.
 //
 // README.md walks through building this file from an empty directory.
 
-import {
-  type DurableObjectStorageLike,
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-  WorkspaceProxy,
-} from "@cloudflare/computer";
+import { type DurableObjectStorageLike, Workspace, WorkspaceProxy } from "@cloudflare/computer";
 import { createAssets } from "@cloudflare/computer/assets";
 import {
   CloudflareContainerBackend,
   withWorkspaceContainer,
 } from "@cloudflare/computer/backends/container";
+import { createAITools } from "@cloudflare/computer/tools";
 import { Think } from "@cloudflare/think";
 import { getAgentByName } from "agents";
+import type { ToolSet } from "ai";
 
 // Carries container egress back to the durable object. The runtime
 // binds it by name, so it has to appear in the worker's module graph.
@@ -38,6 +35,7 @@ export { WorkspaceProxy };
 class RecipeBase extends Think<Env> {}
 
 export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
+  override workspaceBash = false;
   override maxSteps = 10;
   override fetchTools = {
     allowlist: ["https://openstove.org/**"],
@@ -46,15 +44,17 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   };
 
   readonly #backend = new CloudflareContainerBackend({
+    id: "container",
     container: () => this,
     workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
   });
 
+  // The installed Think release still types workspace as its legacy
+  // root-level filesystem shape. Runtime tools use workspace.fs.
   override workspace = new Workspace({
     storage: this.ctx.storage as unknown as DurableObjectStorageLike,
     backends: [this.#backend],
-    useThink: true,
-  }) as Workspace & ThinkWorkspaceCompatibility;
+  }) as Workspace & RecipeBase["workspace"];
 
   override getModel() {
     return "@cf/zai-org/glm-5.2";
@@ -73,9 +73,24 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
       "   and numbered Method steps. End with the source page URL spelled out,",
       "   not a markdown link: the card gets printed, and a link prints as its",
       "   text alone.",
-      "3. Convert it with `bash`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
+      "3. Convert it with `exec`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
       "4. Reply with one sentence naming the recipe you picked.",
     ].join("\n");
+  }
+
+  override getTools(): ToolSet {
+    return createAITools({
+      workspace: this.workspace,
+      shell: {
+        defaultBackend: "container",
+        backends: {
+          container: {
+            description:
+              "Cloudflare Container with full Linux userland, including pandoc and typst.",
+          },
+        },
+      },
+    });
   }
 
   override async fetch(request: Request): Promise<Response> {

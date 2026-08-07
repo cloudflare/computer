@@ -461,9 +461,9 @@ await ws.ready();
 const stub = ws.stub();  // crosses the Workers-RPC boundary
 ```
 
-When assigning a workspace to a Think agent's `workspace`, pass
-`useThink: true` so Think's compatibility methods are added alongside
-`workspace.fs` and `workspace.runtime`.
+Agent frameworks should consume files through `workspace.fs`. Use
+`createAITools` from `@cloudflare/computer/tools` for the standard AI
+SDK file tools.
 
 ### Durable pending-sync retries
 
