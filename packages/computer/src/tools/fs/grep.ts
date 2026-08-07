@@ -52,7 +52,7 @@ const inputSchema = z.object({
   caseSensitive: z.boolean().optional().describe("Match letter case. Defaults to false."),
   contextLines: z.number().int().min(0).max(10).optional(),
   limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
-  offset: z.number().int().min(0).max(10_000).optional(),
+  offset: z.number().int().min(0).optional(),
 });
 
 export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof inputSchema>> {
