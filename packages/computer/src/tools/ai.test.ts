@@ -179,33 +179,26 @@ function memoryStore(options: {
 }
 
 describe("WorkspaceFileStore", () => {
-  it("slices byte ranges while reading chunks from Workspace.fs", async () => {
-    const workspace = makeWorkspace();
-    await workspace.fs.mkdir("/workspace", { recursive: true });
-    await workspace.fs.writeFile("/workspace/range.txt", bytes("abcdefghij"));
-    const store = new WorkspaceFileStore(workspace);
-
-    await expect(
-      drainChunks(store.readChunks("/workspace/range.txt", 2, 5)).then(decode),
-    ).resolves.toBe("cdefg");
-  });
-
-  it("cancels read streams when a byte range stops before EOF", async () => {
-    let cancelled = false;
+  it("uses readRange without streaming skipped bytes from Workspace.fs", async () => {
+    const calls: Array<{ offset: number; length: number }> = [];
+    const content = bytes("abcdefghij");
     const workspace = {
       fs: {
         async stat() {
-          return { size: 10, mtime: 1, mode: 0o100644, isFile: true, isDirectory: false };
+          return {
+            size: content.length,
+            mtime: 1,
+            mode: 0o100644,
+            isFile: true,
+            isDirectory: false,
+          };
         },
-        async readFile() {
-          return new ReadableStream<Uint8Array>({
-            start(controller) {
-              controller.enqueue(bytes("abcdefghij"));
-            },
-            cancel() {
-              cancelled = true;
-            },
-          });
+        async readRange(_path: string, offset: number, length: number) {
+          calls.push({ offset, length });
+          return content.slice(offset, offset + length);
+        },
+        async readFile(): Promise<ReadableStream<Uint8Array>> {
+          throw new Error("readFile must not be called for ranged reads");
         },
         async writeFile() {},
         async mkdir() {},
@@ -220,7 +213,48 @@ describe("WorkspaceFileStore", () => {
     await expect(
       drainChunks(store.readChunks("/workspace/range.txt", 2, 5)).then(decode),
     ).resolves.toBe("cdefg");
-    expect(cancelled).toBe(true);
+    expect(calls).toEqual([{ offset: 2, length: 5 }]);
+  });
+
+  it("splits unbounded reads into fixed-size ranges", async () => {
+    const calls: Array<{ offset: number; length: number }> = [];
+    const content = new Uint8Array(150_000).fill(7);
+    const workspace = {
+      fs: {
+        async stat() {
+          return {
+            size: content.length,
+            mtime: 1,
+            mode: 0o100644,
+            isFile: true,
+            isDirectory: false,
+          };
+        },
+        async readRange(_path: string, offset: number, length: number) {
+          calls.push({ offset, length });
+          return content.slice(offset, offset + length);
+        },
+        async readFile(): Promise<ReadableStream<Uint8Array>> {
+          throw new Error("readFile must not be called for ranged reads");
+        },
+        async writeFile() {},
+        async mkdir() {},
+        async rm() {},
+        async readdir() {
+          return [];
+        },
+      },
+    };
+    const store = new WorkspaceFileStore(workspace);
+
+    await expect(drainChunks(store.readChunks("/workspace/large.bin"))).resolves.toHaveLength(
+      content.length,
+    );
+    expect(calls).toEqual([
+      { offset: 0, length: 65_536 },
+      { offset: 65_536, length: 65_536 },
+      { offset: 131_072, length: 18_928 },
+    ]);
   });
 });
 
@@ -255,7 +289,17 @@ describe("createAITools filesystem tools", () => {
     );
     await expect(executeTool(tools.ls, { path: "/workspace/notes" })).resolves.toEqual({
       path: "/workspace/notes",
-      entries: [{ name: "todo.txt", isFile: true, isDirectory: false }],
+      count: 1,
+      entries: [
+        {
+          name: "todo.txt",
+          size: 8,
+          mtime: 1_700_000_000_000,
+          isFile: true,
+          isDirectory: false,
+          isSymbolicLink: false,
+        },
+      ],
     });
     await expect(
       executeTool(tools.read, { path: "/workspace/notes/todo.txt", limit: 1 }),
@@ -277,6 +321,32 @@ describe("createAITools filesystem tools", () => {
     await expect(workspace.fs.readFile("/workspace/notes/todo.txt", "utf8")).resolves.toBe(
       "one\nthree\n",
     );
+  });
+
+  it("paginates ls results and reports a continuation offset", async () => {
+    const workspace = makeWorkspace();
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    for (const name of ["a", "b", "c"]) {
+      await workspace.fs.writeFile(`/workspace/${name}`, name);
+    }
+    const tools = createAITools({ workspace });
+
+    await expect(
+      executeTool(tools.ls, { path: "/workspace", limit: 2, offset: 0 }),
+    ).resolves.toMatchObject({
+      count: 2,
+      entries: [
+        { name: "a", size: 1 },
+        { name: "b", size: 1 },
+      ],
+      nextOffset: 2,
+    });
+    await expect(
+      executeTool(tools.ls, { path: "/workspace", limit: 2, offset: 2 }),
+    ).resolves.toMatchObject({
+      count: 1,
+      entries: [{ name: "c", size: 1 }],
+    });
   });
 
   it("preserves file mode when write overwrites an existing file", async () => {
