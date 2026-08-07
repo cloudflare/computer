@@ -10,6 +10,7 @@ import {
   restoreLineEndings,
   stripBom,
 } from "./edit-diff.js";
+import { withFileLock } from "./locks.js";
 import type { FileStore } from "./types.js";
 
 export interface EditToolOptions {
@@ -71,25 +72,6 @@ function prepareArguments(input: unknown): { path: string; edits: Edit[] } {
   return args as { path: string; edits: Edit[] };
 }
 
-// Per-path mutation queue. Edit and write should never race on the same file:
-// fuzzy matching reads the entire buffer, applies a textual change, then
-// writes — a concurrent edit landing between read and write would silently
-// clobber the first edit. Module-scoped so all tools sharing a store also
-// share the queue.
-const fileLocks = new Map<string, Promise<unknown>>();
-async function withFileLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
-  const prev = fileLocks.get(path) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  fileLocks.set(
-    path,
-    next.finally(() => {
-      // Clear only if we're still the tail of the chain.
-      if (fileLocks.get(path) === next) fileLocks.delete(path);
-    }),
-  );
-  return next;
-}
-
 export function createEditTool(options: EditToolOptions): Tool<z.infer<typeof inputSchema>> {
   const { store } = options;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
@@ -105,7 +87,7 @@ export function createEditTool(options: EditToolOptions): Tool<z.infer<typeof in
         return { error: "edits must contain at least one replacement." };
       }
 
-      return withFileLock(path, async () => {
+      return withFileLock(store, path, async () => {
         try {
           const stat = await store.stat(path);
           if (!stat) return { error: `File not found: ${path}` };

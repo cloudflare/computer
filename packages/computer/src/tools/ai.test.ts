@@ -4,7 +4,9 @@ import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runt
 import { Workspace } from "../workspace.js";
 import {
   createAITools,
+  createDeleteTool,
   createEditTool,
+  createGrepTool,
   createReadTool,
   createWriteTool,
   type FileStore,
@@ -259,10 +261,18 @@ describe("WorkspaceFileStore", () => {
 });
 
 describe("createAITools filesystem tools", () => {
-  it("creates fixed read, write, edit, and ls tools by default", () => {
+  it("creates the complete filesystem tool set by default", () => {
     const tools = createAITools({ workspace: makeWorkspace() });
 
-    expect(Object.keys(tools).sort()).toEqual(["edit", "ls", "read", "write"]);
+    expect(Object.keys(tools).sort()).toEqual([
+      "delete",
+      "edit",
+      "find",
+      "grep",
+      "ls",
+      "read",
+      "write",
+    ]);
   });
 
   it("returns only read-only tools when readonly is true", () => {
@@ -275,7 +285,7 @@ describe("createAITools filesystem tools", () => {
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["ls", "read"]);
+    expect(Object.keys(tools).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
   it("reads, lists, writes, and edits workspace files", async () => {
@@ -347,6 +357,195 @@ describe("createAITools filesystem tools", () => {
       count: 1,
       entries: [{ name: "c", size: 1 }],
     });
+  });
+
+  it("serializes write behind an edit on the same store and path", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const writes: string[] = [];
+    const store: FileStore = {
+      async stat() {
+        return { size: 3, mtime: 1 };
+      },
+      async readAll() {
+        markReadStarted?.();
+        await readGate;
+        return bytes("old");
+      },
+      async *readChunks() {
+        yield bytes("old");
+      },
+      async write(_path, content) {
+        writes.push(decode(content));
+      },
+    };
+    const edit = executeTool(createEditTool({ store }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+
+    const write = executeTool(createWriteTool({ store }), {
+      path: "/workspace/file.txt",
+      content: "written",
+    });
+    await Promise.resolve();
+    const writesBeforeEditFinished = [...writes];
+
+    releaseRead?.();
+    await Promise.all([edit, write]);
+    expect(writesBeforeEditFinished).toEqual([]);
+    expect(writes).toEqual(["edited", "written"]);
+  });
+
+  it("does not share edit locks between stores", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    let markSecondStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const secondStarted = new Promise<void>((resolve) => {
+      markSecondStarted = resolve;
+    });
+    const first = memoryStore({ content: "old" });
+    first.readAll = async () => {
+      markFirstStarted?.();
+      await readGate;
+      return bytes("old");
+    };
+    const second = memoryStore({ content: "old" });
+    second.readAll = async () => {
+      markSecondStarted?.();
+      return bytes("old");
+    };
+
+    const firstEdit = executeTool(createEditTool({ store: first }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "first" }],
+    });
+    await firstStarted;
+    const secondEdit = executeTool(createEditTool({ store: second }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "second" }],
+    });
+
+    const secondAcquired = await Promise.race([
+      secondStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0)),
+    ]);
+
+    releaseRead?.();
+    await Promise.all([firstEdit, secondEdit]);
+    expect(secondAcquired).toBe(true);
+  });
+
+  it("accepts grep continuation offsets produced after large result sets", () => {
+    const tool = createGrepTool({
+      workspace: {
+        fs: {
+          async find() {
+            return [];
+          },
+          async grep() {
+            return [];
+          },
+        },
+      },
+    });
+    const schema = tool.inputSchema as {
+      safeParse(input: unknown): { success: boolean };
+    };
+
+    expect(schema.safeParse({ path: "/workspace", query: "needle", offset: 10_200 }).success).toBe(
+      true,
+    );
+  });
+
+  it("finds, greps, and deletes files through a real Workspace", async () => {
+    const workspace = makeWorkspace();
+    const tools = createAITools({ workspace });
+    await workspace.fs.mkdir("/workspace/src", { recursive: true });
+    await workspace.fs.writeFile("/workspace/src/a.ts", "const value = 'TODO';\n");
+    await workspace.fs.writeFile("/workspace/src/b.md", "todo in docs\n");
+
+    await expect(
+      executeTool(tools.find, { path: "/workspace", pattern: "**/*.ts", limit: 20 }),
+    ).resolves.toEqual({
+      path: "/workspace",
+      pattern: "**/*.ts",
+      count: 1,
+      entries: [{ path: "/workspace/src/a.ts", type: "file" }],
+    });
+    await expect(
+      executeTool(tools.grep, {
+        path: "/workspace",
+        query: "todo",
+        include: "**/*.ts",
+        limit: 20,
+      }),
+    ).resolves.toMatchObject({
+      count: 1,
+      matches: [{ path: "/workspace/src/a.ts", line: 1, text: "const value = 'TODO';" }],
+    });
+    await expect(executeTool(tools.delete, { path: "/workspace/src/a.ts" })).resolves.toEqual({
+      deleted: "/workspace/src/a.ts",
+    });
+    await expect(workspace.fs.stat("/workspace/src/a.ts")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("serializes delete behind an edit on the same store and path", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const events: string[] = [];
+    const store = memoryStore({
+      content: "old",
+      onWrite() {
+        events.push("edit");
+      },
+    });
+    store.readAll = async () => {
+      markReadStarted?.();
+      await readGate;
+      return bytes("old");
+    };
+    const deleteStore = Object.assign(store, {
+      async remove() {
+        events.push("delete");
+      },
+    });
+    const edit = executeTool(createEditTool({ store }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+    const deletion = executeTool(createDeleteTool({ store: deleteStore }), {
+      path: "/workspace/file.txt",
+    });
+    await Promise.resolve();
+    const eventsBeforeEditFinished = [...events];
+
+    releaseRead?.();
+    await Promise.all([edit, deletion]);
+    expect(eventsBeforeEditFinished).toEqual([]);
+    expect(events).toEqual(["edit", "delete"]);
   });
 
   it("preserves file mode when write overwrites an existing file", async () => {
