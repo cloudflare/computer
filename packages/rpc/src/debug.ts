@@ -1,8 +1,8 @@
 // Stub leak tracking. Gated on the CAPNWEB_TRACK_STUBS env flag so
 // production paths pay nothing. Every RpcTarget we own opts in by
-// calling `trackStub(this)` in its constructor; capnweb invokes
-// `[Symbol.dispose]` when the last remote stub for that target is
-// disposed, which is where we decrement.
+// calling `trackStub(this)` in its constructor; capnweb may invoke
+// `[Symbol.dispose]` more than once for a shared target as sessions
+// end, so repeated disposals for the same object are ignored.
 //
 // The point is *measurement*, not enforcement: snapshot() returns the
 // per-class live count so a soak script can assert "after a quiet
@@ -35,15 +35,19 @@ export function enableStubTracking(): void {
 }
 
 const counters = new Map<string, number>();
+const trackedTargets = new WeakSet<object>();
 
 export function trackStub(target: object): void {
   if (!trackingEnabled) return;
+  if (trackedTargets.has(target)) return;
+  trackedTargets.add(target);
   const name = target.constructor?.name ?? "anonymous";
   counters.set(name, (counters.get(name) ?? 0) + 1);
 }
 
 export function untrackStub(target: object): void {
   if (!trackingEnabled) return;
+  if (!trackedTargets.delete(target)) return;
   const name = target.constructor?.name ?? "anonymous";
   const current = counters.get(name) ?? 0;
   if (current <= 1) counters.delete(name);
