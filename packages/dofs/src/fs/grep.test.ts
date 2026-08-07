@@ -43,11 +43,62 @@ describe("grep", () => {
     });
   });
 
-  it("respects ignoreCase", async () => {
+  it("respects explicit case options and the ignoreCase alias", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "todo\nTODO\nTodo\n", {}, () => 0);
       expect((await grep(db, "TODO", "/a.txt", { ignoreCase: true })).length).toBe(3);
+      expect((await grep(db, "TODO", "/a.txt", { caseSensitive: false })).length).toBe(3);
+      expect((await grep(db, "TODO", "/a.txt", { caseSensitive: true })).length).toBe(1);
       expect((await grep(db, "TODO", "/a.txt")).length).toBe(1);
+    });
+  });
+
+  it("supports regular expressions and fixed strings", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "task 12\ntask \\d+\ntask xx\n", {}, () => 0);
+      expect(
+        (await grep(db, String.raw`task \d+`, "/a.txt", { fixedString: false })).map(
+          (match) => match.line,
+        ),
+      ).toEqual([1]);
+      expect(
+        (await grep(db, String.raw`task \d+`, "/a.txt", { fixedString: true })).map(
+          (match) => match.line,
+        ),
+      ).toEqual([2]);
+      await expect(grep(db, "[", "/a.txt", { fixedString: false })).rejects.toThrow(
+        "Invalid regular expression",
+      );
+    });
+  });
+
+  it("returns numbered context around matches", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "one\ntwo\nTODO\nfour\nfive\n", {}, () => 0);
+      expect(await grep(db, "TODO", "/a.txt", { contextLines: 1 })).toEqual([
+        {
+          path: "/a.txt",
+          line: 3,
+          text: "TODO",
+          context: [
+            { line: 2, text: "two", isMatch: false },
+            { line: 3, text: "TODO", isMatch: true },
+            { line: 4, text: "four", isMatch: false },
+          ],
+        },
+      ]);
+    });
+  });
+
+  it("applies offset and limit across files in path and line order", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "TODO a1\nTODO a2\n", {}, () => 0);
+      await writeFile(db, "/b.txt", "TODO b1\nTODO b2\n", {}, () => 0);
+      expect(
+        (await grep(db, "TODO", "/", { offset: 1, limit: 2 })).map(
+          (match) => `${match.path}:${match.line}`,
+        ),
+      ).toEqual(["/a.txt:2", "/b.txt:1"]);
     });
   });
 
