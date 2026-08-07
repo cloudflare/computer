@@ -827,9 +827,69 @@ describe("createAITools filesystem tools", () => {
     const tool = createReadTool({ store: memoryStore({ content: "abcdef\n" }), maxBytes: 3 });
 
     await expect(executeTool(tool, { path: "/workspace/file.txt" })).resolves.toEqual({
-      error:
-        "Line 1 exceeds the 3-byte read cap. Increase the cap or read a narrower range with offset/limit.",
+      error: "Line 1 exceeds the 3-byte read cap. Increase the cap or configure lineTruncation.",
     });
+  });
+
+  it("optionally includes line numbers", async () => {
+    const store = memoryStore({ content: "one\ntwo\n" });
+    const plain = createReadTool({ store });
+    const numbered = createReadTool({ store, includeLineNumbers: true });
+
+    await expect(executeTool(plain, { path: "/workspace/file.txt" })).resolves.toMatchObject({
+      content: "one\ntwo",
+    });
+    await expect(executeTool(numbered, { path: "/workspace/file.txt" })).resolves.toMatchObject({
+      content: "1\tone\n2\ttwo",
+    });
+  });
+
+  it("truncates long lines by characters or UTF-8 bytes", async () => {
+    const store = memoryStore({ content: "a😀bc\n" });
+    const byChars = createReadTool({ store, lineTruncation: { chars: 2 } });
+    const byBytes = createReadTool({ store, lineTruncation: { bytes: 5 } });
+
+    await expect(executeTool(byChars, { path: "/workspace/file.txt" })).resolves.toMatchObject({
+      content: "a😀... (truncated)",
+    });
+    await expect(executeTool(byBytes, { path: "/workspace/file.txt" })).resolves.toMatchObject({
+      content: "a😀... (truncated)",
+    });
+  });
+
+  it("continues from the first unread byte on the next page", async () => {
+    const content = bytes("first\nsecond\nthird\n");
+    const offsets: number[] = [];
+    const store: FileStore = {
+      async stat() {
+        return { size: content.length, mtime: 1 };
+      },
+      async *readChunks(_path, byteOffset = 0, byteLength) {
+        offsets.push(byteOffset);
+        yield content.slice(
+          byteOffset,
+          byteLength === undefined ? undefined : byteOffset + byteLength,
+        );
+      },
+      async readAll() {
+        return content;
+      },
+      async write() {},
+    };
+    const tool = createReadTool({ store });
+    const first = (await executeTool(tool, {
+      path: "/workspace/file.txt",
+      limit: 1,
+    })) as { nextOffset: number; nextByteOffset: number };
+    await executeTool(tool, {
+      path: "/workspace/file.txt",
+      offset: first.nextOffset,
+      byteOffset: first.nextByteOffset,
+      limit: 1,
+    });
+
+    expect(first).toMatchObject({ nextOffset: 2, nextByteOffset: 6 });
+    expect(offsets).toEqual([0, 6]);
   });
 });
 
