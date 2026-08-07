@@ -35,7 +35,10 @@ ENTRYPOINT ["/usr/local/bin/computerd"]
 ```
 
 Pin the image version explicitly. `latest` is fine for experimentation but
-can bite when wire-protocol changes land.
+can bite when wire-protocol changes land. The `Main computerd image` workflow
+also publishes `ghcr.io/cloudflare/computer-computerd-linux-x64:main` after
+successful CI on `main`; use that mutable tag only for tests and examples
+that intentionally track the branch.
 
 ## Configuration
 

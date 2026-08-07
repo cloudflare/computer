@@ -1,0 +1,111 @@
+# Build the computerd image from the commit that passed CI on main. The
+# mutable :main tag gives tests and examples that follow main a fresh binary
+# without waiting for the changesets release flow.
+
+name: Main computerd image
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  # If main advances while an image is building, only the newest commit
+  # should be allowed to publish the mutable :main tag.
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    if: >-
+      ${{
+        github.repository == 'cloudflare/computer' &&
+        (
+          (
+            github.event_name == 'workflow_run' &&
+            github.event.workflow_run.conclusion == 'success' &&
+            github.event.workflow_run.event == 'push' &&
+            github.event.workflow_run.head_branch == 'main' &&
+            github.event.workflow_run.head_repository.full_name == github.repository
+          ) ||
+          (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # workflow_run checks out the default branch by default. Build the
+          # exact commit whose CI run succeeded instead.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 1
+
+      - uses: ./.github/actions/install
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libfuse2t64 fuse3
+
+      # build-bin generates the SEA blob with the active Node executable and
+      # injects it into the pinned Node 22.22.3 target binary.
+      - name: Use the target Node version for the binary build
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.3
+
+      # computerd's binary build bundles the sibling packages, so their dist/
+      # directories must exist before build:bin runs.
+      - name: Build all workspaces
+        run: npm run build --workspaces --if-present
+
+      - name: Build the computerd binary
+        run: npm run build:bin --workspace @cloudflare/computerd
+
+      - name: Stage the computerd binary
+        run: |
+          mkdir -p packages/computer-computerd-linux-x64/bin
+          cp artifacts/computerd/computerd-linux-x64 \
+            packages/computer-computerd-linux-x64/bin/computerd
+          chmod 755 packages/computer-computerd-linux-x64/bin/computerd
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A slower CI run for an older main commit can finish after a newer
+      # one. Do not let that run replace the newer image.
+      - name: Verify main has not advanced
+        id: main-sha
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+            echo "main advanced while this image was building; skipping the push"
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push the main image
+        if: steps.main-sha.outputs.current == 'true'
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --push \
+            --provenance=false \
+            --tag ghcr.io/cloudflare/computer-computerd-linux-x64:main \
+            --file packages/computer-computerd-linux-x64/Dockerfile \
+            packages/computer-computerd-linux-x64
