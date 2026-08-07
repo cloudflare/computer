@@ -18,3 +18,9 @@ packages/computer/src/backends/worker-shell/generated/
 # blanket dist/ rule above; listed here for discoverability.
 packages/computer-computerd-*/bin/computerd
 packages/computer/dist/bin/computerd-*
+
+# Local secrets for `wrangler dev`. Examples document putting
+# Cloudflare API credentials in .dev.vars files that wrangler reads
+# from the example directory; they must never be committed.
+.dev.vars
+**/.dev.vars
