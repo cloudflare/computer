@@ -16,9 +16,7 @@ alternative). The interface served is `WorkspaceRPC`, defined in
   against the computerd's `/ws` endpoint, with `/api` available
   as an HTTP-batch alternative (single POST per call) for callers that
   can't hold a socket. Default port is `45678`; it will become a
-  build-time variable so hosts can pin a non-default port. The stale
-  `/rpc` comment at `packages/rpc/src/client.ts:18` is scheduled for
-  cleanup.
+  build-time variable so hosts can pin a non-default port.
 - **Framing.** capnweb text frames. Binary frames are unsupported.
   **(planned)** the server will fail the session loudly on the first
   binary message; today the behaviour is unspecified.
@@ -108,9 +106,7 @@ interface SyncRPC {
 
   // Container → DO direction of object transfer. Throws
   // EUNKNOWN_HASH if any hash is unknown — callers must dedupe
-  // and probe first. (planned: today the code returns an empty
-  // payload for missing hashes; EUNKNOWN_HASH via
-  // createWorkspaceError is the deferred fix.)
+  // and probe first.
   fetchObjects(hashes: Uint8Array[]):
     ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>;
 
@@ -199,12 +195,12 @@ interface ShellRPC {
 type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }
   | { id: string; seq: number; name: "stderr"; value: Uint8Array }
-  | { id: string; seq: number; name: "exit";   value: number; result?: unknown };
+  | { id: string; seq: number; name: "exit";   code: number; result?: unknown };
 ```
 
-The `exit` frame carries the process exit code and, for a callable
+The `exit` frame carries the process exit code on `code` and, for a callable
 backend that ran to a zero exit, the structured return value on
-`result`. The value and the exit code settle together, so a single
+`result`. The result and the exit code settle together, so a single
 terminal frame carries both rather than splitting them across two
 frames. Command backends never set `result`.
 
@@ -313,14 +309,13 @@ type WireErrorCode =
 type WireError = {
   code:    WireErrorCode;
   message: string;
-  detail?: unknown;
 };
 ```
 
 | Code | Meaning |
 | --- | --- |
 | `ENOENT` | Path does not exist on the receiver (covers ignored paths, which are invisible to `Workspace.fs`), or `getExec` / `disposeExec` referenced an unknown id. |
-| `EUNKNOWN_HASH` | **(reserved, planned)** `fetchObjects` or `pushObjects` referenced a hash the receiver has no record of. Reserved in `WireErrorCode` but not raised today; `pushObjects` should throw it via `createWorkspaceError`. |
+| `EUNKNOWN_HASH` | `fetchObjects` or `pushObjects` referenced a hash the receiver has no record of; raised via `createWorkspaceError`. |
 | `EEXEC_BUSY` | `exec` was called with an `id` that's already in use by a live run. |
 | `ELOG_TRUNCATED` | `getExec` resume point is older than the retained log. |
 | `ESHUTDOWN` | **(reserved)** Server is shutting down; reconnect after the next boot. Not raised today. |
