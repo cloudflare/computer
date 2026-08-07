@@ -116,6 +116,30 @@ describe("readdir", () => {
     });
   });
 
+  it("keeps UTF-8 filename pages stable when a pending file commits", async () => {
+    await withDB(async (db) => {
+      const bmpName = "\uE000";
+      const astralName = "\u{10000}";
+      await writeFile(db, `/${bmpName}`, "committed", {}, () => 0);
+      openWriteBufferForCreateSync(db, `/${astralName}`, {}, () => 1);
+
+      expect(readdir(db, "/", { limit: 1, offset: 0 }).map((entry) => entry.name)).toEqual([
+        bmpName,
+      ]);
+      expect(readdir(db, "/", { limit: 1, offset: 1 }).map((entry) => entry.name)).toEqual([
+        astralName,
+      ]);
+
+      releaseWriteBufferSync(db, `/${astralName}`, () => 2);
+      expect(readdir(db, "/", { limit: 1, offset: 0 }).map((entry) => entry.name)).toEqual([
+        bmpName,
+      ]);
+      expect(readdir(db, "/", { limit: 1, offset: 1 }).map((entry) => entry.name)).toEqual([
+        astralName,
+      ]);
+    });
+  });
+
   it("rejects invalid offsets", async () => {
     await withDB((db) => {
       expect(() => readdir(db, "/", { offset: -1 })).toThrowError(

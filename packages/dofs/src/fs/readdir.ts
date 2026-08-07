@@ -147,6 +147,14 @@ function toResult(db: Database, parentPath: string, row: DirentRow): WorkspaceDi
   };
 }
 
+const filenameEncoder = new TextEncoder();
+
 function compareByName(a: WorkspaceDirentResult, b: WorkspaceDirentResult): number {
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  const left = filenameEncoder.encode(a.name);
+  const right = filenameEncoder.encode(b.name);
+  const length = Math.min(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return left.byteLength - right.byteLength;
 }
