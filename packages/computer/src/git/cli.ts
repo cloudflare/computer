@@ -826,12 +826,12 @@ function formatLogFull(commits: CommitView[]): string {
 }
 
 function formatGitTimestamp(timestamp: number, timezoneOffset: number): string {
-  // isomorphic-git stores timezoneOffset as minutes east of UTC,
-  // but git's wire format is `git log`'s output uses minutes
-  // west (the inverse). The two are negatives of each other;
-  // pick the convention real git users see.
-  const d = new Date(timestamp * 1000);
+  // isomorphic-git stores timezoneOffset using Date.getTimezoneOffset's
+  // minutes-west-of-UTC convention. Git log renders the inverse offset
+  // (`+0530` for timezoneOffset -330) and shifts the wall clock into
+  // that zone before appending it.
   const offsetMinutes = -timezoneOffset;
+  const d = new Date((timestamp + offsetMinutes * 60) * 1000);
   const sign = offsetMinutes >= 0 ? "+" : "-";
   const abs = Math.abs(offsetMinutes);
   const hh = String(Math.floor(abs / 60)).padStart(2, "0");

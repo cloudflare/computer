@@ -994,7 +994,7 @@ describe("runGitCli — commit argv parsing", () => {
 });
 
 describe("runGitCli — log argv parsing", () => {
-  const sample = (oid: string, msg: string): CommitView => ({
+  const sample = (oid: string, msg: string, timezoneOffset = 0): CommitView => ({
     oid,
     message: msg,
     tree: "",
@@ -1003,13 +1003,13 @@ describe("runGitCli — log argv parsing", () => {
       name: "A",
       email: "a@x",
       timestamp: 1_700_000_000,
-      timezoneOffset: 0,
+      timezoneOffset,
     },
     committer: {
       name: "A",
       email: "a@x",
       timestamp: 1_700_000_000,
-      timezoneOffset: 0,
+      timezoneOffset,
     },
   });
 
@@ -1036,8 +1036,21 @@ describe("runGitCli — log argv parsing", () => {
     expect(res.exitCode).toBe(0);
     expect(res.stdout).toContain(`commit ${"a".repeat(40)}`);
     expect(res.stdout).toContain("Author: A <a@x>");
+    expect(res.stdout).toContain("Date:   2023-11-14 22:13:20 +0000");
     expect(res.stdout).toContain("    hello");
     expect(res.stdout).toContain("    world");
+  });
+
+  it("shifts full-form Date into the author's timezone", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        log: () => [sample("a".repeat(40), "hello", -330)],
+      },
+    );
+    const res = await runGitCli(client, { argv: ["log"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("Date:   2023-11-15 03:43:20 +0530");
   });
 
   it("-n forwards as depth", async () => {
