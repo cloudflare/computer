@@ -18,15 +18,13 @@
  *     a CloudflareContainerBackend (`"container"`) for full Linux
  *     userland through computerd. This mirrors examples/container while
  *     keeping the chat surface unchanged.
- *   - `useThink: true` adds the string-based compatibility surface
- *     Think expects; the cast promotes it from optional to present.
- *     `workspaceBash` is off because `@cloudflare/computer/tools`
- *     provides the `exec` tool.
+ *   - Think consumes `workspace.fs` directly, while
+ *     `@cloudflare/computer/tools` provides the complete file and
+ *     `exec` tool set.
  */
 
 import {
   type DurableObjectStorageLike,
-  type ThinkWorkspaceCompatibility,
   Workspace,
   WorkspaceProxy,
   WorkspaceServiceProxy,
@@ -88,6 +86,8 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
    * shell. Passing `{ backend: "container" }` routes a call to computerd in
    * the Cloudflare Container.
    */
+  // The installed Think release still types workspace as its legacy
+  // root-level filesystem shape. Runtime tools use workspace.fs.
   override workspace = new Workspace({
     storage: this.ctx.storage as unknown as DurableObjectStorageLike,
     backends: [
@@ -99,8 +99,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
       }),
       this.#containerBackend,
     ],
-    useThink: true,
-  }) as Workspace & ThinkWorkspaceCompatibility;
+  }) as Workspace & AssistantBase["workspace"];
 
   /** Forwarded by WorkspaceProxy for computerd's outbound /ws upgrade. */
   override async fetch(request: Request): Promise<Response> {
