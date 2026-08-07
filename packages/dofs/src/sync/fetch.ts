@@ -32,10 +32,10 @@ function toHex(bytes: Uint8Array): string {
   return out;
 }
 
-// Largest hash list bound into one IN (…) probe. Comfortably under
-// SQLite's bound-parameter limit, so a large probe splits into a few
-// index-backed lookups instead of one oversized statement.
-const PROBE_BATCH = 256;
+// Largest hash list bound into one IN (…) probe. Durable Object
+// SQLite accepts at most 100 bound parameters per query, so keep
+// each probe within that platform limit.
+const PROBE_BATCH = 100;
 
 // Subset-test the input hashes against complete local objects. A
 // metadata row alone is not enough: the payload must exist and its

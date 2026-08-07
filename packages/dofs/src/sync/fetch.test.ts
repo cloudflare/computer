@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { withDB } from "../fs/with-db.js";
-import { createFileSync, writeFile, writeRangeSync } from "../fs/writeFile.js";
+import { createFileSync, chunksOf, writeFile, writeRangeSync } from "../fs/writeFile.js";
+import { stageBlob } from "./blobs.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchChanges, fetchObjects, hasObjects } from "./fetch.js";
 
@@ -126,6 +127,20 @@ describe("hasObjects", () => {
   it("returns an empty array when no hashes are passed", async () => {
     await withDB(async (db) => {
       expect(hasObjects(db, [])).toEqual([]);
+    });
+  });
+
+  it("probes more objects than Durable Object SQLite accepts in one query", async () => {
+    await withDB(async (db) => {
+      const hashes: Uint8Array[] = [];
+      for (let i = 0; i < 101; i++) {
+        const bytes = new TextEncoder().encode(`object-${i}`);
+        const hash = chunksOf(bytes)[0].hash;
+        stageBlob(db, hash, bytes, i);
+        hashes.push(hash);
+      }
+
+      expect(hasObjects(db, hashes)).toEqual(hashes);
     });
   });
 
