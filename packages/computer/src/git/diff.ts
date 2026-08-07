@@ -181,6 +181,7 @@ async function collectDiffEntries(opts: DiffWithDeps): Promise<DiffEntry[]> {
         : "";
     const newText =
       workdirStatus === 2 ? await readWorkdirAsText(opts.readFile, dir, filepath) : "";
+    if (oldText === newText) continue;
     // headStatus 0 -> not in the base -> added. workdirStatus 0
     // -> gone from the working tree -> deleted. Otherwise it's a
     // content change.

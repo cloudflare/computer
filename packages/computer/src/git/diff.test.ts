@@ -36,6 +36,12 @@ async function commitFile(path: string, content: string, message: string): Promi
   return git.commit({ fs: memfs, dir: DIR, message, author: AUTHOR });
 }
 
+async function stageThenRemove(path: string): Promise<void> {
+  await memfs.promises.writeFile(`${DIR}/${path}`, "hello\n");
+  await git.add({ fs: memfs, dir: DIR, filepath: path });
+  await memfs.promises.unlink(`${DIR}/${path}`);
+}
+
 async function runDiff(opts: { ref?: string } = {}): Promise<string> {
   return diffWith({
     git: isomorphicGit,
@@ -54,6 +60,14 @@ describe("diffWith (real isomorphic-git + memfs)", () => {
 
   it("returns '' when HEAD cannot be resolved (no commits yet)", async () => {
     await init();
+    expect(await runDiff()).toBe("");
+  });
+
+  it("returns '' for a staged addition removed from the working tree", async () => {
+    await init();
+    await commitFile("base.txt", "base\n", "init");
+    await stageThenRemove("added.txt");
+
     expect(await runDiff()).toBe("");
   });
 
@@ -273,6 +287,14 @@ describe("diffSummaryWith (real isomorphic-git + memfs)", () => {
       ...opts,
     });
   }
+
+  it("returns an empty list for a staged addition removed from the working tree", async () => {
+    await init();
+    await commitFile("base.txt", "base\n", "init");
+    await stageThenRemove("added.txt");
+
+    expect(await summary()).toEqual([]);
+  });
 
   it("returns an empty list for a clean working tree", async () => {
     await init();
