@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { mkdir } from "./mkdir.js";
 import { readdir } from "./readdir.js";
 import { withDB } from "./with-db.js";
+import {
+  openWriteBufferForCreateSync,
+  releaseWriteBufferSync,
+  writeRangeSync,
+} from "./writeFile.js";
 import { writeFile } from "./writeFile.js";
 
 describe("readdir", () => {
@@ -22,6 +27,8 @@ describe("readdir", () => {
       expect(entries).toContainEqual({
         name: "file.txt",
         parentPath: "/",
+        size: 1,
+        mtime: 0,
         isFile: true,
         isDirectory: false,
         isSymbolicLink: false,
@@ -29,6 +36,8 @@ describe("readdir", () => {
       expect(entries).toContainEqual({
         name: "sub",
         parentPath: "/",
+        size: 0,
+        mtime: 0,
         isFile: false,
         isDirectory: true,
         isSymbolicLink: false,
@@ -45,10 +54,53 @@ describe("readdir", () => {
     });
   });
 
-  it("limits committed entries before materializing the result", async () => {
+  it("paginates committed entries by stable name order", async () => {
     await withDB(async (db) => {
-      for (const name of ["a", "b", "c"]) await writeFile(db, `/${name}`, "", {}, () => 0);
-      expect(readdir(db, "/", { limit: 2 }).map((entry) => entry.name)).toEqual(["a", "b"]);
+      for (const name of ["a", "b", "c", "d"]) {
+        await writeFile(db, `/${name}`, name, {}, () => 0);
+      }
+      expect(readdir(db, "/", { limit: 2, offset: 0 }).map((entry) => entry.name)).toEqual([
+        "a",
+        "b",
+      ]);
+      expect(readdir(db, "/", { limit: 2, offset: 2 }).map((entry) => entry.name)).toEqual([
+        "c",
+        "d",
+      ]);
+    });
+  });
+
+  it("merges pending files before applying pagination", async () => {
+    await withDB(async (db) => {
+      for (const name of ["a", "c", "e"]) {
+        await writeFile(db, `/${name}`, name, {}, () => 0);
+      }
+      openWriteBufferForCreateSync(db, "/b", {}, () => 10);
+      writeRangeSync(db, "/b", new TextEncoder().encode("pending"), 0, {}, () => 11);
+
+      expect(readdir(db, "/", { limit: 2, offset: 0 }).map((entry) => entry.name)).toEqual([
+        "a",
+        "b",
+      ]);
+      expect(readdir(db, "/", { limit: 2, offset: 2 }).map((entry) => entry.name)).toEqual([
+        "c",
+        "e",
+      ]);
+      expect(readdir(db, "/", { limit: 2, offset: 0 })[1]).toMatchObject({
+        name: "b",
+        size: 7,
+        mtime: 10,
+      });
+
+      releaseWriteBufferSync(db, "/b", () => 12);
+    });
+  });
+
+  it("rejects invalid offsets", async () => {
+    await withDB((db) => {
+      expect(() => readdir(db, "/", { offset: -1 })).toThrowError(
+        "readdir offset must be a non-negative safe integer",
+      );
     });
   });
 
@@ -62,6 +114,8 @@ describe("readdir", () => {
         {
           name: "leaf.txt",
           parentPath: "/a/b",
+          size: 1,
+          mtime: 0,
           isFile: true,
           isDirectory: false,
           isSymbolicLink: false,
