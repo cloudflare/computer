@@ -315,7 +315,7 @@ type WireError = {
 | Code | Meaning |
 | --- | --- |
 | `ENOENT` | Path does not exist on the receiver (covers ignored paths, which are invisible to `Workspace.fs`), or `getExec` / `disposeExec` referenced an unknown id. |
-| `EUNKNOWN_HASH` | `fetchObjects` or `pushObjects` referenced a hash the receiver has no record of; raised via `createWorkspaceError`. |
+| `EUNKNOWN_HASH` | `fetchObjects` referenced a hash the receiver has no record of; raised via `createWorkspaceError`. |
 | `EEXEC_BUSY` | `exec` was called with an `id` that's already in use by a live run. |
 | `ELOG_TRUNCATED` | `getExec` resume point is older than the retained log. |
 | `ESHUTDOWN` | **(reserved)** Server is shutting down; reconnect after the next boot. Not raised today. |
