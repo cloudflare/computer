@@ -6,9 +6,9 @@ import { withDB } from "./with-db.js";
 import {
   openWriteBufferForCreateSync,
   releaseWriteBufferSync,
+  writeFile,
   writeRangeSync,
 } from "./writeFile.js";
-import { writeFile } from "./writeFile.js";
 
 describe("readdir", () => {
   it("returns an empty array for an empty directory", async () => {
