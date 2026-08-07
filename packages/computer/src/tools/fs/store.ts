@@ -6,12 +6,13 @@
  * class. This adapter is the bridge from that contract to the public
  * `workspace.fs` surface.
  *
- * Reads go through `fs.readFile(path)` as a `ReadableStream<Uint8Array>`
- * and are stitched together either chunk-by-chunk (`readChunks`) or all
- * at once (`readAll`).
+ * Bounded reads go through `fs.readRange`; whole-file reads used by edit
+ * and multimodal output still drain `fs.readFile(path)`.
  */
 
 import type { FileStat, FileStore } from "./types.js";
+
+const RANGE_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Structural subset of `@cloudflare/computer.Workspace` the tools
@@ -27,10 +28,23 @@ export interface WorkspaceLike {
       isDirectory: boolean;
     }>;
     readFile(path: string): Promise<ReadableStream<Uint8Array>>;
+    readRange(path: string, offset: number, length: number): Promise<Uint8Array>;
     writeFile(path: string, content: Uint8Array, options?: { mode?: number }): Promise<void>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
-    readdir(path: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>>;
+    readdir(
+      path: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<
+      Array<{
+        name: string;
+        size: number;
+        mtime: number;
+        isFile: boolean;
+        isDirectory: boolean;
+        isSymbolicLink: boolean;
+      }>
+    >;
   };
 }
 
@@ -64,55 +78,26 @@ export class WorkspaceFileStore implements FileStore {
   }
 
   async *readChunks(path: string, byteOffset = 0, byteLength?: number): AsyncIterable<Uint8Array> {
-    if (byteOffset < 0) throw new Error("readChunks: byteOffset must be non-negative");
-    if (byteLength !== undefined && byteLength < 0) {
-      throw new Error("readChunks: byteLength must be non-negative");
+    if (!Number.isSafeInteger(byteOffset) || byteOffset < 0) {
+      throw new Error("readChunks: byteOffset must be a non-negative safe integer");
+    }
+    if (byteLength !== undefined && (!Number.isSafeInteger(byteLength) || byteLength < 0)) {
+      throw new Error("readChunks: byteLength must be a non-negative safe integer");
     }
     if (byteLength === 0) return;
 
-    const stream = await this.ws.fs.readFile(path);
-    const reader = stream.getReader();
-    let skipped = 0;
-    let yielded = 0;
-    let completed = false;
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          completed = true;
-          break;
-        }
-        if (!value || value.byteLength === 0) continue;
-
-        let start = 0;
-        if (skipped < byteOffset) {
-          const needed = byteOffset - skipped;
-          if (value.byteLength <= needed) {
-            skipped += value.byteLength;
-            continue;
-          }
-          start = needed;
-          skipped = byteOffset;
-        }
-
-        let end = value.byteLength;
-        if (byteLength !== undefined) {
-          const remaining = byteLength - yielded;
-          if (remaining <= 0) break;
-          end = Math.min(end, start + remaining);
-        }
-
-        if (end > start) {
-          const chunk = value.slice(start, end);
-          yielded += chunk.byteLength;
-          yield chunk;
-        }
-
-        if (byteLength !== undefined && yielded >= byteLength) break;
-      }
-    } finally {
-      if (!completed) await reader.cancel();
-      reader.releaseLock();
+    const stat = await this.ws.fs.stat(path);
+    let remaining = Math.max(0, stat.size - byteOffset);
+    if (byteLength !== undefined) remaining = Math.min(remaining, byteLength);
+    let offset = byteOffset;
+    while (remaining > 0) {
+      const requested = Math.min(remaining, RANGE_CHUNK_BYTES);
+      const chunk = await this.ws.fs.readRange(path, offset, requested);
+      if (chunk.byteLength === 0) return;
+      yield chunk;
+      offset += chunk.byteLength;
+      remaining -= chunk.byteLength;
+      if (chunk.byteLength < requested) return;
     }
   }
 }
