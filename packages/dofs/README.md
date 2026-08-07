@@ -45,6 +45,11 @@ export class WorkspaceDO extends DurableObject {
 - `incrementRev()` shared sequencer in place. FS writes stamp the returned value into `vfs_nodes.rev` and pass it to `sync/changes.ts` for tombstones.
 - `SQLiteTestStorage` (backed by `node:sqlite`) available from `./testing` for unit tests against a real in-memory database; `RecordingStorage` available from the package root for workerd-safe schema assertions.
 - All filesystem primitives listed above are implemented and unit-tested.
+  `readdir` returns size and modification time and supports stable
+  `limit`/`offset` pages, including files held in pending write buffers.
+  `find` supports `*`, `**`, and `?` globs. `grep` supports bounded pages,
+  regular expressions or fixed strings, explicit case handling, and numbered
+  context lines.
 - `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) implemented and exported from the package entrypoint; consumed by `@cloudflare/computerd`.
 - Buffered-write surface for the FUSE driver: `createFileSync`,
   `writeRangeSync`, `truncateFileSync`, `readRangeSync`, `chmodSync`,
@@ -53,6 +58,8 @@ export class WorkspaceDO extends DurableObject {
   on FUSE create/open, mutates it through subsequent writes and
   truncates, and commits chunks in one transaction at release time.
   Reads against the same database see the buffered bytes immediately.
+- `WorkspaceFilesystem.readRange` exposes bounded byte reads without
+  materializing the whole file.
 - Content-addressed blob cache: `readFile`, `readRangeSync`,
   `provider.readFileSync`, and the partial-chunk read-modify-write
   helper share a per-`Database` LRU keyed by `vfs_blob_bytes.hash`.
