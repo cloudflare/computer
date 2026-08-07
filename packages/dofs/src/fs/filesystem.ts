@@ -61,7 +61,7 @@ export class WorkspaceFilesystem {
   }
 
   async readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
-    return readRangeSync(this.db, path, offset, length);
+    return readRangeSync(this.db, path, offset, length).slice();
   }
 
   async stat(path: string): Promise<WorkspaceStatResult> {
