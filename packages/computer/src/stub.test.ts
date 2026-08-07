@@ -205,6 +205,14 @@ describe("WorkspaceStub", () => {
     });
   });
 
+  it("fs.readRange forwards bounded byte reads", async () => {
+    await withStub(async (ws) => {
+      const stub = ws.stub();
+      await stub.fs.writeFile("/bin", new Uint8Array([1, 2, 3, 4, 5]));
+      expect(Array.from(await stub.fs.readRange("/bin", 1, 3))).toEqual([2, 3, 4]);
+    });
+  });
+
   it("fs.readdir forwards bounded-read options", async () => {
     await withStub(async (ws) => {
       const stub = ws.stub();
