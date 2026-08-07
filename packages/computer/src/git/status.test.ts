@@ -103,6 +103,17 @@ describe("statusWith — derived XY codes", () => {
     ]);
   });
 
+  it("staged delete -> 'D '", async () => {
+    await init();
+    await commit("gone.txt", "x\n", "init");
+    await memfs.promises.unlink(`${DIR}/gone.txt`);
+    await git.remove({ fs: memfs, dir: DIR, filepath: "gone.txt" });
+
+    expect(await statusWith({ git: isogit, fs: memfs, dir: DIR })).toEqual([
+      { path: "gone.txt", index: "D", worktree: " " },
+    ]);
+  });
+
   it("multiple entries are sorted lexicographically", async () => {
     await init();
     await commit("base.txt", "x\n", "init");

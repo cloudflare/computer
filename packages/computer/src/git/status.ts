@@ -103,12 +103,11 @@ function indexCode(head: number, stage: number): StatusEntry["index"] {
 }
 
 // Derive the Y (workdir-vs-index) column.
-//   workdir absent, anything       -> 'D' (deleted in workdir)
-//   not in HEAD, not in stage      -> '?' (untracked)
-//   workdir differs from stage     -> 'M'
-//   workdir same as stage          -> ' '
+//   workdir absent, stage present -> 'D' (deleted in workdir)
+//   not in HEAD, not in stage     -> '?' (untracked)
+//   workdir differs from stage    -> 'M'
+//   workdir same as stage         -> ' '
 function worktreeCode(head: number, workdir: number, stage: number): StatusEntry["worktree"] {
-  if (workdir === 0 && stage === 0 && head === 1) return "D";
   if (workdir === 0 && stage > 0) return "D";
   if (head === 0 && stage === 0 && workdir > 0) return "?";
   // workdirStatus 2 means "differs from HEAD"; stageStatus 3 means
