@@ -195,6 +195,12 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
           }
           lineStart = afterNewline;
           cursor = newline + 1;
+          if (collected.length >= lineCap && afterNewline < stat.size) {
+            truncatedByBudget = true;
+            nextByteOffset = afterNewline;
+            keepGoing = false;
+            break;
+          }
         }
         absoluteOffset += chunk.byteLength;
         if (!keepGoing) break;
