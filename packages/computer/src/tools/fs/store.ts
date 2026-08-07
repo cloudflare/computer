@@ -11,7 +11,7 @@
  * multimodal output drain the same stream interface.
  */
 
-import type { FileStat, FileStore } from "./types.js";
+import type { FileStat, MutableFileStore } from "./types.js";
 
 /**
  * Structural subset of `@cloudflare/computer.Workspace` the tools
@@ -33,6 +33,28 @@ export interface WorkspaceLike {
     writeFile(path: string, content: Uint8Array, options?: { mode?: number }): Promise<void>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+    find(
+      directory: string,
+      pattern?: string,
+    ): Promise<Array<{ path: string; type: "file" | "dir" }>>;
+    grep(
+      pattern: string,
+      path: string,
+      options?: {
+        fixedString?: boolean;
+        caseSensitive?: boolean;
+        contextLines?: number;
+        limit?: number;
+        offset?: number;
+      },
+    ): Promise<
+      Array<{
+        path: string;
+        line: number;
+        text: string;
+        context?: Array<{ line: number; text: string; isMatch: boolean }>;
+      }>
+    >;
     readdir(
       path: string,
       options?: { limit?: number; offset?: number },
@@ -49,8 +71,12 @@ export interface WorkspaceLike {
   };
 }
 
-export class WorkspaceFileStore implements FileStore {
-  constructor(private readonly ws: WorkspaceLike) {}
+type WorkspaceFileStoreLike = {
+  fs: Pick<WorkspaceLike["fs"], "stat" | "readFile" | "readRange" | "writeFile" | "mkdir" | "rm">;
+};
+
+export class WorkspaceFileStore implements MutableFileStore {
+  constructor(private readonly ws: WorkspaceFileStoreLike) {}
 
   async stat(path: string): Promise<FileStat | null> {
     try {
@@ -76,6 +102,10 @@ export class WorkspaceFileStore implements FileStore {
   async write(path: string, content: Uint8Array, opts?: { mode?: number }): Promise<void> {
     await ensureParentDir(this.ws, path);
     await this.ws.fs.writeFile(path, content, opts);
+  }
+
+  async remove(path: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void> {
+    await this.ws.fs.rm(path, opts);
   }
 
   async *readChunks(path: string, byteOffset = 0, byteLength?: number): AsyncIterable<Uint8Array> {
@@ -133,7 +163,7 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   return out;
 }
 
-async function ensureParentDir(ws: WorkspaceLike, path: string): Promise<void> {
+async function ensureParentDir(ws: WorkspaceFileStoreLike, path: string): Promise<void> {
   const i = path.lastIndexOf("/");
   if (i <= 0) return;
   const parent = path.slice(0, i);

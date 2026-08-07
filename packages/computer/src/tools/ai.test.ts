@@ -4,6 +4,7 @@ import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runt
 import { Workspace } from "../workspace.js";
 import {
   createAITools,
+  createDeleteTool,
   createEditTool,
   createReadTool,
   createWriteTool,
@@ -301,10 +302,18 @@ describe("WorkspaceFileStore", () => {
 });
 
 describe("createAITools filesystem tools", () => {
-  it("creates fixed read, write, edit, and ls tools by default", () => {
+  it("creates the complete filesystem tool set by default", () => {
     const tools = createAITools({ workspace: makeWorkspace() });
 
-    expect(Object.keys(tools).sort()).toEqual(["edit", "ls", "read", "write"]);
+    expect(Object.keys(tools).sort()).toEqual([
+      "delete",
+      "edit",
+      "find",
+      "grep",
+      "ls",
+      "read",
+      "write",
+    ]);
   });
 
   it("returns only read-only tools when readonly is true", () => {
@@ -317,7 +326,7 @@ describe("createAITools filesystem tools", () => {
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["ls", "read"]);
+    expect(Object.keys(tools).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
   it("reads, lists, writes, and edits workspace files", async () => {
@@ -479,6 +488,83 @@ describe("createAITools filesystem tools", () => {
     releaseRead?.();
     await Promise.all([firstEdit, secondEdit]);
     expect(secondAcquired).toBe(true);
+  });
+
+  it("finds, greps, and deletes files through a real Workspace", async () => {
+    const workspace = makeWorkspace();
+    const tools = createAITools({ workspace });
+    await workspace.fs.mkdir("/workspace/src", { recursive: true });
+    await workspace.fs.writeFile("/workspace/src/a.ts", "const value = 'TODO';\n");
+    await workspace.fs.writeFile("/workspace/src/b.md", "todo in docs\n");
+
+    await expect(
+      executeTool(tools.find, { path: "/workspace", pattern: "**/*.ts", limit: 20 }),
+    ).resolves.toEqual({
+      path: "/workspace",
+      pattern: "**/*.ts",
+      count: 1,
+      entries: [{ path: "/workspace/src/a.ts", type: "file" }],
+    });
+    await expect(
+      executeTool(tools.grep, {
+        path: "/workspace",
+        query: "todo",
+        include: "**/*.ts",
+        limit: 20,
+      }),
+    ).resolves.toMatchObject({
+      count: 1,
+      matches: [{ path: "/workspace/src/a.ts", line: 1, text: "const value = 'TODO';" }],
+    });
+    await expect(executeTool(tools.delete, { path: "/workspace/src/a.ts" })).resolves.toEqual({
+      deleted: "/workspace/src/a.ts",
+    });
+    await expect(workspace.fs.stat("/workspace/src/a.ts")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("serializes delete behind an edit on the same store and path", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const events: string[] = [];
+    const store = memoryStore({
+      content: "old",
+      onWrite() {
+        events.push("edit");
+      },
+    });
+    store.readAll = async () => {
+      markReadStarted?.();
+      await readGate;
+      return bytes("old");
+    };
+    const deleteStore = Object.assign(store, {
+      async remove() {
+        events.push("delete");
+      },
+    });
+    const edit = executeTool(createEditTool({ store }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+    const deletion = executeTool(createDeleteTool({ store: deleteStore }), {
+      path: "/workspace/file.txt",
+    });
+    await Promise.resolve();
+    const eventsBeforeEditFinished = [...events];
+
+    releaseRead?.();
+    await Promise.all([edit, deletion]);
+    expect(eventsBeforeEditFinished).toEqual([]);
+    expect(events).toEqual(["edit", "delete"]);
   });
 
   it("preserves file mode when write overwrites an existing file", async () => {

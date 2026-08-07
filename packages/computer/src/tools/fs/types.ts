@@ -43,3 +43,8 @@ export interface FileStore {
    */
   write(path: string, content: Uint8Array, opts?: { mode?: number }): Promise<void>;
 }
+
+export interface MutableFileStore extends FileStore {
+  /** Remove a file or directory. */
+  remove(path: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void>;
+}
