@@ -98,7 +98,6 @@ export {
   type SyncRetryIntent,
   type SyncRetryOptions,
   type SyncRetryScheduler,
-  type ThinkWorkspaceCompatibility,
   Workspace,
   type WorkspaceGitFactory,
   type WorkspaceOptions,
