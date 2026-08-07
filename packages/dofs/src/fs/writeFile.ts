@@ -214,8 +214,33 @@ async function writeFileStreaming(
   linkStagedChunksSync(db, canonical, parts, chunkRefs, { ...options, mode }, mtime);
 }
 
+// Reject a chunk list that positional reads could not address.
+// readRangeSync finds the chunk covering an offset by dividing that
+// offset by CHUNK_SIZE, and takes a chunk's start offset to be its
+// index times CHUNK_SIZE, so every chunk but the last has to fill a
+// whole window and none may overflow one. Local writers chunk with
+// chunksOf and satisfy this by construction; a chunk list that
+// arrived over sync does not have to.
+export function assertChunkWindows(chunkRefs: ChunkRef[], canonical: string): void {
+  for (let idx = 0; idx < chunkRefs.length; idx++) {
+    const { size } = chunkRefs[idx];
+    const last = idx === chunkRefs.length - 1;
+    if (size === CHUNK_SIZE || (last && size < CHUNK_SIZE)) continue;
+    throw createWorkspaceError(
+      "EINVAL",
+      `chunk ${idx} of ${chunkRefs.length} holds ${size} bytes; only the last chunk may be shorter than ${CHUNK_SIZE}: ${canonical}`,
+      canonical,
+    );
+  }
+}
+
 // Link a path to chunks already staged in content-addressed storage.
 // This keeps payload bytes out of memory during sync apply.
+//
+// The chunk list comes from a caller that did its own chunking, so
+// the guards every other write path gets from writeFile have to run
+// here too: the read-only mount check, and the fixed-window layout
+// that positional reads depend on.
 export function linkStagedChunksSync(
   db: Database,
   canonical: string,
@@ -224,6 +249,8 @@ export function linkStagedChunksSync(
   options: WriteFileOptions,
   mtime: number,
 ): void {
+  assertNotReadOnly(db, canonical);
+  assertChunkWindows(chunkRefs, canonical);
   const mode = (options.mode ?? 0o644) & 0o7777;
   db.transactionSync(() => {
     const parentInode = resolveParent(db, parts, canonical);

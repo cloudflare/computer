@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { link } from "../fs/link.js";
@@ -140,6 +142,103 @@ describe("applyChanges", () => {
         expect(await readFile(b, "/large.txt", "utf8")).toBe(content);
       },
     );
+  });
+
+  it("rejects a file entry whose interior chunks are not chunk-aligned", async () => {
+    // Positional reads locate a chunk by dividing the offset by
+    // CHUNK_SIZE, so only the final chunk may be short. Linking a
+    // sender's chunk list verbatim has to enforce that.
+    await withDB(async (db) => {
+      const first = new TextEncoder().encode("first");
+      const second = new TextEncoder().encode("second");
+      const chunks = [first, second].map((bytes) => {
+        const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+        stageBlob(db, hash, bytes, 1000);
+        return { hash, size: bytes.byteLength };
+      });
+
+      await expect(
+        applyChanges(
+          db,
+          [
+            {
+              kind: "file",
+              rev: 1,
+              path: "/ragged.txt",
+              mode: 0o644,
+              mtime: 1000,
+              size: first.byteLength + second.byteLength,
+              chunks,
+            },
+          ],
+          new Map(),
+          { source: "upstream" },
+        ),
+      ).rejects.toThrow(/chunk/);
+      expect(resolveInode(db, "/ragged.txt")).toBeNull();
+    });
+  });
+
+  it("leaves the existing file in place when it rejects a ragged entry", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/keep.txt", "original", {}, () => 1000);
+
+      const first = new TextEncoder().encode("first");
+      const second = new TextEncoder().encode("second");
+      const chunks = [first, second].map((bytes) => {
+        const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+        stageBlob(db, hash, bytes, 1000);
+        return { hash, size: bytes.byteLength };
+      });
+
+      await expect(
+        applyChanges(
+          db,
+          [
+            {
+              kind: "file",
+              rev: 2,
+              path: "/keep.txt",
+              mode: 0o644,
+              mtime: 2000,
+              size: first.byteLength + second.byteLength,
+              chunks,
+            },
+          ],
+          new Map(),
+          { source: "upstream" },
+        ),
+      ).rejects.toThrow(/chunk/);
+      expect(await readFile(db, "/keep.txt", "utf8")).toBe("original");
+    });
+  });
+
+  it("rejects a file entry with a chunk larger than the chunk size", async () => {
+    await withDB(async (db) => {
+      const bytes = new Uint8Array(CHUNK_SIZE + 1);
+      const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+      stageBlob(db, hash, bytes, 1000);
+
+      await expect(
+        applyChanges(
+          db,
+          [
+            {
+              kind: "file",
+              rev: 1,
+              path: "/oversized.bin",
+              mode: 0o644,
+              mtime: 1000,
+              size: bytes.byteLength,
+              chunks: [{ hash, size: bytes.byteLength }],
+            },
+          ],
+          new Map(),
+          { source: "upstream" },
+        ),
+      ).rejects.toThrow(/chunk/);
+      expect(resolveInode(db, "/oversized.bin")).toBeNull();
+    });
   });
 
   it("commits in batches capped by byte budget", async () => {

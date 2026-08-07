@@ -5,7 +5,7 @@ import { invalidateResolveSubtree } from "../fs/resolveCache.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
 import { unlinkDirent } from "../fs/unlink.js";
-import { linkStagedChunksSync } from "../fs/writeFile.js";
+import { assertChunkWindows, linkStagedChunksSync } from "../fs/writeFile.js";
 import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
@@ -397,15 +397,20 @@ export function applyChangesSync(
 }
 
 // Link a file entry to staged chunks without loading payload bytes.
-// In-memory objects are staged individually before the link.
-
-// Validate declared sizes without loading payloads; chunk hashes remain
+// In-memory objects are staged individually before the link. Declared
+// sizes are validated without loading payloads; chunk hashes remain
 // trusted here, matching stageBlob's existing contract.
+//
+// Every check runs before removeReplaceableFinalEntry, so a rejected
+// entry leaves whatever was already at the path alone. Batches are a
+// sequence of independent transactions, so a throw part way through
+// does not roll the removal back.
 function applyFileEntry(
   db: Database,
   entry: Extract<ChangeEntry, { kind: "file" }>,
   objects: Map<string, Uint8Array>,
 ): number {
+  assertChunkWindows(entry.chunks, entry.path);
   let total = 0;
   for (const c of entry.chunks) {
     total += c.size;

@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
+import { stageBlob } from "../sync/blobs.js";
 import { mkdir } from "./mkdir.js";
 import {
   assertNotReadOnly,
@@ -12,7 +15,7 @@ import { resolveInode } from "./resolve.js";
 import { rm } from "./rm.js";
 import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
-import { writeFile, writeFileSync } from "./writeFile.js";
+import { linkStagedChunksSync, writeFile, writeFileSync } from "./writeFile.js";
 
 // Stage a read-only mount the way the workspace-side indexer
 // eventually will: a row in `_vfs_mounts` plus an actual subtree
@@ -138,6 +141,29 @@ describe("writeFile under a read-only mount", () => {
       expect(() =>
         writeFileSync(db, "/workspace/r2/hello.txt", new Uint8Array([1, 2, 3]), {}, () => 0),
       ).toThrow(/EROFS|read-only/);
+    });
+  });
+
+  it("rejects linkStagedChunksSync under the mount root with EROFS", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/workspace/r2", { recursive: true }, () => 0);
+      stageMount(db, "/workspace/r2", "read-only");
+
+      const bytes = new TextEncoder().encode("blocked");
+      const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+      stageBlob(db, hash, bytes, 0);
+
+      expect(() =>
+        linkStagedChunksSync(
+          db,
+          "/workspace/r2/hello.txt",
+          ["workspace", "r2", "hello.txt"],
+          [{ hash, size: bytes.byteLength }],
+          {},
+          0,
+        ),
+      ).toThrow(/EROFS|read-only/);
+      expect(resolveInode(db, "/workspace/r2/hello.txt")).toBeNull();
     });
   });
 
