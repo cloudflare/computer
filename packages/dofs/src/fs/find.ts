@@ -65,6 +65,7 @@ function walk(db: Database, parentInode: number, parentPath: string, out: Worksp
 // Compile a simple glob into a regex. Supported:
 //   *  matches any run of characters except '/'
 //   ** matches any run of characters including '/'
+//   ?  matches one character except '/'
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
 function compileGlob(pattern: string): RegExp {
@@ -87,6 +88,11 @@ function compileGlob(pattern: string): RegExp {
         re += "[^/]*";
         i += 1;
       }
+      continue;
+    }
+    if (ch === "?") {
+      re += "[^/]";
+      i += 1;
       continue;
     }
     if (REGEX_METACHARS.has(ch)) {
