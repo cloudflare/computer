@@ -114,6 +114,9 @@ jobs:
           - name: container
             workspace: "@example/computer-container"
             path: examples/container
+          - name: codemode
+            workspace: "@example/computer-codemode"
+            path: examples/codemode
     steps:
       - uses: actions/checkout@v6
         with:

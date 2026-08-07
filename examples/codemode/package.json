@@ -1,0 +1,27 @@
+{
+  "name": "@example/computer-codemode",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Computer Workspace tools exposed through one Codemode MCP server.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/codemode": "^0.5.0",
+    "@cloudflare/computer": "*",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ai": "^7.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.10",
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.107.1"
+  }
+}

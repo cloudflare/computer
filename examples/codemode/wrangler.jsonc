@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-codemode-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": {
+    "bindings": [{ "name": "CodemodeExample", "class_name": "CodemodeExample" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeExample"] }]
+}
