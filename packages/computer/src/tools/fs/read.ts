@@ -1,5 +1,6 @@
-import { type Tool, tool } from "ai";
+import { type JSONValue, type Tool, tool } from "ai";
 import { z } from "zod";
+import { detectMedia } from "./media.js";
 import type { FileStore } from "./types.js";
 
 export type LineTruncation = { bytes: number } | { chars: number };
@@ -14,10 +15,16 @@ export interface ReadToolOptions {
   includeLineNumbers?: boolean;
   /** Shorten individual lines before applying the output byte cap. */
   lineTruncation?: LineTruncation;
+  /** Maximum image or PDF size sent inline to the model. Default 3.5 MiB. */
+  maxModelBytes?: number;
+  /** Prefix bytes inspected when an extension does not identify the file. Default 512. */
+  mediaSniffBytes?: number;
 }
 
 const DEFAULT_MAX_LINES = 2000;
 const DEFAULT_MAX_BYTES = 256 * 1024;
+const DEFAULT_MAX_MODEL_BYTES = 3.5 * 1024 * 1024;
+const DEFAULT_MEDIA_SNIFF_BYTES = 512;
 const TRUNCATION_MARKER = "... (truncated)";
 
 const inputSchema = z.object({
@@ -50,6 +57,17 @@ interface ReadResult {
   nextByteOffset?: number;
 }
 
+interface MediaReadResult {
+  kind: "image" | "file" | "binary";
+  path: string;
+  name: string;
+  mediaType: string;
+  sizeBytes: number;
+  unsupported?: true;
+}
+
+type ReadToolResult = ReadResult | MediaReadResult | { error: string };
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: false });
 
@@ -63,18 +81,27 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const includeLineNumbers = options.includeLineNumbers ?? false;
   const lineTruncation = validateLineTruncation(options.lineTruncation);
+  const maxModelBytes = options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES;
+  const mediaSniffBytes = options.mediaSniffBytes ?? DEFAULT_MEDIA_SNIFF_BYTES;
 
   return tool({
-    description: `Read a text file. Output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB. A truncated result includes line and byte continuations for the next page.`,
+    description: `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`,
     inputSchema,
-    execute: async ({
-      path,
-      offset,
-      byteOffset,
-      limit,
-    }): Promise<ReadResult | { error: string }> => {
+    execute: async ({ path, offset, byteOffset, limit }): Promise<ReadToolResult> => {
       const stat = await store.stat(path);
       if (!stat) return { error: `File not found: ${path}` };
+
+      const media = await detectMedia(store, path, mediaSniffBytes);
+      if (media.kind !== "text") {
+        return {
+          kind: media.kind,
+          path,
+          name: basename(path),
+          mediaType: media.mediaType,
+          sizeBytes: stat.size,
+          ...(media.kind === "binary" ? { unsupported: true as const } : {}),
+        };
+      }
 
       const startLine = offset ?? 1;
       const startByte = byteOffset ?? 0;
@@ -214,6 +241,44 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       }
       return result;
     },
+    toModelOutput: async ({ input, output }: { input: unknown; output: unknown }) => {
+      if (!isRecord(output)) return { type: "text", value: String(output) };
+      if (typeof output.error === "string") {
+        return { type: "error-text", value: output.error };
+      }
+      if (typeof output.content === "string") {
+        return { type: "text", value: output.content };
+      }
+      if (output.kind === "binary") return { type: "json", value: toJSONValue(output) };
+      if (!isMediaReadResult(output) || !isReadInput(input)) {
+        return { type: "json", value: toJSONValue(output) };
+      }
+      if (output.sizeBytes > maxModelBytes) {
+        return {
+          type: "error-text",
+          value: `Read ${output.path} (${output.mediaType}, ${output.sizeBytes} bytes), but it exceeds the ${maxModelBytes}-byte inline model output limit.`,
+        };
+      }
+      const bytes = await store.readAll(input.path);
+      if (bytes === null) {
+        return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
+      }
+      return {
+        type: "content",
+        value: [
+          {
+            type: "text",
+            text: `Read ${output.path} (${output.mediaType}, ${bytes.byteLength} bytes).`,
+          },
+          {
+            type: "file-data",
+            data: uint8ArrayToBase64(bytes),
+            mediaType: output.mediaType,
+            filename: output.name,
+          },
+        ],
+      };
+    },
   });
 }
 
@@ -257,6 +322,47 @@ function decodeUtf8Prefix(bytes: Uint8Array): string {
     }
   }
   return decoder.decode(bytes);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isMediaReadResult(value: unknown): value is MediaReadResult {
+  return (
+    isRecord(value) &&
+    (value.kind === "image" || value.kind === "file") &&
+    typeof value.path === "string" &&
+    typeof value.name === "string" &&
+    typeof value.mediaType === "string" &&
+    typeof value.sizeBytes === "number"
+  );
+}
+
+function toJSONValue(value: unknown): JSONValue {
+  try {
+    const json = JSON.stringify(value);
+    return json === undefined ? null : (JSON.parse(json) as JSONValue);
+  } catch {
+    return String(value);
+  }
+}
+
+function isReadInput(value: unknown): value is { path: string } {
+  return isRecord(value) && typeof value.path === "string";
+}
+
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function renderLine(line: string, lineNumber: number, includeLineNumbers: boolean): string {
