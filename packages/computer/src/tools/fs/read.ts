@@ -254,14 +254,21 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
         return { type: "json", value: toJSONValue(output) };
       }
       if (output.sizeBytes > maxModelBytes) {
-        return {
-          type: "error-text",
-          value: `Read ${output.path} (${output.mediaType}, ${output.sizeBytes} bytes), but it exceeds the ${maxModelBytes}-byte inline model output limit.`,
-        };
+        return inlineMediaLimitError(output, output.sizeBytes, maxModelBytes);
+      }
+      const currentStat = await store.stat(input.path);
+      if (currentStat === null) {
+        return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
+      }
+      if (currentStat.size > maxModelBytes) {
+        return inlineMediaLimitError(output, currentStat.size, maxModelBytes);
       }
       const bytes = await store.readAll(input.path);
       if (bytes === null) {
         return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
+      }
+      if (bytes.byteLength > maxModelBytes) {
+        return inlineMediaLimitError(output, bytes.byteLength, maxModelBytes);
       }
       return {
         type: "content",
@@ -337,6 +344,17 @@ function isMediaReadResult(value: unknown): value is MediaReadResult {
     typeof value.mediaType === "string" &&
     typeof value.sizeBytes === "number"
   );
+}
+
+function inlineMediaLimitError(
+  output: MediaReadResult,
+  sizeBytes: number,
+  maxModelBytes: number,
+): { type: "error-text"; value: string } {
+  return {
+    type: "error-text",
+    value: `Read ${output.path} (${output.mediaType}, ${sizeBytes} bytes), but it exceeds the ${maxModelBytes}-byte inline model output limit.`,
+  };
 }
 
 function toJSONValue(value: unknown): JSONValue {

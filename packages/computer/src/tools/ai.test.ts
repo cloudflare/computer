@@ -962,6 +962,19 @@ describe("createAITools filesystem tools", () => {
     });
     expect(readAll).toBe(false);
   });
+
+  it("rechecks the inline media cap after reading a concurrently changed file", async () => {
+    const store = memoryStore({ size: 2 });
+    store.readAll = async () => new Uint8Array(10);
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+      type: "error-text",
+      value:
+        "Read /workspace/image.png (image/png, 10 bytes), but it exceeds the 4-byte inline model output limit.",
+    });
+  });
 });
 
 describe("createAITools exec tool", () => {
