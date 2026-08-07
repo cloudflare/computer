@@ -391,6 +391,96 @@ describe("createAITools filesystem tools", () => {
     });
   });
 
+  it("serializes write behind an edit on the same store and path", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const writes: string[] = [];
+    const store: FileStore = {
+      async stat() {
+        return { size: 3, mtime: 1 };
+      },
+      async readAll() {
+        markReadStarted?.();
+        await readGate;
+        return bytes("old");
+      },
+      async *readChunks() {
+        yield bytes("old");
+      },
+      async write(_path, content) {
+        writes.push(decode(content));
+      },
+    };
+    const edit = executeTool(createEditTool({ store }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+
+    const write = executeTool(createWriteTool({ store }), {
+      path: "/workspace/file.txt",
+      content: "written",
+    });
+    await Promise.resolve();
+    const writesBeforeEditFinished = [...writes];
+
+    releaseRead?.();
+    await Promise.all([edit, write]);
+    expect(writesBeforeEditFinished).toEqual([]);
+    expect(writes).toEqual(["edited", "written"]);
+  });
+
+  it("does not share edit locks between stores", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    let markSecondStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const secondStarted = new Promise<void>((resolve) => {
+      markSecondStarted = resolve;
+    });
+    const first = memoryStore({ content: "old" });
+    first.readAll = async () => {
+      markFirstStarted?.();
+      await readGate;
+      return bytes("old");
+    };
+    const second = memoryStore({ content: "old" });
+    second.readAll = async () => {
+      markSecondStarted?.();
+      return bytes("old");
+    };
+
+    const firstEdit = executeTool(createEditTool({ store: first }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "first" }],
+    });
+    await firstStarted;
+    const secondEdit = executeTool(createEditTool({ store: second }), {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "second" }],
+    });
+
+    const secondAcquired = await Promise.race([
+      secondStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 0)),
+    ]);
+
+    releaseRead?.();
+    await Promise.all([firstEdit, secondEdit]);
+    expect(secondAcquired).toBe(true);
+  });
+
   it("preserves file mode when write overwrites an existing file", async () => {
     const writes: Array<{ path: string; content: string; mode?: number }> = [];
     const tool = createWriteTool({

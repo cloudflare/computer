@@ -1,5 +1,6 @@
 import { type Tool, tool } from "ai";
 import { z } from "zod";
+import { withFileLock } from "./locks.js";
 import type { FileStore } from "./types.js";
 
 export interface WriteToolOptions {
@@ -32,16 +33,18 @@ export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof 
           error: `Content too large: ${bytes.length} bytes exceeds the ${maxBytes}-byte write cap. Use the edit tool for incremental changes to existing files, or split the write into smaller pieces.`,
         };
       }
-      try {
-        // Preserve the existing file's mode when overwriting so executable
-        // scripts don't silently lose their +x bit. For new files we leave
-        // `mode` undefined and let the store apply its own default.
-        const existing = await store.stat(path);
-        await store.write(path, bytes, existing ? { mode: existing.mode } : undefined);
-        return { path, bytesWritten: bytes.length };
-      } catch (err) {
-        return { error: err instanceof Error ? err.message : String(err) };
-      }
+      return withFileLock(store, path, async () => {
+        try {
+          // Preserve the existing file's mode when overwriting so executable
+          // scripts don't silently lose its executable bits. For new files we
+          // let the store apply its own default.
+          const existing = await store.stat(path);
+          await store.write(path, bytes, existing ? { mode: existing.mode } : undefined);
+          return { path, bytesWritten: bytes.length };
+        } catch (err) {
+          return { error: err instanceof Error ? err.message : String(err) };
+        }
+      });
     },
   });
 }
