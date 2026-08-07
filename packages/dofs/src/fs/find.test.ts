@@ -54,6 +54,17 @@ describe("find", () => {
     });
   });
 
+  it("matches ? as one non-separator character", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/a", {}, () => 0);
+      await writeFile(db, "/a/a.ts", "", {}, () => 0);
+      await writeFile(db, "/a/ab.ts", "", {}, () => 0);
+      await writeFile(db, "/a/b.ts", "", {}, () => 0);
+      const paths = find(db, "/a", "?.ts").map((entry) => entry.path);
+      expect(paths).toEqual(["/a/a.ts", "/a/b.ts"]);
+    });
+  });
+
   it("matches ** recursively", async () => {
     await withDB(async (db) => {
       mkdir(db, "/a/b/c", { recursive: true }, () => 0);
