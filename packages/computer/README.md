@@ -22,8 +22,9 @@ things in it.
   module. Pick a full Linux container, a fast in-Worker shell, or an
   isolated JavaScript runtime, all against the same files.
 - **Batteries for agents.** Ready-made [AI SDK](https://github.com/vercel/ai)
-  tools (`read`, `write`, `edit`, `ls`, `exec`), a git client, R2-backed
-  read-only mounts, and helpers for publishing files.
+  tools (`read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional
+  `exec`), a git client, R2-backed read-only mounts, and helpers for publishing
+  files.
 
 The Workspace can also run with no execution backend at all, giving you
 just the filesystem.
@@ -266,8 +267,10 @@ to a named one — see [Multiple backends](#multiple-backends).
 
 `@cloudflare/computer/tools` ships AI SDK tools that wrap the Workspace
 surfaces, ready to hand to `generateText`, `streamText`, or an agent
-framework's `getTools()`. The default set is `read`, `write`, `edit`,
-and `ls`; `exec` and `publish` are added when you configure them.
+framework's `getTools()`. The default set is `read`, `ls`, `find`,
+`grep`, `write`, `edit`, and `delete`; `exec` and `publish` are added
+when you configure them. Read-only mode keeps `read`, `ls`, `find`, and
+`grep`.
 
 ```ts
 import { createAITools } from "@cloudflare/computer/tools";
@@ -286,8 +289,12 @@ const tools = createAITools({
 ```
 
 The model reads each backend's `description` when deciding where a
-command should run, so write them in plain language. See
-[`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
+command should run, so write them in plain language. Large text reads
+return both line and byte continuations; pass both to the next call to
+avoid transferring the same bytes again. Images and PDFs are returned
+as AI SDK `file-data` model output after a size check. `ls`, `find`, and
+`grep` return bounded pages with `nextOffset` when more results exist.
+See [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Git
 
@@ -400,7 +407,7 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
-| `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `write`, `edit`, `ls`, optional `exec` and `publish`. |
+| `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, a session-scoped facade over the Cloudflare Artifacts binding. |

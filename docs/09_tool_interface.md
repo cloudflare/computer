@@ -1,29 +1,30 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`. The first provider target is the AI SDK because it is the tool layer used by the `agents` SDK and the Think example.
+`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`.
 
-The tools are thin wrappers over the existing `Workspace` surfaces:
+The tools wrap three Workspace surfaces:
 
-- `workspace.fs` for file reads, writes, edits, and directory listing.
-- `workspace.runtime.exec` for command execution when the caller opts in.
+- `workspace.fs` for file reads, writes, edits, searches, listings, and deletion;
+- `workspace.runtime.exec` for command execution when the caller opts in;
 - `workspace.assets` for publishing generated files when an assets publisher is configured.
-
-Git access already ships through `workspace.git`, the third major surface on `Workspace` alongside `fs`, `runtime`, Assets, and Artifacts. AI SDK tool wrappers around that surface can land later against a stable target. See [`13_git_interface.md`](./13_git_interface.md).
 
 ## What ships
 
 | Export | Purpose |
 | --- | --- |
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
-| `createReadTool` | Memory-efficient, line-windowed file read. |
-| `createWriteTool` | Whole-file write with a UTF-8 byte cap. |
-| `createEditTool` | Exact targeted replacements with unified-diff preview. |
-| `createListTool` | One-level directory listing. |
-| `createExecTool` | Run a shell command through a configured Workspace backend. |
+| `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
+| `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
+| `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
+| `createListTool` | Page through one directory with file metadata. |
+| `createFindTool` | Find paths with `*`, `**`, and `?` globs. |
+| `createGrepTool` | Search text with regular expressions or fixed strings. |
+| `createDeleteTool` | Delete a file or directory. |
+| `createExecTool` | Run a command through a configured Workspace backend. |
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
-| `WorkspaceFileStore` | Adapt `Workspace.fs` to the file-store shape used by the file tools. |
+| `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-The fixed tool names from `createAITools()` are `read`, `write`, `edit`, and `ls`. When present, the conditional tool names are also fixed: `exec` for shell commands and `publish` for asset publishing.
+`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -35,48 +36,39 @@ export class Agent {
   workspace: Workspace;
 
   constructor(ctx: DurableObjectState) {
-    this.workspace = new Workspace({
-      storage: ctx.storage,
-    });
+    this.workspace = new Workspace({ storage: ctx.storage });
   }
 
   getTools() {
     return createAITools({
       workspace: this.workspace,
-      read: { maxBytes: 32 * 1024, maxLines: 800 },
+      read: {
+        maxBytes: 32 * 1024,
+        maxLines: 800,
+        includeLineNumbers: true,
+        lineTruncation: { chars: 2000 },
+      },
     });
   }
 }
 ```
 
-When assigning the same instance to `Think.workspace`, construct it with `useThink: true` so Think's built-in workspace tools can use the compatibility filesystem methods. Pass `shell` only when the `Workspace` was constructed with matching backend ids:
+Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
+
+Pass `shell` only when the Workspace has matching backend ids:
 
 ```ts
-const workspace = new Workspace({
-  storage: ctx.storage,
-  backends: [
-    new WorkerShellBackend({ id: "shell", /* ... */ }),
-    new CloudflareContainerBackend({ id: "container", /* ... */ }),
-  ],
-});
-
 const tools = createAITools({
   workspace,
   shell: {
     defaultBackend: "shell",
     backends: {
-      shell: {
-        description: "Fast Worker shell with built-in textual commands.",
-      },
-      container: {
-        description: "Full Linux userland in a Cloudflare Container.",
-      },
+      shell: { description: "Fast Worker shell with built-in text commands." },
+      container: { description: "Full Linux userland in a Cloudflare Container." },
     },
   },
 });
 ```
-
-The returned value is an AI SDK `ToolSet`. Pass it to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
 ## `createAITools`
 
@@ -88,104 +80,123 @@ createAITools({
   read?,
   write?,
   edit?,
+  find?,
+  grep?,
+  delete?,
   shell?,
 });
 ```
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `workspace` | required | A `Workspace` or structural equivalent with `fs`, and optionally `shell`, `assets`, and `sessionId`. |
-| `readonly` | `false` | When true, return only `read` and `ls`. This omits mutation tools, `exec`, and `publish` even if other options are present. |
-| `assets` | `true` | Set to `false` to omit `publish`. When not false, `publish` appears only if `workspace.assets` is configured. |
+| `workspace` | required | A `Workspace` or structural equivalent. |
+| `readonly` | `false` | Omit `write`, `edit`, `delete`, `exec`, and `publish`. Search remains available. |
+| `assets` | `true` | Set to `false` to omit `publish`. |
 | `read` | default caps | Options passed to `createReadTool`. |
-| `write` | default caps | Options passed to `createWriteTool`. Ignored when `readonly` is true. |
-| `edit` | default caps | Options passed to `createEditTool`. Ignored when `readonly` is true. |
-| `shell` | omitted | Options passed to `createExecTool`. `exec` appears only when this is present and `readonly` is not true. |
-
-`createAITools({ workspace, readonly: true })` is the safe mode for agents that should inspect a workspace but not change it or run commands.
+| `write` | default caps | Options passed to `createWriteTool`. |
+| `edit` | default caps | Options passed to `createEditTool`. |
+| `find` | defaults | Options passed to `createFindTool`. |
+| `grep` | defaults | Options passed to `createGrepTool`. |
+| `delete` | defaults | Options passed to `createDeleteTool`. |
+| `shell` | omitted | Options passed to `createExecTool`. |
 
 ## `read`
 
 ```ts
-createReadTool({ store, maxLines?, maxBytes? });
+createReadTool({
+  store,
+  maxLines?,
+  maxBytes?,
+  includeLineNumbers?,
+  lineTruncation?,
+  maxModelBytes?,
+  mediaSniffBytes?,
+});
 ```
 
 | Option | Default | Notes |
 | --- | --- | --- |
 | `maxLines` | 2000 | Hard line cap per call. |
-| `maxBytes` | 256 KiB | Hard byte cap per call. |
+| `maxBytes` | 256 KiB | Hard UTF-8 output cap per call. |
+| `includeLineNumbers` | `false` | Prefix text lines with `${lineNumber}\t`. |
+| `lineTruncation` | omitted | Shorten each line by `{ bytes }` or `{ chars }` before applying `maxBytes`. |
+| `maxModelBytes` | 3.5 MiB | Largest image or PDF encoded into model output. |
+| `mediaSniffBytes` | 512 | Prefix read when the extension does not identify the file. |
 
 Schema:
 
 ```ts
 {
   path: string;
-  offset?: number; // 1-indexed start line
-  limit?: number;  // max lines this call
+  offset?: number;     // 1-indexed start line
+  byteOffset?: number; // byte continuation from the previous result
+  limit?: number;
 }
 ```
 
-Returns the line window plus `nextOffset` whenever the result was truncated, so the model can call `read` again to keep going. Reads stream through `store.readChunks(path)` and stop as soon as the line or byte cap is hit.
+A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` prevents the store from transferring bytes already read.
+
+Known image and PDF extensions are classified without reading the file. Unknown extensions use a bounded magic-byte sniff. The tool's `toModelOutput` hook emits AI SDK `file-data` parts for images and PDFs. It reads and base64-encodes the whole file only after its size passes `maxModelBytes`. Other binary files return an unsupported binary result.
 
 ## `ls`
 
 ```ts
-createListTool({ workspace });
-```
-
-Schema:
-
-```ts
 {
   path: string;
+  limit?: number;  // default 200, maximum 1000
+  offset?: number;
 }
 ```
 
-Calls `workspace.fs.readdir(path)` and returns:
+`ls` returns at most `limit` entries in name order. Each entry includes `name`, `size`, `mtime`, `isFile`, `isDirectory`, and `isSymbolicLink`. A non-final page includes `nextOffset`.
+
+## `find`
 
 ```ts
 {
-  path: string;
-  entries: Array<{
-    name: string;
-    isFile: boolean;
-    isDirectory: boolean;
-  }>;
+  path?: string;   // default /workspace
+  pattern: string;
+  limit?: number;  // default 200, maximum 1000
+  offset?: number;
 }
 ```
+
+The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, and `?` matches one non-separator character. Results contain `path` and `type`; a non-final page includes `nextOffset`.
+
+## `grep`
+
+```ts
+{
+  path?: string;          // default /workspace
+  query: string;
+  include?: string;       // glob relative to path
+  fixedString?: boolean;  // default false
+  caseSensitive?: boolean;// default false
+  contextLines?: number;  // 0 through 10
+  limit?: number;         // default 200, maximum 1000
+  offset?: number;
+}
+```
+
+The AI tool defaults to case-insensitive regular expressions to match Think's tool contract. Set `fixedString` when the query should be treated as plain text. Matches include path, line number, text, and optional numbered context. Invalid regular expressions return a structured error. A non-final page includes `nextOffset`.
+
+The lower-level `workspace.fs.grep` keeps its existing defaults: literal and case-sensitive. Its options also accept `limit`, `offset`, `contextLines`, `fixedString`, and `caseSensitive`.
 
 ## `write`
 
 ```ts
-createWriteTool({ store, maxBytes? });
+createWriteTool({ store, maxBytes? }); // default 2 MiB
 ```
 
-| Option | Default |
-| --- | --- |
-| `maxBytes` | 2 MiB |
-
-Schema:
-
-```ts
-{
-  path: string;
-  content: string;
-}
-```
-
-Overwrites the file. Preserves an existing file's `mode` so executable scripts keep their executable bit. Rejects writes larger than `maxBytes` with a structured error pointing the model at the `edit` tool or a smaller write.
+The schema is `{ path, content }`. Writing overwrites the file and preserves its existing mode. The tool rejects content over `maxBytes`.
 
 ## `edit`
 
 ```ts
-createEditTool({ store, maxBytes? });
+createEditTool({ store, maxBytes? }); // default 2 MiB
 ```
 
-| Option | Default |
-| --- | --- |
-| `maxBytes` | 2 MiB |
-
-Schema:
+The schema is:
 
 ```ts
 {
@@ -194,109 +205,46 @@ Schema:
 }
 ```
 
-Each edit is matched against the original file content, not incrementally. Overlapping or nested edits are rejected. The tool normalizes line endings for matching, restores the original line ending style on write, preserves the existing file mode, and returns a unified patch for review.
+Every `oldText` must identify one unique, non-overlapping range in the original content. The tool applies the batch atomically, preserves the byte order mark, line ending style, and file mode, and returns a unified patch plus `firstChangedLine`.
 
-## `exec`
+`edit`, `write`, and `delete` share a per-store, per-path lock. A write cannot land between edit's read and write phases, while unrelated workspaces and paths remain independent.
 
-```ts
-createExecTool({
-  workspace,
-  backends,
-  defaultBackend,
-  maxBytes?,
-});
-```
-
-| Option | Default | Notes |
-| --- | --- | --- |
-| `backends` | required | Map of backend id to a model-facing description. |
-| `defaultBackend` | required | Backend used when the model omits `backend`. Must be a key in `backends`. |
-| `maxBytes` | 64 KiB | UTF-8 byte cap for each of stdout and stderr. |
-
-Schema:
-
-```ts
-{
-  command: string;
-  cwd?: string;
-  backend?: string;
-}
-```
-
-Calls `workspace.runtime.exec(command, { cwd, encoding: "utf8", backend })`, waits for `result()`, and returns:
-
-```ts
-{
-  command: string;
-  cwd: string | null;
-  backend: string;
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-```
-
-`exec` is opt-in. `createAITools()` includes it only when the caller passes `shell` options and `readonly` is not true. The backend descriptions are included in the tool description so the model can choose the cheapest backend that can run the command.
-
-Wire this tool up carefully: it executes arbitrary shell commands inside the configured backend. Use `readonly: true` for inspection-only agents, or omit `shell` when command execution is not part of the agent's job.
-
-## `publish`
-
-```ts
-createPublishTool({ workspace });
-```
-
-Schema:
+## `delete`
 
 ```ts
 {
   path: string;
-  expiresAfterMs?: number;
+  recursive?: boolean;
 }
 ```
 
-Calls `workspace.assets.share(path, { expiresAfter, prefix })` and returns either:
+The tool uses forced removal, so deleting a missing path succeeds. Set `recursive` to remove a non-empty directory. `readonly: true` omits this tool.
 
-```ts
-{ ok: true; url: string }
-```
+## `exec`
 
-or:
+`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 
-```ts
-{ ok: false; error: string }
-```
+## `publish`
 
-The default expiry is one hour. When `workspace.sessionId` is non-empty, the prefix is `agent-${workspace.sessionId}` so generated links are grouped by workspace session. If no session id was configured, the tool leaves the prefix unset.
-
-`createAITools()` includes `publish` by default when `readonly` is not true, `assets` is not false, and `workspace.assets` is configured. Pass `assets: false` to hide the tool even when credentials are present.
+`publish` calls `workspace.assets.share`. It appears when assets are configured, `assets` is not `false`, and the tool set is not read-only. The default link expiry is one hour.
 
 ## `FileStore`
-
-The file tools depend on this shape:
 
 ```ts
 interface FileStore {
   stat(path: string): Promise<FileStat | null>;
   readAll(path: string): Promise<Uint8Array | null>;
-  readChunks(path: string, byteOffset?: number, byteLength?: number): AsyncIterable<Uint8Array>;
+  readChunks(
+    path: string,
+    byteOffset?: number,
+    byteLength?: number,
+  ): AsyncIterable<Uint8Array>;
   write(path: string, bytes: Uint8Array, options?: { mode?: number }): Promise<void>;
 }
 
-interface FileStat {
-  size: number;
-  mode?: number;
-  mtime: number;
+interface MutableFileStore extends FileStore {
+  remove(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
 }
 ```
 
-`WorkspaceFileStore` adapts `Workspace.fs.stat`, `Workspace.fs.readFile`, `Workspace.fs.writeFile`, and `Workspace.fs.mkdir` to this contract. Custom stores can use the same tools against another filesystem-shaped backend.
-
-## Conventions for agents
-
-- Tools take absolute paths. Pre-resolve user input against the configured workspace root before calling. See [01. VFS](./01_vfs.md).
-- The `read` tool returns continuation offsets. Feed them back to the model on truncation rather than asking for the whole file.
-- Pair the `edit` tool with a system prompt that says edits apply against the original file. Models that incrementally update their mental model of the file will produce overlapping edits and get a rejection error.
-- Describe every shell backend in plain language. The model reads those descriptions when deciding where a command should run.
-- Treat `exec` output as untrusted text when feeding it back into the model.
-- Use `readonly: true` for review, indexing, or support agents that should not modify the workspace.
+`WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator uses fixed-size `readRange` calls, so seeking to a byte continuation does not stream and discard the preceding file content.
