@@ -1,3 +1,4 @@
+export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export {
   WorkerJavaScriptBackend,
   type WorkerJavaScriptBackendOptions,

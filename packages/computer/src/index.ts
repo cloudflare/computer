@@ -57,6 +57,7 @@ export {
   WorkspaceServiceProxy,
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
+export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,

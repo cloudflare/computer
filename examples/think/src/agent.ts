@@ -80,6 +80,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
     id: "container",
     container: () => this,
     workspace: workspaceRef(this.ctx),
+    egress: { mode: "direct" },
   });
 
   /**

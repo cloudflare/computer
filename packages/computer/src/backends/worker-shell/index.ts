@@ -26,6 +26,7 @@
 // factory to WorkerShellBackend instead of `loader` + `workspace` +
 // `ctx`).
 
+export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter.js";
 export { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 export { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
@@ -40,5 +41,7 @@ export {
 export {
   WorkerShellBackend,
   type WorkerShellBackendOptions,
-  type WorkerShellFetcher,
+  type WorkerShellLoader,
+  type WorkerShellRuntime,
+  type WorkerShellSource,
 } from "./worker-shell.js";

@@ -48,6 +48,7 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   readonly #backend = new CloudflareContainerBackend({
     container: () => this,
     workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
+    egress: { mode: "direct" },
   });
 
   override workspace = new Workspace({

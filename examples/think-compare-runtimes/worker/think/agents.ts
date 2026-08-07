@@ -330,6 +330,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
         );
       },
       workspace: workspaceRef,
+      egress: { mode: "direct" },
       containerEnv: this.env.FUSE_MOUNT ? { FUSE_MOUNT: this.env.FUSE_MOUNT } : undefined,
     });
     const workspace = new Workspace({

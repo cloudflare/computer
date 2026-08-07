@@ -1,5 +1,6 @@
 import { WorkspaceRuntimeBridge } from "../../runtime/bridge.js";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability.js";
+import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
@@ -53,6 +54,7 @@ export interface WorkerJavaScriptBackendOptions {
   maxRetainedExecutions?: number;
   compatibilityDate?: string;
   compatibilityFlags?: string[];
+  egress?: WorkspaceEgressPolicy;
   globalOutbound?: Fetcher | null;
   /** Allow ws:git operations that can perform host-side network requests. */
   allowGitNetwork?: boolean;
@@ -88,7 +90,9 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "compatibilityFlags"
   >
 > &
-  WorkerJavaScriptBackendOptions;
+  Omit<WorkerJavaScriptBackendOptions, "egress" | "globalOutbound"> & {
+    egress: WorkspaceEgressPolicy;
+  };
 
 interface WorkspaceExecutionContext {
   env: Record<string, string>;
@@ -140,6 +144,9 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
 
   constructor(options: WorkerJavaScriptBackendOptions) {
     this.id = options.id ?? "worker-javascript";
+    if (options.egress !== undefined && options.globalOutbound !== undefined) {
+      throw new Error("WorkerJavaScriptBackend cannot use globalOutbound together with egress.");
+    }
     const maxTimeoutMs = options.maxTimeoutMs ?? 180_000;
     const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(60_000, maxTimeoutMs);
     assertPositiveFinite(maxTimeoutMs, "maxTimeoutMs");
@@ -180,8 +187,17 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     if (defaultTimeoutMs > maxTimeoutMs) {
       throw new Error("WorkerJavaScriptBackend defaultTimeoutMs cannot exceed maxTimeoutMs.");
     }
+    const { globalOutbound, egress, ...backendOptions } = options;
+    const resolvedEgress =
+      egress ??
+      (globalOutbound === undefined
+        ? { mode: "none" as const }
+        : globalOutbound === null
+          ? { mode: "none" as const }
+          : { mode: "http-gateway" as const, gateway: globalOutbound });
     this.#options = {
-      ...options,
+      ...backendOptions,
+      egress: resolvedEgress,
       root: options.root ?? "/workspace",
       access: options.access ?? "read-write",
       defaultTimeoutMs,
@@ -205,7 +221,6 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxRetainedExecutions: options.maxRetainedExecutions ?? 100,
       compatibilityDate,
       compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],
-      globalOutbound: options.globalOutbound ?? null,
     };
   }
 
@@ -401,7 +416,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           },
           bridge,
           timeoutMs,
-          globalOutbound: this.#options.globalOutbound ?? null,
+          egress: this.#options.egress,
           compatibilityDate: this.#options.compatibilityDate,
           compatibilityFlags: this.#options.compatibilityFlags,
           maxStdioBytes: this.#options.maxStdioBytes,
@@ -916,7 +931,7 @@ function startJavaScriptExecution(options: {
   context: WorkspaceExecutionContext;
   bridge: WorkspaceRuntimeBridge;
   timeoutMs: number;
-  globalOutbound: Fetcher | null;
+  egress: WorkspaceEgressPolicy;
   compatibilityDate: string;
   compatibilityFlags: string[];
   maxStdioBytes: number;
@@ -935,7 +950,7 @@ function startJavaScriptExecution(options: {
     limits: { cpuMs: options.timeoutMs },
     mainModule: "workspace-runtime-runner.js",
     modules,
-    globalOutbound: options.globalOutbound,
+    ...dynamicWorkerEgress(options.egress),
   });
   let entrypoint: JavaScriptEntrypoint;
   try {

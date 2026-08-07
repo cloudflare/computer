@@ -51,6 +51,7 @@
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
+import { WORKSPACE_EGRESS_TOKEN_HEADER } from "./runtime/egress.js";
 
 export interface WorkspaceProxyProps {
   // Name of a DurableObjectNamespace binding in env. The proxy
@@ -59,11 +60,20 @@ export interface WorkspaceProxyProps {
   // Stringified DurableObjectId — typically `ctx.id.toString()`
   // from inside the owning DO's constructor.
   id: string;
+  egressToken?: string;
 }
 
 export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProps> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    if (this.ctx.props.egressToken !== undefined) {
+      const headers = new Headers(request.headers);
+      headers.set(WORKSPACE_EGRESS_TOKEN_HEADER, this.ctx.props.egressToken);
+      const stub = this.#hostStub();
+      if (stub === undefined) return this.#missingBindingResponse();
+      return stub.fetch(new Request(request, { headers }));
+    }
 
     const callback = url.pathname.match(/^\/__workspace_connect\/([0-9a-f-]{36})\/(health|ws)$/);
     if (callback?.[2] === "health") {
@@ -84,20 +94,25 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
         url.searchParams.set("token", callback[1]);
         request = new Request(url, request);
       }
-      const { binding, id } = this.ctx.props;
-      const ns = (this.env as Record<string, unknown>)[binding] as
-        | DurableObjectNamespace
-        | undefined;
-      if (!ns) {
-        return new Response(`WorkspaceProxy: env.${binding} is not a DurableObjectNamespace`, {
-          status: 500,
-        });
-      }
-      const stub = ns.get(ns.idFromString(id));
+      const stub = this.#hostStub();
+      if (stub === undefined) return this.#missingBindingResponse();
       return stub.fetch(request);
     }
 
     return new Response("not found", { status: 404 });
+  }
+
+  #hostStub(): DurableObjectStub | undefined {
+    const { binding, id } = this.ctx.props;
+    const ns = (this.env as Record<string, unknown>)[binding] as DurableObjectNamespace | undefined;
+    return ns?.get(ns.idFromString(id));
+  }
+
+  #missingBindingResponse(): Response {
+    return new Response(
+      `WorkspaceProxy: env.${this.ctx.props.binding} is not a DurableObjectNamespace`,
+      { status: 500 },
+    );
   }
 }
 
