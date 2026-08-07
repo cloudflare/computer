@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { withDB } from "../fs/with-db.js";
-import { createFileSync, chunksOf, writeFile, writeRangeSync } from "../fs/writeFile.js";
+import { chunksOf, createFileSync, writeFile, writeRangeSync } from "../fs/writeFile.js";
+import { initializeSchema } from "../schema/index.js";
+import { Database } from "../storage.js";
+import { SQLiteTestStorage } from "../testing.js";
+import type { DurableObjectStorageLike, SQLCursorLike } from "../types.js";
 import { stageBlob } from "./blobs.js";
 import { coalesceChanges } from "./coalesce.js";
 import { fetchChanges, fetchObjects, hasObjects } from "./fetch.js";
@@ -130,8 +134,22 @@ describe("hasObjects", () => {
     });
   });
 
-  it("probes more objects than Durable Object SQLite accepts in one query", async () => {
-    await withDB(async (db) => {
+  it("probes more objects than Durable Object SQLite accepts in one query", () => {
+    const storage = new SQLiteTestStorage();
+    const limitedStorage: DurableObjectStorageLike = {
+      sql: {
+        exec<Row extends object>(query: string, ...bindings: unknown[]): SQLCursorLike<Row> {
+          if (bindings.length > 100) {
+            throw new Error(`too many SQLite bindings: ${bindings.length}`);
+          }
+          return storage.sql.exec<Row>(query, ...bindings);
+        },
+      },
+      transactionSync: (closure) => storage.transactionSync(closure),
+    };
+    const db = new Database(limitedStorage);
+    initializeSchema(db, () => 1000);
+    try {
       const hashes: Uint8Array[] = [];
       for (let i = 0; i < 101; i++) {
         const bytes = new TextEncoder().encode(`object-${i}`);
@@ -141,7 +159,9 @@ describe("hasObjects", () => {
       }
 
       expect(hasObjects(db, hashes)).toEqual(hashes);
-    });
+    } finally {
+      storage.close();
+    }
   });
 
   it("preserves input order and duplicates across mixed inputs", async () => {
