@@ -2,16 +2,23 @@ import { type Tool, tool } from "ai";
 import { z } from "zod";
 import type { FileStore } from "./types.js";
 
+export type LineTruncation = { bytes: number } | { chars: number };
+
 export interface ReadToolOptions {
   store: FileStore;
   /** Hard line cap. Default 2000. */
   maxLines?: number;
-  /** Hard byte cap. Default 256 KiB. */
+  /** Hard output byte cap. Default 256 KiB. */
   maxBytes?: number;
+  /** Prefix each returned line with its 1-indexed line number. Default false. */
+  includeLineNumbers?: boolean;
+  /** Shorten individual lines before applying the output byte cap. */
+  lineTruncation?: LineTruncation;
 }
 
 const DEFAULT_MAX_LINES = 2000;
 const DEFAULT_MAX_BYTES = 256 * 1024;
+const TRUNCATION_MARKER = "... (truncated)";
 
 const inputSchema = z.object({
   path: z.string().describe("Path to the file to read"),
@@ -21,6 +28,14 @@ const inputSchema = z.object({
     .min(1)
     .optional()
     .describe("Line number to start reading from (1-indexed)"),
+  byteOffset: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Byte continuation returned by a previous read. Pass it with offset to avoid rescanning.",
+    ),
   limit: z.number().int().min(1).optional().describe("Maximum number of lines to read"),
 });
 
@@ -32,116 +47,140 @@ interface ReadResult {
   totalLines: number | null;
   truncated: boolean;
   nextOffset?: number;
+  nextByteOffset?: number;
 }
 
-/**
- * Memory-efficient line reader. Pulls chunks lazily through the store's
- * `readChunks` iterable; stops the moment the line/byte budget is filled.
- * Never materializes the full file unless the file itself fits within the
- * budget.
- *
- * Returns a continuation `nextOffset` whenever output was truncated so the
- * model can call `read` again with `offset=nextOffset` to keep going. Total
- * line count is reported as `null` when truncation cut us off — counting
- * every line in a multi-megabyte file would defeat the streaming approach.
- */
+const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: false });
 
-// Workerd has no Buffer. TextEncoder.encode allocates a Uint8Array per call,
-// but it's the only portable byte-length primitive available across Node and
-// workers runtimes.
-const _enc = new TextEncoder();
-function utf8ByteLength(s: string): number {
-  return _enc.encode(s).length;
+function utf8ByteLength(value: string): number {
+  return encoder.encode(value).length;
 }
+
 export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof inputSchema>> {
   const { store } = options;
   const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const includeLineNumbers = options.includeLineNumbers ?? false;
+  const lineTruncation = validateLineTruncation(options.lineTruncation);
 
   return tool({
-    description: `Read the contents of a file. Output is truncated to ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB, whichever is reached first; use offset/limit to page through large files.`,
+    description: `Read a text file. Output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB. A truncated result includes line and byte continuations for the next page.`,
     inputSchema,
-    execute: async ({ path, offset, limit }): Promise<ReadResult | { error: string }> => {
+    execute: async ({
+      path,
+      offset,
+      byteOffset,
+      limit,
+    }): Promise<ReadResult | { error: string }> => {
       const stat = await store.stat(path);
       if (!stat) return { error: `File not found: ${path}` };
 
       const startLine = offset ?? 1;
-      const wantedLines = limit ?? maxLines;
-      const lineCap = Math.min(wantedLines, maxLines);
-
-      const decoder = new TextDecoder("utf-8");
-      let carry = ""; // bytes from previous chunk that didn't end on a newline
-      let currentLine = 1; // 1-indexed line we're about to emit
+      const startByte = byteOffset ?? 0;
+      const lineCap = Math.min(limit ?? maxLines, maxLines);
+      let currentLine = byteOffset === undefined ? 1 : startLine;
       const collected: string[] = [];
       let collectedBytes = 0;
       let firstEmittedLine: number | null = null;
       let truncatedByBudget = false;
       let firstLineOverflow = false;
+      let nextByteOffset: number | undefined;
 
-      const processLine = (line: string): boolean => {
-        // Returns true to keep going, false to stop the outer pump.
+      const processLine = (
+        lineBytes: Uint8Array,
+        actualBytes: number,
+        lineStart: number,
+      ): boolean => {
         if (currentLine < startLine) {
-          currentLine++;
+          currentLine += 1;
           return true;
         }
-        // We're at or past `startLine` — try to emit.
-        const lineBytes = utf8ByteLength(line);
-        if (collected.length === 0 && lineBytes > maxBytes) {
+        if (collected.length >= lineCap) {
+          truncatedByBudget = true;
+          nextByteOffset = lineStart;
+          return false;
+        }
+
+        const line = renderLine(
+          truncateLine(lineBytes, actualBytes, lineTruncation),
+          currentLine,
+          includeLineNumbers,
+        );
+        const outputBytes = utf8ByteLength(line) + (collected.length > 0 ? 1 : 0);
+        if (collected.length === 0 && outputBytes > maxBytes) {
           firstLineOverflow = true;
           return false;
         }
-        // Stop before emitting if this line would push us over either cap.
-        if (collected.length >= lineCap) {
+        if (collectedBytes + outputBytes > maxBytes) {
           truncatedByBudget = true;
+          nextByteOffset = lineStart;
           return false;
         }
-        if (collectedBytes + lineBytes + (collected.length > 0 ? 1 : 0) > maxBytes) {
-          truncatedByBudget = true;
-          return false;
-        }
+
         if (firstEmittedLine === null) firstEmittedLine = currentLine;
         collected.push(line);
-        collectedBytes += lineBytes + (collected.length > 1 ? 1 : 0);
-        currentLine++;
+        collectedBytes += outputBytes;
+        currentLine += 1;
         return true;
       };
 
+      const keepBytes = bytesToRetain(lineTruncation, maxBytes);
+      let keptParts: Uint8Array[] = [];
+      let keptLength = 0;
+      let actualLength = 0;
+      let absoluteOffset = startByte;
+      let lineStart = startByte;
       let keepGoing = true;
-      for await (const chunk of store.readChunks(path)) {
-        if (!keepGoing) break;
-        carry += decoder.decode(chunk, { stream: true });
-        // Process every complete line in `carry`. Keep the final partial line
-        // for the next iteration.
-        let nl = carry.indexOf("\n");
-        while (nl !== -1) {
-          const line = carry.slice(0, nl);
-          carry = carry.slice(nl + 1);
-          if (!processLine(line)) {
+
+      const append = (part: Uint8Array): void => {
+        actualLength += part.byteLength;
+        const available = keepBytes - keptLength;
+        if (available <= 0) return;
+        const kept = part.byteLength <= available ? part : part.subarray(0, available);
+        if (kept.byteLength > 0) {
+          keptParts.push(kept);
+          keptLength += kept.byteLength;
+        }
+      };
+      const finishLine = (): boolean => {
+        const bytes = joinBytes(keptParts, keptLength);
+        const result = processLine(bytes, actualLength, lineStart);
+        keptParts = [];
+        keptLength = 0;
+        actualLength = 0;
+        return result;
+      };
+
+      for await (const chunk of store.readChunks(path, startByte)) {
+        let cursor = 0;
+        while (cursor < chunk.byteLength) {
+          const newline = chunk.indexOf(0x0a, cursor);
+          if (newline === -1) {
+            append(chunk.subarray(cursor));
+            break;
+          }
+          append(chunk.subarray(cursor, newline));
+          const afterNewline = absoluteOffset + newline + 1;
+          if (!finishLine()) {
             keepGoing = false;
             break;
           }
-          nl = carry.indexOf("\n");
+          lineStart = afterNewline;
+          cursor = newline + 1;
         }
+        absoluteOffset += chunk.byteLength;
+        if (!keepGoing) break;
       }
-      // Flush the decoder and process any trailing line.
-      if (keepGoing) {
-        carry += decoder.decode();
-        if (carry.length > 0) {
-          processLine(carry);
-        } else if (currentLine === 1 && stat.size === 0) {
-          // empty file
-        }
-      }
+      if (keepGoing && actualLength > 0) finishLine();
 
       if (firstLineOverflow) {
         return {
-          error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. Increase the cap or read a narrower range with offset/limit.`,
+          error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. Increase the cap or configure lineTruncation.`,
         };
       }
 
       if (firstEmittedLine === null) {
-        // Either an empty file (totalLines = 0 or 1) or offset past EOF.
-        // currentLine reflects how many lines we've seen so far.
         const linesSeen = currentLine - 1;
         if (stat.size === 0) {
           return {
@@ -161,19 +200,77 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       const startLineActual = firstEmittedLine ?? startLine;
       const endLine = startLineActual + collected.length - 1;
       const truncated = truncatedByBudget;
-      const totalLines = truncated ? null : currentLine - 1;
-      const nextOffset = truncated ? endLine + 1 : undefined;
-
       const result: ReadResult = {
         path,
         content: collected.join("\n"),
         startLine: startLineActual,
         endLine,
-        totalLines,
+        totalLines: truncated ? null : currentLine - 1,
         truncated,
       };
-      if (nextOffset !== undefined) result.nextOffset = nextOffset;
+      if (truncated) {
+        result.nextOffset = endLine + 1;
+        result.nextByteOffset = nextByteOffset;
+      }
       return result;
     },
   });
+}
+
+function validateLineTruncation(value: LineTruncation | undefined): LineTruncation | undefined {
+  if (value === undefined) return undefined;
+  const amount = "bytes" in value ? value.bytes : value.chars;
+  if (!Number.isSafeInteger(amount) || amount < 1) {
+    throw new TypeError("lineTruncation must be a positive safe integer");
+  }
+  return value;
+}
+
+function bytesToRetain(truncation: LineTruncation | undefined, maxBytes: number): number {
+  if (truncation === undefined) return maxBytes + 1;
+  return "bytes" in truncation ? truncation.bytes : truncation.chars * 4;
+}
+
+function truncateLine(
+  bytes: Uint8Array,
+  actualBytes: number,
+  truncation: LineTruncation | undefined,
+): string {
+  if (truncation === undefined) return decoder.decode(bytes);
+  if ("bytes" in truncation) {
+    if (actualBytes <= truncation.bytes) return decoder.decode(bytes);
+    return `${decodeUtf8Prefix(bytes.subarray(0, truncation.bytes))}${TRUNCATION_MARKER}`;
+  }
+  const text = decoder.decode(bytes);
+  const chars = Array.from(text);
+  if (chars.length <= truncation.chars && actualBytes === bytes.byteLength) return text;
+  return `${chars.slice(0, truncation.chars).join("")}${TRUNCATION_MARKER}`;
+}
+
+function decodeUtf8Prefix(bytes: Uint8Array): string {
+  const fatalDecoder = new TextDecoder("utf-8", { fatal: true });
+  for (let end = bytes.byteLength; end >= Math.max(0, bytes.byteLength - 3); end -= 1) {
+    try {
+      return fatalDecoder.decode(bytes.subarray(0, end));
+    } catch {
+      // The byte limit split a multibyte character; remove one more byte.
+    }
+  }
+  return decoder.decode(bytes);
+}
+
+function renderLine(line: string, lineNumber: number, includeLineNumbers: boolean): string {
+  return includeLineNumbers ? `${lineNumber}\t${line}` : line;
+}
+
+function joinBytes(parts: Uint8Array[], length: number): Uint8Array {
+  if (parts.length === 0) return new Uint8Array();
+  if (parts.length === 1) return parts[0];
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
 }
