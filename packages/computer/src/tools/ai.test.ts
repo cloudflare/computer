@@ -902,6 +902,38 @@ describe("createAITools filesystem tools", () => {
     expect(offsets).toEqual([0, 6]);
   });
 
+  it("stops pulling chunks as soon as the line cap is complete", async () => {
+    const chunks = [bytes("first\nsecond"), bytes(" line continues"), bytes(" to the end")];
+    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+    let chunksRead = 0;
+    const store: FileStore = {
+      async stat() {
+        return { size, mtime: 1 };
+      },
+      async *readChunks() {
+        for (const chunk of chunks) {
+          chunksRead += 1;
+          yield chunk;
+        }
+      },
+      async readAll() {
+        return null;
+      },
+      async write() {},
+    };
+    const tool = createReadTool({ store });
+
+    await expect(
+      executeTool(tool, { path: "/workspace/file.txt", limit: 1 }),
+    ).resolves.toMatchObject({
+      content: "first",
+      truncated: true,
+      nextOffset: 2,
+      nextByteOffset: 6,
+    });
+    expect(chunksRead).toBe(1);
+  });
+
   it("returns image extensions as file-data model output", async () => {
     const content = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     const store = memoryStore({ size: content.length });
