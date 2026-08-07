@@ -37,6 +37,14 @@ describe("WorkspaceFilesystem", () => {
     });
   });
 
+  it("readRange returns only the requested bytes", async () => {
+    await withFs(async (fs) => {
+      await fs.writeFile("/bin", new Uint8Array([1, 2, 3, 4, 5]));
+      expect(Array.from(await fs.readRange("/bin", 1, 3))).toEqual([2, 3, 4]);
+      expect(await fs.readRange("/bin", 5, 3)).toEqual(new Uint8Array());
+    });
+  });
+
   it("stat returns the documented shape for a file", async () => {
     await withFs(async (fs) => {
       await fs.writeFile("/a.txt", "ab");
