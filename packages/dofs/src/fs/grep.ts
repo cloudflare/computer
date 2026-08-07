@@ -5,14 +5,47 @@ import { find } from "./find.js";
 import { readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 
+export interface WorkspaceGrepContextLine {
+  line: number;
+  text: string;
+  isMatch: boolean;
+}
+
 export interface WorkspaceGrepMatch {
   path: string;
   line: number;
   text: string;
+  context?: WorkspaceGrepContextLine[];
 }
 
 export interface GrepOptions {
+  /** Compatibility alias for `caseSensitive: false`. */
   ignoreCase?: boolean;
+  /** Match letter case. Defaults to true. */
+  caseSensitive?: boolean;
+  /** Treat the pattern as plain text. Defaults to true. */
+  fixedString?: boolean;
+  /** Lines of context to include before and after each match. */
+  contextLines?: number;
+  /** Maximum matches to return. */
+  limit?: number;
+  /** Matching lines to skip before collecting results. */
+  offset?: number;
+}
+
+interface ScanState {
+  seen: number;
+  accepted: number;
+}
+
+interface NumberedLine {
+  line: number;
+  text: string;
+}
+
+interface PendingMatch {
+  match: WorkspaceGrepMatch;
+  remaining: number;
 }
 
 export async function grep(
@@ -27,81 +60,164 @@ export async function grep(
     throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
   }
 
+  const settings = normalizeOptions(options);
+  if (settings.limit === 0) return [];
+  const matcher = compileMatcher(pattern, settings.fixedString, settings.caseSensitive);
   const filePaths =
     node.type === "file"
       ? [canonical]
       : find(db, canonical)
           .filter((entry) => entry.type === "file")
-          .map((entry) => entry.path);
+          .map((entry) => entry.path)
+          .sort();
 
   const matches: WorkspaceGrepMatch[] = [];
+  const state: ScanState = { seen: 0, accepted: 0 };
   for (const filePath of filePaths) {
-    await scanFile(db, filePath, pattern, options, matches);
+    const complete = await scanFile(
+      db,
+      filePath,
+      matcher,
+      settings.contextLines,
+      settings.offset,
+      settings.limit,
+      state,
+      matches,
+    );
+    if (complete) break;
   }
   return matches;
 }
 
-// Stream the file in chunks so very large files don't load fully into
-// memory. Carry a partial-line tail between chunks (everything after
-// the last '\n') so a line that straddles a chunk boundary still
-// matches as one line. Line numbers are 1-indexed.
-async function scanFile(
-  db: Database,
-  path: string,
-  pattern: string,
-  options: GrepOptions,
-  out: WorkspaceGrepMatch[],
-): Promise<void> {
-  const stream = await readFile(db, path);
-  const reader = stream.getReader();
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  const needle = options.ignoreCase ? pattern.toUpperCase() : pattern;
-
-  let tail = "";
-  let lineNo = 1;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (value === undefined) continue;
-    const text = tail + decoder.decode(value, { stream: true });
-    const newlineIdx = text.lastIndexOf("\n");
-    const ready = newlineIdx === -1 ? "" : text.slice(0, newlineIdx);
-    tail = newlineIdx === -1 ? text : text.slice(newlineIdx + 1);
-    if (ready.length > 0) {
-      lineNo = scanLines(ready, lineNo, needle, options.ignoreCase === true, path, out);
-    }
+function normalizeOptions(options: GrepOptions): {
+  caseSensitive: boolean;
+  fixedString: boolean;
+  contextLines: number;
+  limit: number;
+  offset: number;
+} {
+  if (
+    options.caseSensitive !== undefined &&
+    options.ignoreCase !== undefined &&
+    options.caseSensitive === options.ignoreCase
+  ) {
+    throw new TypeError("caseSensitive conflicts with ignoreCase");
   }
-  // Drain the decoder and scan whatever's left (final line without a
-  // trailing newline).
-  tail += decoder.decode();
-  if (tail.length > 0) {
-    scanLines(tail, lineNo, needle, options.ignoreCase === true, path, out);
+  const contextLines = options.contextLines ?? 0;
+  if (!Number.isSafeInteger(contextLines) || contextLines < 0) {
+    throw new TypeError("grep contextLines must be a non-negative safe integer");
+  }
+  const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new TypeError("grep limit must be a non-negative safe integer");
+  }
+  const offset = options.offset ?? 0;
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new TypeError("grep offset must be a non-negative safe integer");
+  }
+  return {
+    caseSensitive: options.caseSensitive ?? options.ignoreCase !== true,
+    fixedString: options.fixedString ?? true,
+    contextLines,
+    limit,
+    offset,
+  };
+}
+
+function compileMatcher(pattern: string, fixedString: boolean, caseSensitive: boolean): RegExp {
+  const source = fixedString ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern;
+  try {
+    return new RegExp(source, caseSensitive ? "" : "i");
+  } catch (error) {
+    throw new TypeError(
+      `Invalid regular expression: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
-// Walk `block` line-by-line, push matches into `out`, return the next
-// 1-indexed line number to use for the following block.
-function scanLines(
-  block: string,
-  startLine: number,
-  needle: string,
-  ignoreCase: boolean,
+async function scanFile(
+  db: Database,
   path: string,
+  matcher: RegExp,
+  contextLines: number,
+  offset: number,
+  limit: number,
+  state: ScanState,
   out: WorkspaceGrepMatch[],
-): number {
-  let line = startLine;
-  let cursor = 0;
-  while (cursor <= block.length) {
-    const next = block.indexOf("\n", cursor);
-    const end = next === -1 ? block.length : next;
-    const text = block.slice(cursor, end);
-    const haystack = ignoreCase ? text.toUpperCase() : text;
-    if (haystack.includes(needle)) {
-      out.push({ path, line, text });
+): Promise<boolean> {
+  const before: NumberedLine[] = [];
+  const pending: PendingMatch[] = [];
+
+  for await (const current of readLines(db, path)) {
+    for (const item of pending) {
+      item.match.context?.push({ ...current, isMatch: false });
+      item.remaining -= 1;
     }
-    line += 1;
-    if (next === -1) break;
-    cursor = next + 1;
+    flushReady(pending, out);
+    if (state.accepted >= limit && pending.length === 0) return true;
+
+    if (matcher.test(current.text)) {
+      const matchIndex = state.seen;
+      state.seen += 1;
+      if (matchIndex >= offset && state.accepted < limit) {
+        const match: WorkspaceGrepMatch = { path, ...current };
+        if (contextLines > 0) {
+          match.context = [
+            ...before.map((line) => ({ ...line, isMatch: false })),
+            { ...current, isMatch: true },
+          ];
+          pending.push({ match, remaining: contextLines });
+        } else {
+          out.push(match);
+        }
+        state.accepted += 1;
+      }
+    }
+
+    before.push(current);
+    if (before.length > contextLines) before.shift();
+    if (state.accepted >= limit && pending.length === 0) return true;
   }
-  return line;
+
+  for (const item of pending) out.push(item.match);
+  return state.accepted >= limit;
+}
+
+function flushReady(pending: PendingMatch[], out: WorkspaceGrepMatch[]): void {
+  while (pending[0]?.remaining === 0) {
+    const item = pending.shift();
+    if (item !== undefined) out.push(item.match);
+  }
+}
+
+async function* readLines(db: Database, path: string): AsyncIterable<NumberedLine> {
+  const stream = await readFile(db, path);
+  const reader = stream.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  let tail = "";
+  let line = 1;
+  let completed = false;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        completed = true;
+        break;
+      }
+      if (value === undefined) continue;
+      tail += decoder.decode(value, { stream: true });
+      let newline = tail.indexOf("\n");
+      while (newline !== -1) {
+        yield { line, text: tail.slice(0, newline) };
+        line += 1;
+        tail = tail.slice(newline + 1);
+        newline = tail.indexOf("\n");
+      }
+    }
+    tail += decoder.decode();
+    if (tail.length > 0) yield { line, text: tail };
+  } finally {
+    if (!completed) await reader.cancel();
+    reader.releaseLock();
+  }
 }
