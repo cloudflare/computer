@@ -12,6 +12,7 @@
 //     withWorkspaceContainer,
 //   } from "@cloudflare/computer/backends/container";
 
+export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export {
   CloudflareContainerBackend,
   type CloudflareContainerBackendOptions,

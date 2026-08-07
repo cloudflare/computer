@@ -43,6 +43,103 @@ async function evaluateResult(
 }
 
 describe("WorkerJavaScriptBackend", () => {
+  it("blocks ambient egress by default", async () => {
+    const load = vi.fn(() => ({
+      getEntrypoint() {
+        return {
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, null),
+        };
+      },
+    }));
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+
+    await (await workspace.runtime.exec("export default null")).result();
+
+    expect(load.mock.calls[0]?.[0]).toMatchObject({ globalOutbound: null });
+  });
+
+  it("omits globalOutbound for direct egress", async () => {
+    const load = vi.fn(() => ({
+      getEntrypoint() {
+        return {
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, null),
+        };
+      },
+    }));
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load },
+          egress: { mode: "direct" },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+
+    await (await workspace.runtime.exec("export default null")).result();
+
+    expect(load.mock.calls[0]?.[0]).not.toHaveProperty("globalOutbound");
+  });
+
+  it("routes ambient egress through an HTTP gateway", async () => {
+    const gateway = { fetch: vi.fn() } as unknown as Fetcher;
+    const load = vi.fn(() => ({
+      getEntrypoint() {
+        return {
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, null),
+        };
+      },
+    }));
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load },
+          egress: { mode: "http-gateway", gateway },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+
+    await (await workspace.runtime.exec("export default null")).result();
+
+    expect(load.mock.calls[0]?.[0]).toMatchObject({ globalOutbound: gateway });
+  });
+
+  it("rejects globalOutbound together with egress", () => {
+    expect(
+      () =>
+        new WorkerJavaScriptBackend({
+          loader: throwingLoader("unused"),
+          globalOutbound: null,
+          egress: { mode: "none" },
+        }),
+    ).toThrow(/globalOutbound.*egress/);
+  });
+
   it("validates timeout configuration", () => {
     expect(
       () =>

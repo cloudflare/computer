@@ -46,13 +46,14 @@ export interface IWorkspaceContainerAPI {
   // Idempotent start. Returns once the runtime has accepted the
   // start command; readiness is verified by the backend through
   // probeComputerdHealth against port().
-  start(env: Record<string, string>): Promise<void>;
+  start(env: Record<string, string>, enableInternet: boolean): Promise<void>;
 
   // Wire `host` → workspace inside the container's egress table.
   // Called once per backend connect(). The implementation
   // constructs the loopback Fetcher locally from {binding, id},
   // because Fetchers can't survive a Workers RPC hop.
   interceptOutboundHttp(host: string, workspace: WorkspaceRef): Promise<void>;
+  interceptAllOutboundHttp(workspace: WorkspaceRef, token: string): Promise<void>;
 
   // Fetch against a named TCP port inside the container. The fetch
   // runs in the container-owning Durable Object, so callers across
@@ -68,7 +69,7 @@ export interface IWorkspaceContainerAPI {
   // current generation dead. Implementation: destroy() the
   // container, then start({ env }). Callers bound the number of
   // restart attempts — this method does no looping of its own.
-  restart(env: Record<string, string>): Promise<void>;
+  restart(env: Record<string, string>, enableInternet: boolean): Promise<void>;
 
   // Coarse diagnostic state. The `running` flag reports whether
   // the platform still has a container instance attached; it does
@@ -104,7 +105,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     this.#ctx = ctx;
   }
 
-  async start(env: Record<string, string>) {
+  async start(env: Record<string, string>, enableInternet: boolean) {
     // If a prior generation has died, commit to a fresh one: the
     // destroy clears any platform-side carcass, and the start that
     // follows is unconditional. We cannot rely on
@@ -119,14 +120,14 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
         // best-effort — the next start() will surface any real
         // platform-side failure.
       }
-      this.#container.start({ enableInternet: true, env });
+      this.#container.start({ enableInternet, env });
     } else if (!this.#container.running) {
-      this.#container.start({ enableInternet: true, env });
+      this.#container.start({ enableInternet, env });
     }
     installContainerMonitor(this.#ctx, this.#container);
   }
 
-  async restart(env: Record<string, string>) {
+  async restart(env: Record<string, string>, enableInternet: boolean) {
     // destroy() resolves once the platform has torn down the
     // attached container. A subsequent start() launches a fresh
     // generation — ports re-bind, the computerd daemon comes up clean.
@@ -139,7 +140,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       // succeed against a fresh generation or surface its own
       // failure.
     }
-    this.#container.start({ enableInternet: true, env });
+    this.#container.start({ enableInternet, env });
     installContainerMonitor(this.#ctx, this.#container);
   }
 
@@ -149,6 +150,17 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
 
   async exitInfo(): Promise<ContainerExitInfo | null> {
     return containerExitInfo(this.#ctx);
+  }
+
+  async interceptAllOutboundHttp(ref: WorkspaceRef, token: string) {
+    const exports = (this.#ctx as unknown as { exports: Record<string, unknown> }).exports as {
+      WorkspaceProxy: (opts: { props: WorkspaceRef & { egressToken: string } }) => Fetcher;
+    };
+    const proxy = exports.WorkspaceProxy({ props: { ...ref, egressToken: token } });
+    await Promise.all([
+      this.#container.interceptAllOutboundHttp(proxy),
+      this.#container.interceptOutboundHttps("*", proxy),
+    ]);
   }
 
   async interceptOutboundHttp(host: string, ref: WorkspaceRef) {

@@ -32,8 +32,11 @@ interface FakeHost {
   host: IWorkspaceContainerAPI;
   calls: { name: string; args: unknown[] }[];
   startEnv?: Record<string, string>;
+  enableInternet?: boolean;
   interceptedHost?: string;
   interceptedWorkspace?: WorkspaceRef;
+  gatewayWorkspace?: WorkspaceRef;
+  gatewayToken?: string;
   running: boolean;
   exit: { exitedAt: number; reason: string } | null;
   simulateExit(reason: string): void;
@@ -62,9 +65,10 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
   }
 
   state.host = {
-    async start(env) {
-      calls.push({ name: "start", args: [env] });
+    async start(env, enableInternet) {
+      calls.push({ name: "start", args: [env, enableInternet] });
       state.startEnv = env;
+      state.enableInternet = enableInternet;
       state.running = true;
       // A successful start clears any prior exit, matching
       // WorkspaceContainerAPI.start.
@@ -74,6 +78,11 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
       state.interceptedHost = host;
       state.interceptedWorkspace = ref;
+    },
+    async interceptAllOutboundHttp(ref, token) {
+      calls.push({ name: "interceptAllOutboundHttp", args: [ref, token] });
+      state.gatewayWorkspace = ref;
+      state.gatewayToken = token;
     },
     async fetchPort(port, input, init) {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -94,8 +103,8 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
     port() {
       throw new Error("cross-boundary Fetchers should not be used by CloudflareContainerBackend");
     },
-    async restart(env) {
-      calls.push({ name: "restart", args: [env] });
+    async restart(env, enableInternet) {
+      calls.push({ name: "restart", args: [env, enableInternet] });
       if (opts.restart) {
         await opts.restart();
       }
@@ -133,6 +142,79 @@ describe("CloudflareContainerBackend", () => {
     expect(names).toContain("interceptOutboundHttp");
     expect(fake.interceptedHost).toBe("computer.internal");
     expect(fake.interceptedWorkspace).toEqual(fakeWorkspace);
+  });
+
+  test("blocks ambient egress by default", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+    });
+
+    await expect(backend.connect()).rejects.toThrow();
+
+    expect(fake.enableInternet).toBe(false);
+  });
+
+  test("enables direct ambient egress", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+      egress: { mode: "direct" },
+    });
+
+    await expect(backend.connect()).rejects.toThrow();
+
+    expect(fake.enableInternet).toBe(true);
+  });
+
+  test("routes HTTP egress through the configured gateway", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const gateway = {
+      fetch: vi.fn(async (request: Request) => new Response(request.url)),
+    } as unknown as Fetcher;
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+      egress: { mode: "http-gateway", gateway },
+    });
+    await expect(backend.connect()).rejects.toThrow();
+    const request = new Request("https://api.example.test/data", {
+      headers: { "x-workspace-egress-token": fake.gatewayToken ?? "" },
+    });
+
+    const response = await backend.handleFetch(request);
+
+    expect(fake.gatewayWorkspace).toEqual(fakeWorkspace);
+    expect(await response.text()).toBe("https://api.example.test/data");
+    expect(gateway.fetch).toHaveBeenCalledOnce();
+  });
+
+  test("rejects container egress callbacks with the wrong token", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const gateway = {
+      fetch: vi.fn(async () => new Response("forwarded")),
+    } as unknown as Fetcher;
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+      egress: { mode: "http-gateway", gateway },
+    });
+    await expect(backend.connect()).rejects.toThrow();
+
+    const response = await backend.handleFetch(
+      new Request("https://api.example.test/data", {
+        headers: { "x-workspace-egress-token": "wrong" },
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(gateway.fetch).not.toHaveBeenCalled();
   });
 
   test("egressHost option overrides the default", async () => {

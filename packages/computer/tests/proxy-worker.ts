@@ -31,6 +31,10 @@ export class TestStorageDO extends DurableObject<Env> {
         { status: 200 },
       );
     }
+    const egressToken = request.headers.get("x-workspace-egress-token");
+    if (egressToken !== null) {
+      return Response.json({ url: request.url, egressToken });
+    }
     return new Response("DO unknown path", { status: 404 });
   }
 }
@@ -39,8 +43,11 @@ export default class TestDriver extends WorkerEntrypoint<Env> {
   override async fetch(request: Request): Promise<Response> {
     const binding = request.headers.get("x-test-binding") ?? "COMPUTERD";
     const id = request.headers.get("x-test-id") ?? "";
+    const egressToken = request.headers.get("x-test-egress-token") ?? undefined;
     // biome-ignore lint/suspicious/noExplicitAny: ctx.exports isn't in @cloudflare/workers-types yet
-    const proxy = (this.ctx as any).exports.WorkspaceProxy({ props: { binding, id } });
+    const proxy = (this.ctx as any).exports.WorkspaceProxy({
+      props: { binding, id, egressToken },
+    });
     return proxy.fetch(request);
   }
 }
