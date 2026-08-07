@@ -289,7 +289,17 @@ describe("createAITools filesystem tools", () => {
     );
     await expect(executeTool(tools.ls, { path: "/workspace/notes" })).resolves.toEqual({
       path: "/workspace/notes",
-      entries: [{ name: "todo.txt", isFile: true, isDirectory: false }],
+      count: 1,
+      entries: [
+        {
+          name: "todo.txt",
+          size: 8,
+          mtime: 1_700_000_000_000,
+          isFile: true,
+          isDirectory: false,
+          isSymbolicLink: false,
+        },
+      ],
     });
     await expect(
       executeTool(tools.read, { path: "/workspace/notes/todo.txt", limit: 1 }),
@@ -311,6 +321,32 @@ describe("createAITools filesystem tools", () => {
     await expect(workspace.fs.readFile("/workspace/notes/todo.txt", "utf8")).resolves.toBe(
       "one\nthree\n",
     );
+  });
+
+  it("paginates ls results and reports a continuation offset", async () => {
+    const workspace = makeWorkspace();
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    for (const name of ["a", "b", "c"]) {
+      await workspace.fs.writeFile(`/workspace/${name}`, name);
+    }
+    const tools = createAITools({ workspace });
+
+    await expect(
+      executeTool(tools.ls, { path: "/workspace", limit: 2, offset: 0 }),
+    ).resolves.toMatchObject({
+      count: 2,
+      entries: [
+        { name: "a", size: 1 },
+        { name: "b", size: 1 },
+      ],
+      nextOffset: 2,
+    });
+    await expect(
+      executeTool(tools.ls, { path: "/workspace", limit: 2, offset: 2 }),
+    ).resolves.toMatchObject({
+      count: 1,
+      entries: [{ name: "c", size: 1 }],
+    });
   });
 
   it("preserves file mode when write overwrites an existing file", async () => {
