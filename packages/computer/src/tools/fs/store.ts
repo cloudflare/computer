@@ -36,6 +36,7 @@ export interface WorkspaceLike {
     find(
       directory: string,
       pattern?: string,
+      options?: { limit?: number; offset?: number },
     ): Promise<Array<{ path: string; type: "file" | "dir" }>>;
     grep(
       pattern: string,
@@ -46,6 +47,7 @@ export interface WorkspaceLike {
         contextLines?: number;
         limit?: number;
         offset?: number;
+        include?: string;
       },
     ): Promise<
       Array<{

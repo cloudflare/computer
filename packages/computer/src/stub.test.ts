@@ -228,6 +228,18 @@ describe("WorkspaceStub", () => {
     });
   });
 
+  it("fs.find forwards bounded search options", async () => {
+    await withStub(async (ws) => {
+      const stub = ws.stub();
+      await ws.fs.writeFile("/a.ts", "");
+      await ws.fs.writeFile("/b.ts", "");
+      await ws.fs.writeFile("/c.ts", "");
+      expect(await stub.fs.find("/", "*.ts", { limit: 1, offset: 1 })).toEqual([
+        { path: "/b.ts", type: "file" },
+      ]);
+    });
+  });
+
   it("fs.stat propagates ENOENT for missing paths", async () => {
     await withStub(async (ws) => {
       const stub = ws.stub();

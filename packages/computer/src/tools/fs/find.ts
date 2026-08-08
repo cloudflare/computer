@@ -8,7 +8,11 @@ interface FoundEntry {
 
 export interface FindWorkspaceLike {
   fs: {
-    find(directory: string, pattern?: string): Promise<FoundEntry[]>;
+    find(
+      directory: string,
+      pattern?: string,
+      options?: { limit?: number; offset?: number },
+    ): Promise<FoundEntry[]>;
   };
 }
 
@@ -37,10 +41,12 @@ export function createFindTool(options: FindToolOptions): Tool<z.infer<typeof in
       try {
         const pageSize = limit ?? DEFAULT_LIMIT;
         const pageOffset = offset ?? 0;
-        const matches = await options.workspace.fs.find(path, pattern);
-        const page = matches.slice(pageOffset, pageOffset + pageSize + 1);
-        const truncated = page.length > pageSize;
-        const entries = truncated ? page.slice(0, pageSize) : page;
+        const matches = await options.workspace.fs.find(path, pattern, {
+          limit: pageSize + 1,
+          offset: pageOffset,
+        });
+        const truncated = matches.length > pageSize;
+        const entries = truncated ? matches.slice(0, pageSize) : matches;
         const result: {
           path: string;
           pattern: string;

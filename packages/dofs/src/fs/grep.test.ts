@@ -134,6 +134,20 @@ describe("grep", () => {
     });
   });
 
+  it("filters directory searches by an include glob before applying pagination", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.md", "TODO markdown\n", {}, () => 0);
+      await writeFile(db, "/b.ts", "TODO one\nTODO two\n", {}, () => 0);
+      await writeFile(db, "/c.ts", "TODO three\n", {}, () => 0);
+
+      expect(
+        (await grep(db, "TODO", "/", { include: "**/*.ts", offset: 1, limit: 2 })).map(
+          (match) => `${match.path}:${match.line}`,
+        ),
+      ).toEqual(["/b.ts:2", "/c.ts:1"]);
+    });
+  });
+
   it("matches across a chunk boundary", async () => {
     await withDB(async (db) => {
       // Lay out a file whose line straddles the 512KiB chunk boundary.

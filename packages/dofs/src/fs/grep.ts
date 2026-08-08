@@ -29,6 +29,8 @@ export interface GrepOptions {
   limit?: number;
   /** Matching lines to skip before collecting results. */
   offset?: number;
+  /** Glob relative to a searched directory that limits files. */
+  include?: string;
 }
 
 interface ScanState {
@@ -64,16 +66,9 @@ export async function grep(
     regex: settings.regex,
     ignoreCase: settings.ignoreCase,
   });
-  const filePaths =
-    node.type === "file"
-      ? [canonical]
-      : find(db, canonical)
-          .filter((entry) => entry.type === "file")
-          .map((entry) => entry.path)
-          .sort();
-
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
+  const filePaths = node.type === "file" ? [canonical] : filesUnder(db, canonical, options.include);
   for (const filePath of filePaths) {
     const complete = await scanFile(
       db,
@@ -116,6 +111,23 @@ function normalizeOptions(options: GrepOptions): {
     limit,
     offset,
   };
+}
+
+function* filesUnder(
+  db: Database,
+  directory: string,
+  include: string | undefined,
+): Iterable<string> {
+  const pageSize = 128;
+  let offset = 0;
+  while (true) {
+    const page = find(db, directory, include, { limit: pageSize, offset });
+    for (const entry of page) {
+      if (entry.type === "file") yield entry.path;
+    }
+    if (page.length < pageSize) return;
+    offset += page.length;
+  }
 }
 
 function compileMatcher(pattern: string, options: { regex: boolean; ignoreCase: boolean }): RegExp {

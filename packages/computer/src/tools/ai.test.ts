@@ -6,6 +6,7 @@ import {
   createAITools,
   createDeleteTool,
   createEditTool,
+  createFindTool,
   createGrepTool,
   createReadTool,
   createWriteTool,
@@ -489,6 +490,54 @@ describe("createAITools filesystem tools", () => {
     releaseRead?.();
     await Promise.all([firstEdit, secondEdit]);
     expect(secondAcquired).toBe(true);
+  });
+
+  it("passes find pagination to the workspace filesystem", async () => {
+    let received: { limit?: number; offset?: number } | undefined;
+    const tool = createFindTool({
+      workspace: {
+        fs: {
+          async find(_path, _pattern, options) {
+            received = options;
+            return [{ path: "/workspace/a.ts", type: "file" }];
+          },
+        },
+      },
+    });
+
+    await executeTool(tool, {
+      path: "/workspace",
+      pattern: "**/*.ts",
+      limit: 2,
+      offset: 7,
+    });
+    expect(received).toEqual({ limit: 3, offset: 7 });
+  });
+
+  it("passes grep include and pagination to one filesystem search", async () => {
+    let received: Record<string, unknown> | undefined;
+    const tool = createGrepTool({
+      workspace: {
+        fs: {
+          async find() {
+            throw new Error("find must not be called by the grep tool");
+          },
+          async grep(_query, _path, options) {
+            received = options;
+            return [];
+          },
+        },
+      },
+    });
+
+    await executeTool(tool, {
+      path: "/workspace",
+      query: "TODO",
+      include: "**/*.ts",
+      limit: 2,
+      offset: 7,
+    });
+    expect(received).toMatchObject({ include: "**/*.ts", limit: 3, offset: 7 });
   });
 
   it("accepts grep continuation offsets produced after large result sets", () => {

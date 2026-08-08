@@ -90,6 +90,21 @@ describe("find", () => {
     });
   });
 
+  it("applies limit and offset while walking in deterministic order", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/a/b", { recursive: true }, () => 0);
+      await writeFile(db, "/a/1.ts", "", {}, () => 0);
+      await writeFile(db, "/a/b/2.ts", "", {}, () => 0);
+      await writeFile(db, "/a/b/3.ts", "", {}, () => 0);
+      await writeFile(db, "/a/z.ts", "", {}, () => 0);
+
+      expect(find(db, "/a", "**/*.ts", { offset: 1, limit: 2 })).toEqual([
+        { path: "/a/b/2.ts", type: "file" },
+        { path: "/a/b/3.ts", type: "file" },
+      ]);
+    });
+  });
+
   it("does not match files outside the start directory even with **", async () => {
     await withDB(async (db) => {
       mkdir(db, "/a", {}, () => 0);

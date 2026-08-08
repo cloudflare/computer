@@ -5,7 +5,7 @@ export {
   WorkspaceFilesystem,
   type WorkspaceFilesystemOptions,
 } from "./fs/filesystem.js";
-export type { WorkspaceFoundEntry } from "./fs/find.js";
+export type { FindOptions, WorkspaceFoundEntry } from "./fs/find.js";
 export type {
   GrepOptions,
   WorkspaceGrepContextLine,

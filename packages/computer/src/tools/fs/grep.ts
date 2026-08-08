@@ -14,22 +14,17 @@ interface GrepMatch {
   context?: GrepContextLine[];
 }
 
-interface FoundEntry {
-  path: string;
-  type: "file" | "dir";
-}
-
 interface GrepOptions {
   fixedString?: boolean;
   caseSensitive?: boolean;
   contextLines?: number;
   limit?: number;
   offset?: number;
+  include?: string;
 }
 
 export interface GrepWorkspaceLike {
   fs: {
-    find(directory: string, pattern?: string): Promise<FoundEntry[]>;
     grep(pattern: string, path: string, options?: GrepOptions): Promise<GrepMatch[]>;
   };
 }
@@ -78,22 +73,12 @@ export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof in
           caseSensitive: caseSensitive ?? false,
           contextLines: contextLines ?? 0,
         };
-        const matches =
-          include === undefined
-            ? await options.workspace.fs.grep(query, path, {
-                ...searchOptions,
-                limit: pageSize + 1,
-                offset: pageOffset,
-              })
-            : await grepIncludedFiles(
-                options.workspace,
-                query,
-                path,
-                include,
-                searchOptions,
-                pageOffset,
-                pageSize + 1,
-              );
+        const matches = await options.workspace.fs.grep(query, path, {
+          ...searchOptions,
+          include,
+          limit: pageSize + 1,
+          offset: pageOffset,
+        });
         const truncated = matches.length > pageSize;
         const page = truncated ? matches.slice(0, pageSize) : matches;
         const result: {
@@ -110,35 +95,4 @@ export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof in
       }
     },
   });
-}
-
-async function grepIncludedFiles(
-  workspace: GrepWorkspaceLike,
-  query: string,
-  path: string,
-  include: string,
-  options: Pick<GrepOptions, "fixedString" | "caseSensitive" | "contextLines">,
-  offset: number,
-  limit: number,
-): Promise<GrepMatch[]> {
-  const files = (await workspace.fs.find(path, include))
-    .filter((entry) => entry.type === "file")
-    .map((entry) => entry.path)
-    .sort();
-  const matches: GrepMatch[] = [];
-  let skipped = offset;
-  for (const file of files) {
-    const fileMatches = await workspace.fs.grep(query, file, {
-      ...options,
-      limit: skipped + (limit - matches.length),
-    });
-    if (skipped >= fileMatches.length) {
-      skipped -= fileMatches.length;
-      continue;
-    }
-    matches.push(...fileMatches.slice(skipped, skipped + (limit - matches.length)));
-    skipped = 0;
-    if (matches.length >= limit) break;
-  }
-  return matches;
 }

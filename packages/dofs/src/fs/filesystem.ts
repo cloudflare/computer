@@ -15,7 +15,7 @@
 import type { Database } from "../storage.js";
 
 import { chmod } from "./chmod.js";
-import { find, type WorkspaceFoundEntry } from "./find.js";
+import { type FindOptions, find, type WorkspaceFoundEntry } from "./find.js";
 import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep.js";
 import { ls } from "./ls.js";
 import { type MkdirOptions, mkdir } from "./mkdir.js";
@@ -87,8 +87,12 @@ export class WorkspaceFilesystem {
     return readdir(this.db, path, options);
   }
 
-  async find(directory: string, pattern?: string): Promise<WorkspaceFoundEntry[]> {
-    return find(this.db, directory, pattern);
+  async find(
+    directory: string,
+    pattern?: string,
+    options: FindOptions = {},
+  ): Promise<WorkspaceFoundEntry[]> {
+    return find(this.db, directory, pattern, options);
   }
 
   async ls(prefix: string): Promise<string[]> {
