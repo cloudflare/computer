@@ -81,7 +81,10 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const includeLineNumbers = options.includeLineNumbers ?? false;
   const lineTruncation = validateLineTruncation(options.lineTruncation);
-  const maxModelBytes = options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES;
+  const maxModelBytes = validateBoundedReadLimit(
+    "maxModelBytes",
+    options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES,
+  );
   const mediaSniffBytes = options.mediaSniffBytes ?? DEFAULT_MEDIA_SNIFF_BYTES;
 
   return tool({
@@ -269,10 +272,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       if (currentStat.size > maxModelBytes) {
         return inlineMediaLimitError(output, currentStat.size, maxModelBytes);
       }
-      const bytes = await store.readAll(input.path);
-      if (bytes === null) {
-        return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
-      }
+      const bytes = await readBounded(store, input.path, maxModelBytes + 1);
       if (bytes.byteLength > maxModelBytes) {
         return inlineMediaLimitError(output, bytes.byteLength, maxModelBytes);
       }
@@ -293,6 +293,29 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       };
     },
   });
+}
+
+function validateBoundedReadLimit(name: string, value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value === Number.MAX_SAFE_INTEGER) {
+    throw new TypeError(`${name} must be a positive safe integer below Number.MAX_SAFE_INTEGER`);
+  }
+  return value;
+}
+
+async function readBounded(store: FileStore, path: string, limit: number): Promise<Uint8Array> {
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of store.readChunks(path, 0, limit)) {
+    const remaining = limit - total;
+    if (remaining <= 0) break;
+    const part = chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining);
+    if (part.byteLength > 0) {
+      parts.push(part);
+      total += part.byteLength;
+    }
+    if (total >= limit) break;
+  }
+  return joinBytes(parts, total);
 }
 
 function validateLineTruncation(value: LineTruncation | undefined): LineTruncation | undefined {

@@ -938,6 +938,9 @@ describe("createAITools filesystem tools", () => {
     const content = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     const store = memoryStore({ size: content.length });
     store.readAll = async () => content;
+    store.readChunks = async function* (_path, offset = 0, length) {
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
     const tool = createReadTool({ store });
     const output = await executeTool(tool, { path: "/workspace/image.png" });
 
@@ -995,17 +998,26 @@ describe("createAITools filesystem tools", () => {
     expect(readAll).toBe(false);
   });
 
-  it("rechecks the inline media cap after reading a concurrently changed file", async () => {
+  it("bounds the inline read when media grows after the size check", async () => {
+    const content = new Uint8Array(10);
+    const ranges: Array<{ offset: number; length: number | undefined }> = [];
     const store = memoryStore({ size: 2 });
-    store.readAll = async () => new Uint8Array(10);
+    store.readAll = async () => {
+      throw new Error("inline media must not use readAll");
+    };
+    store.readChunks = async function* (_path, offset = 0, length) {
+      ranges.push({ offset, length });
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
     const tool = createReadTool({ store, maxModelBytes: 4 });
     const output = await executeTool(tool, { path: "/workspace/image.png" });
 
     await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
       type: "error-text",
       value:
-        "Read /workspace/image.png (image/png, 10 bytes), but it exceeds the 4-byte inline model output limit.",
+        "Read /workspace/image.png (image/png, 5 bytes), but it exceeds the 4-byte inline model output limit.",
     });
+    expect(ranges).toEqual([{ offset: 0, length: 5 }]);
   });
 });
 
