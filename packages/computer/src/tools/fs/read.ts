@@ -274,7 +274,15 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       if (currentStat.size > maxModelBytes) {
         return inlineMediaLimitError(output, currentStat.size, maxModelBytes);
       }
-      const bytes = await readBounded(store, input.path, maxModelBytes + 1);
+      let bytes: Uint8Array;
+      try {
+        bytes = await readBounded(store, input.path, maxModelBytes + 1);
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
+        }
+        throw error;
+      }
       if (bytes.byteLength > maxModelBytes) {
         return inlineMediaLimitError(output, bytes.byteLength, maxModelBytes);
       }
@@ -302,6 +310,15 @@ function validateBoundedReadLimit(name: string, value: number): number {
     throw new TypeError(`${name} must be a positive safe integer below Number.MAX_SAFE_INTEGER`);
   }
   return value;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
 }
 
 async function readBounded(store: FileStore, path: string, limit: number): Promise<Uint8Array> {

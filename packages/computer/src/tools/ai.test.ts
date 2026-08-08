@@ -1057,6 +1057,42 @@ describe("createAITools filesystem tools", () => {
     });
     expect(ranges).toEqual([{ offset: 0, length: 5 }]);
   });
+
+  it("reports inline media deleted after the size check", async () => {
+    const store = memoryStore({ size: 2 });
+    store.readChunks = () => ({
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next(): Promise<IteratorResult<Uint8Array>> {
+        throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+      },
+    });
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+      type: "error-text",
+      value: "Could not read file bytes: /workspace/image.png",
+    });
+  });
+
+  it("does not hide unrelated inline media read failures", async () => {
+    const failure = new Error("storage unavailable");
+    const store = memoryStore({ size: 2 });
+    store.readChunks = () => ({
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next(): Promise<IteratorResult<Uint8Array>> {
+        throw failure;
+      },
+    });
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).rejects.toBe(failure);
+  });
 });
 
 describe("createAITools exec tool", () => {
