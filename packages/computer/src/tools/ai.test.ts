@@ -902,6 +902,20 @@ describe("createAITools filesystem tools", () => {
     expect(offsets).toEqual([0, 6]);
   });
 
+  it("keeps text continuations in truncated model output", async () => {
+    const tool = createReadTool({ store: memoryStore({ content: "first\nsecond\n" }) });
+    const truncated = await executeTool(tool, { path: "/workspace/file.txt", limit: 1 });
+    const complete = await executeTool(tool, { path: "/workspace/file.txt" });
+
+    await expect(
+      modelOutput(tool, { path: "/workspace/file.txt", limit: 1 }, truncated),
+    ).resolves.toEqual({ type: "json", value: truncated });
+    await expect(modelOutput(tool, { path: "/workspace/file.txt" }, complete)).resolves.toEqual({
+      type: "text",
+      value: "first\nsecond",
+    });
+  });
+
   it("stops pulling chunks as soon as the line cap is complete", async () => {
     const chunks = [bytes("first\nsecond"), bytes(" line continues"), bytes(" to the end")];
     const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);

@@ -256,7 +256,9 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
         return { type: "error-text", value: output.error };
       }
       if (typeof output.content === "string") {
-        return { type: "text", value: output.content };
+        return output.truncated === true
+          ? { type: "json", value: toJSONValue(output) }
+          : { type: "text", value: output.content };
       }
       if (output.kind === "binary") return { type: "json", value: toJSONValue(output) };
       if (!isMediaReadResult(output) || !isReadInput(input)) {
