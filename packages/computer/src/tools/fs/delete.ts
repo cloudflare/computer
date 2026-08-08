@@ -22,13 +22,18 @@ export function createDeleteTool(options: DeleteToolOptions): Tool<z.infer<typeo
       "Delete a file or directory. Set recursive to true to remove a non-empty directory.",
     inputSchema,
     execute: async ({ path, recursive }) =>
-      withFileLock(store, path, async () => {
-        try {
-          await store.remove(path, { recursive, force: true });
-          return { deleted: path };
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : String(error) };
-        }
-      }),
+      withFileLock(
+        store,
+        path,
+        async () => {
+          try {
+            await store.remove(path, { recursive, force: true });
+            return { deleted: path };
+          } catch (error) {
+            return { error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+        { subtree: recursive === true },
+      ),
   });
 }

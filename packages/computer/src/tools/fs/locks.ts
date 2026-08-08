@@ -1,35 +1,72 @@
 import type { FileStore } from "./types.js";
 
-const storeLocks = new WeakMap<object, Map<string, Promise<void>>>();
+interface LockEntry {
+  path: string;
+  subtree: boolean;
+  done: Promise<void>;
+}
+
+export interface FileLockOptions {
+  /** Exclude mutations at this path and every ancestor or descendant. */
+  subtree?: boolean;
+}
+
+const storeLocks = new WeakMap<object, Set<LockEntry>>();
 
 export async function withFileLock<T>(
   store: FileStore,
   path: string,
   operation: () => Promise<T>,
+  options: FileLockOptions = {},
 ): Promise<T> {
   const identity = store.lockIdentity ?? store;
-  let paths = storeLocks.get(identity);
-  if (paths === undefined) {
-    paths = new Map();
-    storeLocks.set(identity, paths);
+  let locks = storeLocks.get(identity);
+  if (locks === undefined) {
+    locks = new Set();
+    storeLocks.set(identity, locks);
   }
 
-  const key = normalizePath(path);
-  const previous = paths.get(key) ?? Promise.resolve();
+  const normalizedPath = normalizePath(path);
+  const subtree = options.subtree === true;
+  const previous = [...locks]
+    .filter((entry) => conflicts(normalizedPath, subtree, entry.path, entry.subtree))
+    .map((entry) => entry.done);
   let release: (() => void) | undefined;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  paths.set(key, current);
+  const current: LockEntry = {
+    path: normalizedPath,
+    subtree,
+    done: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  };
+  locks.add(current);
 
-  await previous;
+  await Promise.all(previous);
   try {
     return await operation();
   } finally {
     release?.();
-    if (paths.get(key) === current) paths.delete(key);
-    if (paths.size === 0) storeLocks.delete(identity);
+    locks.delete(current);
+    if (locks.size === 0) storeLocks.delete(identity);
   }
+}
+
+function conflicts(
+  leftPath: string,
+  leftSubtree: boolean,
+  rightPath: string,
+  rightSubtree: boolean,
+) {
+  if (leftPath === rightPath) return true;
+  if (!leftSubtree && !rightSubtree) return false;
+  return isDescendant(leftPath, rightPath) || isDescendant(rightPath, leftPath);
+}
+
+function isDescendant(path: string, ancestor: string): boolean {
+  if (path === ancestor) return true;
+  if (ancestor === "/") return path.startsWith("/");
+  if (ancestor === "") return !path.startsWith("/");
+  return path.startsWith(`${ancestor}/`);
 }
 
 function normalizePath(path: string): string {

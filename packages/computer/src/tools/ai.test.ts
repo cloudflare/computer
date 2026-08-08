@@ -685,6 +685,84 @@ describe("createAITools filesystem tools", () => {
     expect(events).toEqual(["edit", "delete"]);
   });
 
+  it("serializes recursive delete behind a mutation in its subtree", async () => {
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const events: string[] = [];
+    const store = memoryStore({
+      content: "old",
+      onWrite() {
+        events.push("edit");
+      },
+    });
+    store.readAll = async () => {
+      markReadStarted?.();
+      await readGate;
+      return bytes("old");
+    };
+    const deleteStore = Object.assign(store, {
+      async remove() {
+        events.push("delete");
+      },
+    });
+    const edit = executeTool(createEditTool({ store }), {
+      path: "/workspace/tree/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+    const deletion = executeTool(createDeleteTool({ store: deleteStore }), {
+      path: "/workspace/tree",
+      recursive: true,
+    });
+    await Promise.resolve();
+    const eventsBeforeEditFinished = [...events];
+
+    releaseRead?.();
+    await Promise.all([edit, deletion]);
+    expect(eventsBeforeEditFinished).toEqual([]);
+    expect(events).toEqual(["edit", "delete"]);
+  });
+
+  it("allows unrelated mutations while a recursive delete is pending", async () => {
+    let releaseRemove: (() => void) | undefined;
+    let markRemoveStarted: (() => void) | undefined;
+    const removeGate = new Promise<void>((resolve) => {
+      releaseRemove = resolve;
+    });
+    const removeStarted = new Promise<void>((resolve) => {
+      markRemoveStarted = resolve;
+    });
+    const events: string[] = [];
+    const store = Object.assign(memoryStore({ content: "old" }), {
+      async remove() {
+        markRemoveStarted?.();
+        await removeGate;
+        events.push("delete");
+      },
+    });
+    const deletion = executeTool(createDeleteTool({ store }), {
+      path: "/workspace/tree",
+      recursive: true,
+    });
+    await removeStarted;
+    const write = executeTool(createWriteTool({ store }), {
+      path: "/workspace/other.txt",
+      content: "new",
+    }).then(() => events.push("write"));
+    await write;
+
+    expect(events).toEqual(["write"]);
+    releaseRemove?.();
+    await deletion;
+    expect(events).toEqual(["write", "delete"]);
+  });
+
   it("preserves file mode when write overwrites an existing file", async () => {
     const writes: Array<{ path: string; content: string; mode?: number }> = [];
     const tool = createWriteTool({
