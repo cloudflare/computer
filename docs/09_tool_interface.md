@@ -134,9 +134,9 @@ Schema:
 }
 ```
 
-A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` prevents the store from transferring bytes already read.
+A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` prevents the store from transferring bytes already read. The AI SDK model output keeps this complete result as JSON when a read is truncated. A complete read remains plain text.
 
-Known image and PDF extensions are classified without reading the file. Unknown extensions use a bounded magic-byte sniff. The tool's `toModelOutput` hook emits AI SDK `file-data` parts for images and PDFs. It reads and base64-encodes the whole file only after its size passes `maxModelBytes`. Other binary files return an unsupported binary result.
+Known image and PDF extensions are classified without reading the file. Unknown extensions use a bounded magic-byte sniff. The tool's `toModelOutput` hook emits AI SDK `file-data` parts for images and PDFs. It checks the file size, then reads at most `maxModelBytes + 1` bytes before deciding whether to encode the file. This keeps the load bounded if the file grows after the size check. Other binary files return an unsupported binary result.
 
 ## `ls`
 
@@ -161,7 +161,7 @@ Known image and PDF extensions are classified without reading the file. Unknown 
 }
 ```
 
-The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, and `?` matches one non-separator character. Results contain `path` and `type`; a non-final page includes `nextOffset`.
+The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, and `?` matches one non-separator character. Results contain `path` and `type`; a non-final page includes `nextOffset`. Pagination reaches `workspace.fs.find`, which walks directory children in fixed-size pages and stops after collecting the requested page instead of materializing every match.
 
 ## `grep`
 
@@ -180,7 +180,9 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
 
 The AI tool defaults to case-insensitive regular expressions to match Think's tool contract. Set `fixedString` when the query should be treated as plain text. Matches include path, line number, text, and optional numbered context. Invalid regular expressions return a structured error. A non-final page includes `nextOffset`.
 
-The lower-level `workspace.fs.grep` keeps its existing defaults: literal and case-sensitive. Its options also accept `limit`, `offset`, `contextLines`, `fixedString`, and `caseSensitive`.
+The tool passes `include`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer.
+
+The lower-level `workspace.fs.grep` keeps its existing defaults: literal and case-sensitive. Its options also accept `limit`, `offset`, `include`, `contextLines`, `fixedString`, and `caseSensitive`.
 
 ## `write`
 
@@ -207,7 +209,7 @@ The schema is:
 
 Every `oldText` must identify one unique, non-overlapping range in the original content. The tool applies the batch atomically, preserves the byte order mark, line ending style, and file mode, and returns a unified patch plus `firstChangedLine`.
 
-`edit`, `write`, and `delete` share a per-store, per-path lock. A write cannot land between edit's read and write phases, while unrelated workspaces and paths remain independent.
+`edit`, `write`, and `delete` share locks through the store's stable `lockIdentity`. Every `WorkspaceFileStore` over the same `workspace.fs` uses the same identity, including adapters created by separate `createAITools()` calls. A write cannot land between edit's read and write phases, while unrelated workspaces and paths remain independent. Recursive deletion also locks the whole subtree, so mutations to ancestors or descendants cannot interleave with it.
 
 ## `delete`
 
@@ -231,7 +233,14 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 ## `FileStore`
 
 ```ts
+interface FileStat {
+  size: number;
+  mtime: number;
+  mode?: number;
+}
+
 interface FileStore {
+  readonly lockIdentity?: object;
   stat(path: string): Promise<FileStat | null>;
   readAll(path: string): Promise<Uint8Array | null>;
   readChunks(
@@ -246,5 +255,9 @@ interface MutableFileStore extends FileStore {
   remove(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
 }
 ```
+
+`readChunks` must stream without loading the full file at once. It yields no bytes at or beyond end of file; otherwise it yields exactly `min(byteLength ?? size - byteOffset, size - byteOffset)` bytes and throws when the path is missing. `readAll` is the explicit whole-file operation used only where the caller applies its own size bound or needs all content for an edit.
+
+`lockIdentity` coordinates mutations across adapters that represent the same storage resource. Custom stores should share one identity when their instances can reach the same files.
 
 `WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator uses fixed-size `readRange` calls, so seeking to a byte continuation does not stream and discard the preceding file content.

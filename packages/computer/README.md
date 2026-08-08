@@ -289,12 +289,15 @@ const tools = createAITools({
 ```
 
 The model reads each backend's `description` when deciding where a
-command should run, so write them in plain language. Large text reads
-return both line and byte continuations; pass both to the next call to
-avoid transferring the same bytes again. Images and PDFs are returned
-as AI SDK `file-data` model output after a size check. `ls`, `find`, and
-`grep` return bounded pages with `nextOffset` when more results exist.
-See [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
+command should run, so write them in plain language. Truncated text
+model output keeps both line and byte continuations; pass both to the
+next call to avoid transferring the same bytes again. Images and PDFs
+are returned as AI SDK `file-data` model output through a bounded read.
+`ls`, `find`, and `grep` pass pagination through to the storage layer
+and return `nextOffset` when more results exist. File mutations share
+locks across tool sets for the same workspace, and recursive deletion
+excludes mutations throughout its subtree. See
+[`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Git
 
