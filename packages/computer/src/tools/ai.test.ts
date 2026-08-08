@@ -994,6 +994,30 @@ describe("createAITools filesystem tools", () => {
     expect(ranges).toEqual([{ offset: 0, length: 512 }]);
   });
 
+  it("sniffs SVG only when it is the root element", async () => {
+    for (const content of [
+      '<svg viewBox="0 0 1 1"></svg>',
+      '<?xml version="1.0"?>\n<svg></svg>',
+      "<!-- generated -->\n<svg></svg>",
+    ]) {
+      const tool = createReadTool({ store: memoryStore({ content }) });
+      await expect(executeTool(tool, { path: "/workspace/upload" })).resolves.toMatchObject({
+        kind: "image",
+        mediaType: "image/svg+xml",
+      });
+    }
+
+    for (const content of [
+      "const markup = '<svg></svg>';",
+      "<html><body><svg></svg></body></html>",
+      "<svgscript>not an svg root</svgscript>",
+    ]) {
+      const tool = createReadTool({ store: memoryStore({ content }) });
+      const output = await executeTool(tool, { path: "/workspace/upload" });
+      expect(output).toMatchObject({ content, truncated: false });
+    }
+  });
+
   it("rejects oversized inline media before reading the whole file", async () => {
     let readAll = false;
     const store = memoryStore({ size: 10 });

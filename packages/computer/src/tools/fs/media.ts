@@ -113,8 +113,21 @@ function asciiAt(bytes: Uint8Array, start: number, end: number): string {
 }
 
 function looksLikeSvg(bytes: Uint8Array): boolean {
-  const prefix = new TextDecoder().decode(bytes).trimStart().toLowerCase();
-  return prefix.startsWith("<svg") || prefix.includes("<svg");
+  let prefix = new TextDecoder().decode(bytes).trimStart();
+
+  if (prefix.startsWith("<?xml")) {
+    const declarationEnd = prefix.indexOf("?>");
+    if (declarationEnd === -1) return false;
+    prefix = prefix.slice(declarationEnd + 2).trimStart();
+  }
+
+  while (prefix.startsWith("<!--")) {
+    const commentEnd = prefix.indexOf("-->");
+    if (commentEnd === -1) return false;
+    prefix = prefix.slice(commentEnd + 3).trimStart();
+  }
+
+  return /^<svg(?:\s|\/?>)/i.test(prefix);
 }
 
 function looksLikeText(bytes: Uint8Array): boolean {
