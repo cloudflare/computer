@@ -1,16 +1,17 @@
 import type { FileStore } from "./types.js";
 
-const storeLocks = new WeakMap<FileStore, Map<string, Promise<void>>>();
+const storeLocks = new WeakMap<object, Map<string, Promise<void>>>();
 
 export async function withFileLock<T>(
   store: FileStore,
   path: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  let paths = storeLocks.get(store);
+  const identity = store.lockIdentity ?? store;
+  let paths = storeLocks.get(identity);
   if (paths === undefined) {
     paths = new Map();
-    storeLocks.set(store, paths);
+    storeLocks.set(identity, paths);
   }
 
   const key = normalizePath(path);
@@ -27,7 +28,7 @@ export async function withFileLock<T>(
   } finally {
     release?.();
     if (paths.get(key) === current) paths.delete(key);
-    if (paths.size === 0) storeLocks.delete(store);
+    if (paths.size === 0) storeLocks.delete(identity);
   }
 }
 

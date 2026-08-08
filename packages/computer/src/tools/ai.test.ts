@@ -447,6 +447,52 @@ describe("createAITools filesystem tools", () => {
     expect(writes).toEqual(["edited", "written"]);
   });
 
+  it("shares mutation locks across tool sets for the same workspace", async () => {
+    const workspace = makeWorkspace();
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await workspace.fs.writeFile("/workspace/file.txt", "old");
+    let releaseRead: (() => void) | undefined;
+    let markReadStarted: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const originalReadFile = workspace.fs.readFile.bind(workspace.fs);
+    const originalWriteFile = workspace.fs.writeFile.bind(workspace.fs);
+    const writes: string[] = [];
+    workspace.fs.readFile = async (...args: Parameters<typeof workspace.fs.readFile>) => {
+      markReadStarted?.();
+      await readGate;
+      return originalReadFile(...args);
+    };
+    workspace.fs.writeFile = async (...args: Parameters<typeof workspace.fs.writeFile>) => {
+      const content = args[1];
+      if (content instanceof Uint8Array) writes.push(decode(content));
+      return originalWriteFile(...args);
+    };
+
+    const firstTools = createAITools({ workspace });
+    const secondTools = createAITools({ workspace });
+    const edit = executeTool(firstTools.edit, {
+      path: "/workspace/file.txt",
+      edits: [{ oldText: "old", newText: "edited" }],
+    });
+    await readStarted;
+    const write = executeTool(secondTools.write, {
+      path: "/workspace/file.txt",
+      content: "written",
+    });
+    await Promise.resolve();
+    const writesBeforeEditFinished = [...writes];
+
+    releaseRead?.();
+    await Promise.all([edit, write]);
+    expect(writesBeforeEditFinished).toEqual([]);
+    expect(writes).toEqual(["edited", "written"]);
+  });
+
   it("does not share edit locks between stores", async () => {
     let releaseRead: (() => void) | undefined;
     let markFirstStarted: (() => void) | undefined;

@@ -18,6 +18,9 @@ export interface FileStat {
 }
 
 export interface FileStore {
+  /** Shared identity used to coordinate mutations across adapters. */
+  readonly lockIdentity?: object;
+
   /** Return file metadata, or null if the path does not exist or is not a file. */
   stat(path: string): Promise<FileStat | null>;
 

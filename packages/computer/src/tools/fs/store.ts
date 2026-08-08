@@ -78,7 +78,11 @@ type WorkspaceFileStoreLike = {
 };
 
 export class WorkspaceFileStore implements MutableFileStore {
-  constructor(private readonly ws: WorkspaceFileStoreLike) {}
+  readonly lockIdentity: object;
+
+  constructor(private readonly ws: WorkspaceFileStoreLike) {
+    this.lockIdentity = ws.fs;
+  }
 
   async stat(path: string): Promise<FileStat | null> {
     try {
