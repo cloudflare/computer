@@ -113,21 +113,84 @@ function asciiAt(bytes: Uint8Array, start: number, end: number): string {
 }
 
 function looksLikeSvg(bytes: Uint8Array): boolean {
-  let prefix = new TextDecoder().decode(bytes).trimStart();
+  const prefix = new TextDecoder().decode(bytes);
+  let cursor = skipWhitespace(prefix, 0);
 
-  if (prefix.startsWith("<?xml")) {
-    const declarationEnd = prefix.indexOf("?>");
-    if (declarationEnd === -1) return false;
-    prefix = prefix.slice(declarationEnd + 2).trimStart();
+  while (cursor < prefix.length) {
+    if (prefix.startsWith("<!--", cursor)) {
+      const end = prefix.indexOf("-->", cursor + 4);
+      if (end === -1) return false;
+      cursor = skipWhitespace(prefix, end + 3);
+      continue;
+    }
+    if (prefix.startsWith("<?", cursor)) {
+      const end = prefix.indexOf("?>", cursor + 2);
+      if (end === -1) return false;
+      cursor = skipWhitespace(prefix, end + 2);
+      continue;
+    }
+    const doctypeEnd = consumeSvgDoctype(prefix, cursor);
+    if (doctypeEnd !== null) {
+      cursor = skipWhitespace(prefix, doctypeEnd);
+      continue;
+    }
+    break;
   }
 
-  while (prefix.startsWith("<!--")) {
-    const commentEnd = prefix.indexOf("-->");
-    if (commentEnd === -1) return false;
-    prefix = prefix.slice(commentEnd + 3).trimStart();
-  }
+  return /^<svg(?:\s|\/?>)/i.test(prefix.slice(cursor));
+}
 
-  return /^<svg(?:\s|\/?>)/i.test(prefix);
+function consumeSvgDoctype(value: string, start: number): number | null {
+  const keyword = "<!doctype";
+  if (value.slice(start, start + keyword.length).toLowerCase() !== keyword) return null;
+
+  let cursor = start + keyword.length;
+  if (!isWhitespace(value[cursor])) return null;
+  cursor = skipWhitespace(value, cursor);
+  if (value.slice(cursor, cursor + 3).toLowerCase() !== "svg") return null;
+  cursor += 3;
+  if (!isWhitespace(value[cursor]) && value[cursor] !== "[" && value[cursor] !== ">") return null;
+
+  let quote: '"' | "'" | undefined;
+  let subsetDepth = 0;
+  while (cursor < value.length) {
+    const character = value[cursor];
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      cursor += 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      cursor += 1;
+      continue;
+    }
+    if (value.startsWith("<!--", cursor)) {
+      const end = value.indexOf("-->", cursor + 4);
+      if (end === -1) return null;
+      cursor = end + 3;
+      continue;
+    }
+    if (character === "[") {
+      subsetDepth += 1;
+    } else if (character === "]" && subsetDepth > 0) {
+      subsetDepth -= 1;
+    } else if (character === ">" && subsetDepth === 0) {
+      return cursor + 1;
+    }
+    cursor += 1;
+  }
+  return null;
+}
+
+function skipWhitespace(value: string, start: number): number {
+  let cursor = start;
+  while (isWhitespace(value[cursor])) cursor += 1;
+  return cursor;
+}
+
+function isWhitespace(value: string | undefined): boolean {
+  return value !== undefined && /\s/.test(value);
 }
 
 function looksLikeText(bytes: Uint8Array): boolean {

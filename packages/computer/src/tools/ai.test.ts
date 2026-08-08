@@ -998,6 +998,10 @@ describe("createAITools filesystem tools", () => {
     for (const content of [
       '<svg viewBox="0 0 1 1"></svg>',
       '<?xml version="1.0"?>\n<svg></svg>',
+      '<?xml-stylesheet type="text/css" href="style.css"?>\n<svg></svg>',
+      '<!DOCTYPE svg SYSTEM "about:legacy-compat">\n<svg></svg>',
+      '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg></svg>',
+      '<!DOCTYPE svg [<!ENTITY greater ">">]>\n<svg></svg>',
       "<!-- generated -->\n<svg></svg>",
     ]) {
       const tool = createReadTool({ store: memoryStore({ content }) });
