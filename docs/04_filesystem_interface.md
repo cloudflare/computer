@@ -208,7 +208,11 @@ console.log(`${s.size} bytes, modified ${new Date(s.mtime).toISOString()}`);
 ```ts
 find(
   directory: string,
-  pattern?:  string,           // simple glob (`*.ts`, `**/*.md`)
+  pattern?: string,            // simple glob (`*.ts`, `**/*.md`)
+  options?: {
+    limit?: number;
+    offset?: number;
+  },
 ): Promise<Array<{ path; type: "file" | "dir" }>>
 ```
 
@@ -218,7 +222,7 @@ matched against each candidate's path **relative to `directory`**, not
 its absolute path — so `**/*.ts` under `/workspace/src` matches
 `a/b.ts`, not `/workspace/src/a/b.ts`.
 
-Only `*`, `**`, and `**/` are honored; `?`, character classes, and
+The glob supports `*`, `**`, `**/`, and `?`. Character classes and
 brace expansions are matched literally.
 
 ```ts
@@ -386,8 +390,8 @@ maps to `Workspace.fs`:
 | `symlink` / `readlink` | — | Not on the public surface; see note below. |
 | `watch` | — | Low-level primitive in `fs/watch.ts` (`createWatcher`, `createWatchAsyncIterable`, `WatchHandle`, `WatchOptions`); not exposed on the `WorkspaceFilesystem` class. |
 | `open` / `FileHandle` | — | Use streams instead. |
-| `glob` | `find` | Limited glob support (`*`, `**`, `**/` only). |
-| — | `grep` | Not in `node:fs`; included here for agents. Substring match. |
+| `glob` | `find` | Limited glob support (`*`, `**`, `**/`, and `?`). |
+| — | `grep` | Not in `node:fs`; literal by default, with optional regular expressions. |
 | — | `find` | Recursive directory walk with an optional glob, relative-rooted. |
 | — | `ls` | Flat list of file paths under a directory (segment-aware). |
 
