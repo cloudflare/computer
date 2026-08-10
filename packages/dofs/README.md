@@ -58,8 +58,6 @@ export class WorkspaceDO extends DurableObject {
   on FUSE create/open, mutates it through subsequent writes and
   truncates, and commits chunks in one transaction at release time.
   Reads against the same database see the buffered bytes immediately.
-- `WorkspaceFilesystem.readRange` exposes bounded byte reads without
-  materializing the whole file.
 - Content-addressed blob cache: `readFile`, `readRangeSync`,
   `provider.readFileSync`, and the partial-chunk read-modify-write
   helper share a per-`Database` LRU keyed by `vfs_blob_bytes.hash`.
