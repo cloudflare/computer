@@ -180,6 +180,18 @@ describe("writeFile under a read-only mount", () => {
     });
   });
 
+  it("allows opening and releasing a file inside a read-only mount without writing", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", {}, () => 0);
+      writeFileSync(db, "/mnt/file.txt", new Uint8Array([1]), {}, () => 0);
+      stageMount(db, "/mnt", "read-only");
+
+      expect(() => openWriteBufferSync(db, "/mnt/file.txt")).not.toThrow();
+      expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 1)).not.toThrow();
+      expect(resolveInode(db, "/mnt/file.txt")?.type).toBe("file");
+    });
+  });
+
   it("rejects streaming writes through a symlinked parent before staging blobs", async () => {
     await withDB(async (db) => {
       mkdir(db, "/mnt", {}, () => 0);
@@ -279,9 +291,8 @@ describe("writeFile under a read-only mount", () => {
       openWriteBufferForCreateSync(db, "/linkdir/new.txt", {}, () => 0);
       stageMount(db, "/linkdir", "read-only");
 
-      expect(() => openWriteBufferSync(db, "/linkdir/new.txt")).toThrowError(
-        expect.objectContaining({ code: "EROFS" }),
-      );
+      expect(() => openWriteBufferSync(db, "/linkdir/new.txt")).not.toThrow();
+      expect(() => releaseWriteBufferSync(db, "/linkdir/new.txt", () => 1)).not.toThrow();
       expect(() => releaseWriteBufferSync(db, "/linkdir/new.txt", () => 1)).toThrowError(
         expect.objectContaining({ code: "EROFS" }),
       );

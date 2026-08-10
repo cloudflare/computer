@@ -9,6 +9,7 @@ import { buildManifest } from "../sync/manifests.js";
 import { pathOf } from "../sync/paths.js";
 import { getBlobBytes } from "./blobCache.js";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
+import { resolveInode } from "./resolve.js";
 import { invalidateResolveExact } from "./resolveCache.js";
 import {
   allocatePendingInode,
@@ -585,6 +586,18 @@ function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
 }
 
 function resolveFileInode(db: Database, path: string): { inode: number; mode: number } {
+  const { path: canonical } = canonicalizePath(path);
+  const node = resolveInode(db, canonical);
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such file: ${canonical}`, canonical);
+  }
+  if (node.type !== "file") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
+  }
+  return { inode: node.inode, mode: node.mode };
+}
+
+function resolveWritableFileInode(db: Database, path: string): { inode: number; mode: number } {
   const { parts, path: canonical } = canonicalizePath(path);
   if (parts.length === 0) {
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
@@ -706,10 +719,8 @@ export function createFileSync(
 // the bytes back to chunks.
 export function openWriteBufferSync(db: Database, path: string): void {
   const { path: canonical } = canonicalizePath(path);
-  assertNotReadOnly(db, canonical);
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
-    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
     pending.openCount += 1;
     return;
   }
@@ -793,6 +804,7 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
     return;
   }
 
+  resolveWritableFileInode(db, path);
   const mtime = now();
   const mode = entry.mode & 0o7777;
   const buffered = entry.buf.subarray(0, entry.size);
@@ -988,7 +1000,7 @@ export function writeRangeSync(
     return bytes.byteLength;
   }
 
-  const { inode, mode: existingMode } = resolveFileInode(db, path);
+  const { inode, mode: existingMode } = resolveWritableFileInode(db, path);
   const mode = (options.mode ?? existingMode) & 0o7777;
   const buffered = getWriteBuffer(db, inode);
 
@@ -1063,7 +1075,7 @@ export function truncateFileSync(
     return;
   }
 
-  const { inode, mode } = resolveFileInode(db, path);
+  const { inode, mode } = resolveWritableFileInode(db, path);
   const buffered = getWriteBuffer(db, inode);
 
   if (buffered !== undefined) {
