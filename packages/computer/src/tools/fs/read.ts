@@ -27,24 +27,33 @@ const DEFAULT_MAX_MODEL_BYTES = 3.5 * 1024 * 1024;
 const DEFAULT_MEDIA_SNIFF_BYTES = 512;
 const TRUNCATION_MARKER = "... (truncated)";
 
-const inputSchema = z.object({
-  path: z.string().describe("Path to the file to read"),
-  offset: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe("Line number to start reading from (1-indexed)"),
-  byteOffset: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      "Byte continuation returned by a previous read. Pass it with offset to avoid rescanning.",
-    ),
-  limit: z.number().int().min(1).optional().describe("Maximum number of lines to read"),
-});
+const inputSchema = z
+  .object({
+    path: z.string().describe("Path to the file to read"),
+    offset: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("Line number to start reading from (1-indexed)"),
+    byteOffset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Byte continuation returned by a previous read. Pass it with offset to avoid rescanning.",
+      ),
+    limit: z.number().int().min(1).optional().describe("Maximum number of lines to read"),
+  })
+  .refine(
+    ({ offset, byteOffset }) =>
+      byteOffset === undefined || byteOffset === 0 || offset !== undefined,
+    {
+      message: "offset is required when byteOffset is greater than zero",
+      path: ["byteOffset"],
+    },
+  );
 
 interface ReadResult {
   path: string;
@@ -91,6 +100,10 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
     description: `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`,
     inputSchema,
     execute: async ({ path, offset, byteOffset, limit }): Promise<ReadToolResult> => {
+      if (byteOffset !== undefined && byteOffset > 0 && offset === undefined) {
+        return { error: "offset is required when byteOffset is greater than zero" };
+      }
+
       const stat = await store.stat(path);
       if (!stat) return { error: `File not found: ${path}` };
 
@@ -169,7 +182,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
         if (available <= 0) return;
         const kept = part.byteLength <= available ? part : part.subarray(0, available);
         if (kept.byteLength > 0) {
-          keptParts.push(kept);
+          keptParts.push(kept.slice());
           keptLength += kept.byteLength;
         }
       };
@@ -256,7 +269,9 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
         return { type: "error-text", value: output.error };
       }
       if (typeof output.content === "string") {
-        return output.truncated === true
+        const positioned =
+          isReadInput(input) && (input.offset !== undefined || input.byteOffset !== undefined);
+        return output.truncated === true || output.content.length === 0 || positioned
           ? { type: "json", value: toJSONValue(output) }
           : { type: "text", value: output.content };
       }
@@ -349,7 +364,8 @@ function validateLineTruncation(value: LineTruncation | undefined): LineTruncati
 
 function bytesToRetain(truncation: LineTruncation | undefined, maxBytes: number): number {
   if (truncation === undefined) return maxBytes + 1;
-  return "bytes" in truncation ? truncation.bytes : truncation.chars * 4;
+  const requested = "bytes" in truncation ? truncation.bytes : truncation.chars * 4;
+  return Math.min(requested, maxBytes + 1);
 }
 
 function truncateLine(
@@ -415,8 +431,15 @@ function toJSONValue(value: unknown): JSONValue {
   }
 }
 
-function isReadInput(value: unknown): value is { path: string } {
-  return isRecord(value) && typeof value.path === "string";
+function isReadInput(
+  value: unknown,
+): value is { path: string; offset?: number; byteOffset?: number } {
+  return (
+    isRecord(value) &&
+    typeof value.path === "string" &&
+    (value.offset === undefined || typeof value.offset === "number") &&
+    (value.byteOffset === undefined || typeof value.byteOffset === "number")
+  );
 }
 
 function basename(path: string): string {

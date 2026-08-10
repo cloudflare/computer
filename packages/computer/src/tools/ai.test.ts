@@ -902,6 +902,16 @@ describe("createAITools filesystem tools", () => {
     expect(offsets).toEqual([0, 6]);
   });
 
+  it("rejects a positive byte continuation without its line continuation", async () => {
+    const tool = createReadTool({ store: memoryStore({ content: "first\nsecond\n" }) });
+
+    await expect(
+      executeTool(tool, { path: "/workspace/file.txt", byteOffset: 6 }),
+    ).resolves.toEqual({
+      error: "offset is required when byteOffset is greater than zero",
+    });
+  });
+
   it("treats a zero byte offset as the start of the file", async () => {
     const tool = createReadTool({ store: memoryStore({ content: "first\nsecond\nthird\n" }) });
 
@@ -933,6 +943,24 @@ describe("createAITools filesystem tools", () => {
       type: "text",
       value: "first\nsecond",
     });
+  });
+
+  it("keeps empty and positioned complete reads as structured model output", async () => {
+    const emptyTool = createReadTool({ store: memoryStore({ content: "" }) });
+    const empty = await executeTool(emptyTool, { path: "/workspace/empty" });
+    await expect(modelOutput(emptyTool, { path: "/workspace/empty" }, empty)).resolves.toEqual({
+      type: "json",
+      value: empty,
+    });
+
+    const positionedTool = createReadTool({ store: memoryStore({ content: "one\ntwo\n" }) });
+    const positioned = await executeTool(positionedTool, {
+      path: "/workspace/file.txt",
+      offset: 2,
+    });
+    await expect(
+      modelOutput(positionedTool, { path: "/workspace/file.txt", offset: 2 }, positioned),
+    ).resolves.toEqual({ type: "json", value: positioned });
   });
 
   it("stops pulling chunks as soon as the line cap is complete", async () => {
