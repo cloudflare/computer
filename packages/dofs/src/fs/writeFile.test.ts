@@ -353,6 +353,35 @@ describe("writeFile", () => {
     });
   });
 
+  it("resolves a relative final symlink from its real parent", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real/nested", { recursive: true }, () => 0);
+      symlink(db, "/real/nested", "/alias", () => 0);
+      symlink(db, "../target", "/real/nested/link", () => 0);
+
+      await writeFile(db, "/alias/link", "hello", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/real/target"))).toBe("hello");
+      expect(new TextDecoder().decode(readBack(db, "/alias/link"))).toBe("hello");
+      expect(resolveInode(db, "/target")).toBeNull();
+    });
+  });
+
+  it("expands a symlink before applying a later parent segment in its target", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/base/dir", { recursive: true }, () => 0);
+      mkdir(db, "/other/deep", { recursive: true }, () => 0);
+      symlink(db, "/other/deep", "/base/dir/alias", () => 0);
+      symlink(db, "alias/../target", "/base/dir/link", () => 0);
+
+      await writeFile(db, "/base/dir/link", "hello", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/other/target"))).toBe("hello");
+      expect(new TextDecoder().decode(readBack(db, "/base/dir/link"))).toBe("hello");
+      expect(resolveInode(db, "/base/dir/target")).toBeNull();
+    });
+  });
+
   it("rejects ENOTDIR when an intermediate symlink resolves to a file", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/target", "file", {}, () => 0);
@@ -374,6 +403,26 @@ describe("writeFile", () => {
       await expect(writeFile(db, "/a/child.txt", "hello", {}, () => 0)).rejects.toMatchObject({
         code: "ELOOP",
       });
+    });
+  });
+
+  it("counts intermediate and final symlinks against one follow limit", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 0);
+      for (let index = 29; index >= 0; index--) {
+        const target = index === 29 ? "/real" : `/dir-${index + 1}`;
+        symlink(db, target, `/dir-${index}`, () => 0);
+      }
+      for (let index = 19; index >= 0; index--) {
+        const target = index === 19 ? "/missing" : `/file-${index + 1}`;
+        symlink(db, target, `/file-${index}`, () => 0);
+      }
+      symlink(db, "/file-0", "/real/link", () => 0);
+
+      await expect(writeFile(db, "/dir-0/link", "hello", {}, () => 0)).rejects.toMatchObject({
+        code: "ELOOP",
+      });
+      expect(resolveInode(db, "/missing")).toBeNull();
     });
   });
 
@@ -413,6 +462,18 @@ describe("writeFile", () => {
       await writeFile(db, "/dir/link", "new", {}, () => 0);
 
       expect(new TextDecoder().decode(readBack(db, "/dir/created"))).toBe("new");
+    });
+  });
+
+  it("creates the missing target at the end of a dangling symlink chain", async () => {
+    await withDB(async (db) => {
+      symlink(db, "/mid", "/link", () => 0);
+      symlink(db, "/missing", "/mid", () => 0);
+
+      await writeFile(db, "/link", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/missing"))).toBe("new");
+      expect(resolveInode(db, "/mid", { followSymlinks: false })?.type).toBe("symlink");
     });
   });
 
