@@ -182,16 +182,13 @@ function memoryStore(options: {
 }
 
 describe("WorkspaceFileStore", () => {
-  it("opens one ranged stream instead of issuing repeated range calls", async () => {
+  it("opens one ranged stream for a bounded read", async () => {
     const calls: Array<{ byteOffset?: number; byteLength?: number }> = [];
     const content = bytes("abcdefghij");
     const workspace = {
       fs: {
         async stat() {
           throw new Error("stat must not be called by readChunks");
-        },
-        async readRange() {
-          throw new Error("readRange must not be called by readChunks");
         },
         async readFile(
           _path: string,
@@ -276,9 +273,6 @@ describe("WorkspaceFileStore", () => {
       fs: {
         async stat() {
           throw new Error("stat must not be called by readChunks");
-        },
-        async readRange() {
-          throw new Error("readRange must not be called by readChunks");
         },
         async readFile(): Promise<ReadableStream<Uint8Array>> {
           return new ReadableStream({
