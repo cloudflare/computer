@@ -199,6 +199,31 @@ test("FUSE ops return errno values instead of throwing for expected filesystem e
   expect(await status((cb) => ops.unlink("/missing", cb))).toBe(-2);
 });
 
+test("FUSE maps read-only provider mutations to EROFS", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/readonly.txt", Buffer.from("content"));
+  const throwReadOnly = () => {
+    throw Object.assign(new Error("read-only mount"), { code: "EROFS" });
+  };
+  const readOnlyVfs = Object.assign(vfs, {
+    createFileSync: () => undefined,
+    writeRangeSync: throwReadOnly,
+    truncateFileSync: throwReadOnly,
+    openWriteBufferSync: () => undefined,
+    releaseWriteBufferSync: throwReadOnly,
+  });
+  const ops = makeFUSEOps(readOnlyVfs);
+
+  const opened = await callback((cb) => ops.open("/readonly.txt", 0, cb));
+  expect(opened.errno).toBe(0);
+  const fh = opened.result as number;
+  expect(await status((cb) => ops.write("/readonly.txt", fh, Buffer.from("x"), 1, 0, cb))).toBe(
+    -30,
+  );
+  expect(await status((cb) => ops.truncate("/readonly.txt", 0, cb))).toBe(-30);
+  expect(await status((cb) => ops.release("/readonly.txt", fh, cb))).toBe(-30);
+});
+
 test("FUSE unlink removes a symlink itself rather than its target", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);

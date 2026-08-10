@@ -14,6 +14,7 @@ const ERRNO = {
   EINVAL: -22,
   EPERM: -1,
   EFBIG: -27,
+  EROFS: -30,
   ENOTEMPTY: -39,
   ENODATA: -61,
   ENOSYS: -38,
@@ -1088,5 +1089,6 @@ function toErrno(error: unknown): number {
   if (code === "ENOTEMPTY") return ERRNO.ENOTEMPTY;
   if (code === "EINVAL") return ERRNO.EINVAL;
   if (code === "EPERM") return ERRNO.EPERM;
+  if (code === "EROFS") return ERRNO.EROFS;
   return ERRNO.EIO;
 }
