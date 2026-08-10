@@ -477,6 +477,28 @@ describe("writeFile", () => {
     });
   });
 
+  it("clamps final symlink targets that climb above the root", async () => {
+    await withDB(async (db) => {
+      symlink(db, "../../created", "/link", () => 0);
+
+      await writeFile(db, "/link", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/created"))).toBe("new");
+      expect(new TextDecoder().decode(readBack(db, "/link"))).toBe("new");
+    });
+  });
+
+  it("clamps intermediate symlink targets that climb above the root", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 0);
+      symlink(db, "../../real", "/linkdir", () => 0);
+
+      await writeFile(db, "/linkdir/file.txt", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/real/file.txt"))).toBe("new");
+    });
+  });
+
   it("creates the missing target at the end of a dangling symlink chain", async () => {
     await withDB(async (db) => {
       symlink(db, "/mid", "/link", () => 0);

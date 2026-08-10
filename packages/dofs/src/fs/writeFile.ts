@@ -92,7 +92,7 @@ function resolveParent(
       countSymlinkFollow(follows, canonical);
       const target = node.link_target ?? "";
       const targetParts = symlinkTargetParts(target, realParts);
-      assertNotReadOnly(db, canonicalizePath(pathFromParts(targetParts)).path);
+      assertNotReadOnly(db, clampedPathFromParts(targetParts));
       if (target.startsWith("/")) {
         inodeStack.splice(1);
         realParts.splice(0);
@@ -169,6 +169,19 @@ function countSymlinkFollow(follows: SymlinkFollowState, path: string): void {
 
 function pathFromParts(parts: string[]): string {
   return `/${parts.join("/")}`;
+}
+
+function clampedPathFromParts(parts: string[]): string {
+  const clamped: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      clamped.pop();
+      continue;
+    }
+    clamped.push(part);
+  }
+  return pathFromParts(clamped);
 }
 
 function childPath(db: Database, parentInode: number, leafName: string, path: string): string {
@@ -261,7 +274,7 @@ function resolveWriteTarget(
     countSymlinkFollow(follows, canonical);
     const realLinkParts = canonicalizePath(direct.canonicalPath).parts;
     targetParts = symlinkTargetParts(node.link_target ?? "", realLinkParts.slice(0, -1));
-    targetCanonical = canonicalizePath(pathFromParts(targetParts)).path;
+    targetCanonical = clampedPathFromParts(targetParts);
     assertNotReadOnly(db, targetCanonical);
     const finalPart = targetParts.at(-1);
     if (finalPart === undefined || finalPart === "" || finalPart === "." || finalPart === "..") {
