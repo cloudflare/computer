@@ -7,8 +7,8 @@
  * `workspace.fs` surface.
  *
  * Chunked and ranged reads use one `fs.readFile` stream so remote workspaces
- * keep one snapshot and one RPC invocation. Whole-file reads used by edit and
- * multimodal output drain the same stream interface.
+ * keep one snapshot and one RPC invocation. Edit drains `readAll`; multimodal
+ * reads use a bounded `readChunks` range and capture those bytes once.
  */
 
 import type { FileStat, MutableFileStore } from "./types.js";

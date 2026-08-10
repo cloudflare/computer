@@ -249,7 +249,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
 
       if (firstLineOverflow) {
         return {
-          error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. Increase the cap or configure lineTruncation.`,
+          error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. The host must increase maxBytes, reduce lineTruncation, or provide a byte-oriented tool.`,
         };
       }
 
@@ -264,6 +264,9 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
             totalLines: 0,
             truncated: false,
           };
+        }
+        if (startByte > 0) {
+          return { error: `Byte continuation ${startByte} is beyond end of file` };
         }
         if (offset !== undefined && startLine > Math.max(1, linesSeen)) {
           return { error: `Offset ${offset} is beyond end of file (${linesSeen} line(s))` };

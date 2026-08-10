@@ -837,7 +837,8 @@ describe("createAITools filesystem tools", () => {
     const tool = createReadTool({ store: memoryStore({ content: "abcdef\n" }), maxBytes: 3 });
 
     await expect(executeTool(tool, { path: "/workspace/file.txt" })).resolves.toEqual({
-      error: "Line 1 exceeds the 3-byte read cap. Increase the cap or configure lineTruncation.",
+      error:
+        "Line 1 exceeds the 3-byte read cap. The host must increase maxBytes, reduce lineTruncation, or provide a byte-oriented tool.",
     });
   });
 
@@ -909,6 +910,25 @@ describe("createAITools filesystem tools", () => {
       executeTool(tool, { path: "/workspace/file.txt", byteOffset: 6 }),
     ).resolves.toEqual({
       error: "offset is required when byteOffset is greater than zero",
+    });
+  });
+
+  it("reports a stale byte continuation without inventing a line count", async () => {
+    const content = bytes("first\n");
+    const store = memoryStore({ size: content.byteLength });
+    store.readChunks = async function* (_path, offset = 0, length) {
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
+    const tool = createReadTool({ store });
+
+    await expect(
+      executeTool(tool, {
+        path: "/workspace/file.txt",
+        offset: 7,
+        byteOffset: 100,
+      }),
+    ).resolves.toEqual({
+      error: "Byte continuation 100 is beyond end of file",
     });
   });
 
