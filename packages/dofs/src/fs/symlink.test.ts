@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { mkdir } from "./mkdir.js";
 import { invalidateReadOnlyMountCache } from "./mount-guard.js";
+import { readFile } from "./readFile.js";
 import { readlink } from "./readlink.js";
 import { resolveInode } from "./resolve.js";
+import { stat } from "./stat.js";
 import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import { writeFile } from "./writeFile.js";
@@ -137,6 +139,60 @@ describe("resolveInode + symlinks", () => {
       symlink(db, "/no/such/target", "/dangling", () => 0);
       const node = resolveInode(db, "/dangling", { followSymlinks: false });
       expect(node?.type).toBe("symlink");
+    });
+  });
+
+  it("resolves a bare relative target from the symlink parent", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dir", {}, () => 0);
+      await writeFile(db, "/dir/target", "hello", {}, () => 0);
+      symlink(db, "target", "/dir/link", () => 0);
+
+      expect(resolveInode(db, "/dir/link")?.inode).toBe(resolveInode(db, "/dir/target")?.inode);
+      await expect(readFile(db, "/dir/link", "utf8")).resolves.toBe("hello");
+    });
+  });
+
+  it("resolves dot and parent segments in relative symlink targets", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dir/sub", { recursive: true }, () => 0);
+      await writeFile(db, "/dir/target", "hello", {}, () => 0);
+      symlink(db, "./target", "/dir/dot-link", () => 0);
+      symlink(db, "../target", "/dir/sub/parent-link", () => 0);
+
+      expect(resolveInode(db, "/dir/dot-link")?.inode).toBe(resolveInode(db, "/dir/target")?.inode);
+      expect(resolveInode(db, "/dir/sub/parent-link")?.inode).toBe(
+        resolveInode(db, "/dir/target")?.inode,
+      );
+    });
+  });
+
+  it("clamps leading parent segments in relative symlink targets at the root", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "hello", {}, () => 0);
+      symlink(db, "../../target", "/link", () => 0);
+
+      expect(resolveInode(db, "/link")?.inode).toBe(resolveInode(db, "/target")?.inode);
+    });
+  });
+
+  it("resolves remaining path segments after a relative symlink", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dir/real", { recursive: true }, () => 0);
+      await writeFile(db, "/dir/real/file.txt", "hello", {}, () => 0);
+      symlink(db, "real", "/dir/link", () => 0);
+
+      expect(resolveInode(db, "/dir/link/file.txt")?.inode).toBe(
+        resolveInode(db, "/dir/real/file.txt")?.inode,
+      );
+    });
+  });
+
+  it("reports ENOENT for a dangling relative symlink target", async () => {
+    await withDB((db) => {
+      symlink(db, "missing", "/dangling", () => 0);
+
+      expect(() => stat(db, "/dangling")).toThrowError(expect.objectContaining({ code: "ENOENT" }));
     });
   });
 

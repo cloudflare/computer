@@ -188,6 +188,23 @@ function toResolved(node: NodeRow): ResolvedInode {
   };
 }
 
+function linkTargetParts(target: string, linkParentParts: string[]): string[] {
+  if (target.startsWith("/")) {
+    return canonicalizePath(target).parts;
+  }
+
+  const resolved = [...linkParentParts];
+  for (const part of target.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(part);
+  }
+  return resolved;
+}
+
 function resolveParts(
   db: Database,
   parts: string[],
@@ -226,7 +243,7 @@ function resolveParts(
         throw createWorkspaceError("ELOOP", "too many symlinks resolving path");
       }
       const target = next.link_target ?? "";
-      const resolved = resolveParts(db, canonicalizePath(target).parts, true, follows);
+      const resolved = resolveParts(db, linkTargetParts(target, parts.slice(0, i)), true, follows);
       if (resolved === null) {
         return null;
       }
