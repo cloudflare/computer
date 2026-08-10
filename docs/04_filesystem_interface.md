@@ -231,38 +231,61 @@ const paths = await fs.ls("/workspace/.agents/skills");
 
 ### `grep`
 
-Available on `Workspace.fs` for parity with the agent tools, and on
-`Workspace.runtime` when you want it to run inside the container (faster
-for large trees because it uses ripgrep).
+`Workspace.fs.grep` accepts this interface:
 
 ```ts
+interface GrepOptions {
+  regex?: boolean;
+  ignoreCase?: boolean;
+  context?: number;
+  limit?: number;
+  offset?: number;
+  include?: string;
+}
+
+interface WorkspaceGrepContextLine {
+  line: number;
+  text: string;
+  isMatch: boolean;
+}
+
+interface WorkspaceGrepMatch {
+  path: string;
+  line: number;
+  text: string;
+  context?: WorkspaceGrepContextLine[];
+}
+
 grep(
   pattern: string,
-  path:    string,
-  options?: { ignoreCase?: boolean }
-): Promise<{ path: string; line: number; text: string }[]>
+  path: string,
+  options?: GrepOptions,
+): Promise<WorkspaceGrepMatch[]>
 ```
 
-`pattern` is a **literal substring** — not a regex, not a glob.
-`ignoreCase` lowercases both sides before comparing.
+Matching is literal and case-sensitive by default. Set `regex: true` to
+interpret `pattern` as a regular expression and `ignoreCase: true` to ignore
+letter case. `context` adds that many lines before and after each match.
+`include` is a glob relative to a searched directory. `limit` and `offset`
+paginate matching lines.
 
-`path` may be a directory **or a single file**. Directory walks return
-matches in walk order. Each result row carries:
-
-- `path` — absolute path of the matching file.
-- `line` — 1-indexed line number within that file.
-- `text` — the entire matching line (without the trailing newline), not
-  just the matched substring.
+`path` may be a directory or a single file. Directory searches return matches
+in deterministic depth-first discovery order, then line order within each
+file. Results are not globally sorted by full path.
 
 ```ts
-const hits = await fs.grep("TODO", "/workspace/src", { ignoreCase: true });
+const hits = await fs.grep("TODO", "/workspace/src", {
+  ignoreCase: true,
+  include: "**/*.ts",
+});
 for (const hit of hits) {
   console.log(`${hit.path}:${hit.line}: ${hit.text}`);
 }
 ```
 
-See [05. Shell Interface](./05_runtime_interface.md) for the container-side
-variant.
+`Workspace.runtime` exposes a narrower container-side variant that accepts only
+`ignoreCase` and treats its pattern as a literal string. See
+[05. Shell Interface](./05_runtime_interface.md) for that variant.
 
 ## Error handling
 
