@@ -8,7 +8,7 @@ import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
 import { pathOf } from "../sync/paths.js";
 import { getBlobBytes } from "./blobCache.js";
-import { assertNotReadOnly } from "./mount-guard.js";
+import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
 import { invalidateResolveExact } from "./resolveCache.js";
 import {
   allocatePendingInode,
@@ -92,7 +92,7 @@ function resolveParent(
       countSymlinkFollow(follows, canonical);
       const target = node.link_target ?? "";
       const targetParts = symlinkTargetParts(target, realParts);
-      assertNotReadOnly(db, clampedPathFromParts(targetParts));
+      assertNotInReadOnlyMount(db, clampedPathFromParts(targetParts));
       if (target.startsWith("/")) {
         inodeStack.splice(1);
         realParts.splice(0);
@@ -275,7 +275,7 @@ function resolveWriteTarget(
     const realLinkParts = canonicalizePath(direct.canonicalPath).parts;
     targetParts = symlinkTargetParts(node.link_target ?? "", realLinkParts.slice(0, -1));
     targetCanonical = clampedPathFromParts(targetParts);
-    assertNotReadOnly(db, targetCanonical);
+    assertNotInReadOnlyMount(db, targetCanonical);
     const finalPart = targetParts.at(-1);
     if (finalPart === undefined || finalPart === "" || finalPart === "." || finalPart === "..") {
       resolveParent(db, [...targetParts, "__write_target__"], targetCanonical, follows);

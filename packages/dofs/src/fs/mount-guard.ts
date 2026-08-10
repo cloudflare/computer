@@ -51,8 +51,12 @@ export function getReadOnlyMountRoots(db: Database): readonly string[] {
 // Both shapes must be blocked so a read-only mount survives both
 // vectors. Mirrors the predicate that lived in
 // GuardedWorkspaceFilesystem before the data-layer move.
+function isAtOrBelowRoot(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
 function overlapsRoot(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}/`) || root.startsWith(`${path}/`);
+  return isAtOrBelowRoot(path, root) || root.startsWith(`${path}/`);
 }
 
 // Throws EROFS when the path overlaps any read-only mount root.
@@ -64,6 +68,18 @@ export function assertNotReadOnly(db: Database, path: string): void {
   if (roots.length === 0) return;
   for (const root of roots) {
     if (overlapsRoot(path, root)) {
+      throw createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, path);
+    }
+  }
+}
+
+// Point writes only need to reject paths at or below a read-only root.
+// Unlike recursive removal, walking through an ancestor of a mount does
+// not modify the protected subtree.
+export function assertNotInReadOnlyMount(db: Database, path: string): void {
+  const roots = getReadOnlyMountRoots(db);
+  for (const root of roots) {
+    if (isAtOrBelowRoot(path, root)) {
       throw createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, path);
     }
   }

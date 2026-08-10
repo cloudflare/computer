@@ -340,6 +340,18 @@ describe("writeFile under a read-only mount", () => {
     });
   });
 
+  it("allows writes through a symlink to a directory that contains a read-only mount", async () => {
+    await withDB((db) => {
+      mkdir(db, "/workspace/scratch", { recursive: true }, () => 0);
+      symlink(db, "/workspace", "/link", () => 0);
+      stageMount(db, "/workspace/r2", "read-only");
+
+      writeFileSync(db, "/link/scratch/file.txt", new Uint8Array([1]), {}, () => 0);
+
+      expect(resolveInode(db, "/workspace/scratch/file.txt")?.type).toBe("file");
+    });
+  });
+
   it("allows writes under a read-write mount", async () => {
     await withDB(async (db) => {
       mkdir(db, "/workspace/rw", { recursive: true }, () => 0);
