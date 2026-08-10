@@ -318,6 +318,12 @@ describe("createAITools filesystem tools", () => {
     ]);
   });
 
+  it("states the default ls page size in the tool description", () => {
+    const tools = createAITools({ workspace: makeWorkspace() });
+
+    expect(toolDescription(tools.ls)).toContain("defaults to 200 entries");
+  });
+
   it("returns only read-only tools when readonly is true", () => {
     const tools = createAITools({
       workspace: makeWorkspace(),

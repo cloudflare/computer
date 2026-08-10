@@ -40,8 +40,7 @@ const inputSchema = z.object({
 
 export function createListTool(options: ListToolOptions): Tool<z.infer<typeof inputSchema>> {
   return tool({
-    description:
-      "List entries in a workspace directory with file sizes and modification times. Use limit and offset to page through large directories.",
+    description: `List entries in a workspace directory with file sizes and modification times. The result defaults to ${DEFAULT_LIMIT} entries; use limit and offset to page through large directories.`,
     inputSchema,
     execute: async ({ path, limit, offset }) => {
       try {
