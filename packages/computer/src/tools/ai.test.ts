@@ -1054,6 +1054,41 @@ describe("createAITools filesystem tools", () => {
     expect(reads).toBe(1);
   });
 
+  it("rejects empty image and PDF attachments", async () => {
+    for (const { path, size } of [
+      { path: "/workspace/empty.png", size: 0 },
+      { path: "/workspace/empty.pdf", size: 0 },
+      { path: "/workspace/incomplete.png", size: 10 },
+    ]) {
+      const store = memoryStore({ size });
+      store.readChunks = async function* () {};
+      const tool = createReadTool({ store });
+
+      await expect(executeTool(tool, { path })).resolves.toEqual({
+        error: `Cannot attach empty file: ${path}`,
+      });
+    }
+
+    const tool = createReadTool({ store: memoryStore({ size: 0 }) });
+    await expect(
+      modelOutput(
+        tool,
+        { path: "/workspace/empty.png" },
+        {
+          kind: "image",
+          path: "/workspace/empty.png",
+          name: "empty.png",
+          mediaType: "image/png",
+          sizeBytes: 0,
+          data: "",
+        },
+      ),
+    ).resolves.toEqual({
+      type: "error-text",
+      value: "Cannot attach empty file: /workspace/empty.png",
+    });
+  });
+
   it("sniffs only a bounded prefix for files without a known extension", async () => {
     const content = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, ...bytes("body")]);
     const ranges: Array<{ offset: number; length: number | undefined }> = [];

@@ -140,6 +140,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
           }
           throw error;
         }
+        if (bytes.byteLength === 0) return { error: `Cannot attach empty file: ${path}` };
         result.sizeBytes = bytes.byteLength;
         if (bytes.byteLength <= maxModelBytes) result.data = uint8ArrayToBase64(bytes);
         return result;
@@ -309,6 +310,9 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       }
       if (output.data === undefined) {
         return { type: "error-text", value: `Could not read captured file bytes: ${output.path}` };
+      }
+      if (output.data.length === 0) {
+        return { type: "error-text", value: `Cannot attach empty file: ${output.path}` };
       }
       return {
         type: "content",
