@@ -74,7 +74,7 @@ export interface WorkspaceLike {
 }
 
 type WorkspaceFileStoreLike = {
-  fs: Pick<WorkspaceLike["fs"], "stat" | "readFile" | "readRange" | "writeFile" | "mkdir" | "rm">;
+  fs: Pick<WorkspaceLike["fs"], "stat" | "readFile" | "writeFile" | "mkdir" | "rm">;
 };
 
 export class WorkspaceFileStore implements MutableFileStore {
