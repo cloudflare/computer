@@ -80,9 +80,6 @@ createAITools({
   read?,
   write?,
   edit?,
-  find?,
-  grep?,
-  delete?,
   shell?,
 });
 ```
@@ -95,7 +92,6 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `find`, `grep`, `delete` | omitted | Reserved option bags with no configurable fields yet. |
 | `shell` | omitted | Options passed to `createExecTool`. |
 
 ## `read`
