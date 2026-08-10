@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
+import { mkdir } from "./mkdir.js";
 import { readRangeSync } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 import { stat } from "./stat.js";
+import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import {
   CHUNK_SIZE,
@@ -172,6 +174,20 @@ describe("deferred-create lifecycle", () => {
       expect(stat(db, "/pending.txt").size).toBe(5);
       expect(blobCount(db)).toBe(1);
       expect(orphanBlobCount(db)).toBe(0);
+    });
+  });
+
+  it("invalidates the real path after releasing through a symlinked parent", async () => {
+    await withDB((db) => {
+      mkdir(db, "/real", {}, () => 1000);
+      symlink(db, "/real", "/linkdir", () => 1000);
+      expect(resolveInode(db, "/real/pending.txt")).toBeNull();
+
+      openWriteBufferForCreateSync(db, "/linkdir/pending.txt", {}, () => 1000);
+      writeRangeSync(db, "/linkdir/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
+      releaseWriteBufferSync(db, "/linkdir/pending.txt", () => 1002);
+
+      expect(resolveInode(db, "/real/pending.txt")?.type).toBe("file");
     });
   });
 

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
 import { link } from "./link.js";
+import { mkdir } from "./mkdir.js";
 import { readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
+import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import {
   CHUNK_SIZE,
@@ -70,6 +72,18 @@ describe("direct range writes", () => {
       expect(node?.type).toBe("file");
       expect(node?.mode).toBe(0o600);
       expect(chunkRows(db, "/empty.txt")).toEqual([]);
+    });
+  });
+
+  it("invalidates a cached miss when creating through a symlinked parent", async () => {
+    await withDB((db) => {
+      mkdir(db, "/real", {}, () => 1000);
+      symlink(db, "/real", "/linkdir", () => 1000);
+      expect(resolveInode(db, "/real/file.txt")).toBeNull();
+
+      createFileSync(db, "/linkdir/file.txt", {}, () => 1001);
+
+      expect(resolveInode(db, "/real/file.txt")?.type).toBe("file");
     });
   });
 

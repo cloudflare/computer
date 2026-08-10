@@ -6,6 +6,7 @@ import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
+import { pathOf } from "../sync/paths.js";
 import { getBlobBytes } from "./blobCache.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { invalidateResolveExact } from "./resolveCache.js";
@@ -168,6 +169,14 @@ function pathFromParts(parts: string[]): string {
   return `/${parts.join("/")}`;
 }
 
+function childPath(db: Database, parentInode: number, leafName: string, path: string): string {
+  const parentPath = pathOf(db, parentInode);
+  if (parentPath === null) {
+    throw createWorkspaceError("ENOENT", `parent directory missing: ${path}`, path);
+  }
+  return parentPath === "/" ? `/${leafName}` : `${parentPath}/${leafName}`;
+}
+
 function symlinkTargetParts(target: string, linkParentParts: string[]): string[] {
   const base = target.startsWith("/") ? [] : linkParentParts;
   return [...base, ...target.split("/")];
@@ -213,7 +222,7 @@ function resolveWriteTarget(
         kind: "create",
         parentInode: direct.parentInode,
         leafName: direct.leafName,
-        canonicalPath: targetCanonical,
+        canonicalPath: direct.canonicalPath,
       };
     }
     if (options.exclusive) {
@@ -662,7 +671,7 @@ export function createFileSync(
       rev,
     );
     if (row === undefined) throw createWorkspaceError("EIO", "failed to allocate inode");
-    insertFileDirent(db, target.parentInode, target.leafName, row.inode, canonical);
+    insertFileDirent(db, target.parentInode, target.leafName, row.inode, target.canonicalPath);
   });
 }
 
@@ -807,6 +816,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
   let realInode = 0;
   try {
     db.transactionSync(() => {
+      const targetPath = childPath(db, parentInode, leafName, canonicalPath);
       // Re-check at commit time: a non-buffered writeFile or another
       // out-of-band path could have landed between open and release.
       const collision = db.one<{ child_inode: number }>(
@@ -832,7 +842,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
       if (row === undefined) {
         throw createWorkspaceError("EIO", "failed to allocate inode");
       }
-      insertFileDirent(db, parentInode, leafName, row.inode, canonicalPath);
+      insertFileDirent(db, parentInode, leafName, row.inode, targetPath);
       if (entry.size > 0) {
         const inode = row.inode;
         const chunkCount = Math.ceil(entry.size / CHUNK_SIZE);

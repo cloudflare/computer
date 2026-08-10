@@ -342,6 +342,18 @@ describe("writeFile", () => {
     });
   });
 
+  it("invalidates a cached miss at the resolved path after writing through a symlinked parent", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 0);
+      symlink(db, "/real", "/linkdir", () => 0);
+      expect(resolveInode(db, "/real/file.txt")).toBeNull();
+
+      await writeFile(db, "/linkdir/file.txt", "hello", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/real/file.txt"))).toBe("hello");
+    });
+  });
+
   it("writes through an intermediate relative symlink to a directory", async () => {
     await withDB(async (db) => {
       mkdir(db, "/base/real", { recursive: true }, () => 0);
