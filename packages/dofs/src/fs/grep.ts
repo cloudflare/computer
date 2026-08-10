@@ -145,27 +145,26 @@ async function scanFile(
   state: ScanState,
   out: WorkspaceGrepMatch[],
 ): Promise<boolean> {
-  const before: NumberedLine[] = [];
+  const before: WorkspaceGrepContextLine[] = [];
   const pending: PendingMatch[] = [];
 
   for await (const current of readLines(db, path)) {
+    const isMatch = matcher.test(current.text);
+    const contextLine = { ...current, isMatch };
     for (const item of pending) {
-      item.match.context?.push({ ...current, isMatch: false });
+      item.match.context?.push({ ...contextLine });
       item.remaining -= 1;
     }
     flushReady(pending, out);
     if (state.accepted >= limit && pending.length === 0) return true;
 
-    if (matcher.test(current.text)) {
+    if (isMatch) {
       const matchIndex = state.seen;
       state.seen += 1;
       if (matchIndex >= offset && state.accepted < limit) {
-        const match: WorkspaceGrepMatch = { path, ...current };
+        const match: WorkspaceGrepMatch = { path, line: current.line, text: current.text };
         if (contextLines > 0) {
-          match.context = [
-            ...before.map((line) => ({ ...line, isMatch: false })),
-            { ...current, isMatch: true },
-          ];
+          match.context = [...before.map((line) => ({ ...line })), { ...contextLine }];
           pending.push({ match, remaining: contextLines });
         } else {
           out.push(match);
@@ -174,7 +173,7 @@ async function scanFile(
       }
     }
 
-    before.push(current);
+    before.push(contextLine);
     if (before.length > contextLines) before.shift();
     if (state.accepted >= limit && pending.length === 0) return true;
   }

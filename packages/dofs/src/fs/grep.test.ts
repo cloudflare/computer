@@ -90,6 +90,41 @@ describe("grep", () => {
     });
   });
 
+  it("marks adjacent matches as matching context", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "TODO one\nTODO two\nplain\n", {}, () => 0);
+
+      const matches = await grep(db, "TODO", "/a.txt", { contextLines: 1 });
+      expect(matches).toEqual([
+        {
+          path: "/a.txt",
+          line: 1,
+          text: "TODO one",
+          context: [
+            { line: 1, text: "TODO one", isMatch: true },
+            { line: 2, text: "TODO two", isMatch: true },
+          ],
+        },
+        {
+          path: "/a.txt",
+          line: 2,
+          text: "TODO two",
+          context: [
+            { line: 1, text: "TODO one", isMatch: true },
+            { line: 2, text: "TODO two", isMatch: true },
+            { line: 3, text: "plain", isMatch: false },
+          ],
+        },
+      ]);
+
+      if (matches[0].context === undefined || matches[1].context === undefined) {
+        throw new Error("expected grep context");
+      }
+      matches[0].context[0].text = "changed";
+      expect(matches[1].context[0].text).toBe("TODO one");
+    });
+  });
+
   it("applies offset and limit across files in path and line order", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "TODO a1\nTODO a2\n", {}, () => 0);
