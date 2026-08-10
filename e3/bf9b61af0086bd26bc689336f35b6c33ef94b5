@@ -1,0 +1,33 @@
+.github/workflows/ci.yml
+  s_3bac4a8ecb5284::t_7ec0a577b629fc 146-148
+examples/codemode/.gitignore
+  s_3bac4a8ecb5284::t_e313e0ab2a9bd8 1-4
+examples/codemode/package.json
+  s_3bac4a8ecb5284::t_59bca8cb6ac374 1-27
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_cb4aae2897e0f6 1-17
+examples/codemode/vitest.config.ts
+  s_3bac4a8ecb5284::t_46ac0b05e42a03 1-13
+examples/codemode/wrangler.jsonc
+  s_3bac4a8ecb5284::t_6de32389b4cc94 1-12
+examples/codemode/wrangler.test.jsonc
+  s_3bac4a8ecb5284::t_b834666ee61897 1-12
+package-lock.json
+  s_3bac4a8ecb5284::t_6d2fd13406338a 65-89,3128-3131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e3bf9b61af0086bd26bc689336f35b6c33ef94b5",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
