@@ -85,7 +85,7 @@ describeIfDocker("Workspace.shell against a real computerd container", () => {
           const { value, done } = await reader.read();
           if (done) break;
           if (value.name === "stdout") chunks.push(value.value);
-          else if (value.name === "exit") exitCode = value.value;
+          else if (value.name === "exit") exitCode = value.code;
         }
       } finally {
         reader.releaseLock();
