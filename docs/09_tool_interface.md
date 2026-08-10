@@ -178,7 +178,7 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
 
 The AI tool defaults to case-insensitive regular expressions to match Think's tool contract. Set `fixedString` when the query should be treated as plain text. Matches include path, line number, text, and optional numbered context. Invalid regular expressions return a structured error. A non-final page includes `nextOffset`.
 
-The tool passes `include`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer.
+The tool passes `include`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer. Directory searches return matches in deterministic depth-first discovery order, then line order within each file. They are not globally sorted by full path.
 
 The lower-level `workspace.fs.grep` keeps its existing defaults: literal and case-sensitive. Its options also accept `limit`, `offset`, `include`, `contextLines`, `fixedString`, and `caseSensitive`.
 
