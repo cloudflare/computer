@@ -154,6 +154,7 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   readonly #backend = new CloudflareContainerBackend({
     container: () => this,
     workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
+    egress: { mode: "direct" },
   });
 
   override workspace = new Workspace({
@@ -169,6 +170,10 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   }
 }
 ```
+
+The explicit `direct` policy preserves the example's outbound Internet
+access. Use `{ mode: "none" }` when commands in the container do not need
+network access.
 
 `withWorkspaceContainer` mixes the container lifecycle into Think, so
 the durable object can start and stop its own container. The
