@@ -196,6 +196,20 @@ describe("resolveInode + symlinks", () => {
     });
   });
 
+  it.each(["file/", "file//", "file/../target"])(
+    "does not traverse past a file in the target %s",
+    async (target) => {
+      await withDB(async (db) => {
+        await writeFile(db, "/file", "file", {}, () => 0);
+        await writeFile(db, "/target", "target", {}, () => 0);
+        symlink(db, target, "/link", () => 0);
+
+        expect(resolveInode(db, "/link")).toBeNull();
+        await expect(readFile(db, "/link", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      });
+    },
+  );
+
   it("throws ELOOP on a cycle", async () => {
     await withDB((db) => {
       symlink(db, "/b", "/a", () => 0);

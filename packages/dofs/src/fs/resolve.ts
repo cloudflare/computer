@@ -188,23 +188,6 @@ function toResolved(node: NodeRow): ResolvedInode {
   };
 }
 
-function linkTargetParts(target: string, linkParentParts: string[]): string[] {
-  if (target.startsWith("/")) {
-    return canonicalizePath(target).parts;
-  }
-
-  const resolved = [...linkParentParts];
-  for (const part of target.split("/")) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      resolved.pop();
-      continue;
-    }
-    resolved.push(part);
-  }
-  return resolved;
-}
-
 function resolveParts(
   db: Database,
   parts: string[],
@@ -216,60 +199,45 @@ function resolveParts(
     return null;
   }
 
-  let current: NodeRow = root;
-  for (let i = 0; i < parts.length; i++) {
-    const isFinal = i === parts.length - 1;
-    if (current.type !== "dir") {
-      return null;
+  const pendingParts = [...parts];
+  const nodeStack: NodeRow[] = [root];
+  while (pendingParts.length > 0) {
+    const name = pendingParts.shift();
+    if (name === undefined) continue;
+    const current = nodeStack[nodeStack.length - 1];
+    if (current.type !== "dir") return null;
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      if (nodeStack.length > 1) nodeStack.pop();
+      continue;
     }
+
     const child = db.one<ChildRow>(
       "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
       current.inode,
-      parts[i],
+      name,
     );
-    if (child === undefined) {
-      return null;
-    }
+    if (child === undefined) return null;
     const next = readNode(db, child.child_inode);
-    if (next === null) {
-      return null;
-    }
+    if (next === null) return null;
+
     // Intermediate symlinks always get followed; final-segment symlinks
-    // are only followed when the caller wants. A dangling intermediate
-    // is the same as a missing intermediate (return null).
-    if (next.type === "symlink" && (!isFinal || followFinal)) {
+    // are only followed when the caller wants. Keep target components in
+    // the queue so links before `..` are expanded in filesystem order.
+    if (next.type === "symlink" && (pendingParts.length > 0 || followFinal)) {
       follows += 1;
       if (follows > MAX_SYMLINK_FOLLOWS) {
         throw createWorkspaceError("ELOOP", "too many symlinks resolving path");
       }
       const target = next.link_target ?? "";
-      const resolved = resolveParts(db, linkTargetParts(target, parts.slice(0, i)), true, follows);
-      if (resolved === null) {
-        return null;
-      }
-      // Replace the current dirent-resolved node with the followed
-      // result, then keep walking remaining segments (if any).
-      current = {
-        inode: resolved.inode,
-        type: resolved.type,
-        mode: resolved.mode,
-        mtime: resolved.mtime,
-        size: resolved.size,
-        link_target: resolved.linkTarget ?? null,
-      };
+      if (target.startsWith("/")) nodeStack.splice(1);
+      pendingParts.unshift(...target.split("/"));
       continue;
     }
-    current = next;
+    nodeStack.push(next);
   }
 
-  return {
-    inode: current.inode,
-    type: current.type,
-    mode: current.mode,
-    mtime: current.mtime,
-    size: current.size,
-    linkTarget: current.link_target ?? undefined,
-  };
+  return toResolved(nodeStack[nodeStack.length - 1]);
 }
 
 function readNode(db: Database, inode: number): NodeRow | null {
