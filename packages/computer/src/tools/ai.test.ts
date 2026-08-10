@@ -179,33 +179,34 @@ function memoryStore(options: {
 }
 
 describe("WorkspaceFileStore", () => {
-  it("uses readRange without streaming skipped bytes from Workspace.fs", async () => {
-    const calls: Array<{ offset: number; length: number }> = [];
+  it("opens one ranged stream instead of issuing repeated range calls", async () => {
+    const calls: Array<{ byteOffset?: number; byteLength?: number }> = [];
     const content = bytes("abcdefghij");
     const workspace = {
       fs: {
         async stat() {
-          return {
-            size: content.length,
-            mtime: 1,
-            mode: 0o100644,
-            isFile: true,
-            isDirectory: false,
-          };
+          throw new Error("stat must not be called by readChunks");
         },
-        async readRange(_path: string, offset: number, length: number) {
-          calls.push({ offset, length });
-          return content.slice(offset, offset + length);
+        async readRange() {
+          throw new Error("readRange must not be called by readChunks");
         },
-        async readFile(): Promise<ReadableStream<Uint8Array>> {
-          throw new Error("readFile must not be called for ranged reads");
+        async readFile(
+          _path: string,
+          options: { byteOffset?: number; byteLength?: number } = {},
+        ): Promise<ReadableStream<Uint8Array>> {
+          calls.push(options);
+          const start = options.byteOffset ?? 0;
+          const end = options.byteLength === undefined ? undefined : start + options.byteLength;
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(content.slice(start, end));
+              controller.close();
+            },
+          });
         },
         async writeFile() {},
         async mkdir() {},
         async rm() {},
-        async readdir() {
-          return [];
-        },
       },
     };
     const store = new WorkspaceFileStore(workspace);
@@ -213,48 +214,89 @@ describe("WorkspaceFileStore", () => {
     await expect(
       drainChunks(store.readChunks("/workspace/range.txt", 2, 5)).then(decode),
     ).resolves.toBe("cdefg");
-    expect(calls).toEqual([{ offset: 2, length: 5 }]);
+    expect(calls).toEqual([{ byteOffset: 2, byteLength: 5 }]);
   });
 
-  it("splits unbounded reads into fixed-size ranges", async () => {
-    const calls: Array<{ offset: number; length: number }> = [];
-    const content = new Uint8Array(150_000).fill(7);
+  it("still validates the path for a zero-length read", async () => {
+    const store = new WorkspaceFileStore(makeWorkspace());
+
+    await expect(drainChunks(store.readChunks("/missing", 0, 0))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects directories instead of treating them as empty files", async () => {
+    const workspace = makeWorkspace();
+    await workspace.fs.mkdir("/directory");
+    const store = new WorkspaceFileStore(workspace);
+
+    await expect(drainChunks(store.readChunks("/directory"))).rejects.toMatchObject({
+      code: "EISDIR",
+    });
+  });
+
+  it("keeps a real multi-chunk workspace read on one snapshot", async () => {
+    const workspace = makeWorkspace();
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const original = new Uint8Array(600_000);
+    original.fill(0x41, 0, 500_000);
+    original.fill(0x42, 500_000);
+    await workspace.fs.writeFile("/workspace/large.bin", original);
+    const store = new WorkspaceFileStore(workspace);
+
+    const chunks = store.readChunks("/workspace/large.bin")[Symbol.asyncIterator]();
+    const first = await chunks.next();
+    expect(first.done).toBe(false);
+    await workspace.fs.writeFile(
+      "/workspace/large.bin",
+      new Uint8Array(original.length).fill(0x43),
+    );
+
+    const parts = [first.value];
+    while (true) {
+      const next = await chunks.next();
+      if (next.done) break;
+      parts.push(next.value);
+    }
+    const result = await drainChunks(
+      (async function* () {
+        yield* parts;
+      })(),
+    );
+    expect(result.byteLength).toBe(original.byteLength);
+    expect(result.every((value, index) => value === original[index])).toBe(true);
+  });
+
+  it("cancels a ranged stream when its consumer stops early", async () => {
+    let cancelled = false;
     const workspace = {
       fs: {
         async stat() {
-          return {
-            size: content.length,
-            mtime: 1,
-            mode: 0o100644,
-            isFile: true,
-            isDirectory: false,
-          };
+          throw new Error("stat must not be called by readChunks");
         },
-        async readRange(_path: string, offset: number, length: number) {
-          calls.push({ offset, length });
-          return content.slice(offset, offset + length);
+        async readRange() {
+          throw new Error("readRange must not be called by readChunks");
         },
         async readFile(): Promise<ReadableStream<Uint8Array>> {
-          throw new Error("readFile must not be called for ranged reads");
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes("first"));
+              controller.enqueue(bytes("second"));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          });
         },
         async writeFile() {},
         async mkdir() {},
         async rm() {},
-        async readdir() {
-          return [];
-        },
       },
     };
     const store = new WorkspaceFileStore(workspace);
 
-    await expect(drainChunks(store.readChunks("/workspace/large.bin"))).resolves.toHaveLength(
-      content.length,
-    );
-    expect(calls).toEqual([
-      { offset: 0, length: 65_536 },
-      { offset: 65_536, length: 65_536 },
-      { offset: 131_072, length: 18_928 },
-    ]);
+    for await (const _chunk of store.readChunks("/workspace/range.txt")) break;
+    expect(cancelled).toBe(true);
   });
 });
 

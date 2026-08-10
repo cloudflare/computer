@@ -6,13 +6,12 @@
  * class. This adapter is the bridge from that contract to the public
  * `workspace.fs` surface.
  *
- * Bounded reads go through `fs.readRange`; whole-file reads used by edit
- * and multimodal output still drain `fs.readFile(path)`.
+ * Chunked and ranged reads use one `fs.readFile` stream so remote workspaces
+ * keep one snapshot and one RPC invocation. Whole-file reads used by edit and
+ * multimodal output drain the same stream interface.
  */
 
 import type { FileStat, FileStore } from "./types.js";
-
-const RANGE_CHUNK_BYTES = 64 * 1024;
 
 /**
  * Structural subset of `@cloudflare/computer.Workspace` the tools
@@ -27,8 +26,10 @@ export interface WorkspaceLike {
       isFile: boolean;
       isDirectory: boolean;
     }>;
-    readFile(path: string): Promise<ReadableStream<Uint8Array>>;
-    readRange(path: string, offset: number, length: number): Promise<Uint8Array>;
+    readFile(
+      path: string,
+      options?: { byteOffset?: number; byteLength?: number },
+    ): Promise<ReadableStream<Uint8Array>>;
     writeFile(path: string, content: Uint8Array, options?: { mode?: number }): Promise<void>;
     mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
     rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
@@ -84,20 +85,24 @@ export class WorkspaceFileStore implements FileStore {
     if (byteLength !== undefined && (!Number.isSafeInteger(byteLength) || byteLength < 0)) {
       throw new Error("readChunks: byteLength must be a non-negative safe integer");
     }
-    if (byteLength === 0) return;
-
-    const stat = await this.ws.fs.stat(path);
-    let remaining = Math.max(0, stat.size - byteOffset);
-    if (byteLength !== undefined) remaining = Math.min(remaining, byteLength);
-    let offset = byteOffset;
-    while (remaining > 0) {
-      const requested = Math.min(remaining, RANGE_CHUNK_BYTES);
-      const chunk = await this.ws.fs.readRange(path, offset, requested);
-      if (chunk.byteLength === 0) return;
-      yield chunk;
-      offset += chunk.byteLength;
-      remaining -= chunk.byteLength;
-      if (chunk.byteLength < requested) return;
+    const stream = await this.ws.fs.readFile(path, { byteOffset, byteLength });
+    const reader = stream.getReader();
+    let completed = false;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          completed = true;
+          return;
+        }
+        if (value !== undefined && value.byteLength > 0) yield value;
+      }
+    } finally {
+      try {
+        if (!completed) await reader.cancel();
+      } finally {
+        reader.releaseLock();
+      }
     }
   }
 }

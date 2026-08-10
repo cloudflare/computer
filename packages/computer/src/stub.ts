@@ -104,6 +104,11 @@ export class WorkspaceFilesystemStub extends RpcTarget {
 
   readFile(path: string): Promise<ReadableStream<Uint8Array>>;
   readFile(path: string, encoding: "utf8"): Promise<string>;
+  readFile(
+    path: string,
+    options: ReadFileOptions & { encoding?: undefined },
+  ): Promise<ReadableStream<Uint8Array>>;
+  readFile(path: string, options: ReadFileOptions & { encoding: "utf8" }): Promise<string>;
   readFile(path: string, options: ReadFileOptions): Promise<string | ReadableStream<Uint8Array>>;
   readFile(
     path: string,
