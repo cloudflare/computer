@@ -578,12 +578,36 @@ describe("createAITools filesystem tools", () => {
 
     await executeTool(tool, {
       path: "/workspace",
-      query: "TODO",
+      query: "TODO.+",
       include: "**/*.ts",
+      regex: true,
+      ignoreCase: true,
+      context: 2,
       limit: 2,
       offset: 7,
     });
-    expect(received).toMatchObject({ include: "**/*.ts", limit: 3, offset: 7 });
+    expect(received).toEqual({
+      include: "**/*.ts",
+      regex: true,
+      ignoreCase: true,
+      context: 2,
+      limit: 3,
+      offset: 7,
+    });
+  });
+
+  it("defaults grep to literal case-sensitive matching", async () => {
+    const workspace = makeWorkspace();
+    const tool = createGrepTool({ workspace });
+    await workspace.fs.mkdir("/workspace");
+    await workspace.fs.writeFile("/workspace/search.txt", "TODO\ntodo\nT.DO\n");
+
+    await expect(
+      executeTool(tool, { path: "/workspace/search.txt", query: "T.DO" }),
+    ).resolves.toMatchObject({
+      count: 1,
+      matches: [{ path: "/workspace/search.txt", line: 3, text: "T.DO" }],
+    });
   });
 
   it("accepts grep continuation offsets produced after large result sets", () => {
@@ -628,6 +652,7 @@ describe("createAITools filesystem tools", () => {
         path: "/workspace",
         query: "todo",
         include: "**/*.ts",
+        ignoreCase: true,
         limit: 20,
       }),
     ).resolves.toMatchObject({

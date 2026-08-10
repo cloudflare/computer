@@ -42,9 +42,9 @@ export interface WorkspaceLike {
       pattern: string,
       path: string,
       options?: {
-        fixedString?: boolean;
-        caseSensitive?: boolean;
-        contextLines?: number;
+        regex?: boolean;
+        ignoreCase?: boolean;
+        context?: number;
         limit?: number;
         offset?: number;
         include?: string;
