@@ -10,9 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { WorkspaceFilesystem } from "./filesystem.js";
-import { readRangeSync } from "./readFile.js";
 import { withDB } from "./with-db.js";
-import { openWriteBufferSync, releaseWriteBufferSync, writeRangeSync } from "./writeFile.js";
 
 async function withFs<T>(
   fn: (fs: WorkspaceFilesystem) => T | Promise<T>,
@@ -36,28 +34,6 @@ describe("WorkspaceFilesystem", () => {
       expect(stream).toBeInstanceOf(ReadableStream);
       const buf = new Uint8Array(await new Response(stream).arrayBuffer());
       expect(Array.from(buf)).toEqual([1, 2, 3, 4]);
-    });
-  });
-
-  it("readRange returns only the requested bytes", async () => {
-    await withFs(async (fs) => {
-      await fs.writeFile("/bin", new Uint8Array([1, 2, 3, 4, 5]));
-      expect(Array.from(await fs.readRange("/bin", 1, 3))).toEqual([2, 3, 4]);
-      expect(await fs.readRange("/bin", 5, 3)).toEqual(new Uint8Array());
-    });
-  });
-
-  it("readRange returns owned bytes while a write buffer is open", async () => {
-    await withFs(async (fs) => {
-      await fs.writeFile("/bin", new Uint8Array([1, 2, 3]));
-      openWriteBufferSync(fs.db, "/bin");
-      writeRangeSync(fs.db, "/bin", new Uint8Array([4, 5, 6]), 0, {}, () => 1);
-
-      const range = readRangeSync(fs.db, "/bin", 0, 3);
-      range[0] = 99;
-
-      expect(Array.from(readRangeSync(fs.db, "/bin", 0, 3))).toEqual([4, 5, 6]);
-      releaseWriteBufferSync(fs.db, "/bin", () => 2);
     });
   });
 

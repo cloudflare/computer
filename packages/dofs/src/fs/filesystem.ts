@@ -20,7 +20,7 @@ import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep.js";
 import { ls } from "./ls.js";
 import { type MkdirOptions, mkdir } from "./mkdir.js";
 import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir.js";
-import { type ReadFileOptions, readFile, readRangeSync } from "./readFile.js";
+import { type ReadFileOptions, readFile } from "./readFile.js";
 import { readlink } from "./readlink.js";
 import { type RmOptions, rm } from "./rm.js";
 import { lstat, stat, type WorkspaceStatResult } from "./stat.js";
@@ -63,10 +63,6 @@ export class WorkspaceFilesystem {
     // the class's overloads above carry the precise return type
     // for each input shape back to the caller.
     return readFile(this.db, path, optionsOrEncoding as ReadFileOptions);
-  }
-
-  async readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
-    return readRangeSync(this.db, path, offset, length);
   }
 
   async stat(path: string): Promise<WorkspaceStatResult> {

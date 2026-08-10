@@ -3,7 +3,13 @@ import { describe, expect, it } from "vitest";
 import { readRangeSync } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFileSync } from "./writeFile.js";
+import {
+  CHUNK_SIZE,
+  openWriteBufferSync,
+  releaseWriteBufferSync,
+  writeFileSync,
+  writeRangeSync,
+} from "./writeFile.js";
 
 describe("readRangeSync", () => {
   it("reads small chunk-backed files at non-zero offset", async () => {
@@ -22,6 +28,20 @@ describe("readRangeSync", () => {
       expect(readRangeSync(db, "/inline.txt", 0, 100).byteLength).toBe(3);
       expect(readRangeSync(db, "/inline.txt", 2, 100).byteLength).toBe(1);
       expect(readRangeSync(db, "/inline.txt", 3, 100).byteLength).toBe(0);
+    });
+  });
+
+  it("returns owned bytes while a write buffer is open", async () => {
+    await withDB((db) => {
+      writeFileSync(db, "/bin", new Uint8Array([1, 2, 3]), {}, () => 1);
+      openWriteBufferSync(db, "/bin");
+      writeRangeSync(db, "/bin", new Uint8Array([4, 5, 6]), 0, {}, () => 1);
+
+      const range = readRangeSync(db, "/bin", 0, 3);
+      range[0] = 99;
+
+      expect(Array.from(readRangeSync(db, "/bin", 0, 3))).toEqual([4, 5, 6]);
+      releaseWriteBufferSync(db, "/bin", () => 2);
     });
   });
 
