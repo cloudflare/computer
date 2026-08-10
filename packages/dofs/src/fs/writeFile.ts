@@ -17,6 +17,7 @@ import {
   ensureCapacity as ensureBufferCapacity,
   getPendingWriteBufferByPath,
   getWriteBuffer,
+  listPendingByParent,
   promotePendingToInode,
   setWriteBuffer,
   type WriteBufferEntry,
@@ -933,6 +934,30 @@ export function flushPendingByPath(db: Database, path: string, now: () => number
   if (entry === undefined || entry.pending === undefined) return false;
   commitPendingBuffer(db, entry, now);
   return true;
+}
+
+/** @internal Commits pending files below a directory before its dirent moves or disappears. */
+export function flushPendingUnderDirectory(db: Database, path: string, now: () => number): void {
+  const directory = resolveInode(db, path, { followSymlinks: false });
+  if (directory?.type !== "dir") return;
+
+  const parents = db.all<{ inode: number }>(
+    `WITH RECURSIVE descendant_dirs(inode) AS (
+      SELECT ?
+      UNION ALL
+      SELECT dirent.child_inode
+      FROM vfs_dirents AS dirent
+      JOIN descendant_dirs AS parent ON dirent.parent_inode = parent.inode
+      JOIN vfs_nodes AS node ON node.inode = dirent.child_inode
+      WHERE node.type = 'dir'
+    )
+    SELECT inode FROM descendant_dirs`,
+    directory.inode,
+  );
+  const entries = parents.flatMap(({ inode }) => listPendingByParent(db, inode));
+  for (const entry of entries) {
+    if (entry.pending !== undefined) commitPendingBuffer(db, entry, now);
+  }
 }
 
 function releasePendingBuffer(db: Database, entry: WriteBufferEntry, now: () => number): void {

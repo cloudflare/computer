@@ -692,6 +692,36 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
     });
   });
 
+  it("renameSync commits pending descendants before moving a directory", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/old");
+      p.openWriteBufferForCreateSync("/old/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/old/pending.txt", Buffer.from("pending"), 0);
+
+      p.renameSync("/old", "/new");
+
+      expect((p.readFileSync("/new/pending.txt") as Buffer).toString()).toBe("pending");
+      expect(() =>
+        p.openWriteBufferForCreateSync("/new/pending.txt", { mode: 0o644 }),
+      ).toThrowError(expect.objectContaining({ code: "EEXIST" }));
+      expect(() => p.releaseWriteBufferSync("/new/pending.txt")).not.toThrow();
+    });
+  });
+
+  it("rmdirSync preserves pending descendants", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/dir");
+      p.openWriteBufferForCreateSync("/dir/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/dir/pending.txt", Buffer.from("pending"), 0);
+
+      expect(() => p.rmdirSync("/dir")).toThrowError(
+        expect.objectContaining({ code: "ENOTEMPTY" }),
+      );
+      expect((p.readFileSync("/dir/pending.txt") as Buffer).toString()).toBe("pending");
+      expect(() => p.releaseWriteBufferSync("/dir/pending.txt")).not.toThrow();
+    });
+  });
+
   it("unlinkSync commits then removes a pending-create file", async () => {
     await withProvider((p) => {
       p.openWriteBufferForCreateSync("/gone.txt", { mode: 0o644 });

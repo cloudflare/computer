@@ -35,6 +35,7 @@ import {
 import {
   createFileSync as createFileSyncImpl,
   flushPendingByPath,
+  flushPendingUnderDirectory,
   openWriteBufferForCreateSync as openWriteBufferForCreateSyncImpl,
   openWriteBufferSync as openWriteBufferSyncImpl,
   releaseWriteBufferSync as releaseWriteBufferSyncImpl,
@@ -263,6 +264,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   rmdirSync(path: string): void {
+    flushPendingUnderDirectory(this.db, path, this.now);
     rmImpl(this.db, path, {});
   }
 
@@ -323,6 +325,8 @@ export class SQLiteWorkspaceProvider {
     // touches dirents: the source needs a real inode to move, and a
     // pending buffer at the destination would otherwise slip past
     // rename's dirent-based existence check and lose bytes on release.
+    flushPendingUnderDirectory(this.db, oldPath, this.now);
+    flushPendingUnderDirectory(this.db, newPath, this.now);
     flushPendingByPath(this.db, oldPath, this.now);
     flushPendingByPath(this.db, newPath, this.now);
     // Capture the destination inode before the rename so we can evict
