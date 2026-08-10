@@ -806,36 +806,41 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
     return;
   }
 
-  resolveWritableFileInode(db, path);
   const mtime = now();
   const mode = entry.mode & 0o7777;
   const buffered = entry.buf.subarray(0, entry.size);
 
-  db.transactionSync(() => {
-    if (entry.size === 0) {
-      // An empty file owns no chunk rows; clear any old ones the
-      // buffer would otherwise have replaced and bump metadata.
-      db.run("DELETE FROM vfs_chunks WHERE inode = ?", node.inode);
-      const rev = incrementRev(db);
-      db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
+  try {
+    resolveWritableFileInode(db, path);
+    db.transactionSync(() => {
+      if (entry.size === 0) {
+        // An empty file owns no chunk rows; clear any old ones the
+        // buffer would otherwise have replaced and bump metadata.
+        db.run("DELETE FROM vfs_chunks WHERE inode = ?", node.inode);
+        const rev = incrementRev(db);
+        db.run(
+          "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
+          mode,
+          mtime,
+          rev,
+          node.inode,
+        );
+        return;
+      }
+      applyChunkedInodeUpdate(
+        db,
+        node.inode,
+        entry.size,
         mode,
         mtime,
-        rev,
-        node.inode,
+        (_idx, start, end) => start < entry.size && end > 0,
+        (_idx, start, end) => buffered.subarray(start, Math.min(end, entry.size)),
       );
-      return;
-    }
-    applyChunkedInodeUpdate(
-      db,
-      node.inode,
-      entry.size,
-      mode,
-      mtime,
-      (_idx, start, end) => start < entry.size && end > 0,
-      (_idx, start, end) => buffered.subarray(start, Math.min(end, entry.size)),
-    );
-  });
+    });
+  } catch (error) {
+    deleteWriteBuffer(db, node.inode);
+    throw error;
+  }
 
   deleteWriteBuffer(db, node.inode);
 }

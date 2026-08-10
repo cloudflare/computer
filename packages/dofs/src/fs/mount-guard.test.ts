@@ -10,6 +10,7 @@ import {
   getReadOnlyMountRoots,
   invalidateReadOnlyMountCache,
 } from "./mount-guard.js";
+import { readRangeSync } from "./readFile.js";
 import { rename } from "./rename.js";
 import { resolveInode } from "./resolve.js";
 import { rm } from "./rm.js";
@@ -189,6 +190,23 @@ describe("writeFile under a read-only mount", () => {
       expect(() => openWriteBufferSync(db, "/mnt/file.txt")).not.toThrow();
       expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 1)).not.toThrow();
       expect(resolveInode(db, "/mnt/file.txt")?.type).toBe("file");
+    });
+  });
+
+  it("evicts rejected dirty bytes before a later read-only open", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", {}, () => 0);
+      writeFileSync(db, "/mnt/file.txt", new TextEncoder().encode("original"), {}, () => 0);
+      openWriteBufferSync(db, "/mnt/file.txt");
+      writeRangeSync(db, "/mnt/file.txt", new TextEncoder().encode("dirty"), 0, {}, () => 1);
+      stageMount(db, "/mnt", "read-only");
+
+      expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 2)).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+      expect(new TextDecoder().decode(readRangeSync(db, "/mnt/file.txt", 0, 8))).toBe("original");
+      expect(() => openWriteBufferSync(db, "/mnt/file.txt")).not.toThrow();
+      expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 3)).not.toThrow();
     });
   });
 
