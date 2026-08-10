@@ -91,6 +91,8 @@ function resolveParent(
     if (node.type === "symlink") {
       countSymlinkFollow(follows, canonical);
       const target = node.link_target ?? "";
+      const targetParts = symlinkTargetParts(target, realParts);
+      assertNotReadOnly(db, canonicalizePath(pathFromParts(targetParts)).path);
       if (target.startsWith("/")) {
         inodeStack.splice(1);
         realParts.splice(0);
@@ -177,6 +179,13 @@ function childPath(db: Database, parentInode: number, leafName: string, path: st
   return parentPath === "/" ? `/${leafName}` : `${parentPath}/${leafName}`;
 }
 
+function pendingTargetPath(db: Database, entry: WriteBufferEntry, fallback: string): string {
+  const pending = entry.pending;
+  return pending === undefined
+    ? fallback
+    : childPath(db, pending.parentInode, pending.leafName, pending.canonicalPath);
+}
+
 function symlinkTargetParts(target: string, linkParentParts: string[]): string[] {
   const base = target.startsWith("/") ? [] : linkParentParts;
   return [...base, ...target.split("/")];
@@ -192,6 +201,7 @@ function resolveDirectWriteTarget(
   const leafName = parts[parts.length - 1];
   const canonicalPath =
     parent.canonicalPath === "/" ? `/${leafName}` : `${parent.canonicalPath}/${leafName}`;
+  assertNotReadOnly(db, canonicalPath);
   const existing = db.one<{ child_inode: number }>(
     "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
     parent.inode,
@@ -214,6 +224,7 @@ function resolveWriteTarget(
   let targetParts = parts;
   let targetCanonical = canonical;
   const follows = { count: 0 };
+  assertNotReadOnly(db, canonical);
 
   while (true) {
     const direct = resolveDirectWriteTarget(db, targetParts, targetCanonical, follows);
@@ -251,6 +262,7 @@ function resolveWriteTarget(
     const realLinkParts = canonicalizePath(direct.canonicalPath).parts;
     targetParts = symlinkTargetParts(node.link_target ?? "", realLinkParts.slice(0, -1));
     targetCanonical = canonicalizePath(pathFromParts(targetParts)).path;
+    assertNotReadOnly(db, targetCanonical);
     const finalPart = targetParts.at(-1);
     if (finalPart === undefined || finalPart === "" || finalPart === "." || finalPart === "..") {
       resolveParent(db, [...targetParts, "__write_target__"], targetCanonical, follows);
@@ -309,8 +321,8 @@ async function writeFileStreaming(
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
   }
   // Reject before we stage any blob bytes so known failures do not grow
-  // orphan blob rows that gc() then has to reap.
-  assertNotReadOnly(db, canonical);
+  // orphan blob rows that gc() then has to reap. Resolve both lexical and
+  // effective paths so a symlink cannot defer an EROFS failure until commit.
   resolveWriteTarget(db, parts, canonical, options);
   const mode = (options.mode ?? 0o644) & 0o7777;
   const mtime = now();
@@ -681,8 +693,10 @@ export function createFileSync(
 // the bytes back to chunks.
 export function openWriteBufferSync(db: Database, path: string): void {
   const { path: canonical } = canonicalizePath(path);
+  assertNotReadOnly(db, canonical);
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
+    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
     pending.openCount += 1;
     return;
   }
@@ -816,7 +830,9 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
   let realInode = 0;
   try {
     db.transactionSync(() => {
+      assertNotReadOnly(db, canonicalPath);
       const targetPath = childPath(db, parentInode, leafName, canonicalPath);
+      assertNotReadOnly(db, targetPath);
       // Re-check at commit time: a non-buffered writeFile or another
       // out-of-band path could have landed between open and release.
       const collision = db.one<{ child_inode: number }>(
@@ -946,6 +962,7 @@ export function writeRangeSync(
   // straight into the path-keyed buffer.
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
+    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
     const writeEnd = offset + bytes.byteLength;
     ensureBufferCapacity(pending, writeEnd);
     if (offset > pending.size) {
@@ -1023,6 +1040,7 @@ export function truncateFileSync(
   // Pending-create files truncate in-place on the path-keyed buffer.
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
+    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
     if (size > pending.size) {
       ensureBufferCapacity(pending, size);
       pending.buf.fill(0, pending.size, size);
