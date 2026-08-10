@@ -17,7 +17,6 @@ import {
   ensureCapacity as ensureBufferCapacity,
   getPendingWriteBufferByPath,
   getWriteBuffer,
-  listPendingByParent,
   listPendingWriteBuffers,
   promotePendingToInode,
   setWriteBuffer,
@@ -944,29 +943,14 @@ export function flushPendingByPath(db: Database, path: string, now: () => number
 
 /** @internal Commits pending files below a directory before its dirent moves or disappears. */
 export function flushPendingUnderDirectory(db: Database, path: string, now: () => number): void {
-  const { path: canonical } = canonicalizePath(path);
-  const directory = resolveInode(db, canonical, { followSymlinks: false });
+  const directory = resolveInode(db, path, { followSymlinks: false });
   if (directory?.type !== "dir") return;
 
-  const parents = db.all<{ inode: number }>(
-    `WITH RECURSIVE descendant_dirs(inode) AS (
-      SELECT ?
-      UNION ALL
-      SELECT dirent.child_inode
-      FROM vfs_dirents AS dirent
-      JOIN descendant_dirs AS parent ON dirent.parent_inode = parent.inode
-      JOIN vfs_nodes AS node ON node.inode = dirent.child_inode
-      WHERE node.type = 'dir'
-    )
-    SELECT inode FROM descendant_dirs`,
-    directory.inode,
-  );
-  const entries = new Set(parents.flatMap(({ inode }) => listPendingByParent(db, inode)));
-  const lexicalPrefix = canonical === "/" ? "/" : `${canonical}/`;
+  // A pending file can be lexically beneath this directory while its
+  // resolved parent is elsewhere through a symlink, and either path
+  // may itself have multiple aliases. Structural changes are rare, so
+  // commit every pending create rather than leave an alias stale.
   for (const entry of listPendingWriteBuffers(db)) {
-    if (entry.pending?.canonicalPath.startsWith(lexicalPrefix)) entries.add(entry);
-  }
-  for (const entry of entries) {
     if (entry.pending !== undefined) commitPendingBuffer(db, entry, now);
   }
 }
