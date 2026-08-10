@@ -88,6 +88,82 @@ interface ChunkRef {
   size: number;
 }
 
+type WriteTarget =
+  | { kind: "existing"; inode: number }
+  | { kind: "create"; parentInode: number; leafName: string; canonicalPath: string };
+
+function pathFromParts(parts: string[]): string {
+  return `/${parts.join("/")}`;
+}
+
+function symlinkTargetPath(target: string, linkParentParts: string[]): string {
+  if (target.startsWith("/")) return canonicalizePath(target).path;
+
+  const resolved = [...linkParentParts];
+  for (const part of target.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      resolved.pop();
+      continue;
+    }
+    resolved.push(part);
+  }
+  return pathFromParts(resolved);
+}
+
+function resolveWriteTarget(
+  db: Database,
+  parts: string[],
+  canonical: string,
+  options: WriteFileOptions,
+): WriteTarget {
+  const parentInode = resolveParent(db, parts, canonical);
+  const leafName = parts[parts.length - 1];
+  const existing = db.one<{ child_inode: number }>(
+    "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+    parentInode,
+    leafName,
+  );
+
+  if (existing === undefined) {
+    return { kind: "create", parentInode, leafName, canonicalPath: canonical };
+  }
+  if (options.exclusive) {
+    throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
+  }
+
+  const node = db.one<{ type: "file" | "dir" | "symlink"; link_target: string | null }>(
+    "SELECT type, link_target FROM vfs_nodes WHERE inode = ?",
+    existing.child_inode,
+  );
+  if (node?.type === "dir") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
+  }
+  if (node?.type !== "symlink") {
+    return { kind: "existing", inode: existing.child_inode };
+  }
+
+  const targetPath = symlinkTargetPath(node.link_target ?? "", parts.slice(0, -1));
+  assertNotReadOnly(db, targetPath);
+  const target = resolveInode(db, targetPath);
+  if (target === null) {
+    const { parts: targetParts, path: targetCanonical } = canonicalizePath(targetPath);
+    if (targetParts.length === 0) {
+      throw createWorkspaceError("EISDIR", "cannot write to the root directory", targetCanonical);
+    }
+    return {
+      kind: "create",
+      parentInode: resolveParent(db, targetParts, targetCanonical),
+      leafName: targetParts[targetParts.length - 1],
+      canonicalPath: targetCanonical,
+    };
+  }
+  if (target.type !== "file") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${targetPath}`, targetPath);
+  }
+  return { kind: "existing", inode: target.inode };
+}
+
 export function chunksOf(bytes: Uint8Array): PreparedChunk[] {
   const chunks: PreparedChunk[] = [];
   for (let offset = 0; offset < bytes.byteLength; offset += CHUNK_SIZE) {
@@ -242,30 +318,12 @@ export function linkStagedChunksSync(
   assertChunkWindows(chunkRefs, canonical);
   const mode = (options.mode ?? 0o644) & 0o7777;
   db.transactionSync(() => {
-    const parentInode = resolveParent(db, parts, canonical);
-    const leafName = parts[parts.length - 1];
-    const existing = db.one<{ child_inode: number }>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-      parentInode,
-      leafName,
-    );
-    let inode: number;
-    if (existing !== undefined) {
-      if (options.exclusive) {
-        throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
-      }
-      const node = db.one<{ type: "file" | "dir" }>(
-        "SELECT type FROM vfs_nodes WHERE inode = ?",
-        existing.child_inode,
-      );
-      if (node?.type === "dir") {
-        throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
-      }
-      inode = existing.child_inode;
+    const target = resolveWriteTarget(db, parts, canonical, options);
+    const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
+    if (target.kind === "existing") {
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
-      inode = insertFileNode(db, mode, mtime);
-      insertFileDirent(db, parentInode, leafName, inode, canonical);
+      insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);
     }
     for (let idx = 0; idx < chunkRefs.length; idx++) {
       const ref = chunkRefs[idx];
@@ -418,17 +476,8 @@ function readChunkBytes(db: Database, inode: number, idx: number): Uint8Array {
 
 function resolveFileInode(db: Database, path: string): { inode: number; mode: number } {
   const { path: canonical } = canonicalizePath(path);
-  const node = db.one<{ inode: number; type: "file" | "dir"; mode: number }>(
-    `SELECT n.inode AS inode, n.type AS type, n.mode AS mode
-       FROM vfs_nodes n
-      WHERE n.inode = (
-        SELECT child_inode
-          FROM vfs_dirents
-         WHERE parent_inode = ? AND name = ?
-      )`,
-    ...parentAndNameForResolvedPath(db, path),
-  );
-  if (node === undefined) {
+  const node = resolveInode(db, path);
+  if (node === null) {
     throw createWorkspaceError("ENOENT", `no such file: ${canonical}`, canonical);
   }
   if (node.type !== "file") {
@@ -964,33 +1013,14 @@ export function writeFileSync(
   const mtime = now();
 
   db.transactionSync(() => {
-    const parentInode = resolveParent(db, parts, canonical);
-    const leafName = parts[parts.length - 1];
-    const existing = db.one<{ child_inode: number }>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-      parentInode,
-      leafName,
-    );
-
-    let inode: number;
-    if (existing !== undefined) {
-      if (options.exclusive) {
-        throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
-      }
-      const node = db.one<{ type: "file" | "dir" }>(
-        "SELECT type FROM vfs_nodes WHERE inode = ?",
-        existing.child_inode,
-      );
-      if (node?.type === "dir") {
-        throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
-      }
-      inode = existing.child_inode;
+    const target = resolveWriteTarget(db, parts, canonical, options);
+    const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
+    if (target.kind === "existing") {
       // Replace the existing representation. Orphaned blobs (if any)
       // are cleaned up by a later gc() pass.
       db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
     } else {
-      inode = insertFileNode(db, mode, mtime);
-      insertFileDirent(db, parentInode, leafName, inode, canonical);
+      insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);
     }
 
     const rev = incrementRev(db);
@@ -1038,29 +1068,13 @@ export function writeFileRangesSync(
   const ranges = normalizeRanges(dirtyRanges, bytes.byteLength);
   const mtime = now();
   db.transactionSync(() => {
-    const parentInode = resolveParent(db, parts, canonical);
-    const leafName = parts[parts.length - 1];
-    const existing = db.one<{ child_inode: number }>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-      parentInode,
-      leafName,
-    );
-
-    let inode: number;
+    const target = resolveWriteTarget(db, parts, canonical, options);
+    const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
     let oldChunks: ChunkRef[] = [];
-    if (existing !== undefined) {
-      const node = db.one<{ type: "file" | "dir" }>(
-        "SELECT type FROM vfs_nodes WHERE inode = ?",
-        existing.child_inode,
-      );
-      if (node?.type === "dir") {
-        throw createWorkspaceError("EISDIR", `path is a directory: ${canonical}`, canonical);
-      }
-      inode = existing.child_inode;
+    if (target.kind === "existing") {
       oldChunks = existingChunkRefs(db, inode);
     } else {
-      inode = insertFileNode(db, mode, mtime);
-      insertFileDirent(db, parentInode, leafName, inode, canonical);
+      insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);
     }
 
     const rev = incrementRev(db);

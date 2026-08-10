@@ -348,7 +348,9 @@ describe("writeFile", () => {
       await writeFile(db, "/target", "file", {}, () => 0);
       symlink(db, "/target", "/linkfile", () => 0);
 
-      await expect(writeFile(db, "/linkfile/child.txt", "hello", {}, () => 0)).rejects.toMatchObject({
+      await expect(
+        writeFile(db, "/linkfile/child.txt", "hello", {}, () => 0),
+      ).rejects.toMatchObject({
         code: "ENOTDIR",
       });
     });
@@ -362,6 +364,82 @@ describe("writeFile", () => {
       await expect(writeFile(db, "/a/child.txt", "hello", {}, () => 0)).rejects.toMatchObject({
         code: "ELOOP",
       });
+    });
+  });
+
+  it("writes through a final symlink to its target", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "old", {}, () => 0);
+      symlink(db, "/target", "/link", () => 0);
+
+      await writeFile(db, "/link", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/target"))).toBe("new");
+      expect(new TextDecoder().decode(readBack(db, "/link"))).toBe("new");
+      expect(
+        db.scalar<number>(
+          "SELECT COUNT(*) FROM vfs_chunks c JOIN vfs_nodes n ON n.inode = c.inode WHERE n.type = 'symlink'",
+        ),
+      ).toBe(0);
+      expect(db.scalar<number>("SELECT size FROM vfs_nodes WHERE type = 'symlink'")).toBe(0);
+    });
+  });
+
+  it("creates the target when writing through a dangling final symlink", async () => {
+    await withDB(async (db) => {
+      symlink(db, "/created", "/link", () => 0);
+
+      await writeFile(db, "/link", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/created"))).toBe("new");
+    });
+  });
+
+  it("creates a relative target from the symlink parent when writing through a dangling final symlink", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/dir", {}, () => 0);
+      symlink(db, "created", "/dir/link", () => 0);
+
+      await writeFile(db, "/dir/link", "new", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/dir/created"))).toBe("new");
+    });
+  });
+
+  it("keeps exclusive writes on a final symlink from following the link", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "old", {}, () => 0);
+      symlink(db, "/target", "/link", () => 0);
+
+      await expect(
+        writeFile(db, "/link", "new", { exclusive: true }, () => 0),
+      ).rejects.toMatchObject({
+        code: "EEXIST",
+      });
+      expect(new TextDecoder().decode(readBack(db, "/target"))).toBe("old");
+    });
+  });
+
+  it("range writes follow a final symlink", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "abc", {}, () => 0);
+      symlink(db, "/target", "/link", () => 0);
+
+      writeFileRangesSync(
+        db,
+        "/link",
+        new TextEncoder().encode("axc"),
+        [{ start: 1, end: 2 }],
+        {},
+        () => 0,
+      );
+
+      expect(new TextDecoder().decode(readBack(db, "/target"))).toBe("axc");
+      expect(
+        db.scalar<number>(
+          "SELECT COUNT(*) FROM vfs_chunks c JOIN vfs_nodes n ON n.inode = c.inode WHERE n.type = 'symlink'",
+        ),
+      ).toBe(0);
     });
   });
 
