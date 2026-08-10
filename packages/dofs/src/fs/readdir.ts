@@ -54,7 +54,7 @@ export function readdir(
   }
   if (limit === 0) return [];
 
-  const pending = listPendingByParent(db, node.inode)
+  let pending = listPendingByParent(db, node.inode)
     .filter((entry) => entry.pending !== undefined)
     .map(
       (entry): WorkspaceDirentResult => ({
@@ -67,6 +67,14 @@ export function readdir(
         isSymbolicLink: false,
       }),
     );
+
+  // A concurrent apply can commit the same name while a pending-create
+  // buffer is still open. Remove those pending duplicates before calculating
+  // the committed window; otherwise they shift the page even when the
+  // committed row falls outside that window.
+  if (pending.length > 0 && (limit !== undefined || offset > 0)) {
+    pending = pending.filter((entry) => !committedNameExists(db, node.inode, entry.name));
+  }
 
   // Pending creates live outside SQLite until their final release. If there
   // are none, let SQLite apply the requested page directly. Otherwise fetch
@@ -93,6 +101,16 @@ export function readdir(
   entries.sort(compareByName);
   const localOffset = offset - queryOffset;
   return entries.slice(localOffset, limit === undefined ? undefined : localOffset + limit);
+}
+
+function committedNameExists(db: Database, parentInode: number, name: string): boolean {
+  return (
+    db.one<{ present: number }>(
+      "SELECT 1 AS present FROM vfs_dirents WHERE parent_inode = ? AND name = ? LIMIT 1",
+      parentInode,
+      name,
+    ) !== undefined
+  );
 }
 
 function readRows(

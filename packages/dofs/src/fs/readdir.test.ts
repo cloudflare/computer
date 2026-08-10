@@ -96,6 +96,22 @@ describe("readdir", () => {
     });
   });
 
+  it("ignores a pending file whose committed entry is outside the requested page", async () => {
+    await withDB(async (db) => {
+      for (const name of ["b", "c", "d", "e", "f", "g", "h"]) {
+        await writeFile(db, `/${name}`, name, {}, () => 0);
+      }
+      openWriteBufferForCreateSync(db, "/a", {}, () => 10);
+      await writeFile(db, "/landed", "committed", {}, () => 11);
+      db.run("UPDATE vfs_dirents SET name = ? WHERE name = ?", "a", "landed");
+
+      expect(readdir(db, "/", { limit: 2, offset: 5 }).map((entry) => entry.name)).toEqual([
+        "f",
+        "g",
+      ]);
+    });
+  });
+
   it("bounds committed rows fetched for a deep page with a pending file", async () => {
     await withDB(async (db) => {
       for (let index = 0; index < 30; index += 1) {
