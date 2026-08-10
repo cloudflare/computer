@@ -19,14 +19,12 @@ export interface WorkspaceGrepMatch {
 }
 
 export interface GrepOptions {
-  /** Compatibility alias for `caseSensitive: false`. */
+  /** Ignore letter case. Defaults to false. */
   ignoreCase?: boolean;
-  /** Match letter case. Defaults to true. */
-  caseSensitive?: boolean;
-  /** Treat the pattern as plain text. Defaults to true. */
-  fixedString?: boolean;
+  /** Interpret the pattern as a regular expression. Defaults to false. */
+  regex?: boolean;
   /** Lines of context to include before and after each match. */
-  contextLines?: number;
+  context?: number;
   /** Maximum matches to return. */
   limit?: number;
   /** Matching lines to skip before collecting results. */
@@ -62,7 +60,10 @@ export async function grep(
 
   const settings = normalizeOptions(options);
   if (settings.limit === 0) return [];
-  const matcher = compileMatcher(pattern, settings.fixedString, settings.caseSensitive);
+  const matcher = compileMatcher(pattern, {
+    regex: settings.regex,
+    ignoreCase: settings.ignoreCase,
+  });
   const filePaths =
     node.type === "file"
       ? [canonical]
@@ -78,7 +79,7 @@ export async function grep(
       db,
       filePath,
       matcher,
-      settings.contextLines,
+      settings.context,
       settings.offset,
       settings.limit,
       state,
@@ -90,22 +91,15 @@ export async function grep(
 }
 
 function normalizeOptions(options: GrepOptions): {
-  caseSensitive: boolean;
-  fixedString: boolean;
-  contextLines: number;
+  ignoreCase: boolean;
+  regex: boolean;
+  context: number;
   limit: number;
   offset: number;
 } {
-  if (
-    options.caseSensitive !== undefined &&
-    options.ignoreCase !== undefined &&
-    options.caseSensitive === options.ignoreCase
-  ) {
-    throw new TypeError("caseSensitive conflicts with ignoreCase");
-  }
-  const contextLines = options.contextLines ?? 0;
-  if (!Number.isSafeInteger(contextLines) || contextLines < 0) {
-    throw new TypeError("grep contextLines must be a non-negative safe integer");
+  const context = options.context ?? 0;
+  if (!Number.isSafeInteger(context) || context < 0) {
+    throw new TypeError("grep context must be a non-negative safe integer");
   }
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(limit) || limit < 0) {
@@ -116,18 +110,18 @@ function normalizeOptions(options: GrepOptions): {
     throw new TypeError("grep offset must be a non-negative safe integer");
   }
   return {
-    caseSensitive: options.caseSensitive ?? options.ignoreCase !== true,
-    fixedString: options.fixedString ?? true,
-    contextLines,
+    ignoreCase: options.ignoreCase ?? false,
+    regex: options.regex ?? false,
+    context,
     limit,
     offset,
   };
 }
 
-function compileMatcher(pattern: string, fixedString: boolean, caseSensitive: boolean): RegExp {
-  const source = fixedString ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern;
+function compileMatcher(pattern: string, options: { regex: boolean; ignoreCase: boolean }): RegExp {
+  const source = options.regex ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   try {
-    return new RegExp(source, caseSensitive ? "" : "i");
+    return new RegExp(source, options.ignoreCase ? "i" : "");
   } catch (error) {
     throw new TypeError(
       `Invalid regular expression: ${error instanceof Error ? error.message : String(error)}`,
@@ -139,7 +133,7 @@ async function scanFile(
   db: Database,
   path: string,
   matcher: RegExp,
-  contextLines: number,
+  context: number,
   offset: number,
   limit: number,
   state: ScanState,
@@ -163,9 +157,9 @@ async function scanFile(
       state.seen += 1;
       if (matchIndex >= offset && state.accepted < limit) {
         const match: WorkspaceGrepMatch = { path, line: current.line, text: current.text };
-        if (contextLines > 0) {
+        if (context > 0) {
           match.context = [...before.map((line) => ({ ...line })), { ...contextLine }];
-          pending.push({ match, remaining: contextLines });
+          pending.push({ match, remaining: context });
         } else {
           out.push(match);
         }
@@ -174,7 +168,7 @@ async function scanFile(
     }
 
     before.push(contextLine);
-    if (before.length > contextLines) before.shift();
+    if (before.length > context) before.shift();
     if (state.accepted >= limit && pending.length === 0) return true;
   }
 
