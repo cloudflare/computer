@@ -119,15 +119,6 @@ export class WorkspaceFilesystemStub extends RpcTarget {
     );
   }
 
-  readRange(path: string, offset: number, length: number): Promise<Uint8Array> {
-    return withSpan(
-      this.#ws.observer,
-      "workspace.fs.readRange",
-      { "workspace.fs.path": path, "workspace.fs.offset": offset, "workspace.fs.length": length },
-      () => this.#ws.fs.readRange(path, offset, length),
-    );
-  }
-
   exists(path: string): Promise<boolean> {
     return withSpan(
       this.#ws.observer,
