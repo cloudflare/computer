@@ -1,0 +1,19 @@
+packages/dofs/src/sync/fetch.test.ts
+  s_e99bae85ab2fe2::t_f942bb5c9b2e11 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "efbc6dd7c02cc3b9ec2ab0f2dfd8bbad74fba51e",
+  "prompts": {},
+  "sessions": {
+    "s_e99bae85ab2fe2": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fdbea-afd6-7383-9cac-f1344f4540a6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "aron <263346377+aron-cf@users.noreply.github.com>"
+    }
+  }
+}
