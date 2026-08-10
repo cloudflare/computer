@@ -94,7 +94,10 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
     "maxModelBytes",
     options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES,
   );
-  const mediaSniffBytes = options.mediaSniffBytes ?? DEFAULT_MEDIA_SNIFF_BYTES;
+  const mediaSniffBytes = validateBoundedReadLimit(
+    "mediaSniffBytes",
+    options.mediaSniffBytes ?? DEFAULT_MEDIA_SNIFF_BYTES,
+  );
 
   return tool({
     description: `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`,
@@ -107,7 +110,14 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       const stat = await store.stat(path);
       if (!stat) return { error: `File not found: ${path}` };
 
-      const media = await detectMedia(store, path, mediaSniffBytes);
+      const startLine = offset ?? 1;
+      const startByte = byteOffset ?? 0;
+      // Positive byte offsets are continuations emitted only after a text read,
+      // so avoid re-reading the file prefix to classify every subsequent page.
+      const media =
+        startByte > 0
+          ? ({ kind: "text", mediaType: "text/plain" } as const)
+          : await detectMedia(store, path, mediaSniffBytes);
       if (media.kind !== "text") {
         return {
           kind: media.kind,
@@ -119,8 +129,6 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
         };
       }
 
-      const startLine = offset ?? 1;
-      const startByte = byteOffset ?? 0;
       const lineCap = Math.min(limit ?? maxLines, maxLines);
       let currentLine = byteOffset === undefined || byteOffset === 0 ? 1 : startLine;
       const collected: string[] = [];

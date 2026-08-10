@@ -12,7 +12,6 @@ const EXTENSIONS = new Map<string, DetectedMedia>([
   [".jpeg", { kind: "image", mediaType: "image/jpeg" }],
   [".gif", { kind: "image", mediaType: "image/gif" }],
   [".webp", { kind: "image", mediaType: "image/webp" }],
-  [".svg", { kind: "image", mediaType: "image/svg+xml" }],
   [".pdf", { kind: "file", mediaType: "application/pdf" }],
 ]);
 
@@ -20,21 +19,30 @@ const TEXT_EXTENSIONS = new Set([
   ".c",
   ".cc",
   ".cpp",
+  ".conf",
   ".css",
   ".csv",
+  ".env",
   ".go",
   ".h",
   ".html",
+  ".ini",
   ".java",
   ".js",
   ".json",
   ".jsonc",
   ".jsx",
+  ".lock",
+  ".log",
   ".md",
   ".mjs",
+  ".php",
   ".py",
+  ".rb",
   ".rs",
   ".sh",
+  ".sql",
+  ".svg",
   ".toml",
   ".ts",
   ".tsx",
@@ -45,6 +53,17 @@ const TEXT_EXTENSIONS = new Set([
   ".zig",
 ]);
 
+const TEXT_FILENAMES = new Set([
+  ".dockerignore",
+  ".editorconfig",
+  ".env",
+  ".gitattributes",
+  ".gitignore",
+  ".npmrc",
+  "dockerfile",
+  "makefile",
+]);
+
 export async function detectMedia(
   store: FileStore,
   path: string,
@@ -53,7 +72,10 @@ export async function detectMedia(
   const extension = extensionOf(path);
   const known = EXTENSIONS.get(extension);
   if (known !== undefined) return known;
-  if (TEXT_EXTENSIONS.has(extension)) return { kind: "text", mediaType: "text/plain" };
+  const filename = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  if (TEXT_EXTENSIONS.has(extension) || TEXT_FILENAMES.has(filename)) {
+    return { kind: "text", mediaType: "text/plain" };
+  }
 
   const prefix = await readPrefix(store, path, sniffBytes);
   if (startsWith(prefix, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
@@ -71,7 +93,7 @@ export async function detectMedia(
   if (startsWithAscii(prefix, "%PDF-")) {
     return { kind: "file", mediaType: "application/pdf" };
   }
-  if (looksLikeSvg(prefix)) return { kind: "image", mediaType: "image/svg+xml" };
+  if (looksLikeSvg(prefix)) return { kind: "text", mediaType: "image/svg+xml" };
   if (looksLikeText(prefix)) return { kind: "text", mediaType: "text/plain" };
   return { kind: "binary", mediaType: "application/octet-stream" };
 }
@@ -202,5 +224,5 @@ function looksLikeText(bytes: Uint8Array): boolean {
   for (const char of text) {
     if (char === "\uFFFD") replacements += 1;
   }
-  return replacements / text.length < 0.01;
+  return replacements <= 2 || replacements / text.length < 0.01;
 }

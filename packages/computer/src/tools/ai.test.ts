@@ -1041,7 +1041,7 @@ describe("createAITools filesystem tools", () => {
     expect(ranges).toEqual([{ offset: 0, length: 512 }]);
   });
 
-  it("sniffs SVG only when it is the root element", async () => {
+  it("returns SVG source as text instead of inline image data", async () => {
     for (const content of [
       '<svg viewBox="0 0 1 1"></svg>',
       '<?xml version="1.0"?>\n<svg></svg>',
@@ -1051,22 +1051,58 @@ describe("createAITools filesystem tools", () => {
       '<!DOCTYPE svg [<!ENTITY greater ">">]>\n<svg></svg>',
       "<!-- generated -->\n<svg></svg>",
     ]) {
-      const tool = createReadTool({ store: memoryStore({ content }) });
-      await expect(executeTool(tool, { path: "/workspace/upload" })).resolves.toMatchObject({
-        kind: "image",
-        mediaType: "image/svg+xml",
-      });
+      for (const path of ["/workspace/upload", "/workspace/image.svg"]) {
+        const tool = createReadTool({ store: memoryStore({ content }) });
+        await expect(executeTool(tool, { path })).resolves.toMatchObject({
+          content,
+          truncated: false,
+        });
+      }
     }
+  });
 
-    for (const content of [
-      "const markup = '<svg></svg>';",
-      "<html><body><svg></svg></body></html>",
-      "<svgscript>not an svg root</svgscript>",
-    ]) {
-      const tool = createReadTool({ store: memoryStore({ content }) });
-      const output = await executeTool(tool, { path: "/workspace/upload" });
-      expect(output).toMatchObject({ content, truncated: false });
-    }
+  it("tolerates a few invalid UTF-8 bytes in short extensionless text", async () => {
+    const content = new Uint8Array([...bytes("name=caf"), 0xe9, 0x0a]);
+    const store = memoryStore({ size: content.byteLength });
+    store.readChunks = async function* (_path, offset = 0, length) {
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
+    const tool = createReadTool({ store });
+
+    await expect(executeTool(tool, { path: "/workspace/config" })).resolves.toMatchObject({
+      content: "name=caf�",
+      truncated: false,
+    });
+  });
+
+  it("validates the media sniff limit when constructing the tool", () => {
+    expect(() =>
+      createReadTool({ store: memoryStore({ content: "text" }), mediaSniffBytes: 0 }),
+    ).toThrow("mediaSniffBytes must be a positive safe integer");
+  });
+
+  it("does not repeat media sniffing for a text continuation", async () => {
+    const content = bytes("first\nsecond\n");
+    const ranges: Array<{ offset: number; length: number | undefined }> = [];
+    const store = memoryStore({ size: content.byteLength });
+    store.readChunks = async function* (_path, offset = 0, length) {
+      ranges.push({ offset, length });
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
+    const tool = createReadTool({ store });
+    const first = (await executeTool(tool, {
+      path: "/workspace/config",
+      limit: 1,
+    })) as { nextOffset: number; nextByteOffset: number };
+    ranges.length = 0;
+
+    await executeTool(tool, {
+      path: "/workspace/config",
+      offset: first.nextOffset,
+      byteOffset: first.nextByteOffset,
+    });
+
+    expect(ranges).toEqual([{ offset: first.nextByteOffset, length: undefined }]);
   });
 
   it("rejects oversized inline media before reading the whole file", async () => {
