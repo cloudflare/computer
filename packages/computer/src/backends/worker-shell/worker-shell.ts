@@ -142,7 +142,7 @@ export class WorkerShellBackend implements WorkspaceBackend {
   readonly id: string;
   readonly #options: WorkerShellBackendOptions;
   readonly #egress: WorkspaceEgressPolicy;
-  readonly #egressCacheKey: string;
+  #egressCacheKey: string | undefined;
 
   constructor(options: WorkerShellBackendOptions) {
     this.id = options.id ?? "worker-shell";
@@ -165,7 +165,6 @@ export class WorkerShellBackend implements WorkspaceBackend {
     }
     this.#options = options;
     this.#egress = options.egress ?? { mode: "none" };
-    this.#egressCacheKey = egressCacheKey(this.#egress);
   }
 
   async connect(): Promise<BackendHandle> {
@@ -224,6 +223,9 @@ export class WorkerShellBackend implements WorkspaceBackend {
     const loader = source?.loader ?? (this.#options.loader as WorkerShellLoader);
     const workspace = source?.workspace ?? (this.#options.workspace as WorkspaceServiceProxyProps);
     const ctx = (source?.ctx ?? this.#options.ctx) as WorkerShellContext;
+    if (this.#egressCacheKey === undefined) {
+      this.#egressCacheKey = egressCacheKey(this.#egress);
+    }
     const loaderId = `${this.#options.loaderId ?? `workspace-shell:${workspace.id}`}:${this.#egressCacheKey}`;
     const compatibilityDate = this.#options.compatibilityDate ?? DEFAULT_COMPAT_DATE;
     const compatibilityFlags = this.#options.compatibilityFlags

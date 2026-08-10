@@ -19,7 +19,7 @@
 // package's Runner would.
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import { Workspace } from "../../workspace.js";
@@ -109,6 +109,8 @@ function noopFsBackend(): WorkspaceBackend {
 }
 
 describe("WorkerShellBackend", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("returns a BackendHandle with sync: 'none'", async () => {
     const fetcher = fakeFetcher(() => {
       throw new Error("exec not called in this test");
@@ -377,6 +379,61 @@ describe("WorkerShellBackend", () => {
 
     expect(loaderId).toBe("workspace-shell:abc:egress-http-gateway-v1");
     expect(workerCode).toMatchObject({ globalOutbound: gateway });
+  });
+
+  it("does not generate a Loader cache key for an external runtime source", async () => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID").mockReturnValue("generated-revision");
+    const runtime = fakeFetcher(() => ({
+      id: "x",
+      events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+    }));
+    const backend = new WorkerShellBackend({
+      source: { type: "external-runtime", connect: () => runtime },
+      egress: {
+        mode: "http-gateway",
+        gateway: { fetch: async () => new Response() } as Fetcher,
+      },
+    });
+
+    const handle = await backend.connect();
+
+    expect(randomUUID).not.toHaveBeenCalled();
+    await handle.close();
+  });
+
+  it("generates one gateway revision when a managed Loader first connects", async () => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID").mockReturnValue("generated-revision");
+    const loaderIds: string[] = [];
+    const runtime = fakeFetcher(() => ({
+      id: "x",
+      events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+    }));
+    const backend = new WorkerShellBackend({
+      loader: {
+        get(name) {
+          loaderIds.push(name);
+          return { getEntrypoint: () => runtime };
+        },
+      },
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx: { exports: { WorkspaceServiceProxy: () => ({}) } },
+      egress: {
+        mode: "http-gateway",
+        gateway: { fetch: async () => new Response() } as Fetcher,
+      },
+    });
+
+    expect(randomUUID).not.toHaveBeenCalled();
+    const first = await backend.connect();
+    const second = await backend.connect();
+
+    expect(randomUUID).toHaveBeenCalledOnce();
+    expect(loaderIds).toEqual([
+      "workspace-shell:abc:egress-http-gateway-generated-revision",
+      "workspace-shell:abc:egress-http-gateway-generated-revision",
+    ]);
+    await first.close();
+    await second.close();
   });
 
   it("passes egress policy to an external runtime source", async () => {
