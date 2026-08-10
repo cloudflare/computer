@@ -49,6 +49,7 @@ jobs:
             workspace: "@cloudflare/dofs"
             path: packages/dofs
             needs-siblings: false
+            extra-test: "test:workers"
           - name: rpc
             workspace: "@cloudflare/computer-rpc"
             path: packages/rpc
@@ -57,14 +58,19 @@ jobs:
             workspace: "@cloudflare/computer"
             path: packages/computer
             needs-siblings: true
+            build-computerd-bin: true
+            extra-test: "test:harness"
+            system-deps: "fuse3 xz-utils"
           - name: computerd
             workspace: "@cloudflare/computerd"
             path: packages/computerd
             needs-siblings: true
+            build-computerd-bin: true
             # libfuse2 (libfuse.so.2) is what fuse-native binds to at
             # runtime; fuse3 ships /dev/fuse helpers and the
             # FUSE_MOUNT=shim tests need it for the userspace mount path.
-            system-deps: "libfuse2t64 fuse3"
+            # xz-utils extracts the target Node binary used by build:bin.
+            system-deps: "libfuse2t64 fuse3 xz-utils"
     steps:
       - uses: actions/checkout@v6
         with:
@@ -77,6 +83,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ${{ matrix.system-deps }}
+
+      - name: Prepare Docker and FUSE
+        if: matrix.build-computerd-bin
+        run: |
+          docker info
+          sudo modprobe fuse
+          sudo chmod a+rw /dev/fuse
 
       # Build every npm workspace's dist/ unconditionally for now. The
       # computer + computerd jobs need dofs + rpc dist, the rpc job needs
@@ -91,6 +104,13 @@ jobs:
         if: matrix.needs-siblings == false
         run: npm run build --workspace ${{ matrix.workspace }} --if-present
 
+      # The computer harness and computerd's real-FUSE regression both
+      # discover the standalone binary at artifacts/computerd/. Building it
+      # makes those suites execute instead of silently skipping.
+      - name: Build computerd binary
+        if: matrix.build-computerd-bin
+        run: npm run build:bin --workspace @cloudflare/computerd
+
       - name: Lint + format check
         run: npx biome check ${{ matrix.path }}
 
@@ -100,6 +120,10 @@ jobs:
       - name: Test
         run: npm test --workspace ${{ matrix.workspace }} --if-present
 
+      - name: Test (${{ matrix.extra-test }})
+        if: matrix.extra-test
+        run: npm run ${{ matrix.extra-test }} --workspace ${{ matrix.workspace }}
+
   example:
     name: example/${{ matrix.name }}
     runs-on: ubuntu-24.04
@@ -108,12 +132,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: think
-            workspace: "@cloudflare/example-think"
-            path: examples/think
+          - name: artifacts
+            workspace: "@example/computer-artifacts"
+            path: examples/artifacts
+            typegen: "npx wrangler types"
+          - name: assets
+            workspace: "@example/computer-assets"
+            path: examples/assets
           - name: container
             workspace: "@example/computer-container"
             path: examples/container
+            typegen: "npx wrangler types"
+          - name: think
+            workspace: "@cloudflare/example-think"
+            path: examples/think
+            typegen: "npx wrangler types"
+          - name: think-compare-runtimes
+            workspace: "@cloudflare/example-think-compare-runtimes"
+            path: examples/think-compare-runtimes
+          - name: tutorial
+            workspace: "@example/computer-tutorial"
+            path: examples/tutorial
+            typegen: "npm run build:types"
+          - name: worker-javascript
+            workspace: "@example/computer-worker-javascript"
+            path: examples/worker-javascript
+          - name: worker-shell
+            workspace: "@example/computer-worker-shell"
+            path: examples/worker-shell
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,7 +173,8 @@ jobs:
       - run: npm run build --workspaces --if-present
 
       - name: Generate worker types
-        run: npx wrangler types
+        if: matrix.typegen
+        run: ${{ matrix.typegen }}
         working-directory: ${{ matrix.path }}
 
       - name: Lint + format check
@@ -136,8 +183,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck --workspace ${{ matrix.workspace }} --if-present
 
-      # Examples don't ship tests today; --if-present makes this a
-      # no-op until they do.
+      # Most examples don't ship tests today; --if-present keeps this a
+      # no-op for them while running suites such as think-compare-runtimes.
       - name: Test
         run: npm test --workspace ${{ matrix.workspace }} --if-present
 
