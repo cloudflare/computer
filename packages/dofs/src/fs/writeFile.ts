@@ -193,11 +193,8 @@ function childPath(db: Database, parentInode: number, leafName: string, path: st
   return parentPath === "/" ? `/${leafName}` : `${parentPath}/${leafName}`;
 }
 
-function pendingTargetPath(db: Database, entry: WriteBufferEntry, fallback: string): string {
-  const pending = entry.pending;
-  return pending === undefined
-    ? fallback
-    : childPath(db, pending.parentInode, pending.leafName, pending.canonicalPath);
+function pendingTargetPath(entry: WriteBufferEntry, fallback: string): string {
+  return entry.pending?.resolvedPath ?? fallback;
 }
 
 function symlinkTargetParts(target: string, linkParentParts: string[]): string[] {
@@ -991,7 +988,7 @@ export function writeRangeSync(
   // straight into the path-keyed buffer.
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
-    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
+    assertNotReadOnly(db, pendingTargetPath(pending, canonical));
     const writeEnd = offset + bytes.byteLength;
     ensureBufferCapacity(pending, writeEnd);
     if (offset > pending.size) {
@@ -1069,7 +1066,7 @@ export function truncateFileSync(
   // Pending-create files truncate in-place on the path-keyed buffer.
   const pending = getPendingWriteBufferByPath(db, canonical);
   if (pending !== undefined) {
-    assertNotReadOnly(db, pendingTargetPath(db, pending, canonical));
+    assertNotReadOnly(db, pendingTargetPath(pending, canonical));
     if (size > pending.size) {
       ensureBufferCapacity(pending, size);
       pending.buf.fill(0, pending.size, size);

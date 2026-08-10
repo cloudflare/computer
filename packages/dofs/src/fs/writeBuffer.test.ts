@@ -194,6 +194,27 @@ describe("deferred-create lifecycle", () => {
     });
   });
 
+  it("keeps pending buffer operations free of path lookup queries", async () => {
+    await withDB((db) => {
+      mkdir(db, "/deep/real", { recursive: true }, () => 1000);
+      symlink(db, "/deep/real", "/linkdir", () => 1000);
+      openWriteBufferForCreateSync(db, "/linkdir/pending.txt", {}, () => 1000);
+
+      const originalOne = db.one.bind(db);
+      let lookups = 0;
+      db.one = ((query: string, ...bindings: unknown[]) => {
+        lookups += 1;
+        return originalOne(query, ...bindings);
+      }) as typeof db.one;
+
+      writeRangeSync(db, "/linkdir/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
+      truncateFileSync(db, "/linkdir/pending.txt", 3, () => 1002);
+      openWriteBufferSync(db, "/linkdir/pending.txt");
+
+      expect(lookups).toBe(0);
+    });
+  });
+
   it("rejects a second openWriteBufferForCreateSync against the same path", async () => {
     await withDB(async (db) => {
       openWriteBufferForCreateSync(db, "/dupe.txt", {}, () => 1000);
