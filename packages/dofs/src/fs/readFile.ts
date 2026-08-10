@@ -164,7 +164,7 @@ function snapshotResult(
 }
 
 function assertDenseRange(
-  chunks: ChunkRow[],
+  chunks: Array<Pick<ChunkRow, "idx">>,
   firstIdx: number,
   lastIdx: number,
   path: string,
@@ -243,15 +243,15 @@ export function readRangeSync(
   const end = Math.min(offset + length, totalSize);
   const firstIdx = Math.floor(offset / CHUNK_SIZE);
   const lastIdx = Math.floor((end - 1) / CHUNK_SIZE);
-  // Pull every overlapping chunk in one indexed range scan. Missing
-  // indices (a sparse file) simply don't come back, so the assembly
-  // below compacts around the gaps exactly as a per-index walk would.
+  // Pull every overlapping chunk in one indexed range scan. Files are
+  // represented densely; a missing row indicates corrupt storage.
   const chunks = db.all<{ idx: number; hash: Uint8Array }>(
     "SELECT idx, hash FROM vfs_chunks WHERE inode = ? AND idx BETWEEN ? AND ? ORDER BY idx",
     node.inode,
     firstIdx,
     lastIdx,
   );
+  assertDenseRange(chunks, firstIdx, lastIdx, path);
   const out = new Uint8Array(end - offset);
   let written = 0;
   for (const { idx, hash } of chunks) {
@@ -266,5 +266,8 @@ export function readRangeSync(
     out.set(bytes.subarray(srcStart, srcEnd), written);
     written += srcEnd - srcStart;
   }
-  return written === out.byteLength ? out : out.subarray(0, written);
+  if (written !== out.byteLength) {
+    throw createWorkspaceError("EIO", `incomplete chunk data for ${path}`, path);
+  }
+  return out;
 }

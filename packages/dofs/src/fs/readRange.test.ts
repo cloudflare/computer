@@ -90,25 +90,16 @@ describe("readRangeSync", () => {
     });
   });
 
-  it("compacts around a missing chunk row rather than zero-filling", async () => {
+  it("throws EIO when a chunk row is missing", async () => {
     await withDB((db) => {
       const original = new Uint8Array(CHUNK_SIZE * 3);
-      original.fill(1, 0, CHUNK_SIZE);
-      original.fill(2, CHUNK_SIZE, CHUNK_SIZE * 2);
-      original.fill(3, CHUNK_SIZE * 2);
       writeFileSync(db, "/large.bin", original, {}, () => 1);
       const node = resolveInode(db, "/large.bin");
-      // Drop the middle chunk row (node.size still reports three
-      // chunks). The read elides the gap and returns the present
-      // chunks concatenated, trimmed to what was actually read.
       db.run("DELETE FROM vfs_chunks WHERE inode = ? AND idx = 1", node?.inode ?? 0);
 
-      const slice = readRangeSync(db, "/large.bin", 0, CHUNK_SIZE * 3);
-      expect(slice.byteLength).toBe(CHUNK_SIZE * 2);
-      expect(slice[0]).toBe(1);
-      expect(slice[CHUNK_SIZE - 1]).toBe(1);
-      expect(slice[CHUNK_SIZE]).toBe(3);
-      expect(slice[CHUNK_SIZE * 2 - 1]).toBe(3);
+      expect(() => readRangeSync(db, "/large.bin", 0, CHUNK_SIZE * 3)).toThrowError(
+        expect.objectContaining({ code: "EIO" }),
+      );
     });
   });
 
