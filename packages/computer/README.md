@@ -465,9 +465,9 @@ await ws.ready();
 const stub = ws.stub();  // crosses the Workers-RPC boundary
 ```
 
-When assigning a workspace to a Think agent's `workspace`, pass
-`useThink: true` so Think's compatibility methods are added alongside
-`workspace.fs` and `workspace.runtime`.
+Think integrations use `workspace.fs`, `workspace.runtime`, and
+`@cloudflare/computer/tools` directly. The legacy root-level filesystem
+compatibility methods are not available.
 
 ### Durable pending-sync retries
 
