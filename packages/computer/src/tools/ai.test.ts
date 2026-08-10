@@ -1108,6 +1108,20 @@ describe("createAITools filesystem tools", () => {
     });
   });
 
+  it("keeps short invalid byte sequences classified as binary", async () => {
+    const content = new Uint8Array([0xff, 0xfe]);
+    const store = memoryStore({ size: content.byteLength });
+    store.readChunks = async function* (_path, offset = 0, length) {
+      yield content.slice(offset, length === undefined ? undefined : offset + length);
+    };
+    const tool = createReadTool({ store });
+
+    await expect(executeTool(tool, { path: "/workspace/data" })).resolves.toMatchObject({
+      kind: "binary",
+      unsupported: true,
+    });
+  });
+
   it("validates the media sniff limit when constructing the tool", () => {
     expect(() =>
       createReadTool({ store: memoryStore({ content: "text" }), mediaSniffBytes: 0 }),

@@ -224,5 +224,12 @@ function looksLikeText(bytes: Uint8Array): boolean {
   for (const char of text) {
     if (char === "\uFFFD") replacements += 1;
   }
-  return replacements <= 2 || replacements / text.length < 0.01;
+  if (replacements / text.length < 0.01) return true;
+  if (replacements > 2) return false;
+  for (const char of text) {
+    if (char !== "�" && (char >= " " || char === "\n" || char === "\r" || char === "\t")) {
+      return true;
+    }
+  }
+  return false;
 }
