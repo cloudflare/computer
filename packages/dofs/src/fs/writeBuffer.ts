@@ -29,6 +29,11 @@ export interface WriteBufferEntry {
   // Mode the caller wants persisted on release. Defaults to the
   // inode's existing mode at open time when the caller has none.
   mode: number;
+  // Lexical and effective paths used by the most recent successful
+  // mutation. Dirty release validates these paths rather than whichever
+  // hardlink alias happens to close last.
+  dirtyPath?: string;
+  dirtyTargetPath?: string;
   // Pending-create state. When set, no inode row exists yet; release
   // will INSERT the node + dirent + chunks in one transaction. The
   // synthetic inode id used to key this entry in the cache is stored

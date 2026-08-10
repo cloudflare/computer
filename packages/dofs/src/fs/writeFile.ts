@@ -154,7 +154,7 @@ interface ChunkRef {
 }
 
 type WriteTarget =
-  | { kind: "existing"; inode: number }
+  | { kind: "existing"; inode: number; canonicalPath: string }
   | { kind: "create"; parentInode: number; leafName: string; canonicalPath: string };
 
 interface DirectWriteTarget {
@@ -275,7 +275,11 @@ function resolveWriteTarget(
       );
     }
     if (node.type !== "symlink") {
-      return { kind: "existing", inode: direct.existingInode };
+      return {
+        kind: "existing",
+        inode: direct.existingInode,
+        canonicalPath: direct.canonicalPath,
+      };
     }
 
     countSymlinkFollow(follows, canonical);
@@ -603,7 +607,10 @@ function resolveFileInode(db: Database, path: string): { inode: number; mode: nu
   return { inode: node.inode, mode: node.mode };
 }
 
-function resolveWritableFileInode(db: Database, path: string): { inode: number; mode: number } {
+function resolveWritableFileInode(
+  db: Database,
+  path: string,
+): { inode: number; mode: number; canonicalPath: string } {
   const { parts, path: canonical } = canonicalizePath(path);
   if (parts.length === 0) {
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
@@ -616,7 +623,7 @@ function resolveWritableFileInode(db: Database, path: string): { inode: number; 
   if (mode === undefined) {
     throw createWorkspaceError("ENOENT", `no such file: ${canonical}`, canonical);
   }
-  return { inode: target.inode, mode };
+  return { inode: target.inode, mode, canonicalPath: target.canonicalPath };
 }
 
 function directTargetForPath(db: Database, path: string): DirectWriteTarget {
@@ -820,7 +827,11 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
   const buffered = entry.buf.subarray(0, entry.size);
 
   try {
-    resolveWritableFileInode(db, path);
+    if (entry.dirtyPath === undefined || entry.dirtyTargetPath === undefined) {
+      throw createWorkspaceError("EIO", `buffer has no writable path: ${canonical}`, canonical);
+    }
+    assertNotReadOnly(db, entry.dirtyPath);
+    assertNotReadOnly(db, entry.dirtyTargetPath);
     db.transactionSync(() => {
       if (entry.size === 0) {
         // An empty file owns no chunk rows; clear any old ones the
@@ -931,6 +942,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
     throw error;
   }
   promotePendingToInode(db, pendingInode, realInode);
+  entry.dirty = false;
   return realInode;
 }
 
@@ -1028,7 +1040,11 @@ export function writeRangeSync(
     return bytes.byteLength;
   }
 
-  const { inode, mode: existingMode } = resolveWritableFileInode(db, path);
+  const {
+    inode,
+    mode: existingMode,
+    canonicalPath: targetPath,
+  } = resolveWritableFileInode(db, path);
   const mode = (options.mode ?? existingMode) & 0o7777;
   const buffered = getWriteBuffer(db, inode);
 
@@ -1046,6 +1062,8 @@ export function writeRangeSync(
     if (writeEnd > buffered.size) buffered.size = writeEnd;
     buffered.mode = mode;
     buffered.dirty = true;
+    buffered.dirtyPath = canonical;
+    buffered.dirtyTargetPath = targetPath;
     return bytes.byteLength;
   }
 
@@ -1103,7 +1121,7 @@ export function truncateFileSync(
     return;
   }
 
-  const { inode, mode } = resolveWritableFileInode(db, path);
+  const { inode, mode, canonicalPath: targetPath } = resolveWritableFileInode(db, path);
   const buffered = getWriteBuffer(db, inode);
 
   if (buffered !== undefined) {
@@ -1114,6 +1132,8 @@ export function truncateFileSync(
     }
     buffered.size = size;
     buffered.dirty = true;
+    buffered.dirtyPath = canonical;
+    buffered.dirtyTargetPath = targetPath;
     return;
   }
 

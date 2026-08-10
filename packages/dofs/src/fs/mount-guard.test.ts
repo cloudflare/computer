@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
 import { stageBlob } from "../sync/blobs.js";
+import { link } from "./link.js";
 import { mkdir } from "./mkdir.js";
 import {
   assertNotReadOnly,
@@ -190,6 +191,24 @@ describe("writeFile under a read-only mount", () => {
       expect(() => openWriteBufferSync(db, "/mnt/file.txt")).not.toThrow();
       expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 1)).not.toThrow();
       expect(resolveInode(db, "/mnt/file.txt")?.type).toBe("file");
+    });
+  });
+
+  it("commits writable hardlink mutations when a read-only alias closes last", async () => {
+    await withDB((db) => {
+      mkdir(db, "/mnt", {}, () => 0);
+      writeFileSync(db, "/outside.txt", new TextEncoder().encode("seed"), {}, () => 0);
+      link(db, "/outside.txt", "/mnt/file.txt");
+      stageMount(db, "/mnt", "read-only");
+
+      openWriteBufferSync(db, "/outside.txt");
+      openWriteBufferSync(db, "/mnt/file.txt");
+      writeRangeSync(db, "/outside.txt", new TextEncoder().encode("done"), 0, {}, () => 1);
+      releaseWriteBufferSync(db, "/outside.txt", () => 2);
+      expect(() => releaseWriteBufferSync(db, "/mnt/file.txt", () => 2)).not.toThrow();
+
+      expect(new TextDecoder().decode(readRangeSync(db, "/outside.txt", 0, 4))).toBe("done");
+      expect(new TextDecoder().decode(readRangeSync(db, "/mnt/file.txt", 0, 4))).toBe("done");
     });
   });
 
