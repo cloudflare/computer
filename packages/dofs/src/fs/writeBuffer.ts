@@ -38,6 +38,7 @@ export interface WriteBufferEntry {
     parentInode: number;
     leafName: string;
     canonicalPath: string;
+    resolvedPath: string;
     pendingInode: number;
     mtime: number;
   };
@@ -78,7 +79,7 @@ export function listPendingByParent(db: Database, parentInode: number): WriteBuf
   const cache = caches.get(db);
   if (cache === undefined) return [];
   const out: WriteBufferEntry[] = [];
-  for (const entry of cache.byPendingPath.values()) {
+  for (const entry of cache.byInode.values()) {
     if (entry.pending?.parentInode === parentInode) out.push(entry);
   }
   return out;
@@ -89,6 +90,7 @@ export function setWriteBuffer(db: Database, inode: number, entry: WriteBufferEn
   cache.byInode.set(inode, entry);
   if (entry.pending !== undefined) {
     cache.byPendingPath.set(entry.pending.canonicalPath, entry);
+    cache.byPendingPath.set(entry.pending.resolvedPath, entry);
   }
 }
 
@@ -98,6 +100,7 @@ export function deleteWriteBuffer(db: Database, inode: number): void {
   const entry = cache.byInode.get(inode);
   if (entry?.pending !== undefined) {
     cache.byPendingPath.delete(entry.pending.canonicalPath);
+    cache.byPendingPath.delete(entry.pending.resolvedPath);
   }
   cache.byInode.delete(inode);
 }
@@ -122,6 +125,7 @@ export function promotePendingToInode(db: Database, pendingInode: number, realIn
   if (entry === undefined) return;
   if (entry.pending !== undefined) {
     cache.byPendingPath.delete(entry.pending.canonicalPath);
+    cache.byPendingPath.delete(entry.pending.resolvedPath);
     entry.pending = undefined;
   }
   cache.byInode.delete(pendingInode);

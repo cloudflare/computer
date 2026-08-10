@@ -177,15 +177,18 @@ describe("deferred-create lifecycle", () => {
     });
   });
 
-  it("invalidates the real path after releasing through a symlinked parent", async () => {
+  it("exposes a symlinked pending create through its real path", async () => {
     await withDB((db) => {
       mkdir(db, "/real", {}, () => 1000);
       symlink(db, "/real", "/linkdir", () => 1000);
       expect(resolveInode(db, "/real/pending.txt")).toBeNull();
 
       openWriteBufferForCreateSync(db, "/linkdir/pending.txt", {}, () => 1000);
-      writeRangeSync(db, "/linkdir/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
-      releaseWriteBufferSync(db, "/linkdir/pending.txt", () => 1002);
+      expect(stat(db, "/real/pending.txt").size).toBe(0);
+      writeRangeSync(db, "/real/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
+      expect(stat(db, "/real/pending.txt").size).toBe(5);
+      expect(new TextDecoder().decode(readRangeSync(db, "/real/pending.txt", 0, 5))).toBe("hello");
+      releaseWriteBufferSync(db, "/real/pending.txt", () => 1002);
 
       expect(resolveInode(db, "/real/pending.txt")?.type).toBe("file");
     });

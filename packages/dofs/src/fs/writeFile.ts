@@ -759,7 +759,10 @@ export function openWriteBufferForCreateSync(
     throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
   }
   const target = directTargetForPath(db, path);
-  if (target.existingInode !== undefined) {
+  if (
+    target.existingInode !== undefined ||
+    getPendingWriteBufferByPath(db, target.canonicalPath) !== undefined
+  ) {
     throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
   }
   const mode = (options.mode ?? 0o644) & 0o7777;
@@ -775,6 +778,7 @@ export function openWriteBufferForCreateSync(
       parentInode: target.parentInode,
       leafName: target.leafName,
       canonicalPath: canonical,
+      resolvedPath: target.canonicalPath,
       pendingInode,
       mtime,
     },
