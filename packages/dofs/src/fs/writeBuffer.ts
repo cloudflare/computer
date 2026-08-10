@@ -39,6 +39,7 @@ export interface WriteBufferEntry {
     leafName: string;
     canonicalPath: string;
     resolvedPath: string;
+    ancestorInodes: number[];
     pendingInode: number;
     mtime: number;
   };

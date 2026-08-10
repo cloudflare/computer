@@ -47,6 +47,7 @@ interface SymlinkFollowState {
 interface ResolvedParent {
   inode: number;
   canonicalPath: string;
+  ancestorInodes: number[];
 }
 
 // Resolve the target's parent one component at a time. Expanding links
@@ -61,6 +62,7 @@ function resolveParent(
   const pendingParts = parts.slice(0, -1);
   const inodeStack = [ROOT_INODE];
   const realParts: string[] = [];
+  const ancestorInodes = new Set([ROOT_INODE]);
 
   while (pendingParts.length > 0) {
     const name = pendingParts.shift();
@@ -111,11 +113,13 @@ function resolveParent(
     }
     inodeStack.push(node.inode);
     realParts.push(name);
+    ancestorInodes.add(node.inode);
   }
 
   return {
     inode: inodeStack[inodeStack.length - 1],
     canonicalPath: pathFromParts(realParts),
+    ancestorInodes: [...ancestorInodes],
   };
 }
 
@@ -155,6 +159,7 @@ interface DirectWriteTarget {
   parentInode: number;
   leafName: string;
   canonicalPath: string;
+  ancestorInodes: number[];
   existingInode?: number;
 }
 
@@ -223,6 +228,7 @@ function resolveDirectWriteTarget(
     parentInode: parent.inode,
     leafName,
     canonicalPath,
+    ancestorInodes: parent.ancestorInodes,
     existingInode: existing?.child_inode,
   };
 }
@@ -777,6 +783,7 @@ export function openWriteBufferForCreateSync(
       leafName: target.leafName,
       canonicalPath: canonical,
       resolvedPath: target.canonicalPath,
+      ancestorInodes: target.ancestorInodes,
       pendingInode,
       mtime,
     },
@@ -946,12 +953,10 @@ export function flushPendingUnderDirectory(db: Database, path: string, now: () =
   const directory = resolveInode(db, path, { followSymlinks: false });
   if (directory?.type !== "dir") return;
 
-  // A pending file can be lexically beneath this directory while its
-  // resolved parent is elsewhere through a symlink, and either path
-  // may itself have multiple aliases. Structural changes are rare, so
-  // commit every pending create rather than leave an alias stale.
   for (const entry of listPendingWriteBuffers(db)) {
-    if (entry.pending !== undefined) commitPendingBuffer(db, entry, now);
+    if (entry.pending?.ancestorInodes.includes(directory.inode)) {
+      commitPendingBuffer(db, entry, now);
+    }
   }
 }
 

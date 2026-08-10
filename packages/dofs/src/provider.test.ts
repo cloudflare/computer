@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { invalidateReadOnlyMountCache } from "./fs/mount-guard.js";
 import { withDB } from "./fs/with-db.js";
 import { SQLiteWorkspaceProvider } from "./provider.js";
 import type { Database } from "./storage.js";
@@ -736,6 +737,27 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
 
       expect((p.readFileSync("/new/link/pending.txt") as Buffer).toString()).toBe("pending");
       expect(() => p.releaseWriteBufferSync("/new/link/pending.txt")).not.toThrow();
+    });
+  });
+
+  it("does not flush an unrelated uncommittable pending create", async () => {
+    await withProviderAndDB((p, db) => {
+      p.mkdirSync("/a");
+      p.mkdirSync("/b");
+      p.openWriteBufferForCreateSync("/a/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/a/pending.txt", Buffer.from("pending"), 0);
+      db.run(
+        "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, ?)",
+        "/a",
+        "test",
+        "read-only",
+      );
+      invalidateReadOnlyMountCache(db);
+
+      expect(() => p.renameSync("/b", "/c")).not.toThrow();
+      expect(p.existsSync("/b")).toBe(false);
+      expect(p.existsSync("/c")).toBe(true);
+      expect((p.readFileSync("/a/pending.txt") as Buffer).toString()).toBe("pending");
     });
   });
 
