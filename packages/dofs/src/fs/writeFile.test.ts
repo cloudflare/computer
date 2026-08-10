@@ -275,6 +275,16 @@ describe("writeFile", () => {
     });
   });
 
+  it("rejects ENOTDIR when a deep parent path segment is a file", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "file", {}, () => 0);
+
+      await expect(
+        writeFile(db, "/target/sub/child.txt", "hello", {}, () => 0),
+      ).rejects.toMatchObject({ code: "ENOTDIR" });
+    });
+  });
+
   it("rejects EISDIR when the path resolves to a directory", async () => {
     await withDB(async (db) => {
       mkdir(db, "/d", {}, () => 0);

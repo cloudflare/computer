@@ -39,25 +39,25 @@ export interface WriteFileRange {
 }
 
 // Resolve directory-only paths (the parent of the target file). The
-// final segment is handled by the caller. Returns the parent inode or
-// throws ENOENT/ENOTDIR. Intermediate symlinks are followed by the
-// normal resolver so writes match read/path-resolution semantics.
+// final segment is handled by the caller. Resolve each prefix so a
+// missing segment remains distinguishable from a non-directory segment.
 function resolveParent(db: Database, parts: string[], canonical: string): number {
-  if (parts.length === 1) return ROOT_INODE;
-
-  const parentPath = `/${parts.slice(0, -1).join("/")}`;
-  const parent = resolveInode(db, parentPath);
-  if (parent === null) {
-    throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
+  let parentInode = ROOT_INODE;
+  for (let depth = 1; depth < parts.length; depth++) {
+    const parent = resolveInode(db, `/${parts.slice(0, depth).join("/")}`);
+    if (parent === null) {
+      throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
+    }
+    if (parent.type !== "dir") {
+      throw createWorkspaceError(
+        "ENOTDIR",
+        `parent path segment is not a directory: ${canonical}`,
+        canonical,
+      );
+    }
+    parentInode = parent.inode;
   }
-  if (parent.type !== "dir") {
-    throw createWorkspaceError(
-      "ENOTDIR",
-      `parent path segment is not a directory: ${canonical}`,
-      canonical,
-    );
-  }
-  return parent.inode;
+  return parentInode;
 }
 
 async function materialize(content: string | Uint8Array): Promise<Uint8Array> {
