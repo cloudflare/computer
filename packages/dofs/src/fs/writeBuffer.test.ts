@@ -194,6 +194,22 @@ describe("deferred-create lifecycle", () => {
     });
   });
 
+  it("exposes a pending create through every alias of its parent", async () => {
+    await withDB((db) => {
+      mkdir(db, "/real", {}, () => 1000);
+      symlink(db, "/real", "/a", () => 1000);
+      symlink(db, "/real", "/b", () => 1000);
+      openWriteBufferForCreateSync(db, "/a/pending.txt", {}, () => 1000);
+
+      expect(stat(db, "/b/pending.txt").size).toBe(0);
+      writeRangeSync(db, "/b/pending.txt", bytesOf("hello"), 0, {}, () => 1001);
+      expect(new TextDecoder().decode(readRangeSync(db, "/b/pending.txt", 0, 5))).toBe("hello");
+      releaseWriteBufferSync(db, "/b/pending.txt", () => 1002);
+
+      expect(resolveInode(db, "/real/pending.txt")?.type).toBe("file");
+    });
+  });
+
   it("keeps pending buffer operations free of path lookup queries", async () => {
     await withDB((db) => {
       mkdir(db, "/deep/real", { recursive: true }, () => 1000);

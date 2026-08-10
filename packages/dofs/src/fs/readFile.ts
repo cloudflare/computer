@@ -2,8 +2,9 @@ import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { getBlobBytes } from "./blobCache.js";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
 import { resolveInode } from "./resolve.js";
-import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
+import { getWriteBuffer } from "./writeBuffer.js";
 import { CHUNK_SIZE } from "./writeFile.js";
 
 export interface ReadFileOptions {
@@ -53,7 +54,7 @@ export async function readFile(
   // requested window so the returned stream remains a snapshot while writes
   // continue through the open buffer.
   const { path: canonical } = canonicalizePath(path);
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     return snapshotResult(pending.buf, pending.size, byteOffset, byteLength, wantString);
   }
@@ -211,7 +212,7 @@ export function readRangeSync(
   // Pending-create files have no inode yet. Serve reads from the
   // path-keyed buffer until release commits the row.
   const { path: canonical } = canonicalizePath(path);
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     if (length === 0) return new Uint8Array();
     if (offset >= pending.size) return new Uint8Array();

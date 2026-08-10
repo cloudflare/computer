@@ -1,8 +1,9 @@
 import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
 import { resolveInode } from "./resolve.js";
-import { getPendingWriteBufferByPath, getWriteBuffer } from "./writeBuffer.js";
+import { getWriteBuffer } from "./writeBuffer.js";
 
 export interface WorkspaceStatResult {
   name: string;
@@ -39,7 +40,7 @@ function statShared(db: Database, path: string, followFinal: boolean): Workspace
   // Pending creates never apply to symlinks, so this is safe to run
   // even on the lstat path — a hit here always corresponds to a
   // file mid-open.
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined && pending.pending !== undefined) {
     return {
       name,

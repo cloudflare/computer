@@ -740,6 +740,21 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
     });
   });
 
+  it("renameSync finds a pending file through another parent alias", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/real");
+      p.symlinkSync("/real", "/a");
+      p.symlinkSync("/real", "/b");
+      p.openWriteBufferForCreateSync("/a/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/a/pending.txt", Buffer.from("pending"), 0);
+
+      p.renameSync("/b/pending.txt", "/moved.txt");
+
+      expect((p.readFileSync("/moved.txt") as Buffer).toString()).toBe("pending");
+      expect(() => p.releaseWriteBufferSync("/moved.txt")).not.toThrow();
+    });
+  });
+
   it("renameSync commits pending files reached through the renamed symlink", async () => {
     await withProvider((p) => {
       p.mkdirSync("/one");

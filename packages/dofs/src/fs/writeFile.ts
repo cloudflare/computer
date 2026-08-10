@@ -9,6 +9,7 @@ import { buildManifest } from "../sync/manifests.js";
 import { pathOf } from "../sync/paths.js";
 import { getBlobBytes } from "./blobCache.js";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
 import { resolveInode } from "./resolve.js";
 import { invalidateResolveExact } from "./resolveCache.js";
 import {
@@ -724,7 +725,7 @@ export function createFileSync(
 // the bytes back to chunks.
 export function openWriteBufferSync(db: Database, path: string): void {
   const { path: canonical } = canonicalizePath(path);
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     pending.openCount += 1;
     return;
@@ -798,7 +799,7 @@ export function openWriteBufferForCreateSync(
 // emit their INSERT + dirent + chunks in the same transaction.
 export function releaseWriteBufferSync(db: Database, path: string, now: () => number): void {
   const { path: canonical } = canonicalizePath(path);
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     releasePendingBuffer(db, pending, now);
     return;
@@ -943,7 +944,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
  */
 export function flushPendingByPath(db: Database, path: string, now: () => number): boolean {
   const { path: canonical } = canonicalizePath(path);
-  const entry = getPendingWriteBufferByPath(db, canonical);
+  const entry = findPendingWriteBuffer(db, canonical);
   if (entry === undefined || entry.pending === undefined) return false;
   commitPendingBuffer(db, entry, now);
   return true;
@@ -1012,7 +1013,7 @@ export function writeRangeSync(
 
   // Pending-create files don't have an inode yet; route the write
   // straight into the path-keyed buffer.
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     assertNotReadOnly(db, pendingTargetPath(pending, canonical));
     const writeEnd = offset + bytes.byteLength;
@@ -1090,7 +1091,7 @@ export function truncateFileSync(
   const mtime = now();
 
   // Pending-create files truncate in-place on the path-keyed buffer.
-  const pending = getPendingWriteBufferByPath(db, canonical);
+  const pending = findPendingWriteBuffer(db, canonical);
   if (pending !== undefined) {
     assertNotReadOnly(db, pendingTargetPath(pending, canonical));
     if (size > pending.size) {

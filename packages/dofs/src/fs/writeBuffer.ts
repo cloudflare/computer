@@ -48,6 +48,7 @@ export interface WriteBufferEntry {
 interface DatabaseCache {
   byInode: Map<number, WriteBufferEntry>;
   byPendingPath: Map<string, WriteBufferEntry>;
+  byPendingParent: Map<string, WriteBufferEntry>;
   nextPendingInode: number;
 }
 
@@ -56,7 +57,12 @@ const caches = new WeakMap<Database, DatabaseCache>();
 function cacheFor(db: Database): DatabaseCache {
   let cache = caches.get(db);
   if (cache === undefined) {
-    cache = { byInode: new Map(), byPendingPath: new Map(), nextPendingInode: -1 };
+    cache = {
+      byInode: new Map(),
+      byPendingPath: new Map(),
+      byPendingParent: new Map(),
+      nextPendingInode: -1,
+    };
     caches.set(db, cache);
   }
   return cache;
@@ -71,6 +77,18 @@ export function getPendingWriteBufferByPath(
   canonicalPath: string,
 ): WriteBufferEntry | undefined {
   return caches.get(db)?.byPendingPath.get(canonicalPath);
+}
+
+function pendingParentKey(parentInode: number, leafName: string): string {
+  return `${parentInode}:${leafName}`;
+}
+
+export function getPendingWriteBufferByParent(
+  db: Database,
+  parentInode: number,
+  leafName: string,
+): WriteBufferEntry | undefined {
+  return caches.get(db)?.byPendingParent.get(pendingParentKey(parentInode, leafName));
 }
 
 // List pending-create buffers whose parent dirent matches `parentInode`.
@@ -92,6 +110,10 @@ export function setWriteBuffer(db: Database, inode: number, entry: WriteBufferEn
   if (entry.pending !== undefined) {
     cache.byPendingPath.set(entry.pending.canonicalPath, entry);
     cache.byPendingPath.set(entry.pending.resolvedPath, entry);
+    cache.byPendingParent.set(
+      pendingParentKey(entry.pending.parentInode, entry.pending.leafName),
+      entry,
+    );
   }
 }
 
@@ -102,6 +124,9 @@ export function deleteWriteBuffer(db: Database, inode: number): void {
   if (entry?.pending !== undefined) {
     cache.byPendingPath.delete(entry.pending.canonicalPath);
     cache.byPendingPath.delete(entry.pending.resolvedPath);
+    cache.byPendingParent.delete(
+      pendingParentKey(entry.pending.parentInode, entry.pending.leafName),
+    );
   }
   cache.byInode.delete(inode);
 }
@@ -127,6 +152,9 @@ export function promotePendingToInode(db: Database, pendingInode: number, realIn
   if (entry.pending !== undefined) {
     cache.byPendingPath.delete(entry.pending.canonicalPath);
     cache.byPendingPath.delete(entry.pending.resolvedPath);
+    cache.byPendingParent.delete(
+      pendingParentKey(entry.pending.parentInode, entry.pending.leafName),
+    );
     entry.pending = undefined;
   }
   cache.byInode.delete(pendingInode);
