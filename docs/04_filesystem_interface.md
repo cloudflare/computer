@@ -37,18 +37,39 @@ method-by-method mapping against `node:fs/promises`.
 ### `readFile`
 
 ```ts
+type ReadFileRange = {
+  byteOffset?: number; // default 0
+  byteLength?: number; // default: remainder of the file
+};
+
 readFile(path: string): Promise<ReadableStream<Uint8Array>>
 readFile(path: string, encoding: "utf8"): Promise<string>
-readFile(path: string, options: { encoding?: "utf8" }): Promise<string>
+readFile(path: string, options: ReadFileRange): Promise<ReadableStream<Uint8Array>>
+readFile(
+  path: string,
+  options: ReadFileRange & { encoding: "utf8" },
+): Promise<string>
 ```
 
 Defaulting to a stream is deliberate — most reads in an agent context
-are "send this file somewhere" and never need to be in memory.
+are "send this file somewhere" and never need to be in memory. A ranged
+stream resolves the file and captures its overlapping chunk rows once,
+then lazily sends those content-addressed blobs. This preserves the existing
+whole-file stream behavior across ordinary concurrent writes while avoiding
+reads before `byteOffset`. The same single stream
+crosses the Workers RPC boundary; callers do not issue one RPC invocation
+per storage chunk.
 
 ```ts
 // Stream a large file straight to the client.
 const stream = await fs.readFile("/workspace/build/out.wasm");
 return new Response(stream, { headers: { "content-type": "application/wasm" } });
+
+// Resume a stream at a byte continuation and cap the transfer.
+const continuation = await fs.readFile("/workspace/build/out.wasm", {
+  byteOffset: 1_048_576,
+  byteLength: 262_144,
+});
 
 // Read a small text file into a string.
 const todo = await fs.readFile("/workspace/notes/todo.md", "utf8");

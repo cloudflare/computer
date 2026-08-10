@@ -132,7 +132,7 @@ Schema:
 }
 ```
 
-A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` prevents the store from transferring bytes already read. The AI SDK model output keeps this complete result as JSON when a read is truncated. A complete read remains plain text.
+A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` opens the next database-backed stream at that byte instead of transferring bytes already read. The workspace adapter uses one ranged stream per tool call, including across Workers RPC; it does not issue one eager range RPC per chunk. The AI SDK model output keeps this complete result as JSON when a read is truncated. A complete read remains plain text.
 
 Known image and PDF extensions are classified without reading the file. Unknown extensions use a bounded magic-byte sniff. The tool's `toModelOutput` hook emits AI SDK `file-data` parts for images and PDFs. It checks the file size, then reads at most `maxModelBytes + 1` bytes before deciding whether to encode the file. This keeps the load bounded if the file grows after the size check. Other binary files return an unsupported binary result.
 
@@ -146,7 +146,25 @@ Known image and PDF extensions are classified without reading the file. Unknown 
 }
 ```
 
-`ls` returns at most `limit` entries in name order. Each entry includes `name`, `size`, `mtime`, `isFile`, `isDirectory`, and `isSymbolicLink`. A non-final page includes `nextOffset`.
+`ls` defaults to at most 200 entries and returns this shape:
+
+```ts
+{
+  path: string;
+  count: number;
+  entries: Array<{
+    name: string;
+    size: number;
+    mtime: number;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymbolicLink: boolean;
+  }>;
+  nextOffset?: number;
+}
+```
+
+Entries are in name order. A non-final page includes `nextOffset`; pass it as the next call's `offset`.
 
 ## `find`
 
@@ -260,7 +278,7 @@ interface MutableFileStore extends FileStore {
 
 `lockIdentity` coordinates mutations across adapters that represent the same storage resource. Custom stores should share one identity when their instances can reach the same files.
 
-`WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator uses fixed-size `readRange` calls, so seeking to a byte continuation does not stream and discard the preceding file content.
+`WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator opens one ranged `readFile` stream, so seeking to a byte continuation neither transfers the preceding content nor issues one RPC invocation per chunk.
 
 ## Conventions for agents
 
