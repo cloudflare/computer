@@ -1,4 +1,5 @@
 export const WORKSPACE_EGRESS_TOKEN_HEADER = "x-workspace-egress-token";
+export const WORKSPACE_EGRESS_URL_HEADER = "x-workspace-egress-url";
 
 export type WorkspaceEgressPolicy =
   | { mode: "none" }

@@ -51,7 +51,7 @@
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
-import { WORKSPACE_EGRESS_TOKEN_HEADER } from "./runtime/egress.js";
+import { WORKSPACE_EGRESS_TOKEN_HEADER, WORKSPACE_EGRESS_URL_HEADER } from "./runtime/egress.js";
 
 export interface WorkspaceProxyProps {
   // Name of a DurableObjectNamespace binding in env. The proxy
@@ -70,9 +70,12 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
     if (this.ctx.props.egressToken !== undefined) {
       const headers = new Headers(request.headers);
       headers.set(WORKSPACE_EGRESS_TOKEN_HEADER, this.ctx.props.egressToken);
+      headers.set(WORKSPACE_EGRESS_URL_HEADER, request.url);
+      url.pathname = "/ws";
+      url.search = "";
       const stub = this.#hostStub();
       if (stub === undefined) return this.#missingBindingResponse();
-      return stub.fetch(new Request(request, { headers }));
+      return stub.fetch(new Request(url, new Request(request, { headers })));
     }
 
     const callback = url.pathname.match(/^\/__workspace_connect\/([0-9a-f-]{36})\/(health|ws)$/);

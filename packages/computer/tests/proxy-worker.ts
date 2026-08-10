@@ -25,15 +25,30 @@ export interface Env {
 export class TestStorageDO extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const egressToken = request.headers.get("x-workspace-egress-token");
+    if (url.pathname === "/ws" && egressToken !== null) {
+      return Response.json({
+        callbackUrl: request.url,
+        originalUrl: request.headers.get("x-workspace-egress-url"),
+        egressToken,
+        method: request.method,
+        body: await request.text(),
+      });
+    }
     if (url.pathname === "/ws") {
       return new Response(
         url.searchParams.has("token") ? `from-do:${url.searchParams.get("token")}` : "from-do",
         { status: 200 },
       );
     }
-    const egressToken = request.headers.get("x-workspace-egress-token");
     if (egressToken !== null) {
-      return Response.json({ url: request.url, egressToken });
+      return Response.json({
+        callbackUrl: request.url,
+        originalUrl: request.headers.get("x-workspace-egress-url"),
+        egressToken,
+        method: request.method,
+        body: await request.text(),
+      });
     }
     return new Response("DO unknown path", { status: 404 });
   }

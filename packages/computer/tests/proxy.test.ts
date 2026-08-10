@@ -54,17 +54,23 @@ describe("WorkspaceProxy", () => {
     expect(await websocket.text()).toBe(`from-do:${token}`);
   });
 
-  it("forwards arbitrary requests with an egress token", async () => {
-    const res = await SELF.fetch("https://api.example.test/v1/data", {
+  it("routes egress callbacks through /ws while preserving the original request", async () => {
+    const res = await SELF.fetch("https://api.example.test/v1/data?format=json", {
+      method: "POST",
+      body: "payload",
       headers: {
+        "content-type": "text/plain",
         "x-test-id": freshId(),
         "x-test-egress-token": "secret-token",
       },
     });
 
     expect(await res.json()).toEqual({
-      url: "https://api.example.test/v1/data",
+      callbackUrl: "https://api.example.test/ws",
+      originalUrl: "https://api.example.test/v1/data?format=json",
       egressToken: "secret-token",
+      method: "POST",
+      body: "payload",
     });
   });
 

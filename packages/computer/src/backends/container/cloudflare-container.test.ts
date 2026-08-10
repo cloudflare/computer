@@ -171,10 +171,14 @@ describe("CloudflareContainerBackend", () => {
     expect(fake.enableInternet).toBe(true);
   });
 
-  test("routes HTTP egress through the configured gateway", async () => {
+  test("restores tokenized egress callbacks before calling the gateway", async () => {
     const fake = makeFakeHost({ healthy: false });
+    let gatewayRequest: Request | undefined;
     const gateway = {
-      fetch: vi.fn(async (request: Request) => new Response(request.url)),
+      fetch: vi.fn(async (request: Request) => {
+        gatewayRequest = request;
+        return new Response(request.url);
+      }),
     } as unknown as Fetcher;
     const backend = new CloudflareContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -183,15 +187,50 @@ describe("CloudflareContainerBackend", () => {
       egress: { mode: "http-gateway", gateway },
     });
     await expect(backend.connect()).rejects.toThrow();
-    const request = new Request("https://api.example.test/data", {
-      headers: { "x-workspace-egress-token": fake.gatewayToken ?? "" },
+    const request = new Request("https://workspace.internal/ws", {
+      method: "POST",
+      body: "payload",
+      headers: {
+        "x-workspace-egress-token": fake.gatewayToken ?? "",
+        "x-workspace-egress-url": "https://api.example.test/data?format=json",
+      },
     });
 
     const response = await backend.handleFetch(request);
 
     expect(fake.gatewayWorkspace).toEqual(fakeWorkspace);
-    expect(await response.text()).toBe("https://api.example.test/data");
+    expect(await response.text()).toBe("https://api.example.test/data?format=json");
+    expect(gatewayRequest?.method).toBe("POST");
+    expect(await gatewayRequest?.text()).toBe("payload");
+    expect(gatewayRequest?.headers.get("x-workspace-egress-token")).toBeNull();
+    expect(gatewayRequest?.headers.get("x-workspace-egress-url")).toBeNull();
     expect(gateway.fetch).toHaveBeenCalledOnce();
+  });
+
+  test("rejects tokenized egress callbacks without a valid original URL", async () => {
+    const fake = makeFakeHost({ healthy: false });
+    const gateway = {
+      fetch: vi.fn(async () => new Response("forwarded")),
+    } as unknown as Fetcher;
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+      egress: { mode: "http-gateway", gateway },
+    });
+    await expect(backend.connect()).rejects.toThrow();
+
+    const response = await backend.handleFetch(
+      new Request("https://workspace.internal/ws", {
+        headers: {
+          "x-workspace-egress-token": fake.gatewayToken ?? "",
+          "x-workspace-egress-url": "ftp://api.example.test/data",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(gateway.fetch).not.toHaveBeenCalled();
   });
 
   test("rejects container egress callbacks with the wrong token", async () => {

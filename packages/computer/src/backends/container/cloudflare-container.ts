@@ -49,7 +49,11 @@ import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 
 import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
 import { startHeartbeat } from "../../heartbeat.js";
-import { WORKSPACE_EGRESS_TOKEN_HEADER, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
+import {
+  WORKSPACE_EGRESS_TOKEN_HEADER,
+  WORKSPACE_EGRESS_URL_HEADER,
+  type WorkspaceEgressPolicy,
+} from "../../runtime/egress.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
@@ -305,8 +309,20 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       req.headers.get(WORKSPACE_EGRESS_TOKEN_HEADER) === this.#egressToken
     ) {
       const headers = new Headers(req.headers);
+      const originalUrl = headers.get(WORKSPACE_EGRESS_URL_HEADER);
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(originalUrl ?? "");
+      } catch {
+        return new Response("invalid egress URL", { status: 400 });
+      }
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        return new Response("invalid egress URL", { status: 400 });
+      }
       headers.delete(WORKSPACE_EGRESS_TOKEN_HEADER);
-      return this.#egress.gateway.fetch(new Request(req, { headers }));
+      headers.delete(WORKSPACE_EGRESS_URL_HEADER);
+      const sanitized = new Request(req, { headers });
+      return this.#egress.gateway.fetch(new Request(parsedUrl, sanitized));
     }
     const url = new URL(req.url);
     if (url.pathname !== "/ws") {
