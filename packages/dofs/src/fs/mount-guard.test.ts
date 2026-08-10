@@ -110,6 +110,16 @@ describe("mount-guard helpers", () => {
     });
   });
 
+  it("treats every path as a descendant of a read-only root mount", async () => {
+    await withDB((db) => {
+      stageMount(db, "/", "read-only");
+
+      expect(() => assertNotReadOnly(db, "/child")).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+    });
+  });
+
   it("read-write mounts do not register as read-only", async () => {
     await withDB(async (db) => {
       stageMount(db, "/workspace/rw", "read-write");
@@ -120,6 +130,21 @@ describe("mount-guard helpers", () => {
 });
 
 describe("writeFile under a read-only mount", () => {
+  it("rejects direct and symlinked writes under a read-only root mount", async () => {
+    await withDB((db) => {
+      mkdir(db, "/actual", {}, () => 0);
+      symlink(db, "/actual", "/link", () => 0);
+      stageMount(db, "/", "read-only");
+
+      expect(() => writeFileSync(db, "/direct.txt", new Uint8Array([1]), {}, () => 0)).toThrowError(
+        expect.objectContaining({ code: "EROFS" }),
+      );
+      expect(() =>
+        writeFileSync(db, "/link/through.txt", new Uint8Array([1]), {}, () => 0),
+      ).toThrowError(expect.objectContaining({ code: "EROFS" }));
+    });
+  });
+
   it("rejects a streaming write under the mount root with EROFS", async () => {
     await withDB(async (db) => {
       // Materialise the directory before flipping the mount to

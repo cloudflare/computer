@@ -52,7 +52,7 @@ export function getReadOnlyMountRoots(db: Database): readonly string[] {
 // vectors. Mirrors the predicate that lived in
 // GuardedWorkspaceFilesystem before the data-layer move.
 function isAtOrBelowRoot(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
+  return root === "/" || path === root || path.startsWith(`${root}/`);
 }
 
 function overlapsRoot(path: string, root: string): boolean {
