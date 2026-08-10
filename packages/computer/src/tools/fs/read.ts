@@ -109,7 +109,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
       const startLine = offset ?? 1;
       const startByte = byteOffset ?? 0;
       const lineCap = Math.min(limit ?? maxLines, maxLines);
-      let currentLine = byteOffset === undefined ? 1 : startLine;
+      let currentLine = byteOffset === undefined || byteOffset === 0 ? 1 : startLine;
       const collected: string[] = [];
       let collectedBytes = 0;
       let firstEmittedLine: number | null = null;

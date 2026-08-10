@@ -902,6 +902,25 @@ describe("createAITools filesystem tools", () => {
     expect(offsets).toEqual([0, 6]);
   });
 
+  it("treats a zero byte offset as the start of the file", async () => {
+    const tool = createReadTool({ store: memoryStore({ content: "first\nsecond\nthird\n" }) });
+
+    await expect(
+      executeTool(tool, {
+        path: "/workspace/file.txt",
+        offset: 2,
+        byteOffset: 0,
+        limit: 1,
+      }),
+    ).resolves.toMatchObject({
+      content: "second",
+      startLine: 2,
+      endLine: 2,
+      nextOffset: 3,
+      nextByteOffset: 13,
+    });
+  });
+
   it("keeps text continuations in truncated model output", async () => {
     const tool = createReadTool({ store: memoryStore({ content: "first\nsecond\n" }) });
     const truncated = await executeTool(tool, { path: "/workspace/file.txt", limit: 1 });
