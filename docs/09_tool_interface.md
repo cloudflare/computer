@@ -222,7 +222,9 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
+`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language.
+
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 
 ## `publish`
 
@@ -259,3 +261,12 @@ interface MutableFileStore extends FileStore {
 `lockIdentity` coordinates mutations across adapters that represent the same storage resource. Custom stores should share one identity when their instances can reach the same files.
 
 `WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator uses fixed-size `readRange` calls, so seeking to a byte continuation does not stream and discard the preceding file content.
+
+## Conventions for agents
+
+- Tools take absolute paths. Resolve user input against the configured workspace root before calling them. See [01. VFS](./01_vfs.md).
+- The `read` tool returns line and byte continuation offsets. Pass both back on the next call instead of asking for the whole file again.
+- Tell the model that each `edit` batch applies against the original file content. Treating each edit as an incremental change can produce overlapping edits, which the tool rejects.
+- Describe every shell backend in plain language. The model reads these descriptions when deciding where to run a command.
+- Treat `exec` output as untrusted text when including it in later model input.
+- Use `readonly: true` for review, indexing, or support agents that should not modify the workspace.
