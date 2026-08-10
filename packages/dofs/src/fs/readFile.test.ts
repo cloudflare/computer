@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import { mkdir } from "./mkdir.js";
 import { readFile } from "./readFile.js";
 import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFile } from "./writeFile.js";
+import {
+  CHUNK_SIZE,
+  openWriteBufferForCreateSync,
+  writeFile,
+  writeRangeSync,
+} from "./writeFile.js";
 
 async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();
@@ -69,6 +74,79 @@ describe("readFile", () => {
       expect(second.value?.[0]).toBe(0x42);
       const end = await reader.read();
       expect(end.done).toBe(true);
+    });
+  });
+
+  it("streams only the requested byte range across chunk boundaries", async () => {
+    await withDB(async (db) => {
+      const bytes = new Uint8Array(CHUNK_SIZE + 8);
+      bytes.fill(0x41, 0, CHUNK_SIZE);
+      bytes.fill(0x42, CHUNK_SIZE);
+      await writeFile(db, "/big", bytes, {}, () => 0);
+
+      const stream = await readFile(db, "/big", {
+        byteOffset: CHUNK_SIZE - 4,
+        byteLength: 8,
+      });
+      expect(Array.from(await drain(stream))).toEqual([
+        0x41, 0x41, 0x41, 0x41, 0x42, 0x42, 0x42, 0x42,
+      ]);
+    });
+  });
+
+  it("keeps a ranged stream on the snapshot captured when it opens", async () => {
+    await withDB(async (db) => {
+      const original = new Uint8Array(CHUNK_SIZE + 4);
+      original.fill(0x41, 0, CHUNK_SIZE);
+      original.fill(0x42, CHUNK_SIZE);
+      await writeFile(db, "/big", original, {}, () => 0);
+
+      const stream = await readFile(db, "/big", {
+        byteOffset: CHUNK_SIZE - 2,
+        byteLength: 6,
+      });
+      await writeFile(db, "/big", new Uint8Array(original.byteLength).fill(0x43), {}, () => 1);
+
+      expect(Array.from(await drain(stream))).toEqual([0x41, 0x41, 0x42, 0x42, 0x42, 0x42]);
+    });
+  });
+
+  it("clamps byte ranges at EOF and supports ranged text reads", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "hello", {}, () => 0);
+
+      expect(await readFile(db, "/a.txt", { encoding: "utf8", byteOffset: 1, byteLength: 3 })).toBe(
+        "ell",
+      );
+      expect(
+        (await drain(await readFile(db, "/a.txt", { byteOffset: 4, byteLength: 10 })))[0],
+      ).toBe(0x6f);
+      expect(await drain(await readFile(db, "/a.txt", { byteOffset: 5 }))).toHaveLength(0);
+      expect(await drain(await readFile(db, "/a.txt", { byteLength: 0 }))).toHaveLength(0);
+    });
+  });
+
+  it("snapshots ranged reads from pending write buffers", async () => {
+    await withDB(async (db) => {
+      openWriteBufferForCreateSync(db, "/pending", {}, () => 0);
+      writeRangeSync(db, "/pending", new TextEncoder().encode("abcdef"), 0, {}, () => 1);
+
+      const stream = await readFile(db, "/pending", { byteOffset: 1, byteLength: 3 });
+      writeRangeSync(db, "/pending", new TextEncoder().encode("ZZZ"), 1, {}, () => 2);
+
+      expect(new TextDecoder().decode(await drain(stream))).toBe("bcd");
+    });
+  });
+
+  it("rejects invalid byte ranges", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "hello", {}, () => 0);
+      await expect(readFile(db, "/a.txt", { byteOffset: -1 })).rejects.toMatchObject({
+        code: "EINVAL",
+      });
+      await expect(
+        readFile(db, "/a.txt", { byteLength: Number.MAX_SAFE_INTEGER + 1 }),
+      ).rejects.toMatchObject({ code: "EINVAL" });
     });
   });
 
