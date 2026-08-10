@@ -18,6 +18,7 @@ import {
   getPendingWriteBufferByPath,
   getWriteBuffer,
   listPendingByParent,
+  listPendingWriteBuffers,
   promotePendingToInode,
   setWriteBuffer,
   type WriteBufferEntry,
@@ -943,7 +944,8 @@ export function flushPendingByPath(db: Database, path: string, now: () => number
 
 /** @internal Commits pending files below a directory before its dirent moves or disappears. */
 export function flushPendingUnderDirectory(db: Database, path: string, now: () => number): void {
-  const directory = resolveInode(db, path, { followSymlinks: false });
+  const { path: canonical } = canonicalizePath(path);
+  const directory = resolveInode(db, canonical, { followSymlinks: false });
   if (directory?.type !== "dir") return;
 
   const parents = db.all<{ inode: number }>(
@@ -959,7 +961,11 @@ export function flushPendingUnderDirectory(db: Database, path: string, now: () =
     SELECT inode FROM descendant_dirs`,
     directory.inode,
   );
-  const entries = parents.flatMap(({ inode }) => listPendingByParent(db, inode));
+  const entries = new Set(parents.flatMap(({ inode }) => listPendingByParent(db, inode)));
+  const lexicalPrefix = canonical === "/" ? "/" : `${canonical}/`;
+  for (const entry of listPendingWriteBuffers(db)) {
+    if (entry.pending?.canonicalPath.startsWith(lexicalPrefix)) entries.add(entry);
+  }
   for (const entry of entries) {
     if (entry.pending !== undefined) commitPendingBuffer(db, entry, now);
   }

@@ -76,13 +76,13 @@ export function getPendingWriteBufferByPath(
 // Used by readdir so freshly-created-but-not-yet-released files show
 // up in directory listings between open and release.
 export function listPendingByParent(db: Database, parentInode: number): WriteBufferEntry[] {
+  return listPendingWriteBuffers(db).filter((entry) => entry.pending?.parentInode === parentInode);
+}
+
+export function listPendingWriteBuffers(db: Database): WriteBufferEntry[] {
   const cache = caches.get(db);
   if (cache === undefined) return [];
-  const out: WriteBufferEntry[] = [];
-  for (const entry of cache.byInode.values()) {
-    if (entry.pending?.parentInode === parentInode) out.push(entry);
-  }
-  return out;
+  return [...cache.byInode.values()].filter((entry) => entry.pending !== undefined);
 }
 
 export function setWriteBuffer(db: Database, inode: number, entry: WriteBufferEntry): void {

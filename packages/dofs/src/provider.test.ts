@@ -708,6 +708,21 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
     });
   });
 
+  it("renameSync commits lexical pending descendants reached through symlinks", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/src");
+      p.mkdirSync("/outside");
+      p.symlinkSync("/outside", "/src/link");
+      p.openWriteBufferForCreateSync("/src/link/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/src/link/pending.txt", Buffer.from("pending"), 0);
+
+      p.renameSync("/src", "/new");
+
+      expect((p.readFileSync("/new/link/pending.txt") as Buffer).toString()).toBe("pending");
+      expect(() => p.releaseWriteBufferSync("/new/link/pending.txt")).not.toThrow();
+    });
+  });
+
   it("rmdirSync preserves pending descendants", async () => {
     await withProvider((p) => {
       p.mkdirSync("/dir");
