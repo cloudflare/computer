@@ -291,9 +291,10 @@ const tools = createAITools({
 The model reads each backend's `description` when deciding where a
 command should run, so write them in plain language. Truncated text
 model output keeps both line and byte continuations; pass both to the
-next call to avoid transferring the same bytes again. Images and PDFs
-are returned as AI SDK `file-data` model output through a bounded read.
-`ls`, `find`, and `grep` pass pagination through to the storage layer
+next call to avoid transferring the same bytes again. Eligible image and
+PDF bytes are captured once during the bounded tool execution and returned
+as AI SDK `file` model output without re-reading the file. SVG source remains
+text. `ls`, `find`, and `grep` pass pagination through to the storage layer
 and return `nextOffset` when more results exist. File mutations share
 locks across tool sets for the same workspace, and recursive deletion
 excludes mutations throughout its subtree. See

@@ -128,9 +128,9 @@ Schema:
 }
 ```
 
-A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. `nextOffset` preserves line numbering; `nextByteOffset` opens the next database-backed stream at that byte instead of transferring bytes already read. The workspace adapter uses one ranged stream per tool call, including across Workers RPC; it does not issue one eager range RPC per chunk. The AI SDK model output keeps this complete result as JSON when a read is truncated. A complete read remains plain text.
+A truncated text result has `totalLines: null`, `nextOffset`, and `nextByteOffset`. Pass both continuations to the next call. A positive `byteOffset` is valid only with `offset`; `byteOffset: 0` starts from the beginning. `nextOffset` preserves line numbering, while `nextByteOffset` opens the next database-backed stream at that byte instead of transferring bytes already read. The workspace adapter uses one ranged stream per tool call, including across Workers RPC; it does not issue one eager range RPC per chunk. The AI SDK model output keeps the complete result as JSON when a read is truncated, empty, or explicitly positioned. Other complete text reads remain plain text.
 
-Known image and PDF extensions are classified without reading the file. Unknown extensions use a bounded magic-byte sniff. The tool's `toModelOutput` hook emits AI SDK `file-data` parts for images and PDFs. It checks the file size, then reads at most `maxModelBytes + 1` bytes before deciding whether to encode the file. This keeps the load bounded if the file grows after the size check. Other binary files return an unsupported binary result.
+Known image and PDF extensions are classified without a prefix read. Unknown extensions use a bounded magic-byte and UTF-8 sniff. SVG source is returned as text rather than inline media. During execution, the tool reads at most `maxModelBytes + 1` bytes and captures eligible image or PDF data in the result. The `toModelOutput` hook performs no filesystem I/O and emits an AI SDK `file` part from those captured bytes, so regenerated prompt history cannot observe later file changes. Other binary files return an unsupported binary result.
 
 ## `ls`
 
