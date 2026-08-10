@@ -8,6 +8,7 @@ import { stageBlob } from "../sync/blobs.js";
 import { buildManifest } from "../sync/manifests.js";
 import { getBlobBytes } from "./blobCache.js";
 import { assertNotReadOnly } from "./mount-guard.js";
+import { resolveInode } from "./resolve.js";
 import { invalidateResolveExact } from "./resolveCache.js";
 import {
   allocatePendingInode,
@@ -39,36 +40,24 @@ export interface WriteFileRange {
 
 // Resolve directory-only paths (the parent of the target file). The
 // final segment is handled by the caller. Returns the parent inode or
-// throws ENOENT/ENOTDIR.
+// throws ENOENT/ENOTDIR. Intermediate symlinks are followed by the
+// normal resolver so writes match read/path-resolution semantics.
 function resolveParent(db: Database, parts: string[], canonical: string): number {
-  let parentInode = ROOT_INODE;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const name = parts[i];
-    const child = db.one<{ child_inode: number }>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
-      parentInode,
-      name,
-    );
-    if (child === undefined) {
-      throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
-    }
-    const next = db.one<{ inode: number; type: "file" | "dir" }>(
-      "SELECT inode, type FROM vfs_nodes WHERE inode = ?",
-      child.child_inode,
-    );
-    if (next === undefined) {
-      throw createWorkspaceError("ENOENT", `dangling dirent: ${canonical}`, canonical);
-    }
-    if (next.type !== "dir") {
-      throw createWorkspaceError(
-        "ENOTDIR",
-        `parent path segment is not a directory: ${canonical}`,
-        canonical,
-      );
-    }
-    parentInode = next.inode;
+  if (parts.length === 1) return ROOT_INODE;
+
+  const parentPath = `/${parts.slice(0, -1).join("/")}`;
+  const parent = resolveInode(db, parentPath);
+  if (parent === null) {
+    throw createWorkspaceError("ENOENT", `parent directory missing: ${canonical}`, canonical);
   }
-  return parentInode;
+  if (parent.type !== "dir") {
+    throw createWorkspaceError(
+      "ENOTDIR",
+      `parent path segment is not a directory: ${canonical}`,
+      canonical,
+    );
+  }
+  return parent.inode;
 }
 
 async function materialize(content: string | Uint8Array): Promise<Uint8Array> {

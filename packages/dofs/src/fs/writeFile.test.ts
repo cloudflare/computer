@@ -4,6 +4,7 @@ import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
 import { mkdir } from "./mkdir.js";
 import { resolveInode } from "./resolve.js";
+import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import { CHUNK_SIZE, writeFile, writeFileRangesSync, writeFileSync } from "./writeFile.js";
 
@@ -317,6 +318,50 @@ describe("writeFile", () => {
       mkdir(db, "/a/b", { recursive: true }, () => 0);
       await writeFile(db, "/a/b/c.txt", "nested", {}, () => 0);
       expect(new TextDecoder().decode(readBack(db, "/a/b/c.txt"))).toBe("nested");
+    });
+  });
+
+  it("writes through an intermediate symlink to a directory", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/real", {}, () => 0);
+      symlink(db, "/real", "/linkdir", () => 0);
+
+      await writeFile(db, "/linkdir/file.txt", "hello", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/real/file.txt"))).toBe("hello");
+    });
+  });
+
+  it("writes through an intermediate relative symlink to a directory", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/base/real", { recursive: true }, () => 0);
+      symlink(db, "real", "/base/linkdir", () => 0);
+
+      await writeFile(db, "/base/linkdir/file.txt", "hello", {}, () => 0);
+
+      expect(new TextDecoder().decode(readBack(db, "/base/real/file.txt"))).toBe("hello");
+    });
+  });
+
+  it("rejects ENOTDIR when an intermediate symlink resolves to a file", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/target", "file", {}, () => 0);
+      symlink(db, "/target", "/linkfile", () => 0);
+
+      await expect(writeFile(db, "/linkfile/child.txt", "hello", {}, () => 0)).rejects.toMatchObject({
+        code: "ENOTDIR",
+      });
+    });
+  });
+
+  it("rejects ELOOP when an intermediate symlink is cyclic", async () => {
+    await withDB(async (db) => {
+      symlink(db, "/b", "/a", () => 0);
+      symlink(db, "/a", "/b", () => 0);
+
+      await expect(writeFile(db, "/a/child.txt", "hello", {}, () => 0)).rejects.toMatchObject({
+        code: "ELOOP",
+      });
     });
   });
 
