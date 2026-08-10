@@ -24,12 +24,13 @@ export default defineConfig({
   test: {
     globals: true,
     include: ["src/**/*.test.ts"],
-    // testing.test.ts exercises SQLiteTestStorage directly — the
-    // node:sqlite-backed fixture has no analogue under workerd, so
-    // the test is meaningful only against the real node runtime.
-    // All other tests run under both backends; provider/provider-fd
-    // use a withProvider helper that delegates to withDB, which the
-    // workers config aliases to a DO-backed implementation.
-    exclude: ["src/testing.test.ts"],
+    // These files exercise SQLiteTestStorage directly. The
+    // node:sqlite-backed fixture has no analogue under workerd and
+    // importing it crashes the pool worker instead of reporting a
+    // module-resolution error. schema/index.test.ts also stages raw,
+    // pre-migration databases, which withDB cannot represent.
+    // All other tests run under both backends; helpers delegate to
+    // withDB, which this config aliases to a DO-backed implementation.
+    exclude: ["src/schema/index.test.ts", "src/testing.test.ts"],
   },
 });

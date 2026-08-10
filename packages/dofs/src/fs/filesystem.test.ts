@@ -9,24 +9,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { initializeSchema } from "../schema/index.js";
-import { Database } from "../storage.js";
-import { SQLiteTestStorage } from "../testing.js";
 import { WorkspaceFilesystem } from "./filesystem.js";
+import { withDB } from "./with-db.js";
 
 async function withFs<T>(
   fn: (fs: WorkspaceFilesystem) => T | Promise<T>,
   now: () => number = () => 1234,
 ): Promise<T> {
-  const storage = new SQLiteTestStorage();
-  const db = new Database(storage);
-  initializeSchema(db, now);
-  const fs = new WorkspaceFilesystem(db, { now });
-  try {
-    return await fn(fs);
-  } finally {
-    storage.close();
-  }
+  return withDB((db) => fn(new WorkspaceFilesystem(db, { now })), { now });
 }
 
 describe("WorkspaceFilesystem", () => {
