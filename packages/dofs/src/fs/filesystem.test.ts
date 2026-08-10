@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 
 import { WorkspaceFilesystem } from "./filesystem.js";
+import { readRangeSync } from "./readFile.js";
 import { withDB } from "./with-db.js";
 import { openWriteBufferSync, releaseWriteBufferSync, writeRangeSync } from "./writeFile.js";
 
@@ -52,10 +53,10 @@ describe("WorkspaceFilesystem", () => {
       openWriteBufferSync(fs.db, "/bin");
       writeRangeSync(fs.db, "/bin", new Uint8Array([4, 5, 6]), 0, {}, () => 1);
 
-      const range = await fs.readRange("/bin", 0, 3);
+      const range = readRangeSync(fs.db, "/bin", 0, 3);
       range[0] = 99;
 
-      expect(Array.from(await fs.readRange("/bin", 0, 3))).toEqual([4, 5, 6]);
+      expect(Array.from(readRangeSync(fs.db, "/bin", 0, 3))).toEqual([4, 5, 6]);
       releaseWriteBufferSync(fs.db, "/bin", () => 2);
     });
   });

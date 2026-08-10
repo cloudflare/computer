@@ -216,7 +216,7 @@ export function readRangeSync(
     if (length === 0) return new Uint8Array();
     if (offset >= pending.size) return new Uint8Array();
     const end = Math.min(offset + length, pending.size);
-    return pending.buf.subarray(offset, end);
+    return pending.buf.slice(offset, end);
   }
   const node = resolveInode(db, path);
   if (node === null) {
@@ -234,7 +234,7 @@ export function readRangeSync(
   if (buffered?.dirty) {
     if (offset >= buffered.size) return new Uint8Array();
     const end = Math.min(offset + length, buffered.size);
-    return buffered.buf.subarray(offset, end);
+    return buffered.buf.slice(offset, end);
   }
 
   // node.size is the cached value resolveInode just loaded.
