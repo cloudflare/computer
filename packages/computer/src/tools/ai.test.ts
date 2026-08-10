@@ -1100,6 +1100,42 @@ describe("createAITools filesystem tools", () => {
     });
   });
 
+  it("recognizes message-only missing media errors", async () => {
+    const store = memoryStore({ size: 2 });
+    store.readChunks = () => ({
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next(): Promise<IteratorResult<Uint8Array>> {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    });
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+      type: "error-text",
+      value: "Could not read file bytes: /workspace/image.png",
+    });
+  });
+
+  it("does not confuse unrelated no-such errors with missing media", async () => {
+    const failure = new Error("SQLITE_ERROR: no such table: vfs_chunks");
+    const store = memoryStore({ size: 2 });
+    store.readChunks = () => ({
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      async next(): Promise<IteratorResult<Uint8Array>> {
+        throw failure;
+      },
+    });
+    const tool = createReadTool({ store, maxModelBytes: 4 });
+    const output = await executeTool(tool, { path: "/workspace/image.png" });
+
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).rejects.toBe(failure);
+  });
+
   it("does not hide unrelated inline media read failures", async () => {
     const failure = new Error("storage unavailable");
     const store = memoryStore({ size: 2 });

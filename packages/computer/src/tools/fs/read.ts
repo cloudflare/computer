@@ -313,11 +313,12 @@ function validateBoundedReadLimit(name: string, value: number): number {
 }
 
 function isMissingFileError(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  if (candidate.code === "ENOENT") return true;
   return (
-    error !== null &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
+    typeof candidate.message === "string" &&
+    (/\bENOENT\b/i.test(candidate.message) || /no such (?:file|path)\b/i.test(candidate.message))
   );
 }
 
