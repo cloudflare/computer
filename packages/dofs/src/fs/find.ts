@@ -21,11 +21,11 @@ interface ChildRow {
   type: "file" | "dir";
 }
 
-interface WalkState {
-  seen: number;
-  offset: number;
-  limit: number;
-  out: WorkspaceFoundEntry[];
+interface WalkStart {
+  inode: number;
+  path: string;
+  prefix: string;
+  regex: RegExp | undefined;
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -36,15 +36,7 @@ export function find(
   pattern?: string,
   options: FindOptions = {},
 ): WorkspaceFoundEntry[] {
-  const { path: canonical } = canonicalizePath(directory);
-  const node = resolveInode(db, canonical);
-  if (node === null) {
-    throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
-  }
-  if (node.type !== "dir") {
-    throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
-  }
-
+  const start = prepareWalk(db, directory, pattern);
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new TypeError("find limit must be a non-negative safe integer");
@@ -55,45 +47,73 @@ export function find(
   }
   if (limit === 0) return [];
 
+  const out: WorkspaceFoundEntry[] = [];
+  let seen = 0;
+  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex)) {
+    if (seen >= offset) {
+      out.push(entry);
+      if (out.length >= limit) break;
+    }
+    seen += 1;
+  }
+  return out;
+}
+
+export function* iterateFoundEntries(
+  db: Database,
+  directory: string,
+  pattern?: string,
+): IterableIterator<WorkspaceFoundEntry> {
+  const start = prepareWalk(db, directory, pattern);
+  yield* walk(db, start.inode, start.path, start.prefix, start.regex);
+}
+
+function prepareWalk(db: Database, directory: string, pattern: string | undefined): WalkStart {
+  const { path: canonical } = canonicalizePath(directory);
+  const node = resolveInode(db, canonical);
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
+  }
+  if (node.type !== "dir") {
+    throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
+  }
+
   // An empty pattern is equivalent to no pattern: walk and return
   // everything rather than compiling it into `^$`, which would match
   // only empty relative paths and yield no results.
   const regex = pattern ? compileGlob(pattern) : undefined;
-  const prefix = canonical === "/" ? "/" : `${canonical}/`;
-  const state: WalkState = { seen: 0, offset, limit, out: [] };
-  walk(db, node.inode, canonical, prefix, regex, state);
-  return state.out;
+  return {
+    inode: node.inode,
+    path: canonical,
+    prefix: canonical === "/" ? "/" : `${canonical}/`,
+    regex,
+  };
 }
 
-function walk(
+function* walk(
   db: Database,
   parentInode: number,
   parentPath: string,
   prefix: string,
   regex: RegExp | undefined,
-  state: WalkState,
-): boolean {
+): IterableIterator<WorkspaceFoundEntry> {
   let afterName = "";
   while (true) {
     const children = readChildren(db, parentInode, afterName);
-    if (children.length === 0) return false;
+    if (children.length === 0) return;
 
     for (const child of children) {
       const childPath = parentPath === "/" ? `/${child.name}` : `${parentPath}/${child.name}`;
       const relativePath = childPath.slice(prefix.length);
       if (regex === undefined || regex.test(relativePath)) {
-        if (state.seen >= state.offset) {
-          state.out.push({ path: childPath, type: child.type });
-          if (state.out.length >= state.limit) return true;
-        }
-        state.seen += 1;
+        yield { path: childPath, type: child.type };
       }
-      if (child.type === "dir" && walk(db, child.child_inode, childPath, prefix, regex, state)) {
-        return true;
+      if (child.type === "dir") {
+        yield* walk(db, child.child_inode, childPath, prefix, regex);
       }
     }
 
-    if (children.length < CHILD_PAGE_SIZE) return false;
+    if (children.length < CHILD_PAGE_SIZE) return;
     afterName = children[children.length - 1].name;
   }
 }

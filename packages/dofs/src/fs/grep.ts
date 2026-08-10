@@ -1,7 +1,7 @@
 import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
-import { find } from "./find.js";
+import { iterateFoundEntries } from "./find.js";
 import { readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 
@@ -118,15 +118,8 @@ function* filesUnder(
   directory: string,
   include: string | undefined,
 ): Iterable<string> {
-  const pageSize = 128;
-  let offset = 0;
-  while (true) {
-    const page = find(db, directory, include, { limit: pageSize, offset });
-    for (const entry of page) {
-      if (entry.type === "file") yield entry.path;
-    }
-    if (page.length < pageSize) return;
-    offset += page.length;
+  for (const entry of iterateFoundEntries(db, directory, include)) {
+    if (entry.type === "file") yield entry.path;
   }
 }
 

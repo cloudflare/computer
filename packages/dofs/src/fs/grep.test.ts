@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { grep } from "./grep.js";
 import { mkdir } from "./mkdir.js";
@@ -145,6 +145,23 @@ describe("grep", () => {
           (match) => `${match.path}:${match.line}`,
         ),
       ).toEqual(["/b.ts:2", "/c.ts:1"]);
+    });
+  });
+
+  it("walks each directory page once during a search", async () => {
+    await withDB(async (db) => {
+      for (let index = 0; index < 260; index += 1) {
+        await writeFile(db, `/file-${String(index).padStart(3, "0")}.txt`, "plain\n", {}, () => 0);
+      }
+      const all = vi.spyOn(db, "all");
+
+      expect(await grep(db, "missing", "/", { include: "*.txt", limit: 1 })).toEqual([]);
+
+      const childPageQueries = all.mock.calls.filter(([query]) =>
+        String(query).includes("d.name > ?"),
+      );
+      expect(childPageQueries.length).toBeGreaterThan(1);
+      expect(childPageQueries.filter(([, , afterName]) => afterName === "")).toHaveLength(1);
     });
   });
 
