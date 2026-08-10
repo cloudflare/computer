@@ -72,6 +72,8 @@ interface MediaReadResult {
   name: string;
   mediaType: string;
   sizeBytes: number;
+  /** Base64 bytes captured during execution for stable prompt history. */
+  data?: string;
   unsupported?: true;
 }
 
@@ -119,7 +121,7 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
           ? ({ kind: "text", mediaType: "text/plain" } as const)
           : await detectMedia(store, path, mediaSniffBytes);
       if (media.kind !== "text") {
-        return {
+        const result: MediaReadResult = {
           kind: media.kind,
           path,
           name: basename(path),
@@ -127,6 +129,20 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
           sizeBytes: stat.size,
           ...(media.kind === "binary" ? { unsupported: true as const } : {}),
         };
+        if (media.kind === "binary" || stat.size > maxModelBytes) return result;
+
+        let bytes: Uint8Array;
+        try {
+          bytes = await readBounded(store, path, maxModelBytes + 1);
+        } catch (error) {
+          if (isMissingFileError(error)) {
+            return { error: `Could not read file bytes: ${path}` };
+          }
+          throw error;
+        }
+        result.sizeBytes = bytes.byteLength;
+        if (bytes.byteLength <= maxModelBytes) result.data = uint8ArrayToBase64(bytes);
+        return result;
       }
 
       const lineCap = Math.min(limit ?? maxLines, maxLines);
@@ -284,41 +300,23 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
           : { type: "text", value: output.content };
       }
       if (output.kind === "binary") return { type: "json", value: toJSONValue(output) };
-      if (!isMediaReadResult(output) || !isReadInput(input)) {
-        return { type: "json", value: toJSONValue(output) };
-      }
+      if (!isMediaReadResult(output)) return { type: "json", value: toJSONValue(output) };
       if (output.sizeBytes > maxModelBytes) {
         return inlineMediaLimitError(output, output.sizeBytes, maxModelBytes);
       }
-      const currentStat = await store.stat(input.path);
-      if (currentStat === null) {
-        return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
-      }
-      if (currentStat.size > maxModelBytes) {
-        return inlineMediaLimitError(output, currentStat.size, maxModelBytes);
-      }
-      let bytes: Uint8Array;
-      try {
-        bytes = await readBounded(store, input.path, maxModelBytes + 1);
-      } catch (error) {
-        if (isMissingFileError(error)) {
-          return { type: "error-text", value: `Could not read file bytes: ${input.path}` };
-        }
-        throw error;
-      }
-      if (bytes.byteLength > maxModelBytes) {
-        return inlineMediaLimitError(output, bytes.byteLength, maxModelBytes);
+      if (output.data === undefined) {
+        return { type: "error-text", value: `Could not read captured file bytes: ${output.path}` };
       }
       return {
         type: "content",
         value: [
           {
             type: "text",
-            text: `Read ${output.path} (${output.mediaType}, ${bytes.byteLength} bytes).`,
+            text: `Read ${output.path} (${output.mediaType}, ${output.sizeBytes} bytes).`,
           },
           {
-            type: "file-data",
-            data: uint8ArrayToBase64(bytes),
+            type: "file",
+            data: { type: "data", data: output.data },
             mediaType: output.mediaType,
             filename: output.name,
           },
@@ -415,7 +413,8 @@ function isMediaReadResult(value: unknown): value is MediaReadResult {
     typeof value.path === "string" &&
     typeof value.name === "string" &&
     typeof value.mediaType === "string" &&
-    typeof value.sizeBytes === "number"
+    typeof value.sizeBytes === "number" &&
+    (value.data === undefined || typeof value.data === "string")
   );
 }
 

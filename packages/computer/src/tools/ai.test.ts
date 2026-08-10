@@ -995,11 +995,13 @@ describe("createAITools filesystem tools", () => {
     expect(chunksRead).toBe(1);
   });
 
-  it("returns image extensions as file-data model output", async () => {
+  it("captures image bytes once and emits modern file model output", async () => {
     const content = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    let reads = 0;
     const store = memoryStore({ size: content.length });
     store.readAll = async () => content;
     store.readChunks = async function* (_path, offset = 0, length) {
+      reads += 1;
       yield content.slice(offset, length === undefined ? undefined : offset + length);
     };
     const tool = createReadTool({ store });
@@ -1009,19 +1011,27 @@ describe("createAITools filesystem tools", () => {
       kind: "image",
       mediaType: "image/png",
       sizeBytes: content.length,
+      data: "iVBORw==",
     });
-    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
+    const expected = {
       type: "content",
       value: [
         { type: "text", text: "Read /workspace/image.png (image/png, 4 bytes)." },
         {
-          type: "file-data",
-          data: "iVBORw==",
+          type: "file",
+          data: { type: "data", data: "iVBORw==" },
           mediaType: "image/png",
           filename: "image.png",
         },
       ],
-    });
+    };
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual(
+      expected,
+    );
+    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual(
+      expected,
+    );
+    expect(reads).toBe(1);
   });
 
   it("sniffs only a bounded prefix for files without a known extension", async () => {
@@ -1038,7 +1048,10 @@ describe("createAITools filesystem tools", () => {
       kind: "file",
       mediaType: "application/pdf",
     });
-    expect(ranges).toEqual([{ offset: 0, length: 512 }]);
+    expect(ranges).toEqual([
+      { offset: 0, length: 512 },
+      { offset: 0, length: 3.5 * 1024 * 1024 + 1 },
+    ]);
   });
 
   it("returns SVG source as text instead of inline image data", async () => {
@@ -1145,7 +1158,7 @@ describe("createAITools filesystem tools", () => {
     expect(ranges).toEqual([{ offset: 0, length: 5 }]);
   });
 
-  it("reports inline media deleted after the size check", async () => {
+  it("reports inline media deleted while its bytes are captured", async () => {
     const store = memoryStore({ size: 2 });
     store.readChunks = () => ({
       [Symbol.asyncIterator]() {
@@ -1156,11 +1169,9 @@ describe("createAITools filesystem tools", () => {
       },
     });
     const tool = createReadTool({ store, maxModelBytes: 4 });
-    const output = await executeTool(tool, { path: "/workspace/image.png" });
 
-    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
-      type: "error-text",
-      value: "Could not read file bytes: /workspace/image.png",
+    await expect(executeTool(tool, { path: "/workspace/image.png" })).resolves.toEqual({
+      error: "Could not read file bytes: /workspace/image.png",
     });
   });
 
@@ -1175,11 +1186,9 @@ describe("createAITools filesystem tools", () => {
       },
     });
     const tool = createReadTool({ store, maxModelBytes: 4 });
-    const output = await executeTool(tool, { path: "/workspace/image.png" });
 
-    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).resolves.toEqual({
-      type: "error-text",
-      value: "Could not read file bytes: /workspace/image.png",
+    await expect(executeTool(tool, { path: "/workspace/image.png" })).resolves.toEqual({
+      error: "Could not read file bytes: /workspace/image.png",
     });
   });
 
@@ -1195,9 +1204,8 @@ describe("createAITools filesystem tools", () => {
       },
     });
     const tool = createReadTool({ store, maxModelBytes: 4 });
-    const output = await executeTool(tool, { path: "/workspace/image.png" });
 
-    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).rejects.toBe(failure);
+    await expect(executeTool(tool, { path: "/workspace/image.png" })).rejects.toBe(failure);
   });
 
   it("does not hide unrelated inline media read failures", async () => {
@@ -1212,9 +1220,8 @@ describe("createAITools filesystem tools", () => {
       },
     });
     const tool = createReadTool({ store, maxModelBytes: 4 });
-    const output = await executeTool(tool, { path: "/workspace/image.png" });
 
-    await expect(modelOutput(tool, { path: "/workspace/image.png" }, output)).rejects.toBe(failure);
+    await expect(executeTool(tool, { path: "/workspace/image.png" })).rejects.toBe(failure);
   });
 });
 
