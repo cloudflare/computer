@@ -35,7 +35,7 @@ import {
 import {
   createFileSync as createFileSyncImpl,
   flushPendingByPath,
-  flushPendingUnderDirectory,
+  flushPendingUnderNode,
   openWriteBufferForCreateSync as openWriteBufferForCreateSyncImpl,
   openWriteBufferSync as openWriteBufferSyncImpl,
   releaseWriteBufferSync as releaseWriteBufferSyncImpl,
@@ -264,7 +264,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   rmdirSync(path: string): void {
-    flushPendingUnderDirectory(this.db, path, this.now);
+    flushPendingUnderNode(this.db, path, this.now);
     rmImpl(this.db, path, {});
   }
 
@@ -279,6 +279,7 @@ export class SQLiteWorkspaceProvider {
     // resulting GC sees the orphaned blob, matching the non-buffered
     // shape). The buffer's open handles continue to address bytes
     // through the inode-keyed cache.
+    flushPendingUnderNode(this.db, path, this.now);
     flushPendingByPath(this.db, path, this.now);
     // Capture the target inode before rm runs so we can evict its
     // write-buffer cache entry if rm removed the last link. Without
@@ -325,8 +326,8 @@ export class SQLiteWorkspaceProvider {
     // touches dirents: the source needs a real inode to move, and a
     // pending buffer at the destination would otherwise slip past
     // rename's dirent-based existence check and lose bytes on release.
-    flushPendingUnderDirectory(this.db, oldPath, this.now);
-    flushPendingUnderDirectory(this.db, newPath, this.now);
+    flushPendingUnderNode(this.db, oldPath, this.now);
+    flushPendingUnderNode(this.db, newPath, this.now);
     flushPendingByPath(this.db, oldPath, this.now);
     flushPendingByPath(this.db, newPath, this.now);
     // Capture the destination inode before the rename so we can evict

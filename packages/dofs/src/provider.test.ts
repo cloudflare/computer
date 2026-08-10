@@ -740,6 +740,37 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
     });
   });
 
+  it("renameSync commits pending files reached through the renamed symlink", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/one");
+      p.symlinkSync("/one", "/link");
+      p.openWriteBufferForCreateSync("/link/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/link/pending.txt", Buffer.from("pending"), 0);
+
+      p.renameSync("/link", "/newlink");
+
+      expect((p.readFileSync("/newlink/pending.txt") as Buffer).toString()).toBe("pending");
+      expect(() => p.releaseWriteBufferSync("/newlink/pending.txt")).not.toThrow();
+    });
+  });
+
+  it("unlinkSync commits pending files before a traversed symlink is replaced", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/one");
+      p.mkdirSync("/two");
+      p.symlinkSync("/one", "/link");
+      p.openWriteBufferForCreateSync("/link/pending.txt", { mode: 0o644 });
+      p.writeRangeSync("/link/pending.txt", Buffer.from("pending"), 0);
+
+      p.unlinkSync("/link");
+      p.symlinkSync("/two", "/link");
+
+      expect((p.readFileSync("/one/pending.txt") as Buffer).toString()).toBe("pending");
+      expect(p.existsSync("/two/pending.txt")).toBe(false);
+      expect(() => p.releaseWriteBufferSync("/one/pending.txt")).not.toThrow();
+    });
+  });
+
   it("does not flush an unrelated uncommittable pending create", async () => {
     await withProviderAndDB((p, db) => {
       p.mkdirSync("/a");

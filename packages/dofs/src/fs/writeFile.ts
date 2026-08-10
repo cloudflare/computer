@@ -93,6 +93,7 @@ function resolveParent(
       throw createWorkspaceError("ENOENT", `dangling dirent: ${canonical}`, canonical);
     }
     if (node.type === "symlink") {
+      ancestorInodes.add(node.inode);
       countSymlinkFollow(follows, canonical);
       const target = node.link_target ?? "";
       const targetParts = symlinkTargetParts(target, realParts);
@@ -948,13 +949,13 @@ export function flushPendingByPath(db: Database, path: string, now: () => number
   return true;
 }
 
-/** @internal Commits pending files below a directory before its dirent moves or disappears. */
-export function flushPendingUnderDirectory(db: Database, path: string, now: () => number): void {
-  const directory = resolveInode(db, path, { followSymlinks: false });
-  if (directory?.type !== "dir") return;
+/** @internal Commits pending files reached through a node before its dirent changes. */
+export function flushPendingUnderNode(db: Database, path: string, now: () => number): void {
+  const node = resolveInode(db, path, { followSymlinks: false });
+  if (node === null) return;
 
   for (const entry of listPendingWriteBuffers(db)) {
-    if (entry.pending?.ancestorInodes.includes(directory.inode)) {
+    if (entry.pending?.ancestorInodes.includes(node.inode)) {
       commitPendingBuffer(db, entry, now);
     }
   }
