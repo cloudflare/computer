@@ -24,8 +24,8 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 
 The container backend (`@cloudflare/computer/backends/container`)
 gives you a real Linux environment with arbitrary binaries on
-`$PATH`, network, and a full POSIX filesystem. It costs a container
-per session and a real roundtrip on every filesystem op.
+`$PATH`, optional network access, and a full POSIX filesystem. It costs a
+container per session and a real roundtrip on every filesystem op.
 
 The worker backend trades the real environment for a Workers
 isolate that boots instantly, scales out cheaply, and has no
@@ -74,15 +74,34 @@ host DO ─── Workspace ─── WorkerShellBackend
                        back to host DO's SQLite
 ```
 
-The Worker Loader caches the Dynamic Worker isolate by id. The
-default id is `workspace-shell:${workspace.id}` — one isolate per
-workspace, so concurrent execs in the same workspace share a warm
-isolate, and a runaway Bash run in one workspace can't touch
-another workspace's shell.
+The Worker Loader caches the Dynamic Worker isolate by id. The backend
+starts with `workspace-shell:${workspace.id}` and adds the egress policy
+identity. Concurrent execs in the same workspace and policy can share a
+warm isolate, while a policy change cannot reuse an isolate with broader
+network authority.
 
-`globalOutbound: null` on the Dynamic Worker blocks `fetch()` and
-`connect()` from inside the shell. The only path out of the
-isolate is back through the host DO over `env.HOST`.
+Ambient network access is blocked by default. All execution backends use
+the same `WorkspaceEgressPolicy` modes:
+
+```ts
+new WorkerShellBackend({
+  loader: env.LOADER,
+  workspace: { binding: "ContainerExample", id: ctx.id.toString() },
+  ctx,
+  egress: { mode: "none" },
+});
+```
+
+Use `{ mode: "direct" }` to let the Dynamic Worker use its native outbound
+network, or pass `{ mode: "http-gateway", gateway, revision }` to route HTTP
+and HTTPS requests through a `Fetcher`. A stable `revision` lets the Loader
+reuse an isolate until the gateway policy changes. Without one, the backend
+uses a fresh cache identity for each backend lifetime.
+
+These modes govern ambient `fetch()` and `connect()` calls from the shell.
+Host-side capabilities remain separate; for example, the host-forwarded Git
+command can have its own network authority while ambient shell networking is
+blocked.
 
 ## Built-in custom commands
 
@@ -156,16 +175,42 @@ and re-encodes string payloads (`stdout` / `stderr`) into
 accumulate the result from raw events, see the shape they already
 handle.
 
-## Fetcher factory escape hatch
+## Runtime sources
 
-`WorkerShellBackend` is source-agnostic. The common case takes
-`{ loader, workspace, ctx }` and builds the loader callback
-itself. For deployments that need a different Fetcher source — a
-Workers service binding, a Workers-for-Platforms dispatch
-namespace, a fake in tests — pass `fetcher: () => unknown |
-Promise<unknown>` instead. The factory is consulted once on
-`connect()`; the resolved Fetcher is held for the life of the
-handle.
+The managed path takes `{ loader, workspace, ctx }` and builds the Loader
+callback. The equivalent explicit source is:
+
+```ts
+new WorkerShellBackend({
+  source: {
+    type: "loader",
+    loader: env.LOADER,
+    workspace: { binding: "ContainerExample", id: ctx.id.toString() },
+    ctx,
+  },
+  egress: { mode: "none" },
+});
+```
+
+Deployments that obtain a shell from a service binding, Workers for Platforms
+dispatch namespace, broker, pool, or test fake can use an external runtime
+source:
+
+```ts
+new WorkerShellBackend({
+  source: {
+    type: "external-runtime",
+    async connect({ egress }) {
+      return createShellRuntime({ egress });
+    },
+  },
+  egress: { mode: "direct" },
+});
+```
+
+The source is consulted once per backend `connect()`. It receives the policy
+before it creates or selects a runtime and is responsible for enforcing that
+policy. The backend does not own the external runtime's lifecycle.
 
 ## Known fidelity gaps
 
@@ -297,10 +342,10 @@ default-on cost to opt out of. The full set of optional groups is
 
 `curl` runs on a `SecureFetch` adapter over the isolate's global
 `fetch` — `undici` is redirected to a throwing stub at build time
-and never ships. Egress stays governed by the Dynamic Worker's
-`globalOutbound` (left `null`, i.e. closed), not by the shell, so
-enabling `curl` does not by itself open the network.
+and never ships. Egress stays governed by the backend's
+`WorkspaceEgressPolicy`, not by the shell, so enabling `curl` does not by
+itself open the network.
 
-Consumers that build the Loader callback by hand (the `fetcher`
-path) assemble the modules table themselves with
-`assembleShellModules([...groups])` from the same package.
+An external runtime source that builds its own Loader callback can assemble
+the modules table with `assembleShellModules([...groups])` from the same
+package.
