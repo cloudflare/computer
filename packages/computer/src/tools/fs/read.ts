@@ -55,6 +55,13 @@ const inputSchema = z
     },
   );
 
+export interface ReadInput {
+  path: string;
+  offset?: number;
+  byteOffset?: number;
+  limit?: number;
+}
+
 interface ReadResult {
   path: string;
   content: string;
@@ -86,7 +93,9 @@ function utf8ByteLength(value: string): number {
   return encoder.encode(value).length;
 }
 
-export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof inputSchema>> {
+function createReadExecutor(
+  options: ReadToolOptions,
+): (input: ReadInput) => Promise<ReadToolResult> {
   const { store } = options;
   const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
@@ -101,196 +110,211 @@ export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof in
     options.mediaSniffBytes ?? DEFAULT_MEDIA_SNIFF_BYTES,
   );
 
+  return async ({ path, offset, byteOffset, limit }): Promise<ReadToolResult> => {
+    if (byteOffset !== undefined && byteOffset > 0 && offset === undefined) {
+      return { error: "offset is required when byteOffset is greater than zero" };
+    }
+
+    const stat = await store.stat(path);
+    if (!stat) return { error: `File not found: ${path}` };
+
+    const startLine = offset ?? 1;
+    const startByte = byteOffset ?? 0;
+    // Positive byte offsets are continuations emitted only after a text read,
+    // so avoid re-reading the file prefix to classify every subsequent page.
+    const media =
+      startByte > 0
+        ? ({ kind: "text", mediaType: "text/plain" } as const)
+        : await detectMedia(store, path, mediaSniffBytes);
+    if (media.kind !== "text") {
+      const result: MediaReadResult = {
+        kind: media.kind,
+        path,
+        name: basename(path),
+        mediaType: media.mediaType,
+        sizeBytes: stat.size,
+        ...(media.kind === "binary" ? { unsupported: true as const } : {}),
+      };
+      if (media.kind === "binary" || stat.size > maxModelBytes) return result;
+
+      let bytes: Uint8Array;
+      try {
+        bytes = await readBounded(store, path, maxModelBytes + 1);
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          return { error: `Could not read file bytes: ${path}` };
+        }
+        throw error;
+      }
+      if (bytes.byteLength === 0) return { error: `Cannot attach empty file: ${path}` };
+      result.sizeBytes = bytes.byteLength;
+      if (bytes.byteLength <= maxModelBytes) result.data = uint8ArrayToBase64(bytes);
+      return result;
+    }
+
+    const lineCap = Math.min(limit ?? maxLines, maxLines);
+    let currentLine = byteOffset === undefined || byteOffset === 0 ? 1 : startLine;
+    const collected: string[] = [];
+    let collectedBytes = 0;
+    let firstEmittedLine: number | null = null;
+    let truncatedByBudget = false;
+    let firstLineOverflow = false;
+    let nextByteOffset: number | undefined;
+
+    const processLine = (
+      lineBytes: Uint8Array,
+      actualBytes: number,
+      lineStart: number,
+    ): boolean => {
+      if (currentLine < startLine) {
+        currentLine += 1;
+        return true;
+      }
+      if (collected.length >= lineCap) {
+        truncatedByBudget = true;
+        nextByteOffset = lineStart;
+        return false;
+      }
+
+      const line = renderLine(
+        truncateLine(lineBytes, actualBytes, lineTruncation),
+        currentLine,
+        includeLineNumbers,
+      );
+      const outputBytes = utf8ByteLength(line) + (collected.length > 0 ? 1 : 0);
+      if (collected.length === 0 && outputBytes > maxBytes) {
+        firstLineOverflow = true;
+        return false;
+      }
+      if (collectedBytes + outputBytes > maxBytes) {
+        truncatedByBudget = true;
+        nextByteOffset = lineStart;
+        return false;
+      }
+
+      if (firstEmittedLine === null) firstEmittedLine = currentLine;
+      collected.push(line);
+      collectedBytes += outputBytes;
+      currentLine += 1;
+      return true;
+    };
+
+    const keepBytes = bytesToRetain(lineTruncation, maxBytes);
+    let keptParts: Uint8Array[] = [];
+    let keptLength = 0;
+    let actualLength = 0;
+    let absoluteOffset = startByte;
+    let lineStart = startByte;
+    let keepGoing = true;
+
+    const append = (part: Uint8Array): void => {
+      actualLength += part.byteLength;
+      const available = keepBytes - keptLength;
+      if (available <= 0) return;
+      const kept = part.byteLength <= available ? part : part.subarray(0, available);
+      if (kept.byteLength > 0) {
+        keptParts.push(kept.slice());
+        keptLength += kept.byteLength;
+      }
+    };
+    const finishLine = (): boolean => {
+      const bytes = joinBytes(keptParts, keptLength);
+      const result = processLine(bytes, actualLength, lineStart);
+      keptParts = [];
+      keptLength = 0;
+      actualLength = 0;
+      return result;
+    };
+
+    for await (const chunk of store.readChunks(path, startByte)) {
+      let cursor = 0;
+      while (cursor < chunk.byteLength) {
+        const newline = chunk.indexOf(0x0a, cursor);
+        if (newline === -1) {
+          append(chunk.subarray(cursor));
+          break;
+        }
+        append(chunk.subarray(cursor, newline));
+        const afterNewline = absoluteOffset + newline + 1;
+        if (!finishLine()) {
+          keepGoing = false;
+          break;
+        }
+        lineStart = afterNewline;
+        cursor = newline + 1;
+        if (collected.length >= lineCap && afterNewline < stat.size) {
+          truncatedByBudget = true;
+          nextByteOffset = afterNewline;
+          keepGoing = false;
+          break;
+        }
+      }
+      absoluteOffset += chunk.byteLength;
+      if (!keepGoing) break;
+    }
+    if (keepGoing && actualLength > 0) finishLine();
+
+    if (firstLineOverflow) {
+      return {
+        error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. The host must increase maxBytes, reduce lineTruncation, or provide a byte-oriented tool.`,
+      };
+    }
+
+    if (firstEmittedLine === null) {
+      const linesSeen = currentLine - 1;
+      if (stat.size === 0) {
+        return {
+          path,
+          content: "",
+          startLine: 1,
+          endLine: 0,
+          totalLines: 0,
+          truncated: false,
+        };
+      }
+      if (startByte > 0) {
+        return { error: `Byte continuation ${startByte} is beyond end of file` };
+      }
+      if (offset !== undefined && startLine > Math.max(1, linesSeen)) {
+        return { error: `Offset ${offset} is beyond end of file (${linesSeen} line(s))` };
+      }
+    }
+
+    const startLineActual = firstEmittedLine ?? startLine;
+    const endLine = startLineActual + collected.length - 1;
+    const truncated = truncatedByBudget;
+    const result: ReadResult = {
+      path,
+      content: collected.join("\n"),
+      startLine: startLineActual,
+      endLine,
+      totalLines: truncated ? null : currentLine - 1,
+      truncated,
+    };
+    if (truncated) {
+      result.nextOffset = endLine + 1;
+      result.nextByteOffset = nextByteOffset;
+    }
+    return result;
+  };
+}
+
+export function readFromStore(options: ReadToolOptions, input: ReadInput): Promise<ReadToolResult> {
+  return createReadExecutor(options)(input);
+}
+
+export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof inputSchema>> {
+  const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxModelBytes = validateBoundedReadLimit(
+    "maxModelBytes",
+    options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES,
+  );
+
   return tool({
     description: `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`,
     inputSchema,
-    execute: async ({ path, offset, byteOffset, limit }): Promise<ReadToolResult> => {
-      if (byteOffset !== undefined && byteOffset > 0 && offset === undefined) {
-        return { error: "offset is required when byteOffset is greater than zero" };
-      }
-
-      const stat = await store.stat(path);
-      if (!stat) return { error: `File not found: ${path}` };
-
-      const startLine = offset ?? 1;
-      const startByte = byteOffset ?? 0;
-      // Positive byte offsets are continuations emitted only after a text read,
-      // so avoid re-reading the file prefix to classify every subsequent page.
-      const media =
-        startByte > 0
-          ? ({ kind: "text", mediaType: "text/plain" } as const)
-          : await detectMedia(store, path, mediaSniffBytes);
-      if (media.kind !== "text") {
-        const result: MediaReadResult = {
-          kind: media.kind,
-          path,
-          name: basename(path),
-          mediaType: media.mediaType,
-          sizeBytes: stat.size,
-          ...(media.kind === "binary" ? { unsupported: true as const } : {}),
-        };
-        if (media.kind === "binary" || stat.size > maxModelBytes) return result;
-
-        let bytes: Uint8Array;
-        try {
-          bytes = await readBounded(store, path, maxModelBytes + 1);
-        } catch (error) {
-          if (isMissingFileError(error)) {
-            return { error: `Could not read file bytes: ${path}` };
-          }
-          throw error;
-        }
-        if (bytes.byteLength === 0) return { error: `Cannot attach empty file: ${path}` };
-        result.sizeBytes = bytes.byteLength;
-        if (bytes.byteLength <= maxModelBytes) result.data = uint8ArrayToBase64(bytes);
-        return result;
-      }
-
-      const lineCap = Math.min(limit ?? maxLines, maxLines);
-      let currentLine = byteOffset === undefined || byteOffset === 0 ? 1 : startLine;
-      const collected: string[] = [];
-      let collectedBytes = 0;
-      let firstEmittedLine: number | null = null;
-      let truncatedByBudget = false;
-      let firstLineOverflow = false;
-      let nextByteOffset: number | undefined;
-
-      const processLine = (
-        lineBytes: Uint8Array,
-        actualBytes: number,
-        lineStart: number,
-      ): boolean => {
-        if (currentLine < startLine) {
-          currentLine += 1;
-          return true;
-        }
-        if (collected.length >= lineCap) {
-          truncatedByBudget = true;
-          nextByteOffset = lineStart;
-          return false;
-        }
-
-        const line = renderLine(
-          truncateLine(lineBytes, actualBytes, lineTruncation),
-          currentLine,
-          includeLineNumbers,
-        );
-        const outputBytes = utf8ByteLength(line) + (collected.length > 0 ? 1 : 0);
-        if (collected.length === 0 && outputBytes > maxBytes) {
-          firstLineOverflow = true;
-          return false;
-        }
-        if (collectedBytes + outputBytes > maxBytes) {
-          truncatedByBudget = true;
-          nextByteOffset = lineStart;
-          return false;
-        }
-
-        if (firstEmittedLine === null) firstEmittedLine = currentLine;
-        collected.push(line);
-        collectedBytes += outputBytes;
-        currentLine += 1;
-        return true;
-      };
-
-      const keepBytes = bytesToRetain(lineTruncation, maxBytes);
-      let keptParts: Uint8Array[] = [];
-      let keptLength = 0;
-      let actualLength = 0;
-      let absoluteOffset = startByte;
-      let lineStart = startByte;
-      let keepGoing = true;
-
-      const append = (part: Uint8Array): void => {
-        actualLength += part.byteLength;
-        const available = keepBytes - keptLength;
-        if (available <= 0) return;
-        const kept = part.byteLength <= available ? part : part.subarray(0, available);
-        if (kept.byteLength > 0) {
-          keptParts.push(kept.slice());
-          keptLength += kept.byteLength;
-        }
-      };
-      const finishLine = (): boolean => {
-        const bytes = joinBytes(keptParts, keptLength);
-        const result = processLine(bytes, actualLength, lineStart);
-        keptParts = [];
-        keptLength = 0;
-        actualLength = 0;
-        return result;
-      };
-
-      for await (const chunk of store.readChunks(path, startByte)) {
-        let cursor = 0;
-        while (cursor < chunk.byteLength) {
-          const newline = chunk.indexOf(0x0a, cursor);
-          if (newline === -1) {
-            append(chunk.subarray(cursor));
-            break;
-          }
-          append(chunk.subarray(cursor, newline));
-          const afterNewline = absoluteOffset + newline + 1;
-          if (!finishLine()) {
-            keepGoing = false;
-            break;
-          }
-          lineStart = afterNewline;
-          cursor = newline + 1;
-          if (collected.length >= lineCap && afterNewline < stat.size) {
-            truncatedByBudget = true;
-            nextByteOffset = afterNewline;
-            keepGoing = false;
-            break;
-          }
-        }
-        absoluteOffset += chunk.byteLength;
-        if (!keepGoing) break;
-      }
-      if (keepGoing && actualLength > 0) finishLine();
-
-      if (firstLineOverflow) {
-        return {
-          error: `Line ${currentLine} exceeds the ${maxBytes}-byte read cap. The host must increase maxBytes, reduce lineTruncation, or provide a byte-oriented tool.`,
-        };
-      }
-
-      if (firstEmittedLine === null) {
-        const linesSeen = currentLine - 1;
-        if (stat.size === 0) {
-          return {
-            path,
-            content: "",
-            startLine: 1,
-            endLine: 0,
-            totalLines: 0,
-            truncated: false,
-          };
-        }
-        if (startByte > 0) {
-          return { error: `Byte continuation ${startByte} is beyond end of file` };
-        }
-        if (offset !== undefined && startLine > Math.max(1, linesSeen)) {
-          return { error: `Offset ${offset} is beyond end of file (${linesSeen} line(s))` };
-        }
-      }
-
-      const startLineActual = firstEmittedLine ?? startLine;
-      const endLine = startLineActual + collected.length - 1;
-      const truncated = truncatedByBudget;
-      const result: ReadResult = {
-        path,
-        content: collected.join("\n"),
-        startLine: startLineActual,
-        endLine,
-        totalLines: truncated ? null : currentLine - 1,
-        truncated,
-      };
-      if (truncated) {
-        result.nextOffset = endLine + 1;
-        result.nextByteOffset = nextByteOffset;
-      }
-      return result;
-    },
+    execute: createReadExecutor(options),
     toModelOutput: async ({ input, output }: { input: unknown; output: unknown }) => {
       if (!isRecord(output)) return { type: "text", value: String(output) };
       if (typeof output.error === "string") {
