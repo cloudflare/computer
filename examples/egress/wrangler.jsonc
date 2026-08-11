@@ -1,0 +1,44 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-egress-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  "vars": {
+    "EGRESS_MODE": "none"
+  },
+
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "containers": [
+    {
+      "class_name": "EgressExample",
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 1,
+      "rollout_active_grace_period": 0,
+      "rollout_step_percentage": [100]
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "EgressExample",
+        "class_name": "EgressExample"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["EgressExample"]
+    }
+  ]
+}

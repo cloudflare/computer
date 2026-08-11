@@ -1,0 +1,21 @@
+{
+  "name": "@example/computer-egress",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker that compares egress policies across the Cloudflare Computer execution backends.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.107.1"
+  }
+}

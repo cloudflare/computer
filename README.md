@@ -60,6 +60,9 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/worker-javascript`](examples/worker-javascript) — mirrors
   `worker-shell`, but `exec` evaluates an ECMAScript module in a Dynamic
   Worker instead of running a shell command.
+- [`examples/egress`](examples/egress) — sends one URL through the container,
+  Worker shell, and Worker JavaScript backends with matching `none`, `all`, or
+  custom egress policies.
 - [`examples/think`](examples/think) — a [`@cloudflare/think`](https://www.npmjs.com/package/@cloudflare/think)
   chat agent that uses the workspace as its working directory, reachable
   from a terminal.
