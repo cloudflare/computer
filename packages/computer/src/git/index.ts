@@ -485,6 +485,7 @@ export function createGitClient({
           ...options,
           fs: await fs(),
           git: await loadGit<IsomorphicGitReadsClient>(),
+          cache,
         });
       },
       async repoRoot(options = {}) {

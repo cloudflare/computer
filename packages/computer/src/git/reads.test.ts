@@ -100,6 +100,71 @@ describe("revParseWith", () => {
     expect(out).toBe(oid);
   });
 
+  it("resolves an abbreviated oid", async () => {
+    await init();
+    const oid = await commit("a.txt", "v1\n", "init");
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: oid.slice(0, 7) });
+    expect(out).toBe(oid);
+  });
+
+  it("resolves an uppercase abbreviated oid", async () => {
+    await init();
+    const oid = await commit("a.txt", "v1\n", "init");
+    const out = await revParseWith({
+      git: isogit,
+      fs: memfs,
+      dir: DIR,
+      ref: oid.slice(0, 7).toUpperCase(),
+    });
+    expect(out).toBe(oid);
+  });
+
+  it("resolves an abbreviated oid with an ancestry suffix", async () => {
+    await init();
+    const first = await commit("a.txt", "v1\n", "first");
+    const second = await commit("a.txt", "v2\n", "second");
+    const out = await revParseWith({
+      git: isogit,
+      fs: memfs,
+      dir: DIR,
+      ref: `${second.slice(0, 7)}^`,
+    });
+    expect(out).toBe(first);
+  });
+
+  it("prefers an exact hexadecimal ref over an abbreviated oid", async () => {
+    await init();
+    const oid = await commit("a.txt", "v1\n", "first");
+    const short = oid.slice(0, 7);
+    const refOid = await commit("a.txt", "v2\n", "second");
+    await git.branch({ fs: memfs, dir: DIR, ref: short, object: refOid });
+    const out = await revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: short });
+    expect(out).toBe(refOid);
+  });
+
+  it("does not expand a missing non-hexadecimal ref", async () => {
+    await init();
+    await commit("a.txt", "v1\n", "init");
+    await expect(
+      revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "missing-branch" }),
+    ).rejects.toMatchObject({ code: "EREVPARSEFAIL" });
+  });
+
+  it("preserves ambiguity errors for abbreviated oids", async () => {
+    const ambiguous = Object.assign(new Error("ambiguous"), { code: "AmbiguousError" });
+    const client = {
+      resolveRef: async () => {
+        throw Object.assign(new Error("not found"), { code: "NotFoundError" });
+      },
+      expandOid: async () => {
+        throw ambiguous;
+      },
+    } as unknown as IsomorphicGitReadsClient;
+    await expect(
+      revParseWith({ git: client, fs: memfs, dir: DIR, ref: "abcdef0" }),
+    ).rejects.toMatchObject({ code: "EREVPARSEFAIL", cause: ambiguous });
+  });
+
   it("resolves HEAD^ to the first parent", async () => {
     await init();
     const first = await commit("a.txt", "v1\n", "first");

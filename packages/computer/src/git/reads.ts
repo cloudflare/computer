@@ -58,6 +58,12 @@ export interface IsomorphicGitReadsClient {
     };
   }>;
   resolveRef(args: { fs: object; dir: string; ref: string }): Promise<string>;
+  expandOid(args: {
+    fs: object;
+    dir: string;
+    oid: string;
+    cache?: object;
+  }): Promise<string>;
   // isomorphic-git's declared return type is `string | void`
   // for the detached-HEAD case. The actual runtime value is
   // `undefined`; we declare it that way to keep the structural
@@ -174,13 +180,25 @@ export interface GitRevParseOptions extends BaseReadOptions {
 export interface RevParseWithDeps extends GitRevParseOptions {
   git: IsomorphicGitReadsClient;
   fs: object;
+  cache?: object;
 }
 
 export async function revParseWith(opts: RevParseWithDeps): Promise<string> {
   const dir = opts.dir ?? "/";
   try {
     const { base, steps } = parseRevision(opts.ref);
-    let oid = await opts.git.resolveRef({ fs: opts.fs, dir, ref: base });
+    let oid: string;
+    try {
+      oid = await opts.git.resolveRef({ fs: opts.fs, dir, ref: base });
+    } catch (cause) {
+      if (!isNotFoundCause(cause) || !isAbbreviatedOid(base)) throw cause;
+      oid = await opts.git.expandOid({
+        fs: opts.fs,
+        dir,
+        oid: base.toLowerCase(),
+        cache: opts.cache,
+      });
+    }
     for (const step of steps) {
       oid = await walkParent(opts, dir, oid, step);
     }
@@ -190,6 +208,15 @@ export async function revParseWith(opts: RevParseWithDeps): Promise<string> {
     if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
     throw new GitError("EREVPARSEFAIL", `git rev-parse failed: ${errorMessage(cause)}`, { cause });
   }
+}
+
+function isNotFoundCause(cause: unknown): boolean {
+  if (!(cause instanceof Error)) return false;
+  return cause.name === "NotFoundError" || (cause as { code?: unknown }).code === "NotFoundError";
+}
+
+function isAbbreviatedOid(ref: string): boolean {
+  return ref.length < 40 && /^[0-9a-f]+$/i.test(ref);
 }
 
 /**
