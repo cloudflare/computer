@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage.js";
 import { mkdir } from "./mkdir.js";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
 import { readRangeSync } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 import { stat } from "./stat.js";
@@ -150,6 +151,20 @@ describe("buffered write lifecycle", () => {
 });
 
 describe("deferred-create lifecycle", () => {
+  it("skips parent resolution when no pending buffers exist", async () => {
+    await withDB((db) => {
+      const originalAll = db.all.bind(db);
+      let queries = 0;
+      db.all = ((query: string, ...bindings: unknown[]) => {
+        queries += 1;
+        return originalAll(query, ...bindings);
+      }) as typeof db.all;
+
+      expect(findPendingWriteBuffer(db, "/missing/file.txt")).toBeUndefined();
+      expect(queries).toBe(0);
+    });
+  });
+
   it("holds the file in memory until release commits one transaction", async () => {
     await withDB(async (db) => {
       openWriteBufferForCreateSync(db, "/pending.txt", { mode: 0o600 }, () => 1000);

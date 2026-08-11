@@ -96,6 +96,10 @@ export function getPendingWriteBufferByParent(
   return caches.get(db)?.byPendingParent.get(pendingParentKey(parentInode, leafName));
 }
 
+export function hasPendingWriteBuffers(db: Database): boolean {
+  return (caches.get(db)?.byPendingParent.size ?? 0) > 0;
+}
+
 // List pending-create buffers whose parent dirent matches `parentInode`.
 // Used by readdir so freshly-created-but-not-yet-released files show
 // up in directory listings between open and release.
