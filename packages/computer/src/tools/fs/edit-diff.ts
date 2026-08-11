@@ -33,6 +33,14 @@ export function stripBom(content: string): { bom: string; text: string } {
 
 // ---------- fuzzy matching ----------
 
+function foldFuzzyCharacters(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
+}
+
 /**
  * Progressive normalization for fuzzy matching:
  *   - NFKC unicode normalization
@@ -42,27 +50,133 @@ export function stripBom(content: string): { bom: string; text: string } {
  *   - non-breaking / typographic spaces → " "
  */
 export function normalizeForFuzzyMatch(text: string): string {
-  return text
-    .normalize("NFKC")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n")
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
-    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
-    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
+  return foldFuzzyCharacters(
+    text
+      .normalize("NFKC")
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n"),
+  );
 }
 
 export interface FuzzyMatchResult {
   found: boolean;
+  /** Offset in the original content, including for a fuzzy match. */
   index: number;
+  /** Length in the original content, including for a fuzzy match. */
   matchLength: number;
   usedFuzzyMatch: boolean;
-  /** The content the caller should treat as the base for replacement. */
+  /** The original content that replacements must be applied to. */
   contentForReplacement: string;
+  /** The normalized match does not have safe boundaries in the original content. */
+  unsafeBoundary?: boolean;
 }
 
-export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
+interface FuzzyContent {
+  text: string;
+  originalLines: string[];
+  normalizedLines: string[];
+  originalLineStarts: number[];
+  mappable: boolean;
+}
+
+interface TextBoundary {
+  lineIndex: number;
+  column: number;
+}
+
+const fuzzyGraphemeSegmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+
+function prepareFuzzyContent(content: string): FuzzyContent {
+  const text = normalizeForFuzzyMatch(content);
+  const originalLines = content.split("\n");
+  const normalizedLines = text.split("\n");
+  const originalLineStarts: number[] = [];
+  let originalLineStart = 0;
+  for (const line of originalLines) {
+    originalLineStarts.push(originalLineStart);
+    originalLineStart += line.length + 1;
+  }
+
+  // Grapheme-local NFKC supplies the source map below. Whole-string NFKC stays
+  // authoritative; if a runtime segments it differently, reject the fuzzy
+  // replacement rather than splice at guessed offsets.
+  const segmentedNfkc = Array.from(fuzzyGraphemeSegmenter.segment(content), (segment) =>
+    segment.segment.normalize("NFKC"),
+  ).join("");
+  return {
+    text,
+    originalLines,
+    normalizedLines,
+    originalLineStarts,
+    mappable:
+      segmentedNfkc === content.normalize("NFKC") &&
+      originalLines.length === normalizedLines.length,
+  };
+}
+
+function getTextBoundary(lines: string[], offset: number): TextBoundary | undefined {
+  if (offset < 0) return undefined;
+
+  let lineStart = 0;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const lineEnd = lineStart + lines[lineIndex].length;
+    if (offset <= lineEnd) return { lineIndex, column: offset - lineStart };
+    lineStart = lineEnd + 1;
+  }
+  return undefined;
+}
+
+function isCodePointBoundary(text: string, offset: number): boolean {
+  if (offset <= 0 || offset >= text.length) return true;
+  const previous = text.charCodeAt(offset - 1);
+  const next = text.charCodeAt(offset);
+  return !(previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff);
+}
+
+/** Map one fuzzy-text boundary back to an unambiguous original-text boundary. */
+function mapFuzzyBoundary(
+  content: FuzzyContent,
+  normalizedOffset: number,
+  kind: "start" | "end",
+): number | undefined {
+  if (!content.mappable) return undefined;
+  const boundary = getTextBoundary(content.normalizedLines, normalizedOffset);
+  if (!boundary) return undefined;
+
+  const originalLine = content.originalLines[boundary.lineIndex];
+  const normalizedLine = content.normalizedLines[boundary.lineIndex];
+  const originalLineStart = content.originalLineStarts[boundary.lineIndex];
+  if (
+    originalLine === undefined ||
+    normalizedLine === undefined ||
+    originalLineStart === undefined ||
+    !isCodePointBoundary(normalizedLine, boundary.column) ||
+    normalizeForFuzzyMatch(originalLine) !== normalizedLine
+  ) {
+    return undefined;
+  }
+
+  // A fuzzy boundary at line end sits on both sides of trimmed whitespace.
+  // Starts belong after that whitespace; ends belong before it.
+  if (kind === "start" && boundary.column === normalizedLine.length) {
+    return originalLineStart + originalLine.length;
+  }
+
+  let normalizedColumn = 0;
+  for (const segment of fuzzyGraphemeSegmenter.segment(originalLine)) {
+    if (normalizedColumn === boundary.column) return originalLineStart + segment.index;
+    if (normalizedColumn > boundary.column) return undefined;
+    normalizedColumn += foldFuzzyCharacters(segment.segment.normalize("NFKC")).length;
+  }
+  return normalizedColumn === boundary.column ? originalLineStart + originalLine.length : undefined;
+}
+
+function findText(
+  content: string,
+  oldText: string,
+  preparedContent?: FuzzyContent,
+): FuzzyMatchResult {
   const exactIndex = content.indexOf(oldText);
   if (exactIndex !== -1) {
     return {
@@ -74,9 +188,20 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
     };
   }
 
-  const fuzzyContent = normalizeForFuzzyMatch(content);
+  const fuzzyContent = preparedContent ?? prepareFuzzyContent(content);
   const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-  const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
+  if (fuzzyOldText.length === 0) {
+    return {
+      found: false,
+      index: -1,
+      matchLength: 0,
+      usedFuzzyMatch: true,
+      contentForReplacement: content,
+      unsafeBoundary: true,
+    };
+  }
+
+  let fuzzyIndex = fuzzyContent.text.indexOf(fuzzyOldText);
   if (fuzzyIndex === -1) {
     return {
       found: false,
@@ -86,13 +211,58 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
       contentForReplacement: content,
     };
   }
+
+  // A normalized occurrence can land on an unsafe partial expansion while a
+  // later occurrence maps cleanly. Uniqueness is checked separately, so locate
+  // the first source-mappable occurrence here rather than failing early.
+  let originalStart: number | undefined;
+  let originalEnd: number | undefined;
+  let normalizedSpan: string | undefined;
+  while (fuzzyIndex !== -1) {
+    originalStart = mapFuzzyBoundary(fuzzyContent, fuzzyIndex, "start");
+    originalEnd = mapFuzzyBoundary(fuzzyContent, fuzzyIndex + fuzzyOldText.length, "end");
+    normalizedSpan =
+      originalStart === undefined || originalEnd === undefined
+        ? undefined
+        : normalizeForFuzzyMatch(content.slice(originalStart, originalEnd));
+    if (normalizedSpan === fuzzyOldText) break;
+    originalStart = undefined;
+    originalEnd = undefined;
+    normalizedSpan = undefined;
+    fuzzyIndex = fuzzyContent.text.indexOf(fuzzyOldText, fuzzyIndex + 1);
+  }
+  const expectedSpan =
+    originalStart === undefined || originalEnd === undefined
+      ? undefined
+      : fuzzyContent.text.slice(fuzzyIndex, fuzzyIndex + fuzzyOldText.length);
+  if (
+    originalStart === undefined ||
+    originalEnd === undefined ||
+    originalEnd < originalStart ||
+    normalizedSpan !== expectedSpan ||
+    normalizedSpan !== fuzzyOldText
+  ) {
+    return {
+      found: false,
+      index: -1,
+      matchLength: 0,
+      usedFuzzyMatch: true,
+      contentForReplacement: content,
+      unsafeBoundary: true,
+    };
+  }
+
   return {
     found: true,
-    index: fuzzyIndex,
-    matchLength: fuzzyOldText.length,
+    index: originalStart,
+    matchLength: originalEnd - originalStart,
     usedFuzzyMatch: true,
-    contentForReplacement: fuzzyContent,
+    contentForReplacement: content,
   };
+}
+
+export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
+  return findText(content, oldText);
 }
 
 // ---------- edit application ----------
@@ -114,10 +284,16 @@ export interface AppliedEditsResult {
   newContent: string;
 }
 
-function countOccurrences(content: string, oldText: string): number {
-  const fuzzyContent = normalizeForFuzzyMatch(content);
+function countOccurrences(
+  content: string,
+  oldText: string,
+  fuzzyContent: string | undefined,
+  usedFuzzyMatch: boolean,
+): number {
+  if (!usedFuzzyMatch) return content.split(oldText).length - 1;
   const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-  return fuzzyContent.split(fuzzyOldText).length - 1;
+  if (fuzzyOldText.length === 0) return 0;
+  return (fuzzyContent ?? normalizeForFuzzyMatch(content)).split(fuzzyOldText).length - 1;
 }
 
 function notFound(path: string, idx: number, total: number): Error {
@@ -152,11 +328,18 @@ function noChange(path: string, total: number): Error {
   }
   return new Error(`No changes made to ${path}. The replacements produced identical content.`);
 }
+function unsafeFuzzyBoundary(path: string, idx: number, total: number): Error {
+  const target = total === 1 ? "The fuzzy match" : `The fuzzy match for edits[${idx}]`;
+  return new Error(
+    `${target} in ${path} crosses an ambiguous Unicode-normalization or trimmed-whitespace boundary. Copy the exact source text or use a span whose normalized boundaries map cleanly.`,
+  );
+}
 
 /**
  * Apply one or more edits to LF-normalized content. All edits are matched
  * against the original content; replacements are then applied right-to-left
- * so earlier offsets stay valid.
+ * so earlier offsets stay valid. Fuzzy normalization is lookup-only: every
+ * replacement is spliced into the original content.
  */
 export function applyEditsToNormalizedContent(
   normalizedContent: string,
@@ -172,19 +355,20 @@ export function applyEditsToNormalizedContent(
     if (normalized[i].oldText.length === 0) throw emptyOldText(path, i, normalized.length);
   }
 
-  // If any edit needs fuzzy matching, do all replacement in fuzzy-normalized
-  // space so indices line up. Otherwise stay in the caller's exact content.
-  const initial = normalized.map((e) => fuzzyFindText(normalizedContent, e.oldText));
-  const baseContent = initial.some((m) => m.usedFuzzyMatch)
-    ? normalizeForFuzzyMatch(normalizedContent)
-    : normalizedContent;
-
+  const needsFuzzyMapping = normalized.some((e) => !normalizedContent.includes(e.oldText));
+  const fuzzyContent = needsFuzzyMapping ? prepareFuzzyContent(normalizedContent) : undefined;
   const matched: MatchedEdit[] = [];
   for (let i = 0; i < normalized.length; i++) {
     const e = normalized[i];
-    const m = fuzzyFindText(baseContent, e.oldText);
+    const m = findText(normalizedContent, e.oldText, fuzzyContent);
+    if (m.unsafeBoundary) throw unsafeFuzzyBoundary(path, i, normalized.length);
     if (!m.found) throw notFound(path, i, normalized.length);
-    const occurrences = countOccurrences(baseContent, e.oldText);
+    const occurrences = countOccurrences(
+      normalizedContent,
+      e.oldText,
+      fuzzyContent?.text,
+      m.usedFuzzyMatch,
+    );
     if (occurrences > 1) throw duplicate(path, i, normalized.length, occurrences);
     matched.push({
       editIndex: i,
@@ -205,7 +389,7 @@ export function applyEditsToNormalizedContent(
     }
   }
 
-  let newContent = baseContent;
+  let newContent = normalizedContent;
   for (let i = matched.length - 1; i >= 0; i--) {
     const m = matched[i];
     newContent =
@@ -214,8 +398,8 @@ export function applyEditsToNormalizedContent(
       newContent.substring(m.matchIndex + m.matchLength);
   }
 
-  if (baseContent === newContent) throw noChange(path, normalized.length);
-  return { baseContent, newContent };
+  if (normalizedContent === newContent) throw noChange(path, normalized.length);
+  return { baseContent: normalizedContent, newContent };
 }
 
 // ---------- diffs ----------

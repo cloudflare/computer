@@ -386,6 +386,27 @@ describe("createAITools filesystem tools", () => {
     );
   });
 
+  it("preserves untargeted bytes when an edit uses fuzzy matching", async () => {
+    const workspace = makeWorkspace();
+    const tools = createAITools({ workspace });
+    const original = "The spec says “must” — not optional.  \nlet target = 1;\n";
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await workspace.fs.writeFile("/workspace/notes.md", original);
+
+    const result = await executeTool(tools.edit, {
+      path: "/workspace/notes.md",
+      edits: [{ oldText: "let target = 1; ", newText: "let target = 2;" }],
+    });
+
+    await expect(workspace.fs.readFile("/workspace/notes.md", "utf8")).resolves.toBe(
+      original.replace("let target = 1;", "let target = 2;"),
+    );
+    expect(result).toMatchObject({
+      diff: expect.not.stringContaining('The spec says "must" - not optional.'),
+      patch: expect.stringContaining("+let target = 2;"),
+    });
+  });
+
   it("paginates ls results and reports a continuation offset", async () => {
     const workspace = makeWorkspace();
     await workspace.fs.mkdir("/workspace", { recursive: true });

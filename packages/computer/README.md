@@ -295,9 +295,11 @@ next call to avoid transferring the same bytes again. Eligible image and
 PDF bytes are captured once during the bounded tool execution and returned
 as AI SDK `file` model output without re-reading the file. SVG source remains
 text. `ls`, `find`, and `grep` pass pagination through to the storage layer
-and return `nextOffset` when more results exist. File mutations share
-locks across tool sets for the same workspace, and recursive deletion
-excludes mutations throughout its subtree. See
+and return `nextOffset` when more results exist. `edit` falls back to
+Unicode- and whitespace-tolerant matching while splicing replacements into
+the original text, so untargeted content stays byte-for-byte unchanged. File
+mutations share locks across tool sets for the same workspace, and recursive
+deletion excludes mutations throughout its subtree. See
 [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
 
 ## Git

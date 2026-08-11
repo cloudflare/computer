@@ -219,7 +219,9 @@ The schema is:
 }
 ```
 
-Every `oldText` must identify one unique, non-overlapping range in the original content. The tool applies the batch atomically, preserves the byte order mark, line ending style, and file mode, and returns a unified patch plus `firstChangedLine`.
+Every `oldText` must identify one unique, non-overlapping range in the original content. Exact matching is tried first. If that misses, the tool can locate the range after NFKC normalization, trailing-whitespace trimming, and common quote, dash, and space folding. Fuzzy normalization is lookup-only: the replacement is spliced into the original text, so content outside the matched range stays unchanged and the returned diff describes the bytes written. A fuzzy match whose normalized boundary cannot map unambiguously to the source is rejected; copy a larger exact range in that case.
+
+The tool applies the batch atomically, preserves the byte order mark, line ending style, and file mode, and returns a unified patch plus `firstChangedLine`.
 
 `edit`, `write`, and `delete` share locks through the store's stable `lockIdentity`. Every `WorkspaceFileStore` over the same `workspace.fs` uses the same identity, including adapters created by separate `createAITools()` calls. A write cannot land between edit's read and write phases, while unrelated workspaces and paths remain independent. Recursive deletion also locks the whole subtree, so mutations to ancestors or descendants cannot interleave with it.
 
