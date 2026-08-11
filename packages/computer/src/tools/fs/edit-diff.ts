@@ -41,6 +41,15 @@ function foldFuzzyCharacters(text: string): string {
     .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
 }
 
+function normalizeNfkcForFuzzyMatch(text: string): string {
+  return foldFuzzyCharacters(
+    text
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n"),
+  );
+}
+
 /**
  * Progressive normalization for fuzzy matching:
  *   - NFKC unicode normalization
@@ -50,13 +59,7 @@ function foldFuzzyCharacters(text: string): string {
  *   - non-breaking / typographic spaces → " "
  */
 export function normalizeForFuzzyMatch(text: string): string {
-  return foldFuzzyCharacters(
-    text
-      .normalize("NFKC")
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .join("\n"),
-  );
+  return normalizeNfkcForFuzzyMatch(text.normalize("NFKC"));
 }
 
 export interface FuzzyMatchResult {
@@ -77,7 +80,13 @@ interface FuzzyContent {
   originalLines: string[];
   normalizedLines: string[];
   originalLineStarts: number[];
-  mappable: boolean;
+  lineMappings: Map<number, FuzzyLineMapping>;
+}
+
+interface FuzzyLineMapping {
+  nfkcText: string;
+  fuzzyText: string;
+  boundaryColumns: Map<number, number | undefined>;
 }
 
 interface TextBoundary {
@@ -98,20 +107,12 @@ function prepareFuzzyContent(content: string): FuzzyContent {
     originalLineStart += line.length + 1;
   }
 
-  // Grapheme-local NFKC supplies the source map below. Whole-string NFKC stays
-  // authoritative; if a runtime segments it differently, reject the fuzzy
-  // replacement rather than splice at guessed offsets.
-  const segmentedNfkc = Array.from(fuzzyGraphemeSegmenter.segment(content), (segment) =>
-    segment.segment.normalize("NFKC"),
-  ).join("");
   return {
     text,
     originalLines,
     normalizedLines,
     originalLineStarts,
-    mappable:
-      segmentedNfkc === content.normalize("NFKC") &&
-      originalLines.length === normalizedLines.length,
+    lineMappings: new Map(),
   };
 }
 
@@ -134,25 +135,91 @@ function isCodePointBoundary(text: string, offset: number): boolean {
   return !(previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff);
 }
 
+function getFuzzyLineMapping(
+  content: FuzzyContent,
+  lineIndex: number,
+): FuzzyLineMapping | undefined {
+  const cached = content.lineMappings.get(lineIndex);
+  if (cached) return cached;
+
+  const originalLine = content.originalLines[lineIndex];
+  if (originalLine === undefined) return undefined;
+  const nfkcText = originalLine.normalize("NFKC");
+  const mapping: FuzzyLineMapping = {
+    nfkcText,
+    fuzzyText: normalizeNfkcForFuzzyMatch(nfkcText),
+    boundaryColumns: new Map(),
+  };
+  content.lineMappings.set(lineIndex, mapping);
+  return mapping;
+}
+
+/** Map one normalized line column to an unambiguous original line column. */
+function mapFuzzyLineBoundary(
+  originalLine: string,
+  mapping: FuzzyLineMapping,
+  normalizedColumn: number,
+): number | undefined {
+  if (mapping.boundaryColumns.has(normalizedColumn)) {
+    return mapping.boundaryColumns.get(normalizedColumn);
+  }
+
+  let originalColumn: number | undefined;
+  // Character folding preserves UTF-16 length, so an NFKC-stable line needs no
+  // grapheme source map. This is the common large-file path.
+  if (mapping.nfkcText === originalLine) {
+    originalColumn = normalizedColumn <= originalLine.length ? normalizedColumn : undefined;
+  } else {
+    let fuzzyColumn = 0;
+    let nfkcColumn = 0;
+    for (const segment of fuzzyGraphemeSegmenter.segment(originalLine)) {
+      if (fuzzyColumn === normalizedColumn) {
+        originalColumn = segment.index;
+        break;
+      }
+      if (fuzzyColumn > normalizedColumn) break;
+
+      const normalizedSegment = segment.segment.normalize("NFKC");
+      // Whole-line NFKC is authoritative. Validate only the prefix needed for
+      // this boundary instead of segmenting and allocating for the whole file.
+      if (!mapping.nfkcText.startsWith(normalizedSegment, nfkcColumn)) break;
+      nfkcColumn += normalizedSegment.length;
+      fuzzyColumn += foldFuzzyCharacters(normalizedSegment).length;
+    }
+    if (
+      originalColumn === undefined &&
+      fuzzyColumn === normalizedColumn &&
+      nfkcColumn === mapping.nfkcText.length
+    ) {
+      originalColumn = originalLine.length;
+    }
+  }
+
+  mapping.boundaryColumns.set(normalizedColumn, originalColumn);
+  return originalColumn;
+}
+
 /** Map one fuzzy-text boundary back to an unambiguous original-text boundary. */
 function mapFuzzyBoundary(
   content: FuzzyContent,
   normalizedOffset: number,
   kind: "start" | "end",
 ): number | undefined {
-  if (!content.mappable) return undefined;
+  if (content.originalLines.length !== content.normalizedLines.length) return undefined;
   const boundary = getTextBoundary(content.normalizedLines, normalizedOffset);
   if (!boundary) return undefined;
 
   const originalLine = content.originalLines[boundary.lineIndex];
   const normalizedLine = content.normalizedLines[boundary.lineIndex];
   const originalLineStart = content.originalLineStarts[boundary.lineIndex];
+  const lineMapping = getFuzzyLineMapping(content, boundary.lineIndex);
   if (
     originalLine === undefined ||
     normalizedLine === undefined ||
     originalLineStart === undefined ||
+    lineMapping === undefined ||
     !isCodePointBoundary(normalizedLine, boundary.column) ||
-    normalizeForFuzzyMatch(originalLine) !== normalizedLine
+    lineMapping.fuzzyText !== normalizedLine
   ) {
     return undefined;
   }
@@ -163,13 +230,8 @@ function mapFuzzyBoundary(
     return originalLineStart + originalLine.length;
   }
 
-  let normalizedColumn = 0;
-  for (const segment of fuzzyGraphemeSegmenter.segment(originalLine)) {
-    if (normalizedColumn === boundary.column) return originalLineStart + segment.index;
-    if (normalizedColumn > boundary.column) return undefined;
-    normalizedColumn += foldFuzzyCharacters(segment.segment.normalize("NFKC")).length;
-  }
-  return normalizedColumn === boundary.column ? originalLineStart + originalLine.length : undefined;
+  const originalColumn = mapFuzzyLineBoundary(originalLine, lineMapping, boundary.column);
+  return originalColumn === undefined ? undefined : originalLineStart + originalColumn;
 }
 
 function findText(

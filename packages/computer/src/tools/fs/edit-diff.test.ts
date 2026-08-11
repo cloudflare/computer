@@ -147,6 +147,19 @@ describe("fuzzy edit source mapping", () => {
     ).toThrow(/ambiguous Unicode-normalization or trimmed-whitespace boundary/);
   });
 
+  it("maps only candidate lines in a large file", () => {
+    const untouchedLine = `${"x".repeat(256 * 1024)}ㄱᅡ unrelated`;
+    const original = `${untouchedLine}\nconst value = ﬁ;\n`;
+
+    expect(
+      applyEditsToNormalizedContent(
+        original,
+        [{ oldText: "const value = fi;", newText: "const value = pair;" }],
+        path,
+      ).newContent,
+    ).toBe(`${untouchedLine}\nconst value = pair;\n`);
+  });
+
   it("replaces an entire grapheme even when whole-string NFKC composes it", () => {
     expect(
       applyEditsToNormalizedContent("Ångstrom\n", [{ oldText: "Å", newText: "A" }], path)
