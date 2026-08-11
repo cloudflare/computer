@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/computerd",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Computer daemon CLI and FUSE mount. Source-only; the distributable lives at @cloudflare/computer-computerd-linux-x64.",
   "license": "MIT",
   "private": true,
