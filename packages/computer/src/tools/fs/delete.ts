@@ -15,25 +15,35 @@ const inputSchema = z.object({
     .describe("Remove a directory and all of its contents. Defaults to false."),
 });
 
+export interface DeleteInput {
+  path: string;
+  recursive?: boolean;
+}
+
+export function deleteFromStore(
+  options: DeleteToolOptions,
+  { path, recursive }: DeleteInput,
+): Promise<{ deleted: string } | { error: string }> {
+  return withFileLock(
+    options.store,
+    path,
+    async () => {
+      try {
+        await options.store.remove(path, { recursive, force: true });
+        return { deleted: path };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    { subtree: recursive === true },
+  );
+}
+
 export function createDeleteTool(options: DeleteToolOptions): Tool<z.infer<typeof inputSchema>> {
-  const { store } = options;
   return tool({
     description:
       "Delete a file or directory. Set recursive to true to remove a non-empty directory.",
     inputSchema,
-    execute: async ({ path, recursive }) =>
-      withFileLock(
-        store,
-        path,
-        async () => {
-          try {
-            await store.remove(path, { recursive, force: true });
-            return { deleted: path };
-          } catch (error) {
-            return { error: error instanceof Error ? error.message : String(error) };
-          }
-        },
-        { subtree: recursive === true },
-      ),
+    execute: (input) => deleteFromStore(options, input),
   });
 }

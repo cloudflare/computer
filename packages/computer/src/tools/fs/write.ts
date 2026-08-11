@@ -19,32 +19,40 @@ const inputSchema = z.object({
   content: z.string().describe("File content"),
 });
 
-export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof inputSchema>> {
-  const { store } = options;
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+export interface WriteInput {
+  path: string;
+  content: string;
+}
 
+export async function writeToStore(
+  options: WriteToolOptions,
+  { path, content }: WriteInput,
+): Promise<{ path: string; bytesWritten: number } | { error: string }> {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > maxBytes) {
+    return {
+      error: `Content too large: ${bytes.length} bytes exceeds the ${maxBytes}-byte write cap. Use the edit tool for incremental changes to existing files, or split the write into smaller pieces.`,
+    };
+  }
+  return withFileLock(options.store, path, async () => {
+    try {
+      // Preserve the existing file's mode when overwriting so executable
+      // scripts don't silently lose its executable bits. For new files we
+      // let the store apply its own default.
+      const existing = await options.store.stat(path);
+      await options.store.write(path, bytes, existing ? { mode: existing.mode } : undefined);
+      return { path, bytesWritten: bytes.length };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+}
+
+export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof inputSchema>> {
   return tool({
     description: "Write content to a file. Overwrites any existing file at the path.",
     inputSchema,
-    execute: async ({ path, content }) => {
-      const bytes = new TextEncoder().encode(content);
-      if (bytes.length > maxBytes) {
-        return {
-          error: `Content too large: ${bytes.length} bytes exceeds the ${maxBytes}-byte write cap. Use the edit tool for incremental changes to existing files, or split the write into smaller pieces.`,
-        };
-      }
-      return withFileLock(store, path, async () => {
-        try {
-          // Preserve the existing file's mode when overwriting so executable
-          // scripts don't silently lose its executable bits. For new files we
-          // let the store apply its own default.
-          const existing = await store.stat(path);
-          await store.write(path, bytes, existing ? { mode: existing.mode } : undefined);
-          return { path, bytesWritten: bytes.length };
-        } catch (err) {
-          return { error: err instanceof Error ? err.message : String(err) };
-        }
-      });
-    },
+    execute: (input) => writeToStore(options, input),
   });
 }

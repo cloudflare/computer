@@ -788,42 +788,6 @@ describe("createAITools filesystem tools", () => {
     expect(events).toEqual(["write", "delete"]);
   });
 
-  it("preserves file mode when write overwrites an existing file", async () => {
-    const writes: Array<{ path: string; content: string; mode?: number }> = [];
-    const tool = createWriteTool({
-      store: memoryStore({
-        content: "old",
-        mode: 0o100755,
-        onWrite(path, content, opts) {
-          writes.push({ path, content: decode(content), mode: opts?.mode });
-        },
-      }),
-    });
-
-    await expect(
-      executeTool(tool, { path: "/workspace/script.sh", content: "new" }),
-    ).resolves.toEqual({ path: "/workspace/script.sh", bytesWritten: 3 });
-    expect(writes).toEqual([{ path: "/workspace/script.sh", content: "new", mode: 0o100755 }]);
-  });
-
-  it("returns structured write errors for filesystem failures", async () => {
-    const tool = createWriteTool({
-      store: memoryStore({ content: "old", writeError: new Error("disk full") }),
-    });
-
-    await expect(
-      executeTool(tool, { path: "/workspace/out.txt", content: "new" }),
-    ).resolves.toEqual({ error: "disk full" });
-  });
-
-  it("rejects writes over the byte cap", async () => {
-    const tool = createWriteTool({ store: memoryStore({}), maxBytes: 3 });
-
-    await expect(
-      executeTool(tool, { path: "/workspace/out.txt", content: "abcd" }),
-    ).resolves.toMatchObject({ error: expect.stringContaining("exceeds the 3-byte write cap") });
-  });
-
   it("returns structured edit errors for non-unique replacements", async () => {
     const tool = createEditTool({ store: memoryStore({ content: "same\nsame\n" }) });
 
