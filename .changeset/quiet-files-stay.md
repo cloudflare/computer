@@ -2,4 +2,4 @@
 "@cloudflare/computer": patch
 ---
 
-Preserve untargeted file content when the `edit` tool falls back to fuzzy matching.
+Fix issue where the edit tool would rewrite the whole file when oldText doesn't match exactly.
