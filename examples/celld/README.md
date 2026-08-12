@@ -190,29 +190,103 @@ celld restore failed for FilesystemAgent:...: open managed db .../db.sqlite: dat
 So the Agents SDK wiring is present for iteration, but not counted as validated
 working yet.
 
-## JavaScript environment gaps
+## Known gaps and follow-ups
 
-The celld Worker Loader works for simple JavaScript execution, but these gaps
-remain before Computer's full `WorkerJavaScriptBackend` can be used unchanged:
+The celld Worker Loader works for simple JavaScript execution, but there are a
+few concrete gaps before this example can use Computer's full
+`WorkerJavaScriptBackend` unchanged.
 
-- **Cross-isolate capability bridge cloning**: passing Computer's
-  `WorkspaceRuntimeBridge` into the loaded worker failed with
-  `() => {} could not be cloned`. Passing a smaller filesystem-only `RpcTarget`
-  as a `ctx.fs` capability failed the same way. The example avoids that by
-  returning a plain JSON result instead of passing host capability stubs.
-- **Filesystem bridge**: because the bridge cannot be passed yet, loaded code
-  cannot import Computer's durable `node:fs/promises` shim and `ctx.fs` is only
-  a throwing placeholder. celld's native `node:fs` compatibility is
-  intentionally partial and reads return `ENOENT`.
-- **Stream transfer for live stdout/stderr**: Computer's backend streams framed
-  output through a `ReadableStream` passed back to the host. This prototype
-  buffers `stdout`/`stderr` and returns them when execution completes.
-- **Dynamic imports**: celld v0.1.0 rejected `import("entry.js")` inside a
-  loaded worker. The runner statically imports the generated entry module.
-- **Loaded-worker shape**: celld expects a default Worker with a `fetch`
-  function even when using a named RPC entrypoint, so the runner includes both.
-- **Agent runtime**: the Agents SDK bundles/deploys, but the live Agent request
-  hit the celld managed-DB lock noted above.
+### 1. Host capability stubs cannot cross into the loaded worker yet
+
+Computer's full backend passes a `WorkspaceRuntimeBridge` capability object into
+the Dynamic Worker so user code can call back into the host Durable Object for
+filesystem, module resolution, stdout/stderr events, and other runtime services.
+Under celld v0.1.0, that argument failed during the loaded-worker RPC call:
+
+```text
+DataCloneError: () => {} could not be cloned
+```
+
+I also tried a smaller filesystem-only `RpcTarget` intended to back `ctx.fs`;
+it failed with the same clone error. For now, `CelldJavaScriptBackend` only
+passes plain structured-clone data (`input`, `env`, `cwd`, `stdin`) and returns
+a plain JSON result plus buffered output.
+
+Follow-up: celld's Worker Loader RPC needs to support passing capability stubs
+(or a documented equivalent) as named-Entrypoint arguments between the host
+Worker and a loaded Worker.
+
+### 2. No durable filesystem inside loaded JavaScript yet
+
+Because the host bridge cannot be passed, loaded code cannot import Computer's
+durable `node:fs/promises` shim. The `ctx.fs` object is present to reserve the
+intended API shape, but every method currently throws a descriptive error.
+celld's native `node:fs` compatibility is not a replacement: it is intentionally
+partial and reads return `ENOENT`.
+
+Working filesystem access today is the outer HTTP API:
+
+```text
+PUT    /fs/workspace/<path>
+GET    /fs/workspace/<path>
+DELETE /fs/workspace/<path>
+GET    /ls/workspace/<dir>
+POST   /mkdir/workspace/<dir>
+```
+
+Follow-up: once capability stubs can cross into loaded workers, wire `ctx.fs`
+first. After that, evaluate whether Computer's existing durable
+`node:fs/promises` module bridge can be reused unchanged.
+
+### 3. Output is buffered, not streamed live
+
+Computer's full backend streams runtime events as they happen. This example
+captures `console.log/info` as stdout and `console.warn/error` as stderr inside
+the loaded Worker, then returns those buffers when the function completes.
+
+Follow-up: support returning/transferring a stream or event capability from the
+loaded Worker so `/exec` can expose live stdout/stderr and long-running task
+status.
+
+### 4. Loaded-worker module loading differs from Workerd
+
+Two celld Worker Loader differences are handled in the example runner:
+
+- Dynamic `import("entry.js")` failed under celld v0.1.0, so the runner uses a
+  static `import * as userModule from "entry.js"`.
+- The loaded Worker needed a default `fetch` export even though execution uses a
+  named `WorkerEntrypoint`, so the runner exports both `Runner` and a tiny
+  default `fetch()` handler.
+
+Follow-up: decide whether these are intended celld constraints or compatibility
+bugs. If they are fixed, the generated runner can become closer to Computer's
+normal Worker JavaScript backend.
+
+### 5. Agents SDK is bundled but not validated at runtime
+
+`FilesystemAgent` bundles and deploys with celld once the `path` npm polyfill is
+present, but a live Agent request hit a celld managed-SQLite restore failure:
+
+```text
+celld restore failed for FilesystemAgent:...: open managed db .../db.sqlite: database is locked
+```
+
+Follow-up: investigate celld's managed SQLite locking/restore path with Agents
+SDK Durable Objects. The basic Worker and `CelldWorkspace` Durable Object paths
+are validated; the Agent Durable Object is not yet counted as working.
+
+### Current validation matrix
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Local S3 shim | Working | Supports the S3 subset celld uses for local deploy/run. |
+| HTTP filesystem API | Working | Validated against actual celld with the local S3 shim. |
+| `/exec` simple JavaScript | Working | Uses celld Worker Loader + named `WorkerEntrypoint`. |
+| `default(input, ctx)` | Working | `ctx.env`, `ctx.cwd`, and `ctx.stdin` are available. |
+| `ctx.fs` in loaded JavaScript | Gap | Placeholder only; host capability passing fails to clone. |
+| Computer `WorkerJavaScriptBackend` unchanged | Gap | Blocked on host bridge/capability passing. |
+| Live stdout/stderr streaming | Gap | Output is buffered until completion. |
+| Agents SDK route | Gap | Bundles/deploys, but live request hit SQLite lock. |
 
 ## Local S3 shim
 
