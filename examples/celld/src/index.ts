@@ -52,8 +52,19 @@ export class CelldAgent extends withWorkspace(CelldAgentBase, (self) => {
               defaultBackend: CELLD_JAVASCRIPT_BACKEND_ID,
               backends: {
                 [CELLD_JAVASCRIPT_BACKEND_ID]: {
-                  description:
-                    "A celld Dynamic Worker that runs an ECMAScript module with structured input and output. The loaded worker cannot access the workspace filesystem yet.",
+                  description: [
+                    "Runs a complete JavaScript module in a celld Dynamic Worker with structured input and output.",
+                    "Pass module source, not a filename or bare script. The module must have a default export. Export a function to receive `(input, ctx)` and return structured output.",
+                    "",
+                    "```js",
+                    "export default async function main(input, ctx) {",
+                    '  console.log("cwd:", ctx.cwd);',
+                    "  return { received: input };",
+                    "}",
+                    "```",
+                    "",
+                    "The loaded worker cannot access the Workspace filesystem. Use read, write, edit, ls, find, grep, and delete outside exec.",
+                  ].join("\n"),
                 },
               },
             },

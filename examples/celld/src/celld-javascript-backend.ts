@@ -216,8 +216,8 @@ function celldJavaScriptRunner(): string {
       const fail = () => {
         throw new Error(
           "ctx.fs is not wired yet: celld Worker Loader does not currently clone " +
-          "the host filesystem capability into loaded workers. Use the outer " +
-          "HTTP /fs routes for now."
+          "the host filesystem capability into loaded workers. Use the read, " +
+          "write, edit, ls, find, grep, and delete tools outside exec."
         );
       };
       return {

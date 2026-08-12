@@ -146,9 +146,19 @@ The agent receives these tools from `@cloudflare/computer/tools`:
 
 ## JavaScript backend limits
 
-The celld Worker Loader can run ECMAScript modules with JSON input and output.
-The module's default export receives `(input, ctx)`, where `ctx` includes
-`env`, `cwd`, and `stdin`.
+The celld Worker Loader can run JavaScript modules with JSON input and output.
+The source passed to `exec` must be a complete module, not a filename or a bare
+script. It must have a default export. A default function receives `(input,
+ctx)`, where `ctx` includes `env`, `cwd`, and `stdin`:
+
+```js
+export default async function main(input, ctx) {
+  console.log("cwd:", ctx.cwd);
+  return { received: input };
+}
+```
+
+`ctx.cwd` is metadata; the directory is not mounted in the Dynamic Worker.
 
 The backend does not yet provide the full Computer
 `WorkerJavaScriptBackend` bridge:
