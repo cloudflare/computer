@@ -24,3 +24,7 @@ packages/computer/dist/bin/computerd-*
 # from the example directory; they must never be committed.
 .dev.vars
 **/.dev.vars
+
+# Local celld example state.
+examples/celld/.celld-s3*/
+examples/celld/.celld-state*/

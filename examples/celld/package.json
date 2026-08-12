@@ -1,0 +1,21 @@
+{
+  "name": "@example/computer-celld",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype @cloudflare/computer Workspace running on celld with a local S3-compatible shim.",
+  "scripts": {
+    "shim": "node script/local-s3-shim.mjs --root .celld-s3 --port 9000",
+    "dev:local": "node script/local-dev.mjs",
+    "deploy:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 celld deploy . --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1",
+    "celld:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 CELLD_WATCH=.celld-state celld --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1 --listen 127.0.0.1:8080 --advertise 127.0.0.1:8080",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3"
+  }
+}
