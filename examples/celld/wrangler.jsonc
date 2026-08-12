@@ -1,7 +1,6 @@
 {
   // celld-compatible Wrangler project. celld intentionally accepts a small
-  // subset of Wrangler config, so the Dynamic Worker loader is enabled at
-  // runtime with CELLD_WORKER_LOADER=LOADER instead of a `worker_loaders` key.
+  // subset of Wrangler config; unsupported platform bindings are omitted.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "computer-celld-example",
   "main": "src/index.ts",
@@ -13,6 +12,10 @@
       {
         "name": "WORKSPACE",
         "class_name": "CelldWorkspace"
+      },
+      {
+        "name": "FilesystemAgent",
+        "class_name": "FilesystemAgent"
       }
     ]
   },
@@ -20,7 +23,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["CelldWorkspace"]
+      "new_sqlite_classes": ["CelldWorkspace", "FilesystemAgent"]
     }
   ]
 }

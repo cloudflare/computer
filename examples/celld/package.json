@@ -8,11 +8,13 @@
     "shim": "node script/local-s3-shim.mjs --root .celld-s3 --port 9000",
     "dev:local": "node script/local-dev.mjs",
     "deploy:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 celld deploy . --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1",
-    "celld:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 CELLD_WATCH=.celld-state celld --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1 --listen 127.0.0.1:8080 --advertise 127.0.0.1:8080",
+    "celld:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 CELLD_WORKER_LOADER=LOADER CELLD_WATCH=.celld-state celld --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1 --listen 127.0.0.1:8080 --advertise 127.0.0.1:8080",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/computer": "*"
+    "@cloudflare/computer": "*",
+    "agents": "^0.20.1",
+    "path": "^0.12.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",

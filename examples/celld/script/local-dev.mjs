@@ -7,6 +7,7 @@ const env = {
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || "local",
   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || "local",
   AWS_REGION: process.env.AWS_REGION || "us-east-1",
+  CELLD_WORKER_LOADER: process.env.CELLD_WORKER_LOADER || "LOADER",
   CELLD_WATCH: process.env.CELLD_WATCH || ".celld-state",
 };
 
