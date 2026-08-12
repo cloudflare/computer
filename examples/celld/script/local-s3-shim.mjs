@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 
 const args = new Map(process.argv.slice(2).map((arg, i, all) => [arg, all[i + 1]]));
@@ -34,10 +34,14 @@ async function route(req, res) {
 
   if (keyParts.length === 0) {
     if (req.method === "HEAD") return empty(res, 200);
-    if (req.method === "GET" && (url.searchParams.has("list-type") || url.searchParams.has("prefix"))) {
+    if (
+      req.method === "GET" &&
+      (url.searchParams.has("list-type") || url.searchParams.has("prefix"))
+    ) {
       return listBucket(res, bucket, url.searchParams.get("prefix") || "");
     }
-    if (req.method === "GET") return xml(res, 200, `<ListBucketResult><Name>${esc(bucket)}</Name></ListBucketResult>`);
+    if (req.method === "GET")
+      return xml(res, 200, `<ListBucketResult><Name>${esc(bucket)}</Name></ListBucketResult>`);
   }
 
   const key = keyParts.join("/");
@@ -59,7 +63,8 @@ async function putObject(req, res, bucket, key) {
   const current = await objectMeta(file).catch(() => null);
 
   const ifNoneMatch = req.headers["if-none-match"];
-  if (ifNoneMatch === "*" && current) return sendError(res, 412, "PreconditionFailed", "object exists");
+  if (ifNoneMatch === "*" && current)
+    return sendError(res, 412, "PreconditionFailed", "object exists");
 
   const ifMatch = req.headers["if-match"];
   if (ifMatch && (!current || stripQuotes(ifMatch) !== stripQuotes(current.etag))) {
@@ -108,7 +113,10 @@ async function listBucket(res, bucket, prefix) {
   const keys = [];
   await walk(bucketRoot, async (file) => {
     if (file.endsWith(".meta.json")) return;
-    const key = file.slice(bucketRoot.length + 1).split(sep).join("/");
+    const key = file
+      .slice(bucketRoot.length + 1)
+      .split(sep)
+      .join("/");
     if (key.startsWith(prefix)) keys.push(key);
   });
   keys.sort();
@@ -131,7 +139,7 @@ async function listBucket(res, bucket, prefix) {
     res,
     200,
     [
-      "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+      '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">',
       `<Name>${esc(bucket)}</Name>`,
       `<Prefix>${esc(prefix)}</Prefix>`,
       "<KeyCount>",
@@ -150,7 +158,11 @@ async function objectMeta(file) {
     return JSON.parse(await readFile(metaFile, "utf8"));
   } catch {
     const body = await readFile(file);
-    return { etag: `"${createHash("md5").update(body).digest("hex")}"`, metadata: {}, mtime: s.mtimeMs };
+    return {
+      etag: `"${createHash("md5").update(body).digest("hex")}"`,
+      metadata: {},
+      mtime: s.mtimeMs,
+    };
   }
 }
 
@@ -207,9 +219,12 @@ function sendError(res, status, code, message) {
 }
 
 function stripQuotes(value) {
-  return String(value).replace(/^W\//, "").replace(/^\"|\"$/g, "");
+  return String(value).replace(/^W\//, "").replace(/^"|"$/g, "");
 }
 
 function esc(value) {
-  return String(value).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  return String(value).replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
+  );
 }

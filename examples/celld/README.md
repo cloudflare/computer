@@ -1,313 +1,182 @@
-# celld example
+# celld chat agent example
 
 > [!IMPORTANT]
-> Prototype only. This is a small integration sketch for running a
-> `@cloudflare/computer` Workspace inside a Worker deployed to
-> [`denoland/celld`](https://github.com/denoland/celld).
+> Prototype only. This example runs a `@cloudflare/computer` Workspace and an
+> Agents SDK chat agent on [`denoland/celld`](https://github.com/denoland/celld).
 
-This example uses celld as the Durable Object runtime and
-`@cloudflare/computer` as the durable Workspace/filesystem layer. It includes a
-small local S3-compatible shim so the prototype can run without AWS S3 or
-Cloudflare R2.
+The example has one durable object, `CelldAgent`. It owns the chat history and
+Workspace in the same SQLite database. The Worker exposes the standard Agents
+WebSocket route and no separate filesystem or execution HTTP API.
 
-It also wires celld's experimental Worker Loader into a small
-`celld-javascript` Computer runtime backend in
-`src/celld-javascript-backend.ts`. That backend supports ECMAScript-module
-execution with JSON input/output, captured console output, and a second `ctx`
-argument containing `env`, `cwd`, and `stdin`. It does **not** yet expose
-Computer's full `WorkerJavaScriptBackend` filesystem/capability bridge; see
-[JavaScript environment gaps](#javascript-environment-gaps).
+The terminal client uses the AI SDK TUI. Workspace operations are available to
+the model through `createAITools()`.
 
 ## Architecture
 
-```
-client ─► celld HTTP (:8080)
-             │
-             ▼
-       Worker fetch handler
-             │ direct DO RPC methods
-             ▼
-       CelldWorkspace Durable Object
-             │
-             ├─ @cloudflare/computer Workspace filesystem (DO SQLite)
-             │
-             └─ celld-javascript backend
-                    │ env.LOADER.load(...)
-                    ▼
-                  celld Dynamic Worker
-
-celld deployment/state/leases ─► local S3 shim (:9000) ─► .celld-s3/
+```text
+terminal (`npm run chat`)
+        │ AgentClient WebSocket
+        ▼
+/agents/celld-agent/<name>
+        │ routeAgentRequest
+        ▼
+CelldAgent (AIChatAgent + withWorkspace)
+        ├─ chat history in SQLite
+        ├─ @cloudflare/computer Workspace in the same SQLite database
+        │    └─ read, ls, find, grep, write, edit, and delete tools
+        ├─ celld-javascript runtime backend
+        │    └─ exec tool when env.LOADER is available
+        └─ Cloudflare Workers AI REST API
+             └─ account ID and API token from celld Worker vars
 ```
 
-The Worker calls explicit methods on the Durable Object (`writeFile`,
-`readFile`, `readdir`, `mkdir`, `rm`, `exec`) rather than using Computer's
-nested `WorkspaceStub` from outside the object. That keeps the public surface
-within celld's currently supported JS RPC shape.
+`CelldAgent.onChatMessage()` calls `getWorkspace(this)`, passes that Workspace
+to `createAITools()`, and gives the resulting tools to the AI SDK tool loop.
+There is no hand-written Durable Object RPC interface.
+
+## Install celld
+
+Install the current celld release and make sure `~/.local/bin` is on `PATH`:
+
+```sh
+curl -fsSL https://celld.dev/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+celld --version
+```
+
+`celld deploy` also needs `esbuild` on `PATH`. Installing this repository's npm
+dependencies provides it under `node_modules/.bin`.
+
+Build `@cloudflare/computer` before deploying the example because the workspace
+package resolves through its `dist` directory:
+
+```sh
+npm install
+npm run build --workspace @cloudflare/computer
+export PATH="$PWD/node_modules/.bin:$PATH"
+```
+
+## Configure Cloudflare credentials
+
+celld does not provide the managed Workers AI binding. The agent configures
+`workers-ai-provider` with an account ID and API token, which calls the
+Cloudflare Workers AI REST API directly.
+
+Create an API token with Workers AI read access, then set both values in your
+local environment:
+
+```sh
+export CLOUDFLARE_ACCOUNT_ID=<account-id>
+export CLOUDFLARE_API_TOKEN=<api-token>
+```
+
+`dev:local` forwards these values to celld as `CELLD_VAR_*` Worker variables.
+If you run the `celld` command yourself, set the prefixed names directly:
+
+```sh
+export CELLD_VAR_CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
+export CELLD_VAR_CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN"
+```
+
+Keep the API token in your local environment. Do not add it to
+`wrangler.jsonc` or another tracked file.
 
 ## Run locally
 
-Prerequisites:
-
-- Node.js
-- `celld` on your `PATH` (`curl -fsSL https://celld.dev/install.sh | sh`)
-- dependencies installed from the repository root (`npm install`)
-
-One-command local run:
+From the repository root, start celld in one terminal:
 
 ```sh
+export PATH="$PWD/node_modules/.bin:$HOME/.local/bin:$PATH"
+export CLOUDFLARE_ACCOUNT_ID=<account-id>
+export CLOUDFLARE_API_TOKEN=<api-token>
 npm run dev:local --workspace @example/computer-celld
 ```
 
-That command starts `script/local-s3-shim.mjs`, runs `celld deploy`, then
-starts `celld` on `127.0.0.1:8080` with `CELLD_WORKER_LOADER=LOADER`.
+`dev:local` starts the local S3-compatible shim, deploys the Worker, enables the
+celld Worker Loader as `env.LOADER`, and listens on
+`http://127.0.0.1:8080`.
 
-If you prefer separate terminals:
-
-```sh
-# terminal 1
-npm run shim --workspace @example/computer-celld
-
-# terminal 2
-npm run deploy:local --workspace @example/computer-celld
-npm run celld:local --workspace @example/computer-celld
-```
-
-## HTTP filesystem surface
-
-All paths are absolute Workspace paths with the leading slash represented in
-the URL. The handler rejects anything outside `/workspace`. A `cell` query
-parameter selects the Durable Object name; it defaults to `default`.
+Open the terminal chat in another terminal:
 
 ```sh
-# Help
-curl http://127.0.0.1:8080/
-
-# Write a file
-echo 'hello from celld + computer' | curl -X PUT --data-binary @- \
-  'http://127.0.0.1:8080/fs/workspace/hello.txt?cell=demo'
-
-# Read the file back
-curl 'http://127.0.0.1:8080/fs/workspace/hello.txt?cell=demo'
-
-# List a directory
-curl 'http://127.0.0.1:8080/ls/workspace?cell=demo'
-
-# Create a directory
-curl -X POST 'http://127.0.0.1:8080/mkdir/workspace/tmp?cell=demo'
-
-# Delete a file
-curl -X DELETE 'http://127.0.0.1:8080/fs/workspace/hello.txt?cell=demo'
+npm run chat --workspace @example/computer-celld
 ```
 
-Routes:
-
-```
-PUT    /fs/workspace/<path>          raw request body -> /workspace/<path>
-GET    /fs/workspace/<path>          read /workspace/<path>
-DELETE /fs/workspace/<path>          delete a file; add ?recursive=1 for dirs
-GET    /ls/workspace/<dir>           JSON directory listing
-POST   /mkdir/workspace/<dir>        mkdir -p
-POST   /exec                         JavaScript module execution via celld Worker Loader
-```
-
-## JavaScript backend
-
-Start celld with `CELLD_WORKER_LOADER=LOADER` and call `/exec`:
+Each `--name` selects a separate agent with its own chat history and Workspace:
 
 ```sh
-curl -X POST 'http://127.0.0.1:8080/exec?cell=demo' \
-  -H 'content-type: application/json' \
-  -d '{"source":"console.log(\"running\"); export default (input, ctx) => ({ doubled: input.n * 2, cwd: ctx.cwd, name: ctx.env.NAME })","input":{"n":21},"env":{"NAME":"celld"}}'
+npm run chat --workspace @example/computer-celld -- --name demo
 ```
 
-Expected shape:
+Client options:
 
-```json
-{
-  "status": "completed",
-  "exitCode": 0,
-  "value": { "doubled": 42 }
-}
-```
+- `--worker URL` or `CELLD_WORKER` selects the celld HTTP endpoint.
+- `--name NAME` or `CELLD_AGENT_NAME` selects the agent instance.
+- `--title TITLE` changes the terminal title.
 
-User modules can either default-export a value or a function. If the default
-export is a function, it is called as `default(input, ctx)`. The current `ctx`
-shape is:
+The same client is available as the `celld-chat` package binary.
 
-```ts
-interface CelldExecContext {
-  env: Record<string, string>;
-  cwd: string;
-  stdin: string;
-  fs: {
-    readFile(): never;
-    writeFile(): never;
-    readdir(): never;
-    mkdir(): never;
-    rm(): never;
-    stat(): never;
-    exists(): never;
-    ls(): never;
-    find(): never;
-    grep(): never;
-  };
-}
-```
-
-`ctx.fs` is present but intentionally throws a descriptive error today. I tried
-passing a host filesystem `RpcTarget` into the loaded worker as a second step;
-celld v0.1.0 rejected that capability argument with the same structured-clone
-failure as the full Computer bridge. The outer HTTP `/fs` routes are the working
-filesystem API for now.
-
-The backend intentionally uses static imports in the generated runner because
-celld v0.1.0 does not support dynamic `import("entry.js")` in loaded workers.
-Loaded workers also need a default `fetch` export, so the runner includes a tiny
-`fetch() { return new Response("ok") }` handler and exposes the evaluator as a
-named `WorkerEntrypoint`.
-
-## Agents SDK attempt
-
-`FilesystemAgent` is included as a smoke-test attempt for the Cloudflare Agents
-SDK on celld. It constructs a filesystem-only Computer Workspace and calls
-`createAITools({ workspace, assets: false })`.
-
-Routes:
+For a noninteractive chat transport check, run:
 
 ```sh
-curl 'http://127.0.0.1:8080/agents/filesystem-agent/demo'
-curl 'http://127.0.0.1:8080/agents/filesystem-agent/demo/tools'
+npm run smoke --workspace @example/computer-celld
 ```
 
-Status: the Worker bundles and deploys with celld once the `path` npm polyfill
-is present, but a live request currently failed during celld restore with a
-managed SQLite lock:
+The smoke client sends one message over the Agents WebSocket protocol and
+requires the reply to contain `celld smoke reply`. Set `CELLD_PROMPT` to change
+the message or `CELLD_EXPECT` to use a different expected phrase.
 
-```text
-celld restore failed for FilesystemAgent:...: open managed db .../db.sqlite: database is locked
-```
+## Workspace tools
 
-So the Agents SDK wiring is present for iteration, but not counted as validated
-working yet.
+The agent receives these tools from `@cloudflare/computer/tools`:
 
-## Known gaps and follow-ups
+| Tool | Purpose |
+| --- | --- |
+| `read` | Read a Workspace file. |
+| `ls` | List a directory. |
+| `find` | Find paths. |
+| `grep` | Search file contents. |
+| `write` | Create or replace a file. |
+| `edit` | Apply targeted replacements. |
+| `delete` | Remove a file or directory. |
+| `exec` | Run an ECMAScript module in a celld Dynamic Worker. |
 
-The celld Worker Loader works for simple JavaScript execution, but there are a
-few concrete gaps before this example can use Computer's full
-`WorkerJavaScriptBackend` unchanged.
+`exec` is present only when celld injects `env.LOADER`. It uses the
+`celld-javascript` backend in `src/celld-javascript-backend.ts`.
 
-### 1. Host capability stubs cannot cross into the loaded worker yet
+## JavaScript backend limits
 
-Computer's full backend passes a `WorkspaceRuntimeBridge` capability object into
-the Dynamic Worker so user code can call back into the host Durable Object for
-filesystem, module resolution, stdout/stderr events, and other runtime services.
-Under celld v0.1.0, that argument failed during the loaded-worker RPC call:
+The celld Worker Loader can run ECMAScript modules with JSON input and output.
+The module's default export receives `(input, ctx)`, where `ctx` includes
+`env`, `cwd`, and `stdin`.
 
-```text
-DataCloneError: () => {} could not be cloned
-```
+The backend does not yet provide the full Computer
+`WorkerJavaScriptBackend` bridge:
 
-I also tried a smaller filesystem-only `RpcTarget` intended to back `ctx.fs`;
-it failed with the same clone error. For now, `CelldJavaScriptBackend` only
-passes plain structured-clone data (`input`, `env`, `cwd`, `stdin`) and returns
-a plain JSON result plus buffered output.
+- Capability stubs cannot cross into the loaded Worker, so `ctx.fs` methods
+  throw and durable `node:fs/promises` is unavailable there.
+- Output is buffered until execution finishes instead of streamed live.
+- The generated runner uses a static import and a small default `fetch` export
+  to match celld v0.1.0's Worker Loader behavior.
 
-Follow-up: celld's Worker Loader RPC needs to support passing capability stubs
-(or a documented equivalent) as named-Entrypoint arguments between the host
-Worker and a loaded Worker.
+The host-side file tools remain fully functional because they operate directly
+on the Workspace owned by `CelldAgent`.
 
-### 2. No durable filesystem inside loaded JavaScript yet
-
-Because the host bridge cannot be passed, loaded code cannot import Computer's
-durable `node:fs/promises` shim. The `ctx.fs` object is present to reserve the
-intended API shape, but every method currently throws a descriptive error.
-celld's native `node:fs` compatibility is not a replacement: it is intentionally
-partial and reads return `ENOENT`.
-
-Working filesystem access today is the outer HTTP API:
-
-```text
-PUT    /fs/workspace/<path>
-GET    /fs/workspace/<path>
-DELETE /fs/workspace/<path>
-GET    /ls/workspace/<dir>
-POST   /mkdir/workspace/<dir>
-```
-
-Follow-up: once capability stubs can cross into loaded workers, wire `ctx.fs`
-first. After that, evaluate whether Computer's existing durable
-`node:fs/promises` module bridge can be reused unchanged.
-
-### 3. Output is buffered, not streamed live
-
-Computer's full backend streams runtime events as they happen. This example
-captures `console.log/info` as stdout and `console.warn/error` as stderr inside
-the loaded Worker, then returns those buffers when the function completes.
-
-Follow-up: support returning/transferring a stream or event capability from the
-loaded Worker so `/exec` can expose live stdout/stderr and long-running task
-status.
-
-### 4. Loaded-worker module loading differs from Workerd
-
-Two celld Worker Loader differences are handled in the example runner:
-
-- Dynamic `import("entry.js")` failed under celld v0.1.0, so the runner uses a
-  static `import * as userModule from "entry.js"`.
-- The loaded Worker needed a default `fetch` export even though execution uses a
-  named `WorkerEntrypoint`, so the runner exports both `Runner` and a tiny
-  default `fetch()` handler.
-
-Follow-up: decide whether these are intended celld constraints or compatibility
-bugs. If they are fixed, the generated runner can become closer to Computer's
-normal Worker JavaScript backend.
-
-### 5. Agents SDK is bundled but not validated at runtime
-
-`FilesystemAgent` bundles and deploys with celld once the `path` npm polyfill is
-present, but a live Agent request hit a celld managed-SQLite restore failure:
-
-```text
-celld restore failed for FilesystemAgent:...: open managed db .../db.sqlite: database is locked
-```
-
-Follow-up: investigate celld's managed SQLite locking/restore path with Agents
-SDK Durable Objects. The basic Worker and `CelldWorkspace` Durable Object paths
-are validated; the Agent Durable Object is not yet counted as working.
-
-### Current validation matrix
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Local S3 shim | Working | Supports the S3 subset celld uses for local deploy/run. |
-| HTTP filesystem API | Working | Validated against actual celld with the local S3 shim. |
-| `/exec` simple JavaScript | Working | Uses celld Worker Loader + named `WorkerEntrypoint`. |
-| `default(input, ctx)` | Working | `ctx.env`, `ctx.cwd`, and `ctx.stdin` are available. |
-| `ctx.fs` in loaded JavaScript | Gap | Placeholder only; host capability passing fails to clone. |
-| Computer `WorkerJavaScriptBackend` unchanged | Gap | Blocked on host bridge/capability passing. |
-| Live stdout/stderr streaming | Gap | Output is buffered until completion. |
-| Agents SDK route | Gap | Bundles/deploys, but live request hit SQLite lock. |
-
-## Local S3 shim
+## Local storage
 
 `script/local-s3-shim.mjs` implements the small path-style S3 subset celld uses
-for local development:
-
-- `PUT`, `GET`, `HEAD`, `DELETE` object requests
-- `GET ?list-type=2&prefix=...` listings
-- `If-Match` / `If-None-Match: *` conditional writes
-- `ETag` and `x-amz-meta-*` headers
-
-It is intentionally a development shim, not a complete S3 server. The on-disk
-layout is `.celld-s3/<bucket>/<key>`.
+for local deployment and state replication. It stores data under
+`.celld-s3/`. The shim is for development only.
 
 ## Layout
 
-```
+```text
 examples/celld/
-  src/index.ts                    Worker + DO + HTTP filesystem routes
-  src/celld-javascript-backend.ts celld Worker Loader module backend
-  script/local-s3-shim.mjs        tiny filesystem-backed S3-compatible endpoint
-  script/local-dev.mjs            start shim, deploy, and run celld locally
-  wrangler.jsonc                  celld-supported Wrangler config subset
+  cli/chat.mjs                    AI SDK terminal client
+  src/index.ts                    chat agent and Worker entrypoint
+  src/celld-javascript-backend.ts celld Worker Loader runtime backend
+  script/local-s3-shim.mjs        local S3-compatible endpoint
+  script/local-dev.mjs            deploy and run celld locally
+  script/smoke.mjs                noninteractive WebSocket chat check
+  wrangler.jsonc                  celld-supported Worker configuration
 ```

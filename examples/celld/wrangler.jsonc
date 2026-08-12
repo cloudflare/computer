@@ -10,12 +10,8 @@
   "durable_objects": {
     "bindings": [
       {
-        "name": "WORKSPACE",
-        "class_name": "CelldWorkspace"
-      },
-      {
-        "name": "FilesystemAgent",
-        "class_name": "FilesystemAgent"
+        "name": "CelldAgent",
+        "class_name": "CelldAgent"
       }
     ]
   },
@@ -23,7 +19,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["CelldWorkspace", "FilesystemAgent"]
+      "new_sqlite_classes": ["CelldAgent"]
     }
   ]
 }

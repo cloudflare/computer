@@ -83,13 +83,16 @@ class CelldJavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
   async getExec(input: { id: string; after?: number | "tail" }): Promise<ModuleExecutionEnvelope> {
     const events = this.records.get(input.id);
-    if (!events) throw Object.assign(new Error(`no such execution: ${input.id}`), { code: "ENOENT" });
-    const after = input.after === "tail" ? Math.max(0, events.length - 1) : input.after ?? 0;
+    if (!events)
+      throw Object.assign(new Error(`no such execution: ${input.id}`), { code: "ENOENT" });
+    const after = input.after === "tail" ? Math.max(0, events.length - 1) : (input.after ?? 0);
     return { id: input.id, events: streamEvents(events.filter((event) => event.seq > after)) };
   }
 
   async killExec(_input: { id: string }): Promise<void> {
-    throw new Error(`${this.options.id} executions are synchronous and cannot be killed after admission.`);
+    throw new Error(
+      `${this.options.id} executions are synchronous and cannot be killed after admission.`,
+    );
   }
 
   async disposeExec(input: { id: string }): Promise<void> {
@@ -129,9 +132,17 @@ class CelldJavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       const result = await entrypoint.evaluate(input.input ?? null, meta);
 
       const events: WorkspaceRuntimeEvent[] = [];
-      if (result.stdout) events.push({ id, seq: events.length + 1, name: "stdout", value: encode(result.stdout) });
-      if (result.stderr) events.push({ id, seq: events.length + 1, name: "stderr", value: encode(result.stderr) });
-      events.push({ id, seq: events.length + 1, name: "exit", code: 0, result: result.value ?? null });
+      if (result.stdout)
+        events.push({ id, seq: events.length + 1, name: "stdout", value: encode(result.stdout) });
+      if (result.stderr)
+        events.push({ id, seq: events.length + 1, name: "stderr", value: encode(result.stderr) });
+      events.push({
+        id,
+        seq: events.length + 1,
+        name: "exit",
+        code: 0,
+        result: result.value ?? null,
+      });
       return events;
     } catch (error) {
       return [
@@ -139,7 +150,9 @@ class CelldJavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           id,
           seq: 1,
           name: "stderr",
-          value: encode(`${error instanceof Error ? error.stack || error.message : String(error)}\n`),
+          value: encode(
+            `${error instanceof Error ? error.stack || error.message : String(error)}\n`,
+          ),
         },
         { id, seq: 2, name: "exit", code: 1 },
       ];
@@ -238,12 +251,15 @@ function normalizePath(path: string): string {
   const parts: string[] = [];
   for (const part of path.split("/")) {
     if (!part || part === ".") continue;
-    if (part === "..") throw Object.assign(new Error(`path escapes ${MOUNT_ROOT}: ${path}`), { code: "EINVAL" });
+    if (part === "..")
+      throw Object.assign(new Error(`path escapes ${MOUNT_ROOT}: ${path}`), { code: "EINVAL" });
     parts.push(part);
   }
   const absolute = `/${parts.join("/")}`;
   if (absolute !== MOUNT_ROOT && !absolute.startsWith(`${MOUNT_ROOT}/`)) {
-    throw Object.assign(new Error(`path must sit under ${MOUNT_ROOT}: ${path}`), { code: "EINVAL" });
+    throw Object.assign(new Error(`path must sit under ${MOUNT_ROOT}: ${path}`), {
+      code: "EINVAL",
+    });
   }
   return absolute;
 }

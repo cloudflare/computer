@@ -9,12 +9,22 @@
     "dev:local": "node script/local-dev.mjs",
     "deploy:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 celld deploy . --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1",
     "celld:local": "AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_REGION=us-east-1 CELLD_WORKER_LOADER=LOADER CELLD_WATCH=.celld-state celld --bucket s3://celld-computer --endpoint http://127.0.0.1:9000 --region us-east-1 --listen 127.0.0.1:8080 --advertise 127.0.0.1:8080",
+    "chat": "node cli/chat.mjs",
+    "smoke": "node script/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
+  "bin": {
+    "celld-chat": "./cli/chat.mjs"
+  },
   "dependencies": {
+    "@ai-sdk/react": "^4.0.45",
+    "@ai-sdk/tui": "^1.0.43",
+    "@cloudflare/ai-chat": "^0.10.1",
     "@cloudflare/computer": "*",
-    "agents": "^0.20.1",
-    "path": "^0.12.7"
+    "agents": "^0.20.0",
+    "ai": "^7.0.0",
+    "path": "^0.12.7",
+    "workers-ai-provider": "^4.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",
