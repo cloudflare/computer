@@ -11,8 +11,10 @@ small local S3-compatible shim so the prototype can run without AWS S3 or
 Cloudflare R2.
 
 It also wires celld's experimental Worker Loader into a small
-`celld-javascript` Computer runtime backend. That backend supports simple
-ECMAScript-module execution with JSON input/output. It does **not** yet expose
+`celld-javascript` Computer runtime backend in
+`src/celld-javascript-backend.ts`. That backend supports ECMAScript-module
+execution with JSON input/output, captured console output, and a second `ctx`
+argument containing `env`, `cwd`, and `stdin`. It does **not** yet expose
 Computer's full `WorkerJavaScriptBackend` filesystem/capability bridge; see
 [JavaScript environment gaps](#javascript-environment-gaps).
 
@@ -115,7 +117,7 @@ Start celld with `CELLD_WORKER_LOADER=LOADER` and call `/exec`:
 ```sh
 curl -X POST 'http://127.0.0.1:8080/exec?cell=demo' \
   -H 'content-type: application/json' \
-  -d '{"source":"console.log(\"running\"); export default (input) => ({ doubled: input.n * 2 })","input":{"n":21}}'
+  -d '{"source":"console.log(\"running\"); export default (input, ctx) => ({ doubled: input.n * 2, cwd: ctx.cwd, name: ctx.env.NAME })","input":{"n":21},"env":{"NAME":"celld"}}'
 ```
 
 Expected shape:
@@ -127,6 +129,36 @@ Expected shape:
   "value": { "doubled": 42 }
 }
 ```
+
+User modules can either default-export a value or a function. If the default
+export is a function, it is called as `default(input, ctx)`. The current `ctx`
+shape is:
+
+```ts
+interface CelldExecContext {
+  env: Record<string, string>;
+  cwd: string;
+  stdin: string;
+  fs: {
+    readFile(): never;
+    writeFile(): never;
+    readdir(): never;
+    mkdir(): never;
+    rm(): never;
+    stat(): never;
+    exists(): never;
+    ls(): never;
+    find(): never;
+    grep(): never;
+  };
+}
+```
+
+`ctx.fs` is present but intentionally throws a descriptive error today. I tried
+passing a host filesystem `RpcTarget` into the loaded worker as a second step;
+celld v0.1.0 rejected that capability argument with the same structured-clone
+failure as the full Computer bridge. The outer HTTP `/fs` routes are the working
+filesystem API for now.
 
 The backend intentionally uses static imports in the generated runner because
 celld v0.1.0 does not support dynamic `import("entry.js")` in loaded workers.
@@ -163,13 +195,15 @@ working yet.
 The celld Worker Loader works for simple JavaScript execution, but these gaps
 remain before Computer's full `WorkerJavaScriptBackend` can be used unchanged:
 
-- **Cross-isolate `RpcTarget` bridge cloning**: passing Computer's
+- **Cross-isolate capability bridge cloning**: passing Computer's
   `WorkspaceRuntimeBridge` into the loaded worker failed with
-  `() => {} could not be cloned`. The prototype avoids that by returning a
-  plain JSON result instead of passing host capability stubs.
+  `() => {} could not be cloned`. Passing a smaller filesystem-only `RpcTarget`
+  as a `ctx.fs` capability failed the same way. The example avoids that by
+  returning a plain JSON result instead of passing host capability stubs.
 - **Filesystem bridge**: because the bridge cannot be passed yet, loaded code
-  cannot import Computer's durable `node:fs/promises` shim. celld's native
-  `node:fs` compatibility is intentionally partial and reads return `ENOENT`.
+  cannot import Computer's durable `node:fs/promises` shim and `ctx.fs` is only
+  a throwing placeholder. celld's native `node:fs` compatibility is
+  intentionally partial and reads return `ENOENT`.
 - **Stream transfer for live stdout/stderr**: Computer's backend streams framed
   output through a `ReadableStream` passed back to the host. This prototype
   buffers `stdout`/`stderr` and returns them when execution completes.
@@ -197,8 +231,9 @@ layout is `.celld-s3/<bucket>/<key>`.
 
 ```
 examples/celld/
-  src/index.ts                Worker + DO + HTTP filesystem + JS backend routes
-  script/local-s3-shim.mjs    tiny filesystem-backed S3-compatible endpoint
-  script/local-dev.mjs        start shim, deploy, and run celld locally
-  wrangler.jsonc              celld-supported Wrangler config subset
+  src/index.ts                    Worker + DO + HTTP filesystem routes
+  src/celld-javascript-backend.ts celld Worker Loader module backend
+  script/local-s3-shim.mjs        tiny filesystem-backed S3-compatible endpoint
+  script/local-dev.mjs            start shim, deploy, and run celld locally
+  wrangler.jsonc                  celld-supported Wrangler config subset
 ```

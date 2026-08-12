@@ -4,18 +4,13 @@ import { Agent, routeAgentRequest } from "agents";
 import {
   type DurableObjectStorageLike,
   getWorkspace,
-  type ModuleExecutionEnvelope,
-  type ModuleExecutionInput,
   Workspace,
-  type WorkspaceModuleBackend,
-  type WorkspaceModuleBackendHandle,
-  type WorkspaceModuleBackendHost,
-  type WorkspaceRuntimeEvent,
-  type WorkspaceRuntimeLoader,
   type WorkspaceRuntimeValue,
   withWorkspace,
 } from "@cloudflare/computer";
 import { createAITools } from "@cloudflare/computer/tools";
+
+import { CELLD_JAVASCRIPT_BACKEND_ID, CelldJavaScriptBackend } from "./celld-javascript-backend";
 
 export class CelldWorkspace extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
@@ -59,7 +54,7 @@ export class CelldWorkspace extends withWorkspace(class extends DurableObject<En
   async exec(request: RunnableExecRequest): Promise<unknown> {
     const ws = await getWorkspace(this);
     const handle = await ws.runtime.exec(request.source, {
-      backend: "celld-javascript",
+      backend: CELLD_JAVASCRIPT_BACKEND_ID,
       cwd: request.cwd ?? MOUNT_ROOT,
       input: request.input,
       env: request.env,
@@ -79,94 +74,6 @@ interface ExecRequest {
 }
 
 type RunnableExecRequest = Required<Pick<ExecRequest, "source">> & Omit<ExecRequest, "source">;
-
-class CelldJavaScriptBackend implements WorkspaceModuleBackend {
-  readonly protocol = "module" as const;
-  readonly type = "celld-javascript";
-  readonly callable = true;
-  readonly id = "celld-javascript";
-
-  constructor(private readonly loader: WorkspaceRuntimeLoader) {}
-
-  async connect(_host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle> {
-    return new CelldJavaScriptBackendHandle(this.loader, this.id);
-  }
-}
-
-class CelldJavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
-  private readonly records = new Map<string, WorkspaceRuntimeEvent[]>();
-
-  constructor(
-    private readonly loader: WorkspaceRuntimeLoader,
-    private readonly backendId: string,
-  ) {}
-
-  async exec(input: ModuleExecutionInput): Promise<ModuleExecutionEnvelope> {
-    const id = input.id ?? crypto.randomUUID();
-    const events = await this.run(id, input);
-    this.records.set(id, events);
-    return { id, events: streamEvents(events) };
-  }
-
-  async getExec(input: { id: string; after?: number | "tail" }): Promise<ModuleExecutionEnvelope> {
-    const events = this.records.get(input.id);
-    if (!events) throw Object.assign(new Error(`no such execution: ${input.id}`), { code: "ENOENT" });
-    const after = input.after === "tail" ? Math.max(0, events.length - 1) : input.after ?? 0;
-    return { id: input.id, events: streamEvents(events.filter((event) => event.seq > after)) };
-  }
-
-  async killExec(_input: { id: string }): Promise<void> {
-    throw new Error(`${this.backendId} executions are synchronous and cannot be killed after admission.`);
-  }
-
-  async disposeExec(input: { id: string }): Promise<void> {
-    this.records.delete(input.id);
-  }
-
-  private async run(id: string, input: ModuleExecutionInput): Promise<WorkspaceRuntimeEvent[]> {
-    try {
-      const worker = this.loader.load({
-        compatibilityDate: "2026-05-26",
-        compatibilityFlags: ["nodejs_compat", "js_rpc"],
-        limits: { cpuMs: input.timeoutMs ?? 30_000 },
-        mainModule: "runner.js",
-        modules: {
-          "entry.js": input.source,
-          "runner.js": celldJavaScriptRunner(),
-        },
-        globalOutbound: null,
-      });
-      const entrypoint = worker.getEntrypoint("Runner", {
-        limits: { cpuMs: input.timeoutMs ?? 30_000 },
-      }) as {
-        evaluate(
-          input: WorkspaceRuntimeValue,
-          context: { env: Record<string, string>; cwd: string; stdin: string },
-        ): Promise<{ value: WorkspaceRuntimeValue; stdout: string; stderr: string }>;
-      };
-      const result = await entrypoint.evaluate(input.input ?? null, {
-        env: input.env ?? {},
-        cwd: input.cwd ?? MOUNT_ROOT,
-        stdin: typeof input.stdin === "string" ? input.stdin : decodeBytes(input.stdin),
-      });
-      const events: WorkspaceRuntimeEvent[] = [];
-      if (result.stdout) events.push({ id, seq: events.length + 1, name: "stdout", value: encode(result.stdout) });
-      if (result.stderr) events.push({ id, seq: events.length + 1, name: "stderr", value: encode(result.stderr) });
-      events.push({ id, seq: events.length + 1, name: "exit", code: 0, result: result.value ?? null });
-      return events;
-    } catch (error) {
-      return [
-        {
-          id,
-          seq: 1,
-          name: "stderr",
-          value: encode(`${error instanceof Error ? error.message : String(error)}\n`),
-        },
-        { id, seq: 2, name: "exit", code: 1 },
-      ];
-    }
-  }
-}
 
 interface AgentState {
   requests: number;
@@ -420,60 +327,6 @@ function errorCode(error: unknown): string | undefined {
 function errorJSON(error: unknown, status: number): Response {
   const message = error instanceof Error ? error.message : String(error);
   return json({ error: message, code: errorCode(error) }, status);
-}
-
-function encode(value: string): Uint8Array {
-  return new TextEncoder().encode(value);
-}
-
-function decodeBytes(value: Uint8Array | string | undefined): string {
-  if (value === undefined) return "";
-  return typeof value === "string" ? value : new TextDecoder().decode(value);
-}
-
-function streamEvents(events: WorkspaceRuntimeEvent[]): ReadableStream<WorkspaceRuntimeEvent> {
-  return new ReadableStream({
-    start(controller) {
-      for (const event of events) controller.enqueue(event);
-      controller.close();
-    },
-  });
-}
-
-function celldJavaScriptRunner(): string {
-  return `
-    import { WorkerEntrypoint } from "cloudflare:workers";
-    import * as userModule from "entry.js";
-
-    export class Runner extends WorkerEntrypoint {
-      async evaluate(input, context) {
-        const stdout = [];
-        const stderr = [];
-        const write = (target, args) => target.push(args.map(String).join(" ") + "\\n");
-        console.log = (...args) => write(stdout, args);
-        console.info = (...args) => write(stdout, args);
-        console.warn = (...args) => write(stderr, args);
-        console.error = (...args) => write(stderr, args);
-        globalThis.process = {
-          env: context.env || {},
-          argv: ["workspace", "entry.js"],
-          cwd: () => context.cwd || "/workspace",
-          platform: "linux",
-          stdin: context.stdin || "",
-          stdout: { write: (chunk) => { stdout.push(String(chunk)); return true; } },
-          stderr: { write: (chunk) => { stderr.push(String(chunk)); return true; } },
-        };
-        const result = typeof userModule.default === "function" ? await userModule.default(input) : userModule.default;
-        return { value: result ?? null, stdout: stdout.join(""), stderr: stderr.join("") };
-      }
-    }
-
-    export default {
-      fetch() {
-        return new Response("ok");
-      }
-    };
-  `;
 }
 
 async function collect(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
