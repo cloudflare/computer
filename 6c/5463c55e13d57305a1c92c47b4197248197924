@@ -1,0 +1,43 @@
+package-lock.json
+  s_6a296c733892b8::t_c94b1eeb514d2c 96-114,3142-3145
+.github/workflows/ci.yml
+  s_6a296c733892b8::t_fc1f6d6dc116ab 147-149
+examples/mcp/.gitignore
+  s_6a296c733892b8::t_3ad473c0c044c2 1-5
+examples/mcp/src/index.ts
+  s_6a296c733892b8::t_f25b65115b5669 1-130
+examples/mcp/package.json
+  s_6a296c733892b8::t_bb8941348014ce 1-29
+examples/mcp/wrangler.test.jsonc
+  s_6a296c733892b8::t_e436461f85572b 1-13
+examples/mcp/wrangler.jsonc
+  s_6a296c733892b8::t_93edc766b78a8c 1-23
+examples/mcp/vitest.config.ts
+  s_6a296c733892b8::t_5ba6934fbad169 1-13
+README.md
+  s_6a296c733892b8::t_aabdc465acbc34 66-68
+examples/mcp/tsconfig.json
+  s_6a296c733892b8::t_6574981926880e 1-17
+examples/mcp/Dockerfile
+  s_6a296c733892b8::t_8ad9ed7a54f72f 1-17
+examples/mcp/src/server.ts
+  s_6a296c733892b8::t_d4de5e46d20b5c 1-126
+examples/mcp/src/index.test.ts
+  s_6a296c733892b8::t_21633478bc0e8e 1-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6c5463c55e13d57305a1c92c47b4197248197924",
+  "prompts": {},
+  "sessions": {
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
