@@ -54,6 +54,7 @@ import {
   WORKSPACE_EGRESS_URL_HEADER,
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress.js";
+import { WorkspaceTransportError } from "../../transport-failure.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
@@ -209,7 +210,20 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       MOUNT_POINT: "/workspace",
       ...this.#options.containerEnv,
     };
-    await host.start(env, this.#egress.mode === "direct");
+    try {
+      await host.start(env, this.#egress.mode === "direct");
+    } catch (error) {
+      throw new WorkspaceTransportError(
+        this.#formatStageError("start", {
+          attempt: 1,
+          maxAttempts: this.#options.restartAttempts + 1,
+          restarts: 0,
+          lastError: error,
+          priorExit,
+        }),
+        { cause: error },
+      );
+    }
     await host.interceptOutboundHttp(this.#options.egressHost, this.#options.workspace);
     if (this.#egress.mode === "http-gateway" && this.#egressToken !== undefined) {
       await host.interceptAllOutboundHttp(this.#options.workspace, this.#egressToken);
@@ -408,7 +422,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
         } catch (error) {
           this.#rejectUpgrade?.(error);
           this.#clearUpgrade();
-          throw new Error(
+          throw new WorkspaceTransportError(
             this.#formatStageError("restart", {
               attempt,
               maxAttempts,
@@ -423,7 +437,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
     this.#rejectUpgrade?.(new Error("computerd never became healthy"));
     this.#clearUpgrade();
-    throw new Error(
+    throw new WorkspaceTransportError(
       this.#formatStageError("health", {
         attempt,
         maxAttempts,
@@ -495,17 +509,19 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     } catch (error) {
       this.#rejectUpgrade?.(error);
       this.#clearUpgrade();
-      throw new Error(
+      throw new WorkspaceTransportError(
         `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect failed: ${describeError(error)}`,
         { cause: error },
       );
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      this.#rejectUpgrade?.(new Error(`/connect ${res.status}`));
+      const cause = new Error(`/connect ${res.status}`);
+      this.#rejectUpgrade?.(cause);
       this.#clearUpgrade();
-      throw new Error(
+      throw new WorkspaceTransportError(
         `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect returned ${res.status}: ${body}`,
+        { cause },
       );
     }
   }
@@ -523,7 +539,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
           timer = setTimeout(
             () =>
               reject(
-                new Error(
+                new WorkspaceTransportError(
                   `CloudflareContainerBackend(${this.id}) [stage=ws]: /ws upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
                 ),
               ),

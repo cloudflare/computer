@@ -11,6 +11,7 @@
 
 import { describe, expect, test, vi } from "vitest";
 
+import { WorkspaceTransportError } from "../../transport-failure.js";
 import { CloudflareContainerBackend } from "./cloudflare-container.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 
@@ -22,6 +23,7 @@ interface FakeHostOptions {
   // don't care about transitions.
   healthSequence?: boolean[];
   connectStatus?: number;
+  start?: () => Promise<void>;
   restart?: () => Promise<void>;
   // Pre-set a prior exit reason so connect()'s pre-flight
   // exitInfo() check observes it.
@@ -69,6 +71,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       calls.push({ name: "start", args: [env, enableInternet] });
       state.startEnv = env;
       state.enableInternet = enableInternet;
+      await opts.start?.();
       state.running = true;
       // A successful start clears any prior exit, matching
       // WorkspaceContainerAPI.start.
@@ -126,6 +129,27 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
 const fakeWorkspace: WorkspaceRef = { binding: "TestDO", id: "abc123" };
 
 describe("CloudflareContainerBackend", () => {
+  test("connect() classifies a container start failure as transport", async () => {
+    const platformError = new Error(
+      "There is no container instance that can be provided to this Durable Object, try again later",
+    );
+    const fake = makeFakeHost({
+      start: async () => {
+        throw platformError;
+      },
+    });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+    });
+
+    const error = await backend.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(error).toMatchObject({ cause: platformError });
+    expect(String(error)).toMatch(/stage=start/);
+  });
+
   test("connect() throws when the container port never opens", async () => {
     const fake = makeFakeHost({ healthy: false });
     const backend = new CloudflareContainerBackend({
@@ -135,7 +159,10 @@ describe("CloudflareContainerBackend", () => {
       restartAttempts: 0,
     });
 
-    await expect(backend.connect()).rejects.toThrow(/stage=health.*port=8080/);
+    const error = await backend.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(error).toMatchObject({ cause: expect.any(Error) });
+    expect(String(error)).toMatch(/stage=health.*port=8080/);
 
     const names = fake.calls.map((c) => c.name);
     expect(names).toContain("start");
@@ -321,10 +348,12 @@ describe("CloudflareContainerBackend", () => {
       connectTimeoutMs: 600,
     });
 
-    await expect(backend.connect()).rejects.toThrow(/POST \/connect returned 502/);
+    const error = await backend.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(String(error)).toMatch(/POST \/connect returned 502/);
   });
 
-  test("connect() throws when the /ws upgrade never arrives", async () => {
+  test("connect() throws a transport error when the /ws upgrade never arrives", async () => {
     const fake = makeFakeHost();
     const backend = new CloudflareContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -332,7 +361,9 @@ describe("CloudflareContainerBackend", () => {
       connectTimeoutMs: 600,
     });
 
-    await expect(backend.connect()).rejects.toThrow(/\/ws upgrade did not arrive/);
+    const error = await backend.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(String(error)).toMatch(/\/ws upgrade did not arrive/);
   });
 
   test("handleFetch rejects non-/ws paths", async () => {

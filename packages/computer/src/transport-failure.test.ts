@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { isWorkspaceTransportFailure, WorkspaceTransportError } from "./transport-failure.js";
+import {
+  isWorkspacePreDispatchTransportFailure,
+  isWorkspaceTransportFailure,
+  WorkspaceTransportError,
+} from "./transport-failure.js";
 
 describe("isWorkspaceTransportFailure", () => {
   it("recognises WorkspaceTransportError instances", () => {
@@ -16,6 +20,31 @@ describe("isWorkspaceTransportFailure", () => {
     expect(
       isWorkspaceTransportFailure(
         new Error("Attempted to use RPC stub after it has been disposed."),
+      ),
+    ).toBe(true);
+  });
+
+  it("only treats a locally disposed stub as proof that dispatch did not start", () => {
+    expect(
+      isWorkspacePreDispatchTransportFailure(
+        new Error("Attempted to use RPC stub after it has been disposed."),
+      ),
+    ).toBe(true);
+    expect(
+      isWorkspacePreDispatchTransportFailure(
+        new Error("RPC was canceled because RPC session was shut down"),
+      ),
+    ).toBe(false);
+    expect(isWorkspacePreDispatchTransportFailure(new Error("WebSocket closed unexpectedly"))).toBe(
+      false,
+    );
+  });
+
+  it("walks causes when classifying a pre-dispatch failure", () => {
+    const inner = new Error("Attempted to use RPC stub after it has been disposed.");
+    expect(
+      isWorkspacePreDispatchTransportFailure(
+        new WorkspaceTransportError("shell unavailable", { cause: inner }),
       ),
     ).toBe(true);
   });

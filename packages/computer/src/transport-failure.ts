@@ -44,6 +44,13 @@ export class WorkspaceTransportError extends Error {
 // Phrases that consistently indicate a dead transport. Conservative
 // list — only phrases the workspace stack reliably produces or
 // that capnweb / Cloudflare Workers ws emit on a closed session.
+const PRE_DISPATCH_PATTERNS: RegExp[] = [
+  // This is thrown locally when code calls a stub whose session is
+  // already disposed. No frame can have been sent, so even a
+  // side-effecting operation such as shell.exec is safe to retry.
+  /rpc stub after it has been disposed/i,
+];
+
 const TRANSPORT_PATTERNS: RegExp[] = [
   // capnweb session shutdown / cancellation. Phrasing checked
   // against node_modules/capnweb/dist/index.js: the
@@ -51,7 +58,7 @@ const TRANSPORT_PATTERNS: RegExp[] = [
   // has been disposed." and pre-shutdown cancellation reads as
   // "RPC was canceled because RPC session was shut down...".
   /rpc session was shut down/i,
-  /rpc stub after it has been disposed/i,
+  ...PRE_DISPATCH_PATTERNS,
   /rpc was canceled/i,
   // WebSocket transport failures.
   /websocket is not open/i,
@@ -92,6 +99,25 @@ export function isWorkspaceTransportFailure(error: unknown): boolean {
       continue;
     }
     return false;
+  }
+  return false;
+}
+
+// A transport failure does not normally reveal whether the peer
+// accepted an operation before the connection died. Keep a narrower
+// classifier for failures that prove dispatch never happened. Shell
+// exec uses this to avoid replaying a command with unknown side
+// effects; idempotent sync operations use the broader classifier.
+export function isWorkspacePreDispatchTransportFailure(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth++) {
+    if (!(current instanceof Error)) return false;
+    for (const pattern of PRE_DISPATCH_PATTERNS) {
+      if (pattern.test(current.message)) return true;
+    }
+    const next = (current as Error & { cause?: unknown }).cause;
+    if (next === current) return false;
+    current = next;
   }
   return false;
 }
