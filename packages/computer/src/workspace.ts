@@ -83,7 +83,11 @@ const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
 const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
 
-type BackendRetryMode = "idempotent" | "pre-dispatch";
+// When a backend RPC fails with a transport error, how much replay
+// the operation tolerates. "always" suits idempotent calls; a
+// "pre-dispatch" operation is replayed only when the failure proves
+// no frame reached the peer.
+type BackendRetryPolicy = "always" | "pre-dispatch";
 
 export interface WorkspaceOptions {
   // Local store backing this Workspace. In a Durable Object, pass
@@ -695,17 +699,17 @@ export class Workspace {
     return true;
   }
 
-  // Run an idempotent backend operation with one reconnect retry.
-  // Handle acquisition is inside the loop so a readiness failure and
-  // an RPC failure follow the same bounded policy. pushOnce and
-  // pullOnce are safe replay boundaries: their durable watermarks
-  // advance only after committed work and their apply paths absorb
-  // duplicates.
+  // Run a backend operation with one reconnect retry. Handle
+  // acquisition is inside the loop so a readiness failure and an RPC
+  // failure follow the same bounded policy. The default "always"
+  // policy assumes an idempotent operation: pushOnce and pullOnce are
+  // safe replay boundaries because their durable watermarks advance
+  // only after committed work and their apply paths absorb duplicates.
   async #runWithReconnect<T>(
     id: string,
     operation: string,
     op: (handle: BackendHandle) => Promise<T>,
-    mode: BackendRetryMode = "idempotent",
+    policy: BackendRetryPolicy = "always",
   ): Promise<T> {
     let firstError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -718,11 +722,11 @@ export class Workspace {
         if (handle !== undefined) await this.#invalidateHandle(id, handle);
 
         // A failed connection is always before dispatch. Once an
-        // operation reached a handle, only idempotent calls or a
-        // local disposed-stub failure are safe to replay.
+        // operation reached a handle, only an "always" policy or a
+        // local disposed-stub failure makes replay safe.
         const canRetry =
           handle === undefined ||
-          mode === "idempotent" ||
+          policy === "always" ||
           isWorkspacePreDispatchTransportFailure(error);
         if (!canRetry) {
           throw new WorkspaceTransportError(
@@ -1036,7 +1040,7 @@ export class Workspace {
     id: string,
     operation: string,
     op: (shell: ShellRPC) => ReturnType<ShellRPC["exec"]>,
-    mode: BackendRetryMode = "idempotent",
+    policy: BackendRetryPolicy = "always",
   ): ReturnType<ShellRPC["exec"]> {
     return this.#runWithReconnect(
       id,
@@ -1045,7 +1049,7 @@ export class Workspace {
         const envelope = await op(handle.rpc.shell);
         return wrapShellEnvelope(envelope, (error) => this.#onShellError(id, handle, error));
       },
-      mode,
+      policy,
     );
   }
 
