@@ -237,6 +237,7 @@ function isInternalModuleName(name: string) {
 }
 
 function capabilitiesModule(maxCapabilityBytes: number) {
+  const requestTooLargeMessage = `Workspace capability request exceeds ${maxCapabilityBytes} bytes.`;
   return `
     let host;
     const callKey = Symbol.for("cloudflare.workspace.runtime.call");
@@ -258,7 +259,7 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       if (!host) throw new Error("Workspace capabilities are not installed");
       const request = JSON.stringify(args.map(encode));
       if (new TextEncoder().encode(request).byteLength > ${maxCapabilityBytes}) {
-        throw new Error("Workspace capability request exceeds ${maxCapabilityBytes} bytes.");
+        throw new Error(${JSON.stringify(requestTooLargeMessage)});
       }
       const raw = await host.call(namespace + "." + method, request);
       const payload = JSON.parse(String(raw));

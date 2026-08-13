@@ -157,6 +157,39 @@ describe("WorkerJavaScriptBackend", () => {
     ).toThrow(/positive finite/);
   });
 
+  it("includes the configured capability byte limit in generated errors", async () => {
+    const load = vi.fn(() => ({
+      getEntrypoint() {
+        return {
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, null),
+        };
+      },
+    }));
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load },
+          maxCapabilityBytes: 256,
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+
+    await (await workspace.runtime.exec("export default null")).result();
+
+    const capabilities = load.mock.calls[0]?.[0].modules["workspace-capabilities.js"];
+    expect(capabilities).toEqual(expect.any(String));
+    expect(capabilities).toContain("exceeds 256 bytes");
+    expect(capabilities).not.toContain("maxCapabilityBytes");
+  });
+
   it("disposes Loader resources when evaluate throws synchronously", async () => {
     let entrypointDisposals = 0;
     let workerDisposals = 0;
