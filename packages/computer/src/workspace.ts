@@ -42,7 +42,7 @@ import {
 } from "./runtime/types.js";
 import { CommandExecutor } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
-import { isWorkspaceTransportFailure } from "./transport-failure.js";
+import { isWorkspaceTransportFailure, WorkspaceTransportError } from "./transport-failure.js";
 
 export interface SyncRetryIntent {
   backend: string;
@@ -237,6 +237,10 @@ export class Workspace {
   // In-flight connect promises keyed by backend id, so concurrent
   // callers for the same backend share one connect pass.
   readonly #connecting = new Map<string, Promise<BackendHandle>>();
+  // A transport-failed handle must finish closing before connect()
+  // runs again. This prevents a concurrent caller from reaching a
+  // backend's own cache while it still points at the stale handle.
+  readonly #disconnecting = new Map<string, Promise<void>>();
   // Per-backend CommandExecutor facades. Constructed alongside each
   // handle; reused for the life of the handle.
   readonly #shells = new Map<string, CommandExecutor>();
@@ -550,16 +554,15 @@ export class Workspace {
         { "workspace.sync.backend": resolvedId },
         async () => {
           if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
-          const handle = await this.#handleFor(resolvedId);
-          // A backend that reuses the host store as its sole
-          // source of truth has nothing to ship and no remote to
-          // ship to. Short-circuit so the shell exec bracket can
-          // keep calling push() unconditionally without paying
-          // for it.
-          if (handle.sync === "none") return 0;
-          return this.#runWithInvalidation(resolvedId, handle, () =>
-            pushOnce(this.#db, handle.rpc.sync, resolvedId),
-          );
+          return this.#runWithReconnect(resolvedId, "push", async (handle) => {
+            // A backend that reuses the host store as its sole
+            // source of truth has nothing to ship and no remote to
+            // ship to. Short-circuit so the shell exec bracket can
+            // keep calling push() unconditionally without paying
+            // for it.
+            if (handle.sync === "none") return 0;
+            return pushOnce(this.#db, handle.rpc.sync, resolvedId);
+          });
         },
         (span, outcome) => {
           if (outcome.ok) span.setAttribute("workspace.sync.pushed", outcome.value);
@@ -634,11 +637,10 @@ export class Workspace {
         if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
           return { applied: 0, skipped: [] };
         }
-        const handle = await this.#handleFor(resolvedId);
-        if (handle.sync === "none") return { applied: 0, skipped: [] };
-        return this.#runWithInvalidation(resolvedId, handle, () =>
-          pullOnce(this.#db, handle.rpc.sync, resolvedId),
-        );
+        return this.#runWithReconnect(resolvedId, "pull", async (handle) => {
+          if (handle.sync === "none") return { applied: 0, skipped: [] };
+          return pullOnce(this.#db, handle.rpc.sync, resolvedId);
+        });
       },
       (span, outcome) => {
         if (!outcome.ok) return;
@@ -665,35 +667,60 @@ export class Workspace {
     return { backend, attempt, notBefore: this.#now() + delay };
   }
 
-  // Drop a cached handle when an operation fails with a known
-  // transport-level error. Matches by identity — a concurrent
-  // close() / `closed` watcher that already swapped the entry must
-  // not be clobbered. Returns true if the cached entry was the one
-  // we removed.
-  #invalidateHandle(id: string, handle: BackendHandle): boolean {
+  // Drop and close a cached handle after a transport failure.
+  // Matches by identity so a late error from an old operation cannot
+  // tear down a replacement that another caller already installed.
+  // Cache deletion is synchronous; close() is awaited before retrying
+  // so backends with their own handle cache cannot return the same
+  // broken session from connect().
+  async #invalidateHandle(id: string, handle: BackendHandle): Promise<boolean> {
     if (this.#handles.get(id) !== handle) return false;
     this.#handles.delete(id);
     this.#shells.delete(id);
     this.#commandHandles.delete(id);
+    const closing = handle.close().catch(() => undefined);
+    this.#disconnecting.set(id, closing);
+    try {
+      await closing;
+    } finally {
+      if (this.#disconnecting.get(id) === closing) this.#disconnecting.delete(id);
+    }
     return true;
   }
 
-  // Wrap an RPC-backed operation so a transport failure invalidates
-  // the cached handle before the error rethrows. Non-transport
-  // errors pass through untouched.
-  async #runWithInvalidation<T>(
+  // Run an idempotent backend operation with one reconnect retry.
+  // Handle acquisition is inside the loop so a readiness failure and
+  // an RPC failure follow the same bounded policy. pushOnce and
+  // pullOnce are safe replay boundaries: their durable watermarks
+  // advance only after committed work and their apply paths absorb
+  // duplicates.
+  async #runWithReconnect<T>(
     id: string,
-    handle: BackendHandle,
-    op: () => Promise<T>,
+    operation: string,
+    op: (handle: BackendHandle) => Promise<T>,
   ): Promise<T> {
-    try {
-      return await op();
-    } catch (error) {
-      if (isWorkspaceTransportFailure(error)) {
-        this.#invalidateHandle(id, handle);
+    let firstError: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let handle: BackendHandle | undefined;
+      try {
+        handle = await this.#handleFor(id);
+        return await op(handle);
+      } catch (error) {
+        if (!isWorkspaceTransportFailure(error)) throw error;
+        if (handle !== undefined) await this.#invalidateHandle(id, handle);
+        if (attempt === 0) {
+          firstError = error;
+          continue;
+        }
+        const initial = safeErrorMessage(firstError).slice(0, 160);
+        const terminal = safeErrorMessage(error).slice(0, 240);
+        throw new WorkspaceTransportError(
+          `Workspace backend ${JSON.stringify(id)}: ${operation} failed after 1 reconnect retry: initial=${initial}; last=${terminal}`,
+          { cause: error },
+        );
       }
-      throw error;
     }
+    throw new Error("unreachable reconnect state");
   }
 
   // Per-backend mutation FIFO. Public push() / pull() calls and each
@@ -756,11 +783,13 @@ export class Workspace {
     this.#shells.clear();
     this.#commandHandles.clear();
     this.#connecting.clear();
+    const disconnecting = [...this.#disconnecting.values()];
     this.#moduleHandles.clear();
     this.#connectingModuleHandles.clear();
     this.#readyPromise = undefined;
-    await Promise.all(
-      [...handles, ...moduleHandles].map(async (h) => {
+    await Promise.all([
+      ...disconnecting,
+      ...[...handles, ...moduleHandles].map(async (h) => {
         try {
           await h.close?.();
         } catch {
@@ -768,7 +797,7 @@ export class Workspace {
           // gone shouldn't take the workspace down with it.
         }
       }),
-    );
+    ]);
   }
 
   // Unified backend handle used by the runtime. Module backends
@@ -900,6 +929,10 @@ export class Workspace {
   #handleFor(id: string): Promise<BackendHandle> {
     const cached = this.#handles.get(id);
     if (cached !== undefined) return Promise.resolve(cached);
+    const disconnecting = this.#disconnecting.get(id);
+    if (disconnecting !== undefined) {
+      return disconnecting.then(() => this.#handleFor(id));
+    }
     const inflight = this.#connecting.get(id);
     if (inflight !== undefined) return inflight;
     const backend = this.#backendsById.get(id);
@@ -909,56 +942,65 @@ export class Workspace {
     const generation = this.#connectionGeneration;
     let promise!: Promise<BackendHandle>;
     promise = (async () => {
-      const handle = await withSpan(
-        this.#observer,
-        "workspace.connect",
-        { "workspace.backend.id": id, "workspace.backend.type": backend.type },
-        () =>
-          backend.connect({
-            db: this.#db,
-            fs: this.#fs,
-            git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
-            artifacts: this.#artifacts,
-          }),
-      );
-      if (generation !== this.#connectionGeneration) {
-        await handle.close().catch(() => undefined);
-        throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
+      let handle: BackendHandle | undefined;
+      try {
+        handle = await withSpan(
+          this.#observer,
+          "workspace.connect",
+          { "workspace.backend.id": id, "workspace.backend.type": backend.type },
+          () =>
+            backend.connect({
+              db: this.#db,
+              fs: this.#fs,
+              git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
+              artifacts: this.#artifacts,
+            }),
+        );
+        if (generation !== this.#connectionGeneration) {
+          throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
+        }
+        // Reconcile watermarks before publishing the handle. If the
+        // remote restarted between our pushes / fetches it has lost
+        // state we thought it had; reset the local cursors so the
+        // next tick rebaselines.
+        //
+        // A backend that declares sync: "none" has no remote store
+        // to reconcile against; skip the pass entirely.
+        if (handle.sync !== "none") {
+          await reconcileWatermarks(this.#db, handle.rpc.sync, id);
+        }
+        if (generation !== this.#connectionGeneration) {
+          throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
+        }
+        this.#handles.set(id, handle);
+        // Watch the transport for mid-session loss. Backends without
+        // a `closed` promise (in-process fakes) opt out by omitting
+        // it; we only react when it's wired.
+        if (handle.closed) {
+          handle.closed
+            .catch(() => {})
+            .then(() => {
+              // Only clear if this handle is still the current one
+              // for this id. A close() that already ran will have
+              // dropped the entry; a subsequent #handleFor may have
+              // installed a new one.
+              if (this.#handles.get(id) === handle) {
+                this.#handles.delete(id);
+                this.#shells.delete(id);
+                this.#commandHandles.delete(id);
+              }
+            });
+        }
+        return handle;
+      } catch (error) {
+        // A handle that fails setup was never published, but the
+        // backend may still cache it internally. Close it so the next
+        // connect attempt cannot return the same broken session.
+        if (handle !== undefined && this.#handles.get(id) !== handle) {
+          await handle.close().catch(() => undefined);
+        }
+        throw error;
       }
-      // Reconcile watermarks before publishing the handle. If the
-      // remote restarted between our pushes / fetches it has lost
-      // state we thought it had; reset the local cursors so the
-      // next tick rebaselines.
-      //
-      // A backend that declares sync: "none" has no remote store
-      // to reconcile against; skip the pass entirely.
-      if (handle.sync !== "none") {
-        await reconcileWatermarks(this.#db, handle.rpc.sync, id);
-      }
-      if (generation !== this.#connectionGeneration) {
-        await handle.close().catch(() => undefined);
-        throw new Error(`Workspace closed while backend ${JSON.stringify(id)} was connecting.`);
-      }
-      this.#handles.set(id, handle);
-      // Watch the transport for mid-session loss. Backends without
-      // a `closed` promise (in-process fakes) opt out by omitting
-      // it; we only react when it's wired.
-      if (handle.closed) {
-        handle.closed
-          .catch(() => {})
-          .then(() => {
-            // Only clear if this handle is still the current one
-            // for this id. A close() that already ran will have
-            // dropped the entry; a subsequent #handleFor may have
-            // installed a new one.
-            if (this.#handles.get(id) === handle) {
-              this.#handles.delete(id);
-              this.#shells.delete(id);
-              this.#commandHandles.delete(id);
-            }
-          });
-      }
-      return handle;
     })().finally(() => {
       // Always drop this in-flight entry so a failed connect can be
       // retried, without deleting a newer connection started after close().
@@ -999,7 +1041,7 @@ export class Workspace {
   // a concurrent reconnect already installed.
   #onShellError(id: string, handle: BackendHandle, error: unknown): void {
     if (!isWorkspaceTransportFailure(error)) return;
-    this.#invalidateHandle(id, handle);
+    void this.#invalidateHandle(id, handle);
   }
 }
 
