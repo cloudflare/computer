@@ -365,7 +365,7 @@ describe("CommandExecutor.exec — push/pull bracket", () => {
     expect(order).toEqual(["push", "pull"]); // pull fired after drain
   });
 
-  it("falls back to pushed = 0 when sync.push() throws", async () => {
+  it("fails before spawn when the pre-exec push throws", async () => {
     const f = fakeRpc({ events: [exit(1, 0)] });
     const sync: Sync = {
       async push() {
@@ -375,11 +375,11 @@ describe("CommandExecutor.exec — push/pull bracket", () => {
         return applied(3);
       },
     };
-    const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop");
-    expect(execution.sync.pushed).toBe(0);
-    // pull still fires — docs/05 says one failed half doesn't abort the other
-    const { outcome } = await drain(execution);
-    expect((outcome as { applied: number }).applied).toBe(3);
+
+    await expect(new CommandExecutor(f.rpc.shell, sync).exec("noop")).rejects.toThrow(
+      "push offline",
+    );
+    expect(f.calls.exec).toHaveLength(0);
   });
 
   it("reports a pending sync after a Durable Object storage reset", async () => {

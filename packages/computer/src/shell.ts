@@ -107,16 +107,11 @@ export class CommandExecutor {
 
   // Spawn a command. Pushes host-side writes first so the command
   // sees them, then returns the raw event stream and the sync
-  // bracket stats. The push failure is non-fatal per docs/05 — the
-  // command still runs and pushed reports 0.
+  // bracket stats. A failed push aborts before shell.exec: running
+  // with stale or incomplete workspace contents is not safe.
   async exec(source: string, options: ExecOptions = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
-    let pushed = 0;
-    try {
-      pushed = await this.#sync.push();
-    } catch {
-      // pushed stays 0
-    }
+    const pushed = await this.#sync.push();
     const envelope = await withSpan(
       this.#observer,
       "workspace.runtime.exec.spawn",
