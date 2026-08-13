@@ -24,6 +24,7 @@ interface FakeHostOptions {
   healthSequence?: boolean[];
   connectStatus?: number;
   start?: () => Promise<void>;
+  intercept?: () => Promise<void>;
   restart?: () => Promise<void>;
   // Pre-set a prior exit reason so connect()'s pre-flight
   // exitInfo() check observes it.
@@ -79,6 +80,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
     },
     async interceptOutboundHttp(host, ref) {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
+      await opts.intercept?.();
       state.interceptedHost = host;
       state.interceptedWorkspace = ref;
     },
@@ -148,6 +150,25 @@ describe("CloudflareContainerBackend", () => {
     expect(error).toBeInstanceOf(WorkspaceTransportError);
     expect(error).toMatchObject({ cause: platformError });
     expect(String(error)).toMatch(/stage=start/);
+  });
+
+  test("connect() classifies egress interception failure as transport", async () => {
+    const platformError = new Error("container is not ready for egress interception");
+    const fake = makeFakeHost({
+      intercept: async () => {
+        throw platformError;
+      },
+    });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 300,
+    });
+
+    const error = await backend.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(error).toMatchObject({ cause: platformError });
+    expect(String(error)).toMatch(/stage=egress/);
   });
 
   test("connect() throws when the container port never opens", async () => {

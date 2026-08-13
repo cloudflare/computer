@@ -224,9 +224,22 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
         { cause: error },
       );
     }
-    await host.interceptOutboundHttp(this.#options.egressHost, this.#options.workspace);
-    if (this.#egress.mode === "http-gateway" && this.#egressToken !== undefined) {
-      await host.interceptAllOutboundHttp(this.#options.workspace, this.#egressToken);
+    try {
+      await host.interceptOutboundHttp(this.#options.egressHost, this.#options.workspace);
+      if (this.#egress.mode === "http-gateway" && this.#egressToken !== undefined) {
+        await host.interceptAllOutboundHttp(this.#options.workspace, this.#egressToken);
+      }
+    } catch (error) {
+      throw new WorkspaceTransportError(
+        this.#formatStageError("egress", {
+          attempt: 1,
+          maxAttempts: this.#options.restartAttempts + 1,
+          restarts: 0,
+          lastError: error,
+          priorExit,
+        }),
+        { cause: error },
+      );
     }
 
     // Arm the upgrade promise before posting /connect — computerd
@@ -475,7 +488,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   }
 
   #formatStageError(
-    stage: "start" | "health" | "restart" | "connect" | "ws",
+    stage: "start" | "egress" | "health" | "restart" | "connect" | "ws",
     info: {
       attempt: number;
       maxAttempts: number;

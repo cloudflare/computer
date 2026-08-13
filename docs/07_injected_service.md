@@ -145,7 +145,7 @@ Sharp edges actually present in `cloudflare-container.ts`:
 - `#armUpgrade` must be set up *before* `#postConnect`, because `computerd`
   can dial back before the `POST /connect` response returns.
 - The container host records each monitored generation's exit reason. The dead container closes its WebSocket, and `fetchPort()` also short-circuits later requests with a transport error; either path invalidates the matching Workspace handle.
-- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `CloudflareContainerBackend.connect()` again. The replacement runs the complete start, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
+- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `CloudflareContainerBackend.connect()` again. The replacement runs the complete start, egress-interception, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
 
 ## Environment variables
 
