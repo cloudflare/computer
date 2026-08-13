@@ -36,14 +36,16 @@ export interface Env {
 // methods return empty/no-op; exec returns a single exit event so
 // shell.exec resolves without a real subprocess.
 function fakeBackend(): WorkspaceBackend {
+  let appliedPushRev = 0;
   const sync: SyncRPC = {
-    async push() {
-      return { rev: 0, appliedPushCursor: { rev: 0, path: null } };
+    async push(input) {
+      appliedPushRev = input.senderRev;
+      return { rev: 0, appliedPushCursor: { rev: appliedPushRev, path: null } };
     },
     async fetchChanges() {
       return {
         currentCursor: { rev: 0, path: null },
-        appliedPushCursor: { rev: 0, path: null },
+        appliedPushCursor: { rev: appliedPushRev, path: null },
         stream: new ReadableStream<ChangeEntry>({
           start(c) {
             c.close();
@@ -55,7 +57,11 @@ function fakeBackend(): WorkspaceBackend {
       return null;
     },
     async watermarks() {
-      return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
+      return {
+        currentRev: 0,
+        pushRev: 0,
+        fetchCursor: { rev: appliedPushRev, path: null },
+      };
     },
     async hasObjects() {
       return [];

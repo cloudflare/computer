@@ -9,6 +9,7 @@
 // Command-backend pre-exec push / post-exec pull brackets are
 // routed through Workspace.runtime.exec.
 
+import type { ShellRPC } from "@cloudflare/computer-rpc";
 import { pullOnce, pushOnce, reconcileWatermarks } from "@cloudflare/computer-rpc/driver";
 import {
   type ApplyResult,
@@ -40,9 +41,13 @@ import {
   type WorkspaceRegisteredBackend,
   type WorkspaceRuntimeEvent,
 } from "./runtime/types.js";
-import { CommandExecutor } from "./shell.js";
+import { CommandExecutor, maybeDispose } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
-import { isWorkspaceTransportFailure, WorkspaceTransportError } from "./transport-failure.js";
+import {
+  isWorkspacePreDispatchTransportFailure,
+  isWorkspaceTransportFailure,
+  WorkspaceTransportError,
+} from "./transport-failure.js";
 
 export interface SyncRetryIntent {
   backend: string;
@@ -77,6 +82,8 @@ export type WorkspaceRetryPendingSyncResult =
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
 const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
+
+type BackendRetryMode = "idempotent" | "pre-dispatch";
 
 export interface WorkspaceOptions {
   // Local store backing this Workspace. In a Durable Object, pass
@@ -698,6 +705,7 @@ export class Workspace {
     id: string,
     operation: string,
     op: (handle: BackendHandle) => Promise<T>,
+    mode: BackendRetryMode = "idempotent",
   ): Promise<T> {
     let firstError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -708,6 +716,20 @@ export class Workspace {
       } catch (error) {
         if (!isWorkspaceTransportFailure(error)) throw error;
         if (handle !== undefined) await this.#invalidateHandle(id, handle);
+
+        // A failed connection is always before dispatch. Once an
+        // operation reached a handle, only idempotent calls or a
+        // local disposed-stub failure are safe to replay.
+        const canRetry =
+          handle === undefined ||
+          mode === "idempotent" ||
+          isWorkspacePreDispatchTransportFailure(error);
+        if (!canRetry) {
+          throw new WorkspaceTransportError(
+            `Workspace backend ${JSON.stringify(id)}: ${operation} transport failed; the command may have started and was not replayed: ${safeErrorMessage(error).slice(0, 240)}`,
+            { cause: error },
+          );
+        }
         if (attempt === 0) {
           firstError = error;
           continue;
@@ -809,73 +831,41 @@ export class Workspace {
     return this.#commandHandleFor(id);
   }
 
-  // Command adapters are cached per backend so the module and
-  // command paths are symmetric. The cache is cleared alongside
-  // #shells whenever a handle is invalidated, so an adapter never
-  // outlives the shell it closed over.
+  // Command adapters are cached per backend, but the CommandExecutor
+  // they contain resolves the current ShellRPC for every operation.
+  // A pre-exec push can replace the connection, so binding the adapter
+  // to the handle that existed before that push would dispatch the
+  // command on a stale session.
   async #commandHandleFor(id: string): Promise<WorkspaceModuleBackendHandle> {
     const cached = this.#commandHandles.get(id);
     if (cached) return cached;
-    const { shell, handle } = await this.#shellFor(id);
-    const onError = (error: unknown) => this.#onShellError(id, handle, error);
+    const shell = this.#shellFor(id);
     const adapter: WorkspaceModuleBackendHandle = {
       exec: async (input) => {
-        let envelope: Awaited<ReturnType<CommandExecutor["exec"]>>;
-        try {
-          envelope = await shell.exec(input.source, {
-            id: input.id,
-            cwd: input.cwd,
-            timeoutMs: input.timeoutMs,
-            env: input.env,
-            stdin: input.stdin,
-          });
-        } catch (error) {
-          onError(error);
-          throw error;
-        }
+        const envelope = await shell.exec(input.source, {
+          id: input.id,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs,
+          env: input.env,
+          stdin: input.stdin,
+        });
         return {
           id: envelope.id,
-          events: watchStreamForTransportError(
-            envelope.events,
-            onError,
-          ) as ReadableStream<WorkspaceRuntimeEvent>,
+          events: envelope.events as ReadableStream<WorkspaceRuntimeEvent>,
           sync: envelope.sync,
         };
       },
       getExec: async ({ id: execId, after }) => {
         const resume = after === undefined ? "full" : after;
-        let envelope: Awaited<ReturnType<CommandExecutor["get"]>>;
-        try {
-          envelope = await shell.get(execId, { resume });
-        } catch (error) {
-          onError(error);
-          throw error;
-        }
+        const envelope = await shell.get(execId, { resume });
         return {
           id: envelope.id,
-          events: watchStreamForTransportError(
-            envelope.events,
-            onError,
-          ) as ReadableStream<WorkspaceRuntimeEvent>,
+          events: envelope.events as ReadableStream<WorkspaceRuntimeEvent>,
           sync: envelope.sync,
         };
       },
-      killExec: async ({ id: execId, signal }) => {
-        try {
-          await shell.kill(execId, signal);
-        } catch (error) {
-          onError(error);
-          throw error;
-        }
-      },
-      disposeExec: async ({ id: execId }) => {
-        try {
-          await shell.dispose(execId);
-        } catch (error) {
-          onError(error);
-          throw error;
-        }
-      },
+      killExec: ({ id: execId, signal }) => shell.kill(execId, signal),
+      disposeExec: ({ id: execId }) => shell.dispose(execId),
     };
     this.#commandHandles.set(id, adapter);
     return adapter;
@@ -1010,19 +1000,27 @@ export class Workspace {
     return promise;
   }
 
-  // Per-backend CommandExecutor, constructed on demand and cached
-  // for the life of the handle. Returns both the shell and the
-  // BackendHandle it was built against so the caller can hold the
-  // handle reference for a later identity check; #invalidateHandle
-  // clears both caches together, so a shell pulled from #shells is
-  // always paired with the live handle for that id at the moment
-  // of the lookup.
-  async #shellFor(id: string): Promise<{ shell: CommandExecutor; handle: BackendHandle }> {
-    const handle = await this.#handleFor(id);
+  // Per-backend CommandExecutor, constructed on demand. Its ShellRPC
+  // facade resolves a handle at call time, applies the operation's
+  // retry policy, and binds stream failures to the handle that
+  // produced the envelope.
+  #shellFor(id: string): CommandExecutor {
     const cached = this.#shells.get(id);
-    if (cached !== undefined) return { shell: cached, handle };
+    if (cached !== undefined) return cached;
+    const rpc: ShellRPC = {
+      exec: (input) =>
+        this.#runShellEnvelope(id, "shell.exec", (shell) => shell.exec(input), "pre-dispatch"),
+      getExec: (input) =>
+        this.#runShellEnvelope(id, "shell.getExec", (shell) => shell.getExec(input)),
+      killExec: (input) =>
+        this.#runWithReconnect(id, "shell.killExec", (handle) => handle.rpc.shell.killExec(input)),
+      disposeExec: (input) =>
+        this.#runWithReconnect(id, "shell.disposeExec", (handle) =>
+          handle.rpc.shell.disposeExec(input),
+        ),
+    };
     const shell = new CommandExecutor(
-      handle.rpc.shell,
+      rpc,
       {
         push: () => this.push(id),
         pull: () => this.pull(id),
@@ -1031,7 +1029,24 @@ export class Workspace {
       this.#observer,
     );
     this.#shells.set(id, shell);
-    return { shell, handle };
+    return shell;
+  }
+
+  #runShellEnvelope(
+    id: string,
+    operation: string,
+    op: (shell: ShellRPC) => ReturnType<ShellRPC["exec"]>,
+    mode: BackendRetryMode = "idempotent",
+  ): ReturnType<ShellRPC["exec"]> {
+    return this.#runWithReconnect(
+      id,
+      operation,
+      async (handle) => {
+        const envelope = await op(handle.rpc.shell);
+        return wrapShellEnvelope(envelope, (error) => this.#onShellError(id, handle, error));
+      },
+      mode,
+    );
   }
 
   // Invalidate the cached handle for `id` when a shell-routed RPC
@@ -1043,6 +1058,28 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     void this.#invalidateHandle(id, handle);
   }
+}
+
+// Keep ownership of the original capnweb result envelope while
+// replacing its event stream with a transport-aware wrapper. The
+// CommandExecutor disposes this local envelope when the stream ends;
+// forwarding that disposal releases the real remote envelope exactly
+// once.
+function wrapShellEnvelope(
+  envelope: Awaited<ReturnType<ShellRPC["exec"]>>,
+  onError: (error: unknown) => void,
+): Awaited<ReturnType<ShellRPC["exec"]>> {
+  let disposed = false;
+  const wrapped = {
+    id: envelope.id,
+    events: watchStreamForTransportError(envelope.events, onError),
+    [Symbol.dispose]() {
+      if (disposed) return;
+      disposed = true;
+      maybeDispose(envelope);
+    },
+  };
+  return wrapped;
 }
 
 // Pass an execution event stream through unchanged, but classify any

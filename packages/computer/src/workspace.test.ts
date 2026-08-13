@@ -1379,11 +1379,284 @@ describe("Workspace transport-failure invalidation", () => {
     expect(connects).toBe(1);
   });
 
-  it("shell.exec invalidates the cached handle on a transport error", async () => {
+  it("uses the replacement shell after a pre-exec push reconnects", async () => {
     let connects = 0;
+    let staleShellCalls = 0;
+    let replacementShellCalls = 0;
+    const staleSync: import("@cloudflare/computer-rpc").SyncRPC = {
+      ...fakeRpc(),
+      async push() {
+        throw new WorkspaceTransportError("WebSocket closed during pre-exec push");
+      },
+    };
+    const replacementBase = fakeRpc();
+    const replacementSync: import("@cloudflare/computer-rpc").SyncRPC = {
+      ...replacementBase,
+      async fetchChanges(input) {
+        const result = await replacementBase.fetchChanges(input);
+        return {
+          ...result,
+          appliedPushCursor: { rev: Number.MAX_SAFE_INTEGER, path: null },
+        };
+      },
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const generation = connects++;
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec() {
+            if (generation === 0) {
+              staleShellCalls++;
+              throw new Error("stale shell used after reconnect");
+            }
+            replacementShellCalls++;
+            return {
+              id: "replacement-run",
+              events: new ReadableStream({
+                start(controller) {
+                  controller.enqueue({ id: "replacement-run", seq: 1, name: "exit", code: 0 });
+                  controller.close();
+                },
+              }),
+            };
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          killExec: () => Promise.reject(new Error("not used")),
+          disposeExec: () => Promise.reject(new Error("not used")),
+        };
+        return {
+          rpc: { sync: generation === 0 ? staleSync : replacementSync, shell },
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.fs.writeFile("/input.txt", "ready");
+
+    const result = await (await ws.runtime.exec("true")).result();
+    expect(result.exitCode).toBe(0);
+    expect(connects).toBe(2);
+    expect(staleShellCalls).toBe(0);
+    expect(replacementShellCalls).toBe(1);
+  });
+
+  it("does not spawn when pre-exec push exhausts its reconnect retry", async () => {
+    let connects = 0;
+    let shellCalls = 0;
+    const sync: import("@cloudflare/computer-rpc").SyncRPC = {
+      ...fakeRpc(),
+      async push() {
+        throw new WorkspaceTransportError("container unavailable");
+      },
+    };
     const shell: import("@cloudflare/computer-rpc").ShellRPC = {
       async exec() {
-        throw new WorkspaceTransportError("RPC session was shut down");
+        shellCalls++;
+        throw new Error("must not run");
+      },
+      getExec: () => Promise.reject(new Error("not used")),
+      killExec: () => Promise.reject(new Error("not used")),
+      disposeExec: () => Promise.reject(new Error("not used")),
+    };
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        connects++;
+        return {
+          rpc: { sync, shell },
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.fs.writeFile("/input.txt", "required");
+
+    await expect(ws.runtime.exec("side-effect")).rejects.toThrow(
+      /push failed after 1 reconnect retry/,
+    );
+    expect(connects).toBe(2);
+    expect(shellCalls).toBe(0);
+  });
+
+  it("retries shell.exec when a disposed stub proves dispatch did not start", async () => {
+    let connects = 0;
+    let closes = 0;
+    let starts = 0;
+    let disposals = 0;
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const generation = connects++;
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec() {
+            if (generation === 0) {
+              throw new Error("Attempted to use RPC stub after it has been disposed.");
+            }
+            starts++;
+            return Object.assign(
+              {
+                id: "fresh-run",
+                events: new ReadableStream<import("@cloudflare/computer-rpc").ExecEvent>({
+                  start(controller) {
+                    controller.enqueue({ id: "fresh-run", seq: 1, name: "exit", code: 0 });
+                    controller.close();
+                  },
+                }),
+              },
+              {
+                [Symbol.dispose]() {
+                  disposals++;
+                },
+              },
+            );
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          killExec: () => Promise.reject(new Error("not used")),
+          disposeExec: () => Promise.reject(new Error("not used")),
+        };
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          close: async () => {
+            closes++;
+          },
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+
+    const result = await (await ws.runtime.exec("true")).result();
+    expect(result.exitCode).toBe(0);
+    expect(connects).toBe(2);
+    expect(closes).toBe(1);
+    expect(starts).toBe(1);
+    expect(disposals).toBe(1);
+  });
+
+  it("does not replay shell.exec after an ambiguous transport failure", async () => {
+    let connects = 0;
+    let closes = 0;
+    let dispatches = 0;
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const generation = connects++;
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec() {
+            dispatches++;
+            if (generation === 0) {
+              throw new WorkspaceTransportError("RPC session was shut down");
+            }
+            return {
+              id: "second-request",
+              events: new ReadableStream({
+                start(controller) {
+                  controller.enqueue({ id: "second-request", seq: 1, name: "exit", code: 0 });
+                  controller.close();
+                },
+              }),
+            };
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          killExec: () => Promise.reject(new Error("not used")),
+          disposeExec: () => Promise.reject(new Error("not used")),
+        };
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          close: async () => {
+            closes++;
+          },
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+
+    const error = await ws.runtime.exec("side-effect").catch((caught: unknown) => caught);
+    expect(String(error)).toMatch(/may have started/);
+    expect(String(error)).toMatch(/was not replayed/);
+    expect(connects).toBe(1);
+    expect(dispatches).toBe(1);
+    expect(closes).toBe(1);
+
+    const result = await (await ws.runtime.exec("second request")).result();
+    expect(result.exitCode).toBe(0);
+    expect(connects).toBe(2);
+    expect(dispatches).toBe(2);
+  });
+
+  for (const operation of ["getExec", "killExec", "disposeExec"] as const) {
+    it(`${operation} reconnects and retries a transport failure`, async () => {
+      let connects = 0;
+      let closes = 0;
+      let calls = 0;
+      const backend: WorkspaceBackend = {
+        id: "only",
+        type: "fake",
+        async connect(): Promise<BackendHandle> {
+          const generation = connects++;
+          const failFirst = () => {
+            calls++;
+            if (generation === 0) throw new WorkspaceTransportError("WebSocket closed");
+          };
+          const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+            exec: () => Promise.reject(new Error("not used")),
+            async getExec() {
+              failFirst();
+              return {
+                id: "run",
+                events: new ReadableStream({
+                  start(controller) {
+                    controller.enqueue({ id: "run", seq: 1, name: "exit", code: 0 });
+                    controller.close();
+                  },
+                }),
+              };
+            },
+            async killExec() {
+              failFirst();
+            },
+            async disposeExec() {
+              failFirst();
+            },
+          };
+          return {
+            rpc: { sync: fakeRpc(), shell },
+            sync: "none",
+            close: async () => {
+              closes++;
+            },
+          };
+        },
+      };
+      const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+
+      if (operation === "getExec") {
+        await (await ws.runtime.getExec("run")).result();
+      } else if (operation === "killExec") {
+        await ws.runtime.killExec("run");
+      } else {
+        await ws.runtime.disposeExec("run");
+      }
+
+      expect(connects).toBe(2);
+      expect(closes).toBe(1);
+      expect(calls).toBe(2);
+    });
+  }
+
+  it("does not reconnect shell.exec for a non-transport RPC error", async () => {
+    let connects = 0;
+    let calls = 0;
+    const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+      async exec() {
+        calls++;
+        throw new Error("EEXEC_BUSY: id is already running");
       },
       getExec: () => Promise.reject(new Error("not used")),
       killExec: () => Promise.reject(new Error("not used")),
@@ -1397,16 +1670,16 @@ describe("Workspace transport-failure invalidation", () => {
         return {
           rpc: { sync: fakeRpc(), shell },
           sync: "none",
-          closed: new Promise<void>(() => {}),
           close: async () => {},
         };
       },
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
-    await expect(ws.runtime.exec("true")).rejects.toThrow(/RPC session was shut down/);
+
+    await expect(ws.runtime.exec("true")).rejects.toThrow(/EEXEC_BUSY/);
+    await expect(ws.runtime.exec("true")).rejects.toThrow(/EEXEC_BUSY/);
     expect(connects).toBe(1);
-    await ws.runtime.exec("true").catch(() => undefined);
-    expect(connects).toBe(2);
+    expect(calls).toBe(2);
   });
 
   it("shell.exec invalidates the cached handle on a mid-stream transport error", async () => {
