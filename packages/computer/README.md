@@ -469,16 +469,22 @@ When assigning a workspace to a Think agent's `workspace`, pass
 `useThink: true` so Think's compatibility methods are added alongside
 `workspace.fs` and `workspace.runtime`.
 
+### Container connection recovery
+
+Container sync and process lifecycle operations recover internally from a stale computerd session. The Workspace closes the stale handle, reconnects through the container health check, reconciles sync watermarks, and retries once. Before a command starts on a replacement container, its pre-exec push rebuilds the process-lifetime filesystem mirror from Durable Object storage.
+
+The pre-exec push must succeed before a command starts. `shell.exec` itself is retried only when connection setup failed or the local RPC layer proves that the request was never sent. If the connection fails after computerd may have accepted the command, the operation reports that the command may have started and does not replay it. Files written only inside a container remain volatile until a pull commits them to Durable Object storage.
+
 ### Durable pending-sync retries
 
 A command can change backend files and then have its post-command pull
 fail; the result exposes `sync: { status: "pending", ... }`. Configure a
 `SyncRetryScheduler` on `Workspace` to persist one coalesced retry per
-backend, then call `workspace.retryPendingSync(backend)` from your DO's
-alarm. Retries use bounded exponential backoff and return `"exhausted"`
-after the configured maximum. The library does not own your DO's alarm.
-See `SyncRetryScheduler`, `SyncRetryIntent`, and `SyncRetryOptions` in
-the package exports.
+backend, then call `workspace.retryPendingSync(backend)` from your Durable
+Object's alarm. Retries use bounded exponential backoff and return
+`"exhausted"` after the configured maximum. The library does not own your
+Durable Object's alarm. See `SyncRetryScheduler`, `SyncRetryIntent`, and
+`SyncRetryOptions` in the package exports.
 
 ### Observability
 

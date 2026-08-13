@@ -173,14 +173,11 @@ package WebSocket and require the `computerd` process to be live.
 3. **Death.** The WebSocket closes (clean or RST). capnweb errors
    every pending answer. The session is unrecoverable.
 
-The death case today is **not handled** — the `Workspace` keeps its
-`#handle` reference pointing at the dead session, and the next RPC
-call throws. The caller is expected to reconstruct the workspace.
+Session death is handled at the `Workspace` backend boundary. A close event, capnweb `onRpcBroken` callback, container exit, or classified transport error removes and closes the matching handle. The original operation gets one reconnect retry when replay is safe; the replacement handle is not exposed until computerd passes its health check and `reconcileWatermarks()` has compared the two stores.
 
 ### What an in-flight RPC looks like across a transport failure
 
-Because the rev counters drive every operation, a torn RPC is safe
-to retry against a fresh session. Specifically:
+Because the revision counters drive every sync operation, a torn sync RPC is safe to retry against a fresh session. `Workspace` performs one such reconnect retry automatically. Specifically:
 
 - **`pushOnce`.** `pushRev` is written only after
   `assertAppliedPushCursor` succeeds. A torn push leaves `pushRev` at
@@ -192,12 +189,11 @@ to retry against a fresh session. Specifically:
   past that point, including within the same rev. `applyChanges`'s
   `alreadyApplied` check drops any duplicates the resume happens to
   overlap with.
-- **`exec.events`.** Each event carries a monotonic `seq` per exec
-  id. The client reattaches via `getExec({ id, after: seq })`.
+- **`exec` dispatch.** A failed connection setup or a local disposed-stub error happens before dispatch and can be retried once. Other transport failures are ambiguous: computerd may have accepted the command before the response was lost. The backend invalidates the handle and reports the failure without replaying the command.
+- **`exec.events`.** Each event carries a monotonic `seq` per exec ID and callers can reattach with `getExec({ id, after: seq })`. The current automatic recovery boundary does not reattach a torn event stream; it reports the stream failure and leaves the next explicit operation to reconnect.
+- **`getExec`, `killExec`, and `disposeExec`.** These ID-addressed operations are safe to repeat and get one reconnect retry.
 
-This is why the sync protocol survives transport failures: every
-operation has a persistent cursor, and every receiver is idempotent.
-capnweb itself is fragile, but the protocol layered on top isn't.
+This is why the sync protocol survives transport failures: every sync operation has a persistent cursor, and every receiver is idempotent. Shell commands require the separate no-replay boundary above because their side effects are not generally idempotent. capnweb itself is fragile, but the protocols layered on top define where recovery is safe.
 
 ### Stub disposal contract
 
@@ -394,9 +390,9 @@ items not yet shipped.
 | DO restart, container alive | New incarnation | Unchanged | Fresh session over fresh socket |
 | DO hibernate (future) | Isolate evicted, socket survives | Unchanged | *Fresh tables on wake; sync resumes from `_vfs_watermark`, exec resumes from `serializeAttachment` seqs* |
 | DO OOM | Killed, new incarnation on next event | Unchanged (until backend rebuilds) | Dies, fresh session on next call |
-| Container SIGTERM | Unchanged until next call | Restarted; in-memory VFS lost | Dies on container exit; *watermark reconcile on next connect repairs the mismatch* |
-| Container OOM/kill | Unchanged until next call | Killed; restarted on next call | Same as SIGTERM |
-| WebSocket idle disconnect | Unchanged | Unchanged | Dies on `close`; *reconnect wrapper rebuilds* |
+| Container SIGTERM | Invalidates the handle and reconnects on the active or next operation | Restarted; in-memory VFS lost | Dies on container exit; watermark reconciliation rebuilds from Durable Object storage |
+| Container OOM/kill | Invalidates the handle and reconnects on the active or next operation | Killed; restarted on reconnect | Same as SIGTERM; container-only unsynced data is lost |
+| WebSocket idle disconnect | Invalidates and closes the handle | Unchanged | Dies on `close`; replay-safe operations reconnect once |
 | Both die (host failure) | New incarnation on next event | New container | Rev-0 baseline from DO store |
 
 The recurring theme: **DO storage is the only durable thing in this

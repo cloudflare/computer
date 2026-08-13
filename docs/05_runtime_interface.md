@@ -98,6 +98,10 @@ push → spawn → events/result → pull
 
 A backend with `sync: "none"`, such as `worker-shell`, shares the host store and reports zero push/pull counts. A Container has its own VFS and synchronizes changes before and after command execution. Fully draining either `result()` or the event stream completes the post-command pull before the stream closes.
 
+The pre-command push is a safety gate, not a best-effort optimization. A failed push gets one reconnect retry. If it still fails, `exec()` rejects before the spawn request is sent; `pushed: 0` means a successful push found no entries, not that synchronization failed. A failed post-command pull does not change the completed command result. It reports `sync.status: "pending"` and can be resumed by the durable sync retry scheduler.
+
+Container connection failures also get one backend-internal reconnect attempt. Sync calls, `getExec`, `killExec`, and `disposeExec` are safe to repeat. `shell.exec` is different: the backend retries it only when connection setup failed or a locally disposed stub proves that no request was sent. If the transport fails after computerd may have accepted the spawn, the error states that the command may have started and the backend does not replay it. A failure while reading the event stream also invalidates the connection without rerunning the command.
+
 Module backends use host capability calls against the authoritative Workspace and therefore require no push/pull round trip.
 
 ## Lifecycle differences

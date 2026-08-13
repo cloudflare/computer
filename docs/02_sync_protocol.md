@@ -267,11 +267,8 @@ edited file) shows up exactly once on the wire. See
 
 ## Failure handling
 
-- **Container restart mid-exec.** The DO's connection detects the
-  closed WebSocket and self-destructs. The next call transparently
-  rebuilds against the still-running `computerd` (or restarts it if needed).
-  `pushRev` and the fetch cursor mean the catch-up is incremental, modulo
-  whatever the container's deployment chose for its DB lifetime.
+- **Container restart or transport loss.** The Durable Object detects the closed WebSocket, removes and closes the stale backend handle, and reconnects through the normal computerd health gate. `pushOnce` and `pullOnce` get one reconnect retry inside the original logical operation. `pushRev` and the fetch cursor make those retries idempotent: a torn push replays entries whose watermark did not advance, while a torn pull resumes after its last committed batch. A fresh process-lifetime computerd database resets the matching local watermarks before the replacement handle is exposed, so the next push rebuilds it from a rev-0 baseline.
+- **Container restart during command execution.** The pre-exec push must succeed, including its reconnect retry, before `shell.exec` is called. A locally disposed stub proves that a spawn request was never sent and permits one reconnect retry. A generic disconnect after dispatch is ambiguous, so the backend invalidates the handle and reports that the command may have started instead of replaying it. Event-stream failures follow the same no-replay rule. The post-command pull remains safe to retry; if it still fails, the execution result reports pending sync and the optional durable retry scheduler can resume the pull without rerunning the command.
 - **Container crash mid-apply.** `push` is atomic from the DO's
   perspective on the receiver: the server wraps the whole batch in a
   single `db.transactionSync` via the synchronous `applyChangesSync`

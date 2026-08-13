@@ -144,12 +144,8 @@ Sharp edges actually present in `cloudflare-container.ts`:
 
 - `#armUpgrade` must be set up *before* `#postConnect`, because `computerd`
   can dial back before the `POST /connect` response returns.
-- A `#monitoring` flag watches container exit and drops the cached
-  handle so the next call rebuilds from scratch.
-- **No transparent reconnect after a mid-session drop.** If the
-  WebSocket dies, the caller is expected to reconstruct the
-  `Workspace` rather than the backend trying to splice a new socket
-  into the existing session.
+- The container host records each monitored generation's exit reason. The dead container closes its WebSocket, and `fetchPort()` also short-circuits later requests with a transport error; either path invalidates the matching Workspace handle.
+- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `CloudflareContainerBackend.connect()` again. The replacement runs the complete start, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
 
 ## Environment variables
 
@@ -196,17 +192,9 @@ Today:
 
 ## Lifetime
 
-The `computerd` process is long-lived and outlives DO restarts — the
-sandbox container is reaped only when its lifetime policy says so,
-and a fresh DO incarnation reconnects to the same running daemon over
-a new WebSocket (the Cloudflare backend's `#monitoring` flag drops the
-cached handle if the container itself exits, forcing a rebuild).
+The `computerd` process is long-lived and outlives Durable Object restarts — the sandbox container is reaped only when its lifetime policy says so, and a fresh Durable Object incarnation reconnects to the same running daemon over a new WebSocket. The container monitor and transport error classifier drop stale handles so an operation can reconnect through the readiness gate.
 
-Caveat: **no on-disk persistence yet** (`packages/computerd/README.md`).
-The "same in-memory VFS across DO restarts" picture only holds while
-the container process is alive. A container restart loses VFS state;
-sync via `UPSTREAM_URL` is what brings state back across container
-restarts.
+Caveat: **no on-disk persistence yet** (`packages/computerd/README.md`). The same in-memory VFS across Durable Object restarts only holds while the container process is alive. A container restart loses VFS state. Watermark reconciliation and the next push rebuild the mirror from Durable Object storage, but reconnect cannot recover container-local files that were never pulled before the process died.
 
 ## Open questions
 
