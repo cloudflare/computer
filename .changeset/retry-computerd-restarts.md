@@ -2,4 +2,4 @@
 "@cloudflare/computer": patch
 ---
 
-Retry safe computerd operations after container restarts without replaying commands that may have started.
+`container-shell` operations now reconnect after computerd restarts when retrying is safe. See [container connection recovery](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#command-synchronization).
