@@ -94,15 +94,35 @@ export interface Sync {
   onPullPending?(error: unknown): Promise<void>;
 }
 
+type ShellExecInput = Parameters<ShellRPC["exec"]>[0];
+type ShellExecEnvelope = Awaited<ReturnType<ShellRPC["exec"]>>;
+
+// Optional host-owned dispatch boundary. The container Workspace uses
+// this to keep its pre-exec push and shell spawn on one backend handle;
+// simpler executors use Sync.push followed by the supplied ShellRPC.
+export interface CommandDispatchResult {
+  pushed: number;
+  envelope: ShellExecEnvelope;
+}
+
+export type CommandDispatch = (input: ShellExecInput) => Promise<CommandDispatchResult>;
+
 export class CommandExecutor {
   readonly #shell: ShellRPC;
   readonly #sync: Sync;
   readonly #observer: WorkspaceObserver;
+  readonly #dispatch: CommandDispatch | undefined;
 
-  constructor(shell: ShellRPC, sync: Sync, observer: WorkspaceObserver = noopObserver) {
+  constructor(
+    shell: ShellRPC,
+    sync: Sync,
+    observer: WorkspaceObserver = noopObserver,
+    dispatch?: CommandDispatch,
+  ) {
     this.#shell = shell;
     this.#sync = sync;
     this.#observer = observer;
+    this.#dispatch = dispatch;
   }
 
   // Spawn a command. Pushes host-side writes first so the command
@@ -111,31 +131,23 @@ export class CommandExecutor {
   // with stale or incomplete workspace contents is not safe.
   async exec(source: string, options: ExecOptions = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
-    const pushed = await this.#sync.push();
-    const envelope = await withSpan(
-      this.#observer,
-      "workspace.runtime.exec.spawn",
-      {
-        "workspace.runtime.cwd": options.cwd,
-        "workspace.runtime.timeout_ms": options.timeoutMs,
-        "workspace.runtime.id": options.id,
-      },
-      () =>
-        this.#shell.exec({
-          source,
-          id: options.id,
-          cwd: options.cwd,
-          timeoutMs: options.timeoutMs,
-          env: options.env,
-          stdin:
-            typeof options.stdin === "string"
-              ? new TextEncoder().encode(options.stdin)
-              : options.stdin,
-        }),
-      (span, outcome) => {
-        if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
-      },
-    );
+    const input: ShellExecInput = {
+      source,
+      id: options.id,
+      cwd: options.cwd,
+      timeoutMs: options.timeoutMs,
+      env: options.env,
+      stdin:
+        typeof options.stdin === "string" ? new TextEncoder().encode(options.stdin) : options.stdin,
+    };
+    let pushed: number;
+    let envelope: ShellExecEnvelope;
+    if (this.#dispatch !== undefined) {
+      ({ pushed, envelope } = await this.#dispatch(input));
+    } else {
+      pushed = await this.#sync.push();
+      envelope = await spawnShell(this.#shell, input, this.#observer);
+    }
     // Dispose the RPC envelope when the event stream finishes
     // draining. Without this, capnweb's exports table holds onto
     // the envelope for the life of the session — one entry per exec
@@ -165,6 +177,26 @@ export class CommandExecutor {
   dispose(id: string): Promise<void> {
     return this.#shell.disposeExec({ id });
   }
+}
+
+export function spawnShell(
+  shell: ShellRPC,
+  input: ShellExecInput,
+  observer: WorkspaceObserver = noopObserver,
+): Promise<ShellExecEnvelope> {
+  return withSpan(
+    observer,
+    "workspace.runtime.exec.spawn",
+    {
+      "workspace.runtime.cwd": input.cwd,
+      "workspace.runtime.timeout_ms": input.timeoutMs,
+      "workspace.runtime.id": input.id,
+    },
+    () => shell.exec(input),
+    (span, outcome) => {
+      if (outcome.ok) span.setAttribute("workspace.runtime.id", outcome.value.id);
+    },
+  );
 }
 
 function resumeToAfter(resume: "tail" | "full" | number | undefined): number | "tail" | undefined {

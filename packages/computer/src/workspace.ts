@@ -41,11 +41,12 @@ import {
   type WorkspaceRegisteredBackend,
   type WorkspaceRuntimeEvent,
 } from "./runtime/types.js";
-import { CommandExecutor, maybeDispose } from "./shell.js";
+import { CommandExecutor, maybeDispose, spawnShell } from "./shell.js";
 import { WorkspaceStub } from "./stub.js";
 import {
   isWorkspacePreDispatchTransportFailure,
   isWorkspaceTransportFailure,
+  WorkspacePreDispatchTransportError,
   WorkspaceTransportError,
 } from "./transport-failure.js";
 
@@ -1004,16 +1005,40 @@ export class Workspace {
     return promise;
   }
 
-  // Per-backend CommandExecutor, constructed on demand. Its ShellRPC
-  // facade resolves a handle at call time, applies the operation's
-  // retry policy, and binds stream failures to the handle that
-  // produced the envelope.
+  // Per-backend CommandExecutor, constructed on demand. Exec keeps
+  // its pre-command push and spawn on one BackendHandle. If that
+  // handle fails before dispatch, the reconnect retry repeats both
+  // steps on the replacement so the command cannot skip its push.
+  // Other shell operations resolve a handle at call time and bind
+  // stream failures to the handle that produced the envelope.
   #shellFor(id: string): CommandExecutor {
     const cached = this.#shells.get(id);
     if (cached !== undefined) return cached;
+    const dispatch = (input: Parameters<ShellRPC["exec"]>[0]) =>
+      this.#runWithReconnect(
+        id,
+        "shell.exec",
+        async (handle) => {
+          let pushed: number;
+          try {
+            pushed = await this.#pushForExec(id, handle);
+          } catch (error) {
+            if (!isWorkspaceTransportFailure(error)) throw error;
+            throw new WorkspacePreDispatchTransportError(
+              `pre-exec push failed: ${safeErrorMessage(error)}`,
+              { cause: error },
+            );
+          }
+          const envelope = await spawnShell(handle.rpc.shell, input, this.#observer);
+          return {
+            pushed,
+            envelope: wrapShellEnvelope(envelope, (error) => this.#onShellError(id, handle, error)),
+          };
+        },
+        "pre-dispatch",
+      );
     const rpc: ShellRPC = {
-      exec: (input) =>
-        this.#runShellEnvelope(id, "shell.exec", (shell) => shell.exec(input), "pre-dispatch"),
+      exec: async (input) => (await dispatch(input)).envelope,
       getExec: (input) =>
         this.#runShellEnvelope(id, "shell.getExec", (shell) => shell.getExec(input)),
       killExec: (input) =>
@@ -1031,9 +1056,28 @@ export class Workspace {
         onPullPending: () => this.#schedulePendingSync(id),
       },
       this.#observer,
+      dispatch,
     );
     this.#shells.set(id, shell);
     return shell;
+  }
+
+  #pushForExec(id: string, handle: BackendHandle): Promise<number> {
+    return this.#serialize(id, (resolvedId) =>
+      withSpan(
+        this.#observer,
+        "workspace.sync.push",
+        { "workspace.sync.backend": resolvedId },
+        async () => {
+          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
+          if (handle.sync === "none") return 0;
+          return pushOnce(this.#db, handle.rpc.sync, resolvedId);
+        },
+        (span, outcome) => {
+          if (outcome.ok) span.setAttribute("workspace.sync.pushed", outcome.value);
+        },
+      ),
+    );
   }
 
   #runShellEnvelope(

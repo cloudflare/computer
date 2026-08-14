@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isWorkspacePreDispatchTransportFailure,
   isWorkspaceTransportFailure,
+  WorkspacePreDispatchTransportError,
   WorkspaceTransportError,
 } from "./transport-failure.js";
 
@@ -38,6 +39,17 @@ describe("isWorkspaceTransportFailure", () => {
     expect(isWorkspacePreDispatchTransportFailure(new Error("WebSocket closed unexpectedly"))).toBe(
       false,
     );
+  });
+
+  it("recognises an explicitly pre-dispatch transport failure", () => {
+    const error = new WorkspacePreDispatchTransportError("pre-exec push failed");
+    expect(isWorkspaceTransportFailure(error)).toBe(true);
+    expect(isWorkspacePreDispatchTransportFailure(error)).toBe(true);
+
+    const cloned = new Error(error.message);
+    cloned.name = error.name;
+    expect(isWorkspaceTransportFailure(cloned)).toBe(true);
+    expect(isWorkspacePreDispatchTransportFailure(cloned)).toBe(true);
   });
 
   it("walks causes when classifying a pre-dispatch failure", () => {

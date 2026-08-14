@@ -1475,10 +1475,70 @@ describe("Workspace transport-failure invalidation", () => {
     await ws.fs.writeFile("/input.txt", "required");
 
     await expect(ws.runtime.exec("side-effect")).rejects.toThrow(
-      /push failed after 1 reconnect retry/,
+      /shell\.exec failed after 1 reconnect retry.*pre-exec push failed/,
     );
     expect(connects).toBe(2);
     expect(shellCalls).toBe(0);
+  });
+
+  it("pushes again when the connection closes between push and exec", async () => {
+    let connects = 0;
+    let closeFirst: (() => void) | undefined;
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve;
+    });
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const generation = connects++;
+        const baseSync = fakeRpc();
+        const sync: import("@cloudflare/computer-rpc").SyncRPC =
+          generation === 0
+            ? {
+                ...baseSync,
+                async push(input) {
+                  const result = await baseSync.push(input);
+                  closeFirst?.();
+                  return result;
+                },
+              }
+            : baseSync;
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec() {
+            if (generation === 0) {
+              throw new Error("Attempted to use RPC stub after it has been disposed.");
+            }
+            if ((await sync.readEntry("/required.txt")) === null) {
+              throw new Error("new connection did not receive the pre-exec push");
+            }
+            return {
+              id: "replacement-run",
+              events: new ReadableStream({
+                start(controller) {
+                  controller.enqueue({ id: "replacement-run", seq: 1, name: "exit", code: 0 });
+                  controller.close();
+                },
+              }),
+            };
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          killExec: () => Promise.reject(new Error("not used")),
+          disposeExec: () => Promise.reject(new Error("not used")),
+        };
+        return {
+          rpc: { sync, shell },
+          closed: generation === 0 ? firstClosed : undefined,
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.fs.writeFile("/required.txt", "present");
+
+    const result = await (await ws.runtime.exec("true")).result();
+    expect(result.exitCode).toBe(0);
+    expect(connects).toBe(2);
   });
 
   it("retries shell.exec when a disposed stub proves dispatch did not start", async () => {
@@ -1491,10 +1551,14 @@ describe("Workspace transport-failure invalidation", () => {
       type: "fake",
       async connect(): Promise<BackendHandle> {
         const generation = connects++;
+        const sync = fakeRpc();
         const shell: import("@cloudflare/computer-rpc").ShellRPC = {
           async exec() {
             if (generation === 0) {
               throw new Error("Attempted to use RPC stub after it has been disposed.");
+            }
+            if ((await sync.readEntry("/required.txt")) === null) {
+              throw new Error("replacement container was not pushed before exec");
             }
             starts++;
             return Object.assign(
@@ -1519,8 +1583,7 @@ describe("Workspace transport-failure invalidation", () => {
           disposeExec: () => Promise.reject(new Error("not used")),
         };
         return {
-          rpc: { sync: fakeRpc(), shell },
-          sync: "none",
+          rpc: { sync, shell },
           close: async () => {
             closes++;
           },
@@ -1528,6 +1591,7 @@ describe("Workspace transport-failure invalidation", () => {
       },
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    await ws.fs.writeFile("/required.txt", "present");
 
     const result = await (await ws.runtime.exec("true")).result();
     expect(result.exitCode).toBe(0);

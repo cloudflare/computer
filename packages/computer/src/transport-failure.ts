@@ -31,7 +31,7 @@
 // inspection, and lets callers wrap an underlying cause for
 // observability without losing the classification.
 export class WorkspaceTransportError extends Error {
-  override readonly name = "WorkspaceTransportError";
+  override readonly name: string = "WorkspaceTransportError";
 
   constructor(message: string, options?: { cause?: unknown }) {
     super(message);
@@ -39,6 +39,13 @@ export class WorkspaceTransportError extends Error {
       (this as Error & { cause?: unknown }).cause = options.cause;
     }
   }
+}
+
+// A transport failure that happened before a side-effecting request
+// was dispatched. The reconnect loop may replay the whole operation,
+// including any completed preflight needed by the replacement handle.
+export class WorkspacePreDispatchTransportError extends WorkspaceTransportError {
+  override readonly name = "WorkspacePreDispatchTransportError";
 }
 
 // Phrases that consistently indicate a dead transport. Conservative
@@ -89,7 +96,12 @@ export function isWorkspaceTransportFailure(error: unknown): boolean {
       // .name survives a Workers RPC structured-clone hop even
       // when the subclass identity does not, so cross-DO callers
       // still classify a WorkspaceTransportError correctly.
-      if (current.name === "WorkspaceTransportError") return true;
+      if (
+        current.name === "WorkspaceTransportError" ||
+        current.name === "WorkspacePreDispatchTransportError"
+      ) {
+        return true;
+      }
       for (const pattern of TRANSPORT_PATTERNS) {
         if (pattern.test(current.message)) return true;
       }
@@ -112,6 +124,12 @@ export function isWorkspacePreDispatchTransportFailure(error: unknown): boolean 
   let current: unknown = error;
   for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth++) {
     if (!(current instanceof Error)) return false;
+    if (
+      current instanceof WorkspacePreDispatchTransportError ||
+      current.name === "WorkspacePreDispatchTransportError"
+    ) {
+      return true;
+    }
     for (const pattern of PRE_DISPATCH_PATTERNS) {
       if (pattern.test(current.message)) return true;
     }
