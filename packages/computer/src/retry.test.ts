@@ -3,6 +3,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { WorkspaceTransportError } from "./transport-failure.js";
 import type {
   SyncRetryIntent,
   SyncRetryScheduler,
@@ -95,6 +96,69 @@ async function runCommand(ws: Workspace): Promise<WorkspaceRetryPendingSyncResul
 }
 
 describe("Workspace durable pending-sync retries", () => {
+  it("keeps post-command sync pending when reconnect reaches a replacement runtime", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    let connects = 0;
+    let replacementPulls = 0;
+    const backend: WorkspaceBackend = {
+      id: "sandbox",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const connection = connects++;
+        const runtimeId = connection === 0 ? "runtime-a" : "runtime-b";
+        const sync = retryBackend({
+          onExec() {},
+          async fetchChanges() {
+            if (connection === 0) {
+              throw new WorkspaceTransportError("container exited during post-exec pull");
+            }
+            replacementPulls++;
+            return {
+              currentCursor: { rev: 0, path: null },
+              appliedPushCursor: { rev: 0, path: null },
+              stream: new ReadableStream<ChangeEntry>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+            };
+          },
+        });
+        const handle = await sync.connect({} as never);
+        return { ...handle, runtimeId };
+      },
+    };
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+      retry: { initialDelayMs: 100, maxDelayMs: 1_000, maxAttempts: 3 },
+      now: () => 5_000,
+    });
+
+    const handle = await ws.runtime.exec("build", { encoding: "utf8" });
+    const result = await handle.result();
+
+    expect(result.sync).toMatchObject({
+      status: "pending",
+      error: expect.stringContaining("container exited during post-exec pull"),
+    });
+    expect(replacementPulls).toBe(0);
+    expect(scheduler.intents.get("sandbox")).toEqual({
+      backend: "sandbox",
+      runtimeId: "runtime-a",
+      attempt: 1,
+      notBefore: 5_100,
+    });
+
+    await expect(ws.retryPendingSync("sandbox")).resolves.toMatchObject({
+      status: "pending",
+      runtimeId: "runtime-a",
+      attempt: 2,
+    });
+    expect(replacementPulls).toBe(0);
+  });
+
   it("schedules the exact durable retry intent after a post-command pull failure", async () => {
     const scheduler = new MemoryRetryScheduler();
     let execs = 0;

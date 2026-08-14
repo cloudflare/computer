@@ -53,6 +53,9 @@ import {
 
 export interface SyncRetryIntent {
   backend: string;
+  // Container process whose post-command changes are pending. Durable
+  // retries must not report success against an empty replacement.
+  runtimeId?: string;
   attempt: number;
   notBefore: number;
 }
@@ -78,8 +81,21 @@ export interface SyncRetryOptions {
 export type WorkspaceRetryPendingSyncResult =
   | { status: "idle"; backend: string }
   | { status: "complete"; backend: string; applied: number; skipped: ApplyResult["skipped"] }
-  | { status: "pending"; backend: string; attempt: number; notBefore: number; error: string }
-  | { status: "exhausted"; backend: string; attempt: number; error: string };
+  | {
+      status: "pending";
+      backend: string;
+      runtimeId?: string;
+      attempt: number;
+      notBefore: number;
+      error: string;
+    }
+  | {
+      status: "exhausted";
+      backend: string;
+      runtimeId?: string;
+      attempt: number;
+      error: string;
+    };
 
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
@@ -615,12 +631,13 @@ export class Workspace {
         return {
           status: "exhausted",
           backend: resolvedId,
+          ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
           attempt: intent.attempt,
           error: "pending sync retry attempts exhausted",
         };
       }
       try {
-        const result = await this.#pullResolved(resolvedId);
+        const result = await this.#pullResolved(resolvedId, intent.runtimeId);
         await scheduler.clear(resolvedId);
         return {
           status: "complete",
@@ -634,18 +651,19 @@ export class Workspace {
           return {
             status: "exhausted",
             backend: resolvedId,
+            ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
             attempt: intent.attempt,
             error: message,
           };
         }
-        const next = this.#retryIntent(resolvedId, intent.attempt + 1);
+        const next = this.#retryIntent(resolvedId, intent.attempt + 1, intent.runtimeId);
         await scheduler.schedule(next);
         return { status: "pending", ...next, error: message };
       }
     });
   }
 
-  #pullResolved(resolvedId: string | undefined): Promise<ApplyResult> {
+  #pullResolved(resolvedId: string | undefined, expectedRuntimeId?: string): Promise<ApplyResult> {
     return withSpan(
       this.#observer,
       "workspace.sync.pull",
@@ -655,6 +673,9 @@ export class Workspace {
           return { applied: 0, skipped: [] };
         }
         return this.#runWithReconnect(resolvedId, "pull", async (handle) => {
+          if (expectedRuntimeId !== undefined) {
+            assertExecutionRuntime("post-command sync", expectedRuntimeId, handle.runtimeId);
+          }
           if (handle.sync === "none") return { applied: 0, skipped: [] };
           return pullOnce(this.#db, handle.rpc.sync, resolvedId);
         });
@@ -667,21 +688,26 @@ export class Workspace {
     );
   }
 
-  async #schedulePendingSync(id: string): Promise<void> {
+  async #schedulePendingSync(id: string, runtimeId?: string): Promise<void> {
     const scheduler = this.#retryScheduler;
     if (scheduler === undefined) return;
     await this.#serialize(id, async (resolvedId) => {
       if (resolvedId === undefined || (await scheduler.get(resolvedId)) !== undefined) return;
-      await scheduler.schedule(this.#retryIntent(resolvedId, 1));
+      await scheduler.schedule(this.#retryIntent(resolvedId, 1, runtimeId));
     });
   }
 
-  #retryIntent(backend: string, attempt: number): SyncRetryIntent {
+  #retryIntent(backend: string, attempt: number, runtimeId?: string): SyncRetryIntent {
     const delay = Math.min(
       this.#retryMaxDelayMs,
       this.#retryInitialDelayMs * 2 ** Math.max(0, attempt - 1),
     );
-    return { backend, attempt, notBefore: this.#now() + delay };
+    return {
+      backend,
+      ...(runtimeId === undefined ? {} : { runtimeId }),
+      attempt,
+      notBefore: this.#now() + delay,
+    };
   }
 
   // Drop and close a cached handle after a transport failure.
@@ -724,7 +750,18 @@ export class Workspace {
         handle = await this.#handleFor(id);
         return await op(handle);
       } catch (error) {
-        if (!isWorkspaceTransportFailure(error)) throw error;
+        if (!isWorkspaceTransportFailure(error)) {
+          if (firstError !== undefined && (error as { code?: unknown })?.code === "EEXEC_LOST") {
+            throw Object.assign(
+              new Error(
+                `${safeErrorMessage(error)} Original transport failure: ${safeErrorMessage(firstError)}`,
+                { cause: firstError },
+              ),
+              { name: "WorkspaceExecutionLostError", code: "EEXEC_LOST" },
+            );
+          }
+          throw error;
+        }
         if (handle !== undefined) await this.#invalidateHandle(id, handle);
 
         // A failed connection is always before dispatch. Once an
@@ -1092,8 +1129,8 @@ export class Workspace {
       rpc,
       {
         push: () => this.push(id),
-        pull: () => this.pull(id),
-        onPullPending: () => this.#schedulePendingSync(id),
+        pull: (runtimeId) => this.#pullForExec(id, runtimeId),
+        onPullPending: (_error, runtimeId) => this.#schedulePendingSync(id, runtimeId),
       },
       this.#observer,
       dispatch,
@@ -1101,6 +1138,10 @@ export class Workspace {
     );
     this.#shells.set(id, shell);
     return shell;
+  }
+
+  #pullForExec(id: string, runtimeId?: string): Promise<ApplyResult> {
+    return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId, runtimeId));
   }
 
   #pushForExec(id: string, handle: BackendHandle): Promise<number> {

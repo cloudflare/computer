@@ -94,8 +94,8 @@ export interface GetExecOptions {
 // skipped read-only entries on the sync outcome.
 export interface Sync {
   push(): Promise<number>;
-  pull(): Promise<ApplyResult>;
-  onPullPending?(error: unknown): Promise<void>;
+  pull(runtimeId?: string): Promise<ApplyResult>;
+  onPullPending?(error: unknown, runtimeId?: string): Promise<void>;
 }
 
 type ShellExecInput = Parameters<ShellRPC["exec"]>[0];
@@ -163,7 +163,7 @@ export class CommandExecutor {
     // call — because the inner stream is handed off to the caller
     // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    const { stream, outcome } = withPostPull(drained, this.#sync);
+    const { stream, outcome } = withPostPull(drained, this.#sync, envelope.runtimeId);
     return {
       id: envelope.id,
       runtimeId: envelope.runtimeId,
@@ -183,7 +183,7 @@ export class CommandExecutor {
         ? await this.#shell.getExec({ id, after })
         : await this.#getDispatch({ id, after, runtimeId: options.runtimeId });
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    const { stream, outcome } = withPostPull(drained, this.#sync);
+    const { stream, outcome } = withPostPull(drained, this.#sync, envelope.runtimeId);
     return { id, runtimeId: envelope.runtimeId, events: stream, sync: { pushed: 0, outcome } };
   }
 
@@ -231,6 +231,7 @@ export interface PostPullOutcome {
 export function withPostPull(
   source: ReadableStream<ExecEvent>,
   sync: Sync,
+  runtimeId?: string,
 ): { stream: ReadableStream<ExecEvent>; outcome: Promise<PostPullOutcome> } {
   const reader = source.getReader();
   let resolveOutcome!: (outcome: PostPullOutcome) => void;
@@ -247,7 +248,7 @@ export function withPostPull(
             return;
           }
           reader.releaseLock();
-          const pulled = await runPostPull(sync);
+          const pulled = await runPostPull(sync, runtimeId);
           resolveOutcome(pulled);
           controller.close();
         } catch (error) {
@@ -280,9 +281,9 @@ export function withPostPull(
   return { stream, outcome };
 }
 
-async function runPostPull(sync: Sync): Promise<PostPullOutcome> {
+async function runPostPull(sync: Sync, runtimeId?: string): Promise<PostPullOutcome> {
   try {
-    const result = await sync.pull();
+    const result = await sync.pull(runtimeId);
     return {
       applied: result.applied,
       skipped: result.skipped,
@@ -290,7 +291,7 @@ async function runPostPull(sync: Sync): Promise<PostPullOutcome> {
     };
   } catch (error) {
     try {
-      await sync.onPullPending?.(error);
+      await sync.onPullPending?.(error, runtimeId);
     } catch {}
     return {
       applied: 0,
