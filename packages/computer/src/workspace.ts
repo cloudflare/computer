@@ -260,6 +260,10 @@ export class Workspace {
   // unified backend handle. Cleared alongside #shells so an adapter
   // never outlives the shell it wraps.
   readonly #commandHandles = new Map<string, WorkspaceModuleBackendHandle>();
+  // Last known container runtime for each backend/execution id. Kept
+  // across connection replacement so direct lifecycle calls can fence
+  // process-local state against a new container process.
+  readonly #executionRuntimeIds = new Map<string, string>();
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
@@ -854,23 +858,52 @@ export class Workspace {
           env: input.env,
           stdin: input.stdin,
         });
+        this.#rememberExecutionRuntime(id, envelope.id, envelope.runtimeId);
         return {
           id: envelope.id,
+          runtimeId: envelope.runtimeId,
           events: envelope.events as ReadableStream<WorkspaceRuntimeEvent>,
           sync: envelope.sync,
         };
       },
-      getExec: async ({ id: execId, after }) => {
+      getExec: async ({ id: execId, after, runtimeId }) => {
         const resume = after === undefined ? "full" : after;
-        const envelope = await shell.get(execId, { resume });
+        const expectedRuntimeId =
+          runtimeId ?? this.#executionRuntimeIds.get(this.#executionRuntimeKey(id, execId));
+        const envelope = await shell.get(execId, { resume, runtimeId: expectedRuntimeId });
+        this.#rememberExecutionRuntime(id, envelope.id, envelope.runtimeId);
         return {
           id: envelope.id,
+          runtimeId: envelope.runtimeId,
           events: envelope.events as ReadableStream<WorkspaceRuntimeEvent>,
           sync: envelope.sync,
         };
       },
-      killExec: ({ id: execId, signal }) => shell.kill(execId, signal),
-      disposeExec: ({ id: execId }) => shell.dispose(execId),
+      killExec: ({ id: execId, signal, runtimeId }) =>
+        this.#runExecutionOperation(
+          id,
+          "shell.killExec",
+          execId,
+          runtimeId ?? this.#executionRuntimeIds.get(this.#executionRuntimeKey(id, execId)),
+          (shellRpc) => shellRpc.killExec({ id: execId, signal }),
+        ),
+      disposeExec: async ({ id: execId, runtimeId }) => {
+        const key = this.#executionRuntimeKey(id, execId);
+        const expectedRuntimeId = runtimeId ?? this.#executionRuntimeIds.get(key);
+        await this.#runExecutionOperation(
+          id,
+          "shell.disposeExec",
+          execId,
+          expectedRuntimeId,
+          (shellRpc) => shellRpc.disposeExec({ id: execId }),
+        );
+        if (
+          expectedRuntimeId === undefined ||
+          this.#executionRuntimeIds.get(key) === expectedRuntimeId
+        ) {
+          this.#executionRuntimeIds.delete(key);
+        }
+      },
     };
     this.#commandHandles.set(id, adapter);
     return adapter;
@@ -1032,15 +1065,26 @@ export class Workspace {
           const envelope = await spawnShell(handle.rpc.shell, input, this.#observer);
           return {
             pushed,
-            envelope: wrapShellEnvelope(envelope, (error) => this.#onShellError(id, handle, error)),
+            envelope: wrapShellEnvelope(
+              envelope,
+              (error) => this.#onShellError(id, handle, error),
+              handle.runtimeId,
+            ),
           };
         },
         "pre-dispatch",
       );
+    const getDispatch = (input: Parameters<ShellRPC["getExec"]>[0] & { runtimeId?: string }) =>
+      this.#runShellEnvelope(
+        id,
+        "shell.getExec",
+        (shell) => shell.getExec({ id: input.id, after: input.after }),
+        "always",
+        { executionId: input.id, runtimeId: input.runtimeId },
+      );
     const rpc: ShellRPC = {
       exec: async (input) => (await dispatch(input)).envelope,
-      getExec: (input) =>
-        this.#runShellEnvelope(id, "shell.getExec", (shell) => shell.getExec(input)),
+      getExec: (input) => getDispatch(input),
       killExec: (input) =>
         this.#runWithReconnect(id, "shell.killExec", (handle) => handle.rpc.shell.killExec(input)),
       disposeExec: (input) =>
@@ -1057,6 +1101,7 @@ export class Workspace {
       },
       this.#observer,
       dispatch,
+      getDispatch,
     );
     this.#shells.set(id, shell);
     return shell;
@@ -1085,16 +1130,51 @@ export class Workspace {
     operation: string,
     op: (shell: ShellRPC) => ReturnType<ShellRPC["exec"]>,
     policy: BackendRetryPolicy = "always",
+    expected?: { executionId: string; runtimeId?: string },
   ): ReturnType<ShellRPC["exec"]> {
     return this.#runWithReconnect(
       id,
       operation,
       async (handle) => {
+        if (expected !== undefined) {
+          assertExecutionRuntime(expected.executionId, expected.runtimeId, handle.runtimeId);
+        }
         const envelope = await op(handle.rpc.shell);
-        return wrapShellEnvelope(envelope, (error) => this.#onShellError(id, handle, error));
+        return wrapShellEnvelope(
+          envelope,
+          (error) => this.#onShellError(id, handle, error),
+          handle.runtimeId,
+        );
       },
       policy,
     );
+  }
+
+  #runExecutionOperation(
+    id: string,
+    operation: string,
+    executionId: string,
+    runtimeId: string | undefined,
+    op: (shell: ShellRPC) => Promise<void>,
+  ): Promise<void> {
+    return this.#runWithReconnect(id, operation, async (handle) => {
+      assertExecutionRuntime(executionId, runtimeId, handle.runtimeId);
+      await op(handle.rpc.shell);
+    });
+  }
+
+  #executionRuntimeKey(backendId: string, executionId: string): string {
+    return `${backendId}\u0000${executionId}`;
+  }
+
+  #rememberExecutionRuntime(
+    backendId: string,
+    executionId: string,
+    runtimeId: string | undefined,
+  ): void {
+    if (runtimeId !== undefined) {
+      this.#executionRuntimeIds.set(this.#executionRuntimeKey(backendId, executionId), runtimeId);
+    }
   }
 
   // Invalidate the cached handle for `id` when a shell-routed RPC
@@ -1108,6 +1188,20 @@ export class Workspace {
   }
 }
 
+function assertExecutionRuntime(
+  executionId: string,
+  expectedRuntimeId: string | undefined,
+  currentRuntimeId: string | undefined,
+): void {
+  if (expectedRuntimeId === undefined || currentRuntimeId === expectedRuntimeId) return;
+  throw Object.assign(
+    new Error(
+      `Execution ${JSON.stringify(executionId)} was lost when its container runtime was replaced.`,
+    ),
+    { name: "WorkspaceExecutionLostError", code: "EEXEC_LOST" },
+  );
+}
+
 // Keep ownership of the original capnweb result envelope while
 // replacing its event stream with a transport-aware wrapper. The
 // CommandExecutor disposes this local envelope when the stream ends;
@@ -1116,10 +1210,12 @@ export class Workspace {
 function wrapShellEnvelope(
   envelope: Awaited<ReturnType<ShellRPC["exec"]>>,
   onError: (error: unknown) => void,
-): Awaited<ReturnType<ShellRPC["exec"]>> {
+  runtimeId?: string,
+): Awaited<ReturnType<ShellRPC["exec"]>> & { runtimeId?: string } {
   let disposed = false;
   const wrapped = {
     id: envelope.id,
+    runtimeId,
     events: watchStreamForTransportError(envelope.events, onError),
     [Symbol.dispose]() {
       if (disposed) return;

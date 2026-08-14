@@ -148,6 +148,10 @@ export interface ModuleExecutionInput {
 
 export interface ModuleExecutionEnvelope {
   id: string;
+  // Identity of the process-local backend runtime that owns this
+  // execution. Omitted by backends whose execution state is durable or
+  // shared with the host.
+  runtimeId?: string;
   events: ReadableStream<WorkspaceRuntimeEvent>;
   // Sync bracket stats for a backend that pairs with a remote store.
   // The pre-exec push count is known when the envelope is created;
@@ -162,9 +166,13 @@ export interface ModuleExecutionEnvelope {
 
 export interface WorkspaceModuleBackendHandle {
   exec(input: ModuleExecutionInput): Promise<ModuleExecutionEnvelope>;
-  getExec(input: { id: string; after?: number | "tail" }): Promise<ModuleExecutionEnvelope>;
-  killExec(input: { id: string; signal?: KillSignal }): Promise<void>;
-  disposeExec(input: { id: string }): Promise<void>;
+  getExec(input: {
+    id: string;
+    after?: number | "tail";
+    runtimeId?: string;
+  }): Promise<ModuleExecutionEnvelope>;
+  killExec(input: { id: string; signal?: KillSignal; runtimeId?: string }): Promise<void>;
+  disposeExec(input: { id: string; runtimeId?: string }): Promise<void>;
   // Tear down a backend-owned transport. The command adapter omits
   // it: a command backend's transport is closed through its
   // BackendHandle, not through the adapter the runtime consumes.

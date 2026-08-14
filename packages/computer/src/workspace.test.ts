@@ -1714,6 +1714,178 @@ describe("Workspace transport-failure invalidation", () => {
     });
   }
 
+  it("retries lifecycle operations when reconnect reaches the same runtime", async () => {
+    let connects = 0;
+    let killCalls = 0;
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const connection = connects++;
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec(input) {
+            const id = input.id ?? "run";
+            return {
+              id,
+              events: new ReadableStream({
+                start(controller) {
+                  controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
+                  controller.close();
+                },
+              }),
+            };
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          async killExec() {
+            killCalls++;
+            if (connection === 0) throw new WorkspaceTransportError("WebSocket closed");
+          },
+          disposeExec: () => Promise.reject(new Error("not used")),
+        };
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          runtimeId: "runtime-a",
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const execution = await ws.runtime.exec("true", { id: "run" });
+    await execution.result();
+
+    await expect(execution.kill()).resolves.toBeUndefined();
+    expect(connects).toBe(2);
+    expect(killCalls).toBe(2);
+  });
+
+  for (const operation of ["getExec", "killExec", "disposeExec"] as const) {
+    it(`${operation} rejects when reconnect reaches a replacement runtime`, async () => {
+      let connects = 0;
+      let replacementCalls = 0;
+      const backend: WorkspaceBackend = {
+        id: "only",
+        type: "fake",
+        async connect(): Promise<BackendHandle> {
+          const connection = connects++;
+          const runtimeId = connection === 0 ? "runtime-a" : "runtime-b";
+          const failOrCountReplacement = () => {
+            if (connection === 0) throw new WorkspaceTransportError("WebSocket closed");
+            replacementCalls++;
+          };
+          const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+            async exec(input) {
+              const id = input.id ?? "run";
+              return {
+                id,
+                events: new ReadableStream({
+                  start(controller) {
+                    controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
+                    controller.close();
+                  },
+                }),
+              };
+            },
+            async getExec() {
+              failOrCountReplacement();
+              return {
+                id: "run",
+                events: new ReadableStream({
+                  start(controller) {
+                    controller.enqueue({ id: "run", seq: 1, name: "exit", code: 0 });
+                    controller.close();
+                  },
+                }),
+              };
+            },
+            async killExec() {
+              failOrCountReplacement();
+            },
+            async disposeExec() {
+              failOrCountReplacement();
+            },
+          };
+          return {
+            rpc: { sync: fakeRpc(), shell },
+            sync: "none",
+            runtimeId,
+            close: async () => {},
+          };
+        },
+      };
+      const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+      const execution = await ws.runtime.exec("true", { id: "run" });
+      await execution.result();
+
+      let result: Promise<unknown>;
+      if (operation === "getExec") {
+        result = ws.runtime.getExec("run");
+      } else if (operation === "killExec") {
+        result = execution.kill();
+      } else {
+        result = ws.runtime.disposeExec("run");
+      }
+
+      await expect(result).rejects.toMatchObject({ code: "EEXEC_LOST" });
+      expect(connects).toBe(2);
+      expect(replacementCalls).toBe(0);
+    });
+  }
+
+  it("an old execution handle cannot target a reused id in a replacement runtime", async () => {
+    let connects = 0;
+    let closeFirst: (() => void) | undefined;
+    let replacementKills = 0;
+    const firstClosed = new Promise<void>((resolve) => {
+      closeFirst = resolve;
+    });
+    const backend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        const connection = connects++;
+        const runtimeId = connection === 0 ? "runtime-a" : "runtime-b";
+        const shell: import("@cloudflare/computer-rpc").ShellRPC = {
+          async exec(input) {
+            const id = input.id ?? "reused";
+            return {
+              id,
+              events: new ReadableStream({
+                start(controller) {
+                  controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
+                  controller.close();
+                },
+              }),
+            };
+          },
+          getExec: () => Promise.reject(new Error("not used")),
+          async killExec() {
+            replacementKills++;
+          },
+          async disposeExec() {},
+        };
+        return {
+          rpc: { sync: fakeRpc(), shell },
+          sync: "none",
+          runtimeId,
+          closed: connection === 0 ? firstClosed : undefined,
+          close: async () => {},
+        };
+      },
+    };
+    const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
+    const oldExecution = await ws.runtime.exec("old", { id: "reused" });
+    await oldExecution.result();
+
+    closeFirst?.();
+    await Promise.resolve();
+    const replacement = await ws.runtime.exec("new", { id: "reused" });
+    await replacement.result();
+
+    await expect(oldExecution.kill()).rejects.toMatchObject({ code: "EEXEC_LOST" });
+    expect(replacementKills).toBe(0);
+  });
+
   it("does not reconnect shell.exec for a non-transport RPC error", async () => {
     let connects = 0;
     let calls = 0;

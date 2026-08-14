@@ -49,6 +49,7 @@ export type KillSignal = "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
 // reaches its end, carrying the post-drain pull result.
 export interface CommandExecution {
   id: string;
+  runtimeId?: string;
   events: ReadableStream<ExecEvent>;
   sync: { pushed: number; outcome: Promise<PostPullOutcome> };
 }
@@ -79,6 +80,9 @@ export interface GetExecOptions {
   // number resumes from that seq+1. Omit to receive every
   // event from the start of the run (replays the whole log).
   resume?: "tail" | "full" | number;
+  // Expected process identity for process-local replay. Internal to
+  // the Workspace command adapter; direct ShellRPC callers omit it.
+  runtimeId?: string;
 }
 
 // Push/pull bracket plumbing. CommandExecutor doesn't know about
@@ -95,7 +99,8 @@ export interface Sync {
 }
 
 type ShellExecInput = Parameters<ShellRPC["exec"]>[0];
-type ShellExecEnvelope = Awaited<ReturnType<ShellRPC["exec"]>>;
+type ShellGetInput = Parameters<ShellRPC["getExec"]>[0] & { runtimeId?: string };
+type ShellExecEnvelope = Awaited<ReturnType<ShellRPC["exec"]>> & { runtimeId?: string };
 
 // Optional host-owned dispatch boundary. The container Workspace uses
 // this to keep its pre-exec push and shell spawn on one backend handle;
@@ -106,23 +111,27 @@ export interface CommandDispatchResult {
 }
 
 export type CommandDispatch = (input: ShellExecInput) => Promise<CommandDispatchResult>;
+export type CommandGetDispatch = (input: ShellGetInput) => Promise<ShellExecEnvelope>;
 
 export class CommandExecutor {
   readonly #shell: ShellRPC;
   readonly #sync: Sync;
   readonly #observer: WorkspaceObserver;
   readonly #dispatch: CommandDispatch | undefined;
+  readonly #getDispatch: CommandGetDispatch | undefined;
 
   constructor(
     shell: ShellRPC,
     sync: Sync,
     observer: WorkspaceObserver = noopObserver,
     dispatch?: CommandDispatch,
+    getDispatch?: CommandGetDispatch,
   ) {
     this.#shell = shell;
     this.#sync = sync;
     this.#observer = observer;
     this.#dispatch = dispatch;
+    this.#getDispatch = getDispatch;
   }
 
   // Spawn a command. Pushes host-side writes first so the command
@@ -155,7 +164,12 @@ export class CommandExecutor {
     // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
     const { stream, outcome } = withPostPull(drained, this.#sync);
-    return { id: envelope.id, events: stream, sync: { pushed, outcome } };
+    return {
+      id: envelope.id,
+      runtimeId: envelope.runtimeId,
+      events: stream,
+      sync: { pushed, outcome },
+    };
   }
 
   // Reattach to an in-flight or recently-completed exec. Reattach
@@ -164,10 +178,13 @@ export class CommandExecutor {
   // reattach and drain.
   async get(id: string, options: GetExecOptions = {}): Promise<CommandExecution> {
     const after = resumeToAfter(options.resume);
-    const envelope = await this.#shell.getExec({ id, after });
+    const envelope: ShellExecEnvelope =
+      this.#getDispatch === undefined
+        ? await this.#shell.getExec({ id, after })
+        : await this.#getDispatch({ id, after, runtimeId: options.runtimeId });
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
     const { stream, outcome } = withPostPull(drained, this.#sync);
-    return { id, events: stream, sync: { pushed: 0, outcome } };
+    return { id, runtimeId: envelope.runtimeId, events: stream, sync: { pushed: 0, outcome } };
   }
 
   kill(id: string, signal?: KillSignal): Promise<void> {

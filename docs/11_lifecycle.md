@@ -191,7 +191,7 @@ Because the revision counters drive every sync operation, a torn sync RPC is saf
   overlap with.
 - **`exec` dispatch.** A failed connection setup or a local disposed-stub error happens before dispatch and can be retried once. Other transport failures are ambiguous: computerd may have accepted the command before the response was lost. The backend invalidates the handle and reports the failure without replaying the command.
 - **`exec.events`.** Each event carries a monotonic `seq` per exec ID and callers can reattach with `getExec({ id, after: seq })`. The current automatic recovery boundary does not reattach a torn event stream; it reports the stream failure and leaves the next explicit operation to reconnect.
-- **`getExec`, `killExec`, and `disposeExec`.** These ID-addressed operations are safe to repeat and get one reconnect retry.
+- **`getExec`, `killExec`, and `disposeExec`.** These ID-addressed operations get one reconnect retry when the connection still points at the same container runtime UUID. A replacement process has an empty execution registry, so a runtime mismatch returns `EEXEC_LOST` without sending the old execution ID to the replacement.
 
 This is why the sync protocol survives transport failures: every sync operation has a persistent cursor, and every receiver is idempotent. Shell commands require the separate no-replay boundary above because their side effects are not generally idempotent. capnweb itself is fragile, but the protocols layered on top define where recovery is safe.
 
