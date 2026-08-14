@@ -73,6 +73,11 @@ export interface BackendHandle {
   // The composite WorkspaceRPC stub pointing at the computerd
   // backend produced.
   rpc: WorkspaceRPC;
+  // Durable identity of the runtime process behind this connection.
+  // Reconnecting to the same process preserves it; a replacement
+  // process receives a new id. Backends without process-local state
+  // may omit it.
+  runtimeId?: string;
   // Declares whether this backend pairs with an independent
   // remote store that the Workspace must sync against.
   //

@@ -42,6 +42,7 @@ interface FakeHost {
   gatewayToken?: string;
   running: boolean;
   exit: { exitedAt: number; reason: string } | null;
+  runtimeId: string | null;
   simulateExit(reason: string): void;
 }
 
@@ -54,6 +55,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
     calls,
     running: false,
     exit: opts.priorExit ?? null,
+    runtimeId: null,
     simulateExit(reason: string) {
       state.exit = { exitedAt: Date.now(), reason };
       state.running = false;
@@ -73,10 +75,12 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.startEnv = env;
       state.enableInternet = enableInternet;
       await opts.start?.();
+      if (!state.running) state.runtimeId = crypto.randomUUID();
       state.running = true;
       // A successful start clears any prior exit, matching
       // WorkspaceContainerAPI.start.
       state.exit = null;
+      return { runtimeId: state.runtimeId ?? "missing-runtime" };
     },
     async interceptOutboundHttp(host, ref) {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
@@ -115,6 +119,8 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       }
       state.running = true;
       state.exit = null;
+      state.runtimeId = crypto.randomUUID();
+      return { runtimeId: state.runtimeId };
     },
     async status() {
       calls.push({ name: "status", args: [] });

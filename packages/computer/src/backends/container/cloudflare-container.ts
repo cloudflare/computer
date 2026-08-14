@@ -210,8 +210,9 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       MOUNT_POINT: "/workspace",
       ...this.#options.containerEnv,
     };
+    let runtimeId: string;
     try {
-      await host.start(env, this.#egress.mode === "direct");
+      ({ runtimeId } = await host.start(env, this.#egress.mode === "direct"));
     } catch (error) {
       throw new WorkspaceTransportError(
         this.#formatStageError("start", {
@@ -247,7 +248,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     // the upgrade can arrive before the POST resolves.
     this.#armUpgrade();
 
-    await this.#readyWithRestarts(host, env, deadline, priorExit);
+    runtimeId = await this.#readyWithRestarts(host, env, deadline, priorExit, runtimeId);
     await this.#postConnect(host, deadline);
     const ws = await this.#waitForUpgrade(deadline);
 
@@ -300,6 +301,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
     const handle: BackendHandle = {
       rpc: stub as unknown as WorkspaceRPC,
+      runtimeId,
       closed,
       close: async () => {
         stopHeartbeat?.();
@@ -404,7 +406,8 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     env: Record<string, string>,
     deadline: number,
     priorExit: { exitedAt: number; reason: string } | null,
-  ): Promise<void> {
+    initialRuntimeId: string,
+  ): Promise<string> {
     const maxAttempts = this.#options.restartAttempts + 1;
     // Split the remaining time across attempts so a failing
     // first attempt doesn't starve the restart-retry. Floor at
@@ -415,6 +418,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     let attempt = 0;
     let restarts = 0;
     let lastError: unknown;
+    let runtimeId = initialRuntimeId;
 
     while (attempt < maxAttempts) {
       attempt++;
@@ -426,11 +430,11 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
           return false;
         },
       );
-      if (ok) return;
+      if (ok) return runtimeId;
 
       if (attempt < maxAttempts) {
         try {
-          await host.restart(env, this.#egress.mode === "direct");
+          ({ runtimeId } = await host.restart(env, this.#egress.mode === "direct"));
           restarts++;
         } catch (error) {
           this.#rejectUpgrade?.(error);

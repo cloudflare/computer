@@ -26,6 +26,10 @@ import {
   destroyContainerExpectingExit,
   installContainerMonitor,
 } from "./container-lifecycle.js";
+import {
+  type ContainerRuntimeIdentity,
+  CurrentContainerRuntimeIdentity,
+} from "./container-runtime-identity.js";
 
 export type { ContainerExitInfo } from "./container-lifecycle.js";
 
@@ -42,11 +46,15 @@ export interface WorkspaceRef {
 // Driver surface CloudflareContainerBackend talks to. Implemented
 // by WorkspaceContainerAPI below; exposed on consumer DOs through
 // the `ws` accessor that withWorkspaceContainer installs.
+export interface ContainerRuntimeInfo {
+  runtimeId: string;
+}
+
 export interface IWorkspaceContainerAPI {
-  // Idempotent start. Returns once the runtime has accepted the
-  // start command; readiness is verified by the backend through
-  // probeComputerdHealth against port().
-  start(env: Record<string, string>, enableInternet: boolean): Promise<void>;
+  // Idempotent start. Returns the durable identity of the running
+  // container process once the runtime has accepted the start command;
+  // readiness is verified by the backend through probeComputerdHealth.
+  start(env: Record<string, string>, enableInternet: boolean): Promise<ContainerRuntimeInfo>;
 
   // Wire `host` → workspace inside the container's egress table.
   // Called once per backend connect(). The implementation
@@ -69,7 +77,7 @@ export interface IWorkspaceContainerAPI {
   // current generation dead. Implementation: destroy() the
   // container, then start({ env }). Callers bound the number of
   // restart attempts — this method does no looping of its own.
-  restart(env: Record<string, string>, enableInternet: boolean): Promise<void>;
+  restart(env: Record<string, string>, enableInternet: boolean): Promise<ContainerRuntimeInfo>;
 
   // Coarse diagnostic state. The `running` flag reports whether
   // the platform still has a container instance attached; it does
@@ -95,6 +103,7 @@ export interface IWorkspaceContainerAPI {
 export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContainerAPI {
   readonly #container: NonNullable<DurableObjectState["container"]>;
   readonly #ctx: DurableObjectState;
+  readonly #runtimeIdentity: CurrentContainerRuntimeIdentity;
 
   constructor(ctx: DurableObjectState) {
     super();
@@ -103,6 +112,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     }
     this.#container = ctx.container;
     this.#ctx = ctx;
+    this.#runtimeIdentity = new CurrentContainerRuntimeIdentity(ctx.storage);
   }
 
   async start(env: Record<string, string>, enableInternet: boolean) {
@@ -113,6 +123,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     // destroy resolves, so guarding the start against it would let
     // a stale-running flag skip the re-launch entirely.
     const priorExit = containerExitInfo(this.#ctx);
+    let runtime: ContainerRuntimeIdentity;
     if (priorExit !== null) {
       try {
         await destroyContainerExpectingExit(this.#ctx, this.#container);
@@ -120,11 +131,17 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
         // best-effort — the next start() will surface any real
         // platform-side failure.
       }
-      this.#container.start({ enableInternet, env });
+      runtime = await this.#launch(env, enableInternet);
     } else if (!this.#container.running) {
-      this.#container.start({ enableInternet, env });
+      runtime = await this.#launch(env, enableInternet);
+    } else {
+      // A Durable Object incarnation can be reconstructed while its
+      // container stays alive. Reuse the durable runtime id rather
+      // than treating the new WebSocket as a new process.
+      runtime = (await this.#runtimeIdentity.get()) ?? (await this.#runtimeIdentity.markStarted());
     }
-    installContainerMonitor(this.#ctx, this.#container);
+    installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
+    return { runtimeId: runtime.id };
   }
 
   async restart(env: Record<string, string>, enableInternet: boolean) {
@@ -140,8 +157,20 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       // succeed against a fresh generation or surface its own
       // failure.
     }
-    this.#container.start({ enableInternet, env });
-    installContainerMonitor(this.#ctx, this.#container);
+    const runtime = await this.#launch(env, enableInternet);
+    installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
+    return { runtimeId: runtime.id };
+  }
+
+  async #launch(env: Record<string, string>, enableInternet: boolean) {
+    const runtime = await this.#runtimeIdentity.markStarted();
+    try {
+      this.#container.start({ enableInternet, env });
+      return runtime;
+    } catch (error) {
+      await this.#runtimeIdentity.clear(runtime);
+      throw error;
+    }
   }
 
   async status() {
