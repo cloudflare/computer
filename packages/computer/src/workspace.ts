@@ -95,7 +95,8 @@ export type WorkspaceRetryPendingSyncResult =
       runtimeId?: string;
       attempt: number;
       error: string;
-    };
+    }
+  | { status: "lost"; backend: string; runtimeId: string; error: string };
 
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
@@ -647,6 +648,18 @@ export class Workspace {
         };
       } catch (error) {
         const message = safeErrorMessage(error);
+        if (
+          intent.runtimeId !== undefined &&
+          (error as { code?: unknown } | null)?.code === "EEXEC_LOST"
+        ) {
+          await scheduler.clear(resolvedId);
+          return {
+            status: "lost",
+            backend: resolvedId,
+            runtimeId: intent.runtimeId,
+            error: message,
+          };
+        }
         if (intent.attempt >= this.#retryMaxAttempts) {
           return {
             status: "exhausted",
@@ -692,7 +705,11 @@ export class Workspace {
     const scheduler = this.#retryScheduler;
     if (scheduler === undefined) return;
     await this.#serialize(id, async (resolvedId) => {
-      if (resolvedId === undefined || (await scheduler.get(resolvedId)) !== undefined) return;
+      if (resolvedId === undefined) return;
+      const existing = await scheduler.get(resolvedId);
+      if (existing !== undefined && (runtimeId === undefined || existing.runtimeId === runtimeId)) {
+        return;
+      }
       await scheduler.schedule(this.#retryIntent(resolvedId, 1, runtimeId));
     });
   }

@@ -96,10 +96,11 @@ async function runCommand(ws: Workspace): Promise<WorkspaceRetryPendingSyncResul
 }
 
 describe("Workspace durable pending-sync retries", () => {
-  it("keeps post-command sync pending when reconnect reaches a replacement runtime", async () => {
+  it("clears a lost runtime intent so the live runtime can schedule a new one", async () => {
     const scheduler = new MemoryRetryScheduler();
     let connects = 0;
     let replacementPulls = 0;
+    let failLivePull = false;
     const backend: WorkspaceBackend = {
       id: "sandbox",
       type: "fake",
@@ -112,6 +113,7 @@ describe("Workspace durable pending-sync retries", () => {
             if (connection === 0) {
               throw new WorkspaceTransportError("container exited during post-exec pull");
             }
+            if (failLivePull) throw new Error("live runtime pull failed");
             replacementPulls++;
             return {
               currentCursor: { rev: 0, path: null },
@@ -152,11 +154,59 @@ describe("Workspace durable pending-sync retries", () => {
     });
 
     await expect(ws.retryPendingSync("sandbox")).resolves.toMatchObject({
-      status: "pending",
+      status: "lost",
       runtimeId: "runtime-a",
-      attempt: 2,
     });
     expect(replacementPulls).toBe(0);
+    expect(scheduler.intents.has("sandbox")).toBe(false);
+    expect(scheduler.cleared).toEqual(["sandbox"]);
+
+    failLivePull = true;
+    await runCommand(ws);
+    expect(scheduler.intents.get("sandbox")).toEqual({
+      backend: "sandbox",
+      runtimeId: "runtime-b",
+      attempt: 1,
+      notBefore: 5_100,
+    });
+  });
+
+  it("replaces a stale runtime intent when a live runtime pull becomes pending", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    scheduler.intents.set("sandbox", {
+      backend: "sandbox",
+      runtimeId: "runtime-a",
+      attempt: 3,
+      notBefore: 0,
+    });
+    const base = retryBackend({
+      onExec() {},
+      async fetchChanges() {
+        throw new Error("runtime-b pull failed");
+      },
+    });
+    const backend: WorkspaceBackend = {
+      ...base,
+      async connect(host): Promise<BackendHandle> {
+        return { ...(await base.connect(host)), runtimeId: "runtime-b" };
+      },
+    };
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+      retry: { initialDelayMs: 100, maxDelayMs: 1_000, maxAttempts: 3 },
+      now: () => 5_000,
+    });
+
+    await runCommand(ws);
+
+    expect(scheduler.intents.get("sandbox")).toEqual({
+      backend: "sandbox",
+      runtimeId: "runtime-b",
+      attempt: 1,
+      notBefore: 5_100,
+    });
   });
 
   it("schedules the exact durable retry intent after a post-command pull failure", async () => {

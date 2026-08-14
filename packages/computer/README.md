@@ -476,9 +476,10 @@ fail; the result exposes `sync: { status: "pending", ... }`. Configure a
 `SyncRetryScheduler` on `Workspace` to persist one coalesced retry per
 backend, then call `workspace.retryPendingSync(backend)` from your DO's
 alarm. Retries use bounded exponential backoff and return `"exhausted"`
-after the configured maximum. The library does not own your DO's alarm.
-See `SyncRetryScheduler`, `SyncRetryIntent`, and `SyncRetryOptions` in
-the package exports.
+after the configured maximum. A container replacement returns `"lost"`
+and clears the unrecoverable intent so new work is not blocked. The library
+does not own your DO's alarm. See `SyncRetryScheduler`, `SyncRetryIntent`,
+and `SyncRetryOptions` in the package exports.
 
 ### Observability
 
