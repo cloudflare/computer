@@ -84,6 +84,9 @@ an incarnation boundary. What survives is:
   container-side cursor the DO has fetched). These are written via the
   same SQLite transaction as the data they describe, so they cannot
   drift out of sync with the store.
+- The latest container runtime UUID for each execution ID. This lets a
+  reconstructed Workspace reject stale get, kill, or dispose calls before
+  they can reach a replacement container that reused the same ID.
 
 On every new incarnation `Workspace.ready()` re-runs `#connect()`,
 which re-enters the backend's bootstrap sequence. If the container is

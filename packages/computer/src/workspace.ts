@@ -28,7 +28,7 @@ import {
 } from "./artifacts/index.js";
 import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { ExecutionRuntimeTracker } from "./execution-runtime-tracker.js";
+import { ExecutionRuntimeTracker, SqlExecutionRuntimeStore } from "./execution-runtime-tracker.js";
 import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
@@ -281,7 +281,7 @@ export class Workspace {
   // Last known container runtime for recent backend/execution ids.
   // Returned handles carry their own id; the bounded LRU supports
   // direct by-id lifecycle calls without growing for the DO lifetime.
-  readonly #executionRuntimes = new ExecutionRuntimeTracker();
+  readonly #executionRuntimes: ExecutionRuntimeTracker;
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
@@ -335,6 +335,10 @@ export class Workspace {
       : createDisabledArtifactsClient();
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
+    this.#executionRuntimes = new ExecutionRuntimeTracker(
+      1_024,
+      new SqlExecutionRuntimeStore(this.#db),
+    );
     this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
     const registered = (options.backends ?? []).slice();
     this.#backends = registered.filter(
@@ -1218,7 +1222,7 @@ export class Workspace {
   }
 
   #executionRuntimeKey(backendId: string, executionId: string): string {
-    return `${backendId}\u0000${executionId}`;
+    return JSON.stringify([backendId, executionId]);
   }
 
   #rememberExecutionRuntime(

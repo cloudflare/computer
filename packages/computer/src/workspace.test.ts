@@ -1886,6 +1886,75 @@ describe("Workspace transport-failure invalidation", () => {
     expect(replacementKills).toBe(0);
   });
 
+  it("persists execution runtime fencing across Workspace incarnations", async () => {
+    const storage = makeStorage();
+    const firstBackend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        return {
+          rpc: {
+            sync: fakeRpc(),
+            shell: {
+              async exec(input) {
+                const id = input.id ?? "persisted";
+                return {
+                  id,
+                  events: new ReadableStream({
+                    start(controller) {
+                      controller.enqueue({ id, seq: 1, name: "exit", code: 0 });
+                      controller.close();
+                    },
+                  }),
+                };
+              },
+              getExec: () => Promise.reject(new Error("not used")),
+              killExec: async () => {},
+              disposeExec: async () => {},
+            },
+          },
+          sync: "none",
+          runtimeId: "runtime-a",
+          close: async () => {},
+        };
+      },
+    };
+    const first = new Workspace({ storage, backends: [firstBackend] });
+    const execution = await first.runtime.exec("true", { id: "persisted" });
+    await execution.result();
+    await first.close();
+
+    let replacementKills = 0;
+    const replacementBackend: WorkspaceBackend = {
+      id: "only",
+      type: "fake",
+      async connect(): Promise<BackendHandle> {
+        return {
+          rpc: {
+            sync: fakeRpc(),
+            shell: {
+              exec: () => Promise.reject(new Error("not used")),
+              getExec: () => Promise.reject(new Error("not used")),
+              async killExec() {
+                replacementKills++;
+              },
+              disposeExec: async () => {},
+            },
+          },
+          sync: "none",
+          runtimeId: "runtime-b",
+          close: async () => {},
+        };
+      },
+    };
+    const recreated = new Workspace({ storage, backends: [replacementBackend] });
+
+    await expect(recreated.runtime.killExec("persisted")).rejects.toMatchObject({
+      code: "EEXEC_LOST",
+    });
+    expect(replacementKills).toBe(0);
+  });
+
   it("does not reconnect shell.exec for a non-transport RPC error", async () => {
     let connects = 0;
     let calls = 0;

@@ -106,7 +106,7 @@ Module backends use host capability calls against the authoritative Workspace an
 
 ## Lifecycle differences
 
-`container-shell` provides computerd's retained process log, replay, signals, and disposal. Execution handles are scoped to the UUID of the container process that accepted them, so they cannot target a reused execution id after process replacement.
+`container-shell` provides computerd's retained process log, replay, signals, and disposal. Execution handles are scoped to the UUID of the container process that accepted them, so they cannot target a reused execution id after process replacement. The latest UUID owner for each execution ID is stored in Workspace SQLite, with a bounded in-memory LRU cache, so direct by-ID operations preserve the fence across Durable Object incarnation and cache eviction.
 
 `worker-javascript` provides a Workspace-owned execution journal, retained result/events, host cancellation, and explicit disposal. Active Workers cannot be serialized across host restart; orphaned running records are reconciled to failed.
 
