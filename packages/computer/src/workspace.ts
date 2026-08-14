@@ -28,6 +28,7 @@ import {
 } from "./artifacts/index.js";
 import type { AssetsClient } from "./assets/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { ExecutionRuntimeTracker } from "./execution-runtime-tracker.js";
 import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
@@ -260,10 +261,10 @@ export class Workspace {
   // unified backend handle. Cleared alongside #shells so an adapter
   // never outlives the shell it wraps.
   readonly #commandHandles = new Map<string, WorkspaceModuleBackendHandle>();
-  // Last known container runtime for each backend/execution id. Kept
-  // across connection replacement so direct lifecycle calls can fence
-  // process-local state against a new container process.
-  readonly #executionRuntimeIds = new Map<string, string>();
+  // Last known container runtime for recent backend/execution ids.
+  // Returned handles carry their own id; the bounded LRU supports
+  // direct by-id lifecycle calls without growing for the DO lifetime.
+  readonly #executionRuntimes = new ExecutionRuntimeTracker();
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
@@ -869,7 +870,7 @@ export class Workspace {
       getExec: async ({ id: execId, after, runtimeId }) => {
         const resume = after === undefined ? "full" : after;
         const expectedRuntimeId =
-          runtimeId ?? this.#executionRuntimeIds.get(this.#executionRuntimeKey(id, execId));
+          runtimeId ?? this.#executionRuntimes.get(this.#executionRuntimeKey(id, execId));
         const envelope = await shell.get(execId, { resume, runtimeId: expectedRuntimeId });
         this.#rememberExecutionRuntime(id, envelope.id, envelope.runtimeId);
         return {
@@ -884,12 +885,12 @@ export class Workspace {
           id,
           "shell.killExec",
           execId,
-          runtimeId ?? this.#executionRuntimeIds.get(this.#executionRuntimeKey(id, execId)),
+          runtimeId ?? this.#executionRuntimes.get(this.#executionRuntimeKey(id, execId)),
           (shellRpc) => shellRpc.killExec({ id: execId, signal }),
         ),
       disposeExec: async ({ id: execId, runtimeId }) => {
         const key = this.#executionRuntimeKey(id, execId);
-        const expectedRuntimeId = runtimeId ?? this.#executionRuntimeIds.get(key);
+        const expectedRuntimeId = runtimeId ?? this.#executionRuntimes.get(key);
         await this.#runExecutionOperation(
           id,
           "shell.disposeExec",
@@ -897,12 +898,7 @@ export class Workspace {
           expectedRuntimeId,
           (shellRpc) => shellRpc.disposeExec({ id: execId }),
         );
-        if (
-          expectedRuntimeId === undefined ||
-          this.#executionRuntimeIds.get(key) === expectedRuntimeId
-        ) {
-          this.#executionRuntimeIds.delete(key);
-        }
+        this.#executionRuntimes.delete(key, expectedRuntimeId);
       },
     };
     this.#commandHandles.set(id, adapter);
@@ -1173,7 +1169,10 @@ export class Workspace {
     runtimeId: string | undefined,
   ): void {
     if (runtimeId !== undefined) {
-      this.#executionRuntimeIds.set(this.#executionRuntimeKey(backendId, executionId), runtimeId);
+      this.#executionRuntimes.remember(
+        this.#executionRuntimeKey(backendId, executionId),
+        runtimeId,
+      );
     }
   }
 
