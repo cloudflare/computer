@@ -21,7 +21,7 @@ import {
   stageBlob,
   writeFetchCursor,
 } from "@cloudflare/dofs";
-import { newWebSocketRpcSession, nodeHttpBatchRpcResponse, RpcTarget } from "capnweb";
+import { newWebSocketRpcSession, RpcTarget } from "capnweb";
 
 import { trackStub, untrackStub } from "./debug.js";
 import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "./interface.js";
@@ -347,18 +347,6 @@ export function acceptWebSocketSession(
   rpc: SyncRPC | ShellRPC | WorkspaceRPC,
 ): void {
   newWebSocketRpcSession(ws as unknown as WebSocket, rpc as unknown as RpcTarget);
-}
-
-// Serve a single capnweb HTTP-batch session against a SyncRPC. Wraps
-// capnweb's nodeHttpBatchRpcResponse so computerd never directly imports
-// capnweb (which would split capnweb's module identity in mixed
-// ESM/CJS contexts — the RpcTarget instanceof check then fails).
-export function serveHTTPBatch(
-  request: import("node:http").IncomingMessage,
-  response: import("node:http").ServerResponse,
-  rpc: SyncRPC | ShellRPC | WorkspaceRPC,
-): Promise<void> {
-  return nodeHttpBatchRpcResponse(request, response, rpc as unknown as RpcTarget);
 }
 
 function iterableToReadableStream<T>(it: AsyncIterable<T>): ReadableStream<T> {
