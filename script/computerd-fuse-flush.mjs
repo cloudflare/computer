@@ -138,9 +138,12 @@ async function main() {
     // 2. Write through FUSE. echo > triggers FUSE create, write,
     //    flush (on close), release \u2014 every spill point landed in
     //    the 68407fc fix.
+    // The VFS keys everything under the mount point, so the path the
+    // receiver reads back is the absolute in-container path, not /x.txt.
+    const target = "/workspace/x.txt";
     const payload = `from-fuse ${Date.now()}\n`;
-    await dockerExec(container.cid, "bash", "-c", `printf '%s' '${payload}' > /workspace/x.txt`);
-    process.stderr.write(`  wrote ${payload.trim()} to /workspace/x.txt via FUSE\n`);
+    await dockerExec(container.cid, "bash", "-c", `printf '%s' '${payload}' > ${target}`);
+    process.stderr.write(`  wrote ${payload.trim()} to ${target} via FUSE\n`);
 
     // 3. Pull from the container's WebSocket on the host. Mirrors
     //    what the host DO does after exec returns.
@@ -165,16 +168,16 @@ async function main() {
     initializeSchema(recvDb, () => Date.now());
 
     try {
-      const applied = await pullOnce(recvDb, client.sync);
+      const { applied } = await pullOnce(recvDb, client.sync);
       process.stderr.write(`  pullOnce applied ${applied} entries\n`);
       if (applied === 0) {
-        throw new Error("pullOnce applied 0 entries; expected at least 1 for /x.txt");
+        throw new Error(`pullOnce applied 0 entries; expected at least 1 for ${target}`);
       }
 
       // 4. Read the file back through the receiver-side provider.
       //    The bytes have to match what we wrote through FUSE.
       const provider = new SQLiteWorkspaceProvider(recvDb, { now: () => Date.now() });
-      const back = provider.readFileSync("/x.txt", "utf8");
+      const back = provider.readFileSync(target, "utf8");
       if (back !== payload) {
         throw new Error(
           `byte mismatch:\n  wrote: ${JSON.stringify(payload)}\n  read:  ${JSON.stringify(back)}`,
