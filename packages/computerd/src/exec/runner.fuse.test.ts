@@ -107,7 +107,7 @@ describeIfReal("Runner shell.exec under real FUSE", () => {
   test("exec(cwd inside the FUSE mount) returns quickly and runs the command", async () => {
     if (!url) throw new Error("computerd container did not start");
     const client = createWorkspaceClient({
-      url: `${url.replace(/^http(s?):\/\//, "ws$1://")}/ws`,
+      url: `${url.replace(/^http(s?):\/\//, "ws$1://")}/api`,
       WebSocketImpl: WebSocket,
     });
     try {

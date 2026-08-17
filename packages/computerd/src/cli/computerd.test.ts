@@ -105,13 +105,13 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
   expect(await fs.readFile(path.join(mountPoint, "dir", "hello.txt"), "utf8")).toBe("hello fuse");
 });
 
-test("/ws serves a capnweb WorkspaceRPC session", async (_ctx) => {
+test("/api serves a capnweb WorkspaceRPC session", async (_ctx) => {
   const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
   const port = await getAvailablePort();
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
   await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
 
-  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/ws` });
+  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/api` });
   try {
     // hasObjects against a fresh DB returns the empty subset.
     expect(await client.sync.hasObjects([])).toEqual([]);
@@ -133,15 +133,73 @@ test("/ws serves a capnweb WorkspaceRPC session", async (_ctx) => {
   }
 });
 
-test("/api serves a capnweb HTTP-batch WorkspaceRPC session", async (_ctx) => {
-  const { newHttpBatchRpcSession } = await import("capnweb");
+test("/api refuses anything that is not a websocket handshake", async (_ctx) => {
+  // /api carries one transport. A caller that arrives over plain HTTP,
+  // or botches the handshake, should learn that from the status rather
+  // than from a capnweb error several calls later.
   const port = await getAvailablePort();
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
   await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+  const base = `http://127.0.0.1:${port}/api`;
 
-  // HTTP batch flushes on first await; each call is a fresh session.
-  const stub = newHttpBatchRpcSession(`http://127.0.0.1:${port}/api`);
-  expect(await stub.sync.hasObjects([])).toEqual([]);
+  // No Upgrade header at all: never reaches the upgrade listener.
+  const plainGet = await fetch(base);
+  expect(plainGet.status).toBe(400);
+  expect(await plainGet.text()).toMatch(/websocket/i);
+
+  const post = await fetch(base, { method: "POST", body: "[]" });
+  expect(post.status).toBe(400);
+
+  // An upgrade attempt naming a version we do not speak gets 426 and
+  // the versions we do speak, per the websocket specification.
+  const badVersion = await rawRequest(port, [
+    "GET /api HTTP/1.1",
+    `Host: 127.0.0.1:${port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Version: 7",
+  ]);
+  expect(badVersion).toMatch(/^HTTP\/1\.1 426 /);
+  expect(badVersion).toMatch(/Sec-WebSocket-Version: 13, 8/i);
+
+  // A handshake missing its key is malformed, not a version problem.
+  const noKey = await rawRequest(port, [
+    "GET /api HTTP/1.1",
+    `Host: 127.0.0.1:${port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Version: 13",
+  ]);
+  expect(noKey).toMatch(/^HTTP\/1\.1 400 /);
+
+  // An unknown path is still a 404, upgrade header or not.
+  const unknown = await rawRequest(port, [
+    "GET /nope HTTP/1.1",
+    `Host: 127.0.0.1:${port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Version: 13",
+  ]);
+  expect(unknown).toMatch(/^HTTP\/1\.1 404 /);
+});
+
+test("/__computerd/watermarks reports sync revisions over plain HTTP", async (_ctx) => {
+  // Samplers want three numbers on an interval. Opening an RPC session
+  // per sample is the wrong shape for that.
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-watermarks-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const res = await fetch(`http://127.0.0.1:${port}/__computerd/watermarks`);
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body).toMatchObject({
+    currentRev: expect.any(Number),
+    pushRev: expect.any(Number),
+    fetchCursor: { rev: expect.any(Number) },
+  });
 });
 
 test("/__computerd/stats returns DOFS table sizes and process memory", async (_ctx) => {
@@ -222,7 +280,7 @@ test("FUSE_MOUNT=shim materialises an RPC push under the mount point", async (_c
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-shim-push-"));
   await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "shim" } });
 
-  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/ws` });
+  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/api` });
   onTestFinished(() => client.close());
 
   const db = new Database(new SQLiteTestStorage());
@@ -531,6 +589,34 @@ async function waitFor(predicate, { timeoutMs = 2_000, intervalMs = 10 } = {}) {
     await delay(intervalMs);
   }
   throw new Error("waitFor: predicate did not become true within the timeout");
+}
+
+// Write a request onto a raw socket and return the response head.
+// http.request() will not send a malformed websocket handshake, and
+// fetch() will not send one at all, so the handshake cases need this.
+function rawRequest(port, lines) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(`${lines.join("\r\n")}\r\n\r\n`);
+    });
+    let buf = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buf += chunk;
+    });
+    socket.once("error", reject);
+    // The server may hold the socket open after refusing the
+    // handshake, so settle on the end of the response head.
+    const settle = () => {
+      socket.destroy();
+      resolve(buf);
+    };
+    socket.on("data", () => {
+      if (buf.includes("\r\n\r\n")) settle();
+    });
+    socket.once("close", () => resolve(buf));
+    setTimeout(settle, 2_000);
+  });
 }
 
 function postJson(url, body) {

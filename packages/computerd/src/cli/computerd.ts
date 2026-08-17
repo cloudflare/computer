@@ -7,11 +7,7 @@ import { isAbsolute } from "node:path";
 import type { ExecEvent as RpcExecEvent } from "@cloudflare/computer-rpc";
 import { isStubTrackingEnabled, stubSnapshot } from "@cloudflare/computer-rpc/debug";
 import type { RunnerLike } from "@cloudflare/computer-rpc/server";
-import {
-  acceptWebSocketSession,
-  createWorkspaceServer,
-  serveHTTPBatch,
-} from "@cloudflare/computer-rpc/server";
+import { acceptWebSocketSession, createWorkspaceServer } from "@cloudflare/computer-rpc/server";
 import type { Database } from "@cloudflare/dofs";
 import { WebSocket, WebSocketServer } from "ws";
 import { Runner } from "../exec/index.js";
@@ -176,25 +172,14 @@ function createHTTPServer(
   const server = createServer((request, response) => {
     const path = requestPath(request);
 
-    // /api — capnweb HTTP-batch endpoint. Single POST per call;
-    // request body carries the serialized message, response body
-    // carries the reply. Useful for environments that can't open
-    // a WebSocket (curl, fetch from a Worker without ws upgrade).
+    // /api — the capnweb endpoint. It carries one transport, a
+    // websocket, so a request that reaches the ordinary handler here
+    // has no Upgrade header and cannot be served. Say so plainly:
+    // the alternative is a caller that connects, makes one call that
+    // appears to work, and then fails on a stream.
     if (path === "/api") {
-      if (request.method !== "POST") {
-        send(response, 405, "method not allowed\n", {
-          allow: "POST",
-          "content-type": "text/plain; charset=utf-8",
-        });
-        return;
-      }
-      void serveHTTPBatch(request, response, rpc).catch((error) => {
-        console.error("/api batch failed:", error);
-        if (!response.headersSent) {
-          send(response, 500, "internal error\n", {
-            "content-type": "text/plain; charset=utf-8",
-          });
-        }
+      send(response, 400, "/api requires a websocket upgrade\n", {
+        "content-type": "text/plain; charset=utf-8",
       });
       return;
     }
@@ -255,6 +240,32 @@ function createHTTPServer(
       return;
     }
 
+    // Sync revisions over plain HTTP, for samplers that want a few
+    // numbers on an interval rather than an RPC session. Reads through
+    // the same watermarks() the wire serves, so the two cannot drift.
+    if (path === "/__computerd/watermarks") {
+      if (request.method === "HEAD") {
+        send(response, 200, "", { "content-type": "application/json; charset=utf-8" });
+        return;
+      }
+      void rpc.sync
+        .watermarks()
+        .then((watermarks) => {
+          send(response, 200, JSON.stringify(watermarks), {
+            "content-type": "application/json; charset=utf-8",
+          });
+        })
+        .catch((error: unknown) => {
+          console.error("/__computerd/watermarks failed:", error);
+          if (!response.headersSent) {
+            send(response, 500, "internal error\n", {
+              "content-type": "text/plain; charset=utf-8",
+            });
+          }
+        });
+      return;
+    }
+
     if (path === "/__computerd/info") {
       const body = request.method === "HEAD" ? "" : JSON.stringify(info);
       send(response, 200, body, {
@@ -276,21 +287,36 @@ function createHTTPServer(
     });
   });
 
-  // /ws — capnweb WebSocket endpoint. Long-lived, bidirectional,
-  // streaming-friendly. The container's primary sync carrier.
-  // perMessageDeflate compresses each WS frame with zlib. Defaults
-  // off in the `ws` package; we turn it on so computerd-to-computerd peers
-  // (and any Node-side client that negotiates the extension) save
-  // bytes on the wire. Clients that don't advertise the extension
-  // negotiate down to plain frames, so no flag day for workerd or
-  // browser callers.
+  // /api — the capnweb endpoint. Long-lived, bidirectional, and
+  // streaming-friendly, which is what the wire contract needs: every
+  // call that reads data back returns a ReadableStream.
+  // perMessageDeflate compresses each frame with zlib. Defaults off
+  // in the `ws` package; we turn it on so any Node-side client that
+  // negotiates the extension saves bytes on the wire. Clients that
+  // don't advertise it negotiate down to plain frames, so no flag day
+  // for workerd or browser callers.
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   wss.on("connection", (ws) => {
     acceptWebSocketSession(ws, rpc);
   });
   server.on("upgrade", (request, socket, head) => {
-    if (requestPath(request) !== "/ws") {
+    if (requestPath(request) !== "/api") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    // `ws` answers a malformed handshake for us: 405 for a method
+    // other than GET, 400 for a bad Upgrade header or a missing key.
+    // It answers 400 for an unsupported version too, where the
+    // websocket specification calls for 426, so that one case is
+    // handled here before handing over.
+    const version = Number(request.headers["sec-websocket-version"]);
+    if (version !== 13 && version !== 8) {
+      socket.write(
+        "HTTP/1.1 426 Upgrade Required\r\n" +
+          "Sec-WebSocket-Version: 13, 8\r\n" +
+          "Connection: close\r\n\r\n",
+      );
       socket.destroy();
       return;
     }
@@ -486,7 +512,7 @@ async function main(): Promise<void> {
   // FUSE_MOUNT picks the backend. auto (default) probes /dev/fuse
   // or macFUSE and falls back to the userspace shim. fuse / macfuse
   // require their respective real backend. shim forces the userspace
-  // polling shim. none skips the mount entirely; HTTP + /api + /ws
+  // polling shim. none skips the mount entirely; HTTP and /api
   // still come up so tests and tooling can talk to computerd's RPC surface.
   const fuseMountMode = parseFuseMountMode(process.env.FUSE_MOUNT);
   const backend: FUSEBackend = await resolveFuseBackend(fuseMountMode);

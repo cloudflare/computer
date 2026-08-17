@@ -8,7 +8,7 @@ import { access as defaultAccess } from "node:fs/promises";
 //   - fuse   : require the linux kernel FUSE backend.
 //   - macfuse: require macFUSE on darwin.
 //   - shim   : force the userspace shim. Works on any platform.
-//   - none   : skip the mount entirely; HTTP + /api + /ws still come up.
+//   - none   : skip the mount entirely; HTTP and /api still come up.
 export type FuseMountMode = "auto" | "fuse" | "macfuse" | "shim" | "none";
 
 // The resolved backend selection. No `reason` field — the choice is
