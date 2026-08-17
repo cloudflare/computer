@@ -199,11 +199,11 @@ function createHTTPServer(
       return;
     }
 
-    // /connect — POST { url } where url is the http(s) base of an
-    // egress endpoint the host wants us to dial back into. We open a
-    // capnweb WebSocket session against `${url}/ws` and serve our RPC
-    // over it, exactly like /ws but with the carrier inverted (we
-    // dial out instead of accepting an inbound upgrade).
+    // /connect — POST { base, health, api } naming an endpoint the
+    // host wants us to dial back into. We poll `base + health` until
+    // it answers, then open a capnweb WebSocket session against
+    // `base + api` and serve our RPC over it: the same session as an
+    // inbound upgrade, with the carrier inverted because we dial out.
     if (path === "/connect") {
       if (request.method !== "POST") {
         send(response, 405, "method not allowed\n", {
@@ -321,14 +321,35 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
+// The caller names every part of the endpoint it wants us to reach.
+// We assemble `base + health` and `base + api` and hold no opinion
+// about either path, so the host is free to rename its own routes
+// without a matching release of this binary.
 interface ConnectBody {
-  // Base URL of the egress endpoint. ws[s]:// or http[s]://; we
-  // normalise http(s) to ws(s) and append /ws.
-  url?: unknown;
-  // How long to poll the upstream /health before giving up.
-  // Defaults to 30s; the egress proxy is up at boot but the worker
-  // that hosts it may take a tick.
+  // http:// or https:// origin of the endpoint, optionally with a
+  // path prefix. Trailing slashes are trimmed.
+  base?: unknown;
+  // Absolute path of the readiness probe, e.g. "/health".
+  health?: unknown;
+  // Absolute path of the capnweb endpoint, e.g. "/api". Dialed as
+  // ws:// or wss:// according to the scheme on `base`.
+  api?: unknown;
+  // How long to poll the readiness probe before giving up. Defaults
+  // to 30s; the egress proxy is up at boot but the worker that hosts
+  // it may take a tick.
   healthTimeoutMs?: unknown;
+}
+
+// A path we're willing to append to `base`. Rejecting anything that
+// parses as an address of its own keeps a caller from redirecting the
+// dial somewhere the base never pointed. "//host/path" is
+// protocol-relative, which resolves against the base's scheme rather
+// than staying under the base, so it goes too.
+function isEndpointPath(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (!value.startsWith("/")) return false;
+  if (value.startsWith("//")) return false;
+  return !URL.canParse(value);
 }
 
 async function handleConnect(
@@ -347,22 +368,38 @@ async function handleConnect(
     return;
   }
 
-  if (typeof body.url !== "string" || body.url.length === 0) {
-    send(response, 400, "missing 'url' in body\n", {
+  if (
+    typeof body.base !== "string" ||
+    !(body.base.startsWith("http://") || body.base.startsWith("https://"))
+  ) {
+    send(response, 400, "'base' must be an http:// or https:// URL\n", {
       "content-type": "text/plain; charset=utf-8",
     });
     return;
   }
-  const baseUrl = body.url.replace(/\/+$/, "");
+  if (!isEndpointPath(body.health)) {
+    send(response, 400, "'health' must be an absolute path such as /health\n", {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  if (!isEndpointPath(body.api)) {
+    send(response, 400, "'api' must be an absolute path such as /api\n", {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  const baseUrl = body.base.replace(/\/+$/, "");
+  const healthUrl = `${baseUrl}${body.health}`;
   const healthTimeoutMs =
     typeof body.healthTimeoutMs === "number" && body.healthTimeoutMs > 0
       ? body.healthTimeoutMs
       : 30_000;
 
   try {
-    await waitForHealth(baseUrl, healthTimeoutMs);
+    await waitForHealth(healthUrl, healthTimeoutMs);
   } catch (error) {
-    send(response, 502, `upstream /health unreachable: ${(error as Error).message}\n`, {
+    send(response, 502, `readiness probe unreachable: ${(error as Error).message}\n`, {
       "content-type": "text/plain; charset=utf-8",
     });
     return;
@@ -382,7 +419,7 @@ async function handleConnect(
     }
   }
 
-  const wsUrl = `${toWebSocketUrl(baseUrl)}/ws`;
+  const wsUrl = `${toWebSocketUrl(baseUrl)}${body.api}`;
   const ws = new WebSocket(wsUrl);
   upstreamSlot.ws = ws;
   ws.once("open", () => {
@@ -413,15 +450,13 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 }
 
 function toWebSocketUrl(input: string): string {
-  if (input.startsWith("ws://") || input.startsWith("wss://")) return input;
   if (input.startsWith("http://")) return `ws://${input.slice("http://".length)}`;
   if (input.startsWith("https://")) return `wss://${input.slice("https://".length)}`;
   throw new Error(`unsupported URL scheme: ${input}`);
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<void> {
+async function waitForHealth(healthUrl: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const healthUrl = `${toHttpUrl(baseUrl)}/health`;
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
@@ -436,12 +471,6 @@ async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<void> 
   throw new Error(
     `${healthUrl} not healthy within ${timeoutMs}ms: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
   );
-}
-
-function toHttpUrl(input: string): string {
-  if (input.startsWith("ws://")) return `http://${input.slice("ws://".length)}`;
-  if (input.startsWith("wss://")) return `https://${input.slice("wss://".length)}`;
-  return input;
 }
 
 async function main(): Promise<void> {

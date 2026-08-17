@@ -291,8 +291,10 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
   const peerPort = await getAvailablePort();
   const opened = [];
   const peerSockets = new Set();
+  // Deliberately non-default paths: the daemon must use what the
+  // request names, not paths of its own.
   const peerServer = http.createServer((req, res) => {
-    if (req.url === "/health") {
+    if (req.url === "/probe") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("ok\n");
       return;
@@ -305,7 +307,7 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
   });
   const wss = new WebSocketServer({ noServer: true });
   peerServer.on("upgrade", (req, socket, head) => {
-    if (req.url !== "/ws") {
+    if (req.url !== "/socket") {
       socket.destroy();
       return;
     }
@@ -337,7 +339,11 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
 
   const peerUrl = `http://127.0.0.1:${peerPort}`;
   const connect = async () => {
-    const res = await postJson(`http://127.0.0.1:${port}/connect`, { url: peerUrl });
+    const res = await postJson(`http://127.0.0.1:${port}/connect`, {
+      base: peerUrl,
+      health: "/probe",
+      api: "/socket",
+    });
     expect(res.statusCode).toBe(200);
   };
 
@@ -352,6 +358,49 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
   await waitFor(() => opened[0].closed);
   expect(opened[0].closed).toBe(true, "first peer WS should be closed after re-POST /connect");
   expect(opened[1].closed).toBe(false, "second peer WS should still be open");
+});
+
+test("/connect rejects a body that does not name every part", async (_ctx) => {
+  // The daemon assembles no host paths of its own, so a request that
+  // leaves one out has to be refused rather than defaulted.
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+  const url = `http://127.0.0.1:${port}/connect`;
+
+  const cases = [
+    [{}, "empty body"],
+    [{ health: "/health", api: "/api" }, "no base"],
+    [{ base: "http://127.0.0.1:1", api: "/api" }, "no health"],
+    [{ base: "http://127.0.0.1:1", health: "/health" }, "no api"],
+    [{ base: "ftp://127.0.0.1:1", health: "/health", api: "/api" }, "unsupported scheme"],
+    [{ base: "http://127.0.0.1:1", health: "health", api: "/api" }, "health lacks a slash"],
+    [{ base: "http://127.0.0.1:1", health: "/health", api: "api" }, "api lacks a slash"],
+    [
+      { base: "http://127.0.0.1:1", health: "/health", api: "http://elsewhere/api" },
+      "api is an absolute address",
+    ],
+    [
+      { base: "http://127.0.0.1:1", health: "//elsewhere/health", api: "/api" },
+      "health is protocol relative",
+    ],
+  ];
+
+  for (const [body, label] of cases) {
+    const res = await postJson(url, body);
+    expect(res.statusCode, `${label} should be refused`).toBe(400);
+  }
+
+  // Control: a well-formed body must clear validation. Port 1 has
+  // nothing listening, so it gets as far as the health probe and
+  // fails there instead, which is a different status.
+  const ok = await postJson(url, {
+    base: "http://127.0.0.1:1",
+    health: "/health",
+    api: "/api",
+    healthTimeoutMs: 250,
+  });
+  expect(ok.statusCode, "a complete body should reach the health probe").toBe(502);
 });
 
 async function startComputerd({
