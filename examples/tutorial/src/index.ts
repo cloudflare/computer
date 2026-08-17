@@ -80,7 +80,7 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   }
 
   override async fetch(request: Request): Promise<Response> {
-    return new URL(request.url).pathname === "/ws"
+    return new URL(request.url).pathname === "/api"
       ? this.#backend.handleFetch(request)
       : super.fetch(request);
   }

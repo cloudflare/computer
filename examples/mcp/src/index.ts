@@ -60,7 +60,7 @@ export class ComputerMCP extends withWorkspace(ComputerMCPBase, workspaceOptions
     const path = new URL(request.url).pathname;
     // computerd reaches this callback through an internal binding. The public
     // Worker forwards only /mcp.
-    if (path === "/ws") return this.containerShell.handleFetch(request);
+    if (path === "/api") return this.containerShell.handleFetch(request);
     if (path !== "/mcp") return new Response("not found", { status: 404 });
 
     const unauthorized = authorize(request, this.env.MCP_TOKEN);

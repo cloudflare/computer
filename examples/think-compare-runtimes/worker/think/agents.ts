@@ -260,7 +260,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/ws" && this.#activeBackend) {
+    if (url.pathname === "/api" && this.#activeBackend) {
       return this.#activeBackend.handleFetch(request);
     }
     return super.fetch(request);

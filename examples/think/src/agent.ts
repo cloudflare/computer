@@ -46,7 +46,7 @@ import { createWorkersAI } from "workers-ai-provider";
 // WorkerShellBackend reaches WorkspaceServiceProxy through
 // `ctx.exports.WorkspaceServiceProxy(...)` so the in-isolate shell
 // can call back into the host workspace. WorkspaceProxy carries the
-// container's outbound /ws egress back to this DO.
+// container's outbound /api egress back to this DO.
 export { WorkspaceProxy, WorkspaceServiceProxy };
 
 const MODEL_ID = "@cf/zai-org/glm-5.2";
@@ -73,7 +73,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
    * Container backend used when `exec` needs a real Linux userland.
    * The DO itself owns the container binding through the
    * withWorkspaceContainer mixin; CloudflareContainerBackend handles
-   * startup, outbound egress interception, the /ws upgrade, and the
+   * startup, outbound egress interception, the /api upgrade, and the
    * capnweb session.
    */
   readonly #containerBackend = new CloudflareContainerBackend({
@@ -103,10 +103,10 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
     useThink: true,
   }) as Workspace & ThinkWorkspaceCompatibility;
 
-  /** Forwarded by WorkspaceProxy for computerd's outbound /ws upgrade. */
+  /** Forwarded by WorkspaceProxy for computerd's outbound /api upgrade. */
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/ws") {
+    if (url.pathname === "/api") {
       return this.#containerBackend.handleFetch(request);
     }
     return super.fetch(request);

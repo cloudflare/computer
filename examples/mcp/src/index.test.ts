@@ -26,7 +26,7 @@ describe("Computer Code Mode MCP", () => {
     expect(health.status).toBe(200);
     expect(await health.text()).toBe("ok\n");
 
-    const internal = await SELF.fetch("https://example.test/ws");
+    const internal = await SELF.fetch("https://example.test/api");
     expect(internal.status).toBe(404);
   });
 

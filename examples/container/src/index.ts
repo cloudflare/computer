@@ -4,7 +4,7 @@
 // The DO is a thin shell over CloudflareContainerBackend: it picks
 // the container (this.ctx.container) and the egress fetcher
 // (ctx.exports.WorkspaceProxy bound to this DO instance), forwards
-// container-bound /ws upgrades back through the backend, and
+// container-bound /api upgrades back through the backend, and
 // otherwise just calls into a single Workspace instance.
 //
 // Wire shape:
@@ -14,7 +14,7 @@
 //              ▼
 //        ContainerExample DO ──► Container ──► computerd (:8080)
 //              ▲                                │
-//              │  ws://computer.internal/ws    │
+//              │  ws://computer.internal/api   │
 //              └─── capnweb session ◀─────────────┘
 
 import { DurableObject, tracing } from "cloudflare:workers";
@@ -92,7 +92,7 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
 // hands back round-trip into this DO; the actual SyncRPC + ShellRPC
 // traffic stays on the computerd ↔ DO capnweb wire.
 export class ContainerExample extends withWorkspace(ContainerBase, workspaceOptions) {
-  // ---- WebSocket: computerd's outbound /ws upgrade ---------------------
+  // ---- WebSocket: computerd's outbound /api upgrade --------------------
 
   override async fetch(request: Request): Promise<Response> {
     return this.backend.handleFetch(request);
