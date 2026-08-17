@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@cloudflare/dofs": "*",
-    "capnweb": "^0.8.0"
+    "capnweb": "^0.10.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1",

@@ -117,7 +117,7 @@
   },
   "dependencies": {
     "acorn": "^8.17.0",
-    "capnweb": "^0.8.0",
+    "capnweb": "^0.10.0",
     "just-bash": "^3.0.1"
   },
   "peerDependencies": {
