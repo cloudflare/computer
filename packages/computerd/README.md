@@ -28,8 +28,8 @@ Current endpoints:
 - `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
 - `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, and process resident memory. Useful for watching how the store grows under load.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
-- `POST /api` is a capnweb HTTP-batch RPC endpoint backed by `@cloudflare/computer-rpc`. Non-POST methods return `405`.
-- `GET /ws` upgrades to a WebSocket carrying the same capnweb RPC surface. This is the container's primary sync carrier.
+- `GET /__computerd/watermarks` returns JSON with `currentRev`, `pushRev`, and `fetchCursor`, read through the same `watermarks()` the wire serves. For samplers that want a few numbers without opening a session.
+- `GET /api` upgrades to a WebSocket carrying the capnweb RPC surface backed by `@cloudflare/computer-rpc`. This is the container's only RPC carrier. A request without an `Upgrade` header returns `400`; a handshake naming an unsupported `Sec-WebSocket-Version` returns `426` along with the versions the server speaks.
 
 All other paths and methods return `404`/`405` with a `text/plain` body.
 
@@ -38,9 +38,9 @@ Current filesystem support:
 - `@platformatic/vfs` in-memory filesystem provided by `@cloudflare/dofs`'s node provider.
 - FUSE operation adapter covering the full `fuse-native` operation surface.
 - Unsupported FUSE operations return `ENOSYS` to the kernel; the binding logs a one-shot warning per operation.
-- capnweb RPC over `/api` and `/ws` exposes the workspace database and an `exec` runner to clients.
-- Optional host/DO synchronization: when `UPSTREAM_URL` is set, `computerd` opens a `SyncClient` from `@cloudflare/computer-rpc/client` against that URL and runs the sync loop in the background.
-- No on-disk persistence yet — the in-memory VFS is rebuilt on each start, with sync pulling state back from the upstream when configured.
+- capnweb RPC over `/api` exposes the workspace database and an `exec` runner to clients.
+- Synchronization is driven by whoever holds the other end of the session. The daemon serves `SyncRPC`; it does not run a sync loop of its own.
+- No on-disk persistence yet — the in-memory VFS is rebuilt on each start, and the host pushes state back after a restart.
 
 ## FUSE write model
 
@@ -101,14 +101,13 @@ FUSE_MOUNT=auto    # default: probe /dev/fuse or macFUSE, fall back to the users
 FUSE_MOUNT=fuse    # require the linux kernel FUSE backend (/dev/fuse)
 FUSE_MOUNT=macfuse # require macFUSE on darwin
 FUSE_MOUNT=shim    # force the userspace dev shim (no FUSE)
-FUSE_MOUNT=none    # skip the mount entirely; HTTP + /api + /ws still come up
+FUSE_MOUNT=none    # skip the mount entirely; HTTP and /api still come up
 ```
 
 Additional environment variables:
 
 ```sh
-UPSTREAM_URL=https://example/ws  # open a SyncClient against this capnweb endpoint
-EXEC_LOG_MAX_BYTES=1048576       # cap the in-memory exec log buffer (bytes)
+EXEC_LOG_MAX_BYTES=1048576  # cap the in-memory exec log buffer (bytes)
 ```
 
 `FUSE_MOUNT=auto` is the friendly default: if `/dev/fuse` (or macFUSE) is available `computerd` mounts a real FUSE filesystem, otherwise it transparently falls back to the userspace shim. Pin the value (`fuse` / `macfuse` / `shim` / `none`) when a test needs to assert a specific code path.
@@ -124,7 +123,7 @@ How it works:
 - A periodic poll (~250 ms) walks `MOUNT_POINT`, diffs it against a content-hash shadow, and pushes any new or changed entries into the VFS.
 - The shadow doubles as a loop suppressor: after a write in either direction the shadow matches both sides, so the next tick on the opposite side sees no diff.
 
-`exec` runs with `cwd=MOUNT_POINT` exactly as it does under real FUSE, so a child process that writes into the mount point ends up writing through the shim into the VFS — and onward to the DO when `UPSTREAM_URL` is set.
+`exec` runs with `cwd=MOUNT_POINT` exactly as it does under real FUSE, so a child process that writes into the mount point ends up writing through the shim into the VFS, and onward to the host on its next pull.
 
 Caveats. The shim is dev-only:
 

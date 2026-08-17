@@ -49,4 +49,3 @@ examples that intentionally track release candidates.
 | `PORT` | `8080` | HTTP + WebSocket listener port. |
 | `MOUNT_POINT` | `/workspace` | Path the FUSE filesystem mounts at. |
 | `FUSE_MOUNT` | `auto` | Backend selector. `auto` probes `/dev/fuse` (linux) or macFUSE (darwin) and falls back to the userspace shim. `fuse` and `macfuse` require their respective real backend. `shim` forces the userspace shim. `none` skips the mount entirely; HTTP / WS still come up. |
-| `UPSTREAM_URL` | unset | If set, computerd dials this WebSocket on boot and runs a bidirectional sync loop against it. |

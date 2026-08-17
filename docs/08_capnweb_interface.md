@@ -12,10 +12,11 @@ alternative). The interface served is `WorkspaceRPC`, defined in
 
 ## Transport
 
-- **Carrier.** One long-lived WebSocket per Workspace. The DO opens it
-  against the computerd's `/ws` endpoint, with `/api` available
-  as an HTTP-batch alternative (single POST per call) for callers that
-  can't hold a socket. Default port is `45678`; it will become a
+- **Carrier.** One long-lived WebSocket per Workspace, on the
+  computerd's `/api` endpoint. There is no HTTP alternative: every call
+  that returns data returns a `ReadableStream`, and delivering one
+  needs a call from server to client, which capnweb's HTTP batch
+  transport cannot complete. Default port is `45678`; it will become a
   build-time variable so hosts can pin a non-default port.
 - **Framing.** capnweb text frames. Binary frames are unsupported.
   **(planned)** the server will fail the session loudly on the first

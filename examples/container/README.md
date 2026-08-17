@@ -21,7 +21,7 @@ client ─► Worker /c/<name>/{file,exec}
              ▼
        DO (ContainerExample) ──► Container ──► computerd (:8080)
              ▲                                  │
-             │      ws://computer.internal/ws  │
+             │      ws://computer.internal/api │
              └────────── capnweb session ◄──────┘
 ```
 
@@ -30,19 +30,20 @@ client ─► Worker /c/<name>/{file,exec}
    `Workspace` instance. That backend owns the entire computerd lifecycle:
    container start,
    outbound egress interception, port-readiness polling, POST
-   `/connect` to computerd, `/ws` upgrade routing, and capnweb session
+   `/connect` to computerd, `/api` upgrade routing, and capnweb session
    attach.
 2. computerd reaches the Worker through the container's **outbound
    interception** (`ctx.container.interceptOutboundHttp("computer.internal",
    …)`, set up by the backend). The DO passes
    `ctx.exports.WorkspaceProxy({ props: { binding, id } })` as the
    egress fetcher; that `WorkerEntrypoint` (re-exported from
-   `@cloudflare/computer`) routes `/ws` upgrades back to the owning DO.
+   `@cloudflare/computer`) routes `/api` upgrades back to the owning DO.
 3. When `Workspace.ready()` is called for the first time, the
    backend posts `/connect` into computerd with
-   `{ url: "http://computer.internal" }`. computerd polls
-   `computer.internal/health`, then dials
-   `ws://computer.internal/ws`.
+   `{ base: "http://computer.internal", health: "/health", api: "/api" }`.
+   computerd polls `computer.internal/health`, then dials
+   `ws://computer.internal/api`. Naming both paths in the request keeps
+   the daemon from assembling routes it does not serve.
 4. `WorkspaceProxy.fetch` forwards the upgrade to the DO's `fetch()`
    via the DO binding looked up from its props. The DO's `fetch()`
    delegates to `backend.handleFetch(req)`, which performs the

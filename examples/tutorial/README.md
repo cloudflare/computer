@@ -164,7 +164,7 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
   }) as Workspace & ThinkWorkspaceCompatibility;
 
   override async fetch(request: Request): Promise<Response> {
-    return new URL(request.url).pathname === "/ws"
+    return new URL(request.url).pathname === "/api"
       ? this.#backend.handleFetch(request)
       : super.fetch(request);
   }
@@ -179,7 +179,7 @@ network access.
 the durable object can start and stop its own container. The
 `workspace: { binding, id }` pair is how the container finds its way
 home: it dials the named binding at that id, which is why `fetch` has to
-hand `/ws` to the backend before the base class sees it.
+hand `/api` to the backend before the base class sees it.
 
 ## 5. Hook the workspace up to the agent
 

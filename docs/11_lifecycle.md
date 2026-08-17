@@ -24,7 +24,7 @@ capnweb WebSocket session.
 │  │ Workspace           │  │                  │  │ computerd              │  │
 │  │  fs:  WorkspaceFS   │  │                  │  │  HTTP server     │  │
 │  │  shell: ShellRPC    │  │                  │  │   /health        │  │
-│  │  sync: SyncRPC      │◀─┼── capnweb WS ───▶│  │   /connect /ws   │  │
+│  │  sync: SyncRPC      │◀─┼── capnweb WS ───▶│  │  /connect /api   │  │
 │  │  push() / pull()    │  │                  │  │  FUSE mount      │  │
 │  │  ready()            │  │                  │  │  exec runner     │  │
 │  └──────────┬──────────┘  │                  │  └────────┬─────────┘  │
@@ -50,7 +50,7 @@ The 1:1 mapping is load-bearing for several reasons:
   doesn't have to multiplex multiple WS peers.
 
 The DO is the WebSocket *server* in this pairing, even though `computerd`
-exposes its own `/ws` server-side and could be dialed directly. The
+exposes its own `/api` server-side and could be dialed directly. The
 reason for the inversion is documented in
 [07. Injected Service §Bootstrap sequence](./07_injected_service.md):
 the egress interceptor needs to be wired before any traffic flows, and
@@ -90,7 +90,7 @@ an incarnation boundary. What survives is:
 
 On every new incarnation `Workspace.ready()` re-runs `#connect()`,
 which re-enters the backend's bootstrap sequence. If the container is
-still alive, the backend's `POST /connect` + `/ws` handshake produces
+still alive, the backend's `POST /connect` + `/api` handshake produces
 a fresh capnweb session against the same in-memory VFS on the
 container side. If the container died too (e.g. host OOM took both),
 the next sync round is a rev-0 baseline rebuild from the DO's store.
@@ -129,9 +129,9 @@ that point so the next call rebuilds from scratch (see the container host and ba
 
 The critical asymmetry: the **container's VFS is process-lifetime
 in-memory**, while the **DO's VFS is durable SQLite**. A container
-restart loses container-side state. Sync via `UPSTREAM_URL` (which
-the Cloudflare backend wires automatically) is what brings state back
-on the next push/pull round.
+restart loses container-side state. The durable object drives sync
+across the capnweb session it opens through `POST /connect`, and that
+is what brings state back on the next push/pull round.
 
 ## Capnweb lifecycle
 
@@ -373,7 +373,7 @@ between agent turns, and it's exactly where hibernation pays off.
 
 Adopting PartySocket for reconnect/backoff would require the DO
 to be the WebSocket *client* dialing `computerd`'s
-`/ws` endpoint. That model is appealing for reconnect, but
+`/api` endpoint. That model is appealing for reconnect, but
 hibernatable WebSockets only work server-side via
 `ctx.acceptWebSocket()` — there is no hibernation API for outbound
 client sockets. **Inverting the dial direction permanently forecloses

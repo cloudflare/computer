@@ -87,7 +87,7 @@ To build the binary from source instead, run `npm run build:bin
 `artifacts/computerd/computerd-linux-x64`, then `COPY` that into the
 image.
 
-`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what `examples/container/` uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `UPSTREAM_URL`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
+`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what `examples/container/` uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
 
 ## Example
 

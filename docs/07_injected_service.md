@@ -32,9 +32,8 @@ staging the binary into a container image.
    same paths. The backend is picked by `FUSE_MOUNT` (default `auto`,
    see the env-var table below).
 2. **Dirty tracking.** Writes that flow through FUSE land in the
-   in-container VFS database; sync (when `UPSTREAM_URL` is set) is
-   what surfaces those revisions back out. See doc 02 for the sync
-   protocol.
+   in-container VFS database; the host pulls those revisions back out
+   across the capnweb session. See doc 02 for the sync protocol.
 3. **Exec.** Runs shell commands and streams stdout/stderr back over
    capnweb. See [05. Shell Interface](./05_runtime_interface.md).
 4. **Apply.** Accepts changes pushed by the DO and writes them into
@@ -52,9 +51,9 @@ backend pins it to `8080`) and serves:
 | --- | --- | --- |
 | `/health` | `GET`, `HEAD` | Liveness probe; `200 ok\n` as soon as the HTTP server binds. |
 | `/__computerd/info` | `GET` | Runtime info: FUSE backend, mount point, port. |
-| `/api` | `POST` | HTTP-batch capnweb transport. |
-| `/ws` | `GET` (upgrade) | WebSocket capnweb transport — the bootstrap stub is `WorkspaceRPC`. |
-| `/connect` | `POST` | Tells `computerd` to dial *out* to a caller-supplied URL and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
+| `/__computerd/watermarks` | `GET` | Sync revisions: `currentRev`, `pushRev`, `fetchCursor`. |
+| `/api` | `GET` (upgrade) | WebSocket capnweb transport — the bootstrap stub is `WorkspaceRPC`. A request without an `Upgrade` header gets `400`; an unsupported `Sec-WebSocket-Version` gets `426` and the versions the server speaks. |
+| `/connect` | `POST` | Tells `computerd` to dial *out* to a caller-supplied endpoint and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
 | `/` | `GET` | Banner/info page. |
 
 The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
@@ -108,9 +107,9 @@ Provider-agnostic shape — three steps, in order:
    path the mount is awaited *before* `listen`, so by the time
    `/health` answers FUSE is up too. With `FUSE_MOUNT=none` there is
    no FUSE step at all.
-3. **Open the capnweb session.** Either the host upgrades to `/ws`
-   directly, or it asks `computerd` (via `POST /connect`) to dial *out* to a
-   URL it controls and serve the session over that outbound socket.
+3. **Open the capnweb session.** Either the host upgrades to `/api`
+   directly, or it asks `computerd` (via `POST /connect`) to dial *out* to an
+   endpoint it controls and serve the session over that outbound socket.
    Either way, the bootstrap stub is `WorkspaceRPC`.
 
 ### Cloudflare Containers specifics
@@ -132,8 +131,10 @@ wires it like this:
    repeated until it returns `200`.
 4. **Invert the WebSocket.** The DO arms an upgrade slot
    (`#armUpgrade`) and then `POST`s to `/connect` on the container
-   (`#postConnect`). `computerd` reads that request and dials *out* to the
-   egress at `${egressHost}/ws`. Because the egress is intercepted,
+   (`#postConnect`). The request names the egress base and both paths,
+   so `computerd` polls `base + health` and then dials `base + api`;
+   the daemon assembles no paths of its own. Because the egress is
+   intercepted,
    that outbound dial loops back to the DO's `handleFetch()`, which
    accepts the upgrade and resolves the in-flight `#pendingUpgrade`.
    The capnweb session then runs over that socket. **The WebSocket
@@ -154,10 +155,9 @@ These are the variables `computerd` actually consumes (see
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PORT` | `45678` | Port the HTTP/WS server listens on. CF backend pins this to `8080`. |
+| `PORT` | `45678` | Port the HTTP server listens on. CF backend pins this to `8080`. |
 | `MOUNT_POINT` | `/workspace` | Absolute path inside the container to mount the FUSE filesystem at. Ignored when `FUSE_MOUNT=none`. |
 | `FUSE_MOUNT` | `auto` | Backend selector: `auto` probes `/dev/fuse` (linux) or macFUSE (darwin) and falls back to the userspace shim; `fuse` / `macfuse` require the corresponding real backend; `shim` forces the userspace shim; `none` skips the mount entirely. |
-| `UPSTREAM_URL` | unset | If set, `computerd` starts a sync client against this URL to push/pull VFS revisions. |
 | `EXEC_LOG_MAX_BYTES` | runner default | Caps the per-exec stdout/stderr log retained in-memory. |
 | `LOG_FILE` | unset | If set, every `console.log` / `console.error` line and any `uncaughtException` / `unhandledRejection` is also appended to this file. Stdout/stderr behaviour is unchanged. |
 

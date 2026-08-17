@@ -1,6 +1,6 @@
 ---
 name: debugging-computerd-fuse
-description: Debug computerd in real-FUSE mode end-to-end without workerd, vitest-pool-workers, or wrangler in the loop. Boot the linux-x64 binary in a privileged docker container, drive its capnweb /ws endpoint from Node, simulate DO-side sync from a SQLiteTestStorage, and isolate FUSE-related deadlocks. Load when a real-FUSE bug reproduces locally but unit tests pass, when the harness vitest tests hang against a real container, or when you need to attribute a wedge to FUSE vs sync vs exec.
+description: Debug computerd in real-FUSE mode end-to-end without workerd, vitest-pool-workers, or wrangler in the loop. Boot the linux-x64 binary in a privileged docker container, drive its capnweb /api endpoint from Node, simulate DO-side sync from a SQLiteTestStorage, and isolate FUSE-related deadlocks. Load when a real-FUSE bug reproduces locally but unit tests pass, when the harness vitest tests hang against a real container, or when you need to attribute a wedge to FUSE vs sync vs exec.
 ---
 
 # Debugging computerd against real FUSE
@@ -87,10 +87,12 @@ with a missing `/dev/fuse` would have failed startup outright.
 
 ## Drive computerd from a Node script
 
-computerd serves a composite `WorkspaceRPC` over `/ws` (capnweb WebSocket)
-and `/api` (capnweb HTTP batch). The `@cloudflare/computer-rpc/client`
-package wraps the WS form and the `/driver` subpath exposes
-`pushOnce`/`pullOnce` against a Node-side `Database`.
+computerd serves a composite `WorkspaceRPC` over `/api`, a capnweb
+WebSocket. That is the only RPC carrier: capnweb's HTTP batch transport
+cannot deliver a returned stream, which is what every read on this
+interface is. The `@cloudflare/computer-rpc/client` package wraps the
+socket and the `/driver` subpath exposes `pushOnce`/`pullOnce` against a
+Node-side `Database`.
 
 Set up a probe project once:
 
@@ -123,7 +125,7 @@ import { pullOnce, pushOnce } from "@cloudflare/computer-rpc/driver";
 import { WebSocket } from "ws";
 
 const url = process.env.COMPUTERD_URL;                // e.g. http://127.0.0.1:18080
-const wsUrl = `${url.replace(/^http(s?):\/\//, "ws$1://")}/ws`;
+const wsUrl = `${url.replace(/^http(s?):\/\//, "ws$1://")}/api`;
 
 const storage = new SQLiteTestStorage();
 const db = new Database(storage);
