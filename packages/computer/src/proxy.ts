@@ -78,7 +78,7 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       return stub.fetch(new Request(url, new Request(request, { headers })));
     }
 
-    const callback = url.pathname.match(/^\/__workspace_connect\/([0-9a-f-]{36})\/(health|ws)$/);
+    const callback = url.pathname.match(/^\/__workspace_connect\/([0-9a-f-]{36})\/(health|api)$/);
     if (callback?.[2] === "health") {
       return new Response("ok\n", {
         headers: { "content-type": "text/plain; charset=utf-8" },
@@ -91,11 +91,9 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       });
     }
 
-    // The tokenized callback keeps its own spelling: nothing in this
-    // repository builds those URLs, so renaming that segment would
-    // change an inbound contract for no gain. Both forms normalize to
-    // /api before reaching the durable object.
-    if (url.pathname === "/api" || callback?.[2] === "ws") {
+    // Both the plain and tokenized forms normalize to /api before
+    // reaching the durable object.
+    if (url.pathname === "/api" || callback?.[2] === "api") {
       if (callback?.[1]) {
         url.pathname = "/api";
         url.searchParams.set("token", callback[1]);
@@ -168,7 +166,7 @@ export class ArtifactsCLITarget extends RpcTarget {
 //   const ws = await env.HOST.getWorkspace();
 //
 // The proxy resolves env[binding] at call time — the same lazy
-// lookup WorkspaceProxy does for the /ws upgrade path — so the
+// lookup WorkspaceProxy does for the /api upgrade path — so the
 // DO class doesn't need to live in @cloudflare/computer. Any
 // DO that exposes a `__getWorkspaceStub(): WorkspaceStub` RPC method
 // works.

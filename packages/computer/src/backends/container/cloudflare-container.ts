@@ -79,7 +79,7 @@ export interface CloudflareContainerBackendOptions {
   container: () => ContainerHostHolder | Promise<ContainerHostHolder>;
 
   // Identifies the Workspace-owning DO. Fixed for the lifetime of
-  // the backend: the backend lives inside this DO and the /ws
+  // the backend: the backend lives inside this DO and the /api
   // upgrade always lands here. Plain {binding, id} data so it
   // survives the Workers RPC hop to a cross-DO container host.
   workspace: WorkspaceRef;
@@ -100,7 +100,7 @@ export interface CloudflareContainerBackendOptions {
   containerEnv?: Record<string, string>;
 
   // Total time the backend waits for: container port to open,
-  // /connect POST to return, /ws upgrade to arrive. Default 30s.
+  // /connect POST to return, /api upgrade to arrive. Default 30s.
   connectTimeoutMs?: number;
 
   // Period for the application-level heartbeat — a watermarks()
@@ -165,7 +165,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
 
-  // State for the in-flight /ws upgrade. handleFetch() resolves
+  // State for the in-flight /api upgrade. handleFetch() resolves
   // #pendingUpgrade; connect() awaits it.
   #pendingUpgrade: Promise<WebSocket> | undefined;
   #resolveUpgrade: ((ws: WebSocket) => void) | undefined;

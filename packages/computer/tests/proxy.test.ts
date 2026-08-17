@@ -48,7 +48,7 @@ describe("WorkspaceProxy", () => {
       headers: { "x-test-id": freshId() },
     });
     expect(health.status).toBe(200);
-    const websocket = await SELF.fetch(`http://proxy.test/__workspace_connect/${token}/ws`, {
+    const websocket = await SELF.fetch(`http://proxy.test/__workspace_connect/${token}/api`, {
       headers: { "x-test-id": freshId(), "x-test-binding": "COMPUTERD" },
     });
     expect(await websocket.text()).toBe(`from-do:${token}`);
