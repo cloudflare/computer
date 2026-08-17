@@ -33,10 +33,10 @@
 //
 //     override async fetch(req: Request): Promise<Response> {
 //       // The DO answers /health (port-readiness poll from the
-//       // backend) and /ws (capnweb upgrade) on its own fetch().
+//       // backend) and /api (capnweb upgrade) on its own fetch().
 //       const url = new URL(req.url);
 //       if (url.pathname === "/health") return new Response("ok\n");
-//       if (url.pathname === "/ws") return this.#backend.handleFetch(req);
+//       if (url.pathname === "/api") return this.#backend.handleFetch(req);
 //       return new Response("not found", { status: 404 });
 //     }
 //   }
@@ -46,7 +46,7 @@
 // proxy looks up `env[binding]` at fetch time and falls back to a
 // clear error if the name doesn't resolve. The DO class doesn't
 // need to live in @cloudflare/computer — the proxy works for any
-// DO that implements a fetch() handler answering /health and /ws.
+// DO that implements a fetch() handler answering /health and /api.
 
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
@@ -71,7 +71,7 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       const headers = new Headers(request.headers);
       headers.set(WORKSPACE_EGRESS_TOKEN_HEADER, this.ctx.props.egressToken);
       headers.set(WORKSPACE_EGRESS_URL_HEADER, request.url);
-      url.pathname = "/ws";
+      url.pathname = "/api";
       url.search = "";
       const stub = this.#hostStub();
       if (stub === undefined) return this.#missingBindingResponse();
@@ -91,9 +91,13 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       });
     }
 
-    if (url.pathname === "/ws" || callback?.[2] === "ws") {
+    // The tokenized callback keeps its own spelling: nothing in this
+    // repository builds those URLs, so renaming that segment would
+    // change an inbound contract for no gain. Both forms normalize to
+    // /api before reaching the durable object.
+    if (url.pathname === "/api" || callback?.[2] === "ws") {
       if (callback?.[1]) {
-        url.pathname = "/ws";
+        url.pathname = "/api";
         url.searchParams.set("token", callback[1]);
         request = new Request(url, request);
       }

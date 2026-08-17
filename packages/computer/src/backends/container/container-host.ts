@@ -34,7 +34,7 @@ import {
 export type { ContainerExitInfo } from "./container-lifecycle.js";
 
 // Identifies the Durable Object that owns the Workspace and answers
-// the /ws upgrade. Plain data so it can travel over Workers RPC.
+// the /api upgrade. Plain data so it can travel over Workers RPC.
 export interface WorkspaceRef {
   // Binding name in the host Worker's env that resolves to the
   // DurableObjectNamespace for the Workspace-owning DO class.

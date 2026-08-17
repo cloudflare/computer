@@ -4,7 +4,7 @@
 // The successful connect() path constructs a WebSocketPair, which
 // is a workerd global not available under the vitest node runner.
 // These tests cover the paths that bail before the upgrade (port
-// never opens, /connect non-2xx, /ws upgrade timeout), the
+// never opens, /connect non-2xx, /api upgrade timeout), the
 // handleFetch input validation, and the factory + workspace-ref
 // plumbing. The full happy-path round-trip is covered by the live
 // example.
@@ -246,7 +246,7 @@ describe("CloudflareContainerBackend", () => {
       egress: { mode: "http-gateway", gateway },
     });
     await expect(backend.connect()).rejects.toThrow();
-    const request = new Request("https://workspace.internal/ws", {
+    const request = new Request("https://workspace.internal/api", {
       method: "POST",
       body: "payload",
       headers: {
@@ -280,7 +280,7 @@ describe("CloudflareContainerBackend", () => {
     await expect(backend.connect()).rejects.toThrow();
 
     const response = await backend.handleFetch(
-      new Request("https://workspace.internal/ws", {
+      new Request("https://workspace.internal/api", {
         headers: {
           "x-workspace-egress-token": fake.gatewayToken ?? "",
           "x-workspace-egress-url": "ftp://api.example.test/data",
@@ -401,12 +401,12 @@ describe("CloudflareContainerBackend", () => {
     expect(fake.connectBody).toMatchObject({
       base: "http://computer.internal",
       health: "/health",
-      api: "/ws",
+      api: "/api",
     });
     expect(typeof fake.connectBody?.healthTimeoutMs).toBe("number");
   });
 
-  test("connect() throws a transport error when the /ws upgrade never arrives", async () => {
+  test("connect() throws a transport error when the /api upgrade never arrives", async () => {
     const fake = makeFakeHost();
     const backend = new CloudflareContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -416,10 +416,10 @@ describe("CloudflareContainerBackend", () => {
 
     const error = await backend.connect().catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(WorkspaceTransportError);
-    expect(String(error)).toMatch(/\/ws upgrade did not arrive/);
+    expect(String(error)).toMatch(/\/api upgrade did not arrive/);
   });
 
-  test("handleFetch rejects non-/ws paths", async () => {
+  test("handleFetch rejects non-/api paths", async () => {
     const fake = makeFakeHost();
     const backend = new CloudflareContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -435,8 +435,8 @@ describe("CloudflareContainerBackend", () => {
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
     });
-    const res = await backend.handleFetch(new Request("http://computer.internal/ws"));
-    expect(res.status).toBe(426);
+    const res = await backend.handleFetch(new Request("http://computer.internal/api"));
+    expect(res.status).toBe(400);
   });
 
   test("connect() consults host.exitInfo() before host.start()", async () => {
@@ -480,9 +480,9 @@ describe("CloudflareContainerBackend", () => {
   test("connect() restarts the host when initial readiness fails and recovers", async () => {
     // First attempt drains all probes as failures; restart() runs;
     // the second attempt's very first probe answers healthy.
-    // connect() still fails at the /ws upgrade (no WebSocketPair
+    // connect() still fails at the /api upgrade (no WebSocketPair
     // under node) — the point is that readiness recovered after
-    // restart and we reached the /connect POST and /ws upgrade.
+    // restart and we reached the /connect POST and /api upgrade.
     const fake = makeFakeHost({
       healthSequence: [
         // First attempt — enough failures to exhaust the budget.

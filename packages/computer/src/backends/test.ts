@@ -41,7 +41,7 @@ export class TestBackend implements WorkspaceBackend {
     // first RPC. The probe surfaces "harness forgot to start the
     // container" up front.
     await probeHealth(this.#url);
-    const client = createWorkspaceClient({ url: `${wsUrl}/ws` });
+    const client = createWorkspaceClient({ url: `${wsUrl}/api` });
     return {
       rpc: client,
       close: async () => {

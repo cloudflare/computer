@@ -142,7 +142,7 @@ const DEFAULT_EGRESS_HOST = "computer.internal";
 // its own, so these travel in the /connect request and both ends stay
 // in step from one place.
 const EGRESS_HEALTH_PATH = "/health";
-const EGRESS_API_PATH = "/ws";
+const EGRESS_API_PATH = "/api";
 const DEFAULT_CONTAINER_PORT = 8080;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -333,7 +333,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     return handle;
   }
 
-  // Routes a /ws upgrade Request into the in-flight connect().
+  // Routes an /api upgrade Request into the in-flight connect().
   // Returns the 101 response that the WorkspaceProxy fetch handler
   // forwards back to the container.
   async handleFetch(req: Request): Promise<Response> {
@@ -359,11 +359,14 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       return this.#egress.gateway.fetch(new Request(parsedUrl, sanitized));
     }
     const url = new URL(req.url);
-    if (url.pathname !== "/ws") {
+    if (url.pathname !== EGRESS_API_PATH) {
       return new Response("not found", { status: 404 });
     }
+    // A request with no Upgrade header is a malformed handshake, which
+    // is a 400. 426 belongs to the narrower case of a version this end
+    // does not speak, and is what the daemon answers for it.
     if (req.headers.get("upgrade") !== "websocket") {
-      return new Response("expected websocket upgrade", { status: 426 });
+      return new Response(`${EGRESS_API_PATH} requires a websocket upgrade`, { status: 400 });
     }
 
     const pair = new WebSocketPair();
@@ -564,7 +567,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
             () =>
               reject(
                 new WorkspaceTransportError(
-                  `CloudflareContainerBackend(${this.id}) [stage=ws]: /ws upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
+                  `CloudflareContainerBackend(${this.id}) [stage=ws]: /api upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
                 ),
               ),
             remaining,
