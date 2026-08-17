@@ -15,7 +15,7 @@ export interface RPCEvent {
 }
 
 export interface ClientOptions {
-  // WebSocket URL. Typically ws://container-host:45678/ws.
+  // WebSocket URL. Typically ws://container-host:45678/api.
   url: string;
   // Optional WebSocket constructor. Defaults to the global
   // WebSocket (node 22+ ships one; older runtimes can pass the

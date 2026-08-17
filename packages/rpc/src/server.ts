@@ -323,7 +323,7 @@ export function createShellServer(runner: RunnerLike): ShellRPC {
 }
 
 // Construct the composite WorkspaceRPC. The wire serves this on
-// /ws so clients reach `.sync` and `.shell` through one session.
+// /api so clients reach `.sync` and `.shell` through one session.
 export function createWorkspaceServer(
   db: Database,
   runner: RunnerLike,
