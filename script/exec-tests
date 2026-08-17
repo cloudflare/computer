@@ -77,7 +77,7 @@ const assert = (cond, msg) => {
   }
 };
 
-const client = createWorkspaceClient({ url: `ws://localhost:${port}/ws` });
+const client = createWorkspaceClient({ url: `ws://localhost:${port}/api` });
 try {
   // 1. echo + exit code.
   const h = await client.shell.exec({ source: "echo hello && exit 7" });
