@@ -8,7 +8,7 @@
 # through the Workspace is on disk for pandoc to read, and the PDF
 # pandoc writes syncs back to the durable object.
 
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.2.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.2.1 AS computerd
 
 FROM debian:stable-slim
 

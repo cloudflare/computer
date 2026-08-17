@@ -1,4 +1,4 @@
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.2.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.2.1 AS computerd
 
 FROM node:22-bookworm-slim
 

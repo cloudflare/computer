@@ -1,5 +1,15 @@
 # @cloudflare/computer
 
+## 0.2.1
+
+### Patch Changes
+
+- [#102](https://github.com/cloudflare/computer/pull/102) [`e09135b`](https://github.com/cloudflare/computer/commit/e09135bbdbff4a50a487afae47be4ad3c31d1a60) Thanks [@agent-think](https://github.com/apps/agent-think)! - Embed the configured byte limit directly in Worker JavaScript capability size errors.
+
+- [#95](https://github.com/cloudflare/computer/pull/95) [`1e6c027`](https://github.com/cloudflare/computer/commit/1e6c02791b6825ccdc743be17c402a4798ed7084) Thanks [@agent-think](https://github.com/apps/agent-think)! - Add support for short revision ids in the git module.
+
+- [#103](https://github.com/cloudflare/computer/pull/103) [`8afbb7c`](https://github.com/cloudflare/computer/commit/8afbb7c340fb4ab08626cca576dba15eb7e7ed72) Thanks [@aron-cf](https://github.com/aron-cf)! - `container-shell` operations now reconnect after computerd restarts when retrying is safe, and process-local execution handles return `EEXEC_LOST` after container replacement. See [container connection recovery](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#command-synchronization).
+
 ## 0.2.0
 
 ### Minor Changes
