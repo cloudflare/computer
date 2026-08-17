@@ -236,7 +236,7 @@ async function main() {
     await waitForHealth(port, child);
     console.error("[soak] computerd healthy");
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api`);
     await new Promise((res, rej) => {
       ws.once("open", res);
       ws.once("error", rej);

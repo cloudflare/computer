@@ -157,7 +157,7 @@ async function main() {
       `${REPO_ROOT}/node_modules/@cloudflare/computer-rpc/dist/sync-driver.js`
     );
 
-    const wsUrl = `${container.url.replace("http://", "ws://")}/ws`;
+    const wsUrl = `${container.url.replace("http://", "ws://")}/api`;
     const client = createWorkspaceClient({ url: wsUrl });
 
     const recvStorage = new SQLiteTestStorage();
