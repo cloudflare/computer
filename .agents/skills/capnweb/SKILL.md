@@ -14,7 +14,9 @@ description: |
 between the Durable Object and `computerd`. It's an object-capability RPC
 system with promise pipelining, structured-clone-style transfer of
 stubs, and bidirectional calls. The wire format used here is text
-JSON over a long-lived WebSocket, with an HTTP batch alternative.
+JSON over a long-lived WebSocket. That is the only carrier: capnweb's
+HTTP batch transport cannot deliver a stream returned from a call,
+which is what every read on this interface is.
 
 ## Where things live
 
@@ -48,10 +50,10 @@ you don't explicitly dispose stubs, you leak resources on the other
 side of the connection.
 
 This matters more here than in many capnweb deployments because the
-connection is **long-lived**. HTTP batch sessions auto-dispose
-everything when the batch ends, but our WebSocket between the
-Durable Object and `computerd` stays up for the lifetime of the workspace.
-Every undisposed stub stays alive until that connection drops.
+connection is **long-lived**. A short-lived session disposes everything
+when it ends; our WebSocket between the Durable Object and `computerd`
+stays up for the lifetime of the workspace, so every undisposed stub
+stays alive until that connection drops.
 
 ## The caller-disposes rule
 

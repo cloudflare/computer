@@ -6,8 +6,8 @@
 
 [capnweb](https://github.com/cloudflare/capnweb) is the RPC framing used
 between the Durable Object and the in-container `computerd` computerd.
-The wire format is text JSON over a single WebSocket (with an HTTP-batch
-alternative). The interface served is `WorkspaceRPC`, defined in
+The wire format is text JSON over a single WebSocket. The interface
+served is `WorkspaceRPC`, defined in
 `packages/rpc/src/interface.ts` and consumed by both sides.
 
 ## Transport
