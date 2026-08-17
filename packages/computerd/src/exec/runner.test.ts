@@ -491,3 +491,29 @@ test("heartbeat seq is monotonically increasing with other events", async () => 
     dispose();
   }
 });
+
+test("a spawned command sees the allowlisted environment, not the daemon's", async () => {
+  // The daemon's environment holds its own configuration and, when the
+  // host sets one, the secret authorizing requests to its HTTP surface.
+  // Neither may reach a command the workspace runs.
+  process.env.RPC_CLIENT_SECRET = "must-not-escape";
+  process.env.COMPUTER_VAR_GREETING = "hello";
+  const { runner, dispose } = fixture();
+  try {
+    // Written without brace expansion so the assertion reads as shell
+    // rather than as a mistyped template literal.
+    const handle = runner.exec(
+      'printf \'[%s][%s]\' "$RPC_CLIENT_SECRET" "$GREETING"; test -n "$PATH" && printf \'[path]\'',
+    );
+    const events = await drain(handle.events);
+    const stdout = events
+      .filter((event) => event.name === "stdout")
+      .map((event) => decode(event.value as Uint8Array))
+      .join("");
+    expect(stdout).toBe("[][hello][path]");
+  } finally {
+    delete process.env.RPC_CLIENT_SECRET;
+    delete process.env.COMPUTER_VAR_GREETING;
+    dispose();
+  }
+});

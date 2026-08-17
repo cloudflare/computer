@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 
 import { type Database, stat } from "@cloudflare/dofs";
 
+import { inheritedEnv } from "./env.js";
 import { createLog, type EventLog, openLog } from "./log.js";
 import { clearExecState, initializeExecSchema } from "./schema.js";
 import { ExecError, type ExecEvent, type ExecOptions, type RunnerOptions } from "./types.js";
@@ -111,7 +112,7 @@ export class Runner {
     if (existing !== undefined) this.disposeRecord(existing);
 
     const cwd = options.cwd ?? this.opts.cwd;
-    const env = { ...process.env, ...this.opts.env, ...options.env };
+    const env = { ...inheritedEnv(process.env), ...this.opts.env, ...options.env };
     // Pre-flight the cwd via dofs's stat which walks vfs_nodes /
     // vfs_dirents in SQLite directly — no node:fs.statSync, no
     // FUSE callback. Preserves the historical ENOENT-cwd error
