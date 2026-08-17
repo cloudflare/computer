@@ -20,6 +20,7 @@
 
 import { RpcTarget } from "cloudflare:workers";
 import { WorkspaceTransportError } from "../../transport-failure.js";
+import { ContainerClientSecret } from "./container-client-secret.js";
 import {
   type ContainerExitInfo,
   containerExitInfo,
@@ -48,6 +49,10 @@ export interface WorkspaceRef {
 // the `ws` accessor that withWorkspaceContainer installs.
 export interface ContainerRuntimeInfo {
   runtimeId: string;
+  // Shared secret the container requires on its HTTP surface. Durable,
+  // so a reconstructed durable object presents the value the running
+  // container was launched with.
+  clientSecret: string;
 }
 
 export interface IWorkspaceContainerAPI {
@@ -104,6 +109,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   readonly #container: NonNullable<DurableObjectState["container"]>;
   readonly #ctx: DurableObjectState;
   readonly #runtimeIdentity: CurrentContainerRuntimeIdentity;
+  readonly #clientSecret: ContainerClientSecret;
 
   constructor(ctx: DurableObjectState) {
     super();
@@ -113,6 +119,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     this.#container = ctx.container;
     this.#ctx = ctx;
     this.#runtimeIdentity = new CurrentContainerRuntimeIdentity(ctx.storage);
+    this.#clientSecret = new ContainerClientSecret(ctx.storage);
   }
 
   async start(env: Record<string, string>, enableInternet: boolean) {
@@ -123,6 +130,10 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     // destroy resolves, so guarding the start against it would let
     // a stale-running flag skip the re-launch entirely.
     const priorExit = containerExitInfo(this.#ctx);
+    // Resolved before any launch so the value written into the
+    // container's environment is the same one later incarnations read
+    // back and present on their requests.
+    const clientSecret = await this.#clientSecret.ensure();
     let runtime: ContainerRuntimeIdentity;
     if (priorExit !== null) {
       try {
@@ -131,9 +142,9 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
         // best-effort — the next start() will surface any real
         // platform-side failure.
       }
-      runtime = await this.#launch(env, enableInternet);
+      runtime = await this.#launch(env, enableInternet, clientSecret);
     } else if (!this.#container.running) {
-      runtime = await this.#launch(env, enableInternet);
+      runtime = await this.#launch(env, enableInternet, clientSecret);
     } else {
       // A Durable Object incarnation can be reconstructed while its
       // container stays alive. Reuse the durable runtime id rather
@@ -141,7 +152,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       runtime = (await this.#runtimeIdentity.get()) ?? (await this.#runtimeIdentity.markStarted());
     }
     installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
-    return { runtimeId: runtime.id };
+    return { runtimeId: runtime.id, clientSecret };
   }
 
   async restart(env: Record<string, string>, enableInternet: boolean) {
@@ -157,15 +168,16 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       // succeed against a fresh generation or surface its own
       // failure.
     }
-    const runtime = await this.#launch(env, enableInternet);
+    const clientSecret = await this.#clientSecret.ensure();
+    const runtime = await this.#launch(env, enableInternet, clientSecret);
     installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
-    return { runtimeId: runtime.id };
+    return { runtimeId: runtime.id, clientSecret };
   }
 
-  async #launch(env: Record<string, string>, enableInternet: boolean) {
+  async #launch(env: Record<string, string>, enableInternet: boolean, clientSecret: string) {
     const runtime = await this.#runtimeIdentity.markStarted();
     try {
-      this.#container.start({ enableInternet, env });
+      this.#container.start({ enableInternet, env: { ...env, RPC_CLIENT_SECRET: clientSecret } });
       return runtime;
     } catch (error) {
       await this.#runtimeIdentity.clear(runtime);

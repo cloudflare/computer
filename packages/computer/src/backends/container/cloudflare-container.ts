@@ -216,8 +216,12 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       ...this.#options.containerEnv,
     };
     let runtimeId: string;
+    // The container requires this on its HTTP surface. It is durable, so
+    // the value is the same across incarnations and across a replaced
+    // container.
+    let clientSecret: string;
     try {
-      ({ runtimeId } = await host.start(env, this.#egress.mode === "direct"));
+      ({ runtimeId, clientSecret } = await host.start(env, this.#egress.mode === "direct"));
     } catch (error) {
       throw new WorkspaceTransportError(
         this.#formatStageError("start", {
@@ -254,7 +258,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     this.#armUpgrade();
 
     runtimeId = await this.#readyWithRestarts(host, env, deadline, priorExit, runtimeId);
-    await this.#postConnect(host, deadline);
+    await this.#postConnect(host, deadline, clientSecret);
     const ws = await this.#waitForUpgrade(deadline);
 
     const stub = newWebSocketRpcSession(
@@ -519,13 +523,20 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     );
   }
 
-  async #postConnect(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+  async #postConnect(
+    host: IWorkspaceContainerAPI,
+    deadline: number,
+    clientSecret: string,
+  ): Promise<void> {
     const remaining = Math.max(0, deadline - Date.now());
     let res: Response;
     try {
       res = await host.fetchPort(this.#options.containerPort, "http://container/connect", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${clientSecret}`,
+        },
         body: JSON.stringify({
           base: `http://${this.#options.egressHost}`,
           health: EGRESS_HEALTH_PATH,

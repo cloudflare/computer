@@ -35,6 +35,8 @@ interface FakeHost {
   host: IWorkspaceContainerAPI;
   calls: { name: string; args: unknown[] }[];
   connectBody?: Record<string, unknown>;
+  connectAuthorization?: string | null;
+  clientSecret?: string;
   startEnv?: Record<string, string>;
   enableInternet?: boolean;
   interceptedHost?: string;
@@ -77,11 +79,15 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.enableInternet = enableInternet;
       await opts.start?.();
       if (!state.running) state.runtimeId = crypto.randomUUID();
+      state.clientSecret ??= "00112233445566778899aabbccddeeff";
       state.running = true;
       // A successful start clears any prior exit, matching
       // WorkspaceContainerAPI.start.
       state.exit = null;
-      return { runtimeId: state.runtimeId ?? "missing-runtime" };
+      return {
+        runtimeId: state.runtimeId ?? "missing-runtime",
+        clientSecret: state.clientSecret ?? "unset",
+      };
     },
     async interceptOutboundHttp(host, ref) {
       calls.push({ name: "interceptOutboundHttp", args: [host, ref] });
@@ -107,6 +113,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
           .clone()
           .json()
           .catch(() => undefined);
+        state.connectAuthorization = request.headers.get("authorization");
         if (connectStatus !== 200) {
           return new Response(`/connect ${connectStatus}`, { status: connectStatus });
         }
@@ -125,7 +132,8 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.running = true;
       state.exit = null;
       state.runtimeId = crypto.randomUUID();
-      return { runtimeId: state.runtimeId };
+      state.clientSecret ??= "00112233445566778899aabbccddeeff";
+      return { runtimeId: state.runtimeId, clientSecret: state.clientSecret };
     },
     async status() {
       calls.push({ name: "status", args: [] });
@@ -404,6 +412,9 @@ describe("CloudflareContainerBackend", () => {
       api: "/api",
     });
     expect(typeof fake.connectBody?.healthTimeoutMs).toBe("number");
+    // The daemon refuses an unauthorized request once it has a secret,
+    // so the bearer token travels with the dial-back instruction.
+    expect(fake.connectAuthorization).toBe(`Bearer ${fake.clientSecret}`);
   });
 
   test("connect() throws a transport error when the /api upgrade never arrives", async () => {
