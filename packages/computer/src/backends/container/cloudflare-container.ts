@@ -138,6 +138,11 @@ export interface CloudflareContainerBackendOptions {
 }
 
 const DEFAULT_EGRESS_HOST = "computer.internal";
+// Paths the egress proxy serves. The container assembles no paths of
+// its own, so these travel in the /connect request and both ends stay
+// in step from one place.
+const EGRESS_HEALTH_PATH = "/health";
+const EGRESS_API_PATH = "/ws";
 const DEFAULT_CONTAINER_PORT = 8080;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -519,7 +524,9 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          url: `http://${this.#options.egressHost}`,
+          base: `http://${this.#options.egressHost}`,
+          health: EGRESS_HEALTH_PATH,
+          api: EGRESS_API_PATH,
           healthTimeoutMs: remaining,
         }),
       });

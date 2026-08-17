@@ -34,6 +34,7 @@ interface FakeHostOptions {
 interface FakeHost {
   host: IWorkspaceContainerAPI;
   calls: { name: string; args: unknown[] }[];
+  connectBody?: Record<string, unknown>;
   startEnv?: Record<string, string>;
   enableInternet?: boolean;
   interceptedHost?: string;
@@ -102,6 +103,10 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
         return new Response(null, { status: 200 });
       }
       if (url.pathname === "/connect") {
+        state.connectBody = await request
+          .clone()
+          .json()
+          .catch(() => undefined);
         if (connectStatus !== 200) {
           return new Response(`/connect ${connectStatus}`, { status: connectStatus });
         }
@@ -378,6 +383,27 @@ describe("CloudflareContainerBackend", () => {
     const error = await backend.connect().catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(WorkspaceTransportError);
     expect(String(error)).toMatch(/POST \/connect returned 502/);
+  });
+
+  test("connect() names the egress base and both paths in the /connect body", async () => {
+    // The container assembles no host paths of its own, so the
+    // request has to carry them. A missing field would leave the
+    // daemon with nothing to dial.
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+    });
+
+    await backend.connect().catch(() => {});
+
+    expect(fake.connectBody).toMatchObject({
+      base: "http://computer.internal",
+      health: "/health",
+      api: "/ws",
+    });
+    expect(typeof fake.connectBody?.healthTimeoutMs).toBe("number");
   });
 
   test("connect() throws a transport error when the /ws upgrade never arrives", async () => {
