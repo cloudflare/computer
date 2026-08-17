@@ -33,6 +33,11 @@ Current endpoints:
 
 All other paths and methods return `404`/`405` with a `text/plain` body.
 
+When `RPC_CLIENT_SECRET` is set, every route above except `/health` requires
+it as `Authorization: Bearer <secret>`, and so does the `/api` upgrade.
+Requests without it get `401`. Leaving the variable unset disables the
+check, which is what the container harnesses rely on.
+
 Current filesystem support:
 
 - `@platformatic/vfs` in-memory filesystem provided by `@cloudflare/dofs`'s node provider.
@@ -107,7 +112,9 @@ FUSE_MOUNT=none    # skip the mount entirely; HTTP and /api still come up
 Additional environment variables:
 
 ```sh
-EXEC_LOG_MAX_BYTES=1048576  # cap the in-memory exec log buffer (bytes)
+EXEC_LOG_MAX_BYTES=1048576        # cap the in-memory exec log buffer (bytes)
+RPC_CLIENT_SECRET=<secret>        # require Authorization: Bearer <secret> on every route but /health
+COMPUTER_VAR_NODE_ENV=production  # forwarded into exec as NODE_ENV
 ```
 
 `FUSE_MOUNT=auto` is the friendly default: if `/dev/fuse` (or macFUSE) is available `computerd` mounts a real FUSE filesystem, otherwise it transparently falls back to the userspace shim. Pin the value (`fuse` / `macfuse` / `shim` / `none`) when a test needs to assert a specific code path.
