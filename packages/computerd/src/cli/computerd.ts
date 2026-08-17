@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { timingSafeEqual } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
@@ -99,6 +100,29 @@ function requestPath(request: IncomingMessage): string {
   return url.pathname;
 }
 
+// Routes reachable without the shared secret. Readiness has to stay
+// open: the host polls it before it holds any session, and a gated
+// probe turns a bad token into what looks like a container that never
+// started.
+const UNAUTHENTICATED_PATHS = new Set(["/health"]);
+
+// When RPC_CLIENT_SECRET is set, every other route requires it as a
+// bearer token. When it is unset there is nothing to check and the
+// surface is open, which is how the harnesses and local runs work.
+function isAuthorized(request: IncomingMessage, secret: string | undefined): boolean {
+  if (secret === undefined) return true;
+  const header = request.headers.authorization;
+  if (typeof header !== "string") return false;
+  const scheme = "Bearer ";
+  if (!header.startsWith(scheme)) return false;
+  const presented = Buffer.from(header.slice(scheme.length));
+  const expected = Buffer.from(secret);
+  // timingSafeEqual throws on a length mismatch, and the length of the
+  // secret is not worth leaking through the comparison either.
+  if (presented.length !== expected.length) return false;
+  return timingSafeEqual(presented, expected);
+}
+
 // Strip heartbeat events from a Runner stream before it reaches the
 // RPC layer. Heartbeats are a local observability signal only; the
 // computer-rpc wire contract carries only stdout, stderr, and exit.
@@ -162,6 +186,7 @@ interface HTTPHandle {
 function createHTTPServer(
   info: ComputerdInfo,
   rpc: ReturnType<typeof createWorkspaceServer>,
+  secret: string | undefined,
   getStats?: () => Record<string, unknown>,
 ): HTTPHandle {
   // Holds the current outbound capnweb session opened via /connect.
@@ -171,6 +196,16 @@ function createHTTPServer(
   const upstreamSlot: { ws: WebSocket | undefined } = { ws: undefined };
   const server = createServer((request, response) => {
     const path = requestPath(request);
+
+    // Checked before routing so an unauthorized caller cannot learn
+    // which routes exist.
+    if (!UNAUTHENTICATED_PATHS.has(path) && !isAuthorized(request, secret)) {
+      send(response, 401, "unauthorized\n", {
+        "www-authenticate": "Bearer",
+        "content-type": "text/plain; charset=utf-8",
+      });
+      return;
+    }
 
     // /api — the capnweb endpoint. It carries one transport, a
     // websocket, so a request that reaches the ordinary handler here
@@ -307,6 +342,13 @@ function createHTTPServer(
     acceptWebSocketSession(ws, rpc);
   });
   server.on("upgrade", (request, socket, head) => {
+    if (!isAuthorized(request, secret)) {
+      socket.write(
+        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer\r\nConnection: close\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
     if (requestPath(request) !== "/api") {
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
@@ -522,6 +564,13 @@ async function main(): Promise<void> {
 
   rejectLegacyFuseEnv(process.env);
 
+  // Read the shared secret once and drop it from the environment. The
+  // exec allowlist already keeps it out of spawned commands; removing
+  // it here means a future code path that spreads process.env cannot
+  // reintroduce the leak.
+  const clientSecret = process.env.RPC_CLIENT_SECRET?.trim() || undefined;
+  delete process.env.RPC_CLIENT_SECRET;
+
   const port = parsePort(process.env.PORT);
   const mountPoint = parseMountPoint(process.env.MOUNT_POINT);
   // FUSE_MOUNT picks the backend. auto (default) probes /dev/fuse
@@ -615,7 +664,7 @@ async function main(): Promise<void> {
         }
       : {}),
   });
-  const http = createHTTPServer(info, rpc, () => ({
+  const http = createHTTPServer(info, rpc, clientSecret, () => ({
     ...collectDbStats(db),
     ...(fuse?.getBufferStats?.() ?? {}),
   }));

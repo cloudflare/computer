@@ -595,9 +595,37 @@ async function waitForHTTPOK(url, child, output, timeoutMs = 5_000) {
   throw new Error(`timed out waiting for ${url}\n${output()}`);
 }
 
-function request(url) {
+// Write a request onto a raw socket and return the response head.
+// http.request() will not send a malformed websocket handshake, and
+// fetch() will not send one at all, so the handshake cases need this.
+function rawRequest(port, lines) {
   return new Promise((resolve, reject) => {
-    const request = http.get(url, (response) => {
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(`${lines.join("\r\n")}\r\n\r\n`);
+    });
+    let buf = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      buf += chunk;
+    });
+    socket.once("error", reject);
+    // The server may hold the socket open after refusing the
+    // handshake, so settle on the end of the response head.
+    const settle = () => {
+      socket.destroy();
+      resolve(buf);
+    };
+    socket.on("data", () => {
+      if (buf.includes("\r\n\r\n")) settle();
+    });
+    socket.once("close", () => resolve(buf));
+    setTimeout(settle, 2_000);
+  });
+}
+
+function request(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, options, (response) => {
       response.setEncoding("utf8");
       let body = "";
       response.on("data", (chunk) => {
@@ -630,34 +658,6 @@ async function waitFor(predicate, { timeoutMs = 2_000, intervalMs = 10 } = {}) {
     await delay(intervalMs);
   }
   throw new Error("waitFor: predicate did not become true within the timeout");
-}
-
-// Write a request onto a raw socket and return the response head.
-// http.request() will not send a malformed websocket handshake, and
-// fetch() will not send one at all, so the handshake cases need this.
-function rawRequest(port, lines) {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(port, "127.0.0.1", () => {
-      socket.write(`${lines.join("\r\n")}\r\n\r\n`);
-    });
-    let buf = "";
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk) => {
-      buf += chunk;
-    });
-    socket.once("error", reject);
-    // The server may hold the socket open after refusing the
-    // handshake, so settle on the end of the response head.
-    const settle = () => {
-      socket.destroy();
-      resolve(buf);
-    };
-    socket.on("data", () => {
-      if (buf.includes("\r\n\r\n")) settle();
-    });
-    socket.once("close", () => resolve(buf));
-    setTimeout(settle, 2_000);
-  });
 }
 
 function postJson(url, body) {
@@ -709,3 +709,72 @@ function stopProcess(child) {
     child.kill("SIGTERM");
   });
 }
+
+test("RPC_CLIENT_SECRET gates the HTTP surface but not /health", async (_ctx) => {
+  const secret = "0123456789abcdef0123456789abcdef";
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-auth-"));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", RPC_CLIENT_SECRET: secret },
+  });
+  const base = `http://127.0.0.1:${port}`;
+  const bearer = { authorization: `Bearer ${secret}` };
+
+  // Readiness has to stay reachable: the host polls it before it has
+  // any session, and a gated probe turns a bad token into what looks
+  // like a container that never came up.
+  expect((await request(`${base}/health`)).statusCode).toBe(200);
+
+  for (const route of ["/", "/__computerd/info", "/api/watermarks"]) {
+    const anonymous = await request(`${base}${route}`);
+    expect(anonymous.statusCode, `${route} without a token`).toBe(401);
+    const authorized = await request(`${base}${route}`, { headers: bearer });
+    expect(authorized.statusCode, `${route} with the token`).toBe(200);
+  }
+
+  // Wrong token, right shape.
+  const wrong = await request(`${base}/__computerd/info`, {
+    headers: { authorization: `Bearer ${"f".repeat(secret.length)}` },
+  });
+  expect(wrong.statusCode).toBe(401);
+
+  // A token of a different length must not be treated as a match.
+  const short = await request(`${base}/__computerd/info`, {
+    headers: { authorization: "Bearer short" },
+  });
+  expect(short.statusCode).toBe(401);
+
+  // Another scheme is not a bearer token.
+  const basic = await request(`${base}/__computerd/info`, {
+    headers: { authorization: `Basic ${secret}` },
+  });
+  expect(basic.statusCode).toBe(401);
+
+  // /connect is gated too, and refused before its body is considered.
+  const connect = await postJson(`${base}/connect`, {});
+  expect(connect.statusCode).toBe(401);
+
+  // The upgrade is gated as well.
+  const upgrade = await rawRequest(port, [
+    "GET /api HTTP/1.1",
+    `Host: 127.0.0.1:${port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Version: 13",
+  ]);
+  expect(upgrade).toMatch(/^HTTP\/1\.1 401 /);
+});
+
+test("without RPC_CLIENT_SECRET every route stays open", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-noauth-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+  const base = `http://127.0.0.1:${port}`;
+
+  for (const route of ["/health", "/", "/__computerd/info", "/api/watermarks"]) {
+    expect((await request(`${base}${route}`)).statusCode, route).toBe(200);
+  }
+});
