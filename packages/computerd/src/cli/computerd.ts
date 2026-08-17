@@ -5,7 +5,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Socket } from "node:net";
 import { isAbsolute } from "node:path";
 import type { ExecEvent as RpcExecEvent } from "@cloudflare/computer-rpc";
-import { createWorkspaceClient, type WorkspaceClient } from "@cloudflare/computer-rpc/client";
 import { isStubTrackingEnabled, stubSnapshot } from "@cloudflare/computer-rpc/debug";
 import type { RunnerLike } from "@cloudflare/computer-rpc/server";
 import {
@@ -464,21 +463,7 @@ async function main(): Promise<void> {
   const backend: FUSEBackend = await resolveFuseBackend(fuseMountMode);
   console.log(`[info] FUSE_MOUNT=${fuseMountMode} resolved to backend=${backend.kind}`);
 
-  const upstreamUrl = process.env.UPSTREAM_URL?.trim();
-  let upstreamClient: WorkspaceClient | undefined;
-  if (upstreamUrl !== undefined && upstreamUrl.length > 0) {
-    // Use the `ws` package's WebSocket (not Node's built-in
-    // global) so the dial negotiates permessage-deflate against
-    // the upstream's WebSocketServer. Node 22's built-in
-    // WebSocket doesn't advertise the deflate extension.
-    upstreamClient = createWorkspaceClient({
-      url: upstreamUrl,
-      WebSocketImpl: WebSocket as unknown as typeof globalThis.WebSocket,
-    });
-  }
-  const { vfs, db, stopSync } = await createNodeVirtualFileSystem({
-    upstream: upstreamClient?.sync,
-  });
+  const { vfs, db } = await createNodeVirtualFileSystem();
   const info: ComputerdInfo = { backend, mountPoint, port };
 
   let fuse: FuseMount | undefined;
@@ -583,14 +568,6 @@ async function main(): Promise<void> {
 
     if (fuse !== undefined) {
       await unmount(fuse);
-    }
-    if (upstreamClient !== undefined) {
-      try {
-        stopSync();
-        await upstreamClient.close();
-      } catch (error) {
-        console.error(error);
-      }
     }
     teardownLogging();
     process.exit(signal === "SIGINT" ? 130 : 143);

@@ -1,5 +1,3 @@
-import type { SyncRPC } from "@cloudflare/computer-rpc";
-import { pullOnce, tick } from "@cloudflare/computer-rpc/driver";
 import { Database, initializeSchema, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { create, type VirtualFileSystem, VirtualProvider } from "@platformatic/vfs";
@@ -51,53 +49,23 @@ const EXTRA_VFS_METHODS = [
   "releaseWriteBufferSync",
 ] as const;
 
-export interface CreateOptions {
-  // Optional upstream sync surface. When set, the local store
-  // performs an initial pull on construction. When unset, computerd runs
-  // standalone against an in-memory store.
-  //
-  // The caller owns the carrier (WebSocket, in-process direct
-  // binding, or any future flavour). This package only needs the
-  // typed surface; the transport seam lives in computer-rpc.
-  // Future RPCs (exec, mounts, watchers) will travel beside
-  // SyncRPC on the same connection, so the caller may pass a
-  // composite stub — we accept the narrow SyncRPC subset
-  // structurally.
-  upstream?: SyncRPC;
-}
-
 export interface NodeVfsHandle {
   // @platformatic/vfs filesystem the FUSE driver consumes.
   vfs: NodeVirtualFileSystem;
-  // dofs Database backing the same store. Exposed so the
-  // CLI can construct a createSyncServer(db) and serve the local
-  // store to upstream callers over capnweb.
+  // dofs Database backing the same store. Exposed so the CLI can
+  // construct a createWorkspaceServer(db) and serve the local store
+  // to whoever holds the capnweb session.
   db: Database;
-  // Stop the periodic sync loop, if one was started. No-op when
-  // no upstream was provided. Idempotent.
-  stopSync: () => void;
 }
 
-// Polling cadence for the background sync loop. Picked to match
-// human-typing latency expectations without saturating the wire.
-const SYNC_TICK_MS = 250;
-
-export async function createNodeVirtualFileSystem(
-  options: CreateOptions = {},
-): Promise<NodeVfsHandle> {
+// The store is local and process-lifetime. Sync is driven from the
+// other end of the capnweb session: the host pushes changes in and
+// pulls them back out, so nothing here polls.
+export async function createNodeVirtualFileSystem(): Promise<NodeVfsHandle> {
   ensureVirtualProviderPrototype();
   const storage = new SQLiteTestStorage();
   const db = new Database(storage);
   initializeSchema(db, () => Date.now());
-
-  let stopSync = () => {};
-  if (options.upstream !== undefined) {
-    // Initial pull. The polling loop would catch up eventually,
-    // but the FUSE mount comes up populated by waiting for the
-    // first pull to settle before returning.
-    await pullOnce(db, options.upstream);
-    stopSync = startSyncLoop(db, options.upstream);
-  }
 
   const provider = new SQLiteWorkspaceProvider(db);
   const vfs = create(provider as unknown as VirtualProvider, { moduleHooks: false });
@@ -117,27 +85,5 @@ export async function createNodeVirtualFileSystem(
       configurable: true,
     });
   }
-  return { vfs, db, stopSync };
-}
-
-// Drive tick(db, upstream) on a setInterval. Errors during a tick
-// log and continue — a transient upstream failure shouldn't
-// kill the daemon. The watermarks are durable, so the next tick
-// resumes from where the failed one would have.
-function startSyncLoop(db: Database, upstream: SyncRPC): () => void {
-  let stopped = false;
-  const handle = setInterval(() => {
-    if (stopped) return;
-    tick(db, upstream).catch((error) => {
-      console.error("sync tick failed:", error);
-    });
-  }, SYNC_TICK_MS);
-  // Don't block process exit on the timer. computerd's shutdown path
-  // calls stopSync() explicitly; this is belt-and-braces.
-  handle.unref?.();
-  return () => {
-    if (stopped) return;
-    stopped = true;
-    clearInterval(handle);
-  };
+  return { vfs, db };
 }
