@@ -1,37 +1,48 @@
 #!/usr/bin/env node
 
-// computerd-soak.mjs — soak test for the computerd sync loop.
+// computerd-soak.mjs — soak test for the sync loop between a host and
+// one computerd.
 //
-// Boots two computerd containers wired as peer-to-peer:
-//   A: standalone computerd, port mapped to the host.
-//   B: standalone computerd, port mapped to the host AND
-//      UPSTREAM_URL pointing at A's host port. B's sync
-//      loop pulls from A and pushes to A.
+// Boots one computerd container and plays the part the durable object
+// plays in production: this script holds the authoritative store and
+// drives sync across the capnweb session. Files are written into the
+// host store at a steady rate while a tick loop pushes them to the
+// daemon. While that runs, sample:
 //
-// Hammers A by writing files through its /api endpoint
-// (capnweb HTTP batch). While the writes flow, sample:
+//   - the host store's currentRev — how far the writer has got.
+//   - the daemon's currentRev — how far sync has carried it.
+//   - docker stats — resident memory for the container.
 //
-//   - A.watermarks() — currentRev, pushRev, fetchRev.
-//   - B.watermarks() — same.
-//   - docker stats — RSS for both containers.
+// The gap between the two revision columns is the convergence lag. The
+// memory column is the other reason this script exists: it is the
+// cheapest way to watch the daemon's footprint under write pressure.
 //
-// Output is a TSV table on stdout, one row per sample,
-// suitable for piping into a CSV reader or just eyeballing.
+// This used to boot a second daemon and point UPSTREAM_URL at the
+// first. That measured a daemon driving its own sync loop, which is a
+// mode no deployment uses and which no longer exists. A workspace pairs
+// one host with one container, so that is what this soaks.
+//
+// Output is a TSV table on stdout, one row per sample, suitable for
+// piping into a CSV reader or just eyeballing.
 //
 // Knobs (env vars):
 //
-//   COMPUTERD_BINARY        path to computerd-linux-x64 binary
+//   COMPUTERD_BINARY  path to computerd-linux-x64 binary
 //   SOAK_DURATION_MS  total wall time of the soak phase (default 30000)
-//   SOAK_WRITES_PER_S target writes/second sustained against A (default 200)
+//   SOAK_WRITES_PER_S target writes/second sustained (default 200)
 //   SOAK_PAYLOAD_B    bytes per write (default 64)
 //   SOAK_SAMPLE_MS    sampling interval (default 250)
+//   SOAK_TICK_MS      sync tick interval (default 100)
 
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { newHttpBatchRpcSession, newWebSocketRpcSession } from "capnweb";
+import { createWorkspaceClient } from "@cloudflare/computer-rpc/client";
+import { pullOnce, pushOnce } from "@cloudflare/computer-rpc/driver";
+import { currentRev, Database, initializeSchema, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import WebSocket from "ws";
 
 const execFileP = promisify(execFile);
@@ -55,10 +66,11 @@ const SAMPLE_MS = Number(process.env.SOAK_SAMPLE_MS ?? 250);
 // skipped.
 const DISABLE_FUSE = process.env.SOAK_DISABLE_FUSE === "1" || !existsSync("/dev/fuse");
 
-// On Linux, host.docker.internal isn't resolved automatically;
-// we map it to the host-gateway address so B can reach A.
-// docker-desktop on macOS/Windows already provides this.
-const ADD_HOST_GATEWAY = process.platform === "linux";
+// Matches MOUNT_POINT in the container env below. The store keeps
+// everything under the mount point so pushed paths land where the FUSE
+// mount expects them.
+const MOUNT_POINT = "/workspace";
+const TICK_MS = Number(process.env.SOAK_TICK_MS ?? 100);
 
 const IMAGE_TAG = "computerd-harness:libfuse2";
 
@@ -90,7 +102,7 @@ RUN apt-get update >/dev/null && apt-get install -y --no-install-recommends \\
   });
 }
 
-async function bootContainer(extraEnv = {}) {
+async function bootContainer() {
   const args = ["run", "--rm", "-d", "--platform", "linux/amd64"];
   if (!DISABLE_FUSE) {
     args.push(
@@ -107,9 +119,6 @@ async function bootContainer(extraEnv = {}) {
       "seccomp=unconfined",
     );
   }
-  if (ADD_HOST_GATEWAY) {
-    args.push("--add-host", "host.docker.internal:host-gateway");
-  }
   args.push(
     "-v",
     `${BINARY}:/usr/local/bin/computerd:ro`,
@@ -118,13 +127,10 @@ async function bootContainer(extraEnv = {}) {
     "-e",
     "PORT=8080",
     "-e",
-    "MOUNT_POINT=/workspace",
+    `MOUNT_POINT=${MOUNT_POINT}`,
   );
   if (DISABLE_FUSE) {
     args.push("-e", "FUSE_MOUNT=none");
-  }
-  for (const [k, v] of Object.entries(extraEnv)) {
-    args.push("-e", `${k}=${v}`);
   }
   const image = DISABLE_FUSE ? "debian:stable-slim" : IMAGE_TAG;
   args.push(image, "/usr/local/bin/computerd");
@@ -174,16 +180,12 @@ async function dockerStats(cids) {
   return result;
 }
 
-// Connect a capnweb HTTP batch client to /api. Each call is
-// its own session; we accept the cost (one round-trip per
-// hammer-write) so the soak measures the entire stack
-// including session setup.
-function batchStub(url) {
-  return newHttpBatchRpcSession(`${url}/api`);
-}
-
+// The daemon's revision numbers over plain HTTP. A sampler wanting
+// three integers on an interval does not need an RPC session.
 async function fetchWatermarks(url) {
-  return await batchStub(url).sync.watermarks();
+  const res = await fetch(`${url}/__computerd/watermarks`);
+  if (!res.ok) throw new Error(`watermarks HTTP ${res.status}`);
+  return await res.json();
 }
 
 // Build a payload-bytes Uint8Array.
@@ -207,149 +209,108 @@ function payloadBytes(seed) {
   return out;
 }
 
-// Persistent capnweb WebSocket session against B. Reused
-// across the soak; one upgrade, many push round-trips.
+// Persistent capnweb session against the daemon. Reused across the
+// soak: one upgrade, many push round-trips.
 //
-// SOAK_NO_DEFLATE=1 forces the dial to negotiate without
-// permessage-deflate so the soak can compare compressed and
-// uncompressed wire costs without rebuilding the computerd binary.
-function wsStub(url) {
-  const wsUrl = `${url.replace("http://", "ws://")}/ws`;
-  const ws = new WebSocket(wsUrl, {
-    perMessageDeflate: process.env.SOAK_NO_DEFLATE !== "1",
+// SOAK_NO_DEFLATE=1 dials without permessage-deflate so the soak can
+// compare compressed and uncompressed wire costs without rebuilding
+// the computerd binary.
+function openSession(url) {
+  return createWorkspaceClient({
+    url: `${url.replace("http://", "ws://")}/api`,
+    WebSocketImpl: class extends WebSocket {
+      constructor(target) {
+        super(target, { perMessageDeflate: process.env.SOAK_NO_DEFLATE !== "1" });
+      }
+    },
   });
-  return newWebSocketRpcSession(ws);
 }
 
-// One write into computerd via the SyncRPC push path. senderRev=0
-// marks us as an external writer — the server applies as
-// a local write (bumps vfs_meta.rev, leaves pushRev alone) so
-// the outbound sync loop picks the entry up on the next tick.
-// This is the F2 fix in practice; before it landed, this
-// path silenced the outbound loop and A never saw any of B's
-// writes.
-async function pushOneWrite(stub, i, bytes) {
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  await stub.sync.pushObjects(
-    new ReadableStream({
-      start(c) {
-        c.enqueue({ hash, bytes });
-        c.close();
-      },
-    }),
-  );
-  await stub.sync.push({
-    senderRev: 0,
-    changes: new ReadableStream({
-      start(c) {
-        c.enqueue({
-          kind: "file",
-          path: `/soak_${i}.bin`,
-          mode: 0o644,
-          mtime: Date.now(),
-          size: bytes.byteLength,
-          chunks: [{ hash, size: bytes.byteLength }],
-        });
-        c.close();
-      },
-    }),
-  });
+// The authoritative store, standing in for the durable object's SQLite.
+function openHostStore() {
+  const db = new Database(new SQLiteTestStorage());
+  initializeSchema(db, () => Date.now());
+  return { db, provider: new SQLiteWorkspaceProvider(db, { now: () => Date.now() }) };
+}
+
+// One write into the host store. The sync tick below is what carries
+// it to the daemon, so this is a plain filesystem write rather than a
+// wire call.
+function writeOne(provider, i, bytes) {
+  provider.writeFileSync(`${MOUNT_POINT}/soak_${i}.bin`, Buffer.from(bytes));
 }
 
 async function main() {
   if (!DISABLE_FUSE) await ensureImage();
 
-  process.stderr.write("booting A (sink) ...\n");
-  const a = await bootContainer();
-  process.stderr.write(`  A: ${a.url} (${a.cid.slice(0, 12)})\n`);
+  process.stderr.write("booting computerd ...\n");
+  const daemon = await bootContainer();
+  process.stderr.write(`  ${daemon.url} (${daemon.cid.slice(0, 12)})\n`);
 
-  process.stderr.write("booting B (source, UPSTREAM_URL -> A) ...\n");
-  // B's sync loop will push to A. Hostname inside docker:
-  // we can't reach the host's 127.0.0.1 portably; use
-  // host.docker.internal which docker-desktop sets up on
-  // macOS/Windows. On linux we'd need --add-host=host.docker.internal:host-gateway.
-  // Inside a docker container we reach the host's mapped
-  // port via host.docker.internal. The capnweb client needs
-  // a ws:// URL pointing at the /ws endpoint (not just the
-  // host).
-  const upstreamForB = `${a.url.replace("http://127.0.0.1", "ws://host.docker.internal")}/ws`;
-  // Inside the docker container, the host port we're trying
-  // to reach is 127.0.0.1:<a.port> on the host. Pass the
-  // mapped host port via host.docker.internal.
-  const b = await bootContainer({
-    UPSTREAM_URL: upstreamForB,
-  });
-  process.stderr.write(`  B: ${b.url} (${b.cid.slice(0, 12)}) -> upstream ${upstreamForB}\n`);
+  const { db, provider } = openHostStore();
+  provider.mkdirSync(MOUNT_POINT, { recursive: true });
+  const session = openSession(daemon.url);
 
-  // Header row.
-  console.log(
-    "t_ms\tA_currentRev\tA_pushRev\tA_fetchRev\tB_currentRev\tB_pushRev\tB_fetchRev\tA_mem\tB_mem\twrites_sent",
-  );
+  // Header row. host_rev is how far the writer has got; daemon_rev is
+  // how far sync has carried it. The difference is the lag.
+  console.log("t_ms\thost_rev\tdaemon_rev\tdaemon_pushRev\tmem\twrites_sent\tpushed");
 
   const start = Date.now();
   const stopAt = start + DURATION_MS;
   const intervalMs = Math.max(1, Math.floor(1000 / WRITES_PER_S));
   let writeSeq = 0;
   let writesSent = 0;
-  let writesInFlight = 0;
 
-  // Writes go through B's SyncRPC /ws push path with
-  // senderRev=0. The server treats them as local writes;
-  // B's outbound sync loop ships them to A on the next
-  // tick. This is the path an external orchestrator (a
-  // DO accepting agent requests, the agent itself) would
-  // take — the same wire surface a computerd-to-computerd peer
-  // uses, just with a different senderRev value.
-  const writeStub = wsStub(b.url);
-
-  // Fire-and-forget write loop. We don't await every write
-  // because the goal is to saturate; we cap the in-flight
-  // count to keep memory bounded.
-  const MAX_INFLIGHT = 32;
+  // Writes land in the host store. The sync tick below carries them
+  // over the wire, which is the direction production runs: the host
+  // owns the truth and pushes it to the container.
   const writeLoop = (async () => {
     while (Date.now() < stopAt) {
-      if (writesInFlight >= MAX_INFLIGHT) {
-        await new Promise((r) => setTimeout(r, 1));
-        continue;
-      }
-      const i = writeSeq++;
-      writesInFlight++;
-      pushOneWrite(writeStub, i, payloadBytes(i))
-        .then(() => {
-          writesSent++;
-          writesInFlight--;
-        })
-        .catch((err) => {
-          writesInFlight--;
-          process.stderr.write(`write ${i} failed: ${err.message}\n`);
-        });
+      writeOne(provider, writeSeq++, payloadBytes(writeSeq));
+      writesSent++;
       await new Promise((r) => setTimeout(r, intervalMs));
     }
   })();
 
-  // Sample loop. Runs in parallel with the writes.
+  // Sync tick. pushOnce ships whatever the writer has committed since
+  // the last tick; pullOnce brings back anything the daemon changed on
+  // its own, which is nothing here but exercises the other direction.
+  // A failed tick logs and continues: watermarks are durable, so the
+  // next tick resumes where this one stopped.
+  let pushed = 0;
+  let ticking = false;
+  const tickTimer = setInterval(() => {
+    if (ticking) return;
+    ticking = true;
+    (async () => {
+      pushed += await pushOnce(db, session.sync);
+      await pullOnce(db, session.sync);
+    })()
+      .catch((err) => {
+        process.stderr.write(`sync tick failed: ${err.message}\n`);
+      })
+      .finally(() => {
+        ticking = false;
+      });
+  }, TICK_MS);
+
+  // Sample loop. Runs in parallel with the writes and the tick.
   const samples = [];
   const sampleLoop = (async () => {
     while (Date.now() < stopAt + 5000) {
       const t = Date.now() - start;
-      const [aWm, bWm, stats] = await Promise.all([
-        fetchWatermarks(a.url).catch(() => null),
-        fetchWatermarks(b.url).catch(() => null),
-        dockerStats([a.cid, b.cid]).catch(() => ({})),
+      const [wm, stats] = await Promise.all([
+        fetchWatermarks(daemon.url).catch(() => null),
+        dockerStats([daemon.cid]).catch(() => ({})),
       ]);
-      const aMem = stats[a.cid.slice(0, 12)] ?? "?";
-      const bMem = stats[b.cid.slice(0, 12)] ?? "?";
       const row = [
         t,
-        aWm?.currentRev ?? -1,
-        aWm?.pushRev ?? -1,
-        aWm?.fetchRev ?? -1,
-        bWm?.currentRev ?? -1,
-        bWm?.pushRev ?? -1,
-        bWm?.fetchRev ?? -1,
-        aMem,
-        bMem,
+        currentRev(db),
+        wm?.currentRev ?? -1,
+        wm?.pushRev ?? -1,
+        stats[daemon.cid.slice(0, 12)] ?? "?",
         writesSent,
+        pushed,
       ];
       console.log(row.join("\t"));
       samples.push(row);
@@ -358,31 +319,22 @@ async function main() {
   })();
 
   await writeLoop;
-  process.stderr.write(`writes done (${writesSent} sent, ${writesInFlight} still in flight)\n`);
-  // Let in-flight writes drain.
-  while (writesInFlight > 0) await new Promise((r) => setTimeout(r, 100));
-  // Let the sync loop catch up.
+  process.stderr.write(`writes done (${writesSent} committed locally)\n`);
+  // Let the tick drain what the writer just committed.
   await new Promise((r) => setTimeout(r, 3000));
   await sampleLoop;
-
-  // capnweb's WebSocket session doesn't expose an explicit
-  // close on the stub; the container kill below tears it
-  // down at the computerd end.
-  await Promise.all([kill(a.cid), kill(b.cid)]);
+  clearInterval(tickTimer);
+  await session.close().catch(() => {});
+  await kill(daemon.cid);
 
   // Summary on stderr.
   const final = samples[samples.length - 1] ?? [];
   process.stderr.write(`\n--- soak complete ---\n`);
-  process.stderr.write(`writes attempted: ${writeSeq}\n`);
-  process.stderr.write(`writes acked:     ${writesSent}\n`);
-  process.stderr.write(`final B.currentRev: ${final[4]}\n`);
-  process.stderr.write(
-    `final B.pushRev:    ${final[5]} (gap to currentRev: ${final[4] - final[5]})\n`,
-  );
-  process.stderr.write(
-    `final A.fetchRev:   ${final[3]} (lag behind B.currentRev: ${final[4] - final[3]})\n`,
-  );
-  process.stderr.write(`final B mem:        ${final[8]}\n`);
+  process.stderr.write(`writes committed:  ${writeSeq}\n`);
+  process.stderr.write(`entries pushed:    ${pushed}\n`);
+  process.stderr.write(`final host rev:    ${final[1]}\n`);
+  process.stderr.write(`final daemon rev:  ${final[2]} (lag: ${final[1] - final[2]})\n`);
+  process.stderr.write(`final mem:         ${final[4]}\n`);
 }
 
 main().catch((err) => {
