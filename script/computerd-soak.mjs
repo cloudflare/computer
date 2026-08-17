@@ -266,7 +266,8 @@ async function main() {
   // owns the truth and pushes it to the container.
   const writeLoop = (async () => {
     while (Date.now() < stopAt) {
-      writeOne(provider, writeSeq++, payloadBytes(writeSeq));
+      const seq = writeSeq++;
+      writeOne(provider, seq, payloadBytes(seq));
       writesSent++;
       await new Promise((r) => setTimeout(r, intervalMs));
     }
