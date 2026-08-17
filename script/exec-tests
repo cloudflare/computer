@@ -13,7 +13,7 @@
 #   - artifacts/computerd/computerd-linux-x64 (run `npm run build:bin --workspace
 #     @cloudflare/computerd` first)
 #   - docker
-#   - node 22+ on the host
+#   - node on the host, recent enough for module.registerHooks (22.15+)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -61,9 +61,12 @@ if ! curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; then
 fi
 echo "==> computerd healthy on :${port}"
 
-# Drive the smoke from a node script. Inline so we don't add a
-# new file to mount; the script is self-contained.
-PORT="${port}" REPO_ROOT="${repo_root}" node --input-type=module -e '
+# Drive the smoke from a node script, inline so nothing extra has to be
+# mounted into the container. The --import hook makes the package's main
+# entry loadable outside workerd; see the note at its use below.
+PORT="${port}" REPO_ROOT="${repo_root}" node \
+  --import "${repo_root}/script/lib/cloudflare-workers-stub.mjs" \
+  --input-type=module -e '
 const repoRoot = process.env.REPO_ROOT;
 const port = process.env.PORT;
 const { createWorkspaceClient } = await import(
@@ -234,15 +237,12 @@ try {
   // 7. Workspace.runtime host wrapper (E3). Uses the composite
   // client through the high-level facade: encoding utf8 +
   // ExecHandle.result() in one call.
-  // Import the specific files rather than the package barrel.
-  // The barrel re-exports WorkspaceProxy, which extends
-  // WorkerEntrypoint from cloudflare:workers — that scheme
-  // only resolves under workerd, not plain Node.
-  const { TestBackend } = await import(
-    `${repoRoot}/packages/computer/dist/backends/test.js`
-  );
-  const { Workspace } = await import(
-    `${repoRoot}/packages/computer/dist/workspace.js`
+  // The package barrel re-exports WorkspaceProxy, which extends
+  // WorkerEntrypoint from cloudflare:workers. That specifier only
+  // resolves under workerd, so this runs with a --import hook that
+  // stubs it; see script/lib/cloudflare-workers-stub.mjs.
+  const { TestBackend, Workspace } = await import(
+    `${repoRoot}/packages/computer/dist/index.js`
   );
   // Workspace needs DurableObjectStorageLike; supply the
   // node:sqlite-backed test storage so this runs under plain

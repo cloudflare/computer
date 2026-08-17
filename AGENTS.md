@@ -133,8 +133,9 @@ loop. Reach for these when you're chasing a behavior the unit tests don't cover.
 - `shell` boots a debian-slim container with the linux `computerd` binary
   mounted under `/usr/local/bin`. The starting point for anything
   that needs a real FUSE mount.
-- `computerd-soak.mjs` boots two `computerd` containers wired peer-to-peer and
-  soaks the sync loop. Use it to chase convergence or churn bugs.
+- `computerd-soak.mjs` boots one `computerd` container, takes the host's
+  part of the sync loop from a local store, and reports convergence lag
+  beside container memory. Use it to chase convergence or churn bugs.
 - `computerd-stub-soak.mjs` soaks the long-lived WebSocket session and
   reads `session.getStats()` to detect stub-disposal drift. Run it
   for changes around the capnweb lifecycle.
@@ -147,6 +148,10 @@ loop. Reach for these when you're chasing a behavior the unit tests don't cover.
   tasks against the mount with a tmpfs baseline for comparison.
 - `exec-tests` boots `computerd` in docker with FUSE disabled and exercises
   a few `shell.exec` scenarios.
+- `lib/cloudflare-workers-stub.mjs` is a node `--import` hook that stubs
+  the `cloudflare:workers` module, so a host-side script can import
+  `@cloudflare/computer`'s main entry outside workerd. Not runnable on
+  its own; `exec-tests` uses it.
 - `npm-bench.sh` / `run-npm-bench.sh` benchmark npm package installs
   on native disk vs the FUSE mount. `run-npm-bench.sh` is the
   user-facing entry point that boots a privileged Docker container;
