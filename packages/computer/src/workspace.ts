@@ -183,6 +183,11 @@ export interface WorkspaceOptions {
   // and reaches every repository, including those other sessions
   // own. Scope it unless the caller is meant to administer the
   // namespace.
+  //
+  // An empty session id is a construction error rather than a way
+  // to ask for the namespace-wide client, so an id that came out
+  // blank by accident cannot widen one tenant's client to all of
+  // them.
   artifacts?: {
     binding: Artifacts;
     sessionId?: string | null;
@@ -1335,16 +1340,17 @@ function positiveRetryOption(value: number | undefined, fallback: number, name: 
  * artifacts-specific one when the caller set it, otherwise the
  * workspace's own, and undefined for a namespace-wide client.
  *
- * `WorkspaceOptions.sessionId` documents the empty string as its
- * unset value, so an empty id here means the workspace has no
- * session to scope by rather than a session named "". The wrapper
- * itself is stricter: it rejects an empty id outright, since a
- * caller reaching it directly has no such convention.
+ * An empty id is passed through rather than read as an absent one.
+ * A caller that derives the session id from an unset variable or a
+ * missing request field gets the wrapper's `InvalidSessionIdError`
+ * at construction instead of a client that reaches every
+ * repository in the namespace. Ask for that client by omitting the
+ * id or passing `null`.
  */
 function artifactsSessionId(options: WorkspaceOptions): string | null | undefined {
   const configured = options.artifacts?.sessionId;
   if (configured !== undefined) return configured;
-  return options.sessionId === "" ? undefined : options.sessionId;
+  return options.sessionId;
 }
 
 function createDisabledArtifactsClient(): ArtifactClient {

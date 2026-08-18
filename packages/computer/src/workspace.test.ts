@@ -2,7 +2,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeArtifactsBinding } from "../tests/utilities/fake-artifacts-binding.js";
-import { createArtifact } from "./artifacts/index.js";
+import { createArtifact, InvalidSessionIdError } from "./artifacts/index.js";
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
@@ -815,6 +815,27 @@ describe("Workspace backend selection", () => {
       });
       expect(ws.artifacts.sessionId).toBeUndefined();
       expect(await ws.artifacts.list()).toHaveLength(1);
+    });
+
+    it("rejects an empty workspace session id instead of widening the client", () => {
+      // A session id derived from an unset variable or a missing
+      // request field must not turn into namespace-wide access.
+      const binding = new FakeArtifactsBinding();
+      expect(
+        () => new Workspace({ storage: makeStorage(), sessionId: "", artifacts: { binding } }),
+      ).toThrow(InvalidSessionIdError);
+    });
+
+    it("rejects an empty artifacts session id", () => {
+      const binding = new FakeArtifactsBinding();
+      expect(
+        () =>
+          new Workspace({
+            storage: makeStorage(),
+            sessionId: "sess1",
+            artifacts: { binding, sessionId: "" },
+          }),
+      ).toThrow(InvalidSessionIdError);
     });
 
     it("reports no session id when no binding is configured", async () => {
