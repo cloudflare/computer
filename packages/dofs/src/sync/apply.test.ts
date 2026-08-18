@@ -206,6 +206,50 @@ describe("applyChanges", () => {
       });
     });
 
+    it("creates a directory through a reachable symlink parent", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/target", {}, () => 1);
+        await writeFile(db, "/target/keep.txt", "keep", {}, () => 2);
+        symlink(db, "/target", "/workspace", () => 3);
+
+        await apply(db, [
+          { kind: "dir", rev: 4, path: "/workspace/newdir", mode: 0o700, mtime: 4 },
+        ]);
+
+        expect(resolveInode(db, "/workspace", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(db, "/workspace")).toBe("/target");
+        expect(await readFile(db, "/workspace/keep.txt", "utf8")).toBe("keep");
+        expect(resolveInode(db, "/target/newdir", { followSymlinks: false })).toMatchObject({
+          type: "dir",
+          mode: 0o700,
+        });
+      });
+    });
+
+    it("creates a symlink through a reachable symlink parent", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/target", {}, () => 1);
+        await writeFile(db, "/target/keep.txt", "keep", {}, () => 2);
+        symlink(db, "/target", "/workspace", () => 3);
+
+        await apply(db, [
+          {
+            kind: "symlink",
+            rev: 4,
+            path: "/workspace/newlink",
+            target: "keep.txt",
+            mode: 0o777,
+            mtime: 4,
+          },
+        ]);
+
+        expect(resolveInode(db, "/workspace", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(db, "/workspace")).toBe("/target");
+        expect(await readFile(db, "/workspace/keep.txt", "utf8")).toBe("keep");
+        expect(readlink(db, "/target/newlink")).toBe("keep.txt");
+      });
+    });
+
     it.each(["file", "symlink"] as const)(
       "replaces a blocking %s ancestor when directories arrive child-first",
       async (kind) => {
@@ -213,8 +257,7 @@ describe("applyChanges", () => {
           if (kind === "file") {
             await writeFile(db, "/workspace", "old", {}, () => 1);
           } else {
-            mkdir(db, "/target", {}, () => 1);
-            symlink(db, "/target", "/workspace", () => 2);
+            symlink(db, "/missing", "/workspace", () => 1);
           }
 
           await apply(db, [
