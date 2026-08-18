@@ -173,6 +173,18 @@ test("/api refuses anything that is not a websocket handshake", async (_ctx) => 
   ]);
   expect(noKey).toMatch(/^HTTP\/1\.1 400 /);
 
+  // A subpath under /api is not the session endpoint: only the exact
+  // path upgrades.
+  const subpath = await rawRequest(port, [
+    "GET /api/watermarks HTTP/1.1",
+    `Host: 127.0.0.1:${port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Version: 13",
+  ]);
+  expect(subpath).toMatch(/^HTTP\/1\.1 404 /);
+
   // An unknown path is still a 404, upgrade header or not.
   const unknown = await rawRequest(port, [
     "GET /nope HTTP/1.1",
@@ -185,14 +197,14 @@ test("/api refuses anything that is not a websocket handshake", async (_ctx) => 
   expect(unknown).toMatch(/^HTTP\/1\.1 404 /);
 });
 
-test("/__computerd/watermarks reports sync revisions over plain HTTP", async (_ctx) => {
+test("/api/watermarks reports sync revisions over plain HTTP", async (_ctx) => {
   // Samplers want three numbers on an interval. Opening an RPC session
   // per sample is the wrong shape for that.
   const port = await getAvailablePort();
   const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-watermarks-"));
   await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
 
-  const res = await fetch(`http://127.0.0.1:${port}/__computerd/watermarks`);
+  const res = await fetch(`http://127.0.0.1:${port}/api/watermarks`);
   expect(res.status).toBe(200);
   const body = await res.json();
   expect(body).toMatchObject({

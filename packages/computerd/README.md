@@ -28,8 +28,8 @@ Current endpoints:
 - `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
 - `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, and process resident memory. Useful for watching how the store grows under load.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
-- `GET /__computerd/watermarks` returns JSON with `currentRev`, `pushRev`, and `fetchCursor`, read through the same `watermarks()` the wire serves. For samplers that want a few numbers without opening a session.
 - `GET /api` upgrades to a WebSocket carrying the capnweb RPC surface backed by `@cloudflare/computer-rpc`. This is the container's only RPC carrier. A request without an `Upgrade` header returns `400`; a handshake naming an unsupported `Sec-WebSocket-Version` returns `426` along with the versions the server speaks.
+- `GET /api/watermarks` returns JSON with `currentRev`, `pushRev`, and `fetchCursor`, read through the same `watermarks()` the wire serves. For samplers that want a few numbers without opening a session. It sits under `/api` because it reads the workspace surface; `/__computerd` is for daemon introspection.
 
 All other paths and methods return `404`/`405` with a `text/plain` body.
 

@@ -183,7 +183,7 @@ async function dockerStats(cids) {
 // The daemon's revision numbers over plain HTTP. A sampler wanting
 // three integers on an interval does not need an RPC session.
 async function fetchWatermarks(url) {
-  const res = await fetch(`${url}/__computerd/watermarks`);
+  const res = await fetch(`${url}/api/watermarks`);
   if (!res.ok) throw new Error(`watermarks HTTP ${res.status}`);
   return await res.json();
 }

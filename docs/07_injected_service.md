@@ -51,10 +51,14 @@ backend pins it to `8080`) and serves:
 | --- | --- | --- |
 | `/health` | `GET`, `HEAD` | Liveness probe; `200 ok\n` as soon as the HTTP server binds. |
 | `/__computerd/info` | `GET` | Runtime info: FUSE backend, mount point, port. |
-| `/__computerd/watermarks` | `GET` | Sync revisions: `currentRev`, `pushRev`, `fetchCursor`. |
-| `/api` | `GET` (upgrade) | WebSocket capnweb transport — the bootstrap stub is `WorkspaceRPC`. A request without an `Upgrade` header gets `400`; an unsupported `Sec-WebSocket-Version` gets `426` and the versions the server speaks. |
+| `/api` | `GET` (upgrade) | WebSocket capnweb transport — the bootstrap stub is `WorkspaceRPC`. Only the exact path upgrades. A request without an `Upgrade` header gets `400`; an unsupported `Sec-WebSocket-Version` gets `426` and the versions the server speaks. |
+| `/api/watermarks` | `GET`, `HEAD` | Sync revisions: `currentRev`, `pushRev`, `fetchCursor`. The same values `sync.watermarks()` returns, for callers that want a few numbers without holding a session. |
 | `/connect` | `POST` | Tells `computerd` to dial *out* to a caller-supplied endpoint and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
 | `/` | `GET` | Banner/info page. |
+
+`/api` is the workspace surface: the session itself, plus anything that
+reads through it. `/__computerd` is daemon introspection, which is why
+runtime info sits there and revisions do not.
 
 The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
 `packages/rpc/`), split into `sync` and `shell` sub-stubs.
