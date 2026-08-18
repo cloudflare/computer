@@ -11,11 +11,9 @@ through a namespace binding (`env.ARTIFACTS`) that can create,
 inspect, import, and delete repositories and mint Git tokens scoped
 to a repository.
 
-`@cloudflare/computer/artifacts` wraps that binding with a facade
-that is session-scoped when you ask for it.
-`createArtifact(binding, sessionId)` binds a namespace binding and a
-session id once and returns a client whose every operation is
-implicitly scoped to that session.
+`@cloudflare/computer/artifacts` wraps that binding with optional
+session scoping. `createArtifact(binding, sessionId)` returns a
+client whose every operation is implicitly scoped to that session.
 
 ```ts
 import { createArtifact } from "@cloudflare/computer/artifacts";
@@ -91,11 +89,9 @@ a repository a session created. Give a session id to any client
 that represents one tenant, and leave it off only for a caller that
 administers the namespace.
 
-Absence has to be spelled out. Only an omitted or `null` session id
-means "no session"; an empty string is still an
-`InvalidSessionIdError`, so an id that came out empty by accident
-fails loudly instead of quietly widening the client to every
-session.
+Only an omitted or `null` session id means "no session"; an empty
+string is still an `InvalidSessionIdError`, so an accidentally empty
+id fails instead of silently widening the client.
 
 ## Two doors into the same implementation
 
