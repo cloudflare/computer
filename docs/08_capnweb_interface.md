@@ -312,7 +312,7 @@ type WireError = {
 
 | Code | Meaning |
 | --- | --- |
-| `ENOENT` | Path does not exist on the receiver (covers ignored paths, which are invisible to `Workspace.fs`), or `getExec` / `disposeExec` referenced an unknown id. |
+| `ENOENT` | Path does not exist on the receiver, or `getExec` / `disposeExec` referenced an unknown id. Sync ignore patterns do not alter filesystem path lookups. |
 | `EUNKNOWN_HASH` | `fetchObjects` referenced a hash the receiver has no record of; raised via `createWorkspaceError`. |
 | `EEXEC_BUSY` | `exec` was called with an `id` that's already in use by a live run. |
 | `ELOG_TRUNCATED` | `getExec` resume point is older than the retained log. |

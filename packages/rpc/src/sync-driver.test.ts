@@ -1082,7 +1082,7 @@ describe("sync driver — blob-stage recovery", () => {
       source.mkdirSync("/repo/node_modules/tiny", { recursive: true });
       source.writeFileSync("/repo/package.json", '{"name":"fixture"}\n');
       source.writeFileSync("/repo/dist/result.txt", "installed");
-      source.writeFileSync("/repo/node_modules/tiny/index.js", "ignored");
+      source.writeFileSync("/repo/node_modules/tiny/index.js", "module.exports = 'installed';");
 
       let injected = false;
       const failingDb = new Database({
@@ -1109,7 +1109,9 @@ describe("sync driver — blob-stage recovery", () => {
       const destination = new SQLiteWorkspaceProvider(receiver.db, { now: () => 1 });
       expect(resumed.applied).toBeGreaterThan(0);
       expect(destination.readFileSync("/repo/dist/result.txt", "utf8")).toBe("installed");
-      expect(destination.existsSync("/repo/node_modules")).toBe(false);
+      expect(destination.readFileSync("/repo/node_modules/tiny/index.js", "utf8")).toBe(
+        "module.exports = 'installed';",
+      );
       expect(readFetchCursor(receiver.db)).toEqual({
         rev: currentRev(upstream.db),
         path: null,

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { isIgnored } from "./ignore.js";
+import { DEFAULT_IGNORE, isIgnored } from "./ignore.js";
 
 describe("isIgnored", () => {
   const list = ["node_modules", ".next", "target"];
+
+  it("has no default exclusions", () => {
+    expect(DEFAULT_IGNORE).toEqual([]);
+    expect(isIgnored("/node_modules/package/index.js", DEFAULT_IGNORE)).toBe(false);
+  });
 
   it("returns false for paths that don't intersect the list", () => {
     expect(isIgnored("/src/index.ts", list)).toBe(false);

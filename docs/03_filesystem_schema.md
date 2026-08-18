@@ -74,9 +74,10 @@ The `vfs_nodes_by_rev` index supports `coalesceChanges`'s cursor scan
 over live inodes, which the sync protocol calls once per pull to
 enumerate everything modified after the last fetch cursor.
 
-There is no `ignored` column: ignored paths are entirely invisible to
-the DO-side filesystem API (see
-[02. Sync Protocol → Ignored entries](./02_sync_protocol.md#ignored-entries)).
+There is no `ignored` column. Ignore patterns are an ephemeral sync
+option, applied while building a change stream; they do not change the
+filesystem namespace or the paths visible through `Workspace.fs`. See
+[02. Sync Protocol → Ignore lists](./02_sync_protocol.md#ignore-lists).
 
 ### `vfs_dirents` — name → inode mapping
 

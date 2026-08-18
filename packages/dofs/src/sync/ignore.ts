@@ -1,14 +1,14 @@
-// Path segment matcher for the container-side ignore list. The
-// container uses this to drop paths from coalesceChanges before
-// they hit the wire; the DO's Workspace.fs surface uses the same
-// helper to make ignored paths invisible to API consumers.
+// Path-segment matcher for an explicitly configured sync ignore list.
+// Matching is whole-segment: a pattern matches that segment anywhere in
+// the path, but does not match a longer segment. Patterns are plain
+// strings, not globs; we can extend to globs later if a real case
+// demands it.
 //
-// Matching is whole-segment: "node_modules" matches the segment
-// node_modules anywhere in the path but does not match
-// node_modules_old or my_node_modules. Patterns are plain strings,
-// not globs; we can extend to globs later if a real case demands it.
+// The default is intentionally empty. Ignoring paths is opt-in because
+// the filesystem and sync surfaces should preserve the same namespace.
 
-export const DEFAULT_IGNORE = ["node_modules"];
+// Kept as a named export for callers that need the package default.
+export const DEFAULT_IGNORE: string[] = [];
 
 export function isIgnored(path: string, patterns: string[]): boolean {
   if (patterns.length === 0) return false;

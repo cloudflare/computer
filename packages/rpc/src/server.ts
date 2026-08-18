@@ -12,7 +12,6 @@ import {
   compareChangeCursors,
   currentRev,
   type Database,
-  DEFAULT_IGNORE,
   fetchObjects,
   hasObjects,
   materialiseChange,
@@ -178,8 +177,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       }
     }
     const after = input.after ?? { rev: 0, path: null };
-    const ignore =
-      input.ignore ?? (this.options.ignore.length > 0 ? this.options.ignore : DEFAULT_IGNORE);
+    const ignore = input.ignore ?? this.options.ignore;
     const snapshotRev = currentRev(this.db);
     const currentCursor = { rev: snapshotRev, path: null };
     return {

@@ -210,7 +210,7 @@ provider-specific config:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `"read-only"` | `"read-only"` or `"read-write"`. |
-| `ignore` | `[]` | Path segments hidden from the pull *and* from `Workspace.fs`. Composed with the top-level `ignore` by union. See [02. Sync Protocol → Ignored entries](./02_sync_protocol.md#ignored-entries). |
+| `ignore` | `[]` | Path segments omitted from the mount's sync pull. The paths remain visible through the underlying `Workspace.fs`; the option is composed with the top-level `ignore` by union. See [02. Sync Protocol → Ignore lists](./02_sync_protocol.md#ignore-lists). |
 | `writeBack` | `"debounce"` | `"debounce"` (default) or `"manual"`. See “Write-back gating” above. |
 | `writeBackMs` | `500` | Debounce window in milliseconds. Ignored when `writeBack: "manual"`. |
 | `maxBytes` | unbounded | Hard cap on total bytes indexed from this mount. Exceeding throws at index time before any data lands in `vfs_nodes`. |
@@ -218,7 +218,7 @@ provider-specific config:
 
 The workspace-level `ignore` option (the renamed `pullIgnore`) applies
 to every mount and to top-level paths. Mount-level `ignore` extends it
-for that mount only.
+for that mount only. No paths are ignored by default.
 
 ## Mount conflicts
 

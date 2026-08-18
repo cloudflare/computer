@@ -405,55 +405,32 @@ first-class conflict primitives.
 
 ## Ignore lists
 
+The optional `ignore` list hides matching path segments from a sync
+stream. Filtering is opt-in and applies only while coalescing changes
+for the wire; the filesystem retains and exposes the paths normally.
+An ignored path is therefore not deleted or hidden from `Workspace.fs`,
+but it is omitted from that particular pull. This is useful for large
+directories of derived files such as `.next`, `target`, `__pycache__`,
+or `dist`.
 
-The `ignore` option hides path segments from the pull. Excluded
-paths are still written and read inside the container — the bytes just
-never cross the wire back to the DO. This is essential for any large
-directory of derived files: `node_modules`, `.next`, `target`,
-`__pycache__`, `dist`. Without an ignore, a single `npm install` would
-push tens of thousands of small files through the sync wire on the
-next pull.
+The default is `[]`. A caller-supplied list replaces the configured
+list for that fetch. Pass an explicit list when a sync peer should omit
+paths, or pass `[]` to include every path. To omit `node_modules`, for
+example, configure `ignore: ["node_modules"]` explicitly.
 
-The default is `["node_modules"]`, applied server-side when `ignore` is
-omitted. A caller-supplied list **replaces** the default — it does not
-extend it. Pass `[]` to disable ignoring entirely, or pass your full
-list (including `"node_modules"` if you still want it) to customise.
+### Filtered entries
 
-### Ignored entries
-
-Ignored paths are **invisible to the `Workspace.fs` API**. They do not
-appear in `readdir`, `stat` returns `ENOENT`, and `readFile` returns
-`ENOENT`. The bytes still live inside the container, so anything that
-*uses* the ignored files — `exec("node ...")`, build tools, anything
-running container-side — keeps working. The exclusion only affects what
-crosses the wire **and** what the DO-side API surfaces.
-
-This is a deliberately narrow surface for the initial release. Whether
-ignored entries should be representable to the DO at all (as stubs, as
-a separate shell-only namespace, or not at all) is left to a future
-iteration — see [Future considerations](#future-considerations).
+Filtering affects only the change stream. Files remain readable and
+writable through `Workspace.fs`, and container-side commands such as
+`exec("node ...")` can use them normally. Filtered entries still advance
+the receiving peer's fetch cursor, so an ignore configuration should be
+kept stable for a sync relationship; removing a pattern does not replay
+changes that were already filtered.
 
 ## Future considerations
 
 Items deferred from the initial design. File an issue if a real use
 case depends on a particular resolution.
-
-### Representing ignored entries to the DO
-
-Today ignored paths are entirely invisible to `Workspace.fs`. That is
-the simplest contract but it loses one piece of information: tools that
-want to enumerate "everything the agent's exec can see" can't get it
-from the DO. Two options worth weighing later:
-
-- **Stub entries with an `ignored` flag** on `stat()`, surfaced via
-  `readdir`. Easy to retrofit; surprising for tools that walk the tree
-  and don't check the flag.
-- **An explicit shell-only namespace** — e.g. `workspace.runtime.readdir`
-  returns container-only entries, `workspace.fs.readdir` stays clean.
-  Cleaner separation, larger API surface.
-
-Either way, the bytes never cross the wire; the question is purely how
-much the DO admits exists.
 
 ### Bloom/cuckoo filter over `vfs_blobs.hash`
 
