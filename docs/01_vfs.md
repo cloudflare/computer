@@ -34,10 +34,13 @@ Workspace where `fs` works against the local SQLite store but
 `shell` throws.
 
 `WorkspaceOptions` includes the storage handle, optional backends,
-clock, session id, mounts, observer, git identity, assets, and artifacts.
-There is no `root` or `sandbox` field on the host facade — sandbox wiring
-lives behind a `WorkspaceBackend`. Think integrations use `workspace.fs`
-and `@cloudflare/computer/tools` directly.
+clock, session id, mounts, observer, git identity, assets, and
+artifacts. There is no `root` or `sandbox` field on the host facade —
+sandbox wiring lives behind a `WorkspaceBackend`.
+
+Agent integrations consume the filesystem through `workspace.fs`.
+Use `createAITools` from `@cloudflare/computer/tools` for the standard
+AI SDK file tools.
 
 Illustrative layout (nothing below `/` is auto-created beyond
 `ROOT_INODE` itself):

@@ -467,9 +467,9 @@ await ws.ready();
 const stub = ws.stub();  // crosses the Workers-RPC boundary
 ```
 
-Think integrations use `workspace.fs`, `workspace.runtime`, and
-`@cloudflare/computer/tools` directly. The legacy root-level filesystem
-compatibility methods are not available.
+Agent frameworks should consume files through `workspace.fs`. Use
+`createAITools` from `@cloudflare/computer/tools` for the standard AI
+SDK file tools.
 
 ### Durable pending-sync retries
 
