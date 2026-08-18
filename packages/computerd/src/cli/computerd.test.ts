@@ -746,6 +746,19 @@ test("RPC_CLIENT_SECRET gates the HTTP surface but not /health", async (_ctx) =>
   });
   expect(short.statusCode).toBe(401);
 
+  // The scheme token is case-insensitive per the HTTP grammar, and the
+  // credentials may be preceded by more than one space.
+  for (const header of [
+    `Bearer ${secret}`,
+    `bearer ${secret}`,
+    `BEARER ${secret}`,
+    `BeArEr ${secret}`,
+    `Bearer   ${secret}`,
+  ]) {
+    const res = await request(`${base}/__computerd/info`, { headers: { authorization: header } });
+    expect(res.statusCode, JSON.stringify(header)).toBe(200);
+  }
+
   // Another scheme is not a bearer token.
   const basic = await request(`${base}/__computerd/info`, {
     headers: { authorization: `Basic ${secret}` },

@@ -113,9 +113,14 @@ function isAuthorized(request: IncomingMessage, secret: string | undefined): boo
   if (secret === undefined) return true;
   const header = request.headers.authorization;
   if (typeof header !== "string") return false;
-  const scheme = "Bearer ";
-  if (!header.startsWith(scheme)) return false;
-  const presented = Buffer.from(header.slice(scheme.length));
+  // The scheme token is case-insensitive and may be followed by more
+  // than one space, so "bearer <secret>" from a hand-written client is
+  // as valid as "Bearer <secret>". Only the credentials that follow are
+  // compared byte for byte.
+  const separator = header.indexOf(" ");
+  if (separator === -1) return false;
+  if (header.slice(0, separator).toLowerCase() !== "bearer") return false;
+  const presented = Buffer.from(header.slice(separator + 1).trim());
   const expected = Buffer.from(secret);
   // timingSafeEqual throws on a length mismatch, and the length of the
   // secret is not worth leaking through the comparison either.
