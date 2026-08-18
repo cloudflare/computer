@@ -1,4 +1,4 @@
-// Facade-owned types for the session-scoped artifacts surface.
+// Facade-owned types for the artifacts surface.
 //
 // The Cloudflare Artifacts Workers binding ships its own types in
 // `@cloudflare/workers-types`: the global `Artifacts` binding,

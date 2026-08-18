@@ -204,9 +204,7 @@ describe("runArtifactsCLI", () => {
       await client.cli({ argv: ["repo", "create", "alpha"] });
       const res = await createArtifact(binding).cli({ argv: ["repo", "list"] });
       expect(res.exitCode).toBe(0);
-      expect(JSON.parse(res.stdout).map((r: { name: string }) => r.name)).toEqual([
-        "sess1__alpha",
-      ]);
+      expect(JSON.parse(res.stdout).map((r: { name: string }) => r.name)).toEqual(["sess1__alpha"]);
     });
   });
 

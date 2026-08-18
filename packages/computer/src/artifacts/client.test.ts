@@ -1,8 +1,12 @@
-// Tests for the session-scoped artifacts client. The fake binding
-// stores names verbatim, so these assert the scoping contract from
-// the outside: what the caller passes in (local names) versus what
-// lands in the namespace (session-prefixed names), and that reads
-// only ever surface the session's own repos with the prefix gone.
+// Tests for the artifacts client. The fake binding stores names
+// verbatim, so these assert the scoping contract from the outside:
+// what the caller passes in (local names) versus what lands in the
+// namespace (session-prefixed names), and that reads only ever
+// surface the session's own repos with the prefix gone.
+//
+// The last block covers the other mode, a client built with no
+// session id, where names go through untouched and every
+// repository in the namespace is in reach.
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding.js";

@@ -122,10 +122,7 @@ const LIST_PAGE_SIZE = 100;
  * session id to scope every operation to that session; omit it for
  * a client over the whole namespace.
  */
-export function createArtifact(
-  binding: Artifacts,
-  sessionId?: string | null,
-): ArtifactClient {
+export function createArtifact(binding: Artifacts, sessionId?: string | null): ArtifactClient {
   // Resolve the scope eagerly so a bad session id fails at
   // construction rather than on first use.
   const scope = normalizeSessionId(sessionId);

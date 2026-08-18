@@ -2,9 +2,8 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import { FakeArtifactsBinding } from "../tests/utilities/fake-artifacts-binding.js";
-
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createArtifact } from "./artifacts/index.js";
+import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";

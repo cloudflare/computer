@@ -6,6 +6,10 @@
 // session — repository names are prefixed on the way in and
 // stripped on the way out, so callers work entirely in local names.
 //
+// The session id is optional. Without one the client spans the
+// namespace: names are the ones the binding stores, and every
+// repository is listed and reachable, including those sessions own.
+//
 // The typed client and the argv-driven CLI (`client.cli(...)`)
 // share one implementation. The worker backend's `artifacts` custom
 // command dispatches through the CLI so the in-shell tool and the

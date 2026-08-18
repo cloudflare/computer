@@ -11,10 +11,11 @@ through a namespace binding (`env.ARTIFACTS`) that can create,
 inspect, import, and delete repositories and mint Git tokens scoped
 to a repository.
 
-`@cloudflare/computer/artifacts` wraps that binding with a
-**session-scoped** facade. `createArtifact(binding, sessionId)`
-binds a namespace binding and a session id once and returns a client
-whose every operation is implicitly scoped to that session.
+`@cloudflare/computer/artifacts` wraps that binding with a facade
+that is session-scoped when you ask for it.
+`createArtifact(binding, sessionId)` binds a namespace binding and a
+session id once and returns a client whose every operation is
+implicitly scoped to that session.
 
 ```ts
 import { createArtifact } from "@cloudflare/computer/artifacts";
@@ -28,6 +29,10 @@ const repo = await artifacts.create("build-cache", {
 // repo.remote  -> "https://.../<agentId>__build-cache.git"
 // repo.token   -> initial git token (a secret)
 ```
+
+The session id is optional. `createArtifact(binding)` returns a
+client over the namespace as a whole — see
+[without a session id](#without-a-session-id).
 
 ## Session scoping
 
@@ -57,6 +62,41 @@ This lets one namespace host many isolated sessions — one per agent,
 user, or task — without the caller managing prefixes by hand, and
 without one session enumerating or colliding with another's repos.
 
+## Without a session id
+
+`createArtifact(binding)` builds a client with no session at all.
+Nothing is prefixed on the way in, nothing is stripped or filtered
+on the way out, and the names it works in are the ones the
+namespace stores.
+
+```ts
+const artifacts = createArtifact(env.ARTIFACTS);
+
+artifacts.sessionId;                   // undefined
+await artifacts.list();                // every repo in the namespace
+await artifacts.get("agent-7__build-cache");   // another session's repo
+await artifacts.create("shared-cache");        // stored as "shared-cache"
+```
+
+A name here may carry the scope separator, because the repositories
+a session owns are stored under `<session>__<name>` and reaching
+them is the point. Names are still held to the binding's charset,
+so `assertRepoName` rejects the same empty and `/`-bearing names it
+always did.
+
+The reach covers writes as well as reads: `create`,
+`import`, `delete`, and the token methods all take the stored name
+literally, so an unscoped client can mint a token for, or delete,
+a repository a session created. Give a session id to any client
+that represents one tenant, and leave it off only for a caller that
+administers the namespace.
+
+Absence has to be spelled out. Only an omitted or `null` session id
+means "no session"; an empty string is still an
+`InvalidSessionIdError`, so an id that came out empty by accident
+fails loudly instead of quietly widening the client to every
+session.
+
 ## Two doors into the same implementation
 
 Like `workspace.git`, the artifacts surface has a typed API and an
@@ -80,13 +120,16 @@ parts they share.
 
 ## Typed surface
 
-`createArtifact(binding, sessionId)` returns an `ArtifactClient`:
+`createArtifact(binding, sessionId?)` returns an `ArtifactClient`.
+The table describes a client with a session id; without one, every
+row reads the same with "the session's" replaced by "the
+namespace's" and "local name" by "stored name":
 
 | Method | Purpose |
 | --- | --- |
 | `create(name, opts?)` | Create a repo. Returns `{ name, remote, defaultBranch, token }` with a local `name`. |
 | `get(name)` | Resolve full `ArtifactsRepoInfo` metadata with a local `name`. Throws if missing. |
-| `list()` | The session's repo summaries: `Omit<ArtifactsRepoInfo, "remote">[]`, each with a local `name`. Walks every page. |
+| `list()` | The session's repo summaries: `Omit<ArtifactsRepoInfo, "remote">[]`, each with a local `name`. Walks every page. Unscoped, this is the whole namespace. |
 | `import(name, source, opts?)` | Import an external git remote into a session repo. |
 | `delete(name)` | Delete a repo. Returns `false` when it does not exist. |
 | `createToken(name, scope?, ttl?)` | Mint a git token. Returns `{ id, plaintext, scope, expiresAt }`. |
@@ -94,6 +137,9 @@ parts they share.
 | `getToken(name, id)` | One token's metadata from that page. Throws `NotFoundError` on a miss. |
 | `revokeToken(name, tokenOrId)` | Revoke a token. Returns `false` on a miss. |
 | `cli(input)` | The argv door (below). `input` may also carry a `remoteAdd` seam used only by the CLI `create` shorthand. |
+
+`sessionId` on the client is the session it is scoped to, or
+`undefined` when it spans the namespace.
 
 `opts` for `create` carries `description`, `readOnly`, and
 `setDefaultBranch`. `source` for `import` carries `url`, `branch`,
@@ -103,8 +149,14 @@ is `"read"` or `"write"` (default `"write"`); `ttl` is in seconds.
 ### Pagination
 
 `list()` exposes no cursor. It walks the binding's pages internally
-until they are exhausted and returns the full session-scoped set. The
-page size is an internal constant, not a caller-facing cap.
+until they are exhausted and returns the full set: the session's
+repositories under a session id, every repository in the namespace
+without one. The page size is an internal constant, not a
+caller-facing cap.
+
+With a session id the walk also does the filtering, so a namespace
+shared by many sessions costs the same number of round trips either
+way.
 
 ### `getToken` and the binding
 
@@ -208,9 +260,11 @@ shared link does not disturb others.
 
 Help is a first-class, agent-readable surface. `help`, `--help`,
 `-h`, and each group's `--help` print documentation that spells out
-the session-scoping contract and the secret-handling rules. A bare
-`artifacts` prints the top-level help and exits non-zero, the way
-`git` with no args does.
+the secret-handling rules and whichever naming contract the client
+actually applies: local names under a session, stored names and a
+namespace-wide `repo list` without one. A bare `artifacts` prints
+the top-level help and exits non-zero, the way `git` with no args
+does.
 
 ### Exit codes
 
@@ -256,6 +310,13 @@ export class MyAgent extends DurableObject<Env> {
 }
 ```
 
+The client is scoped to a session when one is available. The session
+id defaults to `WorkspaceOptions.sessionId`, and
+`artifacts.sessionId` overrides it. With neither — or with an
+explicit `artifacts: { binding, sessionId: null }`, the opt-out for
+a workspace that has a session id but wants artifacts across every
+session — `workspace.artifacts` spans the namespace.
+
 When `artifacts` is omitted from `Workspace`, the command still
 exists, but operations fail with a clear "Workspace Artifacts binding
 is not configured" error.
@@ -286,7 +347,7 @@ The binding and its wire shapes are the global types from
 `@cloudflare/workers-types`: `Artifacts` (the namespace binding),
 `ArtifactsRepo` (the repo handle), `ArtifactsCreateRepoResult`,
 `ArtifactsRepoInfo`, `ArtifactsTokenInfo`, `ArtifactsError`, and so
-on. `createArtifact(binding, sessionId)` takes an `Artifacts` and
+on. `createArtifact(binding, sessionId?)` takes an `Artifacts` and
 returns metadata in those same shapes — the facade adds session
 scoping, it does not redeclare the protocol. Workers consumers get
 the globals from their own `@cloudflare/workers-types` setup, and

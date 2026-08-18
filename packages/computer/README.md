@@ -341,10 +341,12 @@ Two ways to get a file out of the workspace and into the world:
   `assets publish <path> [<expiry>]` command. See
   [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 - **Artifacts** (`@cloudflare/computer/artifacts`):
-  `createArtifact(binding, sessionId)` is a session-scoped facade over
+  `createArtifact(binding, sessionId)` is a facade over
   the [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/)
   binding. Every repository name is implicitly prefixed with the session
-  id, so one namespace hosts many isolated sessions.
+  id, so one namespace hosts many isolated sessions. The session id is
+  optional: leave it off and the client spans the namespace, listing and
+  reaching every repository including those other sessions own.
 
 ```ts
 import { createArtifact } from "@cloudflare/computer/artifacts";
@@ -353,6 +355,9 @@ const artifacts = createArtifact(env.ARTIFACTS, agentId);
 const repo = await artifacts.create("build-cache", { description: "CI artifacts" });
 const token = await artifacts.createToken("build-cache", "read", 3600);
 const mine = await artifacts.list(); // only this session's repos
+
+const all = createArtifact(env.ARTIFACTS);
+await all.list(); // every repo in the namespace, under its stored name
 ```
 
 Artifacts also offers an argv CLI (`artifacts.cli({ argv })`), and when
@@ -414,7 +419,7 @@ on a computerd instance.
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
-| `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, a session-scoped facade over the Cloudflare Artifacts binding. |
+| `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped facade over the Cloudflare Artifacts binding. |
 | `@cloudflare/computer/observe/cloudflare` | Cloudflare-runtime adapter for the observability hook. |
 
 A consumer that only uses the container backend never imports the worker
