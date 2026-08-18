@@ -81,6 +81,15 @@ describe("fuzzy edit source mapping", () => {
     ).toBe("ﬁ\nx\n");
   });
 
+  it("fails closed after too many unmappable normalized occurrences", () => {
+    const content = `${"ﬁ\n".repeat(2_048)}ｆ\n`;
+
+    expect(fuzzyFindText(content, "f")).toMatchObject({
+      found: false,
+      unsafeBoundary: true,
+    });
+  });
+
   it("rejects a match that starts inside an NFKC expansion", () => {
     expect(() =>
       applyEditsToNormalizedContent("const value = ﬁ;\n", [{ oldText: "i", newText: "x" }], path),

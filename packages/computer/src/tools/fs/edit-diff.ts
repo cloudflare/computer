@@ -80,6 +80,7 @@ interface FuzzyContent {
   originalLines: string[];
   normalizedLines: string[];
   originalLineStarts: number[];
+  normalizedLineStarts: number[];
   lineMappings: Map<number, FuzzyLineMapping>;
 }
 
@@ -95,37 +96,52 @@ interface TextBoundary {
 }
 
 const fuzzyGraphemeSegmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+const MAX_UNMAPPABLE_FUZZY_CANDIDATES = 1_024;
+
+function getLineStarts(lines: string[]): number[] {
+  const starts: number[] = [];
+  let start = 0;
+  for (const line of lines) {
+    starts.push(start);
+    start += line.length + 1;
+  }
+  return starts;
+}
 
 function prepareFuzzyContent(content: string): FuzzyContent {
   const text = normalizeForFuzzyMatch(content);
   const originalLines = content.split("\n");
   const normalizedLines = text.split("\n");
-  const originalLineStarts: number[] = [];
-  let originalLineStart = 0;
-  for (const line of originalLines) {
-    originalLineStarts.push(originalLineStart);
-    originalLineStart += line.length + 1;
-  }
 
   return {
     text,
     originalLines,
     normalizedLines,
-    originalLineStarts,
+    originalLineStarts: getLineStarts(originalLines),
+    normalizedLineStarts: getLineStarts(normalizedLines),
     lineMappings: new Map(),
   };
 }
 
-function getTextBoundary(lines: string[], offset: number): TextBoundary | undefined {
+function getTextBoundary(
+  lines: string[],
+  lineStarts: number[],
+  offset: number,
+): TextBoundary | undefined {
   if (offset < 0) return undefined;
 
-  let lineStart = 0;
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const lineEnd = lineStart + lines[lineIndex].length;
-    if (offset <= lineEnd) return { lineIndex, column: offset - lineStart };
-    lineStart = lineEnd + 1;
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low <= high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (lineStarts[middle] <= offset) low = middle + 1;
+    else high = middle - 1;
   }
-  return undefined;
+
+  const lineIndex = high;
+  if (lineIndex < 0) return undefined;
+  const column = offset - lineStarts[lineIndex];
+  return column <= lines[lineIndex].length ? { lineIndex, column } : undefined;
 }
 
 function isCodePointBoundary(text: string, offset: number): boolean {
@@ -206,7 +222,11 @@ function mapFuzzyBoundary(
   kind: "start" | "end",
 ): number | undefined {
   if (content.originalLines.length !== content.normalizedLines.length) return undefined;
-  const boundary = getTextBoundary(content.normalizedLines, normalizedOffset);
+  const boundary = getTextBoundary(
+    content.normalizedLines,
+    content.normalizedLineStarts,
+    normalizedOffset,
+  );
   if (!boundary) return undefined;
 
   const originalLine = content.originalLines[boundary.lineIndex];
@@ -275,11 +295,12 @@ function findText(
   }
 
   // A normalized occurrence can land on an unsafe partial expansion while a
-  // later occurrence maps cleanly. Uniqueness is checked separately, so locate
-  // the first source-mappable occurrence here rather than failing early.
+  // later occurrence maps cleanly. Uniqueness is checked separately, so search
+  // later occurrences before failing closed.
   let originalStart: number | undefined;
   let originalEnd: number | undefined;
   let normalizedSpan: string | undefined;
+  let unmappableCandidates = 0;
   while (fuzzyIndex !== -1) {
     originalStart = mapFuzzyBoundary(fuzzyContent, fuzzyIndex, "start");
     originalEnd = mapFuzzyBoundary(fuzzyContent, fuzzyIndex + fuzzyOldText.length, "end");
@@ -291,6 +312,11 @@ function findText(
     originalStart = undefined;
     originalEnd = undefined;
     normalizedSpan = undefined;
+
+    // A file can contain many normalized matches whose source boundaries are
+    // unsafe. Stop before ambiguous input can monopolize the isolate.
+    unmappableCandidates++;
+    if (unmappableCandidates >= MAX_UNMAPPABLE_FUZZY_CANDIDATES) break;
     fuzzyIndex = fuzzyContent.text.indexOf(fuzzyOldText, fuzzyIndex + 1);
   }
   const expectedSpan =
