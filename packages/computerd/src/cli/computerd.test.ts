@@ -389,6 +389,7 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
   const { WebSocketServer } = await import("ws");
   const peerPort = await getAvailablePort();
   const opened = [];
+  const upgradeAuthorizations = [];
   const peerSockets = new Set();
   // Deliberately non-default paths: the daemon must use what the
   // request names, not paths of its own.
@@ -411,6 +412,9 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
+      // The host arms a slot for this upgrade and hands the first arrival
+      // its session, so the dial-back has to prove it is this daemon.
+      upgradeAuthorizations.push(req.headers.authorization ?? null);
       const entry = { closed: false, closeCode: null };
       ws.on("close", (code) => {
         entry.closed = true;
@@ -457,6 +461,72 @@ test("/connect re-dial tears down the prior WebSocket session", async (_ctx) => 
   await waitFor(() => opened[0].closed);
   expect(opened[0].closed).toBe(true, "first peer WS should be closed after re-POST /connect");
   expect(opened[1].closed).toBe(false, "second peer WS should still be open");
+
+  // No secret is configured here, so there is nothing to present.
+  expect(upgradeAuthorizations).toEqual([null, null]);
+});
+
+test("/connect presents the shared secret on the dial-back", async (_ctx) => {
+  // The host arms a slot for this upgrade and gives the first arrival its
+  // session. Anything that can reach the host's endpoint — which includes
+  // every command this daemon runs — could take the daemon's place, so
+  // the dial has to carry the secret the daemon was launched with.
+  const { WebSocketServer } = await import("ws");
+  const secret = "0123456789abcdef0123456789abcdef";
+  const peerPort = await getAvailablePort();
+  const seen = [];
+  const peerSockets = new Set();
+  const peerServer = http.createServer((req, res) => {
+    if (req.url === "/probe") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok\n");
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  peerServer.on("connection", (sock) => {
+    peerSockets.add(sock);
+    sock.on("close", () => peerSockets.delete(sock));
+  });
+  const wss = new WebSocketServer({ noServer: true });
+  peerServer.on("upgrade", (req, socket, head) => {
+    seen.push(req.headers.authorization ?? null);
+    wss.handleUpgrade(req, socket, head, () => {});
+  });
+  await new Promise((resolve) => peerServer.listen(peerPort, "127.0.0.1", resolve));
+  onTestFinished(
+    () =>
+      new Promise((resolve) => {
+        for (const sock of peerSockets) sock.destroy();
+        wss.close();
+        peerServer.close(() => resolve());
+      }),
+  );
+
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-dialback-"));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", RPC_CLIENT_SECRET: secret },
+  });
+
+  const res = await postJson(`http://127.0.0.1:${port}/connect`, {
+    base: `http://127.0.0.1:${peerPort}`,
+    health: "/probe",
+    api: "/socket",
+  });
+  expect(res.statusCode, "the /connect request itself needs the token too").toBe(401);
+
+  const authorized = await postJson(
+    `http://127.0.0.1:${port}/connect`,
+    { base: `http://127.0.0.1:${peerPort}`, health: "/probe", api: "/socket" },
+    { authorization: `Bearer ${secret}` },
+  );
+  expect(authorized.statusCode).toBe(200);
+
+  await waitFor(() => seen.length === 1);
+  expect(seen[0]).toBe(`Bearer ${secret}`);
 });
 
 test("/connect rejects a body that does not name every part", async (_ctx) => {
@@ -660,7 +730,7 @@ async function waitFor(predicate, { timeoutMs = 2_000, intervalMs = 10 } = {}) {
   throw new Error("waitFor: predicate did not become true within the timeout");
 }
 
-function postJson(url, body) {
+function postJson(url, body, headers = {}) {
   const payload = JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -670,6 +740,7 @@ function postJson(url, body) {
         headers: {
           "content-type": "application/json",
           "content-length": Buffer.byteLength(payload),
+          ...headers,
         },
       },
       (response) => {

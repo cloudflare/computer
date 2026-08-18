@@ -237,7 +237,7 @@ function createHTTPServer(
         });
         return;
       }
-      void handleConnect(request, response, rpc, upstreamSlot);
+      void handleConnect(request, response, rpc, upstreamSlot, secret);
       return;
     }
 
@@ -445,6 +445,7 @@ async function handleConnect(
   response: ServerResponse,
   rpc: ReturnType<typeof createWorkspaceServer>,
   upstreamSlot: { ws: WebSocket | undefined },
+  secret: string | undefined,
 ): Promise<void> {
   let body: ConnectBody;
   try {
@@ -508,7 +509,14 @@ async function handleConnect(
   }
 
   const wsUrl = `${toWebSocketUrl(baseUrl)}${body.api}`;
-  const ws = new WebSocket(wsUrl);
+  // Present the shared secret on the way out as well. The host arms a
+  // slot for this upgrade and hands the first arrival its session, so
+  // without a token anything that can reach the host's endpoint — which
+  // includes every command this daemon runs — could take the workspace's
+  // place. The host holds the same secret, having set it at launch.
+  const ws = new WebSocket(wsUrl, {
+    ...(secret !== undefined ? { headers: { authorization: `Bearer ${secret}` } } : {}),
+  });
   upstreamSlot.ws = ws;
   ws.once("open", () => {
     console.log(`/connect: attached RPC session to ${wsUrl}`);

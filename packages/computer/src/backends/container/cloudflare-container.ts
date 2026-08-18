@@ -151,6 +151,33 @@ const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
 const DEFAULT_HEALTH_RETRY_INITIAL_DELAY_MS = 250;
 const DEFAULT_HEALTH_RETRY_MAX_DELAY_MS = 2_000;
 
+// Bearer check for the dial-back. The scheme token is case-insensitive
+// and may be followed by more than one space, matching what the daemon
+// accepts on its own surface.
+//
+// The comparison walks every byte rather than stopping at the first
+// difference, so it does not leak how much of the secret was correct.
+// crypto.subtle.timingSafeEqual would be the primitive to reach for, but
+// the SubtleCrypto this package compiles against does not declare it.
+//
+// An absent expected secret refuses everything rather than allowing it.
+// This only runs once connect() has recorded the secret it launched the
+// container with, so an absent one means the upgrade arrived without that
+// having happened.
+function bearerMatches(header: string | null, expected: string | undefined): boolean {
+  if (expected === undefined || header === null) return false;
+  const separator = header.indexOf(" ");
+  if (separator === -1) return false;
+  if (header.slice(0, separator).toLowerCase() !== "bearer") return false;
+  const presented = header.slice(separator + 1).trim();
+  if (presented.length !== expected.length) return false;
+  let differences = 0;
+  for (let i = 0; i < expected.length; i += 1) {
+    differences |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return differences === 0;
+}
+
 export class CloudflareContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
   readonly id: string;
@@ -164,6 +191,9 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     Pick<CloudflareContainerBackendOptions, "container" | "workspace" | "containerEnv">;
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
+  // Set once start() reports it, before the upgrade slot is armed, so
+  // handleFetch can check the dial-back against it.
+  #clientSecret: string | undefined;
 
   // State for the in-flight /api upgrade. handleFetch() resolves
   // #pendingUpgrade; connect() awaits it.
@@ -254,6 +284,8 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
         { cause: error },
       );
     }
+
+    this.#clientSecret = clientSecret;
 
     // Arm the upgrade promise before posting /connect — computerd
     // dials back as soon as /health on the egress answers, so
@@ -375,6 +407,18 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     // does not speak, and is what the daemon answers for it.
     if (req.headers.get("upgrade") !== "websocket") {
       return new Response(`${EGRESS_API_PATH} requires a websocket upgrade`, { status: 400 });
+    }
+    // The slot armed by connect() hands its session to whoever arrives
+    // first, and this endpoint is reachable from inside the container
+    // through the egress interceptor. Without a token, any command the
+    // workspace runs could take the daemon's place and become the peer
+    // this durable object pushes its files to and takes its exec output
+    // from. The daemon presents the secret it was launched with.
+    if (!bearerMatches(req.headers.get("authorization"), this.#clientSecret)) {
+      return new Response("unauthorized", {
+        status: 401,
+        headers: { "www-authenticate": "Bearer" },
+      });
     }
 
     const pair = new WebSocketPair();

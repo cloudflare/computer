@@ -531,6 +531,73 @@ describe("CloudflareContainerBackend", () => {
     expect(res.status).toBe(400);
   });
 
+  test("handleFetch refuses a dial-back that does not present the secret", async () => {
+    // The armed slot hands its session to whoever arrives first, and this
+    // endpoint is reachable from inside the container. Without a token,
+    // any command the workspace runs could take the daemon's place.
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+    });
+    // connect() records the secret and arms the slot; it then fails on the
+    // upgrade, which is what leaves the slot open for these requests.
+    await backend.connect().catch(() => {});
+    const upgrade = { upgrade: "websocket" };
+
+    const none = await backend.handleFetch(
+      new Request("http://computer.internal/api", { headers: upgrade }),
+    );
+    expect(none.status).toBe(401);
+    expect(none.headers.get("www-authenticate")).toBe("Bearer");
+
+    const wrong = await backend.handleFetch(
+      new Request("http://computer.internal/api", {
+        headers: { ...upgrade, authorization: `Bearer ${"f".repeat(32)}` },
+      }),
+    );
+    expect(wrong.status).toBe(401);
+
+    const shortToken = await backend.handleFetch(
+      new Request("http://computer.internal/api", {
+        headers: { ...upgrade, authorization: "Bearer short" },
+      }),
+    );
+    expect(shortToken.status).toBe(401);
+
+    const otherScheme = await backend.handleFetch(
+      new Request("http://computer.internal/api", {
+        headers: { ...upgrade, authorization: `Basic ${fake.clientSecret}` },
+      }),
+    );
+    expect(otherScheme.status).toBe(401);
+  });
+
+  test("handleFetch accepts a dial-back presenting the secret, in any scheme case", async () => {
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+    });
+    await backend.connect().catch(() => {});
+
+    // WebSocketPair does not exist outside workerd, so getting past the
+    // check is what is observable here: it fails constructing the pair
+    // rather than answering 401.
+    for (const scheme of ["Bearer", "bearer", "BEARER"]) {
+      const res = await backend
+        .handleFetch(
+          new Request("http://computer.internal/api", {
+            headers: { upgrade: "websocket", authorization: `${scheme} ${fake.clientSecret}` },
+          }),
+        )
+        .catch(() => null);
+      expect(res?.status, scheme).not.toBe(401);
+    }
+  });
+
   test("connect() consults host.exitInfo() before host.start()", async () => {
     const fake = makeFakeHost();
     const backend = new CloudflareContainerBackend({
