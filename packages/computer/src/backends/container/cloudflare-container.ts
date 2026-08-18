@@ -221,7 +221,10 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     // container.
     let clientSecret: string;
     try {
-      ({ runtimeId, clientSecret } = await host.start(env, this.#egress.mode === "direct"));
+      ({ runtimeId, clientSecret } = await host.start({
+        env,
+        enableInternet: this.#egress.mode === "direct",
+      }));
     } catch (error) {
       throw new WorkspaceTransportError(
         this.#formatStageError("start", {
@@ -446,7 +449,10 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
       if (attempt < maxAttempts) {
         try {
-          ({ runtimeId } = await host.restart(env, this.#egress.mode === "direct"));
+          ({ runtimeId } = await host.restart({
+            env,
+            enableInternet: this.#egress.mode === "direct",
+          }));
           restarts++;
         } catch (error) {
           this.#rejectUpgrade?.(error);

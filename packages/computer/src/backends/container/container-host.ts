@@ -22,15 +22,19 @@ import { RpcTarget } from "cloudflare:workers";
 import { WorkspaceTransportError } from "../../transport-failure.js";
 import { ContainerClientSecret } from "./container-client-secret.js";
 import {
+  type ContainerLaunchRecord,
+  type ContainerLaunchSpec,
+  CurrentContainerLaunchRecord,
+  launchRecordFor,
+  sameLaunch,
+} from "./container-launch-record.js";
+import {
   type ContainerExitInfo,
   containerExitInfo,
   destroyContainerExpectingExit,
   installContainerMonitor,
 } from "./container-lifecycle.js";
-import {
-  type ContainerRuntimeIdentity,
-  CurrentContainerRuntimeIdentity,
-} from "./container-runtime-identity.js";
+import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity.js";
 
 export type { ContainerExitInfo } from "./container-lifecycle.js";
 
@@ -53,13 +57,20 @@ export interface ContainerRuntimeInfo {
   // so a reconstructed durable object presents the value the running
   // container was launched with.
   clientSecret: string;
+  // What the call actually did. `adopted` means a container was already
+  // running with the requested launch spec and was reused. `relaunched`
+  // means one was running with a different spec, or with none recorded,
+  // and had to be replaced: the environment and the internet flag can
+  // only be set at launch, so adopting it would have quietly ignored
+  // what the caller asked for.
+  outcome: "launched" | "adopted" | "relaunched";
 }
 
 export interface IWorkspaceContainerAPI {
   // Idempotent start. Returns the durable identity of the running
   // container process once the runtime has accepted the start command;
   // readiness is verified by the backend through probeComputerdHealth.
-  start(env: Record<string, string>, enableInternet: boolean): Promise<ContainerRuntimeInfo>;
+  start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo>;
 
   // Wire `host` → workspace inside the container's egress table.
   // Called once per backend connect(). The implementation
@@ -82,7 +93,12 @@ export interface IWorkspaceContainerAPI {
   // current generation dead. Implementation: destroy() the
   // container, then start({ env }). Callers bound the number of
   // restart attempts — this method does no looping of its own.
-  restart(env: Record<string, string>, enableInternet: boolean): Promise<ContainerRuntimeInfo>;
+  restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo>;
+
+  // Set the platform's idle timeout for the attached container. Exposed
+  // so a caller that pre-starts containers, such as a warm pool, never
+  // needs to reach past this API to ctx.container.
+  setInactivityTimeout(durationMs: number): Promise<void>;
 
   // Coarse diagnostic state. The `running` flag reports whether
   // the platform still has a container instance attached; it does
@@ -110,6 +126,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   readonly #ctx: DurableObjectState;
   readonly #runtimeIdentity: CurrentContainerRuntimeIdentity;
   readonly #clientSecret: ContainerClientSecret;
+  readonly #launchRecord: CurrentContainerLaunchRecord;
 
   constructor(ctx: DurableObjectState) {
     super();
@@ -120,9 +137,10 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     this.#ctx = ctx;
     this.#runtimeIdentity = new CurrentContainerRuntimeIdentity(ctx.storage);
     this.#clientSecret = new ContainerClientSecret(ctx.storage);
+    this.#launchRecord = new CurrentContainerLaunchRecord(ctx.storage);
   }
 
-  async start(env: Record<string, string>, enableInternet: boolean) {
+  async start(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     // If a prior generation has died, commit to a fresh one: the
     // destroy clears any platform-side carcass, and the start that
     // follows is unconditional. We cannot rely on
@@ -134,7 +152,8 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     // container's environment is the same one later incarnations read
     // back and present on their requests.
     const clientSecret = await this.#clientSecret.ensure();
-    let runtime: ContainerRuntimeIdentity;
+    const requested = await launchRecordFor(spec);
+
     if (priorExit !== null) {
       try {
         await destroyContainerExpectingExit(this.#ctx, this.#container);
@@ -142,20 +161,47 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
         // best-effort — the next start() will surface any real
         // platform-side failure.
       }
-      runtime = await this.#launch(env, enableInternet, clientSecret);
-    } else if (!this.#container.running) {
-      runtime = await this.#launch(env, enableInternet, clientSecret);
-    } else {
-      // A Durable Object incarnation can be reconstructed while its
-      // container stays alive. Reuse the durable runtime id rather
-      // than treating the new WebSocket as a new process.
-      runtime = (await this.#runtimeIdentity.get()) ?? (await this.#runtimeIdentity.markStarted());
+      return this.#launchAs(spec, clientSecret, requested, "launched");
     }
+    if (!this.#container.running) {
+      return this.#launchAs(spec, clientSecret, requested, "launched");
+    }
+
+    // A container is already running. Adopting it is only correct if it
+    // was launched with the spec being asked for now: the environment
+    // and the internet flag cannot be changed on a live container, so
+    // adopting a mismatched one would silently drop what this caller
+    // wants. An absent record means something started the container
+    // without going through here, which is the same problem.
+    const actual = await this.#launchRecord.get();
+    if (actual === null || !sameLaunch(actual, requested)) {
+      console.warn({
+        message:
+          actual === null
+            ? "container was started outside WorkspaceContainerAPI; relaunching so the requested environment applies"
+            : "running container was launched with a different spec; relaunching",
+        component: "workspace-container",
+        requested,
+        actual,
+      });
+      try {
+        await destroyContainerExpectingExit(this.#ctx, this.#container);
+      } catch {
+        // best-effort, as above.
+      }
+      return this.#launchAs(spec, clientSecret, requested, "relaunched");
+    }
+
+    // A Durable Object incarnation can be reconstructed while its
+    // container stays alive. Reuse the durable runtime id rather
+    // than treating the new WebSocket as a new process.
+    const runtime =
+      (await this.#runtimeIdentity.get()) ?? (await this.#runtimeIdentity.markStarted());
     installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
-    return { runtimeId: runtime.id, clientSecret };
+    return { runtimeId: runtime.id, clientSecret, outcome: "adopted" };
   }
 
-  async restart(env: Record<string, string>, enableInternet: boolean) {
+  async restart(spec: ContainerLaunchSpec): Promise<ContainerRuntimeInfo> {
     // destroy() resolves once the platform has torn down the
     // attached container. A subsequent start() launches a fresh
     // generation — ports re-bind, the computerd daemon comes up clean.
@@ -169,20 +215,34 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       // failure.
     }
     const clientSecret = await this.#clientSecret.ensure();
-    const runtime = await this.#launch(env, enableInternet, clientSecret);
-    installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
-    return { runtimeId: runtime.id, clientSecret };
+    return this.#launchAs(spec, clientSecret, await launchRecordFor(spec), "launched");
   }
 
-  async #launch(env: Record<string, string>, enableInternet: boolean, clientSecret: string) {
+  async setInactivityTimeout(durationMs: number): Promise<void> {
+    await this.#container.setInactivityTimeout(durationMs);
+  }
+
+  async #launchAs(
+    spec: ContainerLaunchSpec,
+    clientSecret: string,
+    record: ContainerLaunchRecord,
+    outcome: "launched" | "relaunched",
+  ): Promise<ContainerRuntimeInfo> {
     const runtime = await this.#runtimeIdentity.markStarted();
     try {
-      this.#container.start({ enableInternet, env: { ...env, RPC_CLIENT_SECRET: clientSecret } });
-      return runtime;
+      this.#container.start({
+        enableInternet: spec.enableInternet,
+        env: { ...spec.env, RPC_CLIENT_SECRET: clientSecret },
+      });
     } catch (error) {
       await this.#runtimeIdentity.clear(runtime);
       throw error;
     }
+    // Written after the start is accepted, so a failed launch does not
+    // leave a record claiming the container holds this spec.
+    await this.#launchRecord.set(record);
+    installContainerMonitor(this.#ctx, this.#container, () => this.#runtimeIdentity.clear(runtime));
+    return { runtimeId: runtime.id, clientSecret, outcome };
   }
 
   async status() {

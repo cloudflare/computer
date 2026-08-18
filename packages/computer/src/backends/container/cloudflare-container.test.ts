@@ -73,7 +73,8 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
   }
 
   state.host = {
-    async start(env, enableInternet) {
+    async start(spec) {
+      const { env, enableInternet } = spec;
       calls.push({ name: "start", args: [env, enableInternet] });
       state.startEnv = env;
       state.enableInternet = enableInternet;
@@ -87,6 +88,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       return {
         runtimeId: state.runtimeId ?? "missing-runtime",
         clientSecret: state.clientSecret ?? "unset",
+        outcome: "launched",
       };
     },
     async interceptOutboundHttp(host, ref) {
@@ -109,10 +111,10 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
         return new Response(null, { status: 200 });
       }
       if (url.pathname === "/connect") {
-        state.connectBody = await request
+        state.connectBody = (await request
           .clone()
           .json()
-          .catch(() => undefined);
+          .catch(() => undefined)) as Record<string, unknown> | undefined;
         state.connectAuthorization = request.headers.get("authorization");
         if (connectStatus !== 200) {
           return new Response(`/connect ${connectStatus}`, { status: connectStatus });
@@ -124,7 +126,8 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
     port() {
       throw new Error("cross-boundary Fetchers should not be used by CloudflareContainerBackend");
     },
-    async restart(env, enableInternet) {
+    async restart(spec) {
+      const { env, enableInternet } = spec;
       calls.push({ name: "restart", args: [env, enableInternet] });
       if (opts.restart) {
         await opts.restart();
@@ -133,7 +136,14 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.exit = null;
       state.runtimeId = crypto.randomUUID();
       state.clientSecret ??= "00112233445566778899aabbccddeeff";
-      return { runtimeId: state.runtimeId, clientSecret: state.clientSecret };
+      return {
+        runtimeId: state.runtimeId,
+        clientSecret: state.clientSecret,
+        outcome: "launched",
+      };
+    },
+    async setInactivityTimeout(durationMs: number) {
+      calls.push({ name: "setInactivityTimeout", args: [durationMs] });
     },
     async status() {
       calls.push({ name: "status", args: [] });
