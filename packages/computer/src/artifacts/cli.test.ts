@@ -98,6 +98,26 @@ describe("runArtifactsCLI", () => {
       const res = await client.cli({ argv: ["help"] });
       expect(res.stdout.toLowerCase()).toContain("session");
     });
+
+    it("tells an unscoped caller that names are namespace-wide", async () => {
+      // Help is the contract a shell consumer reads. Promising a
+      // session prefix that is not being applied would be worse than
+      // saying nothing.
+      const res = await createArtifact(binding).cli({ argv: ["help"] });
+      expect(res.stdout).toContain("not scoped to a session");
+      expect(res.stdout).toContain("every repository in the namespace");
+      expect(res.stdout).not.toContain("implicitly scoped");
+    });
+
+    it("drops the session-scoping line from group help when unscoped", async () => {
+      const unscoped = createArtifact(binding);
+      const repo = await unscoped.cli({ argv: ["repo", "--help"] });
+      const token = await unscoped.cli({ argv: ["token", "--help"] });
+      expect(repo.stdout).not.toContain("session-scoped");
+      expect(token.stdout).not.toContain("session-scoped");
+      expect(repo.stdout).toContain("repo create");
+      expect(token.stdout).toContain("token create");
+    });
   });
 
   describe("unknown commands", () => {
@@ -178,6 +198,15 @@ describe("runArtifactsCLI", () => {
       const res = await client.cli({ argv: ["repo", "list"] });
       expect(res.exitCode).toBe(0);
       expect(JSON.parse(res.stdout)).toEqual([]);
+    });
+
+    it("prints every repository in the namespace when unscoped", async () => {
+      await client.cli({ argv: ["repo", "create", "alpha"] });
+      const res = await createArtifact(binding).cli({ argv: ["repo", "list"] });
+      expect(res.exitCode).toBe(0);
+      expect(JSON.parse(res.stdout).map((r: { name: string }) => r.name)).toEqual([
+        "sess1__alpha",
+      ]);
     });
   });
 
