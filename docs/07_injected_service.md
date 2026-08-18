@@ -121,13 +121,20 @@ Provider-agnostic shape — three steps, in order:
 `CloudflareContainerBackend` (`packages/computer/src/backends/container/cloudflare-container.ts`)
 wires it like this:
 
-1. **Start.** `container.start({ enableInternet, env })` on the
-   Cloudflare Containers API — not the `@cloudflare/sandbox` SDK.
-   Idempotence comes from `container.running` plus a cached `#handle`;
-   there is no process-name registry, no `startProcess`/`getProcess`,
-   and no `node /app/...` command (the container's `ENTRYPOINT` runs
-   `computerd` directly). `containerEnv` pins `PORT=8080` and lets the
-   image's own `FUSE_MOUNT` value (typically `auto`) win.
+1. **Start.** `WorkspaceContainerAPI.start({ env, enableInternet })`,
+   which reaches the Cloudflare Containers API — not the
+   `@cloudflare/sandbox` SDK. There is no process-name registry, no
+   `startProcess`/`getProcess`, and no `node /app/...` command (the
+   container's `ENTRYPOINT` runs `computerd` directly). `containerEnv`
+   pins `PORT=8080` and lets the image's own `FUSE_MOUNT` value
+   (typically `auto`) win, and the API adds `RPC_CLIENT_SECRET`.
+
+   Neither the environment nor the internet flag can be changed on a
+   running container, so the launch records both and a container found
+   already running is only adopted when it matches. Otherwise it is
+   relaunched, which is what keeps a warm pool from handing a workspace
+   a container configured for something else. A container started
+   outside this API has no record and is relaunched too.
 2. **Wire egress.** `container.interceptOutboundHttp(egressHost, egress)`
    routes outbound HTTP from the container at `egressHost` back to a
    Worker `Fetcher` the DO controls.
