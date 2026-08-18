@@ -210,13 +210,21 @@ function applyDirectoryEntry(db: Database, entry: Extract<ChangeEntry, { kind: "
   });
 }
 
-function ensureParentDirectories(db: Database, path: string, mtime: number): string | undefined {
+function ensureParentDirectories(
+  db: Database,
+  path: string,
+  mtime: number,
+  options: { allowReachableSymlinkParent?: boolean } = {},
+): string | undefined {
   const { parts } = canonicalizePath(path);
   if (parts.length < 2) return undefined;
   const parentPath = `/${parts.slice(0, -1).join("/")}`;
 
   const parent = resolveInodeWithoutSymlinks(db, parentPath);
   if (parent?.type === "dir") return undefined;
+  if (options.allowReachableSymlinkParent && resolveInode(db, parentPath)?.type === "dir") {
+    return undefined;
+  }
 
   for (let i = 0; i < parts.length - 1; i++) {
     const ancestorPath = `/${parts.slice(0, i + 1).join("/")}`;
@@ -510,7 +518,9 @@ function applyFileEntry(
     }
     assertChunkSize(staged, c.size, c.hash, entry.path);
   }
-  const blockingRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+  const blockingRoot = ensureParentDirectories(db, entry.path, entry.mtime, {
+    allowReachableSymlinkParent: true,
+  });
   if (blockingRoot !== undefined) return { total, blockingRoot };
   removeReplaceableFinalEntry(db, entry.path, "file");
   const { parts, path: canonical } = canonicalizePath(entry.path);

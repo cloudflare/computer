@@ -181,6 +181,31 @@ describe("applyChanges", () => {
       },
     );
 
+    it("writes a file through a reachable symlink parent", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/target", {}, () => 1);
+        await writeFile(db, "/target/keep.txt", "keep", {}, () => 2);
+        symlink(db, "/target", "/workspace", () => 3);
+
+        await apply(db, [
+          {
+            kind: "file",
+            rev: 4,
+            path: "/workspace/new.txt",
+            mode: 0o640,
+            mtime: 4,
+            size: 0,
+            chunks: [],
+          },
+        ]);
+
+        expect(resolveInode(db, "/workspace", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(db, "/workspace")).toBe("/target");
+        expect(await readFile(db, "/workspace/keep.txt", "utf8")).toBe("keep");
+        expect(await readFile(db, "/target/new.txt", "utf8")).toBe("");
+      });
+    });
+
     it.each(["file", "symlink"] as const)(
       "replaces a blocking %s ancestor when directories arrive child-first",
       async (kind) => {
