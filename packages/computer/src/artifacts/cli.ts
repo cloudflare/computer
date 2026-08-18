@@ -661,6 +661,7 @@ Secrets: 'create', 'share', and 'token create' all surface a token
 }
 
 function repoHelp(scoped: boolean): string {
+  const nameKind = scoped ? "a local name" : "the stored name";
   return `usage: artifacts repo <subcommand> [<args>]
 
 ${
@@ -674,7 +675,7 @@ ${
        The token is an initial git token — treat it as a secret.
 
    repo get <name>
-       Print JSON metadata for a repository: ArtifactsRepoInfo with a local name.
+       Print JSON metadata for a repository: ArtifactsRepoInfo with ${nameKind}.
 
    repo list
        Print a JSON array of ${scoped ? "this session's" : "the namespace's"} repository metadata (without remote).
