@@ -1,5 +1,7 @@
 // Typed error hierarchy for the artifacts surface.
-//
+
+export const ARTIFACTS_NOT_CONFIGURED_MESSAGE = "Workspace Artifacts binding is not configured";
+
 // The CLI dispatcher in `cli.ts` maps each class to a
 // deterministic exit code and a stderr line so a shell consumer
 // can match on the text. The hierarchy is deliberately narrow:

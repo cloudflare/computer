@@ -19,7 +19,7 @@ import {
   SQLiteWorkspaceProvider,
   WorkspaceFilesystem,
 } from "@cloudflare/dofs";
-
+import { ARTIFACTS_NOT_CONFIGURED_MESSAGE } from "./artifacts/errors.js";
 import {
   type ArtifactClient,
   ArtifactError,
@@ -1356,7 +1356,7 @@ function artifactsSessionId(options: WorkspaceOptions): string | null | undefine
 
 function createDisabledArtifactsClient(): ArtifactClient {
   const fail = () => {
-    throw new ArtifactError("ENOCONFIG", "Workspace Artifacts binding is not configured");
+    throw new ArtifactError("ENOCONFIG", ARTIFACTS_NOT_CONFIGURED_MESSAGE);
   };
   return {
     sessionId: undefined,
@@ -1370,7 +1370,7 @@ function createDisabledArtifactsClient(): ArtifactClient {
     getToken: fail,
     revokeToken: fail,
     async cli(input) {
-      return runArtifactsCLI(this, input);
+      return runArtifactsCLI(this, input, false);
     },
   } as ArtifactClient;
 }

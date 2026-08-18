@@ -770,6 +770,20 @@ describe("Workspace backend selection", () => {
       expect(res.stderr).toContain("Workspace Artifacts binding is not configured");
     });
 
+    it("reports the missing binding in help instead of promising namespace access", async () => {
+      const ws = new Workspace({ storage: makeStorage() });
+      const top = await ws.artifacts.cli({ argv: ["help"] });
+      const repo = await ws.artifacts.cli({ argv: ["repo", "--help"] });
+      const token = await ws.artifacts.cli({ argv: ["token", "--help"] });
+
+      for (const result of [top, repo, token]) {
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain("Workspace Artifacts binding is not configured");
+        expect(result.stdout).not.toContain("every repository in the namespace");
+        expect(result.stdout).not.toContain("namespace-wide");
+      }
+    });
+
     it("scopes to the workspace session id", async () => {
       const binding = new FakeArtifactsBinding();
       const ws = new Workspace({

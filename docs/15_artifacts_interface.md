@@ -256,11 +256,11 @@ shared link does not disturb others.
 
 Help is a first-class, agent-readable surface. `help`, `--help`,
 `-h`, and each group's `--help` print documentation that spells out
-the secret-handling rules and whichever naming contract the client
-actually applies: local names under a session, stored names and a
-namespace-wide `repo list` without one. A bare `artifacts` prints
-the top-level help and exits non-zero, the way `git` with no args
-does.
+the secret-handling rules and the client's actual state: local names
+under a session, stored names and a namespace-wide `repo list`
+without one, or a clear configuration notice when no binding is
+available. A bare `artifacts` prints the top-level help and exits
+non-zero, the way `git` with no args does.
 
 ### Exit codes
 
@@ -322,7 +322,8 @@ quietly widening that tenant's access.
 
 When `artifacts` is omitted from `Workspace`, the command still
 exists, but operations fail with a clear "Workspace Artifacts binding
-is not configured" error.
+is not configured" error. Its help prints the same notice instead of
+describing session or namespace access that is not available.
 
 The binding stanza in the consumer's Wrangler config:
 

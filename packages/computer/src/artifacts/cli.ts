@@ -15,7 +15,7 @@
 
 import type { ArtifactClient } from "./client.js";
 import { parseDuration } from "./duration.js";
-import { ArtifactError } from "./errors.js";
+import { ARTIFACTS_NOT_CONFIGURED_MESSAGE, ArtifactError } from "./errors.js";
 import type { ArtifactScope } from "./types.js";
 
 /**
@@ -58,31 +58,35 @@ export interface ArtifactsCLIResult {
 export async function runArtifactsCLI(
   client: ArtifactClient,
   input: ArtifactsCLIInput,
+  bindingConfigured = true,
 ): Promise<ArtifactsCLIResult> {
   const argv = input.argv;
-  // Help describes the scoping the client actually applies, so every
-  // help path is told whether this client sits in one session or
-  // spans the namespace.
-  const scoped = client.sessionId !== undefined;
+  // Help describes the state the client actually runs in: one
+  // session, the whole namespace, or no binding at all.
+  const mode: ArtifactsHelpMode = bindingConfigured
+    ? client.sessionId === undefined
+      ? "namespace"
+      : "session"
+    : "unconfigured";
   if (argv.length === 0) {
     // Bare invocation: print help but signal misuse, the way `git`
     // with no args exits non-zero.
-    return { stdout: topLevelHelp(scoped), stderr: "", exitCode: 1 };
+    return { stdout: topLevelHelp(mode), stderr: "", exitCode: 1 };
   }
   const [group, ...rest] = argv;
   switch (group) {
     case "help":
     case "--help":
     case "-h":
-      return ok(topLevelHelp(scoped));
+      return ok(topLevelHelp(mode));
     case "create":
       return await runCreate(client, rest, input.remoteAdd);
     case "share":
       return await runShare(client, rest);
     case "repo":
-      return await runRepo(client, rest, scoped);
+      return await runRepo(client, rest, mode);
     case "token":
-      return await runToken(client, rest, scoped);
+      return await runToken(client, rest, mode);
     default:
       return fail(`artifacts: '${group}' is not an artifacts command. See 'artifacts help'.`);
   }
@@ -322,17 +326,17 @@ export function credentialURL(remote: string, token: string): string {
 async function runRepo(
   client: ArtifactClient,
   args: string[],
-  scoped: boolean,
+  mode: ArtifactsHelpMode,
 ): Promise<ArtifactsCLIResult> {
   if (args.length === 0) {
-    return { stdout: repoHelp(scoped), stderr: "", exitCode: 1 };
+    return { stdout: repoHelp(mode), stderr: "", exitCode: 1 };
   }
   const [sub, ...rest] = args;
   switch (sub) {
     case "help":
     case "--help":
     case "-h":
-      return ok(repoHelp(scoped));
+      return ok(repoHelp(mode));
     case "create":
       return await runRepoCreate(client, rest);
     case "get":
@@ -472,17 +476,17 @@ async function runRepoImport(client: ArtifactClient, args: string[]): Promise<Ar
 async function runToken(
   client: ArtifactClient,
   args: string[],
-  scoped: boolean,
+  mode: ArtifactsHelpMode,
 ): Promise<ArtifactsCLIResult> {
   if (args.length === 0) {
-    return { stdout: tokenHelp(scoped), stderr: "", exitCode: 1 };
+    return { stdout: tokenHelp(mode), stderr: "", exitCode: 1 };
   }
   const [sub, ...rest] = args;
   switch (sub) {
     case "help":
     case "--help":
     case "-h":
-      return ok(tokenHelp(scoped));
+      return ok(tokenHelp(mode));
     case "create":
       return await runTokenCreate(client, rest);
     case "list":
@@ -591,11 +595,14 @@ async function runTokenDelete(client: ArtifactClient, args: string[]): Promise<A
 // help text
 // ---------------------------------------------------------------
 //
-// The two name paragraphs are the only thing scoping changes. A
-// client bound to a session works in local names; one bound to the
-// namespace works in stored names and sees every session's
-// repositories. Help states whichever is true, because a consumer
-// that believes the wrong one addresses the wrong repository.
+// The naming paragraph follows the client state. A client bound to
+// a session works in local names; one bound to the namespace works
+// in stored names and sees every session's repositories; one with
+// no binding has neither authority. Help states whichever is true,
+// because a consumer that believes the wrong one addresses the
+// wrong repository.
+
+type ArtifactsHelpMode = "session" | "namespace" | "unconfigured";
 
 const SCOPED_NAMES = `Every repository name you pass is implicitly scoped to this
 session: the name 'starter' addresses the repo stored as
@@ -611,12 +618,28 @@ including those a session owns (stored as '<session>__<name>'), and
 any of them can be read, written to, or deleted under that name.
 `;
 
-function topLevelHelp(scoped: boolean): string {
+const UNCONFIGURED_NAMES = `${ARTIFACTS_NOT_CONFIGURED_MESSAGE}.
+Configure WorkspaceOptions.artifacts before running repository or
+token commands.
+`;
+
+function namingHelp(mode: ArtifactsHelpMode): string {
+  switch (mode) {
+    case "session":
+      return SCOPED_NAMES;
+    case "namespace":
+      return UNSCOPED_NAMES;
+    case "unconfigured":
+      return UNCONFIGURED_NAMES;
+  }
+}
+
+function topLevelHelp(mode: ArtifactsHelpMode): string {
   return `usage: artifacts <command> [<args>]
 
 Manage Cloudflare Artifacts repositories and git tokens.
 
-${scoped ? SCOPED_NAMES : UNSCOPED_NAMES}
+${namingHelp(mode)}
 Commands:
    create  Create a repo, mint a token, and register a git remote.
    share   Mint a token and print one clone-ready remote URL.
@@ -660,15 +683,18 @@ Secrets: 'create', 'share', and 'token create' all surface a token
 `;
 }
 
-function repoHelp(scoped: boolean): string {
-  const nameKind = scoped ? "a local name" : "the stored name";
+function repoHelp(mode: ArtifactsHelpMode): string {
+  const nameKind =
+    mode === "session" ? "a local name" : mode === "namespace" ? "the stored name" : "its name";
+  const listScope =
+    mode === "session"
+      ? "this session's repository"
+      : mode === "namespace"
+        ? "the namespace's repository"
+        : "repository";
   return `usage: artifacts repo <subcommand> [<args>]
 
-${
-  scoped
-    ? "All names are session-scoped; pass local names only."
-    : "Names are namespace-wide; pass the name a repository is stored under."
-}
+${namingHelp(mode)}
 
    repo create <name> [--description <text>] [--default-branch <branch>] [--read-only]
        Create a repository. Prints JSON: { name, remote, defaultBranch, token }.
@@ -678,7 +704,7 @@ ${
        Print JSON metadata for a repository: ArtifactsRepoInfo with ${nameKind}.
 
    repo list
-       Print a JSON array of ${scoped ? "this session's" : "the namespace's"} repository metadata (without remote).
+       Print a JSON array of ${listScope} metadata (without remote).
 
    repo delete <name>
        Delete a repository. Prints a one-line confirmation.
@@ -692,15 +718,11 @@ Example:
 `;
 }
 
-function tokenHelp(scoped: boolean): string {
+function tokenHelp(mode: ArtifactsHelpMode): string {
   return `usage: artifacts token <subcommand> [<args>]
 
 Tokens authenticate git operations against a repository's remote.
-${
-  scoped
-    ? "The <repo> argument is a session-scoped local name."
-    : "The <repo> argument is the name a repository is stored under."
-}
+${namingHelp(mode)}
 
    token create <repo> [--scope read|write] [--ttl <dur>]
        Mint a token. Prints JSON: { id, plaintext, scope, expiresAt }.
