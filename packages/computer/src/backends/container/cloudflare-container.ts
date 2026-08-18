@@ -261,6 +261,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     this.#armUpgrade();
 
     runtimeId = await this.#readyWithRestarts(host, env, deadline, priorExit, runtimeId);
+    await this.#requireAuthEnforced(host, deadline);
     await this.#postConnect(host, deadline, clientSecret);
     const ws = await this.#waitForUpgrade(deadline);
 
@@ -526,6 +527,54 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       `attempt=${info.attempt}/${info.maxAttempts} restarts=${info.restarts} ` +
       `timeoutMs=${this.#options.connectTimeoutMs}${priorExit} ` +
       `lastError=${describeError(info.lastError)}`
+    );
+  }
+
+  // Confirm the container refuses an unauthorized request before handing
+  // it a session. Launching with the secret is arranged elsewhere, but an
+  // image built before the daemon understood RPC_CLIENT_SECRET ignores it
+  // and serves everything, and that is invisible from the host: the
+  // bearer token goes out and the container is content either way.
+  //
+  // /api is the probe target because it exists on every daemon that has a
+  // capnweb endpoint at all, so this check does not depend on which
+  // diagnostic routes a given build happens to expose. An enforcing
+  // daemon answers 401 before it looks at the route; one that is not
+  // enforcing answers whatever the route says for an unauthenticated
+  // GET.
+  //
+  // A definite answer other than 401 fails the connect. Recycling a
+  // container that predates the secret is the cost of the upgrade, and it
+  // is preferable to a workspace that believes it is authorized and is
+  // not. A probe that cannot complete is not evidence either way and is
+  // allowed through: the readiness loop above is what decides whether the
+  // container is alive.
+  async #requireAuthEnforced(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+    let status: number;
+    try {
+      const res = await host.fetchPort(this.#options.containerPort, "http://container/api", {
+        // Bounded like every other request this file makes to the
+        // container. Unbounded, a container that accepts the connection
+        // and then stops serving would hang the connect, and a slow one
+        // would eat the budget #waitForUpgrade needs, surfacing as an
+        // upgrade that never arrived.
+        signal: AbortSignal.timeout(
+          Math.min(this.#options.healthProbeTimeoutMs, Math.max(50, deadline - Date.now())),
+        ),
+      });
+      status = res.status;
+      // Release the body; nothing here reads it.
+      await res.text().catch(() => "");
+    } catch {
+      return;
+    }
+    if (status === 401) return;
+    this.#rejectUpgrade?.(new Error("container is not enforcing RPC_CLIENT_SECRET"));
+    this.#clearUpgrade();
+    throw new WorkspaceTransportError(
+      `CloudflareContainerBackend(${this.id}) [stage=auth]: container served an unauthenticated ` +
+        `request to /api with ${status}, so this workspace would run without authorization. ` +
+        `A container or image predating RPC_CLIENT_SECRET has to be recycled.`,
     );
   }
 

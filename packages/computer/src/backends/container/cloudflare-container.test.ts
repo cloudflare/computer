@@ -16,6 +16,11 @@ import { CloudflareContainerBackend } from "./cloudflare-container.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 
 interface FakeHostOptions {
+  // Status the container returns for an unauthenticated request to a
+  // gated route. Defaults to 401, meaning the secret is enforced.
+  authProbeStatus?: number;
+  // Accept the probe and never answer it, to prove the request is bounded.
+  authProbeHang?: boolean;
   healthy?: boolean;
   // Health probe sequence: each connect() reads from the head of
   // this array. true = answer 200, false = throw "connection
@@ -109,6 +114,18 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       if (url.pathname === "/health") {
         if (!nextHealthy()) throw new Error("connection refused");
         return new Response(null, { status: 200 });
+      }
+      if (url.pathname === "/api") {
+        // An enforcing container refuses an unauthenticated request here.
+        // authProbeStatus models one that does not; authProbeHang models
+        // one that accepts the connection and never answers.
+        if (opts.authProbeHang) {
+          await new Promise((resolve) => {
+            init?.signal?.addEventListener("abort", resolve, { once: true });
+          });
+          throw new Error("aborted");
+        }
+        return new Response(null, { status: opts.authProbeStatus ?? 401 });
       }
       if (url.pathname === "/connect") {
         state.connectBody = (await request
@@ -425,6 +442,60 @@ describe("CloudflareContainerBackend", () => {
     // The daemon refuses an unauthorized request once it has a secret,
     // so the bearer token travels with the dial-back instruction.
     expect(fake.connectAuthorization).toBe(`Bearer ${fake.clientSecret}`);
+  });
+
+  test("connect() fails when the container accepts an unauthenticated request", async () => {
+    // An image predating RPC_CLIENT_SECRET ignores the variable and serves
+    // everything. Connecting anyway would hand a session to a container
+    // that is not authorizing anyone, so this refuses instead.
+    const fake = makeFakeHost({ authProbeStatus: 200 });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+    });
+
+    const error = await backend.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkspaceTransportError);
+    expect(String(error)).toMatch(/stage=auth/);
+    expect(String(error)).toMatch(/without authorization/);
+    expect(String(error)).toMatch(/recycled/);
+  });
+
+  test("connect() gets past the check when the container refuses an unauthenticated request", async () => {
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+    });
+
+    const error = await backend.connect().catch((caught: unknown) => caught);
+
+    // It still fails, but on the upgrade rather than the auth check: there
+    // is no WebSocketPair in this environment.
+    expect(String(error)).not.toMatch(/stage=auth/);
+    expect(fake.calls.map((c) => c.name)).toContain("fetchPort");
+  });
+
+  test("connect() does not hang when the container never answers the check", async () => {
+    // The probe is on the critical path, so an unbounded request would
+    // wedge the connect past its own timeout.
+    const fake = makeFakeHost({ authProbeHang: true });
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      connectTimeoutMs: 600,
+      healthProbeTimeoutMs: 100,
+    });
+
+    const started = Date.now();
+    await backend.connect().catch(() => {});
+
+    // A probe that cannot answer is inconclusive, so the connect carries
+    // on and fails later on the upgrade, well inside its own budget.
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   test("connect() throws a transport error when the /api upgrade never arrives", async () => {
