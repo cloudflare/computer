@@ -78,7 +78,7 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
     },
     // Route every workspace operation through the Cloudflare
     // runtime's user-tracing surface. The runtime owns the span
-    // lifecycle; the observer is a thin facade that forwards seed
+    // lifecycle; the observer is a thin wrapper that forwards seed
     // attributes and a `setAttribute` callback. With
     // `observability.traces.enabled = true` in wrangler.jsonc, the
     // spans show up in the Workers Observability dashboard

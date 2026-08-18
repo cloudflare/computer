@@ -27,7 +27,7 @@
 // The shape of `WorkspaceObserver.span(name, attributes, run)` is a
 // faithful subset of `tracing.enterSpan(name, callback)`. The only
 // real work the adapter does is forward seed attributes onto the
-// runtime span and hand a `setAttribute`-shaped facade to the workspace
+// runtime span and hand a `setAttribute`-shaped wrapper to the workspace
 // callback. Errors propagate through `enterSpan` naturally; the
 // workspace's own `withSpan` helper records `error.name` /
 // `error.message` before re-throwing.
@@ -75,7 +75,7 @@ export function createCloudflareObserver(options: CloudflareObserverOptions): Wo
       // bug rather than a caller bug.
       return tracing.enterSpan(name, (runtimeSpan) => {
         applyAttributes(runtimeSpan, attributes);
-        // Wrap the runtime span in a `WorkspaceSpan` facade. The facade
+        // Present the runtime span as a `WorkspaceSpan`. The wrapper
         // forwards `setAttribute` directly; `undefined` values are
         // dropped so callers can pass optional fields without
         // conditionals.
@@ -102,7 +102,7 @@ function applyAttributes(
 }
 
 // Used when the runtime does not expose `Tracing`. The callback runs
-// inline and the span facade is a no-op, matching the package's default
+// inline and the span wrapper is a no-op, matching the package's default
 // `noopObserver`. Duplicated here rather than re-exported to keep the
 // adapter file self-contained and avoid pulling the package entry into
 // the import graph of every adapter consumer.

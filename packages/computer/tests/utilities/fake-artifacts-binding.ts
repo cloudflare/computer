@@ -9,7 +9,7 @@
 //
 // It is not a faithful emulation of the service: tokens are opaque
 // strings, ids are sequential, and there is no real git storage.
-// But it honors the contracts the facade depends on — repository
+// But it honors the contracts the wrapper depends on — repository
 // names must match the binding's documented charset, `list`
 // paginates across every repo and omits `remote`, and `revokeToken`
 // flips state.
@@ -231,7 +231,7 @@ class FakeRepoHandle implements ArtifactsRepo {
     name: string,
     _opts?: { description?: string; readOnly?: boolean; defaultBranchOnly?: boolean },
   ): Promise<ArtifactsCreateRepoResult> {
-    // Not exercised by the facade today; satisfy the interface.
+    // Not exercised by the wrapper today; satisfy the interface.
     throw makeError("INTERNAL_ERROR", `fork not implemented in fake: ${name}`);
   }
 }

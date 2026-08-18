@@ -141,7 +141,7 @@ export async function mountShim(options: MountShimOptions): Promise<ShimMount> {
   // implicitly when we break out below, or explicitly in unmount)
   // tears down the underlying interval.
   let stopped = false;
-  // watchAsync lives on the provider, not the VFS facade — the dofs
+  // watchAsync lives on the provider, not the VFS wrapper — the dofs
   // SQLiteWorkspaceProvider implements it via revision polling.
   const watcher = vfs.provider.watchAsync(mountPoint, { recursive: true }) as AsyncIterable<{
     eventType: "rename" | "change";

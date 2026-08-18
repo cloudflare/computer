@@ -39,7 +39,7 @@ function eventStream(events: WorkspaceRuntimeEvent[]): ReadableStream<WorkspaceR
 
 // A backend whose exec replays a fixed event sequence. Drives the
 // runtime's encoding transform and result drain — the work the host
-// shell facade used to own before every backend shared one path.
+// shell wrapper used to own before every backend shared one path.
 function replayBackend(events: WorkspaceRuntimeEvent[]): WorkspaceModuleBackendHandle {
   return {
     exec: vi.fn(async (input) => ({ id: input.id ?? "exec", events: eventStream(events) })),

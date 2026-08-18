@@ -1,4 +1,4 @@
-// Facade-owned types for the artifacts surface.
+// Wrapper-owned types for the artifacts surface.
 //
 // The Cloudflare Artifacts Workers binding ships its own types in
 // `@cloudflare/workers-types`: the global `Artifacts` binding,
@@ -9,12 +9,12 @@
 // `ReadableStream` and other Workers globals. Consumers get the
 // types transitively through `@cloudflare/workers-types`.
 //
-// What lives here is the small set of types the facade itself owns
+// What lives here is the small set of types the wrapper itself owns
 // and that have no global equivalent.
 
 /**
  * Token scope. `write` grants push; `read` is fetch-only. Mirrors
  * the binding's `"read" | "write"` literal; named here so the
- * facade and CLI can refer to it by a single alias.
+ * wrapper and CLI can refer to it by a single alias.
  */
 export type ArtifactScope = "read" | "write";

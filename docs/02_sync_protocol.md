@@ -292,7 +292,7 @@ edited file) shows up exactly once on the wire. See
   go through a per-Workspace tail-promise FIFO. Two concurrent
   callers queue — the second can't enter `pushOnce` / `pullOnce`
   until the first has resolved or rejected. A command's pre-exec push
-  and post-stream pull each use this facade, but the FIFO is not held
+  and post-stream pull each use this wrapper, but the FIFO is not held
   for the command's lifetime: overlapping commands and explicit sync
   calls are not one transaction. Rejections aren't contagious: a
   failed mutation surfaces its error to its own caller without

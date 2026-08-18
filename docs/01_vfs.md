@@ -36,7 +36,7 @@ Workspace where `fs` works against the local SQLite store but
 `WorkspaceOptions` includes the storage handle, optional backends,
 clock, session id, mounts, observer, git identity, assets, artifacts,
 and `useThink`. There is no `root` or `sandbox` field on the host
-facade — sandbox wiring lives behind a `WorkspaceBackend`.
+wrapper — sandbox wiring lives behind a `WorkspaceBackend`.
 
 Set `useThink: true` when assigning the Workspace to
 `Think.workspace`. This adds Think's string-oriented filesystem

@@ -344,7 +344,7 @@ The binding and its wire shapes are the global types from
 `ArtifactsRepo` (the repo handle), `ArtifactsCreateRepoResult`,
 `ArtifactsRepoInfo`, `ArtifactsTokenInfo`, `ArtifactsError`, and so
 on. `createArtifact(binding, sessionId?)` takes an `Artifacts` and
-returns metadata in those same shapes — the facade adds session
+returns metadata in those same shapes — the wrapper adds session
 scoping, it does not redeclare the protocol. Workers consumers get
 the globals from their own `@cloudflare/workers-types` setup, and
 this package's typecheck uses the same source of truth.
@@ -354,5 +354,5 @@ The in-memory `FakeArtifactsBinding` the tests run against
 real interface; a drift in the published shape fails the build
 rather than passing green.
 
-The facade covers the repository and token lifecycle. The binding's
+The wrapper covers the repository and token lifecycle. The binding's
 `fork` is intentionally out of scope for now.

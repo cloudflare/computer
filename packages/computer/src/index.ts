@@ -2,7 +2,7 @@
 //
 // The package runs inside a Cloudflare Worker / Durable
 // Object. It picks a backend, holds a SyncRPC connection to
-// computerd, and exposes a file-shaped facade.
+// computerd, and exposes a file-shaped wrapper.
 //
 // Backends ship under sub-path entries so the large built
 // dependencies they carry (a bundled just-bash for the worker

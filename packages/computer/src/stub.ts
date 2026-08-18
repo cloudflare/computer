@@ -24,7 +24,7 @@
 // All the SyncRPC streaming (push / pushObjects / fetchObjects /
 // fetchChanges) happens on the capnweb wire inside the DO. What
 // crosses the Workers-RPC boundary here is only the high-level
-// value-shaped facade — writeFile / readFile / stat / exec —
+// value-shaped wrapper — writeFile / readFile / stat / exec —
 // because Workers RPC doesn't carry non-byte ReadableStreams or
 // capnweb stubs.
 //

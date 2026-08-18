@@ -1,4 +1,4 @@
-// Facade over the Cloudflare Artifacts Workers binding, optionally
+// Wrapper over the Cloudflare Artifacts Workers binding, optionally
 // scoped to a session.
 //
 // `createArtifact(binding, sessionId)` binds a namespace binding
@@ -20,7 +20,7 @@
 // The binding, its repo handle, and the result shapes are the
 // global types from `@cloudflare/workers-types` (`Artifacts`,
 // `ArtifactsRepo`, `ArtifactsCreateRepoResult`, `ArtifactsRepoInfo`,
-// ...). The facade adds session scoping on top; it does not
+// ...). The wrapper adds session scoping on top; it does not
 // redeclare the wire shapes.
 //
 // The typed surface here is the single source of truth. The argv-

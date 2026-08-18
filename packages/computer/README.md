@@ -341,7 +341,7 @@ Two ways to get a file out of the workspace and into the world:
   `assets publish <path> [<expiry>]` command. See
   [`docs/14_assets_interface.md`](../../docs/14_assets_interface.md).
 - **Artifacts** (`@cloudflare/computer/artifacts`):
-  `createArtifact(binding, sessionId)` is a facade over
+  `createArtifact(binding, sessionId)` is a wrapper over
   the [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/)
   binding. Every repository name is implicitly prefixed with the session
   id, so one namespace hosts many isolated sessions. The session id is
@@ -412,14 +412,14 @@ on a computerd instance.
 
 | Entrypoint | Purpose |
 | --- | --- |
-| `@cloudflare/computer` | The `Workspace` facade, `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
+| `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
-| `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped facade over the Cloudflare Artifacts binding. |
+| `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | `@cloudflare/computer/observe/cloudflare` | Cloudflare-runtime adapter for the observability hook. |
 
 A consumer that only uses the container backend never imports the worker

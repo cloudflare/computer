@@ -1,4 +1,4 @@
-// Host-side Workspace facade.
+// Host-side Workspace wrapper.
 //
 // Runs inside a Cloudflare Worker / Durable Object. Owns a local
 // dofs Database (the host store) and a SyncRPC connection
@@ -190,7 +190,7 @@ export interface WorkspaceOptions {
 
   // Add Think's string-oriented WorkspaceLike filesystem methods
   // directly to the Workspace instance. This is off by default so
-  // the primary Workspace API stays on the `workspace.fs` facade;
+  // the primary Workspace API stays on the `workspace.fs` wrapper;
   // enable it when assigning a Workspace to `Think.workspace`.
   useThink?: boolean;
 }
@@ -279,7 +279,7 @@ export class Workspace {
   // runs again. This prevents a concurrent caller from reaching a
   // backend's own cache while it still points at the stale handle.
   readonly #disconnecting = new Map<string, Promise<void>>();
-  // Per-backend CommandExecutor facades. Constructed alongside each
+  // Per-backend CommandExecutor wrappers. Constructed alongside each
   // handle; reused for the life of the handle.
   readonly #shells = new Map<string, CommandExecutor>();
   // Cached command adapters presenting a CommandExecutor as the
@@ -406,14 +406,14 @@ export class Workspace {
   }
 
   // Observer used to wrap workspace operations in spans. Exposed for the
-  // stub and shell facades, which need to wrap their own entry points in
+  // stub and shell wrappers, which put their own entry points in
   // spans named after the boundary the caller crossed. Defaults to a
   // no-op when the constructor did not receive one.
   get observer(): WorkspaceObserver {
     return this.#observer;
   }
 
-  // Filesystem facade — the documented Workspace.fs surface from
+  // Filesystem wrapper — the documented Workspace.fs surface from
   // docs/04. Available immediately; doesn't need ready() because
   // reads and writes hit the local store, not the wire.
   //
@@ -446,7 +446,7 @@ export class Workspace {
     return this.#assets;
   }
 
-  // Git facade. Opt-in so the default Workspace graph does not
+  // Git wrapper. Opt-in so the default Workspace graph does not
   // carry isomorphic-git. When configured, it does not require a
   // backend — every supported subcommand reads and writes through
   // the local SQLite-backed VFS. The configured factory decides
@@ -1337,7 +1337,7 @@ function positiveRetryOption(value: number | undefined, fallback: number, name: 
  *
  * `WorkspaceOptions.sessionId` documents the empty string as its
  * unset value, so an empty id here means the workspace has no
- * session to scope by rather than a session named "". The facade
+ * session to scope by rather than a session named "". The wrapper
  * itself is stricter: it rejects an empty id outright, since a
  * caller reaching it directly has no such convention.
  */

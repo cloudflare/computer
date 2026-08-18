@@ -86,7 +86,7 @@ describe("createCloudflareObserver", () => {
     expect(spans[0].attributes).toEqual({ "workspace.fs.path": "/" });
   });
 
-  it("hands the callback a span facade whose setAttribute reaches the runtime", async () => {
+  it("hands the callback a span wrapper whose setAttribute reaches the runtime", async () => {
     const { tracing, spans } = makeFakeTracing();
     const observer = createCloudflareObserver({ tracing });
     await observer.span("workspace.runtime.exec", {}, async (span) => {

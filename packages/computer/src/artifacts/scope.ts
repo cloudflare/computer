@@ -3,8 +3,8 @@
 // Scoping is optional, so these helpers take a session id that may
 // be undefined and behave in one of two modes.
 //
-// With a session id, every name a caller passes to the facade is
-// local — `starter`, `react-mirror`. The facade prefixes the session
+// With a session id, every name a caller passes to the wrapper is
+// local — `starter`, `react-mirror`. The wrapper prefixes the session
 // id to form the fully-qualified name the binding stores:
 // `${sessionId}__${name}`. Reads run the inverse: a scoped name is
 // stripped back to its local form, and any name that doesn't belong
@@ -30,7 +30,7 @@ const VALID_REPO_NAME_DESCRIPTION =
   "must start with a letter or digit and contain only letters, digits, '.', '_', and '-'";
 
 /**
- * Resolve an optional session id to the scope the facade runs in:
+ * Resolve an optional session id to the scope the wrapper runs in:
  * a validated session id, or undefined for an unscoped client that
  * sees the whole namespace.
  *
@@ -119,7 +119,7 @@ export function unscopedName(sessionId: string | undefined, scoped: string): str
   const local = scoped.slice(prefix.length);
   // A scoped name with a nested separator (`sess__a__b`) does not
   // round-trip through `scopedName`, so it can't have been minted
-  // by this facade. Treat it as foreign.
+  // by this wrapper. Treat it as foreign.
   if (local.length === 0 || local.includes(SCOPE_SEPARATOR)) return undefined;
   return local;
 }

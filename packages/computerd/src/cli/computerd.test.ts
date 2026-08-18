@@ -227,9 +227,9 @@ test("FUSE_MOUNT=shim materialises an RPC push under the mount point", async (_c
 
   const db = new Database(new SQLiteTestStorage());
   initializeSchema(db, Date.now);
-  const fsFacade = new WorkspaceFilesystem(db);
-  await fsFacade.mkdir(`${mountPoint}/repo`, { recursive: true });
-  await fsFacade.writeFile(`${mountPoint}/repo/a.txt`, "alpha");
+  const fsWrapper = new WorkspaceFilesystem(db);
+  await fsWrapper.mkdir(`${mountPoint}/repo`, { recursive: true });
+  await fsWrapper.writeFile(`${mountPoint}/repo/a.txt`, "alpha");
 
   // The exact rev count depends on how many ancestor directories
   // mkdir(recursive) had to materialise under the tmpdir mount

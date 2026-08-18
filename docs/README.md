@@ -42,12 +42,12 @@ The package ships several entrypoints:
 
 | Entrypoint | Purpose |
 | --- | --- |
-| `@cloudflare/computer` | The Workspace facade, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
+| `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
-| `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped facade over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
+| `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped wrapper over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
 
 A consumer that only uses the container backend never imports the
@@ -238,7 +238,7 @@ above, then dive into the area you're working on.
 | [12. Worker backend](./12_worker_backend.md) | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
 | [13. Git interface](./13_git_interface.md) | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
 | [14. Assets interface](./14_assets_interface.md) | `share` a workspace file to R2 and get back a presigned URL. |
-| [15. Artifacts interface](./15_artifacts_interface.md) | `createArtifact` and the `artifacts` CLI, an optionally session-scoped facade over the Cloudflare Artifacts binding. |
+| [15. Artifacts interface](./15_artifacts_interface.md) | `createArtifact` and the `artifacts` CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | [16. Execution runtime architecture](./16_code_execution.md) | One runtime entry point over command and module backends. |
 | [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
