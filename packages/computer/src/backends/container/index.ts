@@ -18,8 +18,10 @@ export {
   type CloudflareContainerBackendOptions,
 } from "./cloudflare-container.js";
 export {
+  type ContainerRuntimeInfo,
   type IWorkspaceContainerAPI,
   WorkspaceContainerAPI,
   type WorkspaceRef,
   withWorkspaceContainer,
 } from "./container-host.js";
+export type { ContainerLaunchSpec } from "./container-launch-record.js";

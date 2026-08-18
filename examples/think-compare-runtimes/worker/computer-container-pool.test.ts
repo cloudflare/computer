@@ -1,3 +1,4 @@
+import type { ContainerLaunchSpec } from "@cloudflare/computer/backends/container";
 import { describe, expect, test, vi } from "vitest";
 import type { WorkspaceContainerHost } from "./computer-container-pool";
 
@@ -11,8 +12,11 @@ describe("createWorkspaceWarmPoolRuntime", () => {
     const { createWorkspaceWarmPoolRuntime } = await import("./computer-container-pool");
     const calls: string[] = [];
     const host = {
-      async startWarmContainer(env: Record<string, string>, inactivityTimeoutMs: number) {
-        calls.push(`start ${env.PORT} ${env.MOUNT_POINT} ${env.FUSE_MOUNT} ${inactivityTimeoutMs}`);
+      async startWarmContainer(spec: ContainerLaunchSpec, inactivityTimeoutMs: number) {
+        const { env, enableInternet } = spec;
+        calls.push(
+          `start ${env.PORT} ${env.MOUNT_POINT} ${env.FUSE_MOUNT} internet=${enableInternet} ${inactivityTimeoutMs}`,
+        );
       },
       async destroyWarmContainer() {
         calls.push("destroy");
@@ -36,22 +40,25 @@ describe("createWorkspaceWarmPoolRuntime", () => {
     await runtime.startContainer("warm-a");
     await expect(runtime.isContainerRunning("warm-a")).resolves.toBe(true);
 
-    expect(calls).toEqual(["start 8080 /workspace shim 120000", "healthy"]);
+    expect(calls).toEqual(["start 8080 /workspace shim internet=true 120000", "healthy"]);
   });
 
   test("retries Workspace container placement while waiting for health", async () => {
     const { startWorkspaceContainerAndWait } = await import("./computer-container-pool");
     const calls: string[] = [];
     let healthAttempts = 0;
-    const container = {
-      running: false,
+    // Stands in for the workspace container API rather than
+    // ctx.container: the warm start goes through the API so the launch
+    // carries the shared secret and is recorded for adoption.
+    const api = {
       async setInactivityTimeout(durationMs: number) {
         calls.push(`timeout ${durationMs}`);
       },
-      start() {
+      async start() {
         calls.push("start");
+        return { runtimeId: "runtime", clientSecret: "secret", outcome: "launched" as const };
       },
-      getTcpPort() {
+      port() {
         return {
           async fetch() {
             healthAttempts += 1;
@@ -61,17 +68,18 @@ describe("createWorkspaceWarmPoolRuntime", () => {
                 "There is no container instance that can be provided to this Durable Object, try again later",
               );
             }
-            container.running = true;
             return new Response(null, { status: 200 });
           },
         } as unknown as Fetcher;
       },
     };
 
-    await startWorkspaceContainerAndWait(container, { PORT: "8080" }, 120_000, {
-      attempts: 3,
-      wait: async () => {},
-    });
+    await startWorkspaceContainerAndWait(
+      api,
+      { env: { PORT: "8080" }, enableInternet: true },
+      120_000,
+      { attempts: 3, wait: async () => {} },
+    );
 
     expect(calls).toEqual([
       "timeout 120000",

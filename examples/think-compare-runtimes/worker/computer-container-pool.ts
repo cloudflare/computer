@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  type ContainerLaunchSpec,
   type IWorkspaceContainerAPI,
   withWorkspaceContainer,
 } from "@cloudflare/computer/backends/container";
@@ -17,7 +18,7 @@ export interface WorkspacePoolEnv extends ContainerPoolConfigEnv {
 
 export interface WorkspaceContainerHostHandle {
   getWorkspaceContainer(): IWorkspaceContainerAPI | Promise<IWorkspaceContainerAPI>;
-  startWarmContainer(env: Record<string, string>, inactivityTimeoutMs: number): Promise<void>;
+  startWarmContainer(spec: ContainerLaunchSpec, inactivityTimeoutMs: number): Promise<void>;
   destroyWarmContainer(): Promise<void>;
   isWarmContainerHealthy(): Promise<boolean>;
 }
@@ -35,11 +36,12 @@ class WorkspaceContainerHostBase extends withWorkspaceContainer(
 ) {}
 
 export class WorkspaceContainerHost extends WorkspaceContainerHostBase {
-  async startWarmContainer(
-    env: Record<string, string>,
-    inactivityTimeoutMs: number,
-  ): Promise<void> {
-    await startWorkspaceContainerAndWait(this.getContainer(), env, inactivityTimeoutMs);
+  async startWarmContainer(spec: ContainerLaunchSpec, inactivityTimeoutMs: number): Promise<void> {
+    // Through the workspace API rather than ctx.container, so the launch
+    // carries whatever the API adds — today the shared secret the
+    // daemon's HTTP surface requires — and is recorded, so the workspace
+    // that adopts this container can tell it matches.
+    await startWorkspaceContainerAndWait(this.getWorkspaceContainer(), spec, inactivityTimeoutMs);
   }
 
   async destroyWarmContainer(): Promise<void> {
@@ -69,7 +71,7 @@ export function createWorkspaceWarmPoolRuntime(env: WorkspacePoolEnv): WarmPoolR
     async startContainer(containerId) {
       const host = getWorkspaceContainerHost(env, containerId);
       try {
-        await host.startWarmContainer(workspaceContainerEnv(env), containerSleepAfterMs(env));
+        await host.startWarmContainer(workspaceLaunchSpec(env), containerSleepAfterMs(env));
       } catch (error) {
         console.warn({
           message: "Workspace warm container failed to start",
@@ -103,19 +105,28 @@ function getWorkspaceContainerHost(
   ) as unknown as WorkspaceContainerHostHandle;
 }
 
-function workspaceContainerEnv(env: WorkspacePoolEnv): Record<string, string> {
+function workspaceLaunchSpec(env: WorkspacePoolEnv): ContainerLaunchSpec {
   return {
-    PORT: String(WORKSPACE_PORT),
-    MOUNT_POINT: "/workspace",
-    ...(env.FUSE_MOUNT ? { FUSE_MOUNT: env.FUSE_MOUNT } : {}),
+    env: {
+      PORT: String(WORKSPACE_PORT),
+      MOUNT_POINT: "/workspace",
+      ...(env.FUSE_MOUNT ? { FUSE_MOUNT: env.FUSE_MOUNT } : {}),
+    },
+    // A pool cannot know the egress policy of the workspace that will
+    // adopt a container, so this has to agree with it by configuration.
+    // Disagreeing costs a relaunch on adoption, not the policy: the
+    // adopting workspace compares this spec against its own and
+    // replaces the container rather than inheriting the wrong one.
+    enableInternet: true,
   };
 }
 
-interface WorkspaceContainerControl {
-  readonly running: boolean;
+// The subset of the workspace container API a warm start needs.
+// Structurally satisfied by IWorkspaceContainerAPI.
+interface WorkspaceWarmStartAPI {
   setInactivityTimeout(durationMs: number): Promise<void>;
-  start(options: { enableInternet: boolean; env: Record<string, string> }): void;
-  getTcpPort(port: number): Fetcher;
+  start(spec: ContainerLaunchSpec): Promise<unknown>;
+  port(port: number): Fetcher;
 }
 
 interface WorkspaceStartWaitOptions {
@@ -124,22 +135,23 @@ interface WorkspaceStartWaitOptions {
 }
 
 export async function startWorkspaceContainerAndWait(
-  container: WorkspaceContainerControl,
-  env: Record<string, string>,
+  api: WorkspaceWarmStartAPI,
+  spec: ContainerLaunchSpec,
   inactivityTimeoutMs: number,
   options: WorkspaceStartWaitOptions = {},
 ): Promise<void> {
   const attempts = options.attempts ?? 120;
   const wait = options.wait ?? ((durationMs) => scheduler.wait(durationMs));
-  await container.setInactivityTimeout(inactivityTimeoutMs);
+  await api.setInactivityTimeout(inactivityTimeoutMs);
 
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (!container.running) {
-      container.start({ enableInternet: true, env });
-    }
+    // Called unconditionally: start() adopts a container already running
+    // with this spec, so there is no need to check `running` first the
+    // way a raw ctx.container.start() did.
+    await api.start(spec);
     try {
-      await waitForWorkspaceHealth(() => container.getTcpPort(WORKSPACE_PORT), 1);
+      await waitForWorkspaceHealth(() => api.port(WORKSPACE_PORT), 1);
       return;
     } catch (error) {
       lastError = error;
