@@ -27,6 +27,81 @@ describe("createArtifact", () => {
     expect(() => createArtifact(binding, "a__b")).toThrow();
   });
 
+  describe("without a session id", () => {
+    // An unscoped client is the namespace-wide door: names are the
+    // ones the binding stores, nothing is prefixed on the way in or
+    // filtered on the way out, and repositories belonging to scoped
+    // sessions are ordinary repositories from here.
+
+    it("constructs from the binding alone", () => {
+      expect(() => createArtifact(binding)).not.toThrow();
+      expect(() => createArtifact(binding, null)).not.toThrow();
+    });
+
+    it("reports no session id", () => {
+      expect(createArtifact(binding).sessionId).toBeUndefined();
+    });
+
+    it("stores a created repo under the bare name", async () => {
+      const client = createArtifact(binding);
+      const result = await client.create("starter");
+      expect(result.name).toBe("starter");
+      expect(binding.has("starter")).toBe(true);
+    });
+
+    it("lists every repository in the namespace under its stored name", async () => {
+      await createArtifact(binding, "sess1").create("alpha");
+      await createArtifact(binding, "sess2").create("beta");
+      await createArtifact(binding).create("loose");
+
+      const repos = await createArtifact(binding).list();
+      expect(repos.map((r) => r.name).sort()).toEqual(["loose", "sess1__alpha", "sess2__beta"]);
+    });
+
+    it("walks every page while listing the whole namespace", async () => {
+      binding = new FakeArtifactsBinding({ pageSize: 1 });
+      await createArtifact(binding, "sess1").create("alpha");
+      await createArtifact(binding, "sess2").create("beta");
+
+      const repos = await createArtifact(binding).list();
+      expect(repos.map((r) => r.name).sort()).toEqual(["sess1__alpha", "sess2__beta"]);
+    });
+
+    it("reads a repository a scoped session created", async () => {
+      await createArtifact(binding, "sess1").create("starter");
+      const repo = await createArtifact(binding).get("sess1__starter");
+      expect(repo.name).toBe("sess1__starter");
+      expect(repo.remote).toContain("sess1__starter.git");
+    });
+
+    it("mints a token for a repository a scoped session created", async () => {
+      await createArtifact(binding, "sess1").create("starter");
+      const token = await createArtifact(binding).createToken("sess1__starter", "read");
+      expect(token.scope).toBe("read");
+      expect(token.plaintext).toMatch(/^art_v1_/);
+    });
+
+    it("deletes a repository a scoped session created", async () => {
+      await createArtifact(binding, "sess1").create("starter");
+      expect(await createArtifact(binding).delete("sess1__starter")).toBe(true);
+      expect(binding.has("sess1__starter")).toBe(false);
+    });
+
+    it("writes into a session's namespace when named explicitly", async () => {
+      // Namespace-wide access covers writes too: the name is taken
+      // literally, so a scoped client picks this repo up as its own.
+      await createArtifact(binding).create("sess1__adopted");
+      expect(await createArtifact(binding, "sess1").list()).toEqual([
+        expect.objectContaining({ name: "adopted" }),
+      ]);
+    });
+
+    it("stays invisible to a scoped client when the name is bare", async () => {
+      await createArtifact(binding).create("loose");
+      expect(await createArtifact(binding, "sess1").list()).toEqual([]);
+    });
+  });
+
   describe("create", () => {
     it("stores the scoped name in the namespace", async () => {
       const client = createArtifact(binding, "sess1");

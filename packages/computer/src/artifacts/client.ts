@@ -1,5 +1,5 @@
-// Session-scoped facade over the Cloudflare Artifacts Workers
-// binding.
+// Facade over the Cloudflare Artifacts Workers binding, optionally
+// scoped to a session.
 //
 // `createArtifact(binding, sessionId)` binds a namespace binding
 // and a session id once and returns a client whose every method is
@@ -8,6 +8,14 @@
 // namespace, and `list()` returns only the session's own repos with
 // the prefix stripped back off. A caller never sees the scoped form
 // — names go in and come out local.
+//
+// The session id is optional. `createArtifact(binding)` returns a
+// client over the namespace as a whole: names are the ones the
+// binding stores, `list()` returns every repository including the
+// ones scoped sessions minted, and any of them can be read, written
+// to, or deleted by its stored name. That is the right client for a
+// caller that administers a namespace rather than living in one
+// corner of it, and the wrong one to hand to a tenant.
 //
 // The binding, its repo handle, and the result shapes are the
 // global types from `@cloudflare/workers-types` (`Artifacts`,
@@ -22,7 +30,7 @@
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./cli.js";
 import { runArtifactsCLI } from "./cli.js";
 import { NotFoundError } from "./errors.js";
-import { scopedName, scopePrefix, unscopedName } from "./scope.js";
+import { normalizeSessionId, scopedName, unscopedName } from "./scope.js";
 import type { ArtifactScope } from "./types.js";
 
 /** Source spec for `import`. Mirrors the binding's `source` block. */
@@ -45,10 +53,13 @@ export interface ArtifactImportOptions {
  */
 export type ArtifactRepoSummary = Omit<ArtifactsRepoInfo, "remote">;
 
-/** The session-scoped client. */
+/** The client, session-scoped or namespace-wide. */
 export interface ArtifactClient {
-  /** The session id every operation is scoped under. */
-  readonly sessionId: string;
+  /**
+   * The session id every operation is scoped under, or undefined
+   * when the client spans the whole namespace.
+   */
+  readonly sessionId: string | undefined;
 
   /** Create a repo. The returned `name` is local (unscoped). */
   create(
@@ -60,7 +71,11 @@ export interface ArtifactClient {
    * Throws `ArtifactsError` (code `NOT_FOUND`) if it does not exist.
    */
   get(name: string): Promise<ArtifactsRepoInfo>;
-  /** List the session's repos, walking every page. Names are local. */
+  /**
+   * List the session's repos, walking every page. Names are local.
+   * Without a session id this is every repo in the namespace, each
+   * under its stored name.
+   */
   list(): Promise<ArtifactRepoSummary[]>;
   /** Import an external git remote into a session repo. */
   import(
@@ -102,22 +117,29 @@ export interface ArtifactClient {
  */
 const LIST_PAGE_SIZE = 100;
 
-/** Build a session-scoped artifacts client over a namespace binding. */
-export function createArtifact(binding: Artifacts, sessionId: string): ArtifactClient {
-  // Validate the session id eagerly so a bad id fails at
+/**
+ * Build an artifacts client over a namespace binding. Pass a
+ * session id to scope every operation to that session; omit it for
+ * a client over the whole namespace.
+ */
+export function createArtifact(
+  binding: Artifacts,
+  sessionId?: string | null,
+): ArtifactClient {
+  // Resolve the scope eagerly so a bad session id fails at
   // construction rather than on first use.
-  scopePrefix(sessionId);
+  const scope = normalizeSessionId(sessionId);
 
   const client: ArtifactClient = {
-    sessionId,
+    sessionId: scope,
 
     async create(name, opts) {
-      const result = await binding.create(scopedName(sessionId, name), opts);
-      return { ...result, name: unscopeOr(sessionId, result.name, name) };
+      const result = await binding.create(scopedName(scope, name), opts);
+      return { ...result, name: unscopeOr(scope, result.name, name) };
     },
 
     async get(name) {
-      const handle = await binding.get(scopedName(sessionId, name));
+      const handle = await binding.get(scopedName(scope, name));
       // The handle is a live Workers-RPC stub (ArtifactsRepo extends
       // RpcTarget). The published `@cloudflare/workers-types` shape is
       // wrong in both directions: it models the metadata as inherited
@@ -139,7 +161,7 @@ export function createArtifact(binding: Artifacts, sessionId: string): ArtifactC
       while (!done) {
         const page = await binding.list({ limit: LIST_PAGE_SIZE, cursor });
         for (const repo of page.repos) {
-          const local = unscopedName(sessionId, repo.name);
+          const local = unscopedName(scope, repo.name);
           if (local !== undefined) out.push({ ...repo, name: local });
         }
         const next = page.cursor;
@@ -159,27 +181,27 @@ export function createArtifact(binding: Artifacts, sessionId: string): ArtifactC
     async import(name, source, opts) {
       const result = await binding.import({
         source,
-        target: { name: scopedName(sessionId, name), opts },
+        target: { name: scopedName(scope, name), opts },
       });
-      return { ...result, name: unscopeOr(sessionId, result.name, name) };
+      return { ...result, name: unscopeOr(scope, result.name, name) };
     },
 
     async delete(name) {
-      return binding.delete(scopedName(sessionId, name));
+      return binding.delete(scopedName(scope, name));
     },
 
-    async createToken(name, scope, ttl) {
-      const handle = await binding.get(scopedName(sessionId, name));
-      return handle.createToken(scope, ttl);
+    async createToken(name, tokenScope, ttl) {
+      const handle = await binding.get(scopedName(scope, name));
+      return handle.createToken(tokenScope, ttl);
     },
 
     async listTokens(name) {
-      const handle = await binding.get(scopedName(sessionId, name));
+      const handle = await binding.get(scopedName(scope, name));
       return handle.listTokens();
     },
 
     async getToken(name, id) {
-      const handle = await binding.get(scopedName(sessionId, name));
+      const handle = await binding.get(scopedName(scope, name));
       const { tokens } = await handle.listTokens();
       const found = tokens.find((t) => t.id === id);
       if (!found) {
@@ -189,7 +211,7 @@ export function createArtifact(binding: Artifacts, sessionId: string): ArtifactC
     },
 
     async revokeToken(name, tokenOrId) {
-      const handle = await binding.get(scopedName(sessionId, name));
+      const handle = await binding.get(scopedName(scope, name));
       return handle.revokeToken(tokenOrId);
     },
 
@@ -228,6 +250,6 @@ function repoInfo(info: ArtifactsRepoInfo, localName: string): ArtifactsRepoInfo
  * stored; if it ever returns something without our prefix, prefer
  * the caller's local name over leaking a foreign-looking value.
  */
-function unscopeOr(sessionId: string, returned: string, fallback: string): string {
+function unscopeOr(sessionId: string | undefined, returned: string, fallback: string): string {
   return unscopedName(sessionId, returned) ?? fallback;
 }
