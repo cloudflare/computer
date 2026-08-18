@@ -170,14 +170,22 @@ export interface WorkspaceOptions {
   assets?: AssetsClient | ((ws: Workspace) => AssetsClient);
 
   // Optional Cloudflare Artifacts binding. When configured,
-  // `workspace.artifacts` is a session-scoped Artifacts client.
-  // The session id defaults to WorkspaceOptions.sessionId; pass
-  // `artifacts.sessionId` to override it. When omitted, accessing
-  // the client is still possible but every operation fails with a
-  // clear configuration error.
+  // `workspace.artifacts` is an Artifacts client. When omitted,
+  // accessing the client is still possible but every operation
+  // fails with a clear configuration error.
+  //
+  // The client is scoped to a session when one is available: the
+  // session id defaults to WorkspaceOptions.sessionId, and
+  // `artifacts.sessionId` overrides it. With neither — or with an
+  // explicit `artifacts.sessionId: null`, the opt-out for a
+  // workspace that has a session id but wants artifacts across
+  // every session — the client spans the whole namespace: it lists
+  // and reaches every repository, including those other sessions
+  // own. Scope it unless the caller is meant to administer the
+  // namespace.
   artifacts?: {
     binding: Artifacts;
-    sessionId?: string;
+    sessionId?: string | null;
   };
 
   // Add Think's string-oriented WorkspaceLike filesystem methods
@@ -328,10 +336,7 @@ export class Workspace {
     this.#defaultGitIdentity = options.defaultGitIdentity;
     this.#useThink = options.useThink ?? false;
     this.#artifacts = options.artifacts
-      ? createArtifact(
-          options.artifacts.binding,
-          options.artifacts.sessionId ?? options.sessionId ?? "",
-        )
+      ? createArtifact(options.artifacts.binding, artifactsSessionId(options))
       : createDisabledArtifactsClient();
     this.#db = new Database(options.storage);
     initializeSchema(this.#db, this.#now);
@@ -1325,12 +1330,29 @@ function positiveRetryOption(value: number | undefined, fallback: number, name: 
   return resolved;
 }
 
+/**
+ * Resolve the session id the artifacts client runs under: the
+ * artifacts-specific one when the caller set it, otherwise the
+ * workspace's own, and undefined for a namespace-wide client.
+ *
+ * `WorkspaceOptions.sessionId` documents the empty string as its
+ * unset value, so an empty id here means the workspace has no
+ * session to scope by rather than a session named "". The facade
+ * itself is stricter: it rejects an empty id outright, since a
+ * caller reaching it directly has no such convention.
+ */
+function artifactsSessionId(options: WorkspaceOptions): string | null | undefined {
+  const configured = options.artifacts?.sessionId;
+  if (configured !== undefined) return configured;
+  return options.sessionId === "" ? undefined : options.sessionId;
+}
+
 function createDisabledArtifactsClient(): ArtifactClient {
   const fail = () => {
     throw new ArtifactError("ENOCONFIG", "Workspace Artifacts binding is not configured");
   };
   return {
-    sessionId: "",
+    sessionId: undefined,
     create: fail,
     get: fail,
     list: fail,

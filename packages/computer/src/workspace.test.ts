@@ -1,7 +1,10 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
+import { FakeArtifactsBinding } from "../tests/utilities/fake-artifacts-binding.js";
+
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { createArtifact } from "./artifacts/index.js";
 import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
@@ -766,6 +769,58 @@ describe("Workspace backend selection", () => {
       const res = await ws.artifacts.cli({ argv: ["repo", "list"] });
       expect(res.exitCode).toBe(1);
       expect(res.stderr).toContain("Workspace Artifacts binding is not configured");
+    });
+
+    it("scopes to the workspace session id", async () => {
+      const binding = new FakeArtifactsBinding();
+      const ws = new Workspace({
+        storage: makeStorage(),
+        sessionId: "sess1",
+        artifacts: { binding },
+      });
+      expect(ws.artifacts.sessionId).toBe("sess1");
+      await ws.artifacts.create("starter");
+      expect(binding.has("sess1__starter")).toBe(true);
+    });
+
+    it("prefers an explicit artifacts session id over the workspace one", async () => {
+      const binding = new FakeArtifactsBinding();
+      const ws = new Workspace({
+        storage: makeStorage(),
+        sessionId: "sess1",
+        artifacts: { binding, sessionId: "other" },
+      });
+      await ws.artifacts.create("starter");
+      expect(binding.has("other__starter")).toBe(true);
+    });
+
+    it("spans the namespace when no session id is configured", async () => {
+      const binding = new FakeArtifactsBinding();
+      await createArtifact(binding, "sess1").create("starter");
+      const ws = new Workspace({ storage: makeStorage(), artifacts: { binding } });
+      expect(ws.artifacts.sessionId).toBeUndefined();
+      expect(await ws.artifacts.list()).toEqual([
+        expect.objectContaining({ name: "sess1__starter" }),
+      ]);
+    });
+
+    it("spans the namespace when the artifacts session id is null", async () => {
+      // The opt-out for a workspace that has a session id of its own
+      // but wants artifacts across every session.
+      const binding = new FakeArtifactsBinding();
+      await createArtifact(binding, "sess1").create("starter");
+      const ws = new Workspace({
+        storage: makeStorage(),
+        sessionId: "sess2",
+        artifacts: { binding, sessionId: null },
+      });
+      expect(ws.artifacts.sessionId).toBeUndefined();
+      expect(await ws.artifacts.list()).toHaveLength(1);
+    });
+
+    it("reports no session id when no binding is configured", async () => {
+      const ws = new Workspace({ storage: makeStorage() });
+      expect(ws.artifacts.sessionId).toBeUndefined();
     });
   });
 
