@@ -10,9 +10,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { getWorkspace, type WorkspaceClient } from "./client.js";
+import { getWorkspace } from "./client.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
+import { Workspace } from "./workspace.js";
 
 interface ExecCall {
   command: string;
@@ -87,7 +87,6 @@ function fakeRemote(): {
   let disposed = false;
   const stub = {
     fs: { marker: "fs" },
-    useThink: false,
     git: { marker: "git" },
     assets: undefined,
     artifacts: { marker: "artifacts" },
@@ -104,14 +103,20 @@ function fakeRemote(): {
   };
 }
 
-function fakeBrokenRemote(): {
+function fakeLegacyFlagRemote(): {
   host: WorkspaceStubHost;
   disposed: () => boolean;
 } {
+  const { runtime } = fakeRuntime(true);
   let disposed = false;
   const stub = {
+    fs: { marker: "fs" },
+    runtime,
+    git: { marker: "git" },
+    assets: undefined,
+    artifacts: { marker: "artifacts" },
     get useThink(): boolean {
-      throw new Error("compatibility lookup failed");
+      throw new Error("legacy compatibility flag was read");
     },
     [Symbol.dispose]() {
       disposed = true;
@@ -177,28 +182,14 @@ describe("getWorkspace — remote dispatch", () => {
     expect(disposed()).toBe(true);
   });
 
-  it("disposes the remote stub when client initialization fails", async () => {
-    const { host, disposed } = fakeBrokenRemote();
+  it("does not inspect the removed remote useThink flag", async () => {
+    const { host, disposed } = fakeLegacyFlagRemote();
 
-    await expect(getWorkspace(host)).rejects.toThrow("compatibility lookup failed");
+    const ws = await getWorkspace(host);
+    expect(ws.fs).toEqual({ marker: "fs" });
+    expect(disposed()).toBe(false);
+    ws[Symbol.dispose]();
     expect(disposed()).toBe(true);
-  });
-
-  it("adds Think compatibility when the remote Workspace enables it", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      useThink: true,
-    });
-    await workspace.fs.writeFile("/notes.txt", "hello");
-    const host: WorkspaceStubHost = {
-      __getWorkspaceStub: () => Promise.resolve(workspace.stub()),
-    };
-
-    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
-
-    expect(client).toHaveProperty("readFile");
-    await expect(client.readFile("/notes.txt")).resolves.toBe("hello");
-    await expect(client.readFile("/missing.txt")).resolves.toBeNull();
   });
 });
 
@@ -215,20 +206,6 @@ describe("getWorkspace — local dispatch", () => {
     const { host } = fakeLocal();
     const ws = await getWorkspace(host);
     expect(() => ws[Symbol.dispose]()).not.toThrow();
-  });
-
-  it("adds Think compatibility when the local Workspace enables it", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      useThink: true,
-    });
-    const host = { [WORKSPACE]: workspace };
-    const { runtime } = fakeRuntime();
-    Object.defineProperty(workspace, "runtime", { get: () => runtime });
-
-    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
-
-    expect(client).toHaveProperty("readFile");
   });
 });
 

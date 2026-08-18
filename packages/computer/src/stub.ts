@@ -600,7 +600,6 @@ export class WorkspaceStub extends RpcTarget {
   readonly #git: WorkspaceGitStub;
   readonly #assets: WorkspaceAssetsStub | undefined;
   readonly #artifacts: WorkspaceArtifactsStub;
-  readonly #useThink: boolean;
 
   constructor(ws: Workspace) {
     super();
@@ -609,7 +608,6 @@ export class WorkspaceStub extends RpcTarget {
     this.#git = new WorkspaceGitStub(ws);
     this.#assets = ws.assets === undefined ? undefined : new WorkspaceAssetsStub(ws);
     this.#artifacts = new WorkspaceArtifactsStub(ws.artifacts);
-    this.#useThink = ws.useThink;
     trackStub(this);
   }
 
@@ -630,10 +628,6 @@ export class WorkspaceStub extends RpcTarget {
 
   get fs(): WorkspaceFilesystemStub {
     return this.#fs;
-  }
-
-  get useThink(): boolean {
-    return this.#useThink;
   }
 
   get runtime(): WorkspaceRuntimeStub {
