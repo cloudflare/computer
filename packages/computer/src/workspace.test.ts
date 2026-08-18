@@ -793,10 +793,23 @@ describe("Workspace backend selection", () => {
       expect(binding.has("other__starter")).toBe(true);
     });
 
-    it("spans the namespace when no session id is configured", async () => {
+    it("spans the namespace when the workspace session id is omitted", async () => {
       const binding = new FakeArtifactsBinding();
       await createArtifact(binding, "sess1").create("starter");
       const ws = new Workspace({ storage: makeStorage(), artifacts: { binding } });
+      expect(ws.artifacts.sessionId).toBeUndefined();
+      expect(await ws.artifacts.list()).toEqual([
+        expect.objectContaining({ name: "sess1__starter" }),
+      ]);
+    });
+
+    it("spans the namespace when the workspace session id is undefined", async () => {
+      // An unset variable and a missing property both arrive here as
+      // undefined, which is the default namespace-wide mode.
+      const binding = new FakeArtifactsBinding();
+      await createArtifact(binding, "sess1").create("starter");
+      const sessionId: string | undefined = undefined;
+      const ws = new Workspace({ storage: makeStorage(), sessionId, artifacts: { binding } });
       expect(ws.artifacts.sessionId).toBeUndefined();
       expect(await ws.artifacts.list()).toEqual([
         expect.objectContaining({ name: "sess1__starter" }),
@@ -818,8 +831,8 @@ describe("Workspace backend selection", () => {
     });
 
     it("rejects an empty workspace session id instead of widening the client", () => {
-      // A session id derived from an unset variable or a missing
-      // request field must not turn into namespace-wide access.
+      // Blank input, or a caller that normalizes a missing value to
+      // "", must not turn into namespace-wide access.
       const binding = new FakeArtifactsBinding();
       expect(
         () => new Workspace({ storage: makeStorage(), sessionId: "", artifacts: { binding } }),

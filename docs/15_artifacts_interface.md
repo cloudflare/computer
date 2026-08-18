@@ -313,11 +313,12 @@ explicit `artifacts: { binding, sessionId: null }`, the opt-out for
 a workspace that has a session id but wants artifacts across every
 session — `workspace.artifacts` spans the namespace.
 
-An empty session id fails here the same way it fails at
-`createArtifact`: the constructor throws `InvalidSessionIdError`.
-A workspace whose session id comes from an unset variable or a
-missing request field stops rather than handing that tenant a
-client over every other tenant's repositories.
+An omitted or undefined session id intentionally gives the
+workspace access to the whole namespace. An empty string is
+different: the constructor throws `InvalidSessionIdError`. This
+catches blank input and code that normalizes a missing value to
+`""`, such as `sessionId: request.sessionId ?? ""`, rather than
+quietly widening that tenant's access.
 
 When `artifacts` is omitted from `Workspace`, the command still
 exists, but operations fail with a clear "Workspace Artifacts binding
