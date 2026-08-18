@@ -3,7 +3,7 @@ import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import { ROOT_INODE } from "../schema/index.js";
 import type { Database } from "../storage.js";
-import { assertNotReadOnly } from "./mount-guard.js";
+import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
 import { invalidateResolveExact } from "./resolveCache.js";
 
 export interface MkdirOptions {
@@ -68,6 +68,25 @@ function createDir(
 }
 
 export function mkdir(db: Database, path: string, options: MkdirOptions, now: () => number): void {
+  mkdirWithGuard(db, path, options, now, assertNotReadOnly);
+}
+
+export function mkdirForSyncParents(
+  db: Database,
+  path: string,
+  options: MkdirOptions,
+  now: () => number,
+): void {
+  mkdirWithGuard(db, path, options, now, assertNotInReadOnlyMount);
+}
+
+function mkdirWithGuard(
+  db: Database,
+  path: string,
+  options: MkdirOptions,
+  now: () => number,
+  guard: (db: Database, path: string) => void,
+): void {
   const { parts, path: canonical } = canonicalizePath(path);
   const recursive = options.recursive === true;
   const mode = (options.mode ?? 0o755) & 0o7777;
@@ -79,7 +98,7 @@ export function mkdir(db: Database, path: string, options: MkdirOptions, now: ()
     // undefined, but our docs treat mkdir("/") as nonsensical).
     throw createWorkspaceError("EEXIST", `path exists: ${canonical}`, canonical);
   }
-  assertNotReadOnly(db, canonical);
+  guard(db, canonical);
 
   db.transactionSync(() => {
     const rev = incrementRev(db);

@@ -1,4 +1,4 @@
-import { mkdir } from "../fs/mkdir.js";
+import { mkdir, mkdirForSyncParents } from "../fs/mkdir.js";
 import { readOnlyRootFor } from "../fs/mount-guard.js";
 import { resolveInode } from "../fs/resolve.js";
 import { invalidateResolveSubtree } from "../fs/resolveCache.js";
@@ -210,6 +210,25 @@ function applyDirectoryEntry(db: Database, entry: Extract<ChangeEntry, { kind: "
   });
 }
 
+function ensureParentDirectories(db: Database, path: string, mtime: number): void {
+  const { parts } = canonicalizePath(path);
+  if (parts.length < 2) return;
+  const parentPath = `/${parts.slice(0, -1).join("/")}`;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const ancestorPath = `/${parts.slice(0, i + 1).join("/")}`;
+    const ancestor = resolveInode(db, ancestorPath, { followSymlinks: false });
+    if (ancestor === null) {
+      mkdirForSyncParents(db, parentPath, { recursive: true }, () => mtime);
+      return;
+    }
+    if (ancestor.type === "dir") continue;
+    removeInodeTreeAtPath(db, ancestorPath, ancestor.inode, ancestor.type);
+    mkdirForSyncParents(db, parentPath, { recursive: true }, () => mtime);
+    return;
+  }
+}
+
 // Drive a ChangeEntry stream against `db`, batching writes so peak
 // memory stays bounded and a crash mid-apply leaves the DB in a
 // consistent state. Each batch runs inside a single transactionSync
@@ -283,6 +302,7 @@ export async function applyChanges(
       continue;
     }
     if (entry.kind === "symlink") {
+      ensureParentDirectories(db, entry.path, entry.mtime);
       removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
@@ -374,6 +394,7 @@ export function applyChangesSync(
       continue;
     }
     if (entry.kind === "symlink") {
+      ensureParentDirectories(db, entry.path, entry.mtime);
       removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
@@ -427,6 +448,7 @@ function applyFileEntry(
     }
     assertChunkSize(staged, c.size, c.hash, entry.path);
   }
+  ensureParentDirectories(db, entry.path, entry.mtime);
   removeReplaceableFinalEntry(db, entry.path, "file");
   const { parts, path: canonical } = canonicalizePath(entry.path);
   linkStagedChunksSync(db, canonical, parts, entry.chunks, { mode: entry.mode }, entry.mtime);
