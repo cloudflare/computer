@@ -1,6 +1,6 @@
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir.js";
 import { readOnlyRootFor } from "../fs/mount-guard.js";
-import { resolveInode } from "../fs/resolve.js";
+import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve.js";
 import { invalidateResolveSubtree } from "../fs/resolveCache.js";
 import { rm } from "../fs/rm.js";
 import { symlink } from "../fs/symlink.js";
@@ -210,23 +210,29 @@ function applyDirectoryEntry(db: Database, entry: Extract<ChangeEntry, { kind: "
   });
 }
 
-function ensureParentDirectories(db: Database, path: string, mtime: number): void {
+function ensureParentDirectories(db: Database, path: string, mtime: number): string | undefined {
   const { parts } = canonicalizePath(path);
-  if (parts.length < 2) return;
+  if (parts.length < 2) return undefined;
   const parentPath = `/${parts.slice(0, -1).join("/")}`;
+
+  const parent = resolveInodeWithoutSymlinks(db, parentPath);
+  if (parent?.type === "dir") return undefined;
 
   for (let i = 0; i < parts.length - 1; i++) {
     const ancestorPath = `/${parts.slice(0, i + 1).join("/")}`;
     const ancestor = resolveInode(db, ancestorPath, { followSymlinks: false });
     if (ancestor === null) {
       mkdirForSyncParents(db, parentPath, { recursive: true }, () => mtime);
-      return;
+      return undefined;
     }
     if (ancestor.type === "dir") continue;
+    const blockingRoot = readOnlyRootFor(db, ancestorPath);
+    if (blockingRoot !== undefined) return blockingRoot;
     removeInodeTreeAtPath(db, ancestorPath, ancestor.inode, ancestor.type);
     mkdirForSyncParents(db, parentPath, { recursive: true }, () => mtime);
-    return;
+    return undefined;
   }
+  return undefined;
 }
 
 // Drive a ChangeEntry stream against `db`, batching writes so peak
@@ -295,6 +301,16 @@ export async function applyChanges(
       continue;
     }
     if (entry.kind === "dir") {
+      const blockingParentRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+      if (blockingParentRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: blockingParentRoot,
+          op: "write",
+          reason: "read-only",
+        });
+        continue;
+      }
       applyDirectoryEntry(db, entry);
       applied++;
       pathsInBatch++;
@@ -302,7 +318,16 @@ export async function applyChanges(
       continue;
     }
     if (entry.kind === "symlink") {
-      ensureParentDirectories(db, entry.path, entry.mtime);
+      const blockingParentRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+      if (blockingParentRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: blockingParentRoot,
+          op: "write",
+          reason: "read-only",
+        });
+        continue;
+      }
       removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
@@ -310,9 +335,18 @@ export async function applyChanges(
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
-    const total = applyFileEntry(db, entry, objects);
+    const fileResult = applyFileEntry(db, entry, objects);
+    if (fileResult.blockingRoot !== undefined) {
+      skipped.push({
+        path: entry.path,
+        mountRoot: fileResult.blockingRoot,
+        op: "write",
+        reason: "read-only",
+      });
+      continue;
+    }
     applied++;
-    bytesInBatch += total;
+    bytesInBatch += fileResult.total;
     pathsInBatch++;
     if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
@@ -387,6 +421,16 @@ export function applyChangesSync(
       continue;
     }
     if (entry.kind === "dir") {
+      const blockingParentRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+      if (blockingParentRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: blockingParentRoot,
+          op: "write",
+          reason: "read-only",
+        });
+        continue;
+      }
       applyDirectoryEntry(db, entry);
       applied++;
       pathsInBatch++;
@@ -394,7 +438,16 @@ export function applyChangesSync(
       continue;
     }
     if (entry.kind === "symlink") {
-      ensureParentDirectories(db, entry.path, entry.mtime);
+      const blockingParentRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+      if (blockingParentRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: blockingParentRoot,
+          op: "write",
+          reason: "read-only",
+        });
+        continue;
+      }
       removeReplaceableFinalEntry(db, entry.path, "symlink");
       symlink(db, entry.target, entry.path, () => entry.mtime);
       applied++;
@@ -402,9 +455,18 @@ export function applyChangesSync(
       if (pathsInBatch >= maxPaths) flush();
       continue;
     }
-    const total = applyFileEntry(db, entry, objects);
+    const fileResult = applyFileEntry(db, entry, objects);
+    if (fileResult.blockingRoot !== undefined) {
+      skipped.push({
+        path: entry.path,
+        mountRoot: fileResult.blockingRoot,
+        op: "write",
+        reason: "read-only",
+      });
+      continue;
+    }
     applied++;
-    bytesInBatch += total;
+    bytesInBatch += fileResult.total;
     pathsInBatch++;
     if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
@@ -430,7 +492,7 @@ function applyFileEntry(
   db: Database,
   entry: Extract<ChangeEntry, { kind: "file" }>,
   objects: Map<string, Uint8Array>,
-): number {
+): { total: number; blockingRoot?: string } {
   assertChunkWindows(entry.chunks, entry.path);
   let total = 0;
   for (const c of entry.chunks) {
@@ -448,11 +510,12 @@ function applyFileEntry(
     }
     assertChunkSize(staged, c.size, c.hash, entry.path);
   }
-  ensureParentDirectories(db, entry.path, entry.mtime);
+  const blockingRoot = ensureParentDirectories(db, entry.path, entry.mtime);
+  if (blockingRoot !== undefined) return { total, blockingRoot };
   removeReplaceableFinalEntry(db, entry.path, "file");
   const { parts, path: canonical } = canonicalizePath(entry.path);
   linkStagedChunksSync(db, canonical, parts, entry.chunks, { mode: entry.mode }, entry.mtime);
-  return total;
+  return { total };
 }
 
 // Return a staged chunk's size without loading its payload bytes.

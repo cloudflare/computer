@@ -106,6 +106,16 @@ export function resolveInode(
   return cte.node;
 }
 
+// Resolve a path in one statement without following symlinks in any
+// component. A path containing a symlink returns null. Sync parent
+// creation uses this for the common case, then inspects each ancestor
+// only when the path is missing or blocked.
+export function resolveInodeWithoutSymlinks(db: Database, path: string): ResolvedInode | null {
+  const { parts } = canonicalizePath(path);
+  const resolution = resolveViaCte(db, parts);
+  return resolution.kind === "resolved" ? resolution.node : null;
+}
+
 interface CteRow {
   level: number;
   inode: number;

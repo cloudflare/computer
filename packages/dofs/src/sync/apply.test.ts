@@ -181,6 +181,73 @@ describe("applyChanges", () => {
       },
     );
 
+    it.each(["file", "symlink"] as const)(
+      "replaces a blocking %s ancestor when directories arrive child-first",
+      async (kind) => {
+        await withDB(async (db) => {
+          if (kind === "file") {
+            await writeFile(db, "/workspace", "old", {}, () => 1);
+          } else {
+            mkdir(db, "/target", {}, () => 1);
+            symlink(db, "/target", "/workspace", () => 2);
+          }
+
+          await apply(db, [
+            { kind: "dir", rev: 8, path: "/workspace/newdir", mode: 0o700, mtime: 8 },
+            { kind: "dir", rev: 9, path: "/workspace", mode: 0o750, mtime: 9 },
+          ]);
+
+          expect(resolveInode(db, "/workspace", { followSymlinks: false })).toMatchObject({
+            type: "dir",
+            mode: 0o750,
+          });
+          expect(resolveInode(db, "/workspace/newdir", { followSymlinks: false })).toMatchObject({
+            type: "dir",
+            mode: 0o700,
+          });
+        });
+      },
+    );
+
+    it("keeps a blocking ancestor that protects a read-only mount", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/target/r2", { recursive: true }, () => 1);
+        symlink(db, "/target", "/workspace", () => 2);
+        db.run(
+          "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, 'read-only')",
+          "/workspace/r2",
+          "test",
+        );
+        invalidateReadOnlyMountCache(db);
+
+        const result = await apply(db, [
+          {
+            kind: "file",
+            rev: 4,
+            path: "/workspace/newdir/file.txt",
+            mode: 0o640,
+            mtime: 4,
+            size: 0,
+            chunks: [],
+          },
+        ]);
+
+        expect(result.applied).toBe(0);
+        expect(result.skipped).toEqual([
+          {
+            path: "/workspace/newdir/file.txt",
+            mountRoot: "/workspace/r2",
+            op: "write",
+            reason: "read-only",
+          },
+        ]);
+        expect(resolveInode(db, "/workspace", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(db, "/workspace")).toBe("/target");
+        expect(resolveInode(db, "/workspace/r2")?.type).toBe("dir");
+        expect(resolveInode(db, "/workspace/newdir/file.txt")).toBeNull();
+      });
+    });
+
     it("creates a missing ancestor of a read-only mount", async () => {
       await withDB(async (db) => {
         db.run(
@@ -212,6 +279,41 @@ describe("applyChanges", () => {
           reason: "read-only",
         });
       });
+    });
+  });
+
+  it("checks an existing parent chain in linear database reads", async () => {
+    await withDB(async (db) => {
+      const parentParts = Array.from({ length: 8 }, (_, index) => `d${index}`);
+      const parentPath = `/${parentParts.join("/")}`;
+      mkdir(db, parentPath, { recursive: true }, () => 1);
+
+      const all = vi.spyOn(db, "all");
+      try {
+        await applyChanges(
+          db,
+          [
+            {
+              kind: "file",
+              rev: 10,
+              path: `${parentPath}/file.txt`,
+              mode: 0o640,
+              mtime: 10,
+              size: 0,
+              chunks: [],
+            },
+          ],
+          new Map(),
+        );
+
+        const childLookups = all.mock.calls.filter(
+          ([query]) =>
+            query === "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+        );
+        expect(childLookups.length).toBeLessThanOrEqual(2 * (parentParts.length + 1));
+      } finally {
+        all.mockRestore();
+      }
     });
   });
 
