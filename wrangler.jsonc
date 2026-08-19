@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-issue-114-021",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "containers": [
+    {
+      "class_name": "ReproContainer",
+      "image": "./Dockerfile",
+      "instance_type": "standard-1",
+      "max_instances": 2,
+      "rollout_active_grace_period": 0,
+      "rollout_step_percentage": [100]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ReproContainer",
+        "class_name": "ReproContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ReproContainer"]
+    }
+  ],
+  "observability": {
+    "traces": { "enabled": true }
+  }
+}
