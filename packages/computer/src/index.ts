@@ -22,6 +22,7 @@ export type {
   SQLiteWorkspaceProviderOptions,
 } from "@cloudflare/dofs";
 export { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+export type { SyncBatchBudget, SyncBatchResult } from "@cloudflare/computer-rpc/driver";
 export type { BackendHandle, WorkspaceBackend } from "./backend.js";
 export { TestBackend, type TestBackendOptions } from "./backends/test.js";
 export {
