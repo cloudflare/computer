@@ -101,9 +101,6 @@ export async function pullOnce(
   remote: SyncRPC,
   backend?: string,
 ): Promise<ApplyResult> {
-  // Delegate to the inner implementation with retried=false. See
-  // pullOnceImpl for the fetchChanges round trip, invariant check,
-  // reset-and-retry path, and batched apply loop.
   return pullOnceImpl(db, remote, backend, false);
 }
 
@@ -336,30 +333,50 @@ function entryHashes(entry: ChangeEntry): { hash: Uint8Array; size: number }[] {
   return entry.kind === "file" ? entry.chunks : [];
 }
 
-function entryContentBytes(entry: ChangeEntry): number {
-  return entryHashes(entry).reduce((total, chunk) => total + chunk.size, 0);
-}
-
 function minimumCursor(a: ChangeCursor, b: ChangeCursor): ChangeCursor {
   return compareChangeCursors(a, b) <= 0 ? a : b;
 }
 
-export async function pullBatch(
+export function pullBatch(
   db: Database,
   remote: SyncRPC,
   options: PullBatchOptions,
 ): Promise<SyncBatchResult> {
   validateBudget(options.budget);
+  return pullBatchImpl(db, remote, options, false);
+}
+
+async function pullBatchImpl(
+  db: Database,
+  remote: SyncRPC,
+  options: PullBatchOptions,
+  retried: boolean,
+): Promise<SyncBatchResult> {
   const backend = options.backend;
   const after = readFetchCursor(db, backend);
   const fetchResult = await remote.fetchChanges({ after, through: options.targetCursor });
+  const pushCursor = readPushCursor(db, backend);
+  const pushDiverged = fetchResult.appliedPushCursor.rev < pushCursor.rev;
+  const fetchDiverged = compareChangeCursors(fetchResult.currentCursor, after) < 0;
+  if (!retried && (pushDiverged || fetchDiverged)) {
+    await fetchResult.stream.cancel().catch(() => {});
+    maybeDispose(fetchResult);
+    if (pushDiverged) writePushCursor(db, { rev: 0, path: null }, backend);
+    if (fetchDiverged) writeFetchCursor(db, { rev: 0, path: null }, backend);
+    return pullBatchImpl(db, remote, options, true);
+  }
   const targetCursor = minimumCursor(
     options.targetCursor ?? fetchResult.currentCursor,
     fetchResult.currentCursor,
   );
-  const pushCursor = readPushCursor(db, backend);
-  assertAppliedPushCursor(fetchResult.appliedPushCursor, pushCursor);
+  try {
+    assertAppliedPushCursor(fetchResult.appliedPushCursor, pushCursor);
+  } catch (error) {
+    maybeDispose(fetchResult);
+    throw error;
+  }
   if (compareChangeCursors(after, targetCursor) >= 0) {
+    maybeDispose(fetchResult);
     return {
       status: "complete",
       entries: 0,
@@ -416,7 +433,7 @@ export async function pullBatch(
       }
       if (transferable.length < missingLocal.length) {
         if (transferable.length > 0) {
-          const objectStream = remote.fetchObjects(transferable.map((chunk) => chunk.hash));
+          const objectStream = await remote.fetchObjects(transferable.map((chunk) => chunk.hash));
           const objectReader = objectStream.getReader();
           try {
             while (true) {
@@ -440,7 +457,7 @@ export async function pullBatch(
         };
       }
       if (transferable.length > 0) {
-        const objectStream = remote.fetchObjects(transferable.map((chunk) => chunk.hash));
+        const objectStream = await remote.fetchObjects(transferable.map((chunk) => chunk.hash));
         const objectReader = objectStream.getReader();
         try {
           while (true) {
@@ -514,6 +531,17 @@ export async function pushBatch(
     if (candidates.length >= options.budget.maxEntries) break;
   }
   if (candidates.length === 0) {
+    const changes = new ReadableStream<ChangeEntry>({
+      start(controller) {
+        controller.close();
+      },
+    });
+    const response = await remote.push({
+      senderRev: targetCursor.rev,
+      senderCursor: targetCursor,
+      changes,
+    });
+    assertAppliedPushCursor(response.appliedPushCursor, targetCursor);
     writePushCursor(db, targetCursor, backend);
     return {
       status: "complete",
@@ -631,77 +659,18 @@ export async function pushBatch(
 // successful push. The wire shape mirrors pullOnce in reverse:
 // stage bytes the remote lacks, then push the entry stream.
 export async function pushOnce(db: Database, remote: SyncRPC, backend?: string): Promise<number> {
-  const sincePush = readWatermark(db, "pushRev", backend);
-  const localRev = currentRev(db);
-  if (localRev <= sincePush) return 0;
-
-  const entries: ChangeEntry[] = [];
-  const wantedHashes: Uint8Array[] = [];
-  const seenHash = new Set<string>();
-  for await (const e of coalesceChanges(db, { rev: sincePush, path: null })) {
-    entries.push(e);
-    if (e.kind === "file") {
-      for (const c of e.chunks) {
-        const k = hex(c.hash);
-        if (!seenHash.has(k)) {
-          seenHash.add(k);
-          wantedHashes.push(c.hash);
-        }
-      }
-    }
-  }
-  if (entries.length === 0) return 0;
-
-  // Probe the remote for the chunks it already holds; ship the
-  // complement.
-  const remoteHas = new Set<string>();
-  if (wantedHashes.length > 0) {
-    const have = await remote.hasObjects(wantedHashes);
-    for (const h of have) remoteHas.add(hex(h));
-  }
-  const missing = wantedHashes.filter((h) => !remoteHas.has(hex(h)));
-
-  if (missing.length > 0) {
-    const local = (function* () {
-      for (const h of missing) {
-        const row = db.one<{ bytes: Uint8Array }>(
-          "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-          h,
-        );
-        if (row === undefined) {
-          throw new Error(`pushOnce: missing local blob ${hex(h)}`);
-        }
-        yield { hash: h, bytes: row.bytes };
-      }
-    })();
-    const bytesStream = new ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>({
-      pull(controller) {
-        const next = local.next();
-        if (next.done) controller.close();
-        else controller.enqueue(next.value);
-      },
+  let targetCursor: ChangeCursor | undefined;
+  let pushed = 0;
+  while (true) {
+    const result = await pushBatch(db, remote, {
+      backend,
+      targetCursor,
+      budget: { maxEntries: PULL_BATCH_SIZE, maxBytes: 4 * 1024 * 1024 },
     });
-    await remote.pushObjects(bytesStream);
+    targetCursor = result.targetCursor;
+    pushed += result.entries;
+    if (result.status === "complete") return pushed;
   }
-
-  const entryStream = new ReadableStream<ChangeEntry>({
-    start(controller) {
-      for (const e of entries) controller.enqueue(e);
-      controller.close();
-    },
-  });
-  const response = await remote.push({ senderRev: localRev, changes: entryStream });
-
-  // Cross-side invariant: the receiver must echo back a cursor that
-  // covers the rev we just claimed to push. A drift means the apply
-  // path lost data, or a stale receiver is serving an old snapshot.
-  // Tear down loudly rather than corrupt watermarks.
-  assertAppliedPushCursor(response.appliedPushCursor, { rev: localRev, path: null });
-
-  // Local pushRev advances to the rev we observed at the start of
-  // this round. Anything written after that gets caught next tick.
-  writeWatermark(db, "pushRev", localRev, backend);
-  return entries.length;
 }
 
 // One full tick: pull, then push. The order matters \u2014 pulling
