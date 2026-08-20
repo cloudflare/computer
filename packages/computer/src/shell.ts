@@ -272,6 +272,9 @@ export function withPostPull(
           try {
             reader.releaseLock();
           } catch {}
+          try {
+            await sync.onPullPending?.(error, runtimeId);
+          } catch {}
           resolveOutcome({
             applied: 0,
             skipped: [],
@@ -285,6 +288,9 @@ export function withPostPull(
           await reader.cancel(reason);
         } finally {
           reader.releaseLock();
+          try {
+            await sync.onPullPending?.(reason, runtimeId);
+          } catch {}
           resolveOutcome({
             applied: 0,
             skipped: [],

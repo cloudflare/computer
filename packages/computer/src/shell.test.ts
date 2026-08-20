@@ -527,3 +527,25 @@ describe("CommandExecutor.get — reattach", () => {
     expect((outcome as { applied: number }).applied).toBe(2);
   });
 });
+
+describe("CommandExecutor cancellation", () => {
+  it("schedules synchronization when the event stream is cancelled", async () => {
+    const f = fakeRpc({ events: [stdout(1, "output"), exit(2, 0)] });
+    let scheduled = 0;
+    const sync: Sync = {
+      async push() {
+        return 0;
+      },
+      async pull() {
+        return applied(0);
+      },
+      async onPullPending() {
+        scheduled += 1;
+      },
+    };
+    const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop");
+    await execution.events.cancel("consumer stopped");
+    await execution.sync.outcome;
+    expect(scheduled).toBe(1);
+  });
+});
