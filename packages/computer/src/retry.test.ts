@@ -396,3 +396,45 @@ describe("Workspace durable pending-sync retries", () => {
     expect(closes).toBe(1);
   });
 });
+
+describe("Workspace deferred synchronization", () => {
+  it("schedules before returning a deferred result", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    const backend = retryBackend({
+      onExec() {},
+      async fetchChanges() {
+        return {
+          currentCursor: { rev: 0, path: null },
+          appliedPushCursor: { rev: 0, path: null },
+          stream: new ReadableStream<ChangeEntry>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+        };
+      },
+    });
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+      now: () => 5_000,
+    });
+
+    const handle = await ws.runtime.exec("build", {
+      encoding: "utf8",
+      sync: "deferred",
+    });
+    const result = await handle.result();
+
+    expect(result.sync).toMatchObject({
+      status: "pending",
+      backend: "sandbox",
+      targetCursor: { rev: 0, path: null },
+    });
+    expect(scheduler.intents.get("sandbox")).toMatchObject({
+      backend: "sandbox",
+      targetCursor: { rev: 0, path: null },
+    });
+  });
+});

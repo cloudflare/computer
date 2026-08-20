@@ -299,6 +299,37 @@ describe("CommandExecutor.exec — envelope events", () => {
 });
 
 describe("CommandExecutor.exec — push/pull bracket", () => {
+  it("defers post-command synchronization until a durable intent is scheduled", async () => {
+    const f = fakeRpc({ events: [exit(1, 0)] });
+    const order: string[] = [];
+    const sync: Sync = {
+      async push() {
+        order.push("push");
+        return 0;
+      },
+      async pull() {
+        order.push("pull");
+        return applied(1);
+      },
+      async onPostExecPending() {
+        order.push("schedule");
+        return { backend: "container", runtimeId: "runtime-1" };
+      },
+    };
+    const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop", {
+      sync: "deferred",
+    });
+    const { outcome } = await drain(execution);
+    expect(order).toEqual(["push", "schedule"]);
+    expect(outcome).toMatchObject({
+      sync: {
+        status: "pending",
+        backend: "container",
+        runtimeId: "runtime-1",
+      },
+    });
+  });
+
   it("reports pushed up front and the pull outcome after drain", async () => {
     const f = fakeRpc({ events: [stdout(1, "hi"), exit(2, 0)] });
     const sync: Sync = {

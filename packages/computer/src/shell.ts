@@ -21,7 +21,7 @@
 // whatever landed between reattach and drain.
 
 import type { ExecEvent, ShellRPC } from "@cloudflare/computer-rpc";
-import type { ApplyResult, SkippedEntry } from "@cloudflare/dofs";
+import type { ApplyResult, ChangeCursor, SkippedEntry } from "@cloudflare/dofs";
 
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { assertNotTemplate } from "./sh.js";
@@ -39,7 +39,15 @@ export type WorkspaceExecEvent<E extends ExecEncoding = undefined> =
 
 export type ExecSyncResult =
   | { status: "complete"; applied: number; skipped: SkippedEntry[] }
-  | { status: "pending"; applied: number; skipped: SkippedEntry[]; error: string };
+  | {
+      status: "pending";
+      applied: number;
+      skipped: SkippedEntry[];
+      error?: string;
+      backend?: string;
+      runtimeId?: string;
+      targetCursor?: ChangeCursor;
+    };
 
 export type KillSignal = "SIGTERM" | "SIGKILL" | "SIGINT" | "SIGHUP";
 
@@ -73,6 +81,7 @@ export interface ExecOptions {
   // Standard input fed to the command. Bytes, or a string encoded
   // as UTF-8.
   stdin?: Uint8Array | string;
+  sync?: "inline" | "deferred";
 }
 
 export interface GetExecOptions {
@@ -96,6 +105,11 @@ export interface Sync {
   push(): Promise<number>;
   pull(runtimeId?: string): Promise<ApplyResult>;
   onPullPending?(error: unknown, runtimeId?: string): Promise<void>;
+  onPostExecPending?(runtimeId?: string): Promise<{
+    backend?: string;
+    runtimeId?: string;
+    targetCursor?: ChangeCursor;
+  }>;
 }
 
 type ShellExecInput = Parameters<ShellRPC["exec"]>[0];
@@ -163,12 +177,15 @@ export class CommandExecutor {
     // call — because the inner stream is handed off to the caller
     // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
-    const { stream, outcome } = withPostPull(drained, this.#sync, envelope.runtimeId);
+    const wrapped =
+      options.sync === "deferred"
+        ? withDeferredPostPull(drained, this.#sync, envelope.runtimeId)
+        : withPostPull(drained, this.#sync, envelope.runtimeId);
     return {
       id: envelope.id,
       runtimeId: envelope.runtimeId,
-      events: stream,
-      sync: { pushed, outcome },
+      events: wrapped.stream,
+      sync: { pushed, outcome: wrapped.outcome },
     };
   }
 
@@ -273,6 +290,70 @@ export function withPostPull(
             skipped: [],
             sync: { status: "pending", applied: 0, skipped: [], error: safeErrorMessage(reason) },
           });
+        }
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, outcome };
+}
+
+export function withDeferredPostPull(
+  source: ReadableStream<ExecEvent>,
+  sync: Sync,
+  runtimeId?: string,
+): { stream: ReadableStream<ExecEvent>; outcome: Promise<PostPullOutcome> } {
+  const reader = source.getReader();
+  let resolveOutcome!: (outcome: PostPullOutcome) => void;
+  const outcome = new Promise<PostPullOutcome>((resolve) => {
+    resolveOutcome = resolve;
+  });
+  const settle = async (reason?: unknown) => {
+    let metadata: Awaited<ReturnType<NonNullable<Sync["onPostExecPending"]>>> = {};
+    let error: unknown = reason;
+    try {
+      metadata = (await sync.onPostExecPending?.(runtimeId)) ?? {};
+    } catch (caught) {
+      error = caught;
+    }
+    resolveOutcome({
+      applied: 0,
+      skipped: [],
+      sync: {
+        status: "pending",
+        applied: 0,
+        skipped: [],
+        ...(error === undefined ? {} : { error: safeErrorMessage(error) }),
+        ...metadata,
+      },
+    });
+  };
+  const stream = new ReadableStream<ExecEvent>(
+    {
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (!next.done) {
+            controller.enqueue(next.value);
+            return;
+          }
+          reader.releaseLock();
+          await settle();
+          controller.close();
+        } catch (error) {
+          try {
+            reader.releaseLock();
+          } catch {}
+          await settle(error);
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try {
+          await reader.cancel(reason);
+        } finally {
+          reader.releaseLock();
+          await settle(reason);
         }
       },
     },

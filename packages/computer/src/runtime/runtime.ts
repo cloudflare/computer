@@ -69,6 +69,7 @@ export class WorkspaceRuntime {
       env: options.env,
       stdin: options.stdin,
       timeoutMs: options.timeoutMs,
+      sync: options.sync,
     });
     return wrapModuleHandle(
       runtime,

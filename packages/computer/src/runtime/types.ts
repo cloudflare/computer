@@ -110,6 +110,7 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
   timeoutMs?: number;
+  sync?: "inline" | "deferred";
 }
 
 export interface WorkspaceRuntimeGetOptions<E extends ExecEncoding = undefined> {
@@ -144,6 +145,7 @@ export interface ModuleExecutionInput {
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
   timeoutMs?: number;
+  sync?: "inline" | "deferred";
 }
 
 export interface ModuleExecutionEnvelope {

@@ -62,6 +62,7 @@ import {
 
 export interface SyncRetryIntent {
   backend: string;
+  targetCursor?: ChangeCursor;
   // Container process whose post-command changes are pending. Durable
   // retries must not report success against an empty replacement.
   runtimeId?: string;
@@ -101,7 +102,9 @@ export type WorkspaceRetryPendingSyncResult =
       runtimeId?: string;
       attempt: number;
       notBefore: number;
-      error: string;
+      cursor?: ChangeCursor;
+      targetCursor?: ChangeCursor;
+      error?: string;
     }
   | {
       status: "exhausted";
@@ -115,6 +118,10 @@ export type WorkspaceRetryPendingSyncResult =
 const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
 const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
+const DEFAULT_SYNC_BATCH_BUDGET: SyncBatchBudget = {
+  maxEntries: 64,
+  maxBytes: 4 * 1024 * 1024,
+};
 
 // When a backend RPC fails with a transport error, how much replay
 // the operation tolerates. "always" suits idempotent calls; a
@@ -703,7 +710,10 @@ export class Workspace {
    * intent. A failed pull advances bounded exponential backoff; the
    * last failed attempt remains stored and is reported as exhausted.
    */
-  retryPendingSync(id?: string): Promise<WorkspaceRetryPendingSyncResult> {
+  retryPendingSync(
+    id?: string,
+    budget: SyncBatchBudget = DEFAULT_SYNC_BATCH_BUDGET,
+  ): Promise<WorkspaceRetryPendingSyncResult> {
     return this.#serialize(id, async (resolvedId) => {
       if (resolvedId === undefined) {
         throw new Error("Workspace has no backend configured for pending sync retry");
@@ -724,7 +734,36 @@ export class Workspace {
         };
       }
       try {
-        const result = await this.#pullResolved(resolvedId, intent.runtimeId);
+        const result = await this.#pullBatchResolved(
+          resolvedId,
+          intent.runtimeId,
+          budget,
+          intent.targetCursor,
+        );
+        if (result.status === "pending") {
+          if (intent.attempt >= this.#retryMaxAttempts) {
+            return {
+              status: "exhausted",
+              backend: resolvedId,
+              ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
+              attempt: intent.attempt,
+              error: "pending sync retry attempts exhausted",
+            };
+          }
+          const next = this.#retryIntent(
+            resolvedId,
+            intent.attempt + 1,
+            intent.runtimeId,
+            result.targetCursor,
+          );
+          await scheduler.schedule(next);
+          return {
+            status: "pending",
+            ...next,
+            cursor: result.cursor,
+            targetCursor: result.targetCursor,
+          };
+        }
         await scheduler.clear(resolvedId);
         return {
           status: "complete",
@@ -755,11 +794,51 @@ export class Workspace {
             error: message,
           };
         }
-        const next = this.#retryIntent(resolvedId, intent.attempt + 1, intent.runtimeId);
+        const next = this.#retryIntent(
+          resolvedId,
+          intent.attempt + 1,
+          intent.runtimeId,
+          intent.targetCursor,
+        );
         await scheduler.schedule(next);
         return { status: "pending", ...next, error: message };
       }
     });
+  }
+
+  #pullBatchResolved(
+    resolvedId: string | undefined,
+    expectedRuntimeId: string | undefined,
+    budget: SyncBatchBudget,
+    targetCursor?: ChangeCursor,
+  ): Promise<SyncBatchResult> {
+    return withSpan(
+      this.#observer,
+      "workspace.sync.pull.batch",
+      { "workspace.sync.backend": resolvedId },
+      async () => {
+        if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
+          return emptyBatchResult(targetCursor);
+        }
+        return this.#runWithReconnect(resolvedId, "pullBatch", async (handle) => {
+          if (expectedRuntimeId !== undefined) {
+            assertExecutionRuntime("post-command sync", expectedRuntimeId, handle.runtimeId);
+          }
+          if (handle.sync === "none") return emptyBatchResult(targetCursor);
+          return pullBatch(this.#db, handle.rpc.sync, {
+            backend: resolvedId,
+            targetCursor,
+            budget,
+          });
+        });
+      },
+      (span, outcome) => {
+        if (!outcome.ok) return;
+        span.setAttribute("workspace.sync.entries", outcome.value.entries);
+        span.setAttribute("workspace.sync.bytes", outcome.value.bytes);
+        span.setAttribute("workspace.sync.applied", outcome.value.applied);
+      },
+    );
   }
 
   #pullResolved(resolvedId: string | undefined, expectedRuntimeId?: string): Promise<ApplyResult> {
@@ -787,26 +866,61 @@ export class Workspace {
     );
   }
 
-  async #schedulePendingSync(id: string, runtimeId?: string): Promise<void> {
+  async #schedulePendingSync(
+    id: string,
+    runtimeId?: string,
+    captureTarget = false,
+  ): Promise<{ backend?: string; runtimeId?: string; targetCursor?: ChangeCursor }> {
     const scheduler = this.#retryScheduler;
-    if (scheduler === undefined) return;
-    await this.#serialize(id, async (resolvedId) => {
-      if (resolvedId === undefined) return;
+    if (scheduler === undefined) {
+      if (captureTarget) {
+        throw new Error("Workspace requires a retryScheduler for deferred synchronization");
+      }
+      return {};
+    }
+    return this.#serialize(id, async (resolvedId) => {
+      if (resolvedId === undefined) return {};
       const existing = await scheduler.get(resolvedId);
       if (existing !== undefined && (runtimeId === undefined || existing.runtimeId === runtimeId)) {
-        return;
+        return {
+          backend: resolvedId,
+          ...(existing.runtimeId === undefined ? {} : { runtimeId: existing.runtimeId }),
+          ...(existing.targetCursor === undefined ? {} : { targetCursor: existing.targetCursor }),
+        };
       }
-      await scheduler.schedule(this.#retryIntent(resolvedId, 1, runtimeId));
+      let targetCursor: ChangeCursor | undefined;
+      if (captureTarget) {
+        const handle = await this.#handleFor(resolvedId);
+        if (runtimeId !== undefined) {
+          assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
+        }
+        targetCursor =
+          handle.sync === "none"
+            ? { rev: 0, path: null }
+            : { rev: (await handle.rpc.sync.watermarks()).currentRev, path: null };
+      }
+      await scheduler.schedule(this.#retryIntent(resolvedId, 1, runtimeId, targetCursor));
+      return {
+        backend: resolvedId,
+        ...(runtimeId === undefined ? {} : { runtimeId }),
+        ...(targetCursor === undefined ? {} : { targetCursor }),
+      };
     });
   }
 
-  #retryIntent(backend: string, attempt: number, runtimeId?: string): SyncRetryIntent {
+  #retryIntent(
+    backend: string,
+    attempt: number,
+    runtimeId?: string,
+    targetCursor?: ChangeCursor,
+  ): SyncRetryIntent {
     const delay = Math.min(
       this.#retryMaxDelayMs,
       this.#retryInitialDelayMs * 2 ** Math.max(0, attempt - 1),
     );
     return {
       backend,
+      ...(targetCursor === undefined ? {} : { targetCursor }),
       ...(runtimeId === undefined ? {} : { runtimeId }),
       attempt,
       notBefore: this.#now() + delay,
@@ -998,6 +1112,7 @@ export class Workspace {
           timeoutMs: input.timeoutMs,
           env: input.env,
           stdin: input.stdin,
+          sync: input.sync,
         });
         this.#rememberExecutionRuntime(id, envelope.id, envelope.runtimeId);
         return {
@@ -1233,7 +1348,10 @@ export class Workspace {
       {
         push: () => this.push(id),
         pull: (runtimeId) => this.#pullForExec(id, runtimeId),
-        onPullPending: (_error, runtimeId) => this.#schedulePendingSync(id, runtimeId),
+        onPullPending: async (_error, runtimeId) => {
+          await this.#schedulePendingSync(id, runtimeId);
+        },
+        onPostExecPending: (runtimeId) => this.#schedulePendingSync(id, runtimeId, true),
       },
       this.#observer,
       dispatch,
