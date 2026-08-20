@@ -710,7 +710,7 @@ export async function reconcileWatermarks(
 ): Promise<{ fetchRevReset: boolean; pushRevReset: boolean }> {
   const remoteWatermarks = await remote.watermarks();
   const localFetchCursor = readFetchCursor(db, backend);
-  const localPushRev = readWatermark(db, "pushRev", backend);
+  const localPushCursor = readPushCursor(db, backend);
 
   let fetchRevReset = false;
   let pushRevReset = false;
@@ -736,8 +736,8 @@ export async function reconcileWatermarks(
   // (e.g. the container side of a DO↔container backend), which would
   // make every reconcile spuriously reset pushRev and force a full
   // re-push on every reconnect.
-  if (remoteWatermarks.fetchCursor.rev < localPushRev) {
-    writeWatermark(db, "pushRev", 0, backend);
+  if (compareChangeCursors(remoteWatermarks.fetchCursor, localPushCursor) < 0) {
+    writePushCursor(db, { rev: 0, path: null }, backend);
     pushRevReset = true;
   }
 
