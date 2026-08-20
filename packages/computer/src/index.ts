@@ -96,6 +96,7 @@ export {
   withWorkspace,
 } from "./with-workspace.js";
 export {
+  type SyncBatchOptions,
   type SyncRetryIntent,
   type SyncRetryOptions,
   type SyncRetryScheduler,

@@ -10,9 +10,18 @@
 // routed through Workspace.runtime.exec.
 
 import type { ShellRPC } from "@cloudflare/computer-rpc";
-import { pullOnce, pushOnce, reconcileWatermarks } from "@cloudflare/computer-rpc/driver";
+import {
+  pullBatch,
+  pullOnce,
+  pushBatch,
+  pushOnce,
+  reconcileWatermarks,
+  type SyncBatchBudget,
+  type SyncBatchResult,
+} from "@cloudflare/computer-rpc/driver";
 import {
   type ApplyResult,
+  type ChangeCursor,
   Database,
   type DurableObjectStorageLike,
   initializeSchema,
@@ -70,6 +79,11 @@ export interface SyncRetryScheduler {
   get(backend: string): Promise<SyncRetryIntent | undefined>;
   schedule(intent: SyncRetryIntent): Promise<void>;
   clear(backend: string): Promise<void>;
+}
+
+export interface SyncBatchOptions extends SyncBatchBudget {
+  mode: "batch";
+  targetCursor?: ChangeCursor;
 }
 
 export interface SyncRetryOptions {
@@ -594,33 +608,91 @@ export class Workspace {
   // Both methods emit a `workspace.sync.push` / `workspace.sync.pull`
   // span on the configured observer, tagged with the resolved
   // backend id and the entry count.
-  push(id?: string): Promise<number> {
+  push(id?: string): Promise<number>;
+  push(options: SyncBatchOptions): Promise<SyncBatchResult>;
+  push(id: string | undefined, options: SyncBatchOptions): Promise<SyncBatchResult>;
+  push(
+    idOrOptions?: string | SyncBatchOptions,
+    options?: SyncBatchOptions,
+  ): Promise<number | SyncBatchResult> {
+    const id =
+      typeof idOrOptions === "string" || idOrOptions === undefined ? idOrOptions : undefined;
+    const batch = typeof idOrOptions === "object" ? idOrOptions : options;
     return this.#serialize(id, (resolvedId) =>
       withSpan(
         this.#observer,
         "workspace.sync.push",
         { "workspace.sync.backend": resolvedId },
         async () => {
+          if (batch !== undefined) {
+            if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
+              return emptyBatchResult(batch.targetCursor);
+            }
+            return this.#runWithReconnect(resolvedId, "pushBatch", async (handle) => {
+              if (handle.sync === "none") return emptyBatchResult(batch.targetCursor);
+              return pushBatch(this.#db, handle.rpc.sync, {
+                backend: resolvedId,
+                targetCursor: batch.targetCursor,
+                budget: batch,
+              });
+            });
+          }
           if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
           return this.#runWithReconnect(resolvedId, "push", async (handle) => {
-            // A backend that reuses the host store as its sole
-            // source of truth has nothing to ship and no remote to
-            // ship to. Short-circuit so the shell exec bracket can
-            // keep calling push() unconditionally without paying
-            // for it.
             if (handle.sync === "none") return 0;
             return pushOnce(this.#db, handle.rpc.sync, resolvedId);
           });
         },
         (span, outcome) => {
-          if (outcome.ok) span.setAttribute("workspace.sync.pushed", outcome.value);
+          if (!outcome.ok) return;
+          span.setAttribute(
+            "workspace.sync.pushed",
+            typeof outcome.value === "number" ? outcome.value : outcome.value.entries,
+          );
         },
       ),
     );
   }
 
-  pull(id?: string): Promise<ApplyResult> {
-    return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId));
+  pull(id?: string): Promise<ApplyResult>;
+  pull(options: SyncBatchOptions): Promise<SyncBatchResult>;
+  pull(id: string | undefined, options: SyncBatchOptions): Promise<SyncBatchResult>;
+  pull(
+    idOrOptions?: string | SyncBatchOptions,
+    options?: SyncBatchOptions,
+  ): Promise<ApplyResult | SyncBatchResult> {
+    const id =
+      typeof idOrOptions === "string" || idOrOptions === undefined ? idOrOptions : undefined;
+    const batch = typeof idOrOptions === "object" ? idOrOptions : options;
+    if (batch === undefined)
+      return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId));
+    return this.#serialize(id, (resolvedId) =>
+      withSpan(
+        this.#observer,
+        "workspace.sync.pull",
+        { "workspace.sync.backend": resolvedId },
+        async () => {
+          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
+            return emptyBatchResult(batch.targetCursor);
+          }
+          return this.#runWithReconnect(resolvedId, "pullBatch", async (handle) => {
+            if (handle.sync === "none") return emptyBatchResult(batch.targetCursor);
+            return pullBatch(this.#db, handle.rpc.sync, {
+              backend: resolvedId,
+              targetCursor: batch.targetCursor,
+              budget: batch,
+            });
+          });
+        },
+        (span, outcome) => {
+          if (!outcome.ok) return;
+          span.setAttribute(
+            "workspace.sync.applied",
+            typeof outcome.value === "object" ? outcome.value.applied : outcome.value,
+          );
+        },
+      ),
+    );
   }
 
   /**
@@ -1257,6 +1329,19 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     void this.#invalidateHandle(id, handle);
   }
+}
+
+function emptyBatchResult(targetCursor?: ChangeCursor): SyncBatchResult {
+  const target = targetCursor ?? { rev: 0, path: null };
+  return {
+    status: "complete",
+    entries: 0,
+    bytes: 0,
+    applied: 0,
+    skipped: [],
+    cursor: target,
+    targetCursor: target,
+  };
 }
 
 function assertExecutionRuntime(

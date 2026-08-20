@@ -76,7 +76,10 @@ function fakeRpc(): import("@cloudflare/computer-rpc").SyncRPC {
       } finally {
         reader.releaseLock();
       }
-      return { rev: 0, appliedPushCursor: { rev: input.senderRev, path: null } };
+      return {
+        rev: 0,
+        appliedPushCursor: input.senderCursor ?? { rev: input.senderRev, path: null },
+      };
     },
     async fetchChanges() {
       return {
@@ -1163,6 +1166,19 @@ describe("Workspace.pull return shape", () => {
     await ws.ready();
     const result = await ws.pull();
     expect(result).toEqual({ applied: 0, skipped: [] });
+  });
+
+  it("uses batch options on pull without changing the default overload", async () => {
+    const ws = new Workspace({ storage: makeStorage(), backends: [makeBackend("fake")] });
+    await ws.ready();
+    const result = await ws.pull("fake", {
+      mode: "batch",
+      maxEntries: 1,
+      maxBytes: 1024,
+    });
+    expect(result.status).toBe("complete");
+    expect(result.entries).toBe(0);
+    expect(result.targetCursor).toEqual({ rev: 0, path: null });
   });
 });
 
