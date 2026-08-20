@@ -69,6 +69,12 @@ export function initializeSchema(db: Database, now: () => number): void {
       "fetch",
       null,
     );
+    db.run(
+      "INSERT OR IGNORE INTO _vfs_push_cursor (k, backend, rev, path) VALUES (?, 'default', ?, ?)",
+      "push",
+      0,
+      null,
+    );
 
     db.run(
       `INSERT OR IGNORE INTO vfs_nodes

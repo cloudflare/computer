@@ -13,7 +13,7 @@
 // dirents leaf so the (parent, name) resolve read is covering
 // (no separate index needed). See `schema/migrations.ts` for the
 // migration list; `sync.ts` carries the fresh-install DDL.
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [

@@ -142,11 +142,30 @@ function v4_to_v5_without_rowid(db: Database): void {
   db.run(`CREATE INDEX vfs_chunks_by_hash ON vfs_chunks(hash)`);
 }
 
+function v5_to_v6_push_cursor(db: Database): void {
+  db.run(
+    `CREATE TABLE IF NOT EXISTS _vfs_push_cursor (
+       k       TEXT    NOT NULL CHECK(k = 'push'),
+       backend TEXT    NOT NULL DEFAULT 'default',
+       rev     INTEGER NOT NULL DEFAULT 0,
+       path    TEXT,
+       PRIMARY KEY (k, backend)
+     )`,
+  );
+  db.run(
+    `INSERT OR IGNORE INTO _vfs_push_cursor (k, backend, rev, path)
+       SELECT 'push', backend, v, NULL
+       FROM _vfs_watermark
+       WHERE k = 'pushRev'`,
+  );
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
   { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
   { from: 3, to: 4, migrator: v3_to_v4_watermark_backend_column },
   { from: 4, to: 5, migrator: v4_to_v5_without_rowid },
+  { from: 5, to: 6, migrator: v5_to_v6_push_cursor },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

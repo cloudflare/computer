@@ -45,6 +45,13 @@ export const SYNC_STATEMENTS = [
     path    TEXT,
     PRIMARY KEY (k, backend)
   )`,
+  `CREATE TABLE IF NOT EXISTS _vfs_push_cursor (
+    k       TEXT    NOT NULL CHECK(k = 'push'),
+    backend TEXT    NOT NULL DEFAULT 'default',
+    rev     INTEGER NOT NULL DEFAULT 0,
+    path    TEXT,
+    PRIMARY KEY (k, backend)
+  )`,
   // The `mode` column was added at schema v2; `schema/migrations.ts`
   // owns the ALTER for existing databases. Keep the CHECK
   // constraint here aligned with the migration's CHECK so fresh

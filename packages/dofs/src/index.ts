@@ -56,8 +56,10 @@ export {
   compareChangeCursors,
   currentRev,
   readFetchCursor,
+  readPushCursor,
   readWatermark,
   writeFetchCursor,
+  writePushCursor,
   writeWatermark,
 } from "./sync/watermarks.js";
 export type { ExecutedStatement } from "./testing-recording.js";

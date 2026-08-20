@@ -6,8 +6,10 @@ import {
   compareChangeCursors,
   currentRev,
   readFetchCursor,
+  readPushCursor,
   readWatermark,
   writeFetchCursor,
+  writePushCursor,
   writeWatermark,
 } from "./watermarks.js";
 
@@ -32,6 +34,17 @@ describe("watermarks", () => {
       expect(readFetchCursor(db)).toEqual({ rev: 12, path: "/dir/file.txt" });
       writeFetchCursor(db, { rev: 13, path: null });
       expect(readFetchCursor(db)).toEqual({ rev: 13, path: null });
+    });
+  });
+
+  it("persists a path-aware push cursor per backend", async () => {
+    await withDB(async (db) => {
+      expect(readPushCursor(db)).toEqual({ rev: 0, path: null });
+      writePushCursor(db, { rev: 12, path: "/dir/file.txt" }, "container");
+      expect(readPushCursor(db, "container")).toEqual({ rev: 12, path: "/dir/file.txt" });
+      expect(readPushCursor(db, "worker")).toEqual({ rev: 0, path: null });
+      writePushCursor(db, { rev: 13, path: null }, "container");
+      expect(readPushCursor(db, "container")).toEqual({ rev: 13, path: null });
     });
   });
 

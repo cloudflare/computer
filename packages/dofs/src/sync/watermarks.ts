@@ -102,6 +102,33 @@ export function readFetchCursor(db: Database, backend: string = DEFAULT_BACKEND_
   return { rev, path: path ?? null };
 }
 
+export function readPushCursor(db: Database, backend: string = DEFAULT_BACKEND_ID): ChangeCursor {
+  const row = db.one<{ rev: number; path: string | null }>(
+    "SELECT rev, path FROM _vfs_push_cursor WHERE k = ? AND backend = ?",
+    "push",
+    backend,
+  );
+  return row === undefined ? { rev: 0, path: null } : { rev: row.rev, path: row.path };
+}
+
+export function writePushCursor(
+  db: Database,
+  cursor: ChangeCursor,
+  backend: string = DEFAULT_BACKEND_ID,
+): void {
+  db.transactionSync(() => {
+    db.run(
+      "INSERT INTO _vfs_push_cursor (k, backend, rev, path) VALUES (?, ?, ?, ?) " +
+        "ON CONFLICT(k, backend) DO UPDATE SET rev = excluded.rev, path = excluded.path",
+      "push",
+      backend,
+      cursor.rev,
+      cursor.path,
+    );
+    writeWatermarkValue(db, "pushRev", cursor.rev, backend);
+  });
+}
+
 export function writeFetchCursor(
   db: Database,
   cursor: ChangeCursor,
