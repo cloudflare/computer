@@ -195,4 +195,72 @@ describe("grep", () => {
       await expect(grep(db, "x", "/missing")).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
+
+  describe("exclude", () => {
+    async function tree(db: Parameters<typeof grep>[0]) {
+      mkdir(db, "/node_modules/pkg", { recursive: true }, () => 0);
+      mkdir(db, "/src", { recursive: true }, () => 0);
+      await writeFile(db, "/node_modules/pkg/index.js", "NEEDLE in vendor\n", {}, () => 0);
+      await writeFile(db, "/src/app.ts", "NEEDLE in source\n", {}, () => 0);
+    }
+
+    it("skips files under an excluded directory", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        const matches = await grep(db, "NEEDLE", "/", { exclude: ["node_modules"] });
+        expect(matches.map((m) => m.path)).toEqual(["/src/app.ts"]);
+      });
+    });
+
+    it("without exclude, still searches everything", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        const matches = await grep(db, "NEEDLE", "/");
+        expect(matches.map((m) => m.path).sort()).toEqual([
+          "/node_modules/pkg/index.js",
+          "/src/app.ts",
+        ]);
+      });
+    });
+
+    it("combines exclude with include", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        await writeFile(db, "/src/other.js", "NEEDLE elsewhere\n", {}, () => 0);
+        const matches = await grep(db, "NEEDLE", "/", {
+          include: "**/*.ts",
+          exclude: ["node_modules"],
+        });
+        expect(matches.map((m) => m.path)).toEqual(["/src/app.ts"]);
+      });
+    });
+
+    it("never reads files inside an excluded directory", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/node_modules/deep/nested", { recursive: true }, () => 0);
+        for (let i = 0; i < 20; i++) {
+          await writeFile(db, `/node_modules/deep/nested/f${i}.js`, "NEEDLE\n", {}, () => 0);
+        }
+        await writeFile(db, "/keep.ts", "NEEDLE\n", {}, () => 0);
+
+        let statements = 0;
+        const originalAll = db.all.bind(db);
+        (db as unknown as { all: unknown }).all = (...args: unknown[]) => {
+          statements += 1;
+          return (originalAll as (...a: unknown[]) => unknown)(...args);
+        };
+        let matches: Awaited<ReturnType<typeof grep>>;
+        try {
+          matches = await grep(db, "NEEDLE", "/", { exclude: ["node_modules"] });
+        } finally {
+          (db as unknown as { all: unknown }).all = originalAll;
+        }
+
+        expect(matches.map((m) => m.path)).toEqual(["/keep.ts"]);
+        // Reading the 20 excluded files would take far more than this;
+        // pruning keeps the walk to the root listing plus /keep.ts.
+        expect(statements).toBeLessThan(10);
+      });
+    });
+  });
 });

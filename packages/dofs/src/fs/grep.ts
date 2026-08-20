@@ -31,6 +31,13 @@ export interface GrepOptions {
   offset?: number;
   /** Glob relative to a searched directory that limits files. */
   include?: string;
+  /**
+   * Whole-segment names to skip during traversal. Excluded directories
+   * are never descended into, so their files are never read. Unlike
+   * `include`, which filters files after the walk has already visited
+   * them, this prunes the walk itself.
+   */
+  exclude?: string[];
 }
 
 interface ScanState {
@@ -68,7 +75,10 @@ export async function grep(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  const filePaths = node.type === "file" ? [canonical] : filesUnder(db, canonical, options.include);
+  const filePaths =
+    node.type === "file"
+      ? [canonical]
+      : filesUnder(db, canonical, options.include, options.exclude);
   for (const filePath of filePaths) {
     const complete = await scanFile(
       db,
@@ -117,8 +127,9 @@ function* filesUnder(
   db: Database,
   directory: string,
   include: string | undefined,
+  exclude: string[] | undefined,
 ): Iterable<string> {
-  for (const entry of iterateFoundEntries(db, directory, include)) {
+  for (const entry of iterateFoundEntries(db, directory, include, exclude)) {
     if (entry.type === "file") yield entry.path;
   }
 }
