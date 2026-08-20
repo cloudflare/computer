@@ -8,6 +8,15 @@ export interface WorkspaceFoundEntry {
   type: "file" | "dir";
 }
 
+// Same as WorkspaceFoundEntry but carries the inode the traversal
+// already read. Internal callers that need to touch the node's
+// content (grep) use this to skip a redundant path re-resolve.
+export interface FoundEntryWithInode extends WorkspaceFoundEntry {
+  inode: number;
+  /** Cached vfs_nodes.size; 0 for directories. */
+  size: number;
+}
+
 export interface FindOptions {
   /** Maximum matching entries to return. */
   limit?: number;
@@ -30,6 +39,7 @@ interface ChildRow {
   name: string;
   child_inode: number;
   type: "file" | "dir";
+  size: number;
 }
 
 interface WalkStart {
@@ -63,7 +73,9 @@ export function find(
   let seen = 0;
   for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude)) {
     if (seen >= offset) {
-      out.push(entry);
+      // The walk carries the inode for internal callers; the public
+      // find() contract is {path, type} only.
+      out.push({ path: entry.path, type: entry.type });
       if (out.length >= limit) break;
     }
     seen += 1;
@@ -76,7 +88,7 @@ export function* iterateFoundEntries(
   directory: string,
   pattern?: string,
   exclude?: string[],
-): IterableIterator<WorkspaceFoundEntry> {
+): IterableIterator<FoundEntryWithInode> {
   const start = prepareWalk(db, directory, pattern, exclude);
   yield* walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude);
 }
@@ -118,7 +130,7 @@ function* walk(
   prefix: string,
   regex: RegExp | undefined,
   exclude: ReadonlySet<string>,
-): IterableIterator<WorkspaceFoundEntry> {
+): IterableIterator<FoundEntryWithInode> {
   let afterName = "";
   while (true) {
     const children = readChildren(db, parentInode, afterName);
@@ -132,7 +144,12 @@ function* walk(
       const childPath = parentPath === "/" ? `/${child.name}` : `${parentPath}/${child.name}`;
       const relativePath = childPath.slice(prefix.length);
       if (regex === undefined || regex.test(relativePath)) {
-        yield { path: childPath, type: child.type };
+        yield {
+          path: childPath,
+          type: child.type,
+          inode: child.child_inode,
+          size: child.size,
+        };
       }
       if (child.type === "dir") {
         yield* walk(db, child.child_inode, childPath, prefix, regex, exclude);
@@ -146,7 +163,7 @@ function* walk(
 
 function readChildren(db: Database, parentInode: number, afterName: string): ChildRow[] {
   return db.all<ChildRow>(
-    `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type
+    `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type, n.size AS size
        FROM vfs_dirents d
        JOIN vfs_nodes n ON n.inode = d.child_inode
       WHERE d.parent_inode = ? AND d.name > ?
