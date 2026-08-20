@@ -21,14 +21,44 @@ import {
   type Database,
   hasObjects,
   readFetchCursor,
+  readPushCursor,
   readWatermark,
   type SkippedEntry,
   stageBlob,
   writeFetchCursor,
+  writePushCursor,
   writeWatermark,
 } from "@cloudflare/dofs";
 
 import type { SyncRPC } from "./interface.js";
+
+export interface SyncBatchBudget {
+  maxEntries: number;
+  maxBytes: number;
+  maxWallTimeMs?: number;
+}
+
+export interface SyncBatchResult {
+  status: "complete" | "pending";
+  entries: number;
+  bytes: number;
+  applied: number;
+  skipped: SkippedEntry[];
+  cursor: ChangeCursor;
+  targetCursor: ChangeCursor;
+}
+
+export interface PullBatchOptions {
+  backend?: string;
+  targetCursor?: ChangeCursor;
+  budget: SyncBatchBudget;
+}
+
+export interface PushBatchOptions {
+  backend?: string;
+  targetCursor?: ChangeCursor;
+  budget: SyncBatchBudget;
+}
 
 function hex(bytes: Uint8Array): string {
   let s = "";
@@ -278,12 +308,323 @@ function cursorComplete(after: ChangeCursor, current: ChangeCursor): boolean {
 }
 
 function writeFetchCursorIfAhead(db: Database, cursor: ChangeCursor, backend?: string): void {
-  // Overlapping pulls can complete out of order, so checkpoint writes
-  // compare against the latest persisted cursor instead of the value
-  // observed when this pull started.
   if (compareChangeCursors(cursor, readFetchCursor(db, backend)) > 0) {
     writeFetchCursor(db, cursor, backend);
   }
+}
+
+function validateBudget(budget: SyncBatchBudget): void {
+  if (!Number.isSafeInteger(budget.maxEntries) || budget.maxEntries <= 0) {
+    throw new Error("Sync batch maxEntries must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(budget.maxBytes) || budget.maxBytes <= 0) {
+    throw new Error("Sync batch maxBytes must be a positive safe integer");
+  }
+  if (
+    budget.maxWallTimeMs !== undefined &&
+    (!Number.isFinite(budget.maxWallTimeMs) || budget.maxWallTimeMs <= 0)
+  ) {
+    throw new Error("Sync batch maxWallTimeMs must be positive when provided");
+  }
+}
+
+function entryCursor(entry: ChangeEntry): ChangeCursor {
+  return { rev: entry.rev, path: entry.path };
+}
+
+function entryHashes(entry: ChangeEntry): { hash: Uint8Array; size: number }[] {
+  return entry.kind === "file" ? entry.chunks : [];
+}
+
+function entryContentBytes(entry: ChangeEntry): number {
+  return entryHashes(entry).reduce((total, chunk) => total + chunk.size, 0);
+}
+
+function minimumCursor(a: ChangeCursor, b: ChangeCursor): ChangeCursor {
+  return compareChangeCursors(a, b) <= 0 ? a : b;
+}
+
+export async function pullBatch(
+  db: Database,
+  remote: SyncRPC,
+  options: PullBatchOptions,
+): Promise<SyncBatchResult> {
+  validateBudget(options.budget);
+  const backend = options.backend;
+  const after = readFetchCursor(db, backend);
+  const fetchResult = await remote.fetchChanges({ after, through: options.targetCursor });
+  const targetCursor = minimumCursor(
+    options.targetCursor ?? fetchResult.currentCursor,
+    fetchResult.currentCursor,
+  );
+  const pushCursor = readPushCursor(db, backend);
+  assertAppliedPushCursor(fetchResult.appliedPushCursor, pushCursor);
+  if (compareChangeCursors(after, targetCursor) >= 0) {
+    return {
+      status: "complete",
+      entries: 0,
+      bytes: 0,
+      applied: 0,
+      skipped: [],
+      cursor: after,
+      targetCursor,
+    };
+  }
+
+  const reader = fetchResult.stream.getReader();
+  let streamDone = false;
+  let cursor = after;
+  let entries = 0;
+  let bytes = 0;
+  let applied = 0;
+  const skipped: SkippedEntry[] = [];
+  const started = Date.now();
+  try {
+    while (entries < options.budget.maxEntries) {
+      if (
+        options.budget.maxWallTimeMs !== undefined &&
+        Date.now() - started >= options.budget.maxWallTimeMs
+      ) {
+        break;
+      }
+      const next = await reader.read();
+      if (next.done) {
+        streamDone = true;
+        break;
+      }
+      const entry = next.value;
+      const chunks = entryHashes(entry);
+      const hashes = chunks.map((chunk) => chunk.hash);
+      const localHave = new Set(hasObjects(db, hashes).map(hex));
+      const remoteHave = new Set(
+        (hashes.length === 0 ? [] : await remote.hasObjects(hashes)).map(hex),
+      );
+      const missingRemote = chunks.filter((chunk) => !remoteHave.has(hex(chunk.hash)));
+      if (missingRemote.length > 0) {
+        throw new Error(`pullBatch: remote is missing object ${hex(missingRemote[0].hash)}`);
+      }
+      const missingLocal = chunks.filter((chunk) => !localHave.has(hex(chunk.hash)));
+      const transferable: { hash: Uint8Array; size: number }[] = [];
+      let availableBytes = options.budget.maxBytes - bytes;
+      for (const chunk of missingLocal) {
+        if (chunk.size <= availableBytes || transferable.length === 0) {
+          transferable.push(chunk);
+          availableBytes -= chunk.size;
+        } else {
+          break;
+        }
+      }
+      if (transferable.length < missingLocal.length) {
+        if (transferable.length > 0) {
+          const objectStream = remote.fetchObjects(transferable.map((chunk) => chunk.hash));
+          const objectReader = objectStream.getReader();
+          try {
+            while (true) {
+              const object = await objectReader.read();
+              if (object.done) break;
+              stageBlob(db, object.value.hash, object.value.bytes, Date.now());
+              bytes += object.value.bytes.byteLength;
+            }
+          } finally {
+            objectReader.releaseLock();
+          }
+        }
+        return {
+          status: "pending",
+          entries,
+          bytes,
+          applied,
+          skipped,
+          cursor,
+          targetCursor,
+        };
+      }
+      if (transferable.length > 0) {
+        const objectStream = remote.fetchObjects(transferable.map((chunk) => chunk.hash));
+        const objectReader = objectStream.getReader();
+        try {
+          while (true) {
+            const object = await objectReader.read();
+            if (object.done) break;
+            stageBlob(db, object.value.hash, object.value.bytes, Date.now());
+            bytes += object.value.bytes.byteLength;
+          }
+        } finally {
+          objectReader.releaseLock();
+        }
+      }
+      const result = await applyChanges(db, [entry], new Map(), {
+        source: "upstream",
+        backend,
+      });
+      const nextCursor = entryCursor(entry);
+      writeFetchCursorIfAhead(db, nextCursor, backend);
+      cursor = nextCursor;
+      entries += 1;
+      applied += result.applied;
+      skipped.push(...result.skipped);
+    }
+    if (streamDone) {
+      writeFetchCursorIfAhead(db, targetCursor, backend);
+      cursor = targetCursor;
+    }
+    return {
+      status: compareChangeCursors(cursor, targetCursor) >= 0 ? "complete" : "pending",
+      entries,
+      bytes,
+      applied,
+      skipped,
+      cursor,
+      targetCursor,
+    };
+  } finally {
+    if (!streamDone) await reader.cancel().catch(() => {});
+    reader.releaseLock();
+    maybeDispose(fetchResult);
+  }
+}
+
+export async function pushBatch(
+  db: Database,
+  remote: SyncRPC,
+  options: PushBatchOptions,
+): Promise<SyncBatchResult> {
+  validateBudget(options.budget);
+  const backend = options.backend;
+  const cursor = readPushCursor(db, backend);
+  const targetCursor = minimumCursor(options.targetCursor ?? { rev: currentRev(db), path: null }, {
+    rev: currentRev(db),
+    path: null,
+  });
+  if (compareChangeCursors(cursor, targetCursor) >= 0) {
+    return {
+      status: "complete",
+      entries: 0,
+      bytes: 0,
+      applied: 0,
+      skipped: [],
+      cursor,
+      targetCursor,
+    };
+  }
+
+  const candidates: ChangeEntry[] = [];
+  for await (const entry of coalesceChanges(db, cursor, { through: targetCursor })) {
+    candidates.push(entry);
+    if (candidates.length >= options.budget.maxEntries) break;
+  }
+  if (candidates.length === 0) {
+    writePushCursor(db, targetCursor, backend);
+    return {
+      status: "complete",
+      entries: 0,
+      bytes: 0,
+      applied: 0,
+      skipped: [],
+      cursor: targetCursor,
+      targetCursor,
+    };
+  }
+
+  const wanted: { hash: Uint8Array; size: number }[] = [];
+  const seen = new Set<string>();
+  for (const entry of candidates) {
+    for (const chunk of entryHashes(entry)) {
+      const key = hex(chunk.hash);
+      if (!seen.has(key)) {
+        seen.add(key);
+        wanted.push(chunk);
+      }
+    }
+  }
+  const have = new Set(
+    (wanted.length === 0 ? [] : await remote.hasObjects(wanted.map((c) => c.hash))).map(hex),
+  );
+  const missing = wanted.filter((chunk) => !have.has(hex(chunk.hash)));
+  const transferable: { hash: Uint8Array; size: number }[] = [];
+  let availableBytes = options.budget.maxBytes;
+  for (const chunk of missing) {
+    if (chunk.size <= availableBytes || transferable.length === 0) {
+      transferable.push(chunk);
+      availableBytes -= chunk.size;
+    } else {
+      break;
+    }
+  }
+  let bytes = 0;
+  if (transferable.length > 0) {
+    const local = (function* () {
+      for (const chunk of transferable) {
+        const row = db.one<{ bytes: Uint8Array }>(
+          "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
+          chunk.hash,
+        );
+        if (row === undefined) throw new Error(`pushBatch: missing local blob ${hex(chunk.hash)}`);
+        bytes += row.bytes.byteLength;
+        yield { hash: chunk.hash, bytes: row.bytes };
+      }
+    })();
+    const objectStream = new ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>({
+      pull(controller) {
+        const next = local.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+    });
+    await remote.pushObjects(objectStream);
+  }
+  if (transferable.length < missing.length) {
+    return {
+      status: "pending",
+      entries: 0,
+      bytes,
+      applied: 0,
+      skipped: [],
+      cursor,
+      targetCursor,
+    };
+  }
+
+  const selected = candidates.filter((entry) => {
+    const entryMissing = entryHashes(entry).filter((chunk) => !have.has(hex(chunk.hash)));
+    return entryMissing.every((chunk) =>
+      transferable.some((item) => hex(item.hash) === hex(chunk.hash)),
+    );
+  });
+  if (selected.length === 0) {
+    return {
+      status: "pending",
+      entries: 0,
+      bytes,
+      applied: 0,
+      skipped: [],
+      cursor,
+      targetCursor,
+    };
+  }
+  const lastCursor = entryCursor(selected[selected.length - 1]);
+  const entryStream = new ReadableStream<ChangeEntry>({
+    start(controller) {
+      for (const entry of selected) controller.enqueue(entry);
+      controller.close();
+    },
+  });
+  const response = await remote.push({
+    senderRev: targetCursor.rev,
+    senderCursor: lastCursor,
+    changes: entryStream,
+  });
+  assertAppliedPushCursor(response.appliedPushCursor, lastCursor);
+  writePushCursor(db, lastCursor, backend);
+  return {
+    status: compareChangeCursors(lastCursor, targetCursor) >= 0 ? "complete" : "pending",
+    entries: selected.length,
+    bytes,
+    applied: response.applied ?? selected.length,
+    skipped: [],
+    cursor: lastCursor,
+    targetCursor,
+  };
 }
 
 // Push every entry the local store has produced since the last

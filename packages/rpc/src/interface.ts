@@ -28,8 +28,13 @@ export interface SyncRPC {
   // advances its fetch cursor to this completed rev after the apply
   // settles, and echoes that cursor back as `appliedPushCursor` so
   // the sender can assert applied covers pushed on every response.
-  push(input: { senderRev: number; changes: ReadableStream<ChangeEntry> }): Promise<{
+  push(input: {
+    senderRev: number;
+    senderCursor?: ChangeCursor;
+    changes: ReadableStream<ChangeEntry>;
+  }): Promise<{
     rev: number;
+    applied?: number;
     appliedPushCursor: ChangeCursor;
   }>;
 
@@ -45,7 +50,11 @@ export interface SyncRPC {
   //                       mirroring the same check on push.
   //
   // Per-file entries carry (hash, size) chunk lists; no bytes inline.
-  fetchChanges(input: { after?: ChangeCursor; ignore?: string[] }): Promise<{
+  fetchChanges(input: {
+    after?: ChangeCursor;
+    through?: ChangeCursor;
+    ignore?: string[];
+  }): Promise<{
     currentCursor: ChangeCursor;
     appliedPushCursor: ChangeCursor;
     stream: ReadableStream<ChangeEntry>;

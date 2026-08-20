@@ -16,7 +16,14 @@ import { describe, expect, it } from "vitest";
 
 import type { SyncRPC } from "./interface.js";
 import { createSyncServer } from "./server.js";
-import { pullOnce, pushOnce, reconcileWatermarks, tick } from "./sync-driver.js";
+import {
+  pullBatch,
+  pullOnce,
+  pushBatch,
+  pushOnce,
+  reconcileWatermarks,
+  tick,
+} from "./sync-driver.js";
 
 // Two peers wired up as direct in-process SyncRPC stubs. No
 // WebSocket; we already have the real-wire convergence test in
@@ -1282,3 +1289,120 @@ async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   hash.update(bytes);
   return new Uint8Array(hash.digest());
 }
+
+describe("bounded synchronization", () => {
+  it("pulls one entry per batch and resumes at the captured target", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      await provider.writeFile("/one.txt", "one");
+      await provider.writeFile("/two.txt", "two");
+
+      const first = await pullBatch(downstream.db, upstream.rpc, {
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(first.status).toBe("pending");
+      expect(first.entries).toBe(1);
+
+      const second = await pullBatch(downstream.db, upstream.rpc, {
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(second.status).toBe("pending");
+      const third = await pullBatch(downstream.db, upstream.rpc, {
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(third.status).toBe("complete");
+      expect(second.entries + third.entries).toBe(1);
+      expect(fileEntries(downstream.db)).toEqual(["one.txt", "two.txt"]);
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+
+  it("stages a large file across pull batches without redownloading chunks", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      const large = new Uint8Array(3 * 512 * 1024);
+      large.fill(1, 0, 512 * 1024);
+      large.fill(2, 512 * 1024, 2 * 512 * 1024);
+      large.fill(3, 2 * 512 * 1024);
+      await provider.writeFile("/large.bin", large);
+      let fetches = 0;
+      const rpc = new Proxy(upstream.rpc as object, {
+        get(target, property, receiver) {
+          if (property === "fetchObjects") {
+            return (hashes: Uint8Array[]) => {
+              fetches += hashes.length;
+              return Reflect.get(target, property, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }) as SyncRPC;
+
+      const first = await pullBatch(downstream.db, rpc, {
+        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
+      });
+      expect(first.status).toBe("pending");
+      expect(first.entries).toBe(0);
+      expect(first.bytes).toBe(512 * 1024);
+
+      const second = await pullBatch(downstream.db, rpc, {
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
+      });
+      expect(second.status).toBe("pending");
+      expect(second.bytes).toBe(512 * 1024);
+
+      const third = await pullBatch(downstream.db, rpc, {
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
+      });
+      expect(third.status).toBe("complete");
+      expect(fetches).toBe(3);
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+
+  it("pushes one bounded unit and resumes through a revision", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      await provider.writeFile("/one.txt", "one");
+      await provider.writeFile("/two.txt", "two");
+
+      const first = await pushBatch(upstream.db, downstream.rpc, {
+        backend: "container",
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(first.status).toBe("pending");
+      expect(first.entries).toBe(1);
+
+      const second = await pushBatch(upstream.db, downstream.rpc, {
+        backend: "container",
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(second.status).toBe("pending");
+      const third = await pushBatch(upstream.db, downstream.rpc, {
+        backend: "container",
+        targetCursor: first.targetCursor,
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+      expect(third.status).toBe("complete");
+      expect(fileEntries(downstream.db)).toEqual(["one.txt", "two.txt"]);
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+});

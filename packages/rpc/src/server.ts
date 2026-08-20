@@ -101,8 +101,9 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
 
   async push(input: {
     senderRev: number;
+    senderCursor?: ChangeCursor;
     changes: ReadableStream<ChangeEntry>;
-  }): Promise<{ rev: number; appliedPushCursor: ChangeCursor }> {
+  }): Promise<{ rev: number; applied?: number; appliedPushCursor: ChangeCursor }> {
     const entries: ChangeEntry[] = [];
     const reader = input.changes.getReader();
     try {
@@ -128,7 +129,8 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     // local writes: bump rev through the normal apply path,
     // leave pushRev untouched so the outbound sync loop
     // ships them upstream on the next tick.
-    const isPeer = input.senderRev > 0;
+    const senderCursor = input.senderCursor ?? { rev: input.senderRev, path: null };
+    const isPeer = senderCursor.rev > 0;
     // Wrap the whole batch in a single transactionSync so a
     // mid-stream failure (e.g. a missing chunk in applyChangesSync's
     // assembly step) rolls back every prior entry. Without this
@@ -138,11 +140,8 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       applyChangesSync(this.db, entries, new Map(), {
         source: isPeer ? "upstream" : "local",
       });
-      if (isPeer) {
-        const nextCursor = { rev: input.senderRev, path: null };
-        if (compareChangeCursors(nextCursor, readFetchCursor(this.db)) > 0) {
-          writeFetchCursor(this.db, nextCursor);
-        }
+      if (isPeer && compareChangeCursors(senderCursor, readFetchCursor(this.db)) > 0) {
+        writeFetchCursor(this.db, senderCursor);
       }
     });
     if (this.options.afterApply !== undefined && entries.length > 0) {
@@ -157,11 +156,16 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     }
     return {
       rev: currentRev(this.db),
-      appliedPushCursor: { rev: input.senderRev, path: null },
+      applied: entries.length,
+      appliedPushCursor: isPeer ? senderCursor : { rev: 0, path: null },
     };
   }
 
-  async fetchChanges(input: { after?: ChangeCursor; ignore?: string[] }): Promise<{
+  async fetchChanges(input: {
+    after?: ChangeCursor;
+    through?: ChangeCursor;
+    ignore?: string[];
+  }): Promise<{
     currentCursor: ChangeCursor;
     appliedPushCursor: ChangeCursor;
     stream: ReadableStream<ChangeEntry>;
@@ -179,7 +183,11 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     const after = input.after ?? { rev: 0, path: null };
     const ignore = input.ignore ?? this.options.ignore;
     const snapshotRev = currentRev(this.db);
-    const currentCursor = { rev: snapshotRev, path: null };
+    const snapshotCursor = { rev: snapshotRev, path: null };
+    const currentCursor =
+      input.through !== undefined && compareChangeCursors(input.through, snapshotCursor) < 0
+        ? input.through
+        : snapshotCursor;
     return {
       currentCursor,
       appliedPushCursor: readFetchCursor(this.db),
