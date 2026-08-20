@@ -108,7 +108,9 @@ export function readPushCursor(db: Database, backend: string = DEFAULT_BACKEND_I
     "push",
     backend,
   );
-  return row === undefined ? { rev: 0, path: null } : { rev: row.rev, path: row.path };
+  const watermark = readWatermark(db, "pushRev", backend);
+  if (row === undefined || watermark > row.rev) return { rev: watermark, path: null };
+  return { rev: row.rev, path: row.path };
 }
 
 export function writePushCursor(
