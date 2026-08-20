@@ -1352,6 +1352,11 @@ export class Workspace {
           await this.#schedulePendingSync(id, runtimeId);
         },
         onPostExecPending: (runtimeId) => this.#schedulePendingSync(id, runtimeId, true),
+        assertDeferredReady: () => {
+          if (this.#retryScheduler === undefined) {
+            throw new Error("Workspace requires a retryScheduler for deferred synchronization");
+          }
+        },
       },
       this.#observer,
       dispatch,

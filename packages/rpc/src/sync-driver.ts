@@ -531,6 +531,17 @@ export async function pushBatch(
     if (candidates.length >= options.budget.maxEntries) break;
   }
   if (candidates.length === 0) {
+    if (cursor.rev === 0 && cursor.path === null) {
+      return {
+        status: "complete",
+        entries: 0,
+        bytes: 0,
+        applied: 0,
+        skipped: [],
+        cursor,
+        targetCursor,
+      };
+    }
     const changes = new ReadableStream<ChangeEntry>({
       start(controller) {
         controller.close();

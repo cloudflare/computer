@@ -438,3 +438,21 @@ describe("Workspace deferred synchronization", () => {
     });
   });
 });
+
+it("rejects deferred execution without a retry scheduler", async () => {
+  let execs = 0;
+  const backend = retryBackend({
+    onExec: () => {
+      execs += 1;
+    },
+    async fetchChanges() {
+      throw new Error("not expected");
+    },
+  });
+  const ws = new Workspace({ storage: new SQLiteTestStorage(), backends: [backend] });
+
+  await expect(ws.runtime.exec("build", { sync: "deferred" })).rejects.toThrow(
+    "retryScheduler",
+  );
+  expect(execs).toBe(0);
+});
