@@ -83,6 +83,7 @@ export class WorkspaceFsAdapter {
   #prefetchRoot: string | undefined;
   #direntCache: Map<string, DirentEntry[]> | undefined;
   #prefetchLoad: Promise<void> | undefined;
+  #prefetchGeneration = 0;
 
   constructor(fs: WorkspaceFs) {
     this.#fs = fs;
@@ -117,6 +118,7 @@ export class WorkspaceFsAdapter {
   beginPrefetch(root: string): void {
     this.#prefetchDepth += 1;
     if (this.#prefetchDepth > 1) return;
+    this.#prefetchGeneration += 1;
     this.#prefetchRoot = normalizePath(root);
     this.#direntCache = undefined;
     this.#prefetchLoad = undefined;
@@ -126,6 +128,7 @@ export class WorkspaceFsAdapter {
     if (this.#prefetchDepth === 0) return;
     this.#prefetchDepth -= 1;
     if (this.#prefetchDepth > 0) return;
+    this.#prefetchGeneration += 1;
     this.#prefetchRoot = undefined;
     this.#direntCache = undefined;
     this.#prefetchLoad = undefined;
@@ -134,6 +137,7 @@ export class WorkspaceFsAdapter {
   // Drop the snapshot. Called from every mutating method so a write
   // inside a prefetch scope is never masked by cached listings.
   #invalidatePrefetch(): void {
+    this.#prefetchGeneration += 1;
     this.#direntCache = undefined;
     this.#prefetchLoad = undefined;
   }
@@ -152,6 +156,7 @@ export class WorkspaceFsAdapter {
     if (root === undefined) return undefined;
     if (this.#direntCache !== undefined) return this.#direntCache;
     if (this.#prefetchLoad === undefined) {
+      const generation = this.#prefetchGeneration;
       this.#prefetchLoad = (async () => {
         const found = await this.#fs.find(root);
         const cache = new Map<string, DirentEntry[]>();
@@ -181,15 +186,20 @@ export class WorkspaceFsAdapter {
           });
           if (isDirectory && !cache.has(entry.path)) cache.set(entry.path, []);
         }
-        this.#direntCache = cache;
+        // A mutation may have invalidated this load while find() was
+        // in flight. Only the current generation may publish a cache.
+        if (this.#prefetchGeneration === generation && this.#prefetchRoot === root) {
+          this.#direntCache = cache;
+        }
       })();
     }
+    const load = this.#prefetchLoad;
     try {
-      await this.#prefetchLoad;
+      await load;
     } catch {
       // A failed prefetch must not fail the command: fall back to
       // direct listings for the rest of the scope.
-      this.#prefetchLoad = undefined;
+      if (this.#prefetchLoad === load) this.#prefetchLoad = undefined;
       return undefined;
     }
     return this.#direntCache;

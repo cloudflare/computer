@@ -74,24 +74,6 @@ function tokenize(segment: string): string[] {
 // decline rather than risk serving a stale listing.
 const FIND_MUTATING = new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir"]);
 
-// find primaries that take a value; their argument is not a start path.
-const FIND_VALUED = new Set([
-  "-name",
-  "-iname",
-  "-path",
-  "-ipath",
-  "-type",
-  "-maxdepth",
-  "-mindepth",
-  "-size",
-  "-newer",
-  "-perm",
-  "-user",
-  "-group",
-  "-mtime",
-  "-regex",
-]);
-
 function findRoot(tokens: string[], cwd: string): string | undefined {
   for (const token of tokens) {
     if (FIND_MUTATING.has(token)) return undefined;

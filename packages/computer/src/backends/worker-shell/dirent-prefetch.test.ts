@@ -95,7 +95,8 @@ describe("directory prefetch", () => {
     const cached = await adapter.readdirWithFileTypes("/src");
     adapter.endPrefetch();
 
-    const sort = (xs: Array<{ name: string }>) => [...xs].sort((a, b) => a.name.localeCompare(b.name));
+    const sort = (xs: Array<{ name: string }>) =>
+      [...xs].sort((a, b) => a.name.localeCompare(b.name));
     expect(sort(cached)).toEqual(sort(uncached));
   });
 
@@ -109,8 +110,7 @@ describe("directory prefetch", () => {
     const cached = await adapter.readdirWithFileTypes("/d");
     adapter.endPrefetch();
 
-    const byName = (xs: Array<{ name: string }>) =>
-      Object.fromEntries(xs.map((e) => [e.name, e]));
+    const byName = (xs: Array<{ name: string }>) => Object.fromEntries(xs.map((e) => [e.name, e]));
     expect(byName(cached)).toEqual(byName(uncached));
   });
 
@@ -139,6 +139,36 @@ describe("directory prefetch", () => {
       const names = (await adapter.readdirWithFileTypes("/")).map((e) => e.name).sort();
       expect(names).toEqual(["a.txt", "b.txt"]);
     } finally {
+      adapter.endPrefetch();
+    }
+  });
+
+  it("does not restore an in-flight snapshot after a write", async () => {
+    await workspace.fs.writeFile("/a.txt", "one");
+    const originalFind = stub.find.bind(stub);
+    let releaseFind: (() => void) | undefined;
+    const findGate = new Promise<void>((resolve) => {
+      releaseFind = resolve;
+    });
+    const find = vi.spyOn(stub, "find").mockImplementation(async (...args) => {
+      const snapshot = await originalFind(...args);
+      await findGate;
+      return snapshot;
+    });
+
+    adapter.beginPrefetch("/");
+    try {
+      const firstRead = adapter.readdirWithFileTypes("/");
+      await vi.waitFor(() => expect(find).toHaveBeenCalledTimes(1));
+      await adapter.writeFile("/b.txt", "two");
+      releaseFind?.();
+      await firstRead;
+
+      const names = (await adapter.readdirWithFileTypes("/")).map((e) => e.name).sort();
+      expect(names).toEqual(["a.txt", "b.txt"]);
+      expect(find).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseFind?.();
       adapter.endPrefetch();
     }
   });
