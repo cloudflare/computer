@@ -194,7 +194,7 @@ The AI tool defaults to literal, case-sensitive matching. Set `regex: true` to i
 
 The tool passes `include`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer. Directory searches return matches in deterministic depth-first discovery order, then line order within each file. They are not globally sorted by full path.
 
-The lower-level `workspace.fs.grep` uses the same literal, case-sensitive defaults. Its options also accept `limit`, `offset`, `include`, `context`, `regex`, and `ignoreCase`.
+The lower-level `workspace.fs.grep` uses the same literal, case-sensitive defaults. Its options also accept `limit`, `offset`, `include`, `exclude`, `context`, `regex`, and `ignoreCase`. `exclude` prunes directories by exact path-segment name before reading their contents.
 
 ## `write`
 
