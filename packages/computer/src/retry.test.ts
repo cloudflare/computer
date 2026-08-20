@@ -451,8 +451,6 @@ it("rejects deferred execution without a retry scheduler", async () => {
   });
   const ws = new Workspace({ storage: new SQLiteTestStorage(), backends: [backend] });
 
-  await expect(ws.runtime.exec("build", { sync: "deferred" })).rejects.toThrow(
-    "retryScheduler",
-  );
+  await expect(ws.runtime.exec("build", { sync: "deferred" })).rejects.toThrow("retryScheduler");
   expect(execs).toBe(0);
 });

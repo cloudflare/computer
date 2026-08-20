@@ -15,6 +15,7 @@
 // TestBackend stays on the main entry because it's a thin
 // test-only fake with no payload.
 
+export type { SyncBatchBudget, SyncBatchResult } from "@cloudflare/computer-rpc/driver";
 export type {
   ApplyResult,
   DurableObjectStorageLike,
@@ -22,7 +23,6 @@ export type {
   SQLiteWorkspaceProviderOptions,
 } from "@cloudflare/dofs";
 export { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
-export type { SyncBatchBudget, SyncBatchResult } from "@cloudflare/computer-rpc/driver";
 export type { BackendHandle, WorkspaceBackend } from "./backend.js";
 export { TestBackend, type TestBackendOptions } from "./backends/test.js";
 export {
