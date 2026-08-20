@@ -32,10 +32,9 @@ export interface GrepOptions {
   /** Glob relative to a searched directory that limits files. */
   include?: string;
   /**
-   * Whole-segment names to skip during traversal. Excluded directories
-   * are never descended into, so their files are never read. Unlike
-   * `include`, which filters files after the walk has already visited
-   * them, this prunes the walk itself.
+   * Globs relative to the searched directory that exclude entries.
+   * Matching directories are never descended into, so their files are
+   * not read. Exclusions use the same glob syntax as `include`.
    */
   exclude?: string[];
 }
@@ -125,9 +124,9 @@ function normalizeOptions(options: GrepOptions): {
 
 interface ScanTarget {
   path: string;
-  // Undefined when the caller grepped a single file directly: that
-  // path still needs a normal resolve. Traversal-produced targets
-  // carry the inode the walk already read.
+  // Targets normally carry the inode and size already read during path
+  // resolution or traversal. The optional fields keep the streaming
+  // path available to callers that only have a path.
   inode?: number;
   size?: number;
 }
