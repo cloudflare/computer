@@ -13,6 +13,17 @@ export interface FindOptions {
   limit?: number;
   /** Matching entries to skip in traversal order. */
   offset?: number;
+  /**
+   * Whole-segment names to skip. A directory whose name matches is
+   * never descended into, so its subtree costs nothing; a file whose
+   * name matches is not yielded. Matching is exact per path segment —
+   * "node_modules" does not match "node_modules_extra".
+   *
+   * Pruning happens during descent rather than filtering emitted
+   * entries, which is the whole point: excluding node_modules has to
+   * avoid walking it, not walk it and discard the results.
+   */
+  exclude?: string[];
 }
 
 interface ChildRow {
@@ -26,6 +37,7 @@ interface WalkStart {
   path: string;
   prefix: string;
   regex: RegExp | undefined;
+  exclude: ReadonlySet<string>;
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -36,7 +48,7 @@ export function find(
   pattern?: string,
   options: FindOptions = {},
 ): WorkspaceFoundEntry[] {
-  const start = prepareWalk(db, directory, pattern);
+  const start = prepareWalk(db, directory, pattern, options.exclude);
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new TypeError("find limit must be a non-negative safe integer");
@@ -49,7 +61,7 @@ export function find(
 
   const out: WorkspaceFoundEntry[] = [];
   let seen = 0;
-  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex)) {
+  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude)) {
     if (seen >= offset) {
       out.push(entry);
       if (out.length >= limit) break;
@@ -63,12 +75,18 @@ export function* iterateFoundEntries(
   db: Database,
   directory: string,
   pattern?: string,
+  exclude?: string[],
 ): IterableIterator<WorkspaceFoundEntry> {
-  const start = prepareWalk(db, directory, pattern);
-  yield* walk(db, start.inode, start.path, start.prefix, start.regex);
+  const start = prepareWalk(db, directory, pattern, exclude);
+  yield* walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude);
 }
 
-function prepareWalk(db: Database, directory: string, pattern: string | undefined): WalkStart {
+function prepareWalk(
+  db: Database,
+  directory: string,
+  pattern: string | undefined,
+  exclude: string[] | undefined,
+): WalkStart {
   const { path: canonical } = canonicalizePath(directory);
   const node = resolveInode(db, canonical);
   if (node === null) {
@@ -87,8 +105,11 @@ function prepareWalk(db: Database, directory: string, pattern: string | undefine
     path: canonical,
     prefix: canonical === "/" ? "/" : `${canonical}/`,
     regex,
+    exclude: exclude === undefined || exclude.length === 0 ? EMPTY_EXCLUDE : new Set(exclude),
   };
 }
+
+const EMPTY_EXCLUDE: ReadonlySet<string> = new Set<string>();
 
 function* walk(
   db: Database,
@@ -96,6 +117,7 @@ function* walk(
   parentPath: string,
   prefix: string,
   regex: RegExp | undefined,
+  exclude: ReadonlySet<string>,
 ): IterableIterator<WorkspaceFoundEntry> {
   let afterName = "";
   while (true) {
@@ -103,13 +125,17 @@ function* walk(
     if (children.length === 0) return;
 
     for (const child of children) {
+      // Prune before doing anything else: an excluded directory is
+      // neither yielded nor descended into, so its entire subtree
+      // costs zero statements.
+      if (exclude.size > 0 && exclude.has(child.name)) continue;
       const childPath = parentPath === "/" ? `/${child.name}` : `${parentPath}/${child.name}`;
       const relativePath = childPath.slice(prefix.length);
       if (regex === undefined || regex.test(relativePath)) {
         yield { path: childPath, type: child.type };
       }
       if (child.type === "dir") {
-        yield* walk(db, child.child_inode, childPath, prefix, regex);
+        yield* walk(db, child.child_inode, childPath, prefix, regex, exclude);
       }
     }
 
