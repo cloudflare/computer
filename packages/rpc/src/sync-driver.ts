@@ -526,9 +526,13 @@ export async function pushBatch(
   }
 
   const candidates: ChangeEntry[] = [];
+  let exhausted = true;
   for await (const entry of coalesceChanges(db, cursor, { through: targetCursor })) {
     candidates.push(entry);
-    if (candidates.length >= options.budget.maxEntries) break;
+    if (candidates.length >= options.budget.maxEntries) {
+      exhausted = false;
+      break;
+    }
   }
   if (candidates.length === 0) {
     if (cursor.rev === 0 && cursor.path === null) {
@@ -642,6 +646,7 @@ export async function pushBatch(
     };
   }
   const lastCursor = entryCursor(selected[selected.length - 1]);
+  const acknowledgedCursor = exhausted ? targetCursor : lastCursor;
   const entryStream = new ReadableStream<ChangeEntry>({
     start(controller) {
       for (const entry of selected) controller.enqueue(entry);
@@ -650,18 +655,18 @@ export async function pushBatch(
   });
   const response = await remote.push({
     senderRev: targetCursor.rev,
-    senderCursor: lastCursor,
+    senderCursor: acknowledgedCursor,
     changes: entryStream,
   });
-  assertAppliedPushCursor(response.appliedPushCursor, lastCursor);
-  writePushCursor(db, lastCursor, backend);
+  assertAppliedPushCursor(response.appliedPushCursor, acknowledgedCursor);
+  writePushCursor(db, acknowledgedCursor, backend);
   return {
-    status: compareChangeCursors(lastCursor, targetCursor) >= 0 ? "complete" : "pending",
+    status: compareChangeCursors(acknowledgedCursor, targetCursor) >= 0 ? "complete" : "pending",
     entries: selected.length,
     bytes,
     applied: response.applied ?? selected.length,
     skipped: [],
-    cursor: lastCursor,
+    cursor: acknowledgedCursor,
     targetCursor,
   };
 }
