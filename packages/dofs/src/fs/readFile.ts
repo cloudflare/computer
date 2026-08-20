@@ -137,12 +137,12 @@ export function readCommittedFileByInode(
   inode: number,
   size: number,
   path: string,
-): Uint8Array {
+): ReadableStream<Uint8Array> {
   const buffered = getWriteBuffer(db, inode);
   if (buffered?.dirty) {
-    return buffered.buf.slice(0, buffered.size);
+    return streamBytes(buffered.buf.slice(0, buffered.size));
   }
-  if (size === 0) return new Uint8Array(0);
+  if (size === 0) return streamBytes(new Uint8Array(0));
 
   const lastIdx = Math.floor((size - 1) / CHUNK_SIZE);
   const chunks = db.all<ChunkRow>(
@@ -155,14 +155,17 @@ export function readCommittedFileByInode(
   );
   assertDenseRange(chunks, 0, lastIdx, path);
 
-  const out = new Uint8Array(size);
-  let written = 0;
-  for (const chunk of chunks) {
-    const bytes = rangedChunkBytes(db, path, chunk, 0, size);
-    out.set(bytes, written);
-    written += bytes.byteLength;
-  }
-  return out;
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index >= chunks.length) {
+        controller.close();
+        return;
+      }
+      const chunk = chunks[index++];
+      controller.enqueue(rangedChunkBytes(db, path, chunk, 0, size));
+    },
+  });
 }
 
 function validateReadWindow(
@@ -199,9 +202,13 @@ function snapshotResult(
   const { start, end } = readWindow(size, byteOffset, byteLength);
   const snapshot = source.slice(start, end);
   if (wantString) return new TextDecoder().decode(snapshot);
+  return streamBytes(snapshot);
+}
+
+function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      if (snapshot.byteLength > 0) controller.enqueue(snapshot);
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
       controller.close();
     },
   });

@@ -211,36 +211,14 @@ function flushReady(pending: PendingMatch[], out: WorkspaceGrepMatch[]): void {
   }
 }
 
-// Decode a whole file's bytes and yield 1-indexed lines. Mirrors the
-// streaming decoder's framing exactly: a trailing fragment with no
-// newline is still a line, and an empty file yields nothing.
-function* splitLines(bytes: Uint8Array): Iterable<NumberedLine> {
-  if (bytes.byteLength === 0) return;
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  let line = 1;
-  let start = 0;
-  let newline = text.indexOf("\n");
-  while (newline !== -1) {
-    yield { line, text: text.slice(start, newline) };
-    line += 1;
-    start = newline + 1;
-    newline = text.indexOf("\n", start);
-  }
-  if (start < text.length) yield { line, text: text.slice(start) };
-}
-
 async function* readLines(db: Database, target: ScanTarget): AsyncIterable<NumberedLine> {
   // Traversal-produced targets carry the inode and size the walk
-  // already read, so the bytes can be pulled straight from the chunk
-  // store. Re-resolving the path here cost one recursive-CTE statement
-  // per file, which is the bulk of a recursive grep's SQL.
-  if (target.inode !== undefined && target.size !== undefined) {
-    const bytes = readCommittedFileByInode(db, target.inode, target.size, target.path);
-    yield* splitLines(bytes);
-    return;
-  }
-
-  const stream = await readFile(db, target.path);
+  // already read, so the stream can skip a redundant path resolve.
+  // Both paths stay lazy so grep never holds a whole file in memory.
+  const stream =
+    target.inode !== undefined && target.size !== undefined
+      ? readCommittedFileByInode(db, target.inode, target.size, target.path)
+      : await readFile(db, target.path);
   const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let tail = "";
