@@ -235,6 +235,41 @@ describe("grep", () => {
       });
     });
 
+    it("issues fewer statements per file than a path re-resolve would", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/many", {}, () => 0);
+        const FILES = 40;
+        for (let i = 0; i < FILES; i++) {
+          await writeFile(db, `/many/f${i}.ts`, "NEEDLE here\n", {}, () => 0);
+        }
+
+        let statements = 0;
+        const originalAll = db.all.bind(db);
+        const originalOne = db.one.bind(db);
+        (db as unknown as { all: unknown }).all = (...args: unknown[]) => {
+          statements += 1;
+          return (originalAll as (...a: unknown[]) => unknown)(...args);
+        };
+        (db as unknown as { one: unknown }).one = (...args: unknown[]) => {
+          statements += 1;
+          return (originalOne as (...a: unknown[]) => unknown)(...args);
+        };
+        let matches: Awaited<ReturnType<typeof grep>>;
+        try {
+          matches = await grep(db, "NEEDLE", "/many");
+        } finally {
+          (db as unknown as { all: unknown }).all = originalAll;
+          (db as unknown as { one: unknown }).one = originalOne;
+        }
+
+        expect(matches).toHaveLength(FILES);
+        // The traversal already knows each file's inode, so grep must not
+        // re-resolve the path. That leaves the chunk read (and a blob read
+        // when the cache misses) per file, plus the directory listing.
+        expect(statements).toBeLessThanOrEqual(2 * FILES + 4);
+      });
+    });
+
     it("never reads files inside an excluded directory", async () => {
       await withDB(async (db) => {
         mkdir(db, "/node_modules/deep/nested", { recursive: true }, () => 0);

@@ -2,7 +2,7 @@ import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { iterateFoundEntries } from "./find.js";
-import { readFile } from "./readFile.js";
+import { readCommittedFileByInode, readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 
 export interface WorkspaceGrepContextLine {
@@ -75,14 +75,14 @@ export async function grep(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  const filePaths =
+  const filePaths: Iterable<ScanTarget> =
     node.type === "file"
-      ? [canonical]
+      ? [{ path: canonical, inode: node.inode, size: node.size }]
       : filesUnder(db, canonical, options.include, options.exclude);
-  for (const filePath of filePaths) {
+  for (const target of filePaths) {
     const complete = await scanFile(
       db,
-      filePath,
+      target,
       matcher,
       settings.context,
       settings.offset,
@@ -123,14 +123,25 @@ function normalizeOptions(options: GrepOptions): {
   };
 }
 
+interface ScanTarget {
+  path: string;
+  // Undefined when the caller grepped a single file directly: that
+  // path still needs a normal resolve. Traversal-produced targets
+  // carry the inode the walk already read.
+  inode?: number;
+  size?: number;
+}
+
 function* filesUnder(
   db: Database,
   directory: string,
   include: string | undefined,
   exclude: string[] | undefined,
-): Iterable<string> {
+): Iterable<ScanTarget> {
   for (const entry of iterateFoundEntries(db, directory, include, exclude)) {
-    if (entry.type === "file") yield entry.path;
+    if (entry.type === "file") {
+      yield { path: entry.path, inode: entry.inode, size: entry.size };
+    }
   }
 }
 
@@ -147,7 +158,7 @@ function compileMatcher(pattern: string, options: { regex: boolean; ignoreCase: 
 
 async function scanFile(
   db: Database,
-  path: string,
+  target: ScanTarget,
   matcher: RegExp,
   context: number,
   offset: number,
@@ -157,8 +168,9 @@ async function scanFile(
 ): Promise<boolean> {
   const before: WorkspaceGrepContextLine[] = [];
   const pending: PendingMatch[] = [];
+  const path = target.path;
 
-  for await (const current of readLines(db, path)) {
+  for await (const current of readLines(db, target)) {
     const isMatch = matcher.test(current.text);
     const contextLine = { ...current, isMatch };
     for (const item of pending) {
@@ -199,8 +211,36 @@ function flushReady(pending: PendingMatch[], out: WorkspaceGrepMatch[]): void {
   }
 }
 
-async function* readLines(db: Database, path: string): AsyncIterable<NumberedLine> {
-  const stream = await readFile(db, path);
+// Decode a whole file's bytes and yield 1-indexed lines. Mirrors the
+// streaming decoder's framing exactly: a trailing fragment with no
+// newline is still a line, and an empty file yields nothing.
+function* splitLines(bytes: Uint8Array): Iterable<NumberedLine> {
+  if (bytes.byteLength === 0) return;
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  let line = 1;
+  let start = 0;
+  let newline = text.indexOf("\n");
+  while (newline !== -1) {
+    yield { line, text: text.slice(start, newline) };
+    line += 1;
+    start = newline + 1;
+    newline = text.indexOf("\n", start);
+  }
+  if (start < text.length) yield { line, text: text.slice(start) };
+}
+
+async function* readLines(db: Database, target: ScanTarget): AsyncIterable<NumberedLine> {
+  // Traversal-produced targets carry the inode and size the walk
+  // already read, so the bytes can be pulled straight from the chunk
+  // store. Re-resolving the path here cost one recursive-CTE statement
+  // per file, which is the bulk of a recursive grep's SQL.
+  if (target.inode !== undefined && target.size !== undefined) {
+    const bytes = readCommittedFileByInode(db, target.inode, target.size, target.path);
+    yield* splitLines(bytes);
+    return;
+  }
+
+  const stream = await readFile(db, target.path);
   const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let tail = "";
