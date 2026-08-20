@@ -19,13 +19,11 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { Bash, type CustomCommand, type SecureFetch } from "just-bash";
-
-import { prefetchRootFor } from "./prefetch-policy.js";
-
 import { WorkspaceFsAdapter } from "./adapter.js";
 import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
 import { defineGitCommand, type GitCommandHost } from "./git-command.js";
+import { prefetchRootFor } from "./prefetch-policy.js";
 
 export interface ExecInput {
   command: string;
