@@ -20,6 +20,8 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { Bash, type CustomCommand, type SecureFetch } from "just-bash";
 
+import { prefetchRootFor } from "./prefetch-policy.js";
+
 import { WorkspaceFsAdapter } from "./adapter.js";
 import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
@@ -218,10 +220,14 @@ export class ShellWorker<
           customCommands,
         });
       } else {
+        const adapter = new WorkspaceFsAdapter(ws.fs);
+        // A recursive find/grep would otherwise walk the tree one
+        // readdir RPC per directory. Let the adapter answer that walk
+        // from a single subtree read for the duration of this command.
+        const prefetchRoot = prefetchRootFor(input.command, cwd);
+        if (prefetchRoot !== undefined) adapter.beginPrefetch(prefetchRoot);
         const bash = new Bash({
-          fs: new WorkspaceFsAdapter(ws.fs) as unknown as NonNullable<
-            ConstructorParameters<typeof Bash>[0]
-          >["fs"],
+          fs: adapter as unknown as NonNullable<ConstructorParameters<typeof Bash>[0]>["fs"],
           cwd,
           fetch:
             this.shellOptions.fetch === null
@@ -239,14 +245,19 @@ export class ShellWorker<
           defenseInDepth: { enabled: false },
           executionLimits: { maxOutputSize: MAX_OUTPUT_BYTES },
         });
-        result = await bash.exec(input.command, {
-          cwd,
-          env: input.env,
-          ...(input.stdin !== undefined
-            ? { stdin: latin1FromBytes(input.stdin), stdinKind: "bytes" as const }
-            : {}),
-          signal: controller.signal,
-        });
+        try {
+          result = await bash.exec(input.command, {
+            cwd,
+            env: input.env,
+            ...(input.stdin !== undefined
+              ? { stdin: latin1FromBytes(input.stdin), stdinKind: "bytes" as const }
+              : {}),
+            signal: controller.signal,
+          });
+        } finally {
+          // The snapshot must not outlive the command that opened it.
+          if (prefetchRoot !== undefined) adapter.endPrefetch();
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
