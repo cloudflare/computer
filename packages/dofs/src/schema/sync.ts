@@ -23,6 +23,23 @@ export const SYNC_STATEMENTS = [
   // index. Used on every recordDelete and on every push-tick that
   // processes tombstones.
   `CREATE INDEX IF NOT EXISTS vfs_changes_by_path ON vfs_changes(path, id DESC)`,
+  // coalesceChanges scans tombstones with
+  // `WHERE rev > ? AND op = 'delete' GROUP BY path`. Neither of the
+  // indexes above serves that: vfs_changes_by_rev(rev) can drive the
+  // range but leaves GROUP BY path to a sort, so the planner instead
+  // scans vfs_changes_by_path in path order and ignores the rev
+  // predicate entirely — reading the whole table to return the handful
+  // of rows in the watermark window.
+  //
+  // (op, rev) puts the equality column first and the range column
+  // second, which is the shape SQLite can drive both halves from. The
+  // GROUP BY still needs a temp b-tree, but the scan is now bounded by
+  // the rev window instead of the table.
+  //
+  // This only started to matter once node_modules entered the sync set:
+  // every reinstall appends thousands of tombstones and the table only
+  // grows. Added at schema v6; `schema/migrations.ts` owns the upgrade.
+  `CREATE INDEX IF NOT EXISTS vfs_changes_by_op_rev ON vfs_changes(op, rev)`,
   // Watermarks are keyed by (k, backend) so a workspace hosting
   // multiple backends keeps each backend's sync cursors
   // independent. The `backend` column was added at schema v3;

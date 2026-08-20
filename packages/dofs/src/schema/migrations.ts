@@ -142,11 +142,27 @@ function v4_to_v5_without_rowid(db: Database): void {
   db.run(`CREATE INDEX vfs_chunks_by_hash ON vfs_chunks(hash)`);
 }
 
+// v5 → v6 — add `vfs_changes_by_op_rev`. The push tick's tombstone
+// query filters `rev > ? AND op = 'delete'` and groups by path;
+// without an (op, rev) index the planner scans vfs_changes in path
+// order and never applies the rev predicate, reading the whole table
+// to return the few rows inside the watermark window.
+//
+// Index-only migration: no table is rewritten and no row is touched,
+// so existing tombstones carry through untouched. The CREATE is
+// duplicated in `sync.ts`'s fresh-install DDL; keep the two in
+// lockstep. IF NOT EXISTS keeps this safe if a database somehow
+// already has the index.
+function v5_to_v6_changes_op_rev_index(db: Database): void {
+  db.run(`CREATE INDEX IF NOT EXISTS vfs_changes_by_op_rev ON vfs_changes(op, rev)`);
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
   { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
   { from: 3, to: 4, migrator: v3_to_v4_watermark_backend_column },
   { from: 4, to: 5, migrator: v4_to_v5_without_rowid },
+  { from: 5, to: 6, migrator: v5_to_v6_changes_op_rev_index },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

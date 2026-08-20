@@ -11,9 +11,12 @@
 // composite-PK lookups now read straight from the PK b-tree leaf
 // with no rowid indirection, and `child_inode` lives in the
 // dirents leaf so the (parent, name) resolve read is covering
-// (no separate index needed). See `schema/migrations.ts` for the
-// migration list; `sync.ts` carries the fresh-install DDL.
-export const SCHEMA_VERSION = 5;
+// (no separate index needed). Bumped to 6 when `vfs_changes` gained
+// `vfs_changes_by_op_rev`, so the push tick's tombstone scan can
+// restrict on the rev window instead of reading the whole table.
+// See `schema/migrations.ts` for the migration list; `sync.ts`
+// carries the fresh-install DDL.
+export const SCHEMA_VERSION = 6;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [

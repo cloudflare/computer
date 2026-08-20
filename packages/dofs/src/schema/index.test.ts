@@ -444,6 +444,74 @@ describe("initializeSchema", () => {
     expect(norm(tableSql("vfs_chunks"))).toBe(norm(freshSql("vfs_chunks")));
   });
 
+  it("creates vfs_changes_by_op_rev on a fresh DB and uses it for the tombstone scan", () => {
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+    initializeSchema(db, () => 0);
+
+    const indexNames = db
+      .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
+      .map((r) => r.name);
+    expect(indexNames).toContain("vfs_changes_by_op_rev");
+
+    // The coalesce tombstone query must be able to restrict on rev
+    // rather than scanning the whole table. Before this index the plan
+    // was `SCAN vfs_changes USING INDEX vfs_changes_by_path`, which
+    // ignores the rev predicate entirely.
+    const plan = db
+      .all<{ detail: string }>(
+        `EXPLAIN QUERY PLAN
+         SELECT path, MAX(rev) AS rev FROM vfs_changes
+          WHERE rev > ? AND op = 'delete' GROUP BY path`,
+        0,
+      )
+      .map((r) => r.detail)
+      .join(" | ");
+    expect(plan).toContain("vfs_changes_by_op_rev");
+    expect(plan).not.toMatch(/SCAN vfs_changes(?! USING)/);
+  });
+
+  it("adds vfs_changes_by_op_rev on the v5 -> v6 upgrade, preserving tombstones", () => {
+    // Stage a v5-shape database: everything current except the new
+    // index. The migrator must add it without disturbing existing rows.
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+
+    initializeSchema(db, () => 0);
+    db.run("INSERT INTO vfs_changes (rev, path, op) VALUES (?, ?, 'delete')", 5, "/a.txt");
+    db.run("INSERT INTO vfs_changes (rev, path, op) VALUES (?, ?, 'delete')", 7, "/b.txt");
+    db.run("INSERT INTO vfs_changes (rev, path, op) VALUES (?, ?, 'delete')", 9, "/a.txt");
+    const before = db.all("SELECT id, rev, path, op FROM vfs_changes ORDER BY id");
+
+    // Roll the database back to v5: drop the index and restamp.
+    db.run("DROP INDEX IF EXISTS vfs_changes_by_op_rev");
+    db.run("UPDATE vfs_meta SET v = 5 WHERE k = 'schema_version'");
+    expect(
+      db
+        .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .map((r) => r.name),
+    ).not.toContain("vfs_changes_by_op_rev");
+
+    initializeSchema(db, () => 0);
+
+    expect(db.one<{ v: number }>("SELECT v FROM vfs_meta WHERE k = 'schema_version'")?.v).toBe(
+      SCHEMA_VERSION,
+    );
+    expect(
+      db
+        .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .map((r) => r.name),
+    ).toContain("vfs_changes_by_op_rev");
+    expect(db.all("SELECT id, rev, path, op FROM vfs_changes ORDER BY id")).toEqual(before);
+
+    // The pre-existing path index must survive the upgrade too.
+    expect(
+      db
+        .all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .map((r) => r.name),
+    ).toContain("vfs_changes_by_path");
+  });
+
   it("is idempotent across repeat calls", () => {
     const storage = new SQLiteTestStorage();
     const db = new Database(storage);
