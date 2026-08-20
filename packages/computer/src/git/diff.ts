@@ -29,6 +29,8 @@ export interface IsomorphicGitDiffClient {
     dir: string;
     ref?: string;
     cache?: object;
+    /** Prunes the worktree walk to these paths. Omit to walk it all. */
+    filepaths?: string[];
   }): Promise<StatusMatrixRow[]>;
   readBlob(args: {
     fs: object;
@@ -166,7 +168,21 @@ async function collectDiffEntries(opts: DiffWithDeps): Promise<DiffEntry[]> {
   // requested commit rather than always HEAD. Without this the
   // `ref` argument would only affect blob reads, leaving the
   // status walk silently skewed.
-  const status = await opts.git.statusMatrix({ fs: opts.fs, dir, ref, cache: opts.cache });
+  // Scope the walk when the caller named paths. isomorphic-git prunes
+  // the traversal to these prefixes instead of visiting the whole
+  // worktree and handing every path to `map`, which matters once the
+  // tree carries a synced node_modules. `filepaths` uses the same
+  // "exact path or directory prefix" rule as makePathFilter below, so
+  // the filter stays as the authority on what is emitted and this is
+  // purely a traversal hint.
+  const scopedPaths = normalizeFilepaths(opts.paths);
+  const status = await opts.git.statusMatrix({
+    fs: opts.fs,
+    dir,
+    ref,
+    cache: opts.cache,
+    ...(scopedPaths === undefined ? {} : { filepaths: scopedPaths }),
+  });
   const pathFilter = makePathFilter(opts.paths);
   const entries: DiffEntry[] = [];
   for (const [filepath, headStatus, workdirStatus] of status) {
@@ -260,6 +276,17 @@ async function listFilesAt(
 ): Promise<string[]> {
   if (typeof git.listFiles !== "function") return [];
   return git.listFiles({ fs, dir, ref });
+}
+
+// The `filepaths` form isomorphic-git wants: normalized, deduplicated,
+// and undefined when the caller asked for no scoping (so the library's
+// own default of ['.'] stands). An empty string normalizes to the repo
+// root, which would scope to everything — treat it as no scope.
+function normalizeFilepaths(paths: string[] | undefined): string[] | undefined {
+  if (paths === undefined || paths.length === 0) return undefined;
+  const out = [...new Set(paths.map((p) => normalizePath(p)))];
+  if (out.some((p) => p === "" || p === ".")) return undefined;
+  return out;
 }
 
 function makePathFilter(paths: string[] | undefined): (p: string) => boolean {
