@@ -22,6 +22,7 @@ import {
 import {
   type ApplyResult,
   type ChangeCursor,
+  compareChangeCursors,
   Database,
   type DurableObjectStorageLike,
   initializeSchema,
@@ -741,21 +742,10 @@ export class Workspace {
           intent.targetCursor,
         );
         if (result.status === "pending") {
-          if (intent.attempt >= this.#retryMaxAttempts) {
-            return {
-              status: "exhausted",
-              backend: resolvedId,
-              ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
-              attempt: intent.attempt,
-              error: "pending sync retry attempts exhausted",
-            };
-          }
-          const next = this.#retryIntent(
-            resolvedId,
-            intent.attempt + 1,
-            intent.runtimeId,
-            result.targetCursor,
-          );
+          // Hitting a batch budget is successful progress, not a failed
+          // retry. Reset the consecutive-failure count so large trees
+          // can drain through any number of bounded alarm turns.
+          const next = this.#retryIntent(resolvedId, 1, intent.runtimeId, result.targetCursor);
           await scheduler.schedule(next);
           return {
             status: "pending",
@@ -881,28 +871,52 @@ export class Workspace {
     return this.#serialize(id, async (resolvedId) => {
       if (resolvedId === undefined) return {};
       const existing = await scheduler.get(resolvedId);
-      if (existing !== undefined && (runtimeId === undefined || existing.runtimeId === runtimeId)) {
+      const sameRuntime =
+        existing !== undefined && (runtimeId === undefined || existing.runtimeId === runtimeId);
+      if (!captureTarget && sameRuntime) {
         return {
           backend: resolvedId,
           ...(existing.runtimeId === undefined ? {} : { runtimeId: existing.runtimeId }),
           ...(existing.targetCursor === undefined ? {} : { targetCursor: existing.targetCursor }),
         };
       }
+
+      const intentRuntimeId = runtimeId ?? (sameRuntime ? existing.runtimeId : undefined);
       let targetCursor: ChangeCursor | undefined;
+      let captureError: unknown;
       if (captureTarget) {
-        const handle = await this.#handleFor(resolvedId);
-        if (runtimeId !== undefined) {
-          assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
+        try {
+          const handle = await this.#handleFor(resolvedId);
+          if (runtimeId !== undefined) {
+            assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
+          }
+          targetCursor =
+            handle.sync === "none"
+              ? { rev: 0, path: null }
+              : {
+                  rev: (await handle.rpc.sync.watermarks({ settle: true })).currentRev,
+                  path: null,
+                };
+          if (
+            sameRuntime &&
+            existing.targetCursor !== undefined &&
+            compareChangeCursors(existing.targetCursor, targetCursor) > 0
+          ) {
+            targetCursor = existing.targetCursor;
+          }
+        } catch (error) {
+          // Preserve a durable, unfenced retry when the settle/capture
+          // step fails. Its first pull will capture a fresh target.
+          captureError = error;
+          targetCursor = undefined;
         }
-        targetCursor =
-          handle.sync === "none"
-            ? { rev: 0, path: null }
-            : { rev: (await handle.rpc.sync.watermarks()).currentRev, path: null };
       }
-      await scheduler.schedule(this.#retryIntent(resolvedId, 1, runtimeId, targetCursor));
+
+      await scheduler.schedule(this.#retryIntent(resolvedId, 1, intentRuntimeId, targetCursor));
+      if (captureError !== undefined) throw captureError;
       return {
         backend: resolvedId,
-        ...(runtimeId === undefined ? {} : { runtimeId }),
+        ...(intentRuntimeId === undefined ? {} : { runtimeId: intentRuntimeId }),
         ...(targetCursor === undefined ? {} : { targetCursor }),
       };
     });

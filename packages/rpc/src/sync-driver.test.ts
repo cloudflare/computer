@@ -475,6 +475,37 @@ describe("SyncRPC server — beforeFetch hook", () => {
       b.close();
     }
   });
+
+  it("settles before returning a deferred synchronization target", async () => {
+    const b = makeReceiverWithSpy();
+    try {
+      const provider = new SQLiteWorkspaceProvider(b.db, { now: () => 2 });
+      b.setBeforeFetch(() => {
+        provider.writeFileSync("/late.txt", "settled");
+      });
+
+      const watermarks = await b.rpc.watermarks({ settle: true });
+
+      expect(b.calls).toBe(1);
+      expect(watermarks.currentRev).toBe(currentRev(b.db));
+      expect(watermarks.currentRev).toBeGreaterThan(1);
+    } finally {
+      b.close();
+    }
+  });
+
+  it("surfaces a failed settle instead of returning a stale target", async () => {
+    const b = makeReceiverWithSpy();
+    try {
+      b.setBeforeFetch(() => {
+        throw new Error("settle failed");
+      });
+
+      await expect(b.rpc.watermarks({ settle: true })).rejects.toThrow("settle failed");
+    } finally {
+      b.close();
+    }
+  });
 });
 
 describe("SyncRPC server — fetchChanges snapshots", () => {
@@ -1400,6 +1431,31 @@ describe("bounded synchronization", () => {
       });
       expect(third.status).toBe("complete");
       expect(fileEntries(downstream.db)).toEqual(["one.txt", "two.txt"]);
+    } finally {
+      upstream.close();
+      downstream.close();
+    }
+  });
+
+  it("leaves an advanced fetch cursor alone when an old target is already satisfied", async () => {
+    const upstream = makePeer();
+    const downstream = makePeer();
+    try {
+      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
+      await provider.writeFile("/one.txt", "one");
+      const oldTarget = { rev: currentRev(upstream.db), path: null };
+      await provider.writeFile("/two.txt", "two");
+      await pullOnce(downstream.db, upstream.rpc);
+      const advanced = readFetchCursor(downstream.db);
+
+      const result = await pullBatch(downstream.db, upstream.rpc, {
+        targetCursor: oldTarget,
+        budget: { maxEntries: 1, maxBytes: 1024 },
+      });
+
+      expect(result.status).toBe("complete");
+      expect(result.cursor).toEqual(advanced);
+      expect(readFetchCursor(downstream.db)).toEqual(advanced);
     } finally {
       upstream.close();
       downstream.close();

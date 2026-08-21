@@ -354,6 +354,20 @@ async function pullBatchImpl(
 ): Promise<SyncBatchResult> {
   const backend = options.backend;
   const after = readFetchCursor(db, backend);
+  if (
+    options.targetCursor !== undefined &&
+    compareChangeCursors(after, options.targetCursor) >= 0
+  ) {
+    return {
+      status: "complete",
+      entries: 0,
+      bytes: 0,
+      applied: 0,
+      skipped: [],
+      cursor: after,
+      targetCursor: options.targetCursor,
+    };
+  }
   const fetchResult = await remote.fetchChanges({ after, through: options.targetCursor });
   const pushCursor = readPushCursor(db, backend);
   const pushDiverged = fetchResult.appliedPushCursor.rev < pushCursor.rev;

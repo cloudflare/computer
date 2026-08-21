@@ -34,6 +34,7 @@ class MemoryRetryScheduler implements SyncRetryScheduler {
 function retryBackend(options: {
   onExec(): void;
   fetchChanges: import("@cloudflare/computer-rpc").SyncRPC["fetchChanges"];
+  watermarks?: import("@cloudflare/computer-rpc").SyncRPC["watermarks"];
   close?: () => Promise<void>;
 }): WorkspaceBackend {
   const sync: import("@cloudflare/computer-rpc").SyncRPC = {
@@ -50,9 +51,13 @@ function retryBackend(options: {
     fetchObjects() {
       return new ReadableStream({ start: (controller) => controller.close() });
     },
-    async watermarks() {
-      return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
-    },
+    watermarks:
+      options.watermarks ??
+      (async () => ({
+        currentRev: 0,
+        pushRev: 0,
+        fetchCursor: { rev: 0, path: null },
+      })),
     async pushObjects() {},
   };
   return {
@@ -304,6 +309,61 @@ describe("Workspace durable pending-sync retries", () => {
     expect(scheduler.cleared).toEqual(["sandbox"]);
   });
 
+  it("does not exhaust retries while bounded batches are making progress", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    const entries = Array.from(
+      { length: 6 },
+      (_, index): ChangeEntry => ({
+        kind: "delete",
+        rev: 1,
+        path: `/generated/${index}`,
+        mtime: 1,
+      }),
+    );
+    const backend = retryBackend({
+      onExec() {},
+      async fetchChanges(input) {
+        const remaining = entries.filter((entry) => {
+          if (!input.after || input.after.rev < entry.rev) return true;
+          return input.after.path !== null && entry.path > input.after.path;
+        });
+        return {
+          currentCursor: { rev: 1, path: null },
+          appliedPushCursor: { rev: 0, path: null },
+          stream: new ReadableStream<ChangeEntry>({
+            start(controller) {
+              for (const entry of remaining) controller.enqueue(entry);
+              controller.close();
+            },
+          }),
+        };
+      },
+    });
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+      retry: { initialDelayMs: 100, maxDelayMs: 1_000, maxAttempts: 3 },
+      now: () => 5_000,
+    });
+    scheduler.intents.set("sandbox", {
+      backend: "sandbox",
+      targetCursor: { rev: 1, path: null },
+      attempt: 1,
+      notBefore: 0,
+    });
+
+    const outcomes: WorkspaceRetryPendingSyncResult[] = [];
+    for (let i = 0; i < 7; i++) {
+      outcomes.push(await ws.retryPendingSync("sandbox", { maxEntries: 1, maxBytes: 1024 }));
+    }
+
+    expect(outcomes.slice(0, -1).every((result) => result.status === "pending")).toBe(true);
+    expect(outcomes.at(-1)).toMatchObject({ status: "complete" });
+    expect(outcomes.some((result) => result.status === "exhausted")).toBe(false);
+    expect(scheduler.intents.size).toBe(0);
+  });
+
   it("coalesces repeated command failures into one pending intent per backend", async () => {
     const scheduler = new MemoryRetryScheduler();
     const backend = retryBackend({
@@ -435,6 +495,105 @@ describe("Workspace deferred synchronization", () => {
     expect(scheduler.intents.get("sandbox")).toMatchObject({
       backend: "sandbox",
       targetCursor: { rev: 0, path: null },
+    });
+  });
+
+  it("settles the remote filesystem before capturing the deferred target", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    const settleInputs: unknown[] = [];
+    const backend = retryBackend({
+      onExec() {},
+      async fetchChanges() {
+        throw new Error("not used");
+      },
+      async watermarks(input) {
+        settleInputs.push(input);
+        return {
+          currentRev: input?.settle === true ? 5 : 0,
+          pushRev: 0,
+          fetchCursor: { rev: 0, path: null },
+        };
+      },
+    });
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+    });
+
+    const handle = await ws.runtime.exec("build", { sync: "deferred" });
+    const result = await handle.result();
+
+    expect(settleInputs.at(-1)).toEqual({ settle: true });
+    expect(result.sync).toMatchObject({ targetCursor: { rev: 5, path: null } });
+    expect(scheduler.intents.get("sandbox")).toMatchObject({
+      targetCursor: { rev: 5, path: null },
+    });
+  });
+
+  it("persists an unfenced intent when target capture fails", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    const backend = retryBackend({
+      onExec() {},
+      async fetchChanges() {
+        throw new Error("not used");
+      },
+      async watermarks(input) {
+        if (input?.settle === true) throw new Error("settle failed");
+        return { currentRev: 0, pushRev: 0, fetchCursor: { rev: 0, path: null } };
+      },
+    });
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+    });
+
+    const handle = await ws.runtime.exec("build", { sync: "deferred" });
+    const result = await handle.result();
+
+    expect(result.sync).toMatchObject({
+      status: "pending",
+      error: expect.stringContaining("settle failed"),
+    });
+    expect(scheduler.intents.get("sandbox")).toEqual(
+      expect.objectContaining({ backend: "sandbox", attempt: 1 }),
+    );
+    expect(scheduler.intents.get("sandbox")).not.toHaveProperty("targetCursor");
+  });
+
+  it("widens an existing intent when another deferred command finishes", async () => {
+    const scheduler = new MemoryRetryScheduler();
+    let currentRev = 0;
+    const backend = retryBackend({
+      onExec() {
+        currentRev++;
+      },
+      async fetchChanges() {
+        throw new Error("not used");
+      },
+      async watermarks() {
+        return {
+          currentRev,
+          pushRev: 0,
+          fetchCursor: { rev: 0, path: null },
+        };
+      },
+    });
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [backend],
+      retryScheduler: scheduler,
+    });
+
+    const first = await ws.runtime.exec("first", { sync: "deferred" });
+    await first.result();
+    const second = await ws.runtime.exec("second", { sync: "deferred" });
+    const result = await second.result();
+
+    expect(result.sync).toMatchObject({ targetCursor: { rev: 2, path: null } });
+    expect(scheduler.intents.get("sandbox")).toMatchObject({
+      targetCursor: { rev: 2, path: null },
     });
   });
 });

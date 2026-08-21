@@ -201,7 +201,18 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     return materialiseChange(this.db, path);
   }
 
-  async watermarks(): Promise<{ currentRev: number; pushRev: number; fetchCursor: ChangeCursor }> {
+  async watermarks(input: { settle?: boolean } = {}): Promise<{
+    currentRev: number;
+    pushRev: number;
+    fetchCursor: ChangeCursor;
+  }> {
+    // Deferred command synchronization needs a cursor that includes
+    // writes still waiting in the userspace shim. Unlike the ordinary
+    // diagnostic read, a settled read propagates hook failures so the
+    // caller can persist an unfenced retry instead of a stale target.
+    if (input.settle === true && this.options.beforeFetch !== undefined) {
+      await this.options.beforeFetch();
+    }
     return {
       currentRev: currentRev(this.db),
       pushRev: readWatermark(this.db, "pushRev"),

@@ -548,4 +548,58 @@ describe("CommandExecutor cancellation", () => {
     await execution.sync.outcome;
     expect(scheduled).toBe(1);
   });
+
+  it("waits for a deferred command to finish before capturing its target after cancellation", async () => {
+    let source!: ReadableStreamDefaultController<ExecEvent>;
+    let sourceCancelled = false;
+    const shell: ShellRPC = {
+      async exec() {
+        return {
+          id: "still-running",
+          events: new ReadableStream<ExecEvent>({
+            start(controller) {
+              source = controller;
+            },
+            cancel() {
+              sourceCancelled = true;
+            },
+          }),
+        };
+      },
+      async getExec() {
+        throw new Error("unused");
+      },
+      async killExec() {},
+      async disposeExec() {},
+    };
+    let scheduled = 0;
+    const sync: Sync = {
+      async push() {
+        return 0;
+      },
+      async pull() {
+        return applied(0);
+      },
+      async onPostExecPending() {
+        scheduled++;
+        return { targetCursor: { rev: 2, path: null } };
+      },
+    };
+    const execution = await new CommandExecutor(shell, sync).exec("build", {
+      sync: "deferred",
+    });
+
+    const cancelling = execution.events.cancel("consumer stopped");
+    await Promise.resolve();
+    expect(sourceCancelled).toBe(false);
+    expect(scheduled).toBe(0);
+
+    source.enqueue(exit(1, 0));
+    source.close();
+    await cancelling;
+    await expect(execution.sync.outcome).resolves.toMatchObject({
+      sync: { status: "pending", targetCursor: { rev: 2, path: null } },
+    });
+    expect(scheduled).toBe(1);
+  });
 });

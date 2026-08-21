@@ -316,9 +316,9 @@ export function withDeferredPostPull(
   const outcome = new Promise<PostPullOutcome>((resolve) => {
     resolveOutcome = resolve;
   });
-  const settle = async (reason?: unknown) => {
+  const settle = async () => {
     let metadata: Awaited<ReturnType<NonNullable<Sync["onPostExecPending"]>>> = {};
-    let error: unknown = reason;
+    let error: unknown;
     try {
       metadata = (await sync.onPostExecPending?.(runtimeId)) ?? {};
     } catch (caught) {
@@ -333,6 +333,21 @@ export function withDeferredPostPull(
         skipped: [],
         ...(error === undefined ? {} : { error: safeErrorMessage(error) }),
         ...metadata,
+      },
+    });
+  };
+  const settleUnfenced = async (error: unknown) => {
+    try {
+      await sync.onPullPending?.(error, runtimeId);
+    } catch {}
+    resolveOutcome({
+      applied: 0,
+      skipped: [],
+      sync: {
+        status: "pending",
+        applied: 0,
+        skipped: [],
+        error: safeErrorMessage(error),
       },
     });
   };
@@ -352,16 +367,25 @@ export function withDeferredPostPull(
           try {
             reader.releaseLock();
           } catch {}
-          await settle(error);
+          await settleUnfenced(error);
           controller.error(error);
         }
       },
-      async cancel(reason) {
+      async cancel() {
+        // Cancelling an event subscription does not stop the command.
+        // Keep draining so backpressure cannot stall it, then capture
+        // the target only after its stream closes. The cancellation
+        // promise is the durability boundary: it resolves only after
+        // the retry intent has been stored.
         try {
-          await reader.cancel(reason);
-        } finally {
+          while (!(await reader.read()).done) {}
           reader.releaseLock();
-          await settle(reason);
+          await settle();
+        } catch (error) {
+          try {
+            reader.releaseLock();
+          } catch {}
+          await settleUnfenced(error);
         }
       },
     },

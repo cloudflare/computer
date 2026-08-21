@@ -71,8 +71,14 @@ export interface SyncRPC {
   //                 progress.
   //
   // pushRev / fetchCursor only move when the receiver is acting as
-  // a sync peer. Otherwise they sit at 0.
-  watermarks(): Promise<{ currentRev: number; pushRev: number; fetchCursor: ChangeCursor }>;
+  // a sync peer. Otherwise they sit at 0. Pass `settle: true` to run
+  // the receiver's pre-fetch reconciliation before currentRev is read;
+  // deferred command sync uses that as its durable target fence.
+  watermarks(input?: { settle?: boolean }): Promise<{
+    currentRev: number;
+    pushRev: number;
+    fetchCursor: ChangeCursor;
+  }>;
 
   // Materialise the receiver's view of a single path as a
   // ChangeEntry. Returns null when the path doesn't exist and

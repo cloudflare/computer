@@ -86,7 +86,10 @@ interface SyncRPC {
   // when it wants to wait for the wire to drain. pushRev /
   // fetchCursor only move when the receiver is acting as a sync
   // peer; otherwise they sit at 0 / { rev: 0, path: null }.
-  watermarks(): Promise<{
+  // `settle` runs the same disk-to-VFS reconciliation as
+  // fetchChanges before reading currentRev. Deferred command sync
+  // uses it to capture a target that includes the command's writes.
+  watermarks(input?: { settle?: boolean }): Promise<{
     currentRev: number;
     pushRev:    number;
     fetchCursor: { rev: number; path: string | null };
