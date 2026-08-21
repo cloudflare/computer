@@ -156,16 +156,19 @@ export function readCommittedFileByInode(
   assertDenseRange(chunks, 0, lastIdx, path);
 
   let index = 0;
-  return new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (index >= chunks.length) {
-        controller.close();
-        return;
-      }
-      const chunk = chunks[index++];
-      controller.enqueue(rangedChunkBytes(db, path, chunk, 0, size));
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (index >= chunks.length) {
+          controller.close();
+          return;
+        }
+        const chunk = chunks[index++];
+        controller.enqueue(rangedChunkBytes(db, path, chunk, 0, size));
+      },
     },
-  });
+    { highWaterMark: 0 },
+  );
 }
 
 function validateReadWindow(
