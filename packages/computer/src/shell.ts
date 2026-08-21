@@ -81,7 +81,7 @@ export interface ExecOptions {
   // Standard input fed to the command. Bytes, or a string encoded
   // as UTF-8.
   stdin?: Uint8Array | string;
-  sync?: "inline" | "deferred";
+  sync?: "wait" | "defer";
 }
 
 export interface GetExecOptions {
@@ -155,7 +155,7 @@ export class CommandExecutor {
   // with stale or incomplete workspace contents is not safe.
   async exec(source: string, options: ExecOptions = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
-    if (options.sync === "deferred") await this.#sync.assertDeferredReady?.();
+    if (options.sync === "defer") await this.#sync.assertDeferredReady?.();
     const input: ShellExecInput = {
       source,
       id: options.id,
@@ -180,7 +180,7 @@ export class CommandExecutor {
     // and the envelope can't be bound with `using` here.
     const drained = disposeOnDone(envelope.events, () => maybeDispose(envelope));
     const wrapped =
-      options.sync === "deferred"
+      options.sync === "defer"
         ? withDeferredPostPull(drained, this.#sync, envelope.runtimeId)
         : withPostPull(drained, this.#sync, envelope.runtimeId);
     return {

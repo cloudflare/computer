@@ -317,7 +317,7 @@ describe("CommandExecutor.exec — push/pull bracket", () => {
       },
     };
     const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop", {
-      sync: "deferred",
+      sync: "defer",
     });
     const { outcome } = await drain(execution);
     expect(order).toEqual(["push", "schedule"]);
@@ -340,7 +340,7 @@ describe("CommandExecutor.exec — push/pull bracket", () => {
         return applied(7);
       },
     };
-    const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop");
+    const execution = await new CommandExecutor(f.rpc.shell, sync).exec("noop", { sync: "wait" });
     expect(execution.sync.pushed).toBe(5);
     const { outcome } = await drain(execution);
     expect(outcome).toEqual({
@@ -586,7 +586,7 @@ describe("CommandExecutor cancellation", () => {
       },
     };
     const execution = await new CommandExecutor(shell, sync).exec("build", {
-      sync: "deferred",
+      sync: "defer",
     });
 
     const cancelling = execution.events.cancel("consumer stopped");

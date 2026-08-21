@@ -483,7 +483,7 @@ describe("Workspace deferred synchronization", () => {
 
     const handle = await ws.runtime.exec("build", {
       encoding: "utf8",
-      sync: "deferred",
+      sync: "defer",
     });
     const result = await handle.result();
 
@@ -521,7 +521,7 @@ describe("Workspace deferred synchronization", () => {
       retryScheduler: scheduler,
     });
 
-    const handle = await ws.runtime.exec("build", { sync: "deferred" });
+    const handle = await ws.runtime.exec("build", { sync: "defer" });
     const result = await handle.result();
 
     expect(settleInputs.at(-1)).toEqual({ settle: true });
@@ -549,7 +549,7 @@ describe("Workspace deferred synchronization", () => {
       retryScheduler: scheduler,
     });
 
-    const handle = await ws.runtime.exec("build", { sync: "deferred" });
+    const handle = await ws.runtime.exec("build", { sync: "defer" });
     const result = await handle.result();
 
     expect(result.sync).toMatchObject({
@@ -586,9 +586,9 @@ describe("Workspace deferred synchronization", () => {
       retryScheduler: scheduler,
     });
 
-    const first = await ws.runtime.exec("first", { sync: "deferred" });
+    const first = await ws.runtime.exec("first", { sync: "defer" });
     await first.result();
-    const second = await ws.runtime.exec("second", { sync: "deferred" });
+    const second = await ws.runtime.exec("second", { sync: "defer" });
     const result = await second.result();
 
     expect(result.sync).toMatchObject({ targetCursor: { rev: 2, path: null } });
@@ -610,6 +610,6 @@ it("rejects deferred execution without a retry scheduler", async () => {
   });
   const ws = new Workspace({ storage: new SQLiteTestStorage(), backends: [backend] });
 
-  await expect(ws.runtime.exec("build", { sync: "deferred" })).rejects.toThrow("retryScheduler");
+  await expect(ws.runtime.exec("build", { sync: "defer" })).rejects.toThrow("retryScheduler");
   expect(execs).toBe(0);
 });
