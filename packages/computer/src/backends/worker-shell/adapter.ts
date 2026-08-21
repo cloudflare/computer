@@ -77,8 +77,132 @@ type AdapterReadFileOptions = { encoding?: "utf8" | null } | "utf8" | null | und
 export class WorkspaceFsAdapter {
   readonly #fs: WorkspaceFs;
 
+  // Directory-listing cache, populated by a single subtree read and
+  // consulted only while a prefetch scope is open. See beginPrefetch.
+  #prefetchDepth = 0;
+  #prefetchRoot: string | undefined;
+  #direntCache: Map<string, DirentEntry[]> | undefined;
+  #prefetchLoad: Promise<void> | undefined;
+  #prefetchGeneration = 0;
+
   constructor(fs: WorkspaceFs) {
     this.#fs = fs;
+  }
+
+  // --- Directory prefetch ------------------------------------------
+  //
+  // just-bash's find and grep walk the tree with one
+  // readdirWithFileTypes per directory. Each is an RPC to the
+  // workspace, so a recursive command over a tree that includes
+  // node_modules costs thousands of round-trips before any matching
+  // work happens.
+  //
+  // A caller that is about to run such a walk can open a prefetch
+  // scope: the adapter reads the whole subtree once via the
+  // workspace's server-side find() and answers subsequent
+  // readdirWithFileTypes calls from that snapshot.
+  //
+  // Correctness rules:
+  //   * The cache lives only for the duration of the scope. Nothing
+  //     persists between commands, so a later command never sees a
+  //     stale tree.
+  //   * Any mutation through the adapter drops the cache immediately,
+  //     so a walk that writes (find -delete, a pipeline that edits
+  //     files) re-reads rather than trusting the snapshot.
+  //   * Paths outside the prefetched root fall through to a direct
+  //     listing.
+  //
+  // Scopes nest: only the outermost begin/end pair drives the load and
+  // the teardown, so a caller can open a scope without knowing whether
+  // one is already active.
+  beginPrefetch(root: string): void {
+    this.#prefetchDepth += 1;
+    if (this.#prefetchDepth > 1) return;
+    this.#prefetchGeneration += 1;
+    this.#prefetchRoot = normalizePath(root);
+    this.#direntCache = undefined;
+    this.#prefetchLoad = undefined;
+  }
+
+  endPrefetch(): void {
+    if (this.#prefetchDepth === 0) return;
+    this.#prefetchDepth -= 1;
+    if (this.#prefetchDepth > 0) return;
+    this.#prefetchGeneration += 1;
+    this.#prefetchRoot = undefined;
+    this.#direntCache = undefined;
+    this.#prefetchLoad = undefined;
+  }
+
+  // Drop the snapshot. Called from every mutating method so a write
+  // inside a prefetch scope is never masked by cached listings.
+  #invalidatePrefetch(): void {
+    this.#prefetchGeneration += 1;
+    this.#direntCache = undefined;
+    this.#prefetchLoad = undefined;
+  }
+
+  // True when `path` sits inside the active prefetch root.
+  #withinPrefetch(path: string): boolean {
+    if (this.#prefetchDepth === 0 || this.#prefetchRoot === undefined) return false;
+    if (this.#prefetchRoot === "/") return true;
+    return path === this.#prefetchRoot || path.startsWith(`${this.#prefetchRoot}/`);
+  }
+
+  // Build the directory -> entries map for the whole prefetched
+  // subtree from one find() call. Concurrent callers share the load.
+  async #ensurePrefetch(): Promise<Map<string, DirentEntry[]> | undefined> {
+    const root = this.#prefetchRoot;
+    if (root === undefined) return undefined;
+    if (this.#direntCache !== undefined) return this.#direntCache;
+    if (this.#prefetchLoad === undefined) {
+      const generation = this.#prefetchGeneration;
+      this.#prefetchLoad = (async () => {
+        const found = await this.#fs.find(root);
+        const cache = new Map<string, DirentEntry[]>();
+        // The root itself always exists as a (possibly empty) bucket so
+        // an empty directory reads as empty rather than missing.
+        cache.set(root, []);
+        for (const entry of found) {
+          const slash = entry.path.lastIndexOf("/");
+          const parent = slash <= 0 ? "/" : entry.path.slice(0, slash);
+          const name = entry.path.slice(slash + 1);
+          let bucket = cache.get(parent);
+          if (bucket === undefined) {
+            bucket = [];
+            cache.set(parent, bucket);
+          }
+          // dofs's find reports "symlink" at runtime even though the
+          // published WorkspaceFoundEntry union is narrower, so widen
+          // here rather than mislabelling links as regular files.
+          const type = entry.type as "file" | "dir" | "symlink";
+          const isDirectory = type === "dir";
+          const isSymbolicLink = type === "symlink";
+          bucket.push({
+            name,
+            isFile: !isDirectory && !isSymbolicLink,
+            isDirectory,
+            isSymbolicLink,
+          });
+          if (isDirectory && !cache.has(entry.path)) cache.set(entry.path, []);
+        }
+        // A mutation may have invalidated this load while find() was
+        // in flight. Only the current generation may publish a cache.
+        if (this.#prefetchGeneration === generation && this.#prefetchRoot === root) {
+          this.#direntCache = cache;
+        }
+      })();
+    }
+    const load = this.#prefetchLoad;
+    try {
+      await load;
+    } catch {
+      // A failed prefetch must not fail the command: fall back to
+      // direct listings for the rest of the scope.
+      if (this.#prefetchLoad === load) this.#prefetchLoad = undefined;
+      return undefined;
+    }
+    return this.#direntCache;
   }
 
   // --- Reads -------------------------------------------------------
@@ -130,6 +254,18 @@ export class WorkspaceFsAdapter {
     if (isDevDir(path)) {
       return [{ name: "null", isFile: true, isDirectory: false, isSymbolicLink: false }];
     }
+    const normalized = normalizePath(path);
+    if (this.#withinPrefetch(normalized)) {
+      const cache = await this.#ensurePrefetch();
+      const hit = cache?.get(normalized);
+      if (hit !== undefined) return hit.map((entry) => ({ ...entry }));
+      if (cache !== undefined) {
+        // Inside the prefetched subtree but absent from the snapshot:
+        // the directory does not exist. Surface the same error a direct
+        // listing would.
+        throw createWorkspaceError("ENOENT", "no such file or directory", path);
+      }
+    }
     const entries = await this.#fs.readdir(path);
     return entries.map((e) => ({
       name: e.name,
@@ -150,11 +286,13 @@ export class WorkspaceFsAdapter {
 
   async writeFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
     if (isDevNull(path)) return;
+    this.#invalidatePrefetch();
     await this.#fs.writeFile(path, content);
   }
 
   async appendFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
     if (isDevNull(path)) return;
+    this.#invalidatePrefetch();
     let existing: Uint8Array;
     try {
       const stream = await this.#fs.readFile(path);
@@ -172,16 +310,19 @@ export class WorkspaceFsAdapter {
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     if (isDevDir(path)) return;
+    this.#invalidatePrefetch();
     await this.#fs.mkdir(path, options);
   }
 
   async rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void> {
     if (isVirtualDevPath(path)) return;
+    this.#invalidatePrefetch();
     await this.#fs.rm(path, options);
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     if (isVirtualDevPath(path)) return;
+    this.#invalidatePrefetch();
     await this.#fs.chmod(path, mode);
   }
 
@@ -189,12 +330,14 @@ export class WorkspaceFsAdapter {
     if (isVirtualDevPath(linkPath)) {
       throw createWorkspaceError("EEXIST", "file exists", linkPath);
     }
+    this.#invalidatePrefetch();
     await this.#fs.symlink(target, linkPath);
   }
 
   // --- Composites --------------------------------------------------
 
   async cp(src: string, dest: string, options?: { recursive?: boolean }): Promise<void> {
+    this.#invalidatePrefetch();
     const recursive = options?.recursive === true;
     const s = await this.#fs.stat(src);
     if (s.isDirectory) {

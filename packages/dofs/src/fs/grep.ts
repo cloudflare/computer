@@ -2,7 +2,7 @@ import { createWorkspaceError } from "../errors.js";
 import { canonicalizePath } from "../path.js";
 import type { Database } from "../storage.js";
 import { iterateFoundEntries } from "./find.js";
-import { readFile } from "./readFile.js";
+import { readCommittedFileByInode, readFile } from "./readFile.js";
 import { resolveInode } from "./resolve.js";
 
 export interface WorkspaceGrepContextLine {
@@ -31,6 +31,13 @@ export interface GrepOptions {
   offset?: number;
   /** Glob relative to a searched directory that limits files. */
   include?: string;
+  /**
+   * Whole-segment names to skip during traversal. Excluded directories
+   * are never descended into, so their files are never read. Unlike
+   * `include`, which filters files after the walk has already visited
+   * them, this prunes the walk itself.
+   */
+  exclude?: string[];
 }
 
 interface ScanState {
@@ -68,11 +75,14 @@ export async function grep(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  const filePaths = node.type === "file" ? [canonical] : filesUnder(db, canonical, options.include);
-  for (const filePath of filePaths) {
+  const filePaths: Iterable<ScanTarget> =
+    node.type === "file"
+      ? [{ path: canonical, inode: node.inode, size: node.size }]
+      : filesUnder(db, canonical, options.include, options.exclude);
+  for (const target of filePaths) {
     const complete = await scanFile(
       db,
-      filePath,
+      target,
       matcher,
       settings.context,
       settings.offset,
@@ -113,13 +123,25 @@ function normalizeOptions(options: GrepOptions): {
   };
 }
 
+interface ScanTarget {
+  path: string;
+  // Undefined when the caller grepped a single file directly: that
+  // path still needs a normal resolve. Traversal-produced targets
+  // carry the inode the walk already read.
+  inode?: number;
+  size?: number;
+}
+
 function* filesUnder(
   db: Database,
   directory: string,
   include: string | undefined,
-): Iterable<string> {
-  for (const entry of iterateFoundEntries(db, directory, include)) {
-    if (entry.type === "file") yield entry.path;
+  exclude: string[] | undefined,
+): Iterable<ScanTarget> {
+  for (const entry of iterateFoundEntries(db, directory, include, exclude)) {
+    if (entry.type === "file") {
+      yield { path: entry.path, inode: entry.inode, size: entry.size };
+    }
   }
 }
 
@@ -136,7 +158,7 @@ function compileMatcher(pattern: string, options: { regex: boolean; ignoreCase: 
 
 async function scanFile(
   db: Database,
-  path: string,
+  target: ScanTarget,
   matcher: RegExp,
   context: number,
   offset: number,
@@ -146,8 +168,9 @@ async function scanFile(
 ): Promise<boolean> {
   const before: WorkspaceGrepContextLine[] = [];
   const pending: PendingMatch[] = [];
+  const path = target.path;
 
-  for await (const current of readLines(db, path)) {
+  for await (const current of readLines(db, target)) {
     const isMatch = matcher.test(current.text);
     const contextLine = { ...current, isMatch };
     for (const item of pending) {
@@ -188,8 +211,14 @@ function flushReady(pending: PendingMatch[], out: WorkspaceGrepMatch[]): void {
   }
 }
 
-async function* readLines(db: Database, path: string): AsyncIterable<NumberedLine> {
-  const stream = await readFile(db, path);
+async function* readLines(db: Database, target: ScanTarget): AsyncIterable<NumberedLine> {
+  // Traversal-produced targets carry the inode and size the walk
+  // already read, so the stream can skip a redundant path resolve.
+  // Both paths stay lazy so grep never holds a whole file in memory.
+  const stream =
+    target.inode !== undefined && target.size !== undefined
+      ? readCommittedFileByInode(db, target.inode, target.size, target.path)
+      : await readFile(db, target.path);
   const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let tail = "";

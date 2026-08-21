@@ -122,6 +122,55 @@ export async function readFile(
   });
 }
 
+// Read a whole committed file by inode, skipping path resolution.
+//
+// Traversal-driven callers (grep) already hold the inode and size that
+// resolveInode would re-derive; re-resolving each path cost an extra
+// recursive-CTE statement per file, which dominated a recursive grep
+// once node_modules entered the tree.
+//
+// Only valid for inodes the caller just read from vfs_dirents. Open
+// write buffers are still honoured so an in-flight write is not missed;
+// pending *creates* have no inode yet and so cannot reach this path.
+export function readCommittedFileByInode(
+  db: Database,
+  inode: number,
+  size: number,
+  path: string,
+): ReadableStream<Uint8Array> {
+  const buffered = getWriteBuffer(db, inode);
+  if (buffered?.dirty) {
+    return streamBytes(buffered.buf.slice(0, buffered.size));
+  }
+  if (size === 0) return streamBytes(new Uint8Array(0));
+
+  const lastIdx = Math.floor((size - 1) / CHUNK_SIZE);
+  const chunks = db.all<ChunkRow>(
+    `SELECT idx, hash, size
+       FROM vfs_chunks
+      WHERE inode = ? AND idx BETWEEN 0 AND ?
+      ORDER BY idx`,
+    inode,
+    lastIdx,
+  );
+  assertDenseRange(chunks, 0, lastIdx, path);
+
+  let index = 0;
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (index >= chunks.length) {
+          controller.close();
+          return;
+        }
+        const chunk = chunks[index++];
+        controller.enqueue(rangedChunkBytes(db, path, chunk, 0, size));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
 function validateReadWindow(
   path: string,
   byteOffset: number,
@@ -156,9 +205,13 @@ function snapshotResult(
   const { start, end } = readWindow(size, byteOffset, byteLength);
   const snapshot = source.slice(start, end);
   if (wantString) return new TextDecoder().decode(snapshot);
+  return streamBytes(snapshot);
+}
+
+function streamBytes(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      if (snapshot.byteLength > 0) controller.enqueue(snapshot);
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
       controller.close();
     },
   });

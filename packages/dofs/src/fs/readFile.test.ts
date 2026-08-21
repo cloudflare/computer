@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { clearBlobCache } from "./blobCache.js";
 import { mkdir } from "./mkdir.js";
-import { readFile } from "./readFile.js";
+import { readCommittedFileByInode, readFile } from "./readFile.js";
 import { withDB } from "./with-db.js";
 import {
   CHUNK_SIZE,
@@ -74,6 +75,33 @@ describe("readFile", () => {
       expect(second.value?.[0]).toBe(0x42);
       const end = await reader.read();
       expect(end.done).toBe(true);
+    });
+  });
+
+  it("streams committed inode reads without loading later chunks", async () => {
+    await withDB(async (db) => {
+      const bytes = new Uint8Array(CHUNK_SIZE + 100);
+      bytes.fill(0x41, 0, CHUNK_SIZE);
+      bytes.fill(0x42, CHUNK_SIZE);
+      await writeFile(db, "/big", bytes, {}, () => 0);
+      const node = db.one<{ inode: number; size: number }>(
+        "SELECT inode, size FROM vfs_nodes WHERE type = 'file'",
+      );
+      if (node === undefined) throw new Error("missing test file");
+
+      clearBlobCache(db);
+      const one = vi.spyOn(db, "one");
+      const stream = readCommittedFileByInode(db, node.inode, node.size, "/big");
+      const blobReads = () =>
+        one.mock.calls.filter(([query]) => String(query).includes("vfs_blob_bytes")).length;
+      expect(stream).toBeInstanceOf(ReadableStream);
+      expect(blobReads()).toBe(0);
+
+      const reader = stream.getReader();
+      expect((await reader.read()).value?.byteLength).toBe(CHUNK_SIZE);
+      expect(blobReads()).toBe(1);
+      expect((await reader.read()).value?.byteLength).toBe(100);
+      expect(blobReads()).toBe(2);
     });
   });
 

@@ -142,4 +142,115 @@ describe("find", () => {
       expect(paths).toEqual(["/a/file.ts"]);
     });
   });
+
+  describe("exclude", () => {
+    async function tree(db: Parameters<typeof find>[0]) {
+      mkdir(db, "/node_modules/pkg/dist", { recursive: true }, () => 0);
+      mkdir(db, "/src/nested", { recursive: true }, () => 0);
+      await writeFile(db, "/node_modules/pkg/dist/index.js", "", {}, () => 0);
+      await writeFile(db, "/node_modules/pkg/package.json", "", {}, () => 0);
+      await writeFile(db, "/src/app.ts", "", {}, () => 0);
+      await writeFile(db, "/src/nested/deep.ts", "", {}, () => 0);
+    }
+
+    it("omits an excluded directory and everything beneath it", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        const paths = find(db, "/", undefined, { exclude: ["node_modules"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/src", "/src/app.ts", "/src/nested", "/src/nested/deep.ts"]);
+      });
+    });
+
+    it("matches an excluded segment at any depth", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/node_modules/deep", { recursive: true }, () => 0);
+        await writeFile(db, "/a/node_modules/deep/x.js", "", {}, () => 0);
+        await writeFile(db, "/a/keep.ts", "", {}, () => 0);
+        const paths = find(db, "/", undefined, { exclude: ["node_modules"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/a", "/a/keep.ts"]);
+      });
+    });
+
+    it("excludes matching files as well as directories", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/d", {}, () => 0);
+        await writeFile(db, "/d/keep.ts", "", {}, () => 0);
+        await writeFile(db, "/d/skip.log", "", {}, () => 0);
+        const paths = find(db, "/", undefined, { exclude: ["skip.log"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/d", "/d/keep.ts"]);
+      });
+    });
+
+    it("does not match a partial segment", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/node_modules_extra", {}, () => 0);
+        await writeFile(db, "/node_modules_extra/a.ts", "", {}, () => 0);
+        const paths = find(db, "/", undefined, { exclude: ["node_modules"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/node_modules_extra", "/node_modules_extra/a.ts"]);
+      });
+    });
+
+    it("accepts several exclude patterns", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        mkdir(db, "/dist", {}, () => 0);
+        await writeFile(db, "/dist/out.js", "", {}, () => 0);
+        const paths = find(db, "/", undefined, { exclude: ["node_modules", "dist"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/src", "/src/app.ts", "/src/nested", "/src/nested/deep.ts"]);
+      });
+    });
+
+    it("combines with a pattern", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        const paths = find(db, "/", "**/*.ts", { exclude: ["node_modules"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/src/app.ts", "/src/nested/deep.ts"]);
+      });
+    });
+
+    it("an empty exclude list behaves like no exclude", async () => {
+      await withDB(async (db) => {
+        await tree(db);
+        const withEmpty = find(db, "/", undefined, { exclude: [] }).map((e) => e.path);
+        const without = find(db, "/").map((e) => e.path);
+        expect(withEmpty.sort()).toEqual(without.sort());
+      });
+    });
+
+    it("never descends into an excluded directory", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/node_modules/a/b/c", { recursive: true }, () => 0);
+        await writeFile(db, "/node_modules/a/b/c/deep.js", "", {}, () => 0);
+        await writeFile(db, "/keep.ts", "", {}, () => 0);
+
+        let statements = 0;
+        const originalAll = db.all.bind(db);
+        (db as unknown as { all: unknown }).all = (...args: unknown[]) => {
+          statements += 1;
+          return (originalAll as (...a: unknown[]) => unknown)(...args);
+        };
+        try {
+          find(db, "/", undefined, { exclude: ["node_modules"] });
+        } finally {
+          (db as unknown as { all: unknown }).all = originalAll;
+        }
+
+        // Pruning must stop the walk at /node_modules itself: one readChildren
+        // for the root, and nothing for the excluded subtree's four levels.
+        expect(statements).toBeLessThanOrEqual(2);
+      });
+    });
+  });
 });

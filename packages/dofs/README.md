@@ -47,7 +47,8 @@ export class WorkspaceDO extends DurableObject {
 - All filesystem primitives listed above are implemented and unit-tested.
   `readdir` returns size and modification time and supports stable
   `limit`/`offset` pages, including files held in pending write buffers.
-  `find` supports `*`, `**`, and `?` globs. `grep` supports bounded pages,
+  `find` supports `*`, `**`, and `?` globs. `find` and `grep` can prune
+  directories by exact path-segment name. `grep` supports bounded pages,
   regular expressions or fixed strings, explicit case handling, and numbered
   context lines.
 - `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) implemented and exported from the package entrypoint; consumed by `@cloudflare/computerd`.

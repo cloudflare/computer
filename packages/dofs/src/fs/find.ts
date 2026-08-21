@@ -8,17 +8,38 @@ export interface WorkspaceFoundEntry {
   type: "file" | "dir";
 }
 
+// Same as WorkspaceFoundEntry but carries the inode the traversal
+// already read. Internal callers that need to touch the node's
+// content (grep) use this to skip a redundant path re-resolve.
+export interface FoundEntryWithInode extends WorkspaceFoundEntry {
+  inode: number;
+  /** Cached vfs_nodes.size; 0 for directories. */
+  size: number;
+}
+
 export interface FindOptions {
   /** Maximum matching entries to return. */
   limit?: number;
   /** Matching entries to skip in traversal order. */
   offset?: number;
+  /**
+   * Whole-segment names to skip. A directory whose name matches is
+   * never descended into, so its subtree costs nothing; a file whose
+   * name matches is not yielded. Matching is exact per path segment —
+   * "node_modules" does not match "node_modules_extra".
+   *
+   * Pruning happens during descent rather than filtering emitted
+   * entries, which is the whole point: excluding node_modules has to
+   * avoid walking it, not walk it and discard the results.
+   */
+  exclude?: string[];
 }
 
 interface ChildRow {
   name: string;
   child_inode: number;
   type: "file" | "dir";
+  size: number;
 }
 
 interface WalkStart {
@@ -26,6 +47,7 @@ interface WalkStart {
   path: string;
   prefix: string;
   regex: RegExp | undefined;
+  exclude: ReadonlySet<string>;
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -36,7 +58,7 @@ export function find(
   pattern?: string,
   options: FindOptions = {},
 ): WorkspaceFoundEntry[] {
-  const start = prepareWalk(db, directory, pattern);
+  const start = prepareWalk(db, directory, pattern, options.exclude);
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new TypeError("find limit must be a non-negative safe integer");
@@ -49,9 +71,11 @@ export function find(
 
   const out: WorkspaceFoundEntry[] = [];
   let seen = 0;
-  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex)) {
+  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude)) {
     if (seen >= offset) {
-      out.push(entry);
+      // The walk carries the inode for internal callers; the public
+      // find() contract is {path, type} only.
+      out.push({ path: entry.path, type: entry.type });
       if (out.length >= limit) break;
     }
     seen += 1;
@@ -63,12 +87,18 @@ export function* iterateFoundEntries(
   db: Database,
   directory: string,
   pattern?: string,
-): IterableIterator<WorkspaceFoundEntry> {
-  const start = prepareWalk(db, directory, pattern);
-  yield* walk(db, start.inode, start.path, start.prefix, start.regex);
+  exclude?: string[],
+): IterableIterator<FoundEntryWithInode> {
+  const start = prepareWalk(db, directory, pattern, exclude);
+  yield* walk(db, start.inode, start.path, start.prefix, start.regex, start.exclude);
 }
 
-function prepareWalk(db: Database, directory: string, pattern: string | undefined): WalkStart {
+function prepareWalk(
+  db: Database,
+  directory: string,
+  pattern: string | undefined,
+  exclude: string[] | undefined,
+): WalkStart {
   const { path: canonical } = canonicalizePath(directory);
   const node = resolveInode(db, canonical);
   if (node === null) {
@@ -87,8 +117,11 @@ function prepareWalk(db: Database, directory: string, pattern: string | undefine
     path: canonical,
     prefix: canonical === "/" ? "/" : `${canonical}/`,
     regex,
+    exclude: exclude === undefined || exclude.length === 0 ? EMPTY_EXCLUDE : new Set(exclude),
   };
 }
+
+const EMPTY_EXCLUDE: ReadonlySet<string> = new Set<string>();
 
 function* walk(
   db: Database,
@@ -96,20 +129,30 @@ function* walk(
   parentPath: string,
   prefix: string,
   regex: RegExp | undefined,
-): IterableIterator<WorkspaceFoundEntry> {
+  exclude: ReadonlySet<string>,
+): IterableIterator<FoundEntryWithInode> {
   let afterName = "";
   while (true) {
     const children = readChildren(db, parentInode, afterName);
     if (children.length === 0) return;
 
     for (const child of children) {
+      // Prune before doing anything else: an excluded directory is
+      // neither yielded nor descended into, so its entire subtree
+      // costs zero statements.
+      if (exclude.size > 0 && exclude.has(child.name)) continue;
       const childPath = parentPath === "/" ? `/${child.name}` : `${parentPath}/${child.name}`;
       const relativePath = childPath.slice(prefix.length);
       if (regex === undefined || regex.test(relativePath)) {
-        yield { path: childPath, type: child.type };
+        yield {
+          path: childPath,
+          type: child.type,
+          inode: child.child_inode,
+          size: child.size,
+        };
       }
       if (child.type === "dir") {
-        yield* walk(db, child.child_inode, childPath, prefix, regex);
+        yield* walk(db, child.child_inode, childPath, prefix, regex, exclude);
       }
     }
 
@@ -120,7 +163,7 @@ function* walk(
 
 function readChildren(db: Database, parentInode: number, afterName: string): ChildRow[] {
   return db.all<ChildRow>(
-    `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type
+    `SELECT d.name AS name, d.child_inode AS child_inode, n.type AS type, n.size AS size
        FROM vfs_dirents d
        JOIN vfs_nodes n ON n.inode = d.child_inode
       WHERE d.parent_inode = ? AND d.name > ?

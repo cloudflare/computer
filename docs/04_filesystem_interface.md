@@ -212,6 +212,7 @@ find(
   options?: {
     limit?: number;
     offset?: number;
+    exclude?: string[];
   },
 ): Promise<Array<{ path; type: "file" | "dir" }>>
 ```
@@ -223,7 +224,10 @@ its absolute path — so `**/*.ts` under `/workspace/src` matches
 `a/b.ts`, not `/workspace/src/a/b.ts`.
 
 The glob supports `*`, `**`, `**/`, and `?`. Character classes and
-brace expansions are matched literally.
+brace expansions are matched literally. `exclude` skips entries whose
+whole name matches one of the supplied values. A matching directory is
+not visited, so excluding `node_modules` avoids reading anything below
+any `node_modules` directory.
 
 ```ts
 // Every TypeScript file in the project.
@@ -266,6 +270,7 @@ interface GrepOptions {
   limit?: number;
   offset?: number;
   include?: string;
+  exclude?: string[];
 }
 
 interface WorkspaceGrepContextLine {
@@ -291,8 +296,9 @@ grep(
 Matching is literal and case-sensitive by default. Set `regex: true` to
 interpret `pattern` as a regular expression and `ignoreCase: true` to ignore
 letter case. `context` adds that many lines before and after each match.
-`include` is a glob relative to a searched directory. `limit` and `offset`
-paginate matching lines.
+`include` is a glob relative to a searched directory. `exclude` skips exact
+path-segment names and does not visit matching directories. `limit` and
+`offset` paginate matching lines.
 
 `path` may be a directory or a single file. Directory searches return matches
 in deterministic depth-first discovery order, then line order within each
