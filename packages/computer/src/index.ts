@@ -58,6 +58,20 @@ export {
   WorkspaceServiceProxy,
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
+export {
+  ReplSession,
+  type ReplEvalOptions,
+  type ReplSessionOptions,
+} from "./repl/session.js";
+export type {
+  ReplEffect,
+  ReplErrorKind,
+  ReplExecutionError,
+  ReplExecutionResult,
+  ReplLogEntry,
+  ReplLogLevel,
+  ReplResultData,
+} from "./repl/types.js";
 export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
 export type {
   ModuleExecutionEnvelope,

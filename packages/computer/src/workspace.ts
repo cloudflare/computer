@@ -44,6 +44,7 @@ import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
+import { ReplSession, type ReplSessionOptions } from "./repl/session.js";
 import { WorkspaceRuntime } from "./runtime/runtime.js";
 import {
   isModuleBackend,
@@ -321,6 +322,9 @@ export class Workspace {
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
   #connectionGeneration = 0;
   #runtime: WorkspaceRuntime | undefined;
+  // REPL sessions, cached per name so evals on one session serialize
+  // through a single instance for the DO's lifetime.
+  readonly #replSessions = new Map<string, ReplSession>();
   #readyPromise: Promise<void> | undefined;
   // Per-backend FIFOs that serialize mutating entry points (push,
   // pull, and the shell exec bracket which goes through them) for
@@ -590,6 +594,22 @@ export class Workspace {
   // across the Workers-RPC boundary (e.g. returned from a DO RPC
   // method). The stub is a lazy RpcTarget — it doesn't own any
   // resources itself; it just delegates back to this workspace.
+  /**
+   * Create-or-attach a durable REPL session by name. A session is a
+   * replayable log in this workspace's SQLite — it has no open/close
+   * lifecycle and costs nothing while idle. Evals on one session are
+   * serialized; use distinct names for parallel work.
+   */
+  repl(name: string, options: Omit<ReplSessionOptions, "name" | "db" | "now">): ReplSession {
+    if (name.length === 0) throw new Error("Workspace repl session name must be non-empty.");
+    let session = this.#replSessions.get(name);
+    if (session === undefined) {
+      session = new ReplSession({ ...options, name, db: this.#db, now: this.#now });
+      this.#replSessions.set(name, session);
+    }
+    return session;
+  }
+
   stub(): WorkspaceStub {
     return new WorkspaceStub(this);
   }
