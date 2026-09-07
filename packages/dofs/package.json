@@ -22,7 +22,7 @@
     "bench": "vitest run --config vitest.config.bench.ts"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.10",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.7",
