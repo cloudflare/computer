@@ -10,7 +10,7 @@ export default defineConfig({
   ],
   test: {
     globals: true,
-    include: ["tests/repl.test.ts"],
+    include: ["tests/repl.test.ts", "tests/repl-capabilities.test.ts"],
     testTimeout: 60_000,
   },
 });

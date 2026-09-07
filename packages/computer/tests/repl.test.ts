@@ -75,11 +75,12 @@ describe("repl session eval", () => {
       "const dateStr = Date();",
       "const perf = performance.now();",
       "const bytes = Array.from(crypto.getRandomValues(new Uint8Array(8)));",
+      "const words = Array.from(crypto.getRandomValues(new Int32Array(4)));",
       "const derived = rolls.map((r) => Math.floor(r * 1000));",
     ].join("\n"));
     const before = await h.replEval(
       "main",
-      "return { rolls, stamp, id, iso, dateStr, perf, bytes, derived, whenMs: when.getTime() };",
+      "return { rolls, stamp, id, iso, dateStr, perf, bytes, words, derived, whenMs: when.getTime() };",
     );
     expect(before.error).toBeUndefined();
 
@@ -87,7 +88,7 @@ describe("repl session eval", () => {
 
     const after = await h.replEval(
       "main",
-      "return { rolls, stamp, id, iso, dateStr, perf, bytes, derived, whenMs: when.getTime() };",
+      "return { rolls, stamp, id, iso, dateStr, perf, bytes, words, derived, whenMs: when.getTime() };",
     );
     expect(after.error).toBeUndefined();
     expect(after.value).toEqual(before.value);

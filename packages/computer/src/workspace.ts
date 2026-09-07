@@ -599,6 +599,10 @@ export class Workspace {
    * replayable log in this workspace's SQLite — it has no open/close
    * lifecycle and costs nothing while idle. Evals on one session are
    * serialized; use distinct names for parallel work.
+   *
+   * Capability grants are attach-time: every repl() call re-attaches with
+   * exactly the capabilities passed here (none means none). Committed
+   * cells always replay against the grants they were recorded with.
    */
   repl(name: string, options: Omit<ReplSessionOptions, "name" | "db" | "now">): ReplSession {
     if (name.length === 0) throw new Error("Workspace repl session name must be non-empty.");
@@ -606,6 +610,8 @@ export class Workspace {
     if (session === undefined) {
       session = new ReplSession({ ...options, name, db: this.#db, now: this.#now });
       this.#replSessions.set(name, session);
+    } else {
+      session.attach(options.capabilities ?? {});
     }
     return session;
   }

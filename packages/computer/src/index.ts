@@ -59,6 +59,17 @@ export {
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
 export {
+  capability,
+  fetchCapability,
+  workspaceFs,
+  type CapabilityMeta,
+  type MethodKeys,
+  type ReplCapability,
+  type ReplFetchInit,
+  type ReplFetchResponse,
+  type WorkspaceFsOptions,
+} from "./repl/capability.js";
+export {
   ReplSession,
   type ReplEvalOptions,
   type ReplSessionOptions,
