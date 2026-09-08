@@ -74,6 +74,15 @@ export {
   type ReplEvalOptions,
   type ReplSessionOptions,
 } from "./repl/session.js";
+export {
+  createJsToolDefinition,
+  renderJsResultText,
+  type JsToolDefinition,
+  type JsToolInput,
+  type JsToolOptions,
+  type JsToolSessionLike,
+  type JsToolWorkspaceLike,
+} from "./repl/tool.js";
 export type {
   ReplEffect,
   ReplErrorKind,

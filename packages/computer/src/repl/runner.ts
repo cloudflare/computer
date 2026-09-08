@@ -55,6 +55,12 @@ export function replCellsModule(count: number): string {
 
 const MAX_LOG_ENTRIES = 1_000;
 const MAX_LOG_ENTRY_CHARS = 8_192;
+// emit() is load-bearing output (unlike logs), so past the per-cell entry
+// cap it throws instead of dropping — deterministic across replay, and the
+// error names the fix. The value ceiling is display transport, not replay
+// input, so oversized values degrade to their rendering (omit-plus-render).
+const MAX_EMIT_ENTRIES = 1_000;
+const MAX_EMIT_VALUE_BYTES = 262_144;
 
 // The runner source. A template-built string (matching how the
 // worker-javascript backend ships its runtime module) so the package build
@@ -119,6 +125,8 @@ function effect(kind, make) {
 let BRIDGE;
 const PROXY_META = new WeakMap();
 const INJECTED = new Map();
+// Grant shapes injected for the cell currently running — help() reads them.
+let CURRENT_SHAPES = null;
 
 function joinPath(path, prop) {
   return path === "" ? prop : path + "." + prop;
@@ -207,6 +215,7 @@ async function doCall(id, path, args, recipe) {
 // cell start in both modes, so grants win over leftover same-name bindings
 // identically live and on replay.
 function injectGrants(shapes) {
+  CURRENT_SHAPES = shapes || null;
   // Restore whatever a grant name shadowed (e.g. the ambient-fetch error
   // when a capability was granted as \`fetch\`), then remove our proxies.
   for (const [name, prior] of INJECTED) {
@@ -330,6 +339,120 @@ function inspect(value, depth) {
   return name + "{ " + entries.join(", ") + " }";
 }
 
+// --- in-session built-ins: help() and emit() ------------------------------
+//
+// Neither is a capability and neither is ever recorded. help() is a pure
+// function of the cell's injected grant shapes — replayed cells see the
+// snapshot they were recorded under, so a committed help() call reproduces
+// exactly even after grants change. emit() fills a per-cell display buffer;
+// replayed cells' emits are discarded like their console output, so only
+// the new cell's emits ride back on the result.
+
+const emits = { entries: [] };
+
+function emitValue(value) {
+  if (emits.entries.length >= ${MAX_EMIT_ENTRIES}) {
+    throw new Error(
+      "emit(): this cell already emitted ${MAX_EMIT_ENTRIES} results. " +
+      "Emit fewer, larger entries — or write bulk data to a workspace file " +
+      "via a granted capability and emit the path."
+    );
+  }
+  let text = inspect(value, 0);
+  if (text.length > ${MAX_LOG_ENTRY_CHARS}) text = text.slice(0, ${MAX_LOG_ENTRY_CHARS}) + "…";
+  const entry = { text };
+  attachEmitValue(entry, value);
+  emits.entries.push(entry);
+  return value;
+}
+
+// Attach the structured value when it can cross the boundary and fits the
+// per-entry ceiling; otherwise the rendering alone ships. Cloned at emit
+// time, so later cell code can't mutate what was already published.
+function attachEmitValue(entry, value) {
+  if (PROXY_META.has(value)) return; // capability handles are not values
+  let clone;
+  try {
+    clone = structuredClone(value);
+  } catch {
+    return; // unclonable: rendering only
+  }
+  try {
+    const estimate = JSON.stringify(value);
+    if (estimate !== undefined && estimate.length > ${MAX_EMIT_VALUE_BYTES}) {
+      entry.text += " (structured value omitted: about " + estimate.length +
+        " bytes exceeds the ${MAX_EMIT_VALUE_BYTES}-byte emit ceiling — " +
+        "write large data to a workspace file and emit the path)";
+      return;
+    }
+  } catch {
+    // Clonable but not JSON-estimable (bigint, cycles): ship it.
+  }
+  entry.value = clone;
+}
+
+function helpText(name) {
+  const shapes = CURRENT_SHAPES || {};
+  const names = Object.keys(shapes);
+  if (name === undefined) {
+    const lines = [
+      "Persistent JavaScript session: top-level await works, and bindings survive across cells — including restarts.",
+      "Built-ins:",
+      "  help(\\"name\\") — full docs for one granted capability",
+      "  emit(value) — publish an extra structured result alongside the cell value (returns the value)",
+    ];
+    if (names.length === 0) {
+      lines.push("No capabilities are granted in this session — pure JavaScript with durable state.");
+    } else {
+      lines.push("Capabilities:");
+      for (const n of names) {
+        const d = shapes[n] && shapes[n].description;
+        lines.push("  " + n + (d ? " — " + d : ""));
+      }
+      lines.push("help(\\"name\\") shows a capability's methods and docs.");
+    }
+    return lines.join("\\n");
+  }
+  const key = String(name);
+  if (!Object.prototype.hasOwnProperty.call(shapes, key)) {
+    return "No capability named " + JSON.stringify(key) + " in this session." +
+      (names.length > 0 ? " Granted: " + names.join(", ") + "." : " No capabilities are granted.") +
+      " help() lists everything.";
+  }
+  const shape = shapes[key];
+  const lines = [key + (shape.description ? " — " + shape.description : "")];
+  renderShapeHelp(lines, key, "", shape, shape.docs || {});
+  return lines.join("\\n");
+}
+
+// Walk a grant shape: methods (with grantor docs, dotted keys for nested
+// surfaces), data snapshots with their current values, and children.
+function renderShapeHelp(lines, path, docPath, shape, docs) {
+  if (shape.opaque) {
+    lines.push("  " + path + ".<method>(…) — surface unknown (opaque remote stub): call any method it supports");
+    return;
+  }
+  if (shape.callable) {
+    lines.push("  " + path + "(…) — callable directly" + (docs[docPath] ? ": " + docs[docPath] : ""));
+  }
+  for (const m of shape.methods || []) {
+    const dk = docPath === "" ? m : docPath + "." + m;
+    lines.push("  " + path + "." + m + "(…)" + (docs[dk] ? " — " + docs[dk] : ""));
+  }
+  for (const k of Object.keys(shape.data || {})) {
+    let rendered;
+    try { rendered = inspect(decodeReplValue(shape.data[k]), 1); } catch { rendered = "…"; }
+    if (rendered.length > 200) rendered = rendered.slice(0, 200) + "…";
+    lines.push("  " + path + "." + k + " = " + rendered);
+  }
+  for (const c of Object.keys(shape.children || {})) {
+    renderShapeHelp(lines, path + "." + c, docPath === "" ? c : docPath + "." + c, shape.children[c], docs);
+  }
+}
+
+globalThis.help = helpText;
+globalThis.emit = emitValue;
+
 function describeError(error, kind) {
   const isError = error instanceof Error;
   return {
@@ -354,6 +477,7 @@ export default class ReplRunner extends WorkerEntrypoint {
     for (let i = 0; i < cells.length - 1; i++) {
       fx.mode = "serve";
       fx.queue = (effectLog[i] || []).slice();
+      emits.entries = [];
       injectGrants(perCell[i]);
       try {
         await cells[i]();
@@ -377,6 +501,7 @@ export default class ReplRunner extends WorkerEntrypoint {
     fx.recorded = [];
     logs.entries = [];
     logs.dropped = 0;
+    emits.entries = [];
     injectGrants(current);
     let value;
     try {
@@ -387,6 +512,9 @@ export default class ReplRunner extends WorkerEntrypoint {
         phase: "cell",
         error: describeError(error, undefined),
         logs: snapshotLogs(),
+        // A failing cell's emits still ship (they narrate the failure);
+        // the cell itself is never committed.
+        results: emits.entries.slice(),
       };
     }
 
@@ -394,7 +522,9 @@ export default class ReplRunner extends WorkerEntrypoint {
       ok: true,
       effects: fx.recorded,
       logs: snapshotLogs(),
-      results: [],
+      // Emitted entries first; an unclonable completion value's rendering
+      // appends after them (Jupyter display order).
+      results: emits.entries.slice(),
     };
     try {
       // A capability handle is not a value — it structured-clones as an
