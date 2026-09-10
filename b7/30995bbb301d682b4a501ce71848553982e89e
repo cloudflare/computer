@@ -1,0 +1,21 @@
+docs/07_injected_service.md
+  s_af88ca552b7a2d::t_5e82a9e9be53ca 12,16-18,24-25,63-75,96-97
+docs/08_capnweb_interface.md
+  s_af88ca552b7a2d::t_b58ca345297e71 213-242
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b730995bbb301d682b4a501ce71848553982e89e",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
