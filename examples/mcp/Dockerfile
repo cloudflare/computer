@@ -8,6 +8,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
+COPY --from=computerd /usr/local/bin/codemode /usr/local/bin/codemode
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace

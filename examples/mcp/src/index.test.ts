@@ -1,6 +1,8 @@
 import { env, SELF } from "cloudflare:test";
+import type { CodemodeRPC } from "@cloudflare/computer-rpc";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { newWebSocketRpcSession } from "capnweb";
 import { afterEach, describe, expect, it } from "vitest";
 
 let client: Client | undefined;
@@ -128,6 +130,57 @@ describe("Computer Code Mode MCP", () => {
       },
     });
     expect(outbound.isError).toBe(true);
+  });
+});
+
+describe("codemode from inside the container", () => {
+  // The public Worker never forwards /codemode; the container reaches
+  // it through the egress interception, which lands on the Durable
+  // Object's fetch. The test takes the same door directly.
+  function durableObject(name: string) {
+    const { COMPUTER_MCP } = env as unknown as { COMPUTER_MCP: DurableObjectNamespace };
+    return COMPUTER_MCP.get(COMPUTER_MCP.idFromName(name));
+  }
+
+  async function connect(name: string) {
+    const response = await durableObject(name).fetch("https://example.test/codemode", {
+      headers: { upgrade: "websocket" },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket;
+    if (!socket) throw new Error("expected a websocket");
+    socket.accept();
+    return newWebSocketRpcSession<CodemodeRPC>(socket as unknown as WebSocket);
+  }
+
+  it("stays private and insists on a websocket", async () => {
+    const publicRoute = await SELF.fetch("https://example.test/codemode");
+    expect(publicRoute.status).toBe(404);
+    const plain = await durableObject("codemode-plain").fetch("https://example.test/codemode");
+    expect(plain.status).toBe(400);
+  });
+
+  it("describes the notes connector and runs scripts against it", async () => {
+    using api = await connect("codemode-run");
+
+    const description = await api.describe();
+    expect(description.connectors).toEqual(["notes"]);
+    expect(description.types).toContain("declare const notes:");
+    expect(description.types).toContain("add: (input: AddInput) => Promise<AddOutput>;");
+
+    const added = await api.execute({
+      code: 'await notes.add({ text: "hello" }); console.log("added"); return await notes.list({});',
+    });
+    expect(added).toMatchObject({ status: "completed", result: ["hello"], logs: ["added"] });
+
+    const failed = await api.execute({ code: 'throw new Error("nope");' });
+    expect(failed).toMatchObject({ status: "error" });
+    expect(failed.status === "error" && failed.error).toContain("nope");
+
+    const blocked = await api.execute({
+      code: 'return await fetch("https://example.com").then((r) => r.status);',
+    });
+    expect(blocked.status).toBe("error");
   });
 });
 

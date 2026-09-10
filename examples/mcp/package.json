@@ -21,8 +21,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/computer-rpc": "*",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260722.1",
+    "capnweb": "^0.10.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11",
     "wrangler": "^4.107.1"
