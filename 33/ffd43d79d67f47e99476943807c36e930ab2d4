@@ -1,0 +1,21 @@
+packages/workspace/src/stub.test.ts
+  s_cd740beb56150e::t_70b2e09cdae098 425-471
+packages/workspace/src/stub.ts
+  s_cd740beb56150e::t_682eada8fb64ce 70,367,369-371,373-383,385-389,391-392,394-397,399-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "33ffd43d79d67f47e99476943807c36e930ab2d4",
+  "prompts": {},
+  "sessions": {
+    "s_cd740beb56150e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fadb9-9e51-7e6b-9dc2-74d04fc48c30",
+        "model": "gpt-5.5"
+      },
+      "human_author": "aron <263346377+aron-cf@users.noreply.github.com>"
+    }
+  }
+}

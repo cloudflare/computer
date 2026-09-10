@@ -1,0 +1,25 @@
+examples/codemode/src/workspace-executor.integration.test.ts
+  s_3bac4a8ecb5284::t_76873b6611ee04 1-29
+examples/codemode/src/workspace-executor.ts
+  s_3bac4a8ecb5284::t_4bb081e7c1ecf0 15,28,30,33,38,69,165-169,180,182-188,236-287,316-322,351,367,369-372,389-407
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_4b7516e4709ce1 7-11
+packages/workspace/src/runtime/runtime.ts
+  s_3bac4a8ecb5284::t_f85d696b6ee89b 90,92,101-114,119-123,158,160,170-174,200,202-204,297-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8ff336c47b2709eab099331c885b353bf5324a76",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

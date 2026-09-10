@@ -1,0 +1,38 @@
+.github/workflows/ci.yml
+  s_3bac4a8ecb5284::t_7ec0a577b629fc 146-148
+examples/mcp/tsconfig.json
+  s_6a296c733892b8::t_70a4b0a4dd69dc 1-17
+package-lock.json
+  s_6a296c733892b8::t_a31b2c7d4c49f6 84-85,96-108,3132-3135
+  s_3bac4a8ecb5284::t_ab5ce0d3f752ee 86-88
+  s_3bac4a8ecb5284::t_b5020e060e046c 93-95
+  s_3bac4a8ecb5284::t_6d2fd13406338a 89-92
+examples/mcp/src/server.ts
+  s_6a296c733892b8::t_ef6e300e383ab0 1-126
+examples/mcp/vitest.config.ts
+  s_6a296c733892b8::t_a81e9707ad790f 1-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf739d15cef0da52c757c02c099a4ecf391c73f2",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

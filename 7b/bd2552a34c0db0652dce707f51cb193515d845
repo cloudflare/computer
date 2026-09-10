@@ -1,0 +1,21 @@
+examples/tutorial/README.md
+  s_ee6fbaf636ecb0::t_cc580afe21ee39 17-19,29,86-88,93-99,138,140-143,150-155,157-160,169,184-188,192-196,199-211,215-217,234-255,262-263,327-329,333-336,357
+examples/tutorial/src/index.ts
+  s_ee6fbaf636ecb0::t_334d0b05d332e7 6-9,16,20-25,50,59,63-73,82,88-95,105-132,159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7bbd2552a34c0db0652dce707f51cb193515d845",
+  "prompts": {},
+  "sessions": {
+    "s_ee6fbaf636ecb0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1cece63a-9967-4090-ac29-ebf9fb47fe75",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Christopher Little-Savage <clittle-savage@cloudflare.com>"
+    }
+  }
+}

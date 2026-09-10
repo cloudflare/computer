@@ -1,0 +1,19 @@
+examples/artifacts/src/index.ts
+  s_cd740beb56150e::t_eb6877bfa82c28 57,174-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ca1b8017973e6b1fb64d7aefb0dc10b5d638ce83",
+  "prompts": {},
+  "sessions": {
+    "s_cd740beb56150e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fadb9-9e51-7e6b-9dc2-74d04fc48c30",
+        "model": "gpt-5.5"
+      },
+      "human_author": "aron <263346377+aron-cf@users.noreply.github.com>"
+    }
+  }
+}

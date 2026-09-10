@@ -1,0 +1,21 @@
+packages/computerd/src/exec/fuse-prerequisites.test.ts
+  s_6a296c733892b8::t_efdccf59390e67 1-43
+packages/computerd/src/exec/fuse-prerequisites.ts
+  s_6a296c733892b8::t_8d09df97639116 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "17e26a0275b1e92b036ecf982756e964ba667add",
+  "prompts": {},
+  "sessions": {
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

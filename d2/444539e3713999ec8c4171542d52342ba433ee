@@ -1,0 +1,29 @@
+package-lock.json
+  s_6a296c733892b8::t_782e0015027285 12199
+packages/computer/package.json
+  s_366d8d72b9ece5::t_1bd2580cd47faf 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d2444539e3713999ec8c4171542d52342ba433ee",
+  "prompts": {},
+  "sessions": {
+    "s_366d8d72b9ece5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb822-ff51-75de-be17-c9e7012c29e4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

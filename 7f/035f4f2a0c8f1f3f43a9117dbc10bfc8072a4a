@@ -1,0 +1,19 @@
+packages/computer/src/backends/container/cloudflare-container.test.ts
+  s_6a296c733892b8::t_b77efbc3dee0a7 40,97-98,351,356,358-374
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7f035f4f2a0c8f1f3f43a9117dbc10bfc8072a4a",
+  "prompts": {},
+  "sessions": {
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

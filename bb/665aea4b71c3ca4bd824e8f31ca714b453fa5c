@@ -1,0 +1,61 @@
+README.md
+  s_3bac4a8ecb5284::t_4cd51d1bd0dee8 65-67
+docs/17_isolate_javascript.md
+  s_3bac4a8ecb5284::t_5fb727f6d9eade 166,168-170
+docs/18_runtime_migration.md
+  s_3bac4a8ecb5284::t_693923af5706ff 14,33-36
+docs/README.md
+  s_3bac4a8ecb5284::t_d282003331eac0 234
+examples/codemode/.gitignore
+  s_3bac4a8ecb5284::t_7f4e67ca3fd77a 1-3
+examples/codemode/Dockerfile
+  s_3bac4a8ecb5284::t_e1a125c0cded07 1-48
+examples/codemode/README.md
+  s_3bac4a8ecb5284::t_46bc18958f7a8b 1-59
+examples/codemode/package.json
+  s_3bac4a8ecb5284::t_9335f69d3db3d5 1-26
+examples/codemode/public/app.js
+  s_3bac4a8ecb5284::t_e82ff86b6f76f8 1-108
+examples/codemode/public/index.html
+  s_3bac4a8ecb5284::t_3cc1e7b6477904 1-71
+examples/codemode/public/styles.css
+  s_3bac4a8ecb5284::t_4a1be8e5848cd5 1-35
+examples/codemode/script/validate.mjs
+  s_3bac4a8ecb5284::t_a66f1fe74124e5 1-58
+examples/codemode/src/index.ts
+  s_3bac4a8ecb5284::t_133cdf24386fb8 1-312
+examples/codemode/src/test-worker.ts
+  s_3bac4a8ecb5284::t_83eeff23c958dd 1-102
+examples/codemode/src/workspace-executor.integration.test.ts
+  s_3bac4a8ecb5284::t_395f724fcf5aa9 1-29
+examples/codemode/src/workspace-executor.test.ts
+  s_3bac4a8ecb5284::t_cf6aeeb982b389 1-334
+examples/codemode/src/workspace-executor.ts
+  s_3bac4a8ecb5284::t_e50e2949a8b0bf 1-397
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_5f90af5a150ade 1-17
+examples/codemode/vitest.config.ts
+  s_3bac4a8ecb5284::t_2ef7485edcf8c5 1-13
+examples/codemode/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_85da548e1e138a 1-14749
+examples/codemode/wrangler.jsonc
+  s_3bac4a8ecb5284::t_1f7292cb5d910c 1-27
+examples/codemode/wrangler.test.jsonc
+  s_3bac4a8ecb5284::t_0314d7c5892de7 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "bb665aea4b71c3ca4bd824e8f31ca714b453fa5c",
+  "prompts": {},
+  "sessions": {
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

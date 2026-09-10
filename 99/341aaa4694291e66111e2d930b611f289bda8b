@@ -1,0 +1,161 @@
+.agents/skills/debugging-wsd-fuse/SKILL.md
+  s_3bac4a8ecb5284::t_0b38c37877170d 31
+docs/01_vfs.md
+  s_3bac4a8ecb5284::t_a485a4d3bfaaf4 69,95,137
+docs/02_sync_protocol.md
+  s_3bac4a8ecb5284::t_921dc93a663558 299,325,453
+docs/07_injected_service.md
+  s_3bac4a8ecb5284::t_4204013506a1f0 39
+docs/08_capnweb_interface.md
+  s_3bac4a8ecb5284::t_6878cfecda2f80 201,267
+docs/13_git_interface.md
+  s_3bac4a8ecb5284::t_95f90711268c61 134
+docs/16_code_execution.md
+  s_3bac4a8ecb5284::t_dccd25f202b175 1-88
+examples/artifacts/README.md
+  s_3bac4a8ecb5284::t_38d883837450a7 35
+examples/artifacts/src/index.ts
+  s_3bac4a8ecb5284::t_1748081481af6b 199
+examples/code/.gitignore
+  s_3bac4a8ecb5284::t_3886caeed1b794 1-3
+examples/code/tsconfig.json
+  s_350ae2edc84263::t_2b4c4d41dd71c9 1-17
+examples/code/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_6df7165afc73ff 1,4-440,443-498,503-531,533-535,537-641,643-3410,3412-3551,3553-3557,3604-11195,11196-11233,11236-11272,11284-11303,11542-11565,11567-11595,11596-11636,11637-11647,11648-12079,12081-12147,12149-12264,12272-12291,12326-12330,12332-12567,12569-13002,13004-13152,13158-13164,13166-13170,13172-13190,13192-13196,13207-13208,13210-13211,13213-13216,13219-13221,13225-14114,14116-14133,14135-14688,14696-14728,14730,14732-14749
+  s_3bac4a8ecb5284::t_44c82005e3525d 11566,12080,12148,12568,13003
+examples/codemode/Dockerfile
+  s_3bac4a8ecb5284::t_149d5ce60492dc 26-29,31
+examples/codemode/public/app.js
+  s_3bac4a8ecb5284::t_d113cd37c5eb78 1-5,22,24-32,35-36,39-40,41-43,45-58,61,63-64,66,68-73,76,78-79,81,83-88,91,94,96-102,104-107
+examples/container/README.md
+  s_3bac4a8ecb5284::t_e757d47444c3d9 56,133
+examples/container/src/index.ts
+  s_3bac4a8ecb5284::t_7b623ed2b9cd9f 232
+examples/think-compare-runtimes/worker/runtime/workspace.ts
+  s_3bac4a8ecb5284::t_4f499a5de1247c 60-63
+examples/worker/src/index.ts
+  s_3bac4a8ecb5284::t_f9b597fa5b0f80 192
+package-lock.json
+  s_3bac4a8ecb5284::t_02a594a7002874 63-64,85-92,94-95,98-99,2838-2841,12240
+  s_3bac4a8ecb5284::t_e8e207f14f9b8b 93,96
+packages/workspace/scripts/clean-dist.mjs
+  s_d2d5c90431634a::t_2e49154e313b1d 2
+packages/workspace/src/backend.ts
+  s_3bac4a8ecb5284::t_87b0281b85e11a 3
+packages/workspace/src/backends/javascript/index.ts
+  s_3bac4a8ecb5284::t_d60c6e09ae20d8 2-4
+packages/workspace/src/backends/worker/adapter.test.ts
+  s_3bac4a8ecb5284::t_df87ac15fdb086 13,18,97-108
+packages/workspace/src/backends/worker/worker.test.ts
+  s_3bac4a8ecb5284::t_10fffdbc7a04cf 188
+packages/workspace/src/observe.ts
+  s_3bac4a8ecb5284::t_9d11d2a7fae9d0 10,20
+packages/workspace/src/observe/cloudflare.test.ts
+  s_3bac4a8ecb5284::t_b58c3b905f2508 92-94,98-99
+packages/workspace/src/observe/cloudflare.ts
+  s_3bac4a8ecb5284::t_afbfd6461364ea 73
+packages/workspace/src/runtime/bridge.ts
+  s_3bac4a8ecb5284::t_7b74e1a7e05076 1-12,16-22,26-32,36-39,45-52,54-79,85-106,108-124,126-129,131,135-136,140,144,146-148,151-152,154-176,182-194,196-198,203-205,212-218,242-258,266-271,285,287-288,325,331,368,370
+packages/workspace/src/runtime/capability.test.ts
+  s_3bac4a8ecb5284::t_70a27cc0e4ff25 1-7,9-20,23-64,100-113,117-119,122-127
+  s_79bb6a0a502813::t_dc7d16f7601fa0 73-99
+packages/workspace/src/shell.ts
+  s_3bac4a8ecb5284::t_0ac737ab5fd380 172,174-176,186,213,218-222
+  s_3bac4a8ecb5284::t_75bc25505a4cd1 311-322,327,335,343,347
+packages/workspace/src/test-harness/shell.test.ts
+  s_3bac4a8ecb5284::t_c515dbcf9c9fea 21,34,44,57,64,77,104,121
+packages/workspace/tests/stub-soak-worker.ts
+  s_3bac4a8ecb5284::t_c53e1685533f05 160
+packages/workspace/tests/worker-backend-worker.ts
+  s_3bac4a8ecb5284::t_0189b1644b92da 82
+packages/workspace/tests/wrangler.script-runner.jsonc
+  s_350ae2edc84263::t_92dae94a73e49f 2-4
+packages/workspace/vitest.config.script-runner.ts
+  s_350ae2edc84263::t_6f94098c61d6bc 7,12
+docs/11_lifecycle.md
+  s_79bb6a0a502813::t_c2ade42d7d6db8 236
+docs/17_isolate_javascript.md
+  s_79bb6a0a502813::t_90e2a8d21c3d12 106,117,143
+examples/codemode/README.md
+  s_79bb6a0a502813::t_47cadffdddfa8b 45,48,52-53
+examples/codemode/package.json
+  s_79bb6a0a502813::t_efca598c442f45 11,20,23
+examples/codemode/src/workspace-executor.test.ts
+  s_79bb6a0a502813::t_603121435f70f3 1-115,128-230,274-287,291-296
+examples/codemode/src/workspace-executor.ts
+  s_79bb6a0a502813::t_6b2f33111df608 71,75,130,162-164,170-179,181,189-193,199,211,222-224,312-315,323,331,337-338,342,350,352-366,368,373-388,408-414
+  s_3bac4a8ecb5284::t_4bb081e7c1ecf0 15,28,30,33,38,69,165-169,180,182-188,236-287,316-322,351,367,369-372,389-407
+examples/codemode/vitest.config.ts
+  s_79bb6a0a502813::t_5320e28da1ac87 1-13
+examples/codemode/wrangler.test.jsonc
+  s_79bb6a0a502813::t_3ee89604684886 1-5,12
+packages/dofs/src/fs/writeFile.test.ts
+  s_79bb6a0a502813::t_f84ea36551dca4 100-109
+packages/dofs/src/fs/writeFile.ts
+  s_79bb6a0a502813::t_bdfd24ab7185ea 31-32,217-219,938-940
+packages/workspace/src/backends/container/cloudflare-container.ts
+  s_79bb6a0a502813::t_a5bfa21c2ad54b 126
+packages/workspace/src/backends/javascript/javascript-backend.test.ts
+  s_79bb6a0a502813::t_a64291dbd506a5 34-62,159-188
+packages/workspace/src/backends/worker/worker.ts
+  s_79bb6a0a502813::t_f6f49fbccc3659 126
+packages/workspace/src/runtime/capability.ts
+  s_79bb6a0a502813::t_1a355c8c7d4d41 121-132,155-160
+packages/workspace/src/runtime/runtime.ts
+  s_3bac4a8ecb5284::t_bb6907f216b291 160-168,174-188,204,209,219-269
+  s_3bac4a8ecb5284::t_f85d696b6ee89b 90,92,101-114,119-123,157,159,169-173,199,201-203,297-300
+packages/workspace/src/runtime/types.ts
+  s_79bb6a0a502813::t_9722c68c7640e8 46-50,71-75,116
+packages/workspace/src/workspace.ts
+  s_79bb6a0a502813::t_b0f961bb3f1b71 509,755-756,776-780,797-799,806-809,820-823,844-846
+examples/codemode/src/workspace-executor.integration.test.ts
+  s_3bac4a8ecb5284::t_76873b6611ee04 1-29
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_4b7516e4709ce1 7-11
+examples/codemode/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_6b4afea582ff56 11566,12080,12148,12568,13003
+packages/workspace/src/backends/worker/entrypoint.test.ts
+  s_3bac4a8ecb5284::t_8c11d229e19416 202-237
+packages/workspace/src/backends/worker/entrypoint.ts
+  s_3bac4a8ecb5284::t_42df9f9a0480f2 9-11,75-79,97,142-153,155-164,178,182-187,197-198,202-206,208-209,244,248-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "99341aaa4694291e66111e2d930b611f289bda8b",
+  "prompts": {},
+  "sessions": {
+    "s_350ae2edc84263": {
+      "agent_id": {
+        "tool": "windsurf",
+        "id": "",
+        "model": "unknown"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_79bb6a0a502813": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb27b-1364-7706-96c5-31f9b140bc7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_d2d5c90431634a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fa8ed-9626-7793-bd78-49d1bae24dcb",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

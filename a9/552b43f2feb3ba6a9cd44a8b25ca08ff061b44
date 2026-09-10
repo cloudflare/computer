@@ -1,0 +1,39 @@
+docs/README.md
+  s_366d8d72b9ece5::t_395e36b6c74e36 45-46
+examples/artifacts/src/index.ts
+  s_6a296c733892b8::t_2105b0112cf843 24
+examples/container/src/index.ts
+  s_6a296c733892b8::t_55f2e30dda3a32 34,38
+examples/think-compare-runtimes/worker/think/agents.ts
+  s_6a296c733892b8::t_52de0e1a58e93f 1,7
+examples/think/src/agent.ts
+  s_6a296c733892b8::t_7e353ce1bd9399 38
+examples/tutorial/src/index.ts
+  s_6a296c733892b8::t_a48aa2b62c14dc 30
+examples/worker-shell/src/index.ts
+  s_6a296c733892b8::t_0a41986656e933 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a9552b43f2feb3ba6a9cd44a8b25ca08ff061b44",
+  "prompts": {},
+  "sessions": {
+    "s_366d8d72b9ece5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb822-ff51-75de-be17-c9e7012c29e4",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_6a296c733892b8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb2b1-9dd3-74ca-952c-69e104f453a8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

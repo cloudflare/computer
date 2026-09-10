@@ -1,0 +1,19 @@
+packages/computer/src/git/diff.test.ts
+  s_e99bae85ab2fe2::t_98a9bfaa8d1fc2 322-329,338-345,356-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "dd8b9d4858e738718fd7f5bbb65954c4f7b5e81c",
+  "prompts": {},
+  "sessions": {
+    "s_e99bae85ab2fe2": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fdbea-afd6-7383-9cac-f1344f4540a6",
+        "model": "gpt-5.5"
+      },
+      "human_author": "aron <263346377+aron-cf@users.noreply.github.com>"
+    }
+  }
+}

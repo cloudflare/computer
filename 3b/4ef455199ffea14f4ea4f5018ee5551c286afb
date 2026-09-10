@@ -1,0 +1,285 @@
+packages/computer/src/workspace.ts
+  s_79bb6a0a502813::t_b0f961bb3f1b71 391,509,591-593,692,695,698-712,722,724,728-729,732,743-784,797-799,806-809,820-823,844-846
+  s_79bb6a0a502813::t_354d9c53d1c176 388-390
+  s_79bb6a0a502813::t_ae7886485e3ea1 392-394
+examples/code/tsconfig.json
+  s_350ae2edc84263::t_2b4c4d41dd71c9 1-17
+packages/computer/src/backends/worker/entrypoint.ts
+  s_3bac4a8ecb5284::t_42df9f9a0480f2 9-11,75-79,93-95,97,142-153,155-164,178,198,202-206,208-209,244,248-250
+docs/16_code_execution.md
+  s_3bac4a8ecb5284::t_dccd25f202b175 1-61,63-88
+packages/computer/tests/wrangler.script-runner.jsonc
+  s_350ae2edc84263::t_92dae94a73e49f 2-4
+  s_3bac4a8ecb5284::t_3572d01902aa1b 1,5-11
+examples/container/src/index.ts
+  s_3bac4a8ecb5284::t_7b623ed2b9cd9f 232
+packages/dofs/src/fs/writeFile.ts
+  s_79bb6a0a502813::t_bdfd24ab7185ea 31-32,217-219,938-940
+examples/codemode/src/workspace-executor.integration.test.ts
+  s_3bac4a8ecb5284::t_76873b6611ee04 1-29
+examples/codemode/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_6b4afea582ff56 11566-13003
+  s_3bac4a8ecb5284::t_82bb7a60950c04 1-11565,13004-14749
+packages/computer/vitest.config.script-runner.ts
+  s_350ae2edc84263::t_6f94098c61d6bc 7-12
+  s_3bac4a8ecb5284::t_3658d97b23bbd9 1-6,13-15
+packages/computer/src/runtime/types.ts
+  s_79bb6a0a502813::t_9722c68c7640e8 42,46-116
+  s_79bb6a0a502813::t_f951363a8d412e 39-41
+  s_79bb6a0a502813::t_fc70f3d477479e 43-45
+  s_79bb6a0a502813::t_f0fd53f15c41b2 117-119
+packages/computer/src/runtime/capability.ts
+  s_79bb6a0a502813::t_1a355c8c7d4d41 23,27,33,55,61,63,67,73,82-83,89,93,97,102,106,110,113-115,117,119,121-161,166,173,177,179,185,202-203,209-210,215-216,224,243,250,254
+  s_3bac4a8ecb5284::t_c14970c0e1dc4d 1-22,24-26,28-32,34-54,56-60,62,64-66,68-72,74-81,84-88,90-92,94-96,98-101,103-105,107-109,111-112,116,118,120,162-165,167-172,174-176,178,180-184,186-201,204-208,211-214,217-223,225-242,244-249,251-253,255-257
+docs/07_injected_service.md
+  s_3bac4a8ecb5284::t_4204013506a1f0 39
+docs/11_lifecycle.md
+  s_79bb6a0a502813::t_c2ade42d7d6db8 236
+  s_3bac4a8ecb5284::t_a1ee0cb52a2d64 223-224,237-238,244,255
+packages/computer/src/runtime/bridge.ts
+  s_3bac4a8ecb5284::t_7b74e1a7e05076 1-370
+examples/think-compare-runtimes/worker/runtime/workspace.ts
+  s_3bac4a8ecb5284::t_4f499a5de1247c 60-63
+  s_3bac4a8ecb5284::t_0f80289511ae9e 21
+package-lock.json
+  s_3bac4a8ecb5284::t_e8e207f14f9b8b 93,96
+  s_3bac4a8ecb5284::t_02a594a7002874 63,65-66,68-85,87-89,91-92,94-95,98-106,182,230,234-236,2839-2841,2843-2845,12200
+  s_3bac4a8ecb5284::t_d83b2b43e69a24 97
+examples/codemode/README.md
+  s_79bb6a0a502813::t_47cadffdddfa8b 45-47,50-53
+  s_3bac4a8ecb5284::t_ab71d5450ad7ff 2-7,9-13,15-29,31-35,37,39-44,54-56
+examples/codemode/Dockerfile
+  s_3bac4a8ecb5284::t_149d5ce60492dc 27-28,30-31
+  s_3bac4a8ecb5284::t_04a0b23c2a4347 1-2,4,6-8,10-12,14-25,32-37,39,41-47
+packages/computer/tests/worker-backend-worker.ts
+  s_3bac4a8ecb5284::t_0189b1644b92da 82
+packages/computer/src/backends/javascript/index.ts
+  s_3bac4a8ecb5284::t_d60c6e09ae20d8 2-4
+  s_3bac4a8ecb5284::t_8b9f205953d79b 1
+examples/container/README.md
+  s_3bac4a8ecb5284::t_e757d47444c3d9 56,133
+examples/codemode/src/workspace-executor.test.ts
+  s_79bb6a0a502813::t_603121435f70f3 1,3-296
+packages/dofs/src/fs/writeFile.test.ts
+  s_79bb6a0a502813::t_f84ea36551dca4 100-109
+examples/code/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_44c82005e3525d 11566,12080,12148,12568,13003
+  s_3bac4a8ecb5284::t_6df7165afc73ff 1-11565,11567-12079,12081-12147,12149-12567,12569-13002,13004-14749
+examples/codemode/wrangler.test.jsonc
+  s_79bb6a0a502813::t_3ee89604684886 1-12
+packages/computer/src/observe.ts
+  s_3bac4a8ecb5284::t_9d11d2a7fae9d0 10,20
+examples/codemode/package.json
+  s_79bb6a0a502813::t_efca598c442f45 11-16,18-23
+  s_79bb6a0a502813::t_ec43c9aa7cb20a 8-10
+  s_79bb6a0a502813::t_ec9991cb2d162f 24-26
+docs/08_capnweb_interface.md
+  s_3bac4a8ecb5284::t_6878cfecda2f80 201,267
+packages/computer/src/observe/cloudflare.test.ts
+  s_3bac4a8ecb5284::t_b58c3b905f2508 92-94,98-99
+examples/artifacts/src/index.ts
+  s_3bac4a8ecb5284::t_1748081481af6b 199
+packages/computer/tests/stub-soak-worker.ts
+  s_3bac4a8ecb5284::t_c53e1685533f05 160
+packages/computer/src/backends/worker/adapter.test.ts
+  s_3bac4a8ecb5284::t_df87ac15fdb086 13,18,97-108
+examples/worker/src/index.ts
+  s_3bac4a8ecb5284::t_f9b597fa5b0f80 192
+packages/computer/src/observe/cloudflare.ts
+  s_3bac4a8ecb5284::t_afbfd6461364ea 73
+docs/02_sync_protocol.md
+  s_3bac4a8ecb5284::t_921dc93a663558 299,325,453
+examples/codemode/vitest.config.ts
+  s_79bb6a0a502813::t_5320e28da1ac87 1-13
+packages/computer/src/test-harness/shell.test.ts
+  s_3bac4a8ecb5284::t_c515dbcf9c9fea 21,34,44,57,64,77,104,121
+examples/codemode/tsconfig.json
+  s_3bac4a8ecb5284::t_4b7516e4709ce1 7-11
+  s_3bac4a8ecb5284::t_7edbc8f788a111 1-6,12-17
+examples/artifacts/README.md
+  s_3bac4a8ecb5284::t_38d883837450a7 35
+docs/13_git_interface.md
+  s_3bac4a8ecb5284::t_95f90711268c61 134
+  s_3bac4a8ecb5284::t_4fb0370c61b0ae 9
+packages/computer/src/backends/container/cloudflare-container.ts
+  s_79bb6a0a502813::t_a5bfa21c2ad54b 126
+packages/computer/src/shell.ts
+  s_3bac4a8ecb5284::t_0ac737ab5fd380 172,174-176,186,213-222
+  s_3bac4a8ecb5284::t_75bc25505a4cd1 311-322,327,335,343,347
+packages/computer/src/runtime/capability.test.ts
+  s_3bac4a8ecb5284::t_70a27cc0e4ff25 1-64,66,100-127
+  s_79bb6a0a502813::t_dc7d16f7601fa0 71,73-99,128
+  s_3bac4a8ecb5284::t_fa2d357b9d7675 65,67-70,72,129
+packages/computer/src/backends/worker/worker.test.ts
+  s_3bac4a8ecb5284::t_10fffdbc7a04cf 188
+packages/computer/src/backends/worker/worker.ts
+  s_79bb6a0a502813::t_f6f49fbccc3659 126
+  s_3bac4a8ecb5284::t_9f7bbc1b4b9ac9 142
+examples/code/.gitignore
+  s_3bac4a8ecb5284::t_3886caeed1b794 1-3
+packages/computer/src/backends/worker/entrypoint.test.ts
+  s_3bac4a8ecb5284::t_8c11d229e19416 202-237
+examples/codemode/src/workspace-executor.ts
+  s_79bb6a0a502813::t_6b2f33111df608 71-164,170-179,181,189-224,296,298,311-315,323-350,352-366,368,373-388,408-414,417
+  s_3bac4a8ecb5284::t_4bb081e7c1ecf0 15-69,165-169,180,182-188,236-287,316-322,351,367,369-372,389-407
+  s_3bac4a8ecb5284::t_56975bdaccd30a 1-9,11-14,70,225-235,288-295,297,299-310,415-416
+packages/computer/scripts/clean-dist.mjs
+  s_d2d5c90431634a::t_2e49154e313b1d 2
+  s_3bac4a8ecb5284::t_53126f220e60a6 1,3-23
+docs/17_isolate_javascript.md
+  s_79bb6a0a502813::t_90e2a8d21c3d12 106-143
+  s_3bac4a8ecb5284::t_8b1610792c0f7c 1-5,8-105,144-155
+docs/01_vfs.md
+  s_3bac4a8ecb5284::t_a485a4d3bfaaf4 69,95,137
+  s_3bac4a8ecb5284::t_b3a37fd0b11224 66
+examples/codemode/public/app.js
+  s_3bac4a8ecb5284::t_d113cd37c5eb78 1-108
+packages/computer/src/runtime/runtime.ts
+  s_3bac4a8ecb5284::t_f85d696b6ee89b 21,48,90-159,169-173,192,199-203,295,297-300,310,316
+  s_3bac4a8ecb5284::t_bb6907f216b291 28,62,73,160-168,174-189,197-198,204-269,272,283,294,308
+  s_3bac4a8ecb5284::t_3817d4fb642185 18-20
+  s_3bac4a8ecb5284::t_af363cd18edd8d 22-27
+  s_3bac4a8ecb5284::t_15c692eab9b45d 29-31,45-47
+  s_3bac4a8ecb5284::t_a87b69797421b3 49-51,59-61
+  s_3bac4a8ecb5284::t_abda188b099229 63-65,70-72
+  s_3bac4a8ecb5284::t_d50b890874005f 74-76,87-89
+  s_3bac4a8ecb5284::t_acd0639aee3612 190-191
+  s_3bac4a8ecb5284::t_6c100e9ec693ca 193-196
+  s_3bac4a8ecb5284::t_83836d98f6b427 270-271
+  s_3bac4a8ecb5284::t_be5378aa569bfc 273-275,280-282
+  s_3bac4a8ecb5284::t_efca25d4700361 284-286,291-293
+  s_3bac4a8ecb5284::t_e1f28e46aa238f 296
+  s_3bac4a8ecb5284::t_3060a6c2ac8f4c 301-303,305-307
+  s_3bac4a8ecb5284::t_d5d17a7189f932 309
+  s_3bac4a8ecb5284::t_80d2130459eaee 311-315
+packages/computer/src/backend.ts
+  s_3bac4a8ecb5284::t_87b0281b85e11a 3
+  s_3bac4a8ecb5284::t_594330d885f430 30-31
+packages/computer/src/backends/javascript/javascript-backend.test.ts
+  s_79bb6a0a502813::t_a64291dbd506a5 20,23,27,30,32,34-188,190-193,200,202-206,209,211,215-219,223-228,231-232
+  s_3bac4a8ecb5284::t_79b3026337755b 1-19,21-22,24-26,28-29,31,33,189,194-199,201,207-208,210,212-214,220-222,229-230,233
+README.md
+  s_3bac4a8ecb5284::t_08c0288c1694ad 5-6,12-23,65-70,97
+docs/04_filesystem_interface.md
+  s_3bac4a8ecb5284::t_a5ea3de24cff9c 18,235,264
+docs/10_project_layout.md
+  s_3bac4a8ecb5284::t_3d58475681114f 46-49,56-58,62,69-71,73,202-204,212,229
+docs/12_worker_backend.md
+  s_3bac4a8ecb5284::t_8b29b71284fe7e 34-36,50
+docs/18_runtime_migration.md
+  s_3bac4a8ecb5284::t_ed3ef3df5757d3 1-36
+docs/README.md
+  s_3bac4a8ecb5284::t_3e9b9b89ac7537 22-23,86-88,90-106,110,165,175,221,232-234,240-241,257
+examples/artifacts/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_24c15121d163f9 3,441-442,498-501,531,535,631,3307-3328,3342,3513,3519-3787,10711-11017,11019-11021,11023,11025-11038,11040,11042-11054,11056,11058-11070,11072,11074-11086,11088,11090-11102,11104,11106-11118,11120-11155,11195-11196,11234-11244,11265-11280,11282-11285,11287-11295,11297-11299,11301-11304,11306-11307,11309-11322,11324,11326,11328,11330-11380,11409-11556,11989-12014,12035-12038,12041,12109,12226-12232,12253-12286,12292,12523,12529-12541,12964,13114-13118,13122,13126,13130-13137,13143-13144,13150,13152,13158-13167,13170,13173,13178-13179,13183-13185,14076,14095,14650-14656,14690,14692
+examples/code/Dockerfile
+  s_3bac4a8ecb5284::t_b7a7c5c18be4ee 1-2,4,6-8,10-12,14-25,27-28,30-37,39,41-47
+examples/code/README.md
+  s_3bac4a8ecb5284::t_52195ed2b20cd6 2-38
+examples/code/architecture.html
+  s_3bac4a8ecb5284::t_825ceb9b997cd0 1-24,26-45
+examples/code/script/run
+  s_3bac4a8ecb5284::t_b2cd423958030c 1-70
+examples/code/src/agent.ts
+  s_3bac4a8ecb5284::t_dcc945b861e1bc 1-89
+examples/code/src/tools/exec.ts
+  s_3bac4a8ecb5284::t_39e010315d6270 1-102
+examples/code/wrangler.jsonc
+  s_3bac4a8ecb5284::t_13a28cd3e463d4 1-7,9-31,33-61
+examples/codemode/.gitignore
+  s_3bac4a8ecb5284::t_e65ec772f89b5f 1-3
+examples/codemode/public/index.html
+  s_3bac4a8ecb5284::t_8b0a6a1de12806 1-11,13-71
+examples/codemode/public/styles.css
+  s_3bac4a8ecb5284::t_86240e7f9a9aaf 1-35
+examples/codemode/script/validate.mjs
+  s_3bac4a8ecb5284::t_8b5649f1a289f8 1-58
+examples/codemode/src/test-worker.ts
+  s_3bac4a8ecb5284::t_799ebbf6d87e44 1,5-98
+examples/codemode/src/workspace-like.ts
+  s_3bac4a8ecb5284::t_046bf0c7129fb2 1-22
+examples/codemode/wrangler.jsonc
+  s_3bac4a8ecb5284::t_dc8e69d3bf11a1 1-27
+examples/container/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_8b92599a31d60a 3,440-441,497-500,530,534,630,3306-3327,3341,3512,3518-3786,10710-11016,11018-11020,11022,11024-11037,11039,11041-11053,11055,11057-11069,11071,11073-11085,11087,11089-11101,11103,11105-11117,11119-11154,11194-11195,11233-11243,11264-11279,11281-11284,11286-11294,11296-11298,11300-11303,11305-11306,11308-11321,11323,11325,11327,11329-11379,11408-11555,11988-12013,12034-12037,12040,12108,12225-12231,12252-12285,12291,12522,12528-12540,12963,13113-13117,13121,13125,13129-13136,13142-13143,13149,13151,13157-13166,13169,13172,13177-13178,13182-13184,14075,14094,14649-14655,14689,14691
+examples/think-compare-runtimes/worker/runtime/adapter.test.ts
+  s_3bac4a8ecb5284::t_e026b4672ed74b 22
+examples/think-compare-runtimes/worker/runtime/workspace.test.ts
+  s_3bac4a8ecb5284::t_73bdaff2e655d3 65,110,141-147,149-173
+examples/think/worker-configuration.d.ts
+  s_3bac4a8ecb5284::t_f1b4d79c13502d 3,441-442,499-502,532,536,642,3411,3552,3558-3603,11234-11235,11273-11283,11304-11541,11566,12080,12148,12265-12271,12292-12325,12331,12568,13003,13153-13157,13165,13171,13191,13197-13206,13209,13212,13217-13218,13222-13224,14115,14134,14689-14695,14729,14731
+packages/computer/package.json
+  s_3bac4a8ecb5284::t_6bc3b8fe79474c 38-41,58,61,65,68,71,77
+packages/computer/rolldown.config.ts
+  s_3bac4a8ecb5284::t_d5506217bb4462 32
+packages/computer/src/backends/container/cloudflare-container.test.ts
+  s_3bac4a8ecb5284::t_42cc0bd719f472 37,88,219-237
+packages/computer/src/backends/javascript/javascript-backend.ts
+  s_3bac4a8ecb5284::t_fa64a970b6e65e 1-693
+packages/computer/src/backends/javascript/module-graph.ts
+  s_3bac4a8ecb5284::t_79ca06a560e96d 1-355
+packages/computer/src/index.ts
+  s_3bac4a8ecb5284::t_eb29e23d4a8795 29,32,59-80,85-86
+packages/computer/src/observe-integration.test.ts
+  s_3bac4a8ecb5284::t_2087ed179becf3 13,235-236,280,282,287-291
+packages/computer/src/proxy.ts
+  s_3bac4a8ecb5284::t_3f7513154458fe 68-74,81-86
+packages/computer/src/stub.ts
+  s_3bac4a8ecb5284::t_9a713cb7fcc676 21,31-36,72-80,119-135,258-261,264,274-275,278,280,285-287,290,298,303-305,312-320,324-390,534,542,557,568-569
+packages/computer/src/tools/ai.test.ts
+  s_3bac4a8ecb5284::t_0030aa91c2299e 293,335,367,399,422,446
+packages/computer/src/workspace.test.ts
+  s_3bac4a8ecb5284::t_ce8903bdfc6931 5,204,221,226-246,248-277,279-280,282,284-290,292-384,391,467,470,493-577,582,652,654,666-679,688,692,1188,1190,1232,1236,1294,1304,1320
+packages/computer/tests/proxy.test.ts
+  s_3bac4a8ecb5284::t_90c14f38284eed 45-56
+packages/computer/tests/script-runner-worker.ts
+  s_3bac4a8ecb5284::t_86f9f1a03ca39e 1-262
+packages/computer/tests/script-runner.test.ts
+  s_3bac4a8ecb5284::t_97f5709e54cf23 1-380
+packages/computer/tests/stub-soak.test.ts
+  s_3bac4a8ecb5284::t_e36f9b8b80f76f 39,77,98-99
+packages/computer/tests/tsconfig.json
+  s_3bac4a8ecb5284::t_765e6810b8c73c 1-12
+packages/computerd/src/cli/computerd.ts
+  s_3bac4a8ecb5284::t_78e8fbeea295d9 333-334,388-391,395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3b4ef455199ffea14f4ea4f5018ee5551c286afb",
+  "prompts": {},
+  "sessions": {
+    "s_350ae2edc84263": {
+      "agent_id": {
+        "tool": "windsurf",
+        "id": "",
+        "model": "unknown"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_3bac4a8ecb5284": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f8a0b-3dd5-742d-80b2-4fa4ebfbbb1b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_79bb6a0a502813": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fb27b-1364-7706-96c5-31f9b140bc7e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_d2d5c90431634a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fa8ed-9626-7793-bd78-49d1bae24dcb",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
