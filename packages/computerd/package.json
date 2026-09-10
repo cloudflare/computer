@@ -30,6 +30,6 @@
     "fuse-native": "^2.2.6"
   },
   "devDependencies": {
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   }
 }
