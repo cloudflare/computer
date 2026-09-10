@@ -1,0 +1,19 @@
+.github/changeset-publish.mjs
+  s_af88ca552b7a2d::t_49533c56ea4782 51-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ec9e84e5d58a1bce7c660fbe82395e231d2ad60b",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
