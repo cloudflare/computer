@@ -159,6 +159,32 @@ export interface WorkspaceRPC {
   shell: ShellRPC;
 }
 
+// Code surface a container process reaches by dialing the host's
+// egress endpoint. Distinct from WorkspaceRPC: there the daemon is
+// the server and the host the client, here the host serves and a
+// short-lived command inside the container is the client. The host
+// runs the script through a codemode runtime with the connectors it
+// was configured with; the container never sees them directly.
+export interface CodemodeRPC {
+  // TypeScript declarations for every connector a script may call,
+  // plus the connector names, which are the globals in scope.
+  describe(): Promise<CodemodeDescription>;
+  // Run a script body. `code` is the body of an async function; a
+  // `return` sends a value back. Never rejects: a script failure is
+  // an "error" result, a run waiting on approval is "paused".
+  execute(input: { code: string }): Promise<CodemodeResult>;
+}
+
+export interface CodemodeDescription {
+  types: string;
+  connectors: string[];
+}
+
+export type CodemodeResult =
+  | { status: "completed"; executionId: string; result?: unknown; logs?: string[] }
+  | { status: "paused"; executionId: string; pending: unknown[] }
+  | { status: "error"; executionId: string; error: string; logs?: string[] };
+
 // Every event carries a per-id monotonic `seq`. The host-side
 // Workspace.shell decodes value to string when the caller passes
 // `encoding: "utf8"`.
