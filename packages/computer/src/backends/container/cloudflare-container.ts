@@ -55,6 +55,7 @@ import {
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress.js";
 import { WorkspaceTransportError } from "../../transport-failure.js";
+import { type CodemodeSessionOptions, createCodemodeSession } from "./codemode-session.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
@@ -130,6 +131,17 @@ export interface CloudflareContainerBackendOptions {
   // Maximum delay between failed startup probes. Defaults to 2s.
   healthRetryMaxDelayMs?: number;
 
+  // Serve a codemode session to processes inside the container. When
+  // set, a command in the container can run `codemode < script.js`:
+  // the script travels to this Durable Object over the same egress
+  // interception computerd dials back through, and runs in a dynamic
+  // worker with the configured connectors as typed globals. Left unset,
+  // the /codemode path answers 404.
+  codemode?: CodemodeSessionOptions & {
+    // Path on the egress host the CLI dials. Defaults to "/codemode".
+    path?: string;
+  };
+
   // Selector this backend is registered under in Workspace.
   // Defaults to "container-shell"; override when the
   // workspace hosts more than one instance of the same backend
@@ -143,6 +155,7 @@ const DEFAULT_EGRESS_HOST = "computer.internal";
 // in step from one place.
 const EGRESS_HEALTH_PATH = "/health";
 const EGRESS_API_PATH = "/api";
+const EGRESS_CODEMODE_PATH = "/codemode";
 const DEFAULT_CONTAINER_PORT = 8080;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -185,10 +198,11 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   readonly #options: Required<
     Omit<
       CloudflareContainerBackendOptions,
-      "container" | "workspace" | "containerEnv" | "egress" | "id"
+      "container" | "workspace" | "containerEnv" | "egress" | "id" | "codemode"
     >
   > &
     Pick<CloudflareContainerBackendOptions, "container" | "workspace" | "containerEnv">;
+  readonly #codemode: CloudflareContainerBackendOptions["codemode"];
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
   // Set once start() reports it, before the upgrade slot is armed, so
@@ -209,6 +223,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
+    this.#codemode = options.codemode;
     this.#options = {
       container: options.container,
       workspace: options.workspace,
@@ -399,6 +414,9 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       return this.#egress.gateway.fetch(new Request(parsedUrl, sanitized));
     }
     const url = new URL(req.url);
+    if (this.#codemode !== undefined && url.pathname === this.#codemodePath()) {
+      return this.#handleCodemodeFetch(req);
+    }
     if (url.pathname !== EGRESS_API_PATH) {
       return new Response("not found", { status: 404 });
     }
@@ -439,6 +457,32 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   }
 
   // --- internals --------------------------------------------------
+
+  #codemodePath(): string {
+    return this.#codemode?.path ?? EGRESS_CODEMODE_PATH;
+  }
+
+  // Serves one codemode session per upgrade. No bearer check, unlike
+  // /api: a request can only arrive here through the egress
+  // interception bound to this workspace, and any process in the
+  // container is meant to be able to run scripts. The /api token
+  // exists to stop a command from replacing the daemon's session,
+  // which has no counterpart here since every session is its own.
+  async #handleCodemodeFetch(req: Request): Promise<Response> {
+    const codemode = this.#codemode;
+    if (codemode === undefined) return new Response("not found", { status: 404 });
+    if (req.headers.get("upgrade") !== "websocket") {
+      return new Response(`${this.#codemodePath()} requires a websocket upgrade`, {
+        status: 400,
+      });
+    }
+    const target = await createCodemodeSession(codemode);
+    const pair = new WebSocketPair();
+    const [client, server] = [pair[0], pair[1]];
+    server.accept();
+    newWebSocketRpcSession(server as unknown as globalThis.WebSocket, target);
+    return new Response(null, { status: 101, webSocket: client });
+  }
 
   #armUpgrade(): void {
     this.#pendingUpgrade = new Promise<WebSocket>((resolve, reject) => {

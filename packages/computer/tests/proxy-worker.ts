@@ -35,6 +35,9 @@ export class TestStorageDO extends DurableObject<Env> {
         body: await request.text(),
       });
     }
+    if (url.pathname === "/codemode") {
+      return new Response(`codemode-from-do:${request.headers.get("upgrade") ?? "none"}`);
+    }
     if (url.pathname === "/api") {
       return new Response(
         url.searchParams.has("token") ? `from-do:${url.searchParams.get("token")}` : "from-do",

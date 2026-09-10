@@ -461,6 +461,37 @@ A backend that accepts a structured `input` and returns a structured
 Passing `input` to a non-callable backend is a clear error rather than a
 silent drop.
 
+### Running scripts from inside the container
+
+A command running in the container can hand a script back to the host
+with the `codemode` binary that ships next to `computerd`. The host runs
+it in a dynamic worker through `@cloudflare/codemode`, with the
+connectors you list as typed globals. Turn it on with the `codemode`
+option on the container backend and export the runtime class from your
+Worker entry:
+
+```ts
+import { CodemodeRuntime } from "@cloudflare/codemode";
+export { CodemodeRuntime };
+
+new CloudflareContainerBackend({
+  container: () => this,
+  workspace: { binding: "MY_DO", id: ctx.id.toString() },
+  codemode: {
+    ctx,
+    loader: env.LOADER,
+    connectors: () => [new NotesConnector(ctx, env)],
+  },
+});
+```
+
+Then forward `/codemode` to `backend.handleFetch` from the Durable
+Object's `fetch`, next to `/api`, and list `CodemodeRuntime` as a
+Durable Object binding so the runtime can find its facet class. Inside
+the container, `codemode --types` prints the declarations and
+`codemode < script.js` runs a script. `@cloudflare/codemode` is an
+optional peer dependency; install it when you use this option.
+
 ### Constructing without the mixin
 
 `withWorkspace` is the shortcut. You can also construct a `Workspace`

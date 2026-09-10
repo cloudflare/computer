@@ -531,6 +531,54 @@ describe("CloudflareContainerBackend", () => {
     expect(res.status).toBe(400);
   });
 
+  test("handleFetch answers /codemode with 404 unless codemode is configured", async () => {
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+    });
+    const res = await backend.handleFetch(
+      new Request("http://computer.internal/codemode", { headers: { upgrade: "websocket" } }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test("handleFetch requires a websocket upgrade on /codemode", async () => {
+    // The 101 path needs WebSocketPair, a workerd global, so the node
+    // runner stops at the handshake check; the example's workers test
+    // covers the session itself.
+    const fake = makeFakeHost();
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      codemode: {
+        ctx: {} as DurableObjectState,
+        loader: {} as WorkerLoader,
+        connectors: () => [],
+      },
+    });
+    const res = await backend.handleFetch(new Request("http://computer.internal/codemode"));
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/\/codemode requires a websocket upgrade/);
+
+    const custom = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => fake.host }),
+      workspace: fakeWorkspace,
+      codemode: {
+        ctx: {} as DurableObjectState,
+        loader: {} as WorkerLoader,
+        connectors: () => [],
+        path: "/scripts",
+      },
+    });
+    expect(
+      (await custom.handleFetch(new Request("http://computer.internal/codemode"))).status,
+    ).toBe(404);
+    expect((await custom.handleFetch(new Request("http://computer.internal/scripts"))).status).toBe(
+      400,
+    );
+  });
+
   test("handleFetch refuses a dial-back that does not present the secret", async () => {
     // The armed slot hands its session to whoever arrives first, and this
     // endpoint is reachable from inside the container. Without a token,

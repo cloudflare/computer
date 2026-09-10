@@ -91,6 +91,14 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       });
     }
 
+    // A codemode session from a process inside the container. The
+    // container backend answers it on the same fetch() as /api.
+    if (url.pathname === "/codemode") {
+      const stub = this.#hostStub();
+      if (stub === undefined) return this.#missingBindingResponse();
+      return stub.fetch(request);
+    }
+
     // Both the plain and tokenized forms normalize to /api before
     // reaching the durable object.
     if (url.pathname === "/api" || callback?.[2] === "api") {
