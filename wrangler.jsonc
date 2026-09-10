@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-git-do-repro-133",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/agents/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ReproAgent", "class_name": "ReproAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ReproAgent"] }]
+}
