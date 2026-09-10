@@ -1,0 +1,49 @@
+.changeset/codemode-cli-binary.md
+  s_af88ca552b7a2d::t_71868112a773c5 5
+.changeset/codemode-rpc-interface.md
+  s_af88ca552b7a2d::t_55578f9abae43c 5
+docs/07_injected_service.md
+  s_af88ca552b7a2d::t_92798c47599f12 71-74
+docs/08_capnweb_interface.md
+  s_af88ca552b7a2d::t_9b79268c043bdf 223-225,227,232,239-249
+examples/mcp/README.md
+  s_af88ca552b7a2d::t_8ae6b4dcf51b59 131,138-139
+examples/mcp/src/index.test.ts
+  s_af88ca552b7a2d::t_9499d3654f310f 166-181
+packages/computer/README.md
+  s_af88ca552b7a2d::t_c83469df240a7e 491-496
+packages/computer/src/backends/container/cloudflare-container.ts
+  s_af88ca552b7a2d::t_54e3cac9a0a34d 58-62,144,417,471
+packages/computer/src/backends/container/codemode-session.test.ts
+  s_af88ca552b7a2d::t_4edb032f449568 4-5,20-37,41-46,52-63,69-77,91,103-106,116-122
+packages/computer/src/backends/container/codemode-session.ts
+  s_af88ca552b7a2d::t_cc6c41e58e4e87 20-27,30-33,39-41,46,64,72-79,116-121
+packages/computer/src/proxy.ts
+  s_af88ca552b7a2d::t_b30d52ec15f592 54,97
+packages/computerd/README.md
+  s_af88ca552b7a2d::t_86690835799ef2 59-63,71-75
+packages/computerd/src/cli/codemode.test.ts
+  s_af88ca552b7a2d::t_51e81638ae631d 1-4,11-17,27-33,36,38,42-72,74,78,81-85,131-132,140,157,162,165-167,171-200,204,211,214-216
+packages/computerd/src/cli/codemode.ts
+  s_af88ca552b7a2d::t_3e1d007ba3c64a 2,12-15,26,29-35,42-43,50,54-57,64-74,76,78,86-91,94,105,116,131-201,205-210,218,220-221,256,268-274,276,293,310-311,313-315,318
+packages/rpc/src/index.ts
+  s_af88ca552b7a2d::t_ab82ff831092ba 20,23-25
+packages/rpc/src/interface.ts
+  s_af88ca552b7a2d::t_e850d175f588a7 171-177,182-186,189,194-225,228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "907d349e5e054c72f822ea6113f2542bb72bc29e",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
