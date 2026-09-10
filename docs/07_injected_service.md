@@ -68,8 +68,10 @@ back through, and the container backend answers it with a capnweb
 session whose bootstrap stub is `CodemodeRPC` (doc 08). The `codemode`
 binary that ships next to `computerd` is the client for it: a command
 the workspace runs can execute a script on the host with
-`codemode < script.js` and print the host's TypeScript declarations
-with `codemode --types`. The route answers `404` unless the backend was
+`codemode < script.js`, print the host's TypeScript declarations with
+`codemode types`, and find one method with `codemode search` or
+`codemode describe`. Approving a paused run is deliberately not on
+this surface. The route answers `404` unless the backend was
 constructed with the `codemode` option, and it needs no credential:
 reaching it at all means running inside this workspace's container.
 

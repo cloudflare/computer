@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// codemode — run a script against the host from inside the container.
+// codemode — run scripts against the host from inside the container.
 //
 // The script body travels to the workspace's Durable Object over a
 // capnweb WebSocket and runs there in a dynamic worker, with the
@@ -9,14 +9,10 @@
 // credential is involved; being inside the container is the
 // capability.
 //
-// Usage:
-//   codemode < script.js
-//   codemode script.js
-//   codemode -e 'return await kv.get({ key: "a" })'
-//   codemode --types
-//
-// Exit codes: 0 completed, 1 the script threw, 2 usage or connection
-// failure, 3 the run paused for approval on the host.
+// Exit codes: 0 done, 1 the script threw, 2 usage or connection
+// failure, 3 the run paused for approval on the host. Approving is
+// not something the container can do, by design: a run pauses because
+// a connector asked for a human's decision.
 
 import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -27,45 +23,59 @@ import { WebSocket } from "ws";
 const DEFAULT_URL = "ws://computer.internal/codemode";
 const DEFAULT_TIMEOUT_MS = 90_000;
 
-const USAGE = `codemode - run a script against this workspace's host
+const USAGE = `codemode - run scripts against this workspace's host
 
 Usage:
-  codemode < script.js          run a script from stdin
-  codemode script.js            run a script file
-  codemode -e 'return 1 + 1'    run inline code
-  codemode --types              print the TypeScript declarations of the globals
+  codemode < script.js                 run a script from stdin
+  codemode run script.js               run a script file
+  codemode -e 'return 1 + 1'           run inline code
+  codemode types                       TypeScript declarations of every global
+  codemode search <query>              find connector methods and snippets
+  codemode describe <target>           declarations for one connector, method, or snippet
+  codemode pending [executionId]       actions a paused run is waiting on
 
 The script is the body of an async function: use \`return\` to send a
 value back. Every connector the host configured is a global; every call
 returns a Promise. console.log output comes back on stderr.
 
 Options:
-  -e, --eval <code>   inline code
-      --types         print declarations and exit
-      --json          print the raw result object
+  -e, --eval <code>   inline code (run)
+      --json          print raw JSON for any command
       --timeout <ms>  give up after this many milliseconds (default ${DEFAULT_TIMEOUT_MS})
   -h, --help          show this help
 
 Environment:
   CODEMODE_URL        host endpoint (default ${DEFAULT_URL})
 
-Exit codes: 0 completed, 1 script error, 2 usage or connection error,
+Exit codes: 0 done, 1 script error, 2 usage or connection error,
 3 paused for approval.
 `;
 
-interface CodemodeIo {
+const COMMANDS = ["run", "types", "search", "describe", "pending"] as const;
+type Command = (typeof COMMANDS)[number];
+
+interface Io {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   stdin: () => Promise<string>;
   stdinIsTTY: boolean;
 }
 
-async function main(argv: string[], env: NodeJS.ProcessEnv, io: CodemodeIo): Promise<number> {
-  let parsed: ReturnType<typeof parseArguments>;
+interface Parsed {
+  command: Command;
+  args: string[];
+  eval: string | undefined;
+  json: boolean;
+  timeoutMs: number;
+  help: boolean;
+}
+
+async function main(argv: string[], env: NodeJS.ProcessEnv, io: Io): Promise<number> {
+  let parsed: Parsed;
   try {
-    parsed = parseArguments(argv);
+    parsed = parse(argv);
   } catch (error) {
-    io.stderr(`${describeError(error)}\n${USAGE}`);
+    io.stderr(`codemode: ${describeError(error)}\n${USAGE}`);
     return 2;
   }
   if (parsed.help) {
@@ -73,17 +83,15 @@ async function main(argv: string[], env: NodeJS.ProcessEnv, io: CodemodeIo): Pro
     return 0;
   }
 
-  const url = env.CODEMODE_URL ?? DEFAULT_URL;
-  let code: string | undefined;
-  if (!parsed.types) {
-    try {
-      code = await loadCode(parsed, io);
-    } catch (error) {
-      io.stderr(`${describeError(error)}\n`);
-      return 2;
-    }
+  let request: (api: CodemodeRPC) => Promise<number>;
+  try {
+    request = await prepare(parsed, io);
+  } catch (error) {
+    io.stderr(`codemode: ${describeError(error)}\n`);
+    return 2;
   }
 
+  const url = env.CODEMODE_URL ?? DEFAULT_URL;
   let ws: WebSocket;
   try {
     ws = await withTimeout(openSocket(url), parsed.timeoutMs, "connect");
@@ -94,17 +102,7 @@ async function main(argv: string[], env: NodeJS.ProcessEnv, io: CodemodeIo): Pro
 
   const api = newWebSocketRpcSession<CodemodeRPC>(ws as unknown as globalThis.WebSocket);
   try {
-    if (parsed.types) {
-      const description = await withTimeout(api.describe(), parsed.timeoutMs, "describe");
-      io.stdout(`${description.types.trim()}\n`);
-      return 0;
-    }
-    const outcome = await withTimeout<CodemodeResult>(
-      api.execute({ code: code ?? "" }),
-      parsed.timeoutMs,
-      "execute",
-    );
-    return report(outcome, parsed.json, io);
+    return await withTimeout(request(api), parsed.timeoutMs, parsed.command);
   } catch (error) {
     io.stderr(`codemode: ${describeError(error)}\n`);
     return 2;
@@ -115,22 +113,12 @@ async function main(argv: string[], env: NodeJS.ProcessEnv, io: CodemodeIo): Pro
   }
 }
 
-interface Parsed {
-  help: boolean;
-  types: boolean;
-  json: boolean;
-  timeoutMs: number;
-  eval: string | undefined;
-  file: string | undefined;
-}
-
-function parseArguments(argv: string[]): Parsed {
+function parse(argv: string[]): Parsed {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
       eval: { type: "string", short: "e" },
-      types: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       timeout: { type: "string", default: String(DEFAULT_TIMEOUT_MS) },
       help: { type: "boolean", short: "h", default: false },
@@ -140,20 +128,86 @@ function parseArguments(argv: string[]): Parsed {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new Error(`--timeout must be a positive number of milliseconds, got ${values.timeout}`);
   }
-  if (positionals.length > 1) {
-    throw new Error(`expected at most one script path, got ${positionals.length}`);
-  }
-  return {
-    help: values.help,
-    types: values.types,
-    json: values.json,
-    timeoutMs,
-    eval: values.eval,
-    file: positionals[0],
-  };
+  const [first, ...rest] = positionals;
+  const named = COMMANDS.find((c) => c === first);
+  // A bare path or nothing at all means run: `codemode script.js`,
+  // `codemode < script.js`, `codemode -e '...'`.
+  const command: Command = named ?? "run";
+  const args = named === undefined ? positionals : rest;
+  return { command, args, eval: values.eval, json: values.json, timeoutMs, help: values.help };
 }
 
-async function loadCode(parsed: Parsed, io: CodemodeIo): Promise<string> {
+// Validates arguments and reads any input before connecting, so a
+// usage mistake never opens a socket.
+async function prepare(parsed: Parsed, io: Io): Promise<(api: CodemodeRPC) => Promise<number>> {
+  const { args, json } = parsed;
+  const print = (value: unknown) => io.stdout(`${JSON.stringify(value, null, 2)}\n`);
+  switch (parsed.command) {
+    case "run": {
+      const code = await loadCode(parsed, io);
+      return async (api) => report(await api.execute({ code }), json, io);
+    }
+    case "types": {
+      expectArgs(args, 0, "types");
+      return async (api) => {
+        const description = await api.types();
+        if (json) print(description);
+        else io.stdout(`${description.types.trim()}\n`);
+        return 0;
+      };
+    }
+    case "search": {
+      const query = args.join(" ").trim();
+      if (query === "") throw new Error("search needs a query");
+      return async (api) => {
+        const found = await api.search(query);
+        if (json) {
+          print(found);
+          return 0;
+        }
+        for (const hit of found.results) {
+          const flag = hit.requiresApproval ? " (requires approval)" : "";
+          io.stdout(`${hit.path}${flag}${hit.description ? `  ${hit.description}` : ""}\n`);
+        }
+        if (found.truncated) io.stderr(`${found.total} matches, showing ${found.results.length}\n`);
+        return 0;
+      };
+    }
+    case "describe": {
+      expectArgs(args, 1, "describe <target>");
+      const target = args[0] ?? "";
+      return async (api) => {
+        const described = await api.describe(target);
+        if (json) print(described);
+        else io.stdout(`${described.types.trim()}\n`);
+        return 0;
+      };
+    }
+    case "pending": {
+      if (args.length > 1) throw new Error("pending takes at most one execution id");
+      return async (api) => {
+        const actions = await api.pending(args[0]);
+        if (json) {
+          print(actions);
+          return 0;
+        }
+        for (const action of actions) {
+          io.stdout(
+            `${action.executionId} seq ${action.seq}: ${action.connector}.${action.method}(${JSON.stringify(action.args)})\n`,
+          );
+        }
+        return 0;
+      };
+    }
+  }
+}
+
+function expectArgs(args: string[], count: number, usage: string): void {
+  if (args.length !== count) throw new Error(`usage: codemode ${usage}`);
+}
+
+async function loadCode(parsed: Parsed, io: Io): Promise<string> {
+  if (parsed.args.length > 1) throw new Error("run takes at most one script path");
   const code = await readSource(parsed, io);
   if (code.trim() === "") {
     throw new Error("no script given: pipe one on stdin, pass a file path, or use -e");
@@ -161,9 +215,10 @@ async function loadCode(parsed: Parsed, io: CodemodeIo): Promise<string> {
   return code;
 }
 
-async function readSource(parsed: Parsed, io: CodemodeIo): Promise<string> {
+async function readSource(parsed: Parsed, io: Io): Promise<string> {
   if (parsed.eval !== undefined) return parsed.eval;
-  if (parsed.file !== undefined) return readFile(parsed.file, "utf8");
+  const file = parsed.args[0];
+  if (file !== undefined) return readFile(file, "utf8");
   if (io.stdinIsTTY) return "";
   return io.stdin();
 }
@@ -198,7 +253,7 @@ function exitCode(outcome: CodemodeResult): number {
   }
 }
 
-function report(outcome: CodemodeResult, json: boolean, io: CodemodeIo): number {
+function report(outcome: CodemodeResult, json: boolean, io: Io): number {
   if (json) {
     io.stdout(`${JSON.stringify(outcome, null, 2)}\n`);
     return exitCode(outcome);
@@ -210,9 +265,15 @@ function report(outcome: CodemodeResult, json: boolean, io: CodemodeIo): number 
     case "error":
       io.stderr(`error: ${outcome.error}\n`);
       break;
-    case "paused":
-      io.stderr(`paused: execution ${outcome.executionId} is waiting for approval on the host\n`);
+    case "paused": {
+      const waiting = outcome.pending
+        .map((a) => `seq ${a.seq}: ${a.connector}.${a.method}(${JSON.stringify(a.args)})`)
+        .join("; ");
+      io.stderr(
+        `paused: execution ${outcome.executionId} is waiting for approval${waiting ? ` on ${waiting}` : ""}\n`,
+      );
       break;
+    }
     case "completed":
       if (outcome.result !== undefined) {
         const text =
@@ -229,7 +290,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function processIo(): CodemodeIo {
+function processIo(): Io {
   return {
     stdout: (text) => process.stdout.write(text),
     stderr: (text) => process.stderr.write(text),
@@ -246,9 +307,13 @@ function processIo(): CodemodeIo {
 
 // Started unconditionally, as computerd is: inside the SEA the bundle is
 // imported from a data: URL, so there is no `require.main` to compare.
+// The exit code is set rather than forced so a large result piped to
+// another process drains before the process ends.
 main(process.argv.slice(2), process.env, processIo())
-  .then((code) => process.exit(code))
+  .then((code) => {
+    process.exitCode = code;
+  })
   .catch((error: unknown) => {
     process.stderr.write(`codemode: ${describeError(error)}\n`);
-    process.exit(2);
+    process.exitCode = 2;
   });

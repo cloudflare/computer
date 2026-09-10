@@ -168,21 +168,64 @@ export interface WorkspaceRPC {
 export interface CodemodeRPC {
   // TypeScript declarations for every connector a script may call,
   // plus the connector names, which are the globals in scope.
-  describe(): Promise<CodemodeDescription>;
+  types(): Promise<CodemodeTypes>;
+  // Ranked search over connector methods and saved snippets, for a
+  // script author who does not want every declaration at once.
+  search(query: string): Promise<CodemodeSearch>;
+  // Declarations for one connector, method ("connector.method"), or
+  // snippet.
+  describe(target: string): Promise<CodemodeDescription>;
   // Run a script body. `code` is the body of an async function; a
   // `return` sends a value back. Never rejects: a script failure is
   // an "error" result, a run waiting on approval is "paused".
   execute(input: { code: string }): Promise<CodemodeResult>;
+  // Actions waiting for approval, across every paused run or for one.
+  // Read-only: a run pauses because a connector method asked for a
+  // human's decision, and the container is never given a way to make
+  // it. Approval stays on the host.
+  pending(executionId?: string): Promise<CodemodePendingAction[]>;
 }
 
-export interface CodemodeDescription {
+export interface CodemodeTypes {
   types: string;
   connectors: string[];
 }
 
+export interface CodemodeSearchResult {
+  path: string;
+  connector: string;
+  method: string;
+  description?: string;
+  requiresApproval?: boolean;
+  kind: "method" | "snippet";
+  score: number;
+}
+
+export interface CodemodeSearch {
+  results: CodemodeSearchResult[];
+  total: number;
+  truncated: boolean;
+}
+
+export interface CodemodeDescription {
+  path: string;
+  description?: string;
+  requiresApproval?: boolean;
+  types: string;
+  kind: "connector" | "method" | "snippet";
+}
+
+export interface CodemodePendingAction {
+  executionId: string;
+  seq: number;
+  connector: string;
+  method: string;
+  args: unknown;
+}
+
 export type CodemodeResult =
   | { status: "completed"; executionId: string; result?: unknown; logs?: string[] }
-  | { status: "paused"; executionId: string; pending: unknown[] }
+  | { status: "paused"; executionId: string; pending: CodemodePendingAction[] }
   | { status: "error"; executionId: string; error: string; logs?: string[] };
 
 // Every event carries a per-id monotonic `seq`. The host-side

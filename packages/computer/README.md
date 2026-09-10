@@ -488,9 +488,12 @@ new CloudflareContainerBackend({
 Then forward `/codemode` to `backend.handleFetch` from the Durable
 Object's `fetch`, next to `/api`, and list `CodemodeRuntime` as a
 Durable Object binding so the runtime can find its facet class. Inside
-the container, `codemode --types` prints the declarations and
-`codemode < script.js` runs a script. `@cloudflare/codemode` is an
-optional peer dependency; install it when you use this option.
+the container, `codemode types` prints the declarations, `codemode
+search` and `codemode describe` find one method at a time, and
+`codemode < script.js` runs a script. A run that pauses for approval
+stays paused until the host decides; the container can list what it
+is waiting on but is never given a way to approve it. `@cloudflare/codemode` is an optional peer dependency;
+install it when you use this option.
 
 ### Constructing without the mixin
 

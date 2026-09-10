@@ -163,10 +163,22 @@ describe("codemode from inside the container", () => {
   it("describes the notes connector and runs scripts against it", async () => {
     using api = await connect("codemode-run");
 
-    const description = await api.describe();
-    expect(description.connectors).toEqual(["notes"]);
-    expect(description.types).toContain("declare const notes:");
-    expect(description.types).toContain("add: (input: AddInput) => Promise<AddOutput>;");
+    const declared = await api.types();
+    expect(declared.connectors).toEqual(["notes"]);
+    expect(declared.types).toContain("declare const notes:");
+    expect(declared.types).toContain("add: (input: AddInput) => Promise<AddOutput>;");
+
+    const found = await api.search("append a note");
+    expect(found.results[0]?.path).toBe("notes.add");
+    const described = await api.describe("notes.add");
+    expect(described.kind).toBe("method");
+    expect(described.types).toContain("AddInput");
+
+    expect(await api.pending()).toEqual([]);
+    // A capnweb stub proxies any name, so the proof is that the host
+    // refuses the call: approving is not on the surface.
+    const offSurface = api as unknown as { approve(input: unknown): Promise<unknown> };
+    await expect(offSurface.approve({ executionId: "none" })).rejects.toThrow();
 
     const added = await api.execute({
       code: 'await notes.add({ text: "hello" }); console.log("added"); return await notes.list({});',

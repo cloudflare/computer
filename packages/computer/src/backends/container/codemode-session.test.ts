@@ -1,7 +1,8 @@
 // CodemodeRPCTarget is the bootstrap stub a container process talks to
 // over /codemode. It adapts a codemode runtime handle to the wire
 // contract and, because a rejection would surface on the host rather
-// than at the caller, folds every failure into an "error" result.
+// than at the caller, folds every run failure into an "error" result.
+// Approval is deliberately absent from the surface.
 
 import { describe, expect, test } from "vitest";
 
@@ -16,39 +17,64 @@ function connector(name: string, types: string): CodemodeConnectorLike {
   return { name: () => name, getTypeScriptTypes: async () => types };
 }
 
-function runtime(execute: CodemodeRuntimeLike["execute"]): CodemodeRuntimeLike {
-  return { execute };
+const pendingAction = { executionId: "p", seq: 1, connector: "kv", method: "put", args: {} };
+
+function runtime(overrides: Partial<CodemodeRuntimeLike> = {}): CodemodeRuntimeLike {
+  return {
+    execute: async () => completed(1),
+    search: async (query) => ({
+      results: [{ path: `kv.${query}`, connector: "kv", method: query, kind: "method", score: 1 }],
+      total: 1,
+      truncated: false,
+    }),
+    describe: async (target) => ({
+      path: target,
+      types: `declare const ${target}: {}`,
+      kind: "connector",
+    }),
+    pending: async () => [pendingAction],
+    ...overrides,
+  };
 }
 
 describe("CodemodeRPCTarget", () => {
-  test("describe joins each connector's declarations and lists their names", async () => {
-    const target = new CodemodeRPCTarget(
-      runtime(async () => completed(1)),
-      [connector("kv", "declare const kv: {}"), connector("github", "declare const github: {}")],
-    );
-    expect(await target.describe()).toEqual({
+  test("types joins each connector's declarations and lists their names", async () => {
+    const target = new CodemodeRPCTarget(runtime(), [
+      connector("kv", "declare const kv: {}"),
+      connector("github", "declare const github: {}"),
+    ]);
+    expect(await target.types()).toEqual({
       types: "declare const kv: {}\ndeclare const github: {}",
       connectors: ["kv", "github"],
     });
   });
 
-  test("describe with no connectors is empty rather than an error", async () => {
-    const target = new CodemodeRPCTarget(
-      runtime(async () => completed(1)),
-      [],
-    );
-    expect(await target.describe()).toEqual({ types: "", connectors: [] });
+  test("types with no connectors is empty rather than an error", async () => {
+    expect(await new CodemodeRPCTarget(runtime(), []).types()).toEqual({
+      types: "",
+      connectors: [],
+    });
+  });
+
+  test("search, describe, and pending pass straight through to the runtime", async () => {
+    const target = new CodemodeRPCTarget(runtime(), []);
+    expect((await target.search("get")).results[0]?.path).toBe("kv.get");
+    expect((await target.describe("kv")).types).toBe("declare const kv: {}");
+    expect(await target.pending("p")).toEqual([pendingAction]);
   });
 
   test("execute forwards the code and maps every runtime status", async () => {
     const seen: string[] = [];
     const target = new CodemodeRPCTarget(
-      runtime(async ({ code }) => {
-        seen.push(code);
-        if (code === "pause") return { status: "paused", executionId: "p", pending: [{ seq: 1 }] };
-        if (code === "fail")
-          return { status: "error", executionId: "e", error: "bad", logs: ["l"] };
-        return { status: "completed", executionId: "c", result: 42, logs: ["hi"] };
+      runtime({
+        execute: async ({ code }) => {
+          seen.push(code);
+          if (code === "pause")
+            return { status: "paused", executionId: "p", pending: [pendingAction] };
+          if (code === "fail")
+            return { status: "error", executionId: "e", error: "bad", logs: ["l"] };
+          return { status: "completed", executionId: "c", result: 42, logs: ["hi"] };
+        },
       }),
       [],
     );
@@ -62,7 +88,7 @@ describe("CodemodeRPCTarget", () => {
     expect(await target.execute({ code: "pause" })).toEqual({
       status: "paused",
       executionId: "p",
-      pending: [{ seq: 1 }],
+      pending: [pendingAction],
     });
     expect(await target.execute({ code: "fail" })).toEqual({
       status: "error",
@@ -74,8 +100,10 @@ describe("CodemodeRPCTarget", () => {
 
   test("execute never rejects: empty code and a throwing runtime become error results", async () => {
     const target = new CodemodeRPCTarget(
-      runtime(async () => {
-        throw new Error("boom");
+      runtime({
+        execute: async () => {
+          throw new Error("boom");
+        },
       }),
       [],
     );
@@ -84,6 +112,13 @@ describe("CodemodeRPCTarget", () => {
       error: "no code provided",
     });
     expect(await target.execute({ code: "x" })).toMatchObject({ status: "error", error: "boom" });
+  });
+
+  test("the surface has no way to approve or reject", () => {
+    const target = new CodemodeRPCTarget(runtime(), []) as unknown as Record<string, unknown>;
+    expect(target.approve).toBeUndefined();
+    expect(target.reject).toBeUndefined();
+    expect(target.rollback).toBeUndefined();
   });
 });
 

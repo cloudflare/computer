@@ -560,23 +560,6 @@ describe("CloudflareContainerBackend", () => {
     const res = await backend.handleFetch(new Request("http://computer.internal/codemode"));
     expect(res.status).toBe(400);
     expect(await res.text()).toMatch(/\/codemode requires a websocket upgrade/);
-
-    const custom = new CloudflareContainerBackend({
-      container: () => ({ getWorkspaceContainer: () => fake.host }),
-      workspace: fakeWorkspace,
-      codemode: {
-        ctx: {} as DurableObjectState,
-        loader: {} as WorkerLoader,
-        connectors: () => [],
-        path: "/scripts",
-      },
-    });
-    expect(
-      (await custom.handleFetch(new Request("http://computer.internal/codemode"))).status,
-    ).toBe(404);
-    expect((await custom.handleFetch(new Request("http://computer.internal/scripts"))).status).toBe(
-      400,
-    );
   });
 
   test("handleFetch refuses a dial-back that does not present the secret", async () => {

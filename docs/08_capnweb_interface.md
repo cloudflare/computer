@@ -220,25 +220,33 @@ session whose bootstrap stub is:
 
 ```ts
 interface CodemodeRPC {
-  describe(): Promise<{ types: string; connectors: string[] }>;
+  types(): Promise<{ types: string; connectors: string[] }>;
+  search(query: string): Promise<CodemodeSearch>;
+  describe(target: string): Promise<CodemodeDescription>;
   execute(input: { code: string }): Promise<CodemodeResult>;
+  pending(executionId?: string): Promise<CodemodePendingAction[]>;
 }
 
 type CodemodeResult =
   | { status: "completed"; executionId: string; result?: unknown; logs?: string[] }
-  | { status: "paused"; executionId: string; pending: unknown[] }
+  | { status: "paused"; executionId: string; pending: CodemodePendingAction[] }
   | { status: "error"; executionId: string; error: string; logs?: string[] };
 ```
 
 `code` is the body of an async function. The host runs it through a
 codemode runtime in a dynamic worker, with the connectors the
 container backend was configured with as typed globals; `types` is
-the TypeScript declaration of those globals. `execute` never rejects:
-a script that throws comes back as an `error` result, and a run that
-stops for approval on the host comes back as `paused`. Each
-connection is its own session and is disposed when the client closes
-the socket. The `codemode` binary in the container image is the
-reference client.
+the TypeScript declaration of all of them, and `search` and
+`describe` are the runtime's own discovery helpers for one method at
+a time. `execute` never rejects: a script that throws comes back as
+an `error` result, and a run that stops for approval on the host
+comes back as `paused` with the actions it waits on, which `pending`
+also lists. Approving or rejecting is deliberately absent: a run
+pauses because a connector asked for a human's decision, and handing
+that decision to the process that wrote the script would make the
+gate meaningless. Each connection is its own session and
+is disposed when the client closes the socket. The `codemode` binary
+in the container image is the reference client.
 
 ## Push and fetch semantics
 

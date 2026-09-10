@@ -17,8 +17,12 @@
 
 export type {
   CodemodeDescription,
+  CodemodePendingAction,
   CodemodeResult,
   CodemodeRPC,
+  CodemodeSearch,
+  CodemodeSearchResult,
+  CodemodeTypes,
   ExecEvent,
   ShellRPC,
   SyncRPC,

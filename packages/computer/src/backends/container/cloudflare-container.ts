@@ -55,7 +55,11 @@ import {
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress.js";
 import { WorkspaceTransportError } from "../../transport-failure.js";
-import { type CodemodeSessionOptions, createCodemodeSession } from "./codemode-session.js";
+import {
+  CODEMODE_PATH,
+  type CodemodeSessionOptions,
+  createCodemodeSession,
+} from "./codemode-session.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
@@ -137,10 +141,7 @@ export interface CloudflareContainerBackendOptions {
   // interception computerd dials back through, and runs in a dynamic
   // worker with the configured connectors as typed globals. Left unset,
   // the /codemode path answers 404.
-  codemode?: CodemodeSessionOptions & {
-    // Path on the egress host the CLI dials. Defaults to "/codemode".
-    path?: string;
-  };
+  codemode?: CodemodeSessionOptions;
 
   // Selector this backend is registered under in Workspace.
   // Defaults to "container-shell"; override when the
@@ -155,7 +156,6 @@ const DEFAULT_EGRESS_HOST = "computer.internal";
 // in step from one place.
 const EGRESS_HEALTH_PATH = "/health";
 const EGRESS_API_PATH = "/api";
-const EGRESS_CODEMODE_PATH = "/codemode";
 const DEFAULT_CONTAINER_PORT = 8080;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 20_000;
@@ -414,7 +414,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       return this.#egress.gateway.fetch(new Request(parsedUrl, sanitized));
     }
     const url = new URL(req.url);
-    if (this.#codemode !== undefined && url.pathname === this.#codemodePath()) {
+    if (this.#codemode !== undefined && url.pathname === CODEMODE_PATH) {
       return this.#handleCodemodeFetch(req);
     }
     if (url.pathname !== EGRESS_API_PATH) {
@@ -458,10 +458,6 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
   // --- internals --------------------------------------------------
 
-  #codemodePath(): string {
-    return this.#codemode?.path ?? EGRESS_CODEMODE_PATH;
-  }
-
   // Serves one codemode session per upgrade. No bearer check, unlike
   // /api: a request can only arrive here through the egress
   // interception bound to this workspace, and any process in the
@@ -472,9 +468,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     const codemode = this.#codemode;
     if (codemode === undefined) return new Response("not found", { status: 404 });
     if (req.headers.get("upgrade") !== "websocket") {
-      return new Response(`${this.#codemodePath()} requires a websocket upgrade`, {
-        status: 400,
-      });
+      return new Response(`${CODEMODE_PATH} requires a websocket upgrade`, { status: 400 });
     }
     const target = await createCodemodeSession(codemode);
     const pair = new WebSocketPair();

@@ -17,19 +17,33 @@
 // not need it installed, and the node test runner never loads a module
 // that imports `cloudflare:workers` at its top level.
 
-import type { CodemodeDescription, CodemodeResult, CodemodeRPC } from "@cloudflare/computer-rpc";
+import type {
+  CodemodeDescription,
+  CodemodePendingAction,
+  CodemodeResult,
+  CodemodeRPC,
+  CodemodeSearch,
+  CodemodeTypes,
+} from "@cloudflare/computer-rpc";
 import { RpcTarget } from "capnweb";
+
+// Path on the egress host the CLI dials. WorkspaceProxy forwards it and
+// the container backend answers it, so both read it from here.
+export const CODEMODE_PATH = "/codemode";
 
 // The slice of the codemode runtime handle and connector the target
 // needs. Structural on purpose: tests substitute fakes, and the
 // package does not import the real types at module load.
 export interface CodemodeRuntimeLike {
   execute(input: { code: string }): Promise<CodemodeRuntimeOutput>;
+  search(query: string): Promise<CodemodeSearch>;
+  describe(target: string): Promise<CodemodeDescription>;
+  pending(executionId?: string): Promise<CodemodePendingAction[]>;
 }
 
 export type CodemodeRuntimeOutput =
   | { status: "completed"; executionId: string; result: unknown; logs?: string[] }
-  | { status: "paused"; executionId: string; pending: unknown[] }
+  | { status: "paused"; executionId: string; pending: CodemodePendingAction[] }
   | { status: "error"; executionId: string; error: string; logs?: string[] };
 
 export interface CodemodeConnectorLike {
@@ -47,12 +61,20 @@ export class CodemodeRPCTarget extends RpcTarget implements CodemodeRPC {
     this.#connectors = connectors;
   }
 
-  async describe(): Promise<CodemodeDescription> {
+  async types(): Promise<CodemodeTypes> {
     const types = await Promise.all(this.#connectors.map((c) => c.getTypeScriptTypes()));
     return {
       types: types.join("\n"),
       connectors: this.#connectors.map((c) => c.name()),
     };
+  }
+
+  search(query: string): Promise<CodemodeSearch> {
+    return this.#runtime.search(String(query ?? ""));
+  }
+
+  describe(target: string): Promise<CodemodeDescription> {
+    return this.#runtime.describe(String(target ?? ""));
   }
 
   // A rejection here would surface as an unhandled rejection on the
@@ -90,6 +112,12 @@ export class CodemodeRPCTarget extends RpcTarget implements CodemodeRPC {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  // Read-only on purpose: the container can see why a run stopped but
+  // is never handed the decision. See the interface comment.
+  pending(executionId?: string): Promise<CodemodePendingAction[]> {
+    return this.#runtime.pending(executionId);
   }
 }
 

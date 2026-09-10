@@ -54,10 +54,13 @@ inside the container. It sends a script to the workspace's Durable
 Object and prints the result:
 
 ```sh
-codemode --types                       # TypeScript declarations of the globals
 echo 'return await notes.list({})' | codemode
 codemode -e 'return 1 + 1'
-codemode script.js
+codemode run script.js
+codemode types                    # TypeScript declarations of every global
+codemode search "append a note"   # find connector methods and snippets
+codemode describe notes.add       # declarations for one connector or method
+codemode pending                  # actions a paused run is waiting on
 ```
 
 The script is the body of an async function; `return` sends a value
@@ -65,8 +68,11 @@ back and `console.log` lines arrive on stderr. The host runs it in a
 dynamic worker with the connectors its container backend was
 configured with (see the `codemode` option on
 `CloudflareContainerBackend` in `@cloudflare/computer`). Exit codes
-are 0 when the script completed, 1 when it threw, 2 for a usage or
-connection error, and 3 when the run paused for approval on the host.
+are 0 when the command finished, 1 when the script threw, 2 for a
+usage or connection error, and 3 when the run paused for approval.
+Approving is not something the container can do: a run pauses because
+a connector asked for a human's decision, and that decision stays on
+the host. `--json` prints raw output for any command.
 
 `codemode` dials `ws://computer.internal/codemode`, the egress host
 the container backend intercepts, and needs no credentials: running

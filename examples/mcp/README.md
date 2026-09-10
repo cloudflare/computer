@@ -128,13 +128,15 @@ a script back to the Durable Object, where it runs in a dynamic worker
 with the example's `notes` connector in scope:
 
 ```js
-const types = await codemode.exec({ command: "codemode --types", backend: "container-shell" });
+const types = await codemode.exec({ command: "codemode types", backend: "container-shell" });
 const added = await codemode.exec({
   command: `echo 'await notes.add({ text: "hello" }); return await notes.list({})' | codemode`,
   backend: "container-shell",
 });
 ```
 
+`codemode search <query>` and `codemode describe notes.add` find and
+document one method at a time instead of printing every declaration.
 `src/notes-connector.ts` is the whole connector. Swap it for connectors
 over whatever the workspace should reach.
 
