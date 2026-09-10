@@ -15,7 +15,6 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createGitClient } from "@cloudflare/computer/git";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
-import { NotesConnector } from "./notes-connector.js";
 import { createComputerMCPServer } from "./server.js";
 
 interface Env {
@@ -24,10 +23,6 @@ interface Env {
   COMPUTER_MCP: DurableObjectNamespace<ComputerMCP>;
 }
 
-// The codemode runtime keeps executions in a Durable Object facet. The
-// runtime looks the class up on ctx.exports by this name, so it has to
-// be exported from the Worker entry.
-export { CodemodeRuntime } from "@cloudflare/codemode";
 export { WorkspaceProxy, WorkspaceServiceProxy };
 
 const TOKEN_ENCODER = new TextEncoder();
@@ -46,13 +41,6 @@ class ComputerMCPBase extends withWorkspaceContainer(ComputerMCPDurableObject) {
     container: () => this,
     workspace: { binding: "COMPUTER_MCP", id: this.ctx.id.toString() },
     egress: { mode: "direct" },
-    // Lets a command inside the container run `codemode < script.js`
-    // against the connectors listed here.
-    codemode: {
-      ctx: this.ctx,
-      loader: this.env.LOADER,
-      connectors: () => [new NotesConnector(this.ctx, this.env)],
-    },
   });
 }
 
@@ -70,9 +58,9 @@ function workspaceOptions(self: InstanceType<typeof ComputerMCPBase>): Workspace
 export class ComputerMCP extends withWorkspace(ComputerMCPBase, workspaceOptions) {
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
-    // computerd and the codemode CLI reach these callbacks through an
-    // internal binding. The public Worker forwards only /mcp.
-    if (path === "/api" || path === "/codemode") return this.containerShell.handleFetch(request);
+    // computerd reaches this callback through an internal binding. The public
+    // Worker forwards only /mcp.
+    if (path === "/api") return this.containerShell.handleFetch(request);
     if (path !== "/mcp") return new Response("not found", { status: 404 });
 
     const unauthorized = authorize(request, this.env.MCP_TOKEN);

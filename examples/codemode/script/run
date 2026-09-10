@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Smoke test against a running `wrangler dev` of this example. Each
+# step runs a command inside the container; the codemode ones travel
+# back to the Durable Object and run there.
+#
+#   npm run dev  (in another terminal), then:
+#   ./script/run                          # against http://127.0.0.1:8787
+#   NAME=foo ./script/run                 # use Durable Object instance 'foo'
+
+set -euo pipefail
+
+BASE_URL="${1:-http://127.0.0.1:8787}"
+BASE_URL="${BASE_URL%/}"
+NAME="${NAME:-demo}"
+
+step() { printf '\n=== %s ===\n' "$*"; }
+exec_in_container() {
+  curl -fsS -X POST "${BASE_URL}/c/${NAME}/exec" \
+    -H 'content-type: application/json' \
+    -d "$(printf '{"command":%s}' "$(printf '%s' "$1" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s)))')")"
+}
+
+step "1. what can a script call?"
+exec_in_container 'codemode types'
+
+step "2. find one method"
+exec_in_container 'codemode search "append a note" && codemode describe notes.add'
+
+step "3. run a script"
+exec_in_container "echo 'await notes.add({ text: \"hello\" }); return await notes.list({})' | codemode"
+
+step "4. a script that throws exits 1"
+exec_in_container "codemode -e 'throw new Error(\"nope\")'; echo exit=\$?"
+
+printf '\nOK\n'

@@ -1,6 +1,6 @@
 // A small connector so `codemode` has something to call from inside the
 // container. It keeps a list of notes in the Durable Object's storage.
-// Replace it with connectors over whatever the workspace should reach:
+// Replace it with connectors over whatever the container should reach:
 // KV, R2, an MCP server through McpConnector, an OpenAPI service.
 
 import { CodemodeConnector, type ConnectorTools } from "@cloudflare/codemode";

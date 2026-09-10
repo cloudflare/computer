@@ -17,12 +17,7 @@
     }
   ],
   "durable_objects": {
-    "bindings": [
-      { "name": "COMPUTER_MCP", "class_name": "ComputerMCP" },
-      // Facet-only class from @cloudflare/codemode: listed so the runtime can
-      // resolve it, deliberately absent from the migrations.
-      { "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" }
-    ]
+    "bindings": [{ "name": "COMPUTER_MCP", "class_name": "ComputerMCP" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ComputerMCP"] }]
 }

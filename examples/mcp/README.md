@@ -120,26 +120,6 @@ You do not need to call the underlying Computer tools individually. The `code` t
 | `codemode.delete_({ path, recursive? })` | Delete a file or directory. |
 | `codemode.exec({ command, cwd?, backend?, env? })` | Run a command, using `worker-shell` unless another backend is selected. |
 
-## Scripts from inside the container
-
-The container image also carries `codemode`, a client for the host's
-code surface. A command run on the `container-shell` backend can hand
-a script back to the Durable Object, where it runs in a dynamic worker
-with the example's `notes` connector in scope:
-
-```js
-const types = await codemode.exec({ command: "codemode types", backend: "container-shell" });
-const added = await codemode.exec({
-  command: `echo 'await notes.add({ text: "hello" }); return await notes.list({})' | codemode`,
-  backend: "container-shell",
-});
-```
-
-`codemode search <query>` and `codemode describe notes.add` find and
-document one method at a time instead of printing every declaration.
-`src/notes-connector.ts` is the whole connector. Swap it for connectors
-over whatever the workspace should reach.
-
 ## How it works
 
 `@cloudflare/codemode` runs Code Mode orchestration code in an isolated Dynamic Worker with outbound networking disabled. Tool calls return to the Durable Object and operate on its Computer workspace.

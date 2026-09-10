@@ -1,0 +1,30 @@
+{
+  // Example: a Worker + Durable Object hosting a Cloudflare Container in
+  // which commands can run `codemode < script.js` against the host.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-codemode-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  // The dynamic worker a script runs in is minted from this loader.
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "containers": [
+    {
+      "class_name": "CodemodeExample",
+      "image": "./Dockerfile",
+      "instance_type": "standard-2",
+      "max_instances": 1,
+      "rollout_active_grace_period": 0,
+      "rollout_step_percentage": [100]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CodemodeExample", "class_name": "CodemodeExample" },
+      // Facet-only class from @cloudflare/codemode: listed so the runtime can
+      // resolve it, deliberately absent from the migrations.
+      { "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeExample"] }]
+}
