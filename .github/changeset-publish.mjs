@@ -48,11 +48,11 @@ function imageExists(tag) {
 
 function stageComputerdBinary() {
   mkdirSync("packages/computer-computerd-linux-x64/bin", { recursive: true });
-  copyFileSync(
-    "artifacts/computerd/computerd-linux-x64",
-    "packages/computer-computerd-linux-x64/bin/computerd",
-  );
-  chmodSync("packages/computer-computerd-linux-x64/bin/computerd", 0o755);
+  for (const entry of ["computerd", "codemode"]) {
+    const staged = `packages/computer-computerd-linux-x64/bin/${entry}`;
+    copyFileSync(`artifacts/computerd/${entry}-linux-x64`, staged);
+    chmodSync(staged, 0o755);
+  }
 }
 
 const { version } = readJson("packages/computerd/package.json");
