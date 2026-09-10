@@ -1,0 +1,19 @@
+README.md
+  s_af88ca552b7a2d::t_984e6c83a3a86c 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7d662ca2f1927a7d74160b0091bfc805d08ccb83",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
