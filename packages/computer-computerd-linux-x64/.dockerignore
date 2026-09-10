@@ -1,3 +1,4 @@
-# Only the staged binary needs to enter the docker build context.
+# Only the staged binaries need to enter the docker build context.
 *
 !bin/computerd
+!bin/codemode

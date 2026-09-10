@@ -32,14 +32,16 @@ const push = process.argv.includes("--push");
 console.log("[build-docker] building computerd-linux-x64");
 execFileSync("node", ["./scripts/build-bin.mjs"], { cwd: computerdRoot, stdio: "inherit" });
 
-// 2. Stage the binary into the platform package's bin/. The
-//    .dockerignore restricts the build context to bin/computerd, so the
-//    Dockerfile's COPY hits this file directly.
-const src = resolve(repoRoot, "artifacts/computerd/computerd-linux-x64");
-const dst = resolve(platformDir, "bin/computerd");
-copyFileSync(src, dst);
-chmodSync(dst, 0o755);
-console.log(`[build-docker] staged ${src} -> ${dst}`);
+// 2. Stage both binaries into the platform package's bin/. The
+//    .dockerignore restricts the build context to bin/, so the
+//    Dockerfile's COPY hits these files directly.
+for (const entry of ["computerd", "codemode"]) {
+  const src = resolve(repoRoot, `artifacts/computerd/${entry}-linux-x64`);
+  const dst = resolve(platformDir, `bin/${entry}`);
+  copyFileSync(src, dst);
+  chmodSync(dst, 0o755);
+  console.log(`[build-docker] staged ${src} -> ${dst}`);
+}
 
 // 3. docker build. --platform pins linux/amd64 because the SEA
 //    binary is hard-tied to that ABI; the buildx default would

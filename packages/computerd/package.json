@@ -1,11 +1,12 @@
 {
   "name": "@cloudflare/computerd",
   "version": "0.2.1",
-  "description": "Computer daemon CLI and FUSE mount. Source-only; the distributable lives at @cloudflare/computer-computerd-linux-x64.",
+  "description": "Computer daemon CLI, FUSE mount, and the in-container codemode CLI. Source-only; the distributables live at @cloudflare/computer-computerd-linux-x64.",
   "license": "MIT",
   "private": true,
   "type": "commonjs",
   "bin": {
+    "codemode": "./dist/cli/codemode.cjs",
     "computerd": "./dist/cli/computerd.cjs"
   },
   "files": [
@@ -27,7 +28,9 @@
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
     "@platformatic/vfs": "^0.4.0",
-    "fuse-native": "^2.2.6"
+    "capnweb": "^0.10.0",
+    "fuse-native": "^2.2.6",
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

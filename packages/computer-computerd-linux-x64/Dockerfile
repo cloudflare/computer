@@ -1,4 +1,5 @@
-# Image-only distribution of the computerd-linux-x64 SEA binary.
+# Image-only distribution of the computerd and codemode linux-x64 SEA
+# binaries.
 #
 # Build via `npm run build:docker --workspace @cloudflare/computerd`,
 # which stages the SEA artifact into ./bin/computerd first and then runs
@@ -9,14 +10,16 @@
 #   FROM cloudflare/computer-computerd-linux-x64:0.1.1 AS computerd
 #   FROM debian:stable-slim
 #   COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
+#   COPY --from=computerd /usr/local/bin/codemode /usr/local/bin/codemode
 #
-# `scratch` keeps the layer count minimal (one layer, ~125 MB binary,
-# zero base-image surface). The image has no shell, no libc, nothing
+# `scratch` keeps the layer count minimal (one layer, two ~125 MB
+# binaries since each embeds Node, zero base-image surface). The image has no shell, no libc, nothing
 # to invoke; `docker run` on it exits immediately. That's the point.
 
 FROM scratch
 
 COPY bin/computerd /usr/local/bin/computerd
+COPY bin/codemode /usr/local/bin/codemode
 
 # Documentation only. scratch has no PID 1 capable of execing this,
 # so the ENTRYPOINT is informational. Downstream consumers redeclare
