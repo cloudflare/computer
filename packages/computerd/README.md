@@ -113,9 +113,12 @@ Additional environment variables:
 
 ```sh
 EXEC_LOG_MAX_BYTES=1048576        # cap the in-memory exec log buffer (bytes)
+EXEC_SHELL=/usr/bin/bash          # interpreter exec runs commands under (default /bin/sh)
 RPC_CLIENT_SECRET=<secret>        # require Authorization: Bearer <secret> on every route but /health
 COMPUTER_VAR_NODE_ENV=production  # forwarded into exec as NODE_ENV
 ```
+
+`EXEC_SHELL` must be an absolute path. It exists because `/bin/sh` is `dash` on a Debian-family image, where bash-only syntax is a parse error that aborts the command rather than a missing feature: `${PIPESTATUS[@]}`, arrays, `[[ ... ]]`, and process substitution all fail that way. `PIPESTATUS` is the usual way to recover the real exit status of a pipeline whose output is filtered — a command redacting a credential through `sed`, for instance — so a caller that needs it can select an interpreter that has it without repointing `/bin/sh` for every other script in the image.
 
 `FUSE_MOUNT=auto` is the friendly default: if `/dev/fuse` (or macFUSE) is available `computerd` mounts a real FUSE filesystem, otherwise it transparently falls back to the userspace shim. Pin the value (`fuse` / `macfuse` / `shim` / `none`) when a test needs to assert a specific code path.
 

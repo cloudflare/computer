@@ -636,12 +636,23 @@ async function main(): Promise<void> {
     }
     logMaxBytesOverride = parsed;
   }
+  // EXEC_SHELL picks the interpreter exec runs commands under, for images
+  // whose /bin/sh cannot be repointed. Default lives in the Runner.
+  const shellEnv = process.env.EXEC_SHELL;
+  let shellOverride: string | undefined;
+  if (shellEnv !== undefined && shellEnv !== "") {
+    if (!shellEnv.startsWith("/")) {
+      throw new Error(`EXEC_SHELL must be an absolute path; got ${JSON.stringify(shellEnv)}`);
+    }
+    shellOverride = shellEnv;
+  }
   const runner = new Runner({
     db,
     // When we have a mount (real FUSE or the shim) point spawned
     // children at it so writes from exec flow through the VFS.
     ...(fuse !== undefined ? { cwd: mountPoint } : {}),
     ...(logMaxBytesOverride !== undefined ? { logMaxBytes: logMaxBytesOverride } : {}),
+    ...(shellOverride !== undefined ? { shell: shellOverride } : {}),
   });
   // Heartbeat events are computerd-local and must not cross the RPC boundary.
   // Wrap the runner so every exec/get stream drops heartbeat events before
