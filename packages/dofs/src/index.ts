@@ -54,6 +54,19 @@ export {
   planBlock,
   selectMode,
 } from "./sync/blocks.js";
+export type {
+  DecodeChangePackOptions,
+  DecodedChangePack,
+  EncodeChangePackInput,
+  PackFooter,
+} from "./sync/change-pack.js";
+export {
+  decodeChangePack,
+  encodeChangePack,
+  PACK_FORMAT_VERSION,
+  PackProtocolError,
+  readPackFooter,
+} from "./sync/change-pack.js";
 export type { ChangeEntry } from "./sync/changes.js";
 export { materialiseChange } from "./sync/changes.js";
 export type { CoalesceOptions } from "./sync/coalesce.js";

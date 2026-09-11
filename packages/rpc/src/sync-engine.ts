@@ -28,10 +28,14 @@ import {
   currentRev,
   type Database,
   DEFAULT_BLOCK_PROFILE,
+  decodeChangePack,
+  encodeChangePack,
   fixTarget,
   hasObjects,
   markBlockStarted,
   openOperation,
+  PACK_THRESHOLD_BYTES,
+  PACK_THRESHOLD_ENTRIES,
   planBlock,
   pruneSkips,
   readFetchCursor,
@@ -40,6 +44,7 @@ import {
   recordSkip,
   type SyncDirection,
   type SyncMode,
+  selectMode,
   shrinkBlockProfile,
   stageBlob,
   writeFetchCursor,
@@ -72,6 +77,11 @@ export interface PullBlocksOptions {
   // materialising thousands of files.
   readonly profile?: BlockProfile;
   readonly now?: () => number;
+  // Mode-selection overrides, internal for the same reason: crossing
+  // the production thresholds in a test would mean writing 20,000
+  // files.
+  readonly thresholdEntries?: number;
+  readonly thresholdBytes?: number;
 }
 
 export type PushBlocksOptions = PullBlocksOptions;
@@ -102,6 +112,122 @@ const active = new Map<string, { generation: string; settled: Promise<SyncProgre
 
 function activeKey(backend: string, direction: SyncDirection): string {
   return `${backend}:${direction}`;
+}
+
+// Ask the source how big the window is, and pick a transport.
+//
+// The probe is a pack request bounded at the threshold: the source
+// plans the window once and reports the entry count it would carry.
+// Filling the probe is itself the signal that the window is at or past
+// the threshold, so this answers the mode question without draining a
+// window that may hold tens of thousands of entries. The probe's stream
+// is cancelled unread — only the counts matter here.
+async function selectPullMode(
+  remote: SyncRPC,
+  input: {
+    after: ChangeCursor;
+    target: ChangeCursor;
+    profile: BlockProfile;
+    ignore?: string[];
+    thresholdEntries?: number;
+    thresholdBytes?: number;
+    generation: string;
+  },
+): Promise<SyncMode> {
+  const thresholdEntries = input.thresholdEntries ?? PACK_THRESHOLD_ENTRIES;
+  const thresholdBytes = input.thresholdBytes ?? PACK_THRESHOLD_BYTES;
+
+  // A peer that predates pack transport keeps working in entry mode.
+  if (typeof remote.fetchChangePack !== "function") return "entries";
+
+  const probe = await remote.fetchChangePack({
+    after: input.after,
+    through: input.target,
+    ...(input.ignore === undefined ? {} : { ignore: input.ignore }),
+    maxEntries: thresholdEntries,
+    maxBytes: thresholdBytes,
+    generation: input.generation,
+  });
+  try {
+    return probe.entryCount >= thresholdEntries || !probe.drained ? "pack" : "entries";
+  } finally {
+    await probe.stream.cancel().catch(() => {});
+    maybeDispose(probe);
+  }
+}
+
+// Transfer and apply one pack block.
+//
+// The pack is decoded and validated before anything is applied. A pack
+// that fails validation leaves no partial state and no cursor movement,
+// because the alternative — advancing over entries that never arrived —
+// loses data silently.
+async function runPullPackBlock(
+  db: Database,
+  remote: SyncRPC,
+  backend: string,
+  options: PullBlocksOptions,
+  operation: { generation: string },
+  after: ChangeCursor,
+  target: ChangeCursor,
+  profile: BlockProfile,
+): Promise<{
+  entries: number;
+  bytes: number;
+  skipped: number;
+  cursor: ChangeCursor;
+}> {
+  const now = options.now ?? (() => Date.now());
+  const response = await remote.fetchChangePack({
+    after,
+    through: target,
+    ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
+    maxEntries: profile.maxEntries,
+    maxBytes: profile.maxBytes,
+    generation: operation.generation,
+  });
+
+  let decoded: Awaited<ReturnType<typeof decodeChangePack>>;
+  try {
+    decoded = await decodeChangePack(response.stream);
+  } finally {
+    maybeDispose(response);
+  }
+
+  // Stage every object the pack carried before applying metadata, so a
+  // crash between the two replays as a no-op rather than as a file with
+  // missing bytes.
+  let bytes = 0;
+  for (const [key, payload] of decoded.objects) {
+    stageBlob(db, hexToBytes(key), payload, now());
+    bytes += payload.byteLength;
+  }
+
+  const result = await applyChanges(db, decoded.entries, new Map(), {
+    source: "upstream",
+    backend,
+  });
+  for (const skip of result.skipped) {
+    recordSkip(db, backend, "pull", operation.generation, skip.path, skip.reason, now());
+  }
+
+  // The footer's block cursor is authoritative: it is what the encoder
+  // committed to, and it already accounts for a drained window jumping
+  // to the target.
+  return {
+    entries: decoded.entries.length,
+    bytes,
+    skipped: result.skipped.length,
+    cursor: decoded.footer.blockCursor,
+  };
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
 
 // Drive one pull block to completion, or throw.
@@ -137,14 +263,22 @@ async function runPullBlock(
     // so the target covers them instead of stranding them until the
     // next operation.
     const settled = await remote.watermarks({ settle: true });
-    const promoted = fixTarget(
-      db,
-      backend,
-      "pull",
-      operation.generation,
-      { target: { rev: settled.currentRev, path: null }, mode: "entries" },
-      now(),
-    );
+    // Decide entries versus pack once, for the whole operation. The
+    // mode is then fixed: a block's encoding must not depend on when it
+    // was requested, or a replayed block would not match the original.
+    const target = { rev: settled.currentRev, path: null };
+    const mode = await selectPullMode(remote, {
+      after: readFetchCursor(db, backend),
+      target,
+      profile,
+      ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
+      ...(options.thresholdEntries === undefined
+        ? {}
+        : { thresholdEntries: options.thresholdEntries }),
+      ...(options.thresholdBytes === undefined ? {} : { thresholdBytes: options.thresholdBytes }),
+      generation: operation.generation,
+    });
+    const promoted = fixTarget(db, backend, "pull", operation.generation, { target, mode }, now());
     if (!promoted) {
       // Another caller replaced this operation while the target was in
       // flight. Its target is authoritative; drop ours and use theirs.
@@ -199,6 +333,42 @@ async function runPullBlock(
       : profile;
 
   markBlockStarted(db, backend, "pull", operation.generation, after, now());
+
+  // Pack mode: one compressed stream carries entries and their objects
+  // together, so there are no per-block object round trips.
+  if (operation.mode === "pack") {
+    const packed = await runPullPackBlock(
+      db,
+      remote,
+      backend,
+      options,
+      operation,
+      after,
+      target,
+      effectiveProfile,
+    );
+    if (compareChangeCursors(packed.cursor, after) > 0) {
+      writeFetchCursor(db, packed.cursor, backend);
+    }
+    clearBlockMarker(db, backend, "pull", operation.generation, now());
+    const packComplete = compareChangeCursors(packed.cursor, target) >= 0;
+    if (packComplete) {
+      completeOperation(db, backend, "pull", operation.generation);
+    }
+    return {
+      operationId: operation.generation,
+      generation: operation.generation,
+      backend,
+      direction: "pull",
+      mode: "pack",
+      cursor: packed.cursor,
+      targetCursor: target,
+      entries: packed.entries,
+      bytes: packed.bytes,
+      skipped: packed.skipped,
+      complete: packComplete,
+    };
+  }
 
   // 2. Ask the source for one deterministic block bounded by the
   //    fixed target. The remote streams entries; we stop reading at
@@ -376,14 +546,23 @@ async function runPushBlock(
 
   if (operation.status === "capturing") {
     pruneSkips(db, backend, "push", operation.generation);
-    const promoted = fixTarget(
-      db,
-      backend,
-      "push",
-      operation.generation,
-      { target: { rev: currentRev(db), path: null }, mode: "entries" },
-      now(),
-    );
+    // Push plans locally, so mode selection is a local probe rather
+    // than a remote round trip. selectMode returns the first block from
+    // the same pass, which is why this does not scan the window twice.
+    const target = { rev: currentRev(db), path: null };
+    const decision = await selectMode(db, {
+      after: readPushCursor(db, backend),
+      through: target,
+      profile,
+      ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
+      ...(options.thresholdEntries === undefined
+        ? {}
+        : { thresholdEntries: options.thresholdEntries }),
+      ...(options.thresholdBytes === undefined ? {} : { thresholdBytes: options.thresholdBytes }),
+    });
+    // A peer without pack transport keeps receiving entry blocks.
+    const mode = typeof remote.applyChangePack === "function" ? decision.mode : "entries";
+    const promoted = fixTarget(db, backend, "push", operation.generation, { target, mode }, now());
     const current = readOperation(db, backend, "push");
     if (current === undefined) {
       throw new Error("sync: push operation vanished during target capture");
@@ -433,6 +612,45 @@ async function runPushBlock(
     profile: effectiveProfile,
     ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
   });
+
+  // Pack mode: one compressed stream carries the entries and every
+  // object they reference, so no hasObjects probe or separate
+  // pushObjects call is needed.
+  if (operation.mode === "pack") {
+    const stream = encodeChangePack(db, {
+      block: planned,
+      after,
+      target,
+      generation: operation.generation,
+    });
+    const ack = await remote.applyChangePack({
+      generation: operation.generation,
+      stream,
+    });
+    // The receiver's echoed cursor is the only authority for advancing.
+    assertAppliedPushCursor(ack.appliedPushCursor, planned.cursor);
+    if (compareChangeCursors(planned.cursor, after) > 0) {
+      writePushCursor(db, planned.cursor, backend);
+    }
+    clearBlockMarker(db, backend, "push", operation.generation, now());
+    const packComplete = compareChangeCursors(planned.cursor, target) >= 0;
+    if (packComplete) {
+      completeOperation(db, backend, "push", operation.generation);
+    }
+    return {
+      operationId: operation.generation,
+      generation: operation.generation,
+      backend,
+      direction: "push",
+      mode: "pack",
+      cursor: planned.cursor,
+      targetCursor: target,
+      entries: planned.entries.length,
+      bytes: planned.objectBytes,
+      skipped: 0,
+      complete: packComplete,
+    };
+  }
 
   // Ship the bytes the receiver lacks before the entries that
   // reference them, so the receiver never sees an entry whose content

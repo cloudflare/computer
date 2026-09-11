@@ -12,9 +12,12 @@ import {
   compareChangeCursors,
   currentRev,
   type Database,
+  decodeChangePack,
+  encodeChangePack,
   fetchObjects,
   hasObjects,
   materialiseChange,
+  planBlock,
   readFetchCursor,
   readWatermark,
   stageBlob,
@@ -194,6 +197,89 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       stream: iterableToReadableStream(
         coalesceChanges(this.db, after, { ignore, through: currentCursor }),
       ),
+    };
+  }
+
+  // Bulk pull. Plans one block against the same cursor window
+  // fetchChanges uses, then encodes it as a pack so the caller needs no
+  // follow-up object round trips.
+  async fetchChangePack(input: {
+    after?: ChangeCursor;
+    through?: ChangeCursor;
+    ignore?: string[];
+    maxEntries: number;
+    maxBytes: number;
+    generation: string;
+  }): Promise<{
+    cursor: ChangeCursor;
+    drained: boolean;
+    entryCount: number;
+    appliedPushCursor: ChangeCursor;
+    stream: ReadableStream<Uint8Array>;
+  }> {
+    if (this.options.beforeFetch !== undefined) {
+      try {
+        await this.options.beforeFetch();
+      } catch (err) {
+        console.warn("[SyncRPCServer] beforeFetch hook failed:", err);
+      }
+    }
+    const after = input.after ?? { rev: 0, path: null };
+    const ignore = input.ignore ?? this.options.ignore;
+    const snapshotCursor = { rev: currentRev(this.db), path: null };
+    const target =
+      input.through !== undefined && compareChangeCursors(input.through, snapshotCursor) < 0
+        ? input.through
+        : snapshotCursor;
+
+    const block = await planBlock(this.db, {
+      after,
+      through: target,
+      profile: { maxEntries: input.maxEntries, maxBytes: input.maxBytes },
+      ...(ignore === undefined ? {} : { ignore }),
+    });
+
+    return {
+      cursor: block.cursor,
+      drained: block.drained,
+      entryCount: block.entries.length,
+      appliedPushCursor: readFetchCursor(this.db),
+      stream: encodeChangePack(this.db, {
+        block,
+        after,
+        target,
+        generation: input.generation,
+      }),
+    };
+  }
+
+  // Bulk push receiver. Decode fully before applying anything: a pack
+  // that fails validation must leave no partial state behind, because
+  // the sender advances its cursor on the acknowledgment this returns.
+  async applyChangePack(input: {
+    generation: string;
+    stream: ReadableStream<Uint8Array>;
+  }): Promise<{
+    appliedPushCursor: ChangeCursor;
+    applied: number;
+    entryCount: number;
+  }> {
+    const decoded = await decodeChangePack(input.stream, {
+      expectGeneration: input.generation,
+    });
+    for (const [key, bytes] of decoded.objects) {
+      stageBlob(this.db, hexToBytes(key), bytes, Date.now());
+    }
+    const result = applyChangesSync(this.db, decoded.entries, new Map(), {
+      source: "upstream",
+    });
+    // The footer's block cursor is the sender's checkpoint; echo it so
+    // the sender advances only through what actually applied here.
+    writeFetchCursor(this.db, decoded.footer.blockCursor);
+    return {
+      appliedPushCursor: decoded.footer.blockCursor,
+      applied: result.applied,
+      entryCount: decoded.entries.length,
     };
   }
 
@@ -378,4 +464,13 @@ function iterableToReadableStream<T>(it: AsyncIterable<T>): ReadableStream<T> {
       if (iterator.return) await iterator.return(reason as undefined);
     },
   });
+}
+
+// Pack object keys are hex; stageBlob wants the raw hash bytes.
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }
