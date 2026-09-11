@@ -2441,9 +2441,83 @@ describe("runGitCli — log --format", () => {
     expect(res.stdout).toBe("aaaaaaa %zz\n");
   });
 
+  it("lets the last of --format and --pretty win, in either order", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "release")] });
+    const formatThenPretty = await runGitCli(client, {
+      argv: ["log", "--format=%s", "--pretty=%h"],
+    });
+    expect(formatThenPretty.stdout).toBe("aaaaaaa\n");
+    const prettyThenFormat = await runGitCli(client, {
+      argv: ["log", "--pretty=%h", "--format=%s"],
+    });
+    expect(prettyThenFormat.stdout).toBe("release\n");
+  });
+
   it("rejects --format combined with --oneline", async () => {
     const { client } = fakeClient();
     const res = await runGitCli(client, { argv: ["log", "--oneline", "--format=%h"] });
     expect(res.exitCode).toBe(129);
+  });
+});
+
+describe("runGitCli — help stays honest about the flags each command takes", () => {
+  // The usage lines are maintained by hand, so they can drift from the
+  // parsers they describe. Rather than re-check every line by eye, take
+  // each long flag the help advertises and confirm the command does not
+  // reject it as unknown or unsupported. A flag that no longer exists,
+  // or was never accepted, fails here instead of misleading a caller.
+  const commands = [
+    "add",
+    "branch",
+    "cat-file",
+    "checkout",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "diff",
+    "fetch",
+    "hash-object",
+    "init",
+    "log",
+    "ls-files",
+    "ls-tree",
+    "merge",
+    "pull",
+    "push",
+    "remote",
+    "reset",
+    "rev-parse",
+    "rm",
+    "show",
+    "stash",
+    "status",
+    "switch",
+    "symbolic-ref",
+    "tag",
+    "update-ref",
+  ];
+
+  it("advertises only flags the command's parser accepts", async () => {
+    const offenders: string[] = [];
+    for (const command of commands) {
+      const { client } = fakeClient();
+      const help = await runGitCli(client, { argv: ["help", command] });
+      expect(help.exitCode, `git help ${command}`).toBe(0);
+
+      for (const flag of help.stdout.match(/--[a-z][a-z-]*/g) ?? []) {
+        const { client: probe } = fakeClient();
+        const res = await runGitCli(probe, { argv: [command, flag] });
+        // The parser rejects an unknown flag at 129 with a message naming
+        // it. Any other failure means the flag was understood and the
+        // command merely wanted different arguments, which is fine here.
+        const unknown =
+          res.stderr.includes(`unknown option '${flag}'`) ||
+          res.stderr.includes(`${flag} is not supported`) ||
+          res.stderr.includes(`only --stdin is supported`);
+        if (unknown) offenders.push(`${command} ${flag}: ${res.stderr.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

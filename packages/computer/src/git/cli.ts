@@ -159,36 +159,37 @@ export async function runGitCli(
 // actually accepts are listed: the whole point is to tell a caller what
 // works here, rather than what real git would take.
 const COMMAND_USAGE: Record<string, string> = {
-  add: "git add [-A] <path>...",
-  branch: "git branch [-d|-D <name>] [--show-current] [<name>]",
+  add: "git add [-A|--all] [-f|--force] <path>...",
+  branch: "git branch [-d|-D|--delete] [-f|--force] [--show-current] [<name>]",
   "cat-file": "git cat-file (-p|-t|-s) <oid>[:<path>]",
-  checkout: "git checkout [-b <name>] [-f] <ref> [--] [<path>...]",
-  clean: "git clean [-f] [-d] [-n] [<path>...]",
+  checkout: "git checkout [-b] [-f|--force] <ref> [--] [<path>...]",
+  clean: "git clean [-f|--force] [-d] [-n|--dry-run] [<path>...]",
   clone:
-    "git clone [--depth <n>] [--branch <ref>] [--single-branch|--no-single-branch] <url> [<dir>]",
-  commit: "git commit -m <message> [-a]",
-  config: "git config [--get] <key> [<value>]",
-  diff: "git diff [--stat] [--name-only] [<ref>] [--] [<path>...]",
-  fetch: "git fetch [<remote>] [<ref>]",
-  "hash-object": "git hash-object [-w] [-t <type>] <path>",
-  init: "git init [<dir>]",
-  log: "git log [-n <count>] [-<count>] [--oneline] [<ref>]",
-  "ls-files": "git ls-files [<ref>]",
+    "git clone [--depth <n>] [-b|--branch <ref>] [--single-branch|--no-single-branch] [--tags|--no-tags] <url> [<dir>]",
+  commit: 'git commit -m|--message <message> [-a|--all] [--amend] [--author "Name <email>"]',
+  config: "git config [--get|--get-all|--add|--unset] <key> [<value>]",
+  diff: "git diff [--stat] [--name-only] [--name-status] [<ref>] [--] [<path>...]",
+  fetch:
+    "git fetch [--depth <n>] [--single-branch|--no-single-branch] [--tags|--no-tags] [--prune] [<remote>] [<ref>]",
+  "hash-object": "git hash-object --stdin [-w]",
+  init: "git init [-b|--initial-branch <name>] [--bare] [<dir>]",
+  log: "git log [-n <count>] [-<count>] [--oneline] [--format|--pretty=<spec>] [<ref>]",
+  "ls-files": "git ls-files [--ref <ref>]",
   "ls-tree": "git ls-tree <ref> [<path>]",
-  merge: "git merge [--ff-only] [--no-ff] <ref>",
-  pull: "git pull [<remote>] [<ref>]",
-  push: "git push [-f|--force] [--delete] [<remote>] [<refspec>]",
-  remote: "git remote [-v] [add <name> <url>] [remove <name>]",
-  reset: "git reset [--hard|--soft|--mixed] [<ref>] [--] [<path>...]",
-  "rev-parse": "git rev-parse <rev>",
-  rm: "git rm [--cached] [-r] <path>...",
+  merge: "git merge [--ff-only] [--no-ff] [-m|--message <message>] <ref>",
+  pull: "git pull [--ff-only] [--no-ff] [<remote>] [<ref>]",
+  push: "git push [-f|--force] [-d|--delete] [<remote>] [<refspec>]",
+  remote: "git remote [add <name> <url>] [remove <name>]",
+  reset: "git reset [--hard] [<ref>] [--] [<path>...]",
+  "rev-parse": "git rev-parse [--abbrev-ref] [--show-toplevel] <rev>",
+  rm: "git rm [--cached] <path>...",
   show: "git show [<ref>]",
   stash: "git stash [push|pop|apply|list|drop]",
-  status: "git status [-s|--short|--porcelain]",
-  switch: "git switch [-c <name>] <ref>",
-  "symbolic-ref": "git symbolic-ref <name> [<ref>]",
-  tag: "git tag [-d <name>] [<name> [<ref>]]",
-  "update-ref": "git update-ref <ref> <oid>",
+  status: "git status [-s|--short] [--porcelain[=<version>]]",
+  switch: "git switch [-c] <ref>",
+  "symbolic-ref": "git symbolic-ref [--short] [-q|--quiet] <name> [<ref>]",
+  tag: "git tag [-d|--delete] [-f|--force] [<name> [<ref>]]",
+  "update-ref": "git update-ref [--force] <ref> <oid>",
   help: "git help [<command>]",
   version: "git version",
 };
@@ -814,19 +815,25 @@ async function runLog(
       shorthandDepth = m[1];
       continue;
     }
+    // --pretty is the same option as --format in real git. Normalize it
+    // to the one key so the parser's last-write behavior decides which
+    // wins: a caller appending an override to a command it did not build
+    // gets the last one written, whichever spelling either of them used.
+    if (arg === "--pretty" || arg.startsWith("--pretty=")) {
+      rewritten.push(`--format${arg.slice("--pretty".length)}`);
+      continue;
+    }
     rewritten.push(arg);
   }
   const parsed = parseFlags(rewritten, {
     n: { kind: "value" },
     oneline: { kind: "bool" },
     format: { kind: "value" },
-    pretty: { kind: "value" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git log: ${parsed.error}\n`, exitCode: 129 };
   }
-  // --pretty and --format are the same option in real git.
-  const formatSpec = (parsed.flags.format ?? parsed.flags.pretty) as string | undefined;
+  const formatSpec = parsed.flags.format as string | undefined;
   if (formatSpec !== undefined && parsed.flags.oneline === true) {
     return {
       stdout: "",
