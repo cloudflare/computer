@@ -41,6 +41,19 @@ export type { ApplyOptions, ApplyResult, SkippedEntry } from "./sync/apply.js";
 // to a Database.
 export { applyChanges, applyChangesSync } from "./sync/apply.js";
 export { stageBlob } from "./sync/blobs.js";
+export type {
+  BlockObject,
+  ModeDecision,
+  PlanBlockRequest,
+  PlannedBlock,
+  SelectModeRequest,
+} from "./sync/blocks.js";
+export {
+  PACK_THRESHOLD_BYTES,
+  PACK_THRESHOLD_ENTRIES,
+  planBlock,
+  selectMode,
+} from "./sync/blocks.js";
 export type { ChangeEntry } from "./sync/changes.js";
 export { materialiseChange } from "./sync/changes.js";
 export type { CoalesceOptions } from "./sync/coalesce.js";
