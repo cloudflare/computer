@@ -39,8 +39,29 @@ export interface BlockProfile {
   readonly maxBytes: number;
 }
 
+// Measured rather than guessed. The plan proposed 4,000 entries, which
+// small trees make look safe: a few hundred entries per block finishes
+// in well under a second. At install scale it is not safe. On a
+// 44,100-file tree a 4,000-entry block took 15.8s of the default
+// 30s allowance — 1.9x headroom, where an unlucky block or a slower
+// machine exceeds the limit and the block can never complete.
+//
+// A sweep at install scale showed the cost is superlinear in block size
+// while total time is flat, because the win from fewer round trips runs
+// out well before the per-block cost does:
+//
+//   entries   blocks   total    worst block   headroom
+//      500       49     36.8s        2.8s       10.8x
+//     1000       25     29.9s        3.6s        8.4x
+//     2000       13     30.5s        3.7s        8.1x
+//     4000        7     31.0s        8.1s        3.7x
+//
+// 2,000 keeps essentially the same total time as 4,000 while more than
+// doubling the headroom, so that is the default. Blocks are a
+// checkpointing mechanism, not a throughput knob: making them larger
+// buys almost nothing and costs exactly the property they exist for.
 export const DEFAULT_BLOCK_PROFILE: BlockProfile = {
-  maxEntries: 4_000,
+  maxEntries: 2_000,
   maxBytes: 64 * 1024 * 1024,
 };
 

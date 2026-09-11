@@ -212,22 +212,48 @@ Object `SqlStorage` under workerd, and
 end to end. Numbers below are from a 16-core dev container, so treat
 them as ratios rather than absolutes.
 
-### Blocks fit the CPU budget comfortably
+### Small trees hide the CPU risk; install scale exposes it
 
-Worst single block, package-shaped tree, 1350 files:
+On a 1350-file tree every block finishes in well under a second, and
+the worst case leaves a 36x margin against the 30-second allowance.
+That reading is misleading, and acting on it would have shipped a bug.
 
-| Block max entries | Mode | Blocks | Worst block | Worst blocks per 30s |
-|---|---|---:|---:|---:|
-| 64 | entries | 24 | 198 ms | 151 |
-| 256 | entries | 6 | 296 ms | 101 |
-| 1024 | entries | 2 | 386 ms | 77 |
-| 1024 | pack | 2 | 815 ms | 36 |
+Run against the size the plan actually cites — 44,100 files, 49,001
+entries, close to its reference 44,264 — the picture changes:
 
-Even the worst case leaves a 36x margin against the default 30-second
-allowance, so the shipped `PACK_BLOCK_MAX_ENTRIES = 4000` is
-conservative rather than risky. Restarting from a fresh iterable per
-block costs about 5% over reusing one iterator, which is the price of
-the durability guarantee and is cheap.
+| Mode | Entries | Blocks | Wire | Total | Worst block | Headroom |
+|---|---:|---:|---:|---:|---:|---:|
+| entries | 49,001 | 13 | 47.3 MB | 121.5 s | 15.2 s | 2.0x |
+| pack | 49,001 | 13 | 3.5 MB | 122.3 s | 15.8 s | 1.9x |
+
+Both converge (all 44,100 files applied, cursor at target), but the
+plan's proposed 4,000-entry block spends 15.8 s of a 30-second
+allowance. Under 2x headroom means an unlucky block, a colder cache, or
+a slower machine exceeds the limit — and a block that cannot finish can
+never finish, because each retry starts from the same cursor and does
+the same work. The shrink-on-interruption policy would eventually walk
+the profile down, but only after repeated hard failures.
+
+A sweep at install scale shows the cost is superlinear in block size
+while total time is flat:
+
+| Block max entries | Blocks | Total | Worst block | Headroom |
+|---|---:|---:|---:|---:|
+| 500 | 49 | 36.8 s | 2.8 s | 10.8x |
+| 1000 | 25 | 29.9 s | 3.6 s | 8.4x |
+| 2000 | 13 | 30.5 s | 3.7 s | 8.1x |
+| 4000 | 7 | 31.0 s | 8.1 s | 3.7x |
+
+The gain from fewer round trips is exhausted by about 1,000 entries,
+while per-block cost keeps climbing. **`DEFAULT_BLOCK_PROFILE.maxEntries`
+is therefore 2,000, not the planned 4,000**: the same total time with
+more than double the headroom. Blocks are a checkpointing mechanism,
+not a throughput knob, so making them bigger buys almost nothing and
+costs exactly the property they exist for.
+
+Restarting from a fresh iterable per block costs about 5% over reusing
+one iterator, which is the price of the durability guarantee and is
+cheap.
 
 ### Pack transport is a bandwidth trade, not a free win
 
@@ -270,6 +296,14 @@ loses above it.** The DO-to-container hop in production is not a local
 socket, so packs should win in the deployed shape — but that is now a
 stated assumption with a measured crossover, not an unexamined premise.
 
+At install scale the byte reduction is larger and the CPU penalty
+smaller, because entry metadata dominates a 49,001-entry window:
+47.3 MB on the wire in entry mode against 3.5 MB packed, a **13x**
+reduction, for well under 1% extra CPU (121.5 s against 122.3 s). The
+crossover there sits near 500 Mbps rather than 150, so the larger the
+sync, the more clearly packs are the right choice — which is the shape
+the thresholds already select for.
+
 The thresholds stay as they are: 20,000 entries or 100 MiB is far above
 where this crossover sits, so any window that trips them is one where
 bytes dominate. The pack compression ratio itself is strong on both
@@ -293,15 +327,23 @@ Remaining gaps:
   and resets on completion, but never grows beyond the default. The plan
   asks for instrumentation before adding growth, and that
   instrumentation is not built.
-- **Production validation.** Block sizing, restart overhead, and the
-  pack bandwidth trade are now measured (see above), including against
-  real Durable Object SqlStorage. What is still missing is the deployed
-  shape: forced eviction between blocks and forced disconnect in each
-  transfer phase are covered by unit tests but not by a real
-  DO-to-container pair, the trees benchmarked here top out around 1800
-  files rather than the plan's 40,000, and the effective bandwidth of
-  the production hop is unmeasured — which is the input the pack
-  crossover above depends on.
+- **Production validation.** Block sizing, restart overhead, the pack
+  bandwidth trade, and convergence at the plan's own 44,000-entry scale
+  are now measured, the first against real Durable Object SqlStorage.
+  What is still missing is the deployed shape: forced eviction between
+  blocks and forced disconnect in each transfer phase are covered by
+  unit tests but not by a real DO-to-container pair, payloads here are
+  38 MB rather than the plan's 1 GB (so per-file bytes, not entry
+  counts, remain unexercised), and the effective bandwidth of the
+  production hop is unmeasured — which is the input the pack crossover
+  depends on.
+
+- **Wall-clock at scale.** Converging 44,100 files takes about two
+  minutes in this environment against an in-process peer. That is
+  inside no single Durable Object invocation, so a sync this size
+  necessarily spans many alarms; the design accounts for that, but the
+  end-to-end latency a caller sees has not been measured against a real
+  transport.
 - **Wire version negotiation.** Pack transport is advertised by method
   presence, which is enough for optional methods but is not a version
   scheme. A future incompatible pack format change would need one.
