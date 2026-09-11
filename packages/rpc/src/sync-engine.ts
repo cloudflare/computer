@@ -18,27 +18,32 @@
 
 import {
   applyChanges,
+  assertAppliedPushCursor,
   type BlockProfile,
   type ChangeCursor,
   type ChangeEntry,
   clearBlockMarker,
   compareChangeCursors,
   completeOperation,
+  currentRev,
   type Database,
   DEFAULT_BLOCK_PROFILE,
   fixTarget,
   hasObjects,
   markBlockStarted,
   openOperation,
+  planBlock,
   pruneSkips,
   readFetchCursor,
   readOperation,
+  readPushCursor,
   recordSkip,
   type SyncDirection,
   type SyncMode,
   shrinkBlockProfile,
   stageBlob,
   writeFetchCursor,
+  writePushCursor,
 } from "@cloudflare/dofs";
 
 import type { SyncRPC } from "./interface.js";
@@ -68,6 +73,8 @@ export interface PullBlocksOptions {
   readonly profile?: BlockProfile;
   readonly now?: () => number;
 }
+
+export type PushBlocksOptions = PullBlocksOptions;
 
 const DEFAULT_BACKEND = "default";
 
@@ -342,6 +349,217 @@ async function nextPullBlock(
   } finally {
     if (active.get(key)?.settled === settled) active.delete(key);
   }
+}
+
+// Drive one push block to completion, or throw.
+//
+// The mirror of runPullBlock with one asymmetry that matters: the local
+// cursor advances only through the remote's acknowledgment. A push that
+// advanced optimistically would silently drop data every time an
+// acknowledgment was lost, because the next block would start above
+// entries the receiver never applied.
+//
+// Push can capture its target inside the creation transaction — the
+// target is the local change head, so there is no remote call to wait
+// on and no 'capturing' phase.
+async function runPushBlock(
+  db: Database,
+  remote: SyncRPC,
+  backend: string,
+  options: PushBlocksOptions,
+): Promise<SyncProgress> {
+  const now = options.now ?? (() => Date.now());
+  const profile = options.profile ?? DEFAULT_BLOCK_PROFILE;
+
+  const opened = openOperation(db, backend, "push", now());
+  let operation = opened.operation;
+
+  if (operation.status === "capturing") {
+    pruneSkips(db, backend, "push", operation.generation);
+    const promoted = fixTarget(
+      db,
+      backend,
+      "push",
+      operation.generation,
+      { target: { rev: currentRev(db), path: null }, mode: "entries" },
+      now(),
+    );
+    const current = readOperation(db, backend, "push");
+    if (current === undefined) {
+      throw new Error("sync: push operation vanished during target capture");
+    }
+    if (!promoted && current.status === "capturing") {
+      throw new Error("sync: push target capture lost its generation");
+    }
+    operation = current;
+  }
+
+  const target = operation.target;
+  if (target === undefined) {
+    throw new Error("sync: pending push operation has no target");
+  }
+
+  const after = readPushCursor(db, backend);
+
+  if (compareChangeCursors(after, target) >= 0) {
+    completeOperation(db, backend, "push", operation.generation);
+    return {
+      operationId: operation.generation,
+      generation: operation.generation,
+      backend,
+      direction: "push",
+      mode: operation.mode ?? "entries",
+      cursor: after,
+      targetCursor: target,
+      entries: 0,
+      bytes: 0,
+      skipped: 0,
+      complete: true,
+    };
+  }
+
+  const effectiveProfile =
+    operation.blockAfter !== undefined && compareChangeCursors(operation.blockAfter, after) === 0
+      ? (shrinkBlockProfile(db, backend, "push", operation.generation, now()) ?? profile)
+      : profile;
+
+  markBlockStarted(db, backend, "push", operation.generation, after, now());
+
+  // Plan the block locally. planBlock owns the ordered-prefix and
+  // byte-bound rules, so push and pull select blocks identically.
+  const planned = await planBlock(db, {
+    after,
+    through: target,
+    profile: effectiveProfile,
+    ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
+  });
+
+  // Ship the bytes the receiver lacks before the entries that
+  // reference them, so the receiver never sees an entry whose content
+  // it cannot resolve.
+  let bytes = 0;
+  if (planned.objects.length > 0) {
+    const have = new Set((await remote.hasObjects(planned.objects.map((o) => o.hash))).map(hex));
+    const missing = planned.objects.filter((o) => !have.has(hex(o.hash)));
+    if (missing.length > 0) {
+      const pending = [...missing];
+      const objectStream = new ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>({
+        pull(controller) {
+          const next = pending.shift();
+          if (next === undefined) {
+            controller.close();
+            return;
+          }
+          const row = db.one<{ bytes: Uint8Array }>(
+            "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
+            next.hash,
+          );
+          if (row === undefined) {
+            controller.error(new Error(`sync: missing local blob ${hex(next.hash)}`));
+            return;
+          }
+          bytes += row.bytes.byteLength;
+          controller.enqueue({ hash: next.hash, bytes: row.bytes });
+        },
+      });
+      await remote.pushObjects(objectStream);
+    }
+  }
+
+  const entryStream = new ReadableStream<ChangeEntry>({
+    start(controller) {
+      for (const entry of planned.entries) controller.enqueue(entry);
+      controller.close();
+    },
+  });
+
+  const response = await remote.push({
+    senderRev: target.rev,
+    senderCursor: planned.cursor,
+    changes: entryStream,
+  });
+
+  // The receiver's echoed cursor is the authority. assertAppliedPushCursor
+  // refuses an acknowledgment that does not cover what we sent, so a
+  // confused peer cannot advance us past unapplied entries.
+  assertAppliedPushCursor(response.appliedPushCursor, planned.cursor);
+
+  if (compareChangeCursors(planned.cursor, after) > 0) {
+    writePushCursor(db, planned.cursor, backend);
+  }
+  clearBlockMarker(db, backend, "push", operation.generation, now());
+
+  const complete = compareChangeCursors(planned.cursor, target) >= 0;
+  if (complete) {
+    completeOperation(db, backend, "push", operation.generation);
+  }
+
+  return {
+    operationId: operation.generation,
+    generation: operation.generation,
+    backend,
+    direction: "push",
+    mode: operation.mode ?? "entries",
+    cursor: planned.cursor,
+    targetCursor: target,
+    entries: planned.entries.length,
+    bytes,
+    skipped: 0,
+    complete,
+  };
+}
+
+async function nextPushBlock(
+  db: Database,
+  remote: SyncRPC,
+  backend: string,
+  options: PushBlocksOptions,
+): Promise<SyncProgress> {
+  const key = activeKey(backend, "push");
+  const existing = active.get(key);
+  if (existing !== undefined) {
+    try {
+      return await existing.settled;
+    } catch {
+      // Fall through and drive our own block from durable state.
+    }
+  }
+
+  const settled = runPushBlock(db, remote, backend, options);
+  const operation = readOperation(db, backend, "push");
+  active.set(key, { generation: operation?.generation ?? "", settled });
+  try {
+    return await settled;
+  } finally {
+    if (active.get(key)?.settled === settled) active.delete(key);
+  }
+}
+
+// Restartable push. Same contract as pullBlocks in the other
+// direction: one block per next(), durable resume, no alarm ownership.
+export function pushBlocks(
+  db: Database,
+  remote: SyncRPC,
+  options: PushBlocksOptions = {},
+): AsyncIterable<SyncProgress> {
+  const backend = options.backend ?? DEFAULT_BACKEND;
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<SyncProgress> {
+      let finished = false;
+      return {
+        async next(): Promise<IteratorResult<SyncProgress>> {
+          if (finished) return { done: true, value: undefined };
+          const progress = await nextPushBlock(db, remote, backend, options);
+          if (progress.complete) finished = true;
+          return { done: false, value: progress };
+        },
+        async return(): Promise<IteratorResult<SyncProgress>> {
+          finished = true;
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
 }
 
 // Restartable pull. Each `next()` commits at most one block; the last
