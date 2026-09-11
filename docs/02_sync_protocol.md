@@ -226,8 +226,8 @@ corrupting data silently.
 
 A large sync cannot assume it finishes in one invocation. A Durable
 Object can be evicted between two steps, an alarm has a hard cutoff,
-and a JavaScript generator survives neither. `Workspace.pullBlocks()`
-and `Workspace.pushBlocks()` therefore treat the iterator as
+and a JavaScript generator survives neither. `Workspace.pull()`
+and `Workspace.push()` therefore treat the iterator as
 disposable and SQLite as the durability surface.
 
 One `next()` performs one complete block: plan it, transfer it, apply
@@ -237,9 +237,9 @@ from durable state, so these two lines are equivalent to iterating
 twice on one iterator:
 
 ```ts
-await workspace.pullBlocks()[Symbol.asyncIterator]().next();
+await workspace.pull()[Symbol.asyncIterator]().next();
 // Durable Object may be evicted here.
-await workspace.pullBlocks()[Symbol.asyncIterator]().next();
+await workspace.pull()[Symbol.asyncIterator]().next();
 ```
 
 Durable state lives in two places. `_vfs_sync_operations` holds one row
@@ -266,7 +266,7 @@ async alarm() {
   // cannot erase this future invocation.
   await this.ctx.storage.setAlarm(Date.now() + 30_000);
 
-  const iterator = this.workspace.pullBlocks()[Symbol.asyncIterator]();
+  const iterator = this.workspace.pull()[Symbol.asyncIterator]();
   const { value, done } = await iterator.next();
 
   if (done || value.complete) {
@@ -289,7 +289,7 @@ async alarm() {
   const stopAt = Date.now() + 12 * 60_000;
   await this.ctx.storage.setAlarm(Date.now() + 30_000);
 
-  for await (const progress of this.workspace.pullBlocks()) {
+  for await (const progress of this.workspace.pull()) {
     if (progress.complete) return;
     if (Date.now() >= stopAt) {
       await this.ctx.storage.setAlarm(Date.now() + 1_000);
@@ -304,6 +304,39 @@ operation. The last yielded cursor stays durable and a later iterable
 resumes from it. The corollary is that the library cannot guarantee
 convergence if the application never calls it again — that is the
 deliberate price of leaving scheduling to the implementor.
+
+### Entry mode and pack mode
+
+Small windows ship one `ChangeEntry` at a time, with a `hasObjects`
+probe and a `fetchObjects` pull for the bytes the receiver lacks. That
+is cheap for a handful of changes and hopeless for tens of thousands of
+them.
+
+Above either threshold the operation switches to a **change pack**: one
+gzip stream carrying the entries interleaved with the unique objects
+they reference, so a block needs no object round trips at all.
+
+| Threshold | Value |
+| --- | --- |
+| Entries in the cursor window | 20,000 |
+| Estimated payload bytes | 100 MiB |
+
+Selection happens once per operation and is persisted on the operation
+row. The mode cannot change mid-operation: a block's encoding must not
+depend on when it was requested, or a replayed block would not match
+the original and the receiver could not absorb it as a no-op. Since the
+target is fixed at creation, the window cannot grow underneath the
+estimate.
+
+Pack framing is length-prefixed records inside the gzip stream, closed
+by a footer carrying the start cursor, block cursor, target, generation,
+counts, and a digest. A truncated or tampered pack is rejected as a
+protocol error before anything applies, leaving the cursor untouched —
+advancing over entries that never arrived would lose them silently.
+
+`fetchChangePack` and `applyChangePack` are optional on `SyncRPC`. A
+peer that predates them keeps working in entry mode, so the two sides
+can be deployed in either order.
 
 ### Replay and idempotency
 

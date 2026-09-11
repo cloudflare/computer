@@ -140,7 +140,7 @@ async function selectPullMode(
   // A peer that predates pack transport keeps working in entry mode.
   if (typeof remote.fetchChangePack !== "function") return "entries";
 
-  const probe = await remote.fetchChangePack({
+  const probe = await remote.fetchChangePack?.({
     after: input.after,
     through: input.target,
     ...(input.ignore === undefined ? {} : { ignore: input.ignore }),
@@ -148,6 +148,7 @@ async function selectPullMode(
     maxBytes: thresholdBytes,
     generation: input.generation,
   });
+  if (probe === undefined) return "entries";
   try {
     return probe.entryCount >= thresholdEntries || !probe.drained ? "pack" : "entries";
   } finally {
@@ -178,7 +179,7 @@ async function runPullPackBlock(
   cursor: ChangeCursor;
 }> {
   const now = options.now ?? (() => Date.now());
-  const response = await remote.fetchChangePack({
+  const response = await remote.fetchChangePack?.({
     after,
     through: target,
     ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
@@ -186,6 +187,9 @@ async function runPullPackBlock(
     maxBytes: profile.maxBytes,
     generation: operation.generation,
   });
+  if (response === undefined) {
+    throw new Error("sync: peer withdrew pack transport mid-operation");
+  }
 
   let decoded: Awaited<ReturnType<typeof decodeChangePack>>;
   try {
@@ -623,10 +627,13 @@ async function runPushBlock(
       target,
       generation: operation.generation,
     });
-    const ack = await remote.applyChangePack({
+    const ack = await remote.applyChangePack?.({
       generation: operation.generation,
       stream,
     });
+    if (ack === undefined) {
+      throw new Error("sync: peer withdrew pack transport mid-operation");
+    }
     // The receiver's echoed cursor is the only authority for advancing.
     assertAppliedPushCursor(ack.appliedPushCursor, planned.cursor);
     if (compareChangeCursors(planned.cursor, after) > 0) {
@@ -778,6 +785,44 @@ export function pushBlocks(
       };
     },
   };
+}
+
+// Open a pull operation and fix its target without transferring
+// anything.
+//
+// Deferred synchronization needs the command's changes pinned at the
+// moment the command finished, even though nothing will drain them until
+// later. Capturing the target here means a later `pullBlocks` iteration
+// joins this pending operation instead of capturing a newer target that
+// could have raced ahead.
+//
+// Returns the fixed target, or undefined when another caller already
+// owns an operation for this backend — in which case that operation's
+// target is authoritative and this one has nothing to add.
+export async function captureSyncTarget(
+  db: Database,
+  remote: SyncRPC,
+  backend: string,
+  options: { now?: () => number } = {},
+): Promise<ChangeCursor | undefined> {
+  const now = options.now ?? (() => Date.now());
+  const opened = openOperation(db, backend, "pull", now());
+  if (opened.joined) return opened.operation.target;
+
+  const settled = await remote.watermarks({ settle: true });
+  const target = { rev: settled.currentRev, path: null };
+  // Decide the mode here rather than deferring it. A package install is
+  // exactly the workload that defers its pull and exactly the workload
+  // that needs pack transport, so guessing "entries" would strand the
+  // largest syncs on the slowest path for the life of the operation.
+  const mode = await selectPullMode(remote, {
+    after: readFetchCursor(db, backend),
+    target,
+    profile: DEFAULT_BLOCK_PROFILE,
+    generation: opened.operation.generation,
+  });
+  fixTarget(db, backend, "pull", opened.operation.generation, { target, mode }, now());
+  return readOperation(db, backend, "pull")?.target;
 }
 
 // Restartable pull. Each `next()` commits at most one block; the last

@@ -110,7 +110,6 @@ export interface Sync {
     runtimeId?: string;
     targetCursor?: ChangeCursor;
   }>;
-  assertDeferredReady?(): void | Promise<void>;
 }
 
 type ShellExecInput = Parameters<ShellRPC["exec"]>[0];
@@ -155,7 +154,6 @@ export class CommandExecutor {
   // with stale or incomplete workspace contents is not safe.
   async exec(source: string, options: ExecOptions = {}): Promise<CommandExecution> {
     assertNotTemplate(source);
-    if (options.sync === "defer") await this.#sync.assertDeferredReady?.();
     const input: ShellExecInput = {
       source,
       id: options.id,

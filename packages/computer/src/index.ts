@@ -15,7 +15,7 @@
 // TestBackend stays on the main entry because it's a thin
 // test-only fake with no payload.
 
-export type { SyncBatchBudget, SyncBatchResult } from "@cloudflare/computer-rpc/driver";
+export type { SyncProgress } from "@cloudflare/computer-rpc/driver";
 export type {
   ApplyResult,
   DurableObjectStorageLike,
@@ -97,13 +97,8 @@ export {
   withWorkspace,
 } from "./with-workspace.js";
 export {
-  type SyncBatchOptions,
-  type SyncRetryIntent,
-  type SyncRetryOptions,
-  type SyncRetryScheduler,
   type ThinkWorkspaceCompatibility,
   Workspace,
   type WorkspaceGitFactory,
   type WorkspaceOptions,
-  type WorkspaceRetryPendingSyncResult,
 } from "./workspace.js";

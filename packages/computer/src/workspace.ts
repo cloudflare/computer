@@ -11,21 +11,17 @@
 
 import type { ShellRPC } from "@cloudflare/computer-rpc";
 import {
-  pullBatch,
+  captureSyncTarget,
   pullBlocks,
   pullOnce,
-  pushBatch,
   pushBlocks,
   pushOnce,
   reconcileWatermarks,
-  type SyncBatchBudget,
-  type SyncBatchResult,
   type SyncProgress,
 } from "@cloudflare/computer-rpc/driver";
 import {
   type ApplyResult,
   type ChangeCursor,
-  compareChangeCursors,
   Database,
   type DurableObjectStorageLike,
   initializeSchema,
@@ -63,69 +59,6 @@ import {
   WorkspacePreDispatchTransportError,
   WorkspaceTransportError,
 } from "./transport-failure.js";
-
-export interface SyncRetryIntent {
-  backend: string;
-  targetCursor?: ChangeCursor;
-  // Container process whose post-command changes are pending. Durable
-  // retries must not report success against an empty replacement.
-  runtimeId?: string;
-  attempt: number;
-  notBefore: number;
-}
-
-/**
- * Durable storage boundary for pending post-command pulls.
- *
- * The host owns persistence and wake-up because the workspace library
- * cannot own a Durable Object alarm. Each backend has at most one intent.
- */
-export interface SyncRetryScheduler {
-  get(backend: string): Promise<SyncRetryIntent | undefined>;
-  schedule(intent: SyncRetryIntent): Promise<void>;
-  clear(backend: string): Promise<void>;
-}
-
-export interface SyncBatchOptions extends SyncBatchBudget {
-  mode: "batch";
-  targetCursor?: ChangeCursor;
-}
-
-export interface SyncRetryOptions {
-  initialDelayMs?: number;
-  maxDelayMs?: number;
-  maxAttempts?: number;
-}
-
-export type WorkspaceRetryPendingSyncResult =
-  | { status: "idle"; backend: string }
-  | { status: "complete"; backend: string; applied: number; skipped: ApplyResult["skipped"] }
-  | {
-      status: "pending";
-      backend: string;
-      runtimeId?: string;
-      attempt: number;
-      notBefore: number;
-      cursor?: ChangeCursor;
-      targetCursor?: ChangeCursor;
-      error?: string;
-    }
-  | {
-      status: "exhausted";
-      backend: string;
-      runtimeId?: string;
-      attempt: number;
-      error: string;
-    }
-  | { status: "lost"; backend: string; runtimeId: string; error: string };
-
-const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
-const DEFAULT_RETRY_MAX_DELAY_MS = 60_000;
-const DEFAULT_RETRY_MAX_ATTEMPTS = 5;
-const DEFAULT_SYNC_BATCH_BUDGET: SyncBatchBudget = {
-  maxEntries: 64,
-  maxBytes: 4 * 1024 * 1024,
-};
 
 // When a backend RPC fails with a transport error, how much replay
 // the operation tolerates. "always" suits idempotent calls; a
@@ -169,12 +102,6 @@ export interface WorkspaceOptions {
   // do not opt in. See `./observe.ts` for the contract and the
   // adapter subpaths for the Cloudflare runtime and OpenTelemetry.
   observer?: WorkspaceObserver;
-
-  // Optional durable retry boundary for failed post-command pulls.
-  // The host persists one intent per backend and wakes the Durable
-  // Object at intent.notBefore to call retryPendingSync(backend).
-  retryScheduler?: SyncRetryScheduler;
-  retry?: SyncRetryOptions;
 
   // Optional git client factory. Omit it to keep the default
   // Workspace graph free of isomorphic-git; pass createGitClient()
@@ -283,10 +210,6 @@ export class Workspace {
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #now: () => number;
-  readonly #retryScheduler: SyncRetryScheduler | undefined;
-  readonly #retryInitialDelayMs: number;
-  readonly #retryMaxDelayMs: number;
-  readonly #retryMaxAttempts: number;
   readonly #sessionId: string;
   readonly #gitFactory: WorkspaceGitFactory | undefined;
   readonly #defaultGitIdentity: GitIdentity | undefined;
@@ -345,22 +268,6 @@ export class Workspace {
 
   constructor(options: WorkspaceOptions) {
     this.#now = options.now ?? Date.now;
-    this.#retryScheduler = options.retryScheduler;
-    this.#retryInitialDelayMs = positiveRetryOption(
-      options.retry?.initialDelayMs,
-      DEFAULT_RETRY_INITIAL_DELAY_MS,
-      "initialDelayMs",
-    );
-    this.#retryMaxDelayMs = positiveRetryOption(
-      options.retry?.maxDelayMs,
-      DEFAULT_RETRY_MAX_DELAY_MS,
-      "maxDelayMs",
-    );
-    this.#retryMaxAttempts = positiveRetryOption(
-      options.retry?.maxAttempts,
-      DEFAULT_RETRY_MAX_ATTEMPTS,
-      "maxAttempts",
-    );
     this.#sessionId = options.sessionId ?? "";
     this.#gitFactory = options.git;
     this.#defaultGitIdentity = options.defaultGitIdentity;
@@ -599,142 +506,32 @@ export class Workspace {
 
   // Sync the local store with a configured backend.
   //
-  // push() ships everything the host has written since the last
-  // push to that backend; pull() applies everything the backend
-  // has produced since the last pull. Both are explicit — the
-  // package doesn't run a background loop. CommandExecutor.exec
-  // brackets each call automatically against the backend it
-  // selects; reach for push() / pull() directly only when an
-  // FS-only flow needs the bracket without an exec.
+  // push() ships everything the host has written since the last push to
+  // that backend; pull() applies everything the backend has produced
+  // since the last pull. Both are restartable async iterables: one
+  // next() commits one durably checkpointed block, and recreating the
+  // iterable resumes from the Workspace's durable cursor.
   //
-  // `id` selects which backend to push to / pull from. Omitting
-  // it picks the default (the first backend in the list).
+  // The caller supplies no cursor, no target, and no budget. Block
+  // sizing is internal so a caller cannot ask for a block too large to
+  // finish inside a Durable Object's CPU allowance.
   //
-  // push() returns the number of entries shipped to the backend.
-  // pull() returns the dofs ApplyResult { applied, skipped } —
-  // `applied` is the number of entries written into the local
-  // store, `skipped` surfaces remote-side writes the apply path
-  // rejected because they targeted a read-only mount root.
+  // `id` selects which backend to sync with. Omitting it picks the
+  // default (the first backend in the list).
   //
-  // Both methods emit a `workspace.sync.push` / `workspace.sync.pull`
-  // span on the configured observer, tagged with the resolved
-  // backend id and the entry count.
-  push(id?: string): Promise<number>;
-  push(options: SyncBatchOptions): Promise<SyncBatchResult>;
-  push(id: string | undefined, options: SyncBatchOptions): Promise<SyncBatchResult>;
-  push(
-    idOrOptions?: string | SyncBatchOptions,
-    options?: SyncBatchOptions,
-  ): Promise<number | SyncBatchResult> {
-    const id =
-      typeof idOrOptions === "string" || idOrOptions === undefined ? idOrOptions : undefined;
-    const batch = typeof idOrOptions === "object" ? idOrOptions : options;
-    return this.#serialize(id, (resolvedId) =>
-      withSpan(
-        this.#observer,
-        "workspace.sync.push",
-        { "workspace.sync.backend": resolvedId },
-        async () => {
-          if (batch !== undefined) {
-            if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
-              return emptyBatchResult(batch.targetCursor);
-            }
-            return this.#runWithReconnect(resolvedId, "pushBatch", async (handle) => {
-              if (handle.sync === "none") return emptyBatchResult(batch.targetCursor);
-              return pushBatch(this.#db, handle.rpc.sync, {
-                backend: resolvedId,
-                targetCursor: batch.targetCursor,
-                budget: batch,
-              });
-            });
-          }
-          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
-          return this.#runWithReconnect(resolvedId, "push", async (handle) => {
-            if (handle.sync === "none") return 0;
-            return pushOnce(this.#db, handle.rpc.sync, resolvedId);
-          });
-        },
-        (span, outcome) => {
-          if (!outcome.ok) return;
-          span.setAttribute(
-            "workspace.sync.pushed",
-            typeof outcome.value === "number" ? outcome.value : outcome.value.entries,
-          );
-        },
-      ),
-    );
-  }
-
-  pull(id?: string): Promise<ApplyResult>;
-  pull(options: SyncBatchOptions): Promise<SyncBatchResult>;
-  pull(id: string | undefined, options: SyncBatchOptions): Promise<SyncBatchResult>;
-  pull(
-    idOrOptions?: string | SyncBatchOptions,
-    options?: SyncBatchOptions,
-  ): Promise<ApplyResult | SyncBatchResult> {
-    const id =
-      typeof idOrOptions === "string" || idOrOptions === undefined ? idOrOptions : undefined;
-    const batch = typeof idOrOptions === "object" ? idOrOptions : options;
-    if (batch === undefined)
-      return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId));
-    return this.#serialize(id, (resolvedId) =>
-      withSpan(
-        this.#observer,
-        "workspace.sync.pull",
-        { "workspace.sync.backend": resolvedId },
-        async () => {
-          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
-            return emptyBatchResult(batch.targetCursor);
-          }
-          return this.#runWithReconnect(resolvedId, "pullBatch", async (handle) => {
-            if (handle.sync === "none") return emptyBatchResult(batch.targetCursor);
-            return pullBatch(this.#db, handle.rpc.sync, {
-              backend: resolvedId,
-              targetCursor: batch.targetCursor,
-              budget: batch,
-            });
-          });
-        },
-        (span, outcome) => {
-          if (!outcome.ok) return;
-          span.setAttribute(
-            "workspace.sync.applied",
-            typeof outcome.value === "object" ? outcome.value.applied : outcome.value,
-          );
-        },
-      ),
-    );
-  }
-
-  /**
-   * Restartable pull. One `next()` commits one durably checkpointed
-   * block.
-   *
-   * The caller supplies no cursor, target, or budget. Recreating the
-   * iterable resumes from the Workspace's durable cursor, so an
-   * application can drive one block per alarm, several per request, or
-   * abandon iteration and pick it up later:
-   *
-   * ```ts
-   * for await (const progress of workspace.pullBlocks()) {
-   *   if (progress.complete) break;
-   * }
-   * ```
-   *
-   * Workspace never sets or deletes an alarm. An application that
-   * wants a watchdog before a block schedules it itself; the yielded
-   * progress carries enough state to make that decision.
-   */
-  pullBlocks(id?: string): AsyncIterable<SyncProgress> {
+  // Workspace never sets or deletes an alarm. Drive these from a
+  // request, an alarm, a queue, or a Workflow; see
+  // docs/02_sync_protocol.md for the one-step and multi-block handler
+  // shapes.
+  //
+  // Both emit a `workspace.sync.push.block` /
+  // `workspace.sync.pull.block` span per committed block, tagged with
+  // the resolved backend id and the entry count.
+  pull(id?: string): AsyncIterable<SyncProgress> {
     return this.#syncBlocks(id, "pull");
   }
 
-  /**
-   * Restartable push. Same contract as {@link pullBlocks} in the other
-   * direction; the local cursor advances only through the backend's
-   * acknowledgment.
-   */
-  pushBlocks(id?: string): AsyncIterable<SyncProgress> {
+  push(id?: string): AsyncIterable<SyncProgress> {
     return this.#syncBlocks(id, "push");
   }
 
@@ -750,9 +547,6 @@ export class Workspace {
     const span = direction === "pull" ? "workspace.sync.pull.block" : "workspace.sync.push.block";
     return {
       [Symbol.asyncIterator]: (): AsyncIterator<SyncProgress> => {
-        // One durable iterator per backend, created lazily so the
-        // backend id resolves inside the FIFO like every other call.
-        let inner: AsyncIterator<SyncProgress> | undefined;
         let finished = false;
         return {
           next: async (): Promise<IteratorResult<SyncProgress>> => {
@@ -772,26 +566,26 @@ export class Workspace {
                       value: emptySyncProgress(resolvedId ?? "none", direction),
                     };
                   }
-                  return this.#runWithReconnect(
-                    resolvedId,
-                    `${direction}Blocks`,
-                    async (handle) => {
-                      if (handle.sync === "none") {
-                        return {
-                          done: false,
-                          value: emptySyncProgress(resolvedId, direction),
-                        };
-                      }
-                      if (inner === undefined) {
-                        const iterable =
-                          direction === "pull"
-                            ? pullBlocks(this.#db, handle.rpc.sync, { backend: resolvedId })
-                            : pushBlocks(this.#db, handle.rpc.sync, { backend: resolvedId });
-                        inner = iterable[Symbol.asyncIterator]();
-                      }
-                      return inner.next();
-                    },
-                  );
+                  return this.#runWithReconnect(resolvedId, direction, async (handle) => {
+                    if (handle.sync === "none") {
+                      return {
+                        done: false,
+                        value: emptySyncProgress(resolvedId, direction),
+                      };
+                    }
+                    // A fresh iterator per attempt, deliberately.
+                    // Caching one across calls would pin the RPC stub
+                    // it was built with, so a reconnect would retry
+                    // against the dead handle. The engine resumes
+                    // from durable state, so building a new iterator
+                    // costs nothing and is what makes the reconnect
+                    // land on the replacement stub.
+                    const iterable =
+                      direction === "pull"
+                        ? pullBlocks(this.#db, handle.rpc.sync, { backend: resolvedId })
+                        : pushBlocks(this.#db, handle.rpc.sync, { backend: resolvedId });
+                    return iterable[Symbol.asyncIterator]().next();
+                  });
                 },
                 (spanRef, outcome) => {
                   if (!outcome.ok || outcome.value.done) return;
@@ -807,140 +601,11 @@ export class Workspace {
           // iterable resumes it.
           return: async (): Promise<IteratorResult<SyncProgress>> => {
             finished = true;
-            await inner?.return?.();
             return { done: true, value: undefined };
           },
         };
       },
     };
-  }
-
-  /**
-   * Run a host-scheduled pending pull from its persisted cursor.
-   *
-   * The call shares the backend's mutation FIFO with push, pull, and
-   * command brackets. A successful pull clears the host's durable
-   * intent. A failed pull advances bounded exponential backoff; the
-   * last failed attempt remains stored and is reported as exhausted.
-   */
-  retryPendingSync(
-    id?: string,
-    budget: SyncBatchBudget = DEFAULT_SYNC_BATCH_BUDGET,
-  ): Promise<WorkspaceRetryPendingSyncResult> {
-    return this.#serialize(id, async (resolvedId) => {
-      if (resolvedId === undefined) {
-        throw new Error("Workspace has no backend configured for pending sync retry");
-      }
-      const scheduler = this.#retryScheduler;
-      if (scheduler === undefined) {
-        throw new Error("Workspace has no retryScheduler configured");
-      }
-      const intent = await scheduler.get(resolvedId);
-      if (intent === undefined) return { status: "idle", backend: resolvedId };
-      if (intent.attempt > this.#retryMaxAttempts) {
-        return {
-          status: "exhausted",
-          backend: resolvedId,
-          ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
-          attempt: intent.attempt,
-          error: "pending sync retry attempts exhausted",
-        };
-      }
-      try {
-        const result = await this.#pullBatchResolved(
-          resolvedId,
-          intent.runtimeId,
-          budget,
-          intent.targetCursor,
-        );
-        if (result.status === "pending") {
-          // Hitting a batch budget is successful progress, not a failed
-          // retry. Reset the consecutive-failure count so large trees
-          // can drain through any number of bounded alarm turns.
-          const next = this.#retryIntent(resolvedId, 1, intent.runtimeId, result.targetCursor);
-          await scheduler.schedule(next);
-          return {
-            status: "pending",
-            ...next,
-            cursor: result.cursor,
-            targetCursor: result.targetCursor,
-          };
-        }
-        await scheduler.clear(resolvedId);
-        return {
-          status: "complete",
-          backend: resolvedId,
-          applied: result.applied,
-          skipped: result.skipped,
-        };
-      } catch (error) {
-        const message = safeErrorMessage(error);
-        if (
-          intent.runtimeId !== undefined &&
-          (error as { code?: unknown } | null)?.code === "EEXEC_LOST"
-        ) {
-          await scheduler.clear(resolvedId);
-          return {
-            status: "lost",
-            backend: resolvedId,
-            runtimeId: intent.runtimeId,
-            error: message,
-          };
-        }
-        if (intent.attempt >= this.#retryMaxAttempts) {
-          return {
-            status: "exhausted",
-            backend: resolvedId,
-            ...(intent.runtimeId === undefined ? {} : { runtimeId: intent.runtimeId }),
-            attempt: intent.attempt,
-            error: message,
-          };
-        }
-        const next = this.#retryIntent(
-          resolvedId,
-          intent.attempt + 1,
-          intent.runtimeId,
-          intent.targetCursor,
-        );
-        await scheduler.schedule(next);
-        return { status: "pending", ...next, error: message };
-      }
-    });
-  }
-
-  #pullBatchResolved(
-    resolvedId: string | undefined,
-    expectedRuntimeId: string | undefined,
-    budget: SyncBatchBudget,
-    targetCursor?: ChangeCursor,
-  ): Promise<SyncBatchResult> {
-    return withSpan(
-      this.#observer,
-      "workspace.sync.pull.batch",
-      { "workspace.sync.backend": resolvedId },
-      async () => {
-        if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
-          return emptyBatchResult(targetCursor);
-        }
-        return this.#runWithReconnect(resolvedId, "pullBatch", async (handle) => {
-          if (expectedRuntimeId !== undefined) {
-            assertExecutionRuntime("post-command sync", expectedRuntimeId, handle.runtimeId);
-          }
-          if (handle.sync === "none") return emptyBatchResult(targetCursor);
-          return pullBatch(this.#db, handle.rpc.sync, {
-            backend: resolvedId,
-            targetCursor,
-            budget,
-          });
-        });
-      },
-      (span, outcome) => {
-        if (!outcome.ok) return;
-        span.setAttribute("workspace.sync.entries", outcome.value.entries);
-        span.setAttribute("workspace.sync.bytes", outcome.value.bytes);
-        span.setAttribute("workspace.sync.applied", outcome.value.applied);
-      },
-    );
   }
 
   #pullResolved(resolvedId: string | undefined, expectedRuntimeId?: string): Promise<ApplyResult> {
@@ -968,89 +633,36 @@ export class Workspace {
     );
   }
 
-  async #schedulePendingSync(
+  // Capture a durable pull operation for a command whose changes were
+  // not drained in-band.
+  //
+  // This used to persist a host-owned retry intent and rely on the host
+  // to set an alarm and call back. The operation row makes that
+  // indirection unnecessary: capturing the target here is enough, and
+  // any later pull() iteration resumes it from durable state.
+  async #capturePendingSync(
     id: string,
     runtimeId?: string,
-    captureTarget = false,
   ): Promise<{ backend?: string; runtimeId?: string; targetCursor?: ChangeCursor }> {
-    const scheduler = this.#retryScheduler;
-    if (scheduler === undefined) {
-      if (captureTarget) {
-        throw new Error("Workspace requires a retryScheduler for deferred synchronization");
-      }
-      return {};
-    }
     return this.#serialize(id, async (resolvedId) => {
-      if (resolvedId === undefined) return {};
-      const existing = await scheduler.get(resolvedId);
-      const sameRuntime =
-        existing !== undefined && (runtimeId === undefined || existing.runtimeId === runtimeId);
-      if (!captureTarget && sameRuntime) {
-        return {
-          backend: resolvedId,
-          ...(existing.runtimeId === undefined ? {} : { runtimeId: existing.runtimeId }),
-          ...(existing.targetCursor === undefined ? {} : { targetCursor: existing.targetCursor }),
-        };
+      if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return {};
+      const handle = await this.#handleFor(resolvedId);
+      if (runtimeId !== undefined) {
+        assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
       }
+      if (handle.sync === "none") return { backend: resolvedId };
 
-      const intentRuntimeId = runtimeId ?? (sameRuntime ? existing.runtimeId : undefined);
-      let targetCursor: ChangeCursor | undefined;
-      let captureError: unknown;
-      if (captureTarget) {
-        try {
-          const handle = await this.#handleFor(resolvedId);
-          if (runtimeId !== undefined) {
-            assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
-          }
-          targetCursor =
-            handle.sync === "none"
-              ? { rev: 0, path: null }
-              : {
-                  rev: (await handle.rpc.sync.watermarks({ settle: true })).currentRev,
-                  path: null,
-                };
-          if (
-            sameRuntime &&
-            existing.targetCursor !== undefined &&
-            compareChangeCursors(existing.targetCursor, targetCursor) > 0
-          ) {
-            targetCursor = existing.targetCursor;
-          }
-        } catch (error) {
-          // Preserve a durable, unfenced retry when the settle/capture
-          // step fails. Its first pull will capture a fresh target.
-          captureError = error;
-          targetCursor = undefined;
-        }
-      }
-
-      await scheduler.schedule(this.#retryIntent(resolvedId, 1, intentRuntimeId, targetCursor));
-      if (captureError !== undefined) throw captureError;
+      // Open the operation and fix its target now, so the command's
+      // changes are pinned even though nothing drains them yet. A
+      // later pull() joins this pending operation rather than
+      // capturing a newer target that could race ahead.
+      const target = await captureSyncTarget(this.#db, handle.rpc.sync, resolvedId);
       return {
         backend: resolvedId,
-        ...(intentRuntimeId === undefined ? {} : { runtimeId: intentRuntimeId }),
-        ...(targetCursor === undefined ? {} : { targetCursor }),
+        ...(runtimeId === undefined ? {} : { runtimeId }),
+        ...(target === undefined ? {} : { targetCursor: target }),
       };
     });
-  }
-
-  #retryIntent(
-    backend: string,
-    attempt: number,
-    runtimeId?: string,
-    targetCursor?: ChangeCursor,
-  ): SyncRetryIntent {
-    const delay = Math.min(
-      this.#retryMaxDelayMs,
-      this.#retryInitialDelayMs * 2 ** Math.max(0, attempt - 1),
-    );
-    return {
-      backend,
-      ...(targetCursor === undefined ? {} : { targetCursor }),
-      ...(runtimeId === undefined ? {} : { runtimeId }),
-      attempt,
-      notBefore: this.#now() + delay,
-    };
   }
 
   // Drop and close a cached handle after a transport failure.
@@ -1472,17 +1084,15 @@ export class Workspace {
     const shell = new CommandExecutor(
       rpc,
       {
-        push: () => this.push(id),
+        push: () => this.#pushForExecDefault(id),
         pull: (runtimeId) => this.#pullForExec(id, runtimeId),
-        onPullPending: async (_error, runtimeId) => {
-          await this.#schedulePendingSync(id, runtimeId);
-        },
-        onPostExecPending: (runtimeId) => this.#schedulePendingSync(id, runtimeId, true),
-        assertDeferredReady: () => {
-          if (this.#retryScheduler === undefined) {
-            throw new Error("Workspace requires a retryScheduler for deferred synchronization");
-          }
-        },
+        // A pull that failed in-band already left its operation
+        // pending, and its cursor is durable, so the next pull()
+        // resumes it with no bookkeeping here. Dialing a fresh handle
+        // just to record that would turn a failed command into a
+        // second connection attempt.
+        onPullPending: undefined,
+        onPostExecPending: (runtimeId) => this.#capturePendingSync(id, runtimeId),
       },
       this.#observer,
       dispatch,
@@ -1494,6 +1104,30 @@ export class Workspace {
 
   #pullForExec(id: string, runtimeId?: string): Promise<ApplyResult> {
     return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId, runtimeId));
+  }
+
+  // The exec bracket's pre-command push. Distinct from the public
+  // push() iterable: the bracket needs the whole local window shipped
+  // before the command starts, and an entry count to report on the
+  // execution, not a block-at-a-time cursor it would have to drive.
+  #pushForExecDefault(id: string): Promise<number> {
+    return this.#serialize(id, (resolvedId) =>
+      withSpan(
+        this.#observer,
+        "workspace.sync.push",
+        { "workspace.sync.backend": resolvedId },
+        async () => {
+          if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return 0;
+          return this.#runWithReconnect(resolvedId, "push", async (handle) => {
+            if (handle.sync === "none") return 0;
+            return pushOnce(this.#db, handle.rpc.sync, resolvedId);
+          });
+        },
+        (span, outcome) => {
+          if (outcome.ok) span.setAttribute("workspace.sync.pushed", outcome.value);
+        },
+      ),
+    );
   }
 
   #pushForExec(id: string, handle: BackendHandle): Promise<number> {
@@ -1578,19 +1212,6 @@ export class Workspace {
     if (!isWorkspaceTransportFailure(error)) return;
     void this.#invalidateHandle(id, handle);
   }
-}
-
-function emptyBatchResult(targetCursor?: ChangeCursor): SyncBatchResult {
-  const target = targetCursor ?? { rev: 0, path: null };
-  return {
-    status: "complete",
-    entries: 0,
-    bytes: 0,
-    applied: 0,
-    skipped: [],
-    cursor: target,
-    targetCursor: target,
-  };
 }
 
 // A backend with no sync wire (a module backend, or a handle that
@@ -1680,14 +1301,6 @@ function watchStreamForTransportError<T>(
       await reader.cancel(reason);
     },
   });
-}
-
-function positiveRetryOption(value: number | undefined, fallback: number, name: string): number {
-  const resolved = value ?? fallback;
-  if (!Number.isSafeInteger(resolved) || resolved <= 0) {
-    throw new Error(`Workspace retry.${name} must be a positive integer`);
-  }
-  return resolved;
 }
 
 /**

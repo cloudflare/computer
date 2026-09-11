@@ -166,25 +166,62 @@ one logical operation can be separated by unrelated mutations, which is
 already true across an eviction and is what the fixed target exists to
 tolerate.
 
+## Removing the batch API and the retry scheduler
+
+The plan sequenced the removal of the old public surface after a
+compatibility window. There is no shipped consumer, so the window was
+skipped and the surface is gone.
+
+**`pull()` and `push()` are the iterables.** The batch overloads,
+`SyncBatchOptions`, `SyncBatchBudget`, and `SyncBatchResult` are
+deleted rather than deprecated. `pullOnce` and `pushOnce` remain as
+internal drivers because the exec bracket needs a single awaitable call
+that drains the whole window before a command starts, and an entry
+count to report on the execution.
+
+**`retryPendingSync` and `SyncRetryScheduler` are deleted.** They
+existed because a failed post-command pull had nowhere durable to
+record its progress, so the host persisted an intent, set an alarm, and
+called back with a bounded budget and an attempt counter. The operation
+row and the watermark now hold exactly that state, and any later
+`pull()` resumes from it. Keeping a parallel retry ledger would mean two
+sources of truth for the same question.
+
+This also removed the caller-visible retry budget the plan wanted gone.
+Exhaustion, backoff, and attempt counts are no longer part of the API;
+a caller that wants to stop trying simply stops iterating.
+
+A deferred exec now calls `captureSyncTarget`, which opens the
+operation and fixes its target without transferring anything. That
+pins the command's changes at the moment it finished, so a later
+`pull()` joins the pending operation instead of capturing a newer
+target that could have raced ahead.
+
+One behavior changed as a consequence. `onPullPending` used to dial the
+backend to record a retry intent; it is now a no-op, because a pull that
+failed in-band already left its operation pending. Dialing a fresh
+handle purely to write bookkeeping turned a failed command into a
+second connection attempt, which a regression test caught.
+
 ## Status
 
 Landed: durable operation state, the block planner, revision-guarded
-replay, the pull engine, the push engine, and the `Workspace`
-iterables.
+replay, the pack codec, pack transport in both directions, the pull and
+push engines, the `Workspace` iterables, and removal of the batch API
+and retry scheduler.
 
-Not yet landed, and deliberately so:
+Remaining gaps:
 
-- **Pack mode.** `selectMode` decides entries versus pack and the
-  thresholds are tested, but the compressed content-addressed pack
-  codec itself is not written; both directions currently run in entry
-  mode. The measured 172-second full-pack result is the reason to build
-  it, and the block framing it needs is now in place.
-- **Removing the old public API.** `pull()` and `push()` keep their
-  batch overloads and their exec bracket. The plan sequences that
-  removal after a compatibility window, and the command executor still
-  depends on the current shapes.
-- **Peer capability negotiation.** The plan calls for using block
-  methods "only when the connected peer exposes them", but the wire has
-  no version negotiation today. The engine rides the existing
-  `fetchChanges` / `push` methods precisely so it needs none; a
-  dedicated block method would need that negotiation designed first.
+- **Adaptive block growth.** The sizing profile shrinks on interruption
+  and resets on completion, but never grows beyond the default. The plan
+  asks for instrumentation before adding growth, and that
+  instrumentation is not built.
+- **Production validation.** The plan's Phase 6 wants forced eviction
+  between every yielded block, forced disconnect in each transfer
+  phase, and a 1 GB / 40,000-file benchmark against real Durable Object
+  limits. The unit suites cover the logic; none of this has run against
+  a deployed matched pair, so the 172-second pack throughput claim is
+  unverified end to end.
+- **Wire version negotiation.** Pack transport is advertised by method
+  presence, which is enough for optional methods but is not a version
+  scheme. A future incompatible pack format change would need one.

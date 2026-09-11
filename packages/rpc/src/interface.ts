@@ -105,7 +105,10 @@ export interface SyncRPC {
   // thresholds in @cloudflare/dofs. `maxEntries` and `maxBytes` bound
   // the block so one pack stays inside the receiver's CPU budget, and
   // `cursor` echoes the block cursor the pack's footer also carries.
-  fetchChangePack(input: {
+  // Optional: a peer built before pack transport omits these, and the
+  // engine falls back to entry mode when it finds them absent. That is
+  // what lets the two sides be deployed in either order.
+  fetchChangePack?(input: {
     after?: ChangeCursor;
     through?: ChangeCursor;
     ignore?: string[];
@@ -124,7 +127,7 @@ export interface SyncRPC {
   // decodes the pack, stages its objects, applies its entries, and
   // echoes the cursor it applied so the sender can advance only through
   // an acknowledgment.
-  applyChangePack(input: { generation: string; stream: ReadableStream<Uint8Array> }): Promise<{
+  applyChangePack?(input: { generation: string; stream: ReadableStream<Uint8Array> }): Promise<{
     appliedPushCursor: ChangeCursor;
     applied: number;
     entryCount: number;

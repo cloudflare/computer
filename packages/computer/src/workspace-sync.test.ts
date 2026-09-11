@@ -52,7 +52,7 @@ function seed(db: Database, count: number): void {
   }
 }
 
-describe("Workspace.pullBlocks", () => {
+describe("Workspace.pull", () => {
   it("takes no cursor and no budget from the caller", async () => {
     const peer = peerBackend("fake");
     try {
@@ -62,7 +62,7 @@ describe("Workspace.pullBlocks", () => {
 
       // The only argument is which backend to talk to.
       const seen = [];
-      for await (const progress of ws.pullBlocks()) seen.push(progress);
+      for await (const progress of ws.pull()) seen.push(progress);
 
       expect(seen[seen.length - 1].complete).toBe(true);
       expect(await ws.fs.readFile("/f000.txt", "utf8")).toBe("content-0");
@@ -80,12 +80,12 @@ describe("Workspace.pullBlocks", () => {
 
       // One block, then abandon the iterator the way an evicted
       // Durable Object would.
-      const iterator = ws.pullBlocks()[Symbol.asyncIterator]();
+      const iterator = ws.pull()[Symbol.asyncIterator]();
       const first = await iterator.next();
       expect(first.done).toBe(false);
 
       // A brand new iterable finishes the operation.
-      for await (const progress of ws.pullBlocks()) {
+      for await (const progress of ws.pull()) {
         if (progress.complete) break;
       }
 
@@ -103,7 +103,7 @@ describe("Workspace.pullBlocks", () => {
       await ws.ready();
 
       const seen = [];
-      for await (const progress of ws.pullBlocks("container")) seen.push(progress);
+      for await (const progress of ws.pull("container")) seen.push(progress);
 
       expect(seen[0].backend).toBe("container");
       expect(seen[0].direction).toBe("pull");
@@ -119,7 +119,7 @@ describe("Workspace.pullBlocks", () => {
       await ws.ready();
 
       const seen = [];
-      for await (const progress of ws.pullBlocks()) seen.push(progress);
+      for await (const progress of ws.pull()) seen.push(progress);
 
       expect(seen).toHaveLength(1);
       expect(seen[0].complete).toBe(true);
@@ -130,7 +130,7 @@ describe("Workspace.pullBlocks", () => {
   });
 });
 
-describe("Workspace.pushBlocks", () => {
+describe("Workspace.push", () => {
   it("ships local writes to the backend", async () => {
     const peer = peerBackend("fake");
     try {
@@ -139,7 +139,7 @@ describe("Workspace.pushBlocks", () => {
       await ws.fs.writeFile("/local.txt", "from the host");
 
       const seen = [];
-      for await (const progress of ws.pushBlocks()) seen.push(progress);
+      for await (const progress of ws.push()) seen.push(progress);
 
       expect(seen[seen.length - 1].complete).toBe(true);
       expect(seen[seen.length - 1].direction).toBe("push");
@@ -161,10 +161,10 @@ describe("Workspace.pushBlocks", () => {
         await ws.fs.writeFile(`/f${i}.txt`, `content-${i}`);
       }
 
-      const iterator = ws.pushBlocks()[Symbol.asyncIterator]();
+      const iterator = ws.push()[Symbol.asyncIterator]();
       await iterator.next();
 
-      for await (const progress of ws.pushBlocks()) {
+      for await (const progress of ws.push()) {
         if (progress.complete) break;
       }
 
@@ -198,7 +198,7 @@ describe("sync block iterables and module backends", () => {
     await ws.ready();
 
     const seen = [];
-    for await (const progress of ws.pullBlocks()) seen.push(progress);
+    for await (const progress of ws.pull()) seen.push(progress);
 
     expect(seen).toHaveLength(1);
     expect(seen[0].complete).toBe(true);
