@@ -63,13 +63,40 @@ export interface WorkerShellLoader {
   };
 }
 
+interface WorkerShellSocketInfo {
+  remoteAddress?: string;
+  localAddress?: string;
+}
+
+interface WorkerShellSocket {
+  readonly readable: ReadableStream;
+  readonly writable: WritableStream;
+  readonly closed: Promise<void>;
+  readonly opened: Promise<WorkerShellSocketInfo>;
+  readonly upgraded: boolean;
+  readonly secureTransport: "on" | "off" | "starttls";
+  close(): Promise<void>;
+  startTls(options?: unknown): WorkerShellSocket;
+}
+
+interface WorkerShellOutbound {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  connect(
+    address: string | { hostname: string; port: number },
+    options?: unknown,
+  ): WorkerShellSocket;
+}
+
 interface WorkerLoaderCode {
   compatibilityDate: string;
   compatibilityFlags?: string[];
   mainModule: string;
-  modules: Record<string, string | { js?: string; cjs?: string; text?: string }>;
+  modules: Record<
+    string,
+    string | { js?: string; cjs?: string; text?: string; wasm?: ArrayBuffer }
+  >;
   env?: Record<string, unknown>;
-  globalOutbound?: unknown;
+  globalOutbound?: WorkerShellOutbound | null;
 }
 
 // Subset of DurableObjectState the backend needs. ctx.exports is
