@@ -340,11 +340,14 @@ describe("REPL capabilities", () => {
       session,
       `await fs.mkdir("/notes");
        await fs.writeFile("/notes/log.txt", "alpha");
+       // Regression: root-level writes must not mkdir("/") (dofs EEXISTs it).
+       await fs.writeFile("/top.txt", "root-level");
+       await fs.readFile("/top.txt");
        await fs.readFile("/notes/log.txt")`,
     );
     expect(first.error).toBeUndefined();
     expect(first.value).toBe("alpha");
-    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 1, "fs.readFile": 1 });
+    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 2, "fs.readFile": 2 });
 
     const second = await stub.replEvalWith(
       ["fs"],
@@ -354,14 +357,14 @@ describe("REPL capabilities", () => {
        await fs.readFile("/notes/log.txt")`,
     );
     expect(second.value).toBe("alpha+beta");
-    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 2, "fs.readFile": 3 });
+    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 3, "fs.readFile": 4 });
 
     // Replay after eviction re-fires nothing: same content, same counters
     // (+1 read for the new cell's own live read).
     await stub.restart();
     const third = await stub.replEvalWith(["fs"], session, `await fs.readFile("/notes/log.txt")`);
     expect(third.value).toBe("alpha+beta");
-    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 2, "fs.readFile": 4 });
+    expect(await stub.counts()).toMatchObject({ "fs.writeFile": 3, "fs.readFile": 5 });
   });
 
   it("rejects oversized capability results without committing or truncating", async () => {
