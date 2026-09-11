@@ -31,7 +31,8 @@
     "build": "tsc -p tsconfig.build.json",
     "pretypecheck": "npm run build --workspace @cloudflare/dofs",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bench": "vitest run --config vitest.config.bench.ts"
   },
   "dependencies": {
     "@cloudflare/dofs": "*",

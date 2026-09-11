@@ -203,6 +203,83 @@ failed in-band already left its operation pending. Dialing a fresh
 handle purely to write bookkeeping turned a failed command into a
 second connection attempt, which a regression test caught.
 
+## Measured behavior
+
+Two benchmark harnesses were added and run in this environment:
+`packages/dofs/src/bench/sync-blocks.bench.ts` against real Durable
+Object `SqlStorage` under workerd, and
+`packages/rpc/src/bench/sync-engine.bench.ts` driving the engine
+end to end. Numbers below are from a 16-core dev container, so treat
+them as ratios rather than absolutes.
+
+### Blocks fit the CPU budget comfortably
+
+Worst single block, package-shaped tree, 1350 files:
+
+| Block max entries | Mode | Blocks | Worst block | Worst blocks per 30s |
+|---|---|---:|---:|---:|
+| 64 | entries | 24 | 198 ms | 151 |
+| 256 | entries | 6 | 296 ms | 101 |
+| 1024 | entries | 2 | 386 ms | 77 |
+| 1024 | pack | 2 | 815 ms | 36 |
+
+Even the worst case leaves a 36x margin against the default 30-second
+allowance, so the shipped `PACK_BLOCK_MAX_ENTRIES = 4000` is
+conservative rather than risky. Restarting from a fresh iterable per
+block costs about 5% over reusing one iterator, which is the price of
+the durability guarantee and is cheap.
+
+### Pack transport is a bandwidth trade, not a free win
+
+This is the finding that most changes the plan's framing. The plan
+justified packs on a 172-second full-pack result and treated
+compression as strictly better. Measured against an in-process peer,
+pack mode is *slower*:
+
+| Shape | Entry mode | Pack mode |
+|---|---:|---:|
+| small (25 files) | 61 ms | 47 ms |
+| medium (540 files) | 305 ms | 370 ms |
+| large (1800 files) | 867 ms | 1470 ms |
+
+The cause is gzip CPU, isolated directly: compressing one 512-entry
+block's 2.3 MB of records down to 85 KB costs about 170 ms, while the
+rest of the block (planning, staging, apply) costs about 100 ms. An
+in-process stub charges nothing for bytes, so that CPU buys nothing.
+
+Counting bytes instead of assuming them, for the same 1800-file window:
+
+| Mode | Wire bytes | Local CPU |
+|---|---:|---:|
+| entries | 6380 KB | 1124 ms |
+| pack | 183 KB | 1425 ms |
+
+That is a **35x** reduction in bytes for roughly 300 ms of extra CPU.
+Pricing both against a link gives the crossover:
+
+| Link | entries | pack | Winner |
+|---|---:|---:|---|
+| 10 Mbps | 6109 ms | 1568 ms | pack, by 74% |
+| 50 Mbps | 2121 ms | 1454 ms | pack, by 31% |
+| 100 Mbps | 1623 ms | 1439 ms | pack, by 11% |
+| 500 Mbps | 1224 ms | 1428 ms | entries, by 17% |
+| infinite | 1124 ms | 1425 ms | entries, by 27% |
+
+**Pack mode wins below roughly 150 Mbps of effective throughput and
+loses above it.** The DO-to-container hop in production is not a local
+socket, so packs should win in the deployed shape — but that is now a
+stated assumption with a measured crossover, not an unexamined premise.
+
+The thresholds stay as they are: 20,000 entries or 100 MiB is far above
+where this crossover sits, so any window that trips them is one where
+bytes dominate. The pack compression ratio itself is strong on both
+shapes measured against real DO storage — 9.1x on a metadata-heavy tree
+and 151x on a byte-heavy one.
+
+If the deployed link turns out to be fast enough that packs lose, the
+fix is a threshold change and not a redesign, because mode selection is
+already a single decision per operation.
+
 ## Status
 
 Landed: durable operation state, the block planner, revision-guarded
@@ -216,12 +293,15 @@ Remaining gaps:
   and resets on completion, but never grows beyond the default. The plan
   asks for instrumentation before adding growth, and that
   instrumentation is not built.
-- **Production validation.** The plan's Phase 6 wants forced eviction
-  between every yielded block, forced disconnect in each transfer
-  phase, and a 1 GB / 40,000-file benchmark against real Durable Object
-  limits. The unit suites cover the logic; none of this has run against
-  a deployed matched pair, so the 172-second pack throughput claim is
-  unverified end to end.
+- **Production validation.** Block sizing, restart overhead, and the
+  pack bandwidth trade are now measured (see above), including against
+  real Durable Object SqlStorage. What is still missing is the deployed
+  shape: forced eviction between blocks and forced disconnect in each
+  transfer phase are covered by unit tests but not by a real
+  DO-to-container pair, the trees benchmarked here top out around 1800
+  files rather than the plan's 40,000, and the effective bandwidth of
+  the production hop is unmeasured — which is the input the pack
+  crossover above depends on.
 - **Wire version negotiation.** Pack transport is advertised by method
   presence, which is enough for optional methods but is not a version
   scheme. A future incompatible pack format change would need one.
