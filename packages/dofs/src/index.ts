@@ -50,6 +50,32 @@ export { DEFAULT_IGNORE, isIgnored } from "./sync/ignore.js";
 export { assertAppliedPushCursor } from "./sync/invariant.js";
 export type { ManifestChunk } from "./sync/manifests.js";
 export { buildManifest, MANIFEST_VERSION } from "./sync/manifests.js";
+export type {
+  BlockProfile,
+  OpenedOperation,
+  SyncDirection,
+  SyncMode,
+  SyncOperation,
+  SyncOperationStatus,
+  SyncSkip,
+  TerminalStatus,
+} from "./sync/operations.js";
+export {
+  beginCapture,
+  clearBlockMarker,
+  completeOperation,
+  DEFAULT_BLOCK_PROFILE,
+  failOperation,
+  fixTarget,
+  MIN_BLOCK_PROFILE,
+  markBlockStarted,
+  openOperation,
+  pruneSkips,
+  readOperation,
+  readSkips,
+  recordSkip,
+  shrinkBlockProfile,
+} from "./sync/operations.js";
 export { pushObjects } from "./sync/push.js";
 export type { ChangeCursor, WatermarkKey } from "./sync/watermarks.js";
 export {

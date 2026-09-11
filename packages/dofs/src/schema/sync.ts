@@ -52,6 +52,58 @@ export const SYNC_STATEMENTS = [
     path    TEXT,
     PRIMARY KEY (k, backend)
   )`,
+  // Durable half of a restartable sync operation. One row per
+  // (backend, direction): the plan's key. A restarted iterator reads
+  // this row to recover the fixed target and generation it was working
+  // against, because a JavaScript generator cannot survive eviction.
+  //
+  // `target_rev` / `target_path` are NULL only while status is
+  // 'capturing' — pull cannot capture its target atomically because
+  // watermarks({settle:true}) is a remote call, so capture is a
+  // two-phase insert-then-promote. `block_after_*` records where an
+  // in-flight block began and is cleared once the cursor advances; a
+  // later invocation that finds the marker with no cursor progress
+  // knows the prior execution was interrupted.
+  //
+  // The committed progress cursor stays in _vfs_watermark. This table
+  // never duplicates it.
+  `CREATE TABLE IF NOT EXISTS _vfs_sync_operations (
+    backend             TEXT    NOT NULL,
+    direction           TEXT    NOT NULL CHECK (direction IN ('pull', 'push')),
+    generation          TEXT    NOT NULL,
+    status              TEXT    NOT NULL CHECK (
+                          status IN ('capturing', 'pending', 'failed', 'lost')
+                        ),
+    target_rev          INTEGER,
+    target_path         TEXT,
+    runtime_id          TEXT,
+    mode                TEXT    CHECK (mode IN ('entries', 'pack')),
+    block_after_rev     INTEGER,
+    block_after_path    TEXT,
+    block_started_at    INTEGER,
+    internal_max_entries INTEGER NOT NULL,
+    internal_max_bytes  INTEGER NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    last_error          TEXT,
+    PRIMARY KEY (backend, direction)
+  )`,
+  // Entries the receiver deliberately refused, most often a
+  // container-side write under a read-only mount. The cursor advances
+  // past a rejection so the operation cannot stall on it forever,
+  // which means the only record of the drop would otherwise be a
+  // yielded progress value the caller may have discarded. These rows
+  // outlive the operation row and are pruned when a new generation
+  // starts. See docs/decisions/sync-operations.md.
+  `CREATE TABLE IF NOT EXISTS _vfs_sync_skips (
+    backend    TEXT    NOT NULL,
+    direction  TEXT    NOT NULL CHECK (direction IN ('pull', 'push')),
+    generation TEXT    NOT NULL,
+    path       TEXT    NOT NULL,
+    reason     TEXT    NOT NULL,
+    at         INTEGER NOT NULL,
+    PRIMARY KEY (backend, direction, generation, path)
+  )`,
   // The `mode` column was added at schema v2; `schema/migrations.ts`
   // owns the ALTER for existing databases. Keep the CHECK
   // constraint here aligned with the migration's CHECK so fresh
