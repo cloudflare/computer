@@ -120,3 +120,71 @@ or above the local revision for that path. `file`, `dir`, and
 is a no-op. `delete` compares the tombstone revision against the live
 inode revision and skips when the local path is newer. This is
 verified by test rather than asserted.
+
+## Decisions forced during implementation
+
+Three more choices had to be made once the code existed. They were not
+in the plan's open questions but would have been silent behavior
+otherwise.
+
+### The pull target is the source's change head
+
+The plan said to capture the target from `watermarks({ settle: true })`
+without naming a field. That response carries three values, and
+`fetchCursor` is the *source's own inbound cursor* — what it has pulled
+from us. Using it makes every pull a no-op, because a source that has
+never pulled reports zero.
+
+The target is `currentRev`: the head of what the source has produced.
+`settle: true` additionally flushes writes still buffered in the
+userspace shim, so they fall inside this target instead of waiting for
+the next operation.
+
+### Object bytes are staged, not carried in memory
+
+`applyChanges` accepts a map of chunk bytes, and the obvious
+implementation fills it from the transfer. That makes a block's peak
+memory proportional to its payload, which defeats the point of a byte
+bound. Bytes are instead staged into the content-addressed blob store
+as they arrive and the apply reads them back from there, so a block's
+resident cost is its metadata.
+
+Staging before apply is also what makes a mid-block crash replay
+cleanly rather than fail on a missing object.
+
+### The mutation FIFO is held per block, not per iteration
+
+`Workspace` serializes mutating sync through a per-backend FIFO. Taking
+that lock for a whole iteration would block every other mutation for as
+long as the caller took to return to the iterator — and the entire
+premise of the design is that the caller may never return. The lock is
+therefore taken and released per `next()`.
+
+This preserves "one mutating sync block per backend and direction"
+while making an abandoned iterator harmless. It does mean two blocks of
+one logical operation can be separated by unrelated mutations, which is
+already true across an eviction and is what the fixed target exists to
+tolerate.
+
+## Status
+
+Landed: durable operation state, the block planner, revision-guarded
+replay, the pull engine, the push engine, and the `Workspace`
+iterables.
+
+Not yet landed, and deliberately so:
+
+- **Pack mode.** `selectMode` decides entries versus pack and the
+  thresholds are tested, but the compressed content-addressed pack
+  codec itself is not written; both directions currently run in entry
+  mode. The measured 172-second full-pack result is the reason to build
+  it, and the block framing it needs is now in place.
+- **Removing the old public API.** `pull()` and `push()` keep their
+  batch overloads and their exec bracket. The plan sequences that
+  removal after a compatibility window, and the command executor still
+  depends on the current shapes.
+- **Peer capability negotiation.** The plan calls for using block
+  methods "only when the connected peer exposes them", but the wire has
+  no version negotiation today. The engine rides the existing
+  `fetchChanges` / `push` methods precisely so it needs none; a
+  dedicated block method would need that negotiation designed first.
