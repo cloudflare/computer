@@ -98,6 +98,7 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
     backend: { kind: "fuse" },
     mountPoint,
     port,
+    store: { kind: "memory" },
   });
 
   await fs.mkdir(path.join(mountPoint, "dir"));
@@ -695,7 +696,7 @@ function rawRequest(port, lines) {
 
 function request(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.get(url, options, (response) => {
+    const request = http.request(url, { method: "GET", ...options }, (response) => {
       response.setEncoding("utf8");
       let body = "";
       response.on("data", (chunk) => {
@@ -710,6 +711,7 @@ function request(url, options = {}) {
     request.setTimeout(1_000, () => {
       request.destroy(new Error(`request timed out: ${url}`));
     });
+    request.end();
   });
 }
 
@@ -860,5 +862,359 @@ test("without RPC_CLIENT_SECRET every route stays open", async (_ctx) => {
 
   for (const route of ["/health", "/", "/__computerd/info", "/api/watermarks"]) {
     expect((await request(`${base}${route}`)).statusCode, route).toBe(200);
+  }
+});
+
+test("/__computerd/info reports the in-memory store by default", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/info`);
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).store).toEqual({ kind: "memory" });
+});
+
+test("/__computerd/info reports the file store and its path when COMPUTERD_DB is set", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  const storePath = path.join(storeDir, "state.db");
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/info`);
+  expect(JSON.parse(response.body).store).toEqual({
+    kind: "file",
+    path: storePath,
+    fresh: true,
+  });
+});
+
+test("computerd rejects a relative COMPUTERD_DB value", async () => {
+  const port = await getAvailablePort();
+  const child = spawn(cliPath, {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      MOUNT_POINT: "/tmp/computerd-mount-not-used",
+      PORT: String(port),
+      FUSE_MOUNT: "none",
+      COMPUTERD_DB: "state.db",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const { code, stderr } = await waitForExit(child);
+  expect(code).toBe(1);
+  expect(stderr).toMatch(/COMPUTERD_DB must be "memory" or an absolute path/);
+});
+
+test("computerd rejects a COMPUTERD_DB path inside the mount point", async () => {
+  const port = await getAvailablePort();
+  const child = spawn(cliPath, {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      MOUNT_POINT: "/tmp/computerd-mount-not-used",
+      PORT: String(port),
+      FUSE_MOUNT: "none",
+      COMPUTERD_DB: "/tmp/computerd-mount-not-used/state.db",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const { code, stderr } = await waitForExit(child);
+  expect(code).toBe(1);
+  expect(stderr).toMatch(/must not sit inside the mount point/);
+});
+
+test("POST /__computerd/checkpoint leaves the store readable", async (_ctx) => {
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: path.join(storeDir, "state.db") },
+  });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`, {
+    method: "POST",
+  });
+  expect(response.statusCode).toBe(200);
+  const body = JSON.parse(response.body);
+  expect(typeof body.walFrames).toBe("number");
+  expect(body.sizeBytes).toBeGreaterThan(0);
+  expect(typeof body.durationMs).toBe("number");
+
+  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/api` });
+  try {
+    expect(await client.sync.hasObjects([])).toEqual([]);
+  } finally {
+    await client.close();
+  }
+});
+
+test("POST /__computerd/checkpoint on an in-memory store reports no frames", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`, {
+    method: "POST",
+  });
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body).walFrames).toBe(0);
+});
+
+test("/__computerd/checkpoint refuses a GET", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`);
+  expect(response.statusCode).toBe(405);
+});
+
+test("/__computerd/checkpoint requires the shared secret when one is set", async (_ctx) => {
+  const secret = "checkpoint-secret";
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", RPC_CLIENT_SECRET: secret },
+  });
+
+  const unauthorized = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`, {
+    method: "POST",
+  });
+  expect(unauthorized.statusCode).toBe(401);
+
+  const authorized = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}` },
+  });
+  expect(authorized.statusCode).toBe(200);
+});
+
+test("/__computerd/stats reports the store size and free pages", async (_ctx) => {
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: path.join(storeDir, "state.db") },
+  });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/stats`);
+  const stats = JSON.parse(response.body);
+  expect(stats.store_size_bytes).toBeGreaterThan(0);
+  expect(typeof stats.store_freelist_count).toBe("number");
+});
+
+test("a write survives SIGTERM because the store is checkpointed after the unmount", async (_ctx) => {
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  const storePath = path.join(storeDir, "state.db");
+
+  const firstPort = await getAvailablePort();
+  const firstMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const child = await startComputerd({
+    port: firstPort,
+    mountPoint: firstMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const { Database, initializeSchema, WorkspaceFilesystem } = await import("@cloudflare/dofs");
+  const { SQLiteTestStorage } = await import("@cloudflare/dofs/testing");
+  const { pushOnce } = await import("@cloudflare/computer-rpc/driver");
+
+  const writer = createWorkspaceClient({ url: `ws://127.0.0.1:${firstPort}/api` });
+  try {
+    const local = new Database(new SQLiteTestStorage());
+    initializeSchema(local, Date.now);
+    await new WorkspaceFilesystem(local).writeFile("/survives.txt", "written before SIGTERM");
+    expect(await pushOnce(local, writer.sync)).toBeGreaterThan(0);
+  } finally {
+    await writer.close();
+  }
+
+  await stopProcess(child);
+
+  const secondPort = await getAvailablePort();
+  const secondMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({
+    port: secondPort,
+    mountPoint: secondMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const reader = createWorkspaceClient({ url: `ws://127.0.0.1:${secondPort}/api` });
+  try {
+    const entry = await reader.sync.readEntry("/survives.txt");
+    expect(entry).not.toBeNull();
+  } finally {
+    await reader.close();
+  }
+});
+
+test("a file store brings the tree and the sync cursors back after a restart", async (_ctx) => {
+  const { Database, initializeSchema, WorkspaceFilesystem } = await import("@cloudflare/dofs");
+  const { SQLiteTestStorage } = await import("@cloudflare/dofs/testing");
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+  const { pushOnce } = await import("@cloudflare/computer-rpc/driver");
+
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  const storePath = path.join(storeDir, "state.db");
+
+  const firstPort = await getAvailablePort();
+  const firstMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const first = await startComputerd({
+    port: firstPort,
+    mountPoint: firstMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const writer = createWorkspaceClient({ url: `ws://127.0.0.1:${firstPort}/api` });
+  try {
+    const local = new Database(new SQLiteTestStorage());
+    initializeSchema(local, Date.now);
+    const localFs = new WorkspaceFilesystem(local);
+    await localFs.mkdir("/restart", { recursive: true });
+    await localFs.writeFile("/restart/a.txt", "before the restart");
+    expect(await pushOnce(local, writer.sync)).toBeGreaterThan(0);
+  } finally {
+    await writer.close();
+  }
+
+  const before = JSON.parse((await request(`http://127.0.0.1:${firstPort}/api/watermarks`)).body);
+  expect(before.fetchCursor.rev).toBeGreaterThan(0);
+
+  await stopProcess(first);
+
+  const secondPort = await getAvailablePort();
+  const secondMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({
+    port: secondPort,
+    mountPoint: secondMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const after = JSON.parse((await request(`http://127.0.0.1:${secondPort}/api/watermarks`)).body);
+  expect(after.currentRev).toBe(before.currentRev);
+  expect(after.fetchCursor).toEqual(before.fetchCursor);
+
+  const reader = createWorkspaceClient({ url: `ws://127.0.0.1:${secondPort}/api` });
+  try {
+    const entry = await reader.sync.readEntry("/restart/a.txt");
+    expect(entry).not.toBeNull();
+  } finally {
+    await reader.close();
+  }
+});
+
+test("an in-memory store comes back empty after a restart", async (_ctx) => {
+  const { Database, initializeSchema, WorkspaceFilesystem } = await import("@cloudflare/dofs");
+  const { SQLiteTestStorage } = await import("@cloudflare/dofs/testing");
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+  const { pushOnce } = await import("@cloudflare/computer-rpc/driver");
+
+  const firstPort = await getAvailablePort();
+  const firstMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const first = await startComputerd({
+    port: firstPort,
+    mountPoint: firstMount,
+    env: { FUSE_MOUNT: "none" },
+  });
+
+  const writer = createWorkspaceClient({ url: `ws://127.0.0.1:${firstPort}/api` });
+  try {
+    const local = new Database(new SQLiteTestStorage());
+    initializeSchema(local, Date.now);
+    const localFs = new WorkspaceFilesystem(local);
+    await localFs.mkdir("/restart", { recursive: true });
+    await localFs.writeFile("/restart/a.txt", "before the restart");
+    expect(await pushOnce(local, writer.sync)).toBeGreaterThan(0);
+  } finally {
+    await writer.close();
+  }
+
+  await stopProcess(first);
+
+  const secondPort = await getAvailablePort();
+  const secondMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({
+    port: secondPort,
+    mountPoint: secondMount,
+    env: { FUSE_MOUNT: "none" },
+  });
+
+  const after = JSON.parse((await request(`http://127.0.0.1:${secondPort}/api/watermarks`)).body);
+  expect(after.fetchCursor).toEqual({ rev: 0, path: null });
+
+  const reader = createWorkspaceClient({ url: `ws://127.0.0.1:${secondPort}/api` });
+  try {
+    expect(await reader.sync.readEntry("/restart/a.txt")).toBeNull();
+  } finally {
+    await reader.close();
+  }
+});
+
+test("the exec log does not come back after a restart on a file store", async (_ctx) => {
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+
+  const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-store-"));
+  onTestFinished(() => fs.rm(storeDir, { recursive: true, force: true }));
+  const storePath = path.join(storeDir, "state.db");
+
+  const firstPort = await getAvailablePort();
+  const firstMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const first = await startComputerd({
+    port: firstPort,
+    mountPoint: firstMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  let execId = "";
+  const runner = createWorkspaceClient({ url: `ws://127.0.0.1:${firstPort}/api` });
+  try {
+    const handle = await runner.shell.exec({ source: "echo hello-from-before" });
+    execId = handle.id;
+    const reader = handle.events.getReader();
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  } finally {
+    await runner.close();
+  }
+
+  await stopProcess(first);
+
+  const secondPort = await getAvailablePort();
+  const secondMount = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({
+    port: secondPort,
+    mountPoint: secondMount,
+    env: { FUSE_MOUNT: "none", COMPUTERD_DB: storePath },
+  });
+
+  const after = createWorkspaceClient({ url: `ws://127.0.0.1:${secondPort}/api` });
+  try {
+    await expect(after.shell.getExec({ id: execId })).rejects.toThrow();
+  } finally {
+    await after.close();
   }
 });

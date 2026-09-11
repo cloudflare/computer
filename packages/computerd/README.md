@@ -26,7 +26,8 @@ Current endpoints:
 
 - `GET /health` returns `200 OK` with `ok\n` once the HTTP server is up (it does not currently block on FUSE readiness).
 - `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
-- `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, and process resident memory. Useful for watching how the store grows under load.
+- `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, process resident memory, and the store's own size and free-page count. Useful for watching how the store grows under load.
+- `POST /__computerd/checkpoint` folds the store's write-ahead log back into the database file and returns `{ walFrames, sizeBytes, durationMs }`. For a host about to take a disk snapshot. Any other method returns `405`.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
 - `GET /api` upgrades to a WebSocket carrying the capnweb RPC surface backed by `@cloudflare/computer-rpc`. This is the container's only RPC carrier. A request without an `Upgrade` header returns `400`; a handshake naming an unsupported `Sec-WebSocket-Version` returns `426` along with the versions the server speaks.
 - `GET /api/watermarks` returns JSON with `currentRev`, `pushRev`, and `fetchCursor`, read through the same `watermarks()` the wire serves. For samplers that want a few numbers without opening a session. It sits under `/api` because it reads the workspace surface; `/__computerd` is for daemon introspection.
@@ -45,7 +46,41 @@ Current filesystem support:
 - Unsupported FUSE operations return `ENOSYS` to the kernel; the binding logs a one-shot warning per operation.
 - capnweb RPC over `/api` exposes the workspace database and an `exec` runner to clients.
 - Synchronization is driven by whoever holds the other end of the session. The daemon serves `SyncRPC`; it does not run a sync loop of its own.
-- No on-disk persistence yet — the in-memory VFS is rebuilt on each start, and the host pushes state back after a restart.
+- Optional on-disk storage through `COMPUTERD_DB`. Unset, the in-memory store is rebuilt at each start and the host sends its state back. Set to a path, the store survives a restart and the host sends only what changed. See [On-disk store](#on-disk-store).
+
+## On-disk store
+
+`COMPUTERD_DB` picks where the workspace lives:
+
+```sh
+COMPUTERD_DB=memory                      # default: in-memory, rebuilt on every start
+COMPUTERD_DB=/var/lib/computerd/state.db # on-disk, survives a restart
+```
+
+The path must be absolute and must not sit inside `MOUNT_POINT`. A database file that the FUSE mount also shows would feed its own writes back to itself. `computerd` refuses to start on either mistake.
+
+Keeping the store on disk saves more than the files. The sync positions live in the same database (`_vfs_watermark`, `_vfs_fetch_cursor`, `_vfs_push_cursor`). Without them a restarted daemon looks further behind than it is, so the durable object sends every path in the workspace again. With them it sends only what changed. On a large workspace that is the difference between resending everything and doing nothing.
+
+The exec log does not persist. `computerd_exec_log` and `computerd_exec_meta` are cleared at every start, because the processes they describe are gone.
+
+### Settings
+
+A file store opens with write-ahead logging, `synchronous = normal`, a 64 MiB page cache, a 256 MiB memory map, temporary tables in memory, and a five-second busy timeout.
+
+`synchronous = normal` flushes to disk when the log is folded back rather than on every commit. That is safe here: the durable object holds the real copy, so a host crash that loses the last few writes costs a resend, not data.
+
+### Checkpointing
+
+- `POST /__computerd/checkpoint` folds the write-ahead log back into the database file and returns `{ walFrames, sizeBytes, durationMs }`. Call it before taking a disk snapshot, so the snapshot holds one file rather than a file plus a log.
+- The same thing happens on `SIGTERM` and `SIGINT`, after the FUSE unmount. The order matters: the FUSE driver writes buffered bytes to the database when it releases a file, so unmounting first is what gets those bytes in.
+- `GET /__computerd/stats` reports `store_size_bytes` and `store_freelist_count` next to the table counts, so you can watch the file grow.
+
+### Limits
+
+- Take snapshots between commands, not during one. A checkpoint keeps the database itself valid, but a snapshot taken mid-command catches a half-written workspace. A half-finished `npm install` is still half-finished after a restore.
+- An older `computerd` exits with `EIO` rather than open a store written by a newer one. Restoring onto an older release fails loudly, which is intended.
+- Mount rows (`_vfs_mounts`) come back with the store and may be out of date until the durable object rebuilds them.
+- If the store is further ahead than the durable object, the daemon cannot fix it: it answers sync requests but never starts one. Begin from a fresh disk instead.
 
 ## FUSE write model
 
@@ -116,6 +151,7 @@ EXEC_LOG_MAX_BYTES=1048576        # cap the in-memory exec log buffer (bytes)
 EXEC_SHELL=/usr/bin/bash          # interpreter exec runs commands under (default /bin/sh)
 RPC_CLIENT_SECRET=<secret>        # require Authorization: Bearer <secret> on every route but /health
 COMPUTER_VAR_NODE_ENV=production  # forwarded into exec as NODE_ENV
+COMPUTERD_DB=/var/lib/computerd/state.db  # on-disk store; "memory" or unset keeps it in memory
 ```
 
 `EXEC_SHELL` must be an absolute path. It exists because `/bin/sh` is `dash` on a Debian-family image, where bash-only syntax is a parse error that aborts the command rather than a missing feature: `${PIPESTATUS[@]}`, arrays, `[[ ... ]]`, and process substitution all fail that way. `PIPESTATUS` is the usual way to recover the real exit status of a pipeline whose output is filtered — a command redacting a credential through `sed`, for instance — so a caller that needs it can select an interpreter that has it without repointing `/bin/sh` for every other script in the image.

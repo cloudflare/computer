@@ -48,6 +48,69 @@ computerd is ~2x slower than the container's ext4 disk for the full
 `npm install`, and ~3.6x slower than tmpfs. The disk comparison is
 the more realistic baseline for general usage.
 
+## In-memory store versus on-disk store
+
+`computerd` keeps its SQLite store in memory by default. Set
+`COMPUTERD_DB` to a path and it goes on the container's disk instead.
+
+These numbers come from `script/store-compare.mjs`, which uses the
+dofs filesystem directly with 2,000 files in one directory. There is
+no FUSE mount involved, so any difference is down to the store.
+
+| Operation | memory | on disk (64 MiB cache) | ratio |
+|---|---:|---:|---:|
+| create 2000 files | 180.9 ms | 659.1 ms | 3.64x |
+| stat 2000 paths, cold | 1580.4 ms | 1558.7 ms | **0.99x** |
+| stat 2000 paths, warm | 12.1 ms | 15.1 ms | 1.25x |
+| readdir x50 | 155.4 ms | 143.1 ms | **0.92x** |
+
+Reads are not slower on disk. That holds even when the cache is far
+too small for the tree: a 2 MiB cache against a 3.8 MiB database still
+reads at 0.99x. Two reasons. Most of the time goes on walking the path
+rather than fetching pages, and the operating system caches whatever
+SQLite drops.
+
+Writes are slower, and the reason is the cost of flushing to disk.
+Creating 1,000 files takes 445 ms at `synchronous = full`, 292 ms at
+`normal` (what we ship), and 148 ms at `off` — which matches the
+in-memory store's 181 ms.
+
+Through a real FUSE mount the write cost shrinks, because the mount
+itself is already the bigger expense:
+
+| Scenario | memory store | file store | baseline |
+|---|---:|---:|---:|
+| stat 1000 files | 2777.3 ms (1.10x) | 3114.9 ms (1.22x) | ~2540 ms |
+| create 1000 files | 989.4 ms (0.98x) | 1178.7 ms (1.17x) | ~1010 ms |
+| write 64 MiB | 238.1 ms (11.14x) | 221.9 ms (12.69x) | ~19 ms |
+| overwrite 64 MiB | 294.3 ms (26.16x) | 304.6 ms (29.30x) | ~11 ms |
+
+## Restore time
+
+This is what the on-disk store buys. `script/restore-time.mjs` times
+what a host waits after a restart: connect, compare sync positions,
+and send whatever the other side is missing.
+
+| Tree | memory store | file store |
+|---|---:|---:|
+| 500 files | 480 ms (502 entries sent) | 26 ms (0 sent) |
+| 3,000 files | 3749 ms (3002 entries sent) | 23 ms (0 sent) |
+
+An in-memory store sends the whole workspace again after every
+restart, so its cost grows with the tree. A file store sends nothing,
+because the sync positions came back along with the files. Restoring
+takes about 25 ms whatever the size, so the saving grows too: 18x at
+500 files, 161x at 3,000.
+
+The trade: small-file work costs 10 to 20 percent more, and a restart
+costs a flat 25 ms instead of resending everything.
+
+Two things these numbers do not cover. They come from one Linux
+container, not from Cloudflare Containers hardware, and a full
+`cloudflare/sandbox-sdk` `npm install` has not been run. The restore
+figures also drive the sync protocol in process, so they show the work
+avoided but not the network round trips a real host would also skip.
+
 ## Where computerd is faster than the disk baseline
 
 The in-memory inode store beats real disk on metadata-heavy work:

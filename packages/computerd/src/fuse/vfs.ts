@@ -1,6 +1,13 @@
-import { Database, initializeSchema, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
-import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import {
+  Database,
+  initializeSchema,
+  invalidateReadOnlyMountCache,
+  SQLiteWorkspaceProvider,
+} from "@cloudflare/dofs";
+import { NodeSQLiteStorage } from "@cloudflare/dofs/node";
 import { create, type VirtualFileSystem, VirtualProvider } from "@platformatic/vfs";
+
+import type { ResolvedStore } from "./store.js";
 
 export type NodeVirtualFileSystem = VirtualFileSystem;
 
@@ -49,23 +56,58 @@ const EXTRA_VFS_METHODS = [
   "releaseWriteBufferSync",
 ] as const;
 
-export interface NodeVfsHandle {
+export interface NodeVFSHandle {
   // @platformatic/vfs filesystem the FUSE driver consumes.
   vfs: NodeVirtualFileSystem;
   // dofs Database backing the same store. Exposed so the CLI can
   // construct a createWorkspaceServer(db) and serve the local store
   // to whoever holds the capnweb session.
   db: Database;
+  // Which store backs this handle, as resolved by store.ts. The CLI
+  // reports it on /__computerd/info.
+  store: ResolvedStore;
+  // Fold any write-ahead log back into the main database file.
+  checkpoint: () => { walFrames: number; sizeBytes: number; durationMs: number };
+  // Byte size of the store, and the pages SQLite is holding free
+  // inside it. Both feed /__computerd/stats.
+  storeStats: () => { sizeBytes: number; freelistCount: number };
+  // Checkpoint and close the underlying database.
+  close: () => void;
 }
 
-// The store is local and process-lifetime. Sync is driven from the
-// other end of the capnweb session: the host pushes changes in and
-// pulls them back out, so nothing here polls.
-export async function createNodeVirtualFileSystem(): Promise<NodeVfsHandle> {
+export interface CreateNodeVFSOptions {
+  store?: ResolvedStore;
+}
+
+export async function createNodeVirtualFileSystem(
+  options: CreateNodeVFSOptions = {},
+): Promise<NodeVFSHandle> {
   ensureVirtualProviderPrototype();
-  const storage = new SQLiteTestStorage();
+  const store: ResolvedStore = options.store ?? { kind: "memory" };
+  const storage = new NodeSQLiteStorage({
+    location: store.kind === "file" ? store.path : ":memory:",
+  });
   const db = new Database(storage);
-  initializeSchema(db, () => Date.now());
+  try {
+    // On a restored store this is the migration step, and the guard
+    // against a stale binary: initializeSchema migrates a database
+    // written by an older computerd forward, and throws EIO on one
+    // written by a newer computerd rather than corrupting it. Closing
+    // the storage on the way out keeps a rejected open from leaking
+    // the file handle.
+    initializeSchema(db, () => Date.now());
+  } catch (error) {
+    storage.close();
+    throw error;
+  }
+  // A restored store arrives with whatever _vfs_mounts rows the
+  // previous process wrote. The read-only mount guard caches those
+  // roots per Database, so drop the cache before anything reads
+  // through it. The durable object's mount indexer re-asserts the
+  // real set on connect; until it does, restored rows may be stale.
+  if (store.kind === "file" && !store.fresh) {
+    invalidateReadOnlyMountCache(db);
+  }
 
   const provider = new SQLiteWorkspaceProvider(db);
   const vfs = create(provider as unknown as VirtualProvider, { moduleHooks: false });
@@ -85,5 +127,18 @@ export async function createNodeVirtualFileSystem(): Promise<NodeVfsHandle> {
       configurable: true,
     });
   }
-  return { vfs, db };
+  return {
+    vfs,
+    db,
+    store,
+    checkpoint: () => storage.checkpoint(),
+    storeStats: () => ({
+      sizeBytes: storage.sizeBytes(),
+      freelistCount: storage.freelistCount(),
+    }),
+    close: () => {
+      storage.checkpoint();
+      storage.close();
+    },
+  };
 }

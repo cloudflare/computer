@@ -1,4 +1,119 @@
-# FUSE mount option benchmarks
+# Store and FUSE mount option benchmarks
+
+## In-memory store versus file-backed store
+
+Numbers from `script/store-compare.mjs`, which
+drives the dofs filesystem directly against both storage backends.
+It deliberately skips FUSE so a difference here is the store and
+nothing else. 2,000 files in one directory, Node 24 on a Linux
+container.
+
+| Store | create 2000 | stat cold | stat warm | readdir x50 |
+|---|---:|---:|---:|---:|
+| memory | 180.9 ms | 1580.4 ms | 12.1 ms | 155.4 ms |
+| file, 64 MiB cache | 659.1 ms (3.64x) | 1558.7 ms (0.99x) | 15.1 ms (1.25x) | 143.1 ms (0.92x) |
+| file, 256 MiB cache | 650.0 ms (3.59x) | 1509.8 ms (0.96x) | 13.8 ms (1.14x) | 146.9 ms (0.95x) |
+
+Two findings, one of which contradicts what we assumed when writing
+the plan.
+
+**Metadata reads do not regress.** Cold `stat` of 2,000 paths is a
+wash (0.96x to 0.99x), and `readdir` is if anything slightly faster
+on the file store. The plan predicted this was where a file-backed
+store would hurt. It does not, because the working set here is about
+1.4 MiB — small enough to sit entirely in SQLite's page cache, so the
+reads never reach the disk. Warm `stat` is 1.14x to 1.25x slower,
+which is the resolve cache doing its job in both cases and the
+remaining difference being page-cache lookup overhead rather than
+input or output.
+
+**Writes are the real cost, and the cause is fsync.** Creating 2,000
+files is 3.6x slower on the file store. Varying `synchronous` isolates
+it:
+
+| `synchronous` | create 1000 files |
+|---|---:|
+| `full` | 444.6 ms |
+| `normal` | 291.9 ms |
+| `off` | 148.1 ms |
+
+`off` matches the in-memory store, so the gap is entirely the cost of
+flushing to disk. `normal` is the shipped default and already buys
+back a third of `full`. Anything faster trades durability for speed,
+which is defensible here because the durable object is the source of
+truth, but `off` risks a corrupt database on host loss rather than
+merely losing recent transactions, so it stays off the table.
+
+Sweeping the cache budget changes almost nothing. At 6,000 files the
+database is 3.8 MiB; squeezing the cache to 2 MiB, so the working set
+genuinely cannot fit, still leaves cold `stat` at 0.99x:
+
+| Store | create 6000 | stat cold | stat warm | readdir x50 |
+|---|---:|---:|---:|---:|
+| memory | 391.9 ms | 14389.1 ms | 34.4 ms | 437.1 ms |
+| file, 2 MiB cache | 1682.0 ms (4.29x) | 14177.7 ms (0.99x) | 55.4 ms (1.61x) | 474.4 ms (1.09x) |
+
+That is the interesting result. The prediction was that a cache too
+small for the tree would turn every resolve into a `pread` and wreck
+the metadata numbers. It does not, because cold `stat` is dominated by
+the resolve walk itself rather than by fetching pages, and the
+operating system's own page cache absorbs what SQLite evicts. Warm
+`stat` is where the difference shows, and it is 20 microseconds per
+operation on a path that is already cheap.
+
+## Through a real FUSE mount
+
+The numbers above isolate the storage layer. These run the same
+comparison through `script/fs-bench.sh` against a real kernel FUSE
+mount, with `computerd` started on the host (`FUSE_MOUNT=fuse`), and
+`/tmp` as the baseline. REPS=2, WARMUP=1.
+
+| Scenario | memory store | file store | baseline |
+|---|---:|---:|---:|
+| stat 1000 files | 2777.3 ms (1.10x) | 3114.9 ms (1.22x) | ~2540 ms |
+| create 1000 files | 989.4 ms (0.98x) | 1178.7 ms (1.17x) | ~1010 ms |
+| write 64 MiB | 238.1 ms (11.14x) | 221.9 ms (12.69x) | ~19 ms |
+| overwrite 64 MiB | 294.3 ms (26.16x) | 304.6 ms (29.30x) | ~11 ms |
+
+Large-file input and output is unchanged between the two stores, which
+is what the storage-layer numbers predicted: those paths are dominated
+by chunking and the FUSE round trip, so the store barely registers.
+The small-file scenarios cost 10 to 20 percent more on disk. That is a
+real regression, and smaller than the 3.6x the storage-layer create
+number would suggest on its own, because FUSE overhead dilutes it.
+
+## Restore time
+
+What the on-disk store buys, measured by `script/restore-time.mjs`. It
+times the interval a host actually waits: from a healthy daemon to a
+workspace the peer agrees is current, meaning connect, reconcile
+watermarks, and push whatever the peer believes is missing.
+
+| Tree | store | first boot | restart |
+|---|---|---:|---:|
+| 500 files | memory | 454 ms (502 pushed) | 480 ms (502 pushed) |
+| 500 files | file | 451 ms (502 pushed) | **26 ms (0 pushed)** |
+| 3,000 files | memory | 3725 ms (3002 pushed) | 3749 ms (3002 pushed) |
+| 3,000 files | file | 4063 ms (3002 pushed) | **23 ms (0 pushed)** |
+
+An in-memory store re-ships the whole tree on every restart, so its
+restart cost tracks the tree size. A file store ships nothing, because
+the sync cursors came back with the files and the peer can see there
+is no difference to send. The saving is 18x at 500 files and 161x at
+3,000, and it keeps growing: the restore side stays flat at roughly
+25 ms while the memory side climbs with the workspace.
+
+This is the trade in one line. Small-file work costs 10 to 20 percent
+more, and a restart costs a fixed 25 ms instead of a full replay.
+
+Caveats. These run on one Linux container, not on Cloudflare
+Containers hardware. The restore measurement drives the sync protocol
+directly rather than through a real durable object over a real
+network, so it captures the work avoided but not the round-trip
+latency a real host would also save. The full `cloudflare/sandbox-sdk`
+`npm install` comparison has not been run.
+
+## FUSE mount option benchmarks
 
 Numbers from running `script/run-fs-bench.sh` against the linux-x64
 `computerd` binary in a privileged docker container, with the bench's pure

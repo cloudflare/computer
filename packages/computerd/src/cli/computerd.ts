@@ -19,7 +19,10 @@ import {
   type FuseMount,
   mountFuse,
   parseFuseMountMode,
+  parseStoreMode,
+  type ResolvedStore,
   resolveFuseBackend,
+  resolveStore,
 } from "../fuse/index.js";
 import { mountShim, type ShimMount } from "../shim/index.js";
 import { installLogging } from "./logger.js";
@@ -147,6 +150,7 @@ interface ComputerdInfo {
   backend: FUSEBackend;
   mountPoint: string;
   port: number;
+  store: ResolvedStore;
 }
 
 // Snapshot DOFS table sizes and process memory so an external caller
@@ -193,6 +197,7 @@ function createHTTPServer(
   rpc: ReturnType<typeof createWorkspaceServer>,
   secret: string | undefined,
   getStats?: () => Record<string, unknown>,
+  checkpoint?: () => { walFrames: number; sizeBytes: number; durationMs: number },
 ): HTTPHandle {
   // Holds the current outbound capnweb session opened via /connect.
   // Re-POSTing /connect (e.g. after a DO hibernate + new incarnation)
@@ -238,6 +243,37 @@ function createHTTPServer(
         return;
       }
       void handleConnect(request, response, rpc, upstreamSlot, secret);
+      return;
+    }
+
+    // /__computerd/checkpoint — fold the write-ahead log back into
+    // the main database file. A host about to ask the platform for a
+    // disk snapshot calls this first so the snapshot captures one
+    // file rather than a file plus a log segment.
+    if (path === "/__computerd/checkpoint") {
+      if (request.method !== "POST") {
+        send(response, 405, "method not allowed\n", {
+          allow: "POST",
+          "content-type": "text/plain; charset=utf-8",
+        });
+        return;
+      }
+      if (checkpoint === undefined) {
+        send(response, 404, "checkpoint unavailable\n", {
+          "content-type": "text/plain; charset=utf-8",
+        });
+        return;
+      }
+      try {
+        send(response, 200, JSON.stringify(checkpoint()), {
+          "content-type": "application/json; charset=utf-8",
+        });
+      } catch (error) {
+        console.error("/__computerd/checkpoint failed:", error);
+        send(response, 500, "internal error\n", {
+          "content-type": "text/plain; charset=utf-8",
+        });
+      }
       return;
     }
 
@@ -595,8 +631,21 @@ async function main(): Promise<void> {
   const backend: FUSEBackend = await resolveFuseBackend(fuseMountMode);
   console.log(`[info] FUSE_MOUNT=${fuseMountMode} resolved to backend=${backend.kind}`);
 
-  const { vfs, db } = await createNodeVirtualFileSystem();
-  const info: ComputerdInfo = { backend, mountPoint, port };
+  const store = resolveStore(parseStoreMode(process.env.COMPUTERD_DB), mountPoint);
+  console.log(
+    `[info] COMPUTERD_DB resolved to store=${store.kind}${
+      store.kind === "file" ? ` path=${store.path} fresh=${store.fresh}` : ""
+    }`,
+  );
+
+  const {
+    vfs,
+    db,
+    checkpoint: checkpointStore,
+    storeStats,
+    close: closeStore,
+  } = await createNodeVirtualFileSystem({ store });
+  const info: ComputerdInfo = { backend, mountPoint, port, store };
 
   let fuse: FuseMount | undefined;
   // When running on the userspace shim, capture the typed handle
@@ -688,10 +737,21 @@ async function main(): Promise<void> {
         }
       : {}),
   });
-  const http = createHTTPServer(info, rpc, clientSecret, () => ({
-    ...collectDbStats(db),
-    ...(fuse?.getBufferStats?.() ?? {}),
-  }));
+  const http = createHTTPServer(
+    info,
+    rpc,
+    clientSecret,
+    () => {
+      const { sizeBytes, freelistCount } = storeStats();
+      return {
+        ...collectDbStats(db),
+        ...(fuse?.getBufferStats?.() ?? {}),
+        store_size_bytes: sizeBytes,
+        store_freelist_count: freelistCount,
+      };
+    },
+    checkpointStore,
+  );
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -711,6 +771,14 @@ async function main(): Promise<void> {
 
     if (fuse !== undefined) {
       await unmount(fuse);
+    }
+    // Unmount first. The FUSE driver writes any buffered bytes to the
+    // database when it releases a file, and those writes need to land
+    // before the store closes.
+    try {
+      closeStore();
+    } catch (error) {
+      console.error("failed to close the store:", error);
     }
     teardownLogging();
     process.exit(signal === "SIGINT" ? 130 : 143);

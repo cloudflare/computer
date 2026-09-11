@@ -586,9 +586,9 @@ needed; pure DO-side optimisation.
 ### Push backpressure
 
 A long-running exec can dirty container state faster than the DO can
-pull. Today's process-lifetime container VFS caps this by OOMing, which
-is a bad answer. Once a disk-backed container mirror lands the bound
-shifts to path count, but the same problem persists. Likely shape: a
+pull. An in-memory container VFS caps this by running out of memory.
+Setting `COMPUTERD_DB` to a file path shifts the limit to path count,
+but the same problem remains. Likely shape: a
 soft cap on the dirty set (say, 256 MiB pending bytes or 100k paths)
 above which FUSE write replies are delayed (real backpressure into the
 writer), or the container opportunistically initiates a push to the DO

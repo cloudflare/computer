@@ -30,14 +30,14 @@ capnweb WebSocket session.
 │  └──────────┬──────────┘  │                  │  └────────┬─────────┘  │
 │             │             │                  │           │            │
 │  ┌──────────▼──────────┐  │                  │  ┌────────▼─────────┐  │
-│  │ SQLite (ctx.storage)│  │                  │  │ In-memory VFS    │  │
-│  │  _vfs_watermark     │  │                  │  │  (process-       │  │
-│  │  vfs_blobs / nodes  │  │                  │  │   lifetime DB)   │  │
+│  │ SQLite (ctx.storage)│  │                  │  │ SQLite VFS       │  │
+│  │  _vfs_watermark     │  │                  │  │  (in memory, or  │  │
+│  │  vfs_blobs / nodes  │  │                  │  │   COMPUTERD_DB)  │  │
 │  └─────────────────────┘  │                  │  └──────────────────┘  │
 └───────────────────────────┘                  └────────────────────────┘
         |                                                  |
-        | source of truth                  process-lifetime |
-        | (durable across restarts)        (lost on restart)|
+        | source of truth                    mirror, in memory
+        | (durable across restarts)          or on the container disk
 ```
 
 The 1:1 mapping is load-bearing for several reasons:
@@ -91,8 +91,8 @@ an incarnation boundary. What survives is:
 On every new incarnation `Workspace.ready()` re-runs `#connect()`,
 which re-enters the backend's bootstrap sequence. If the container is
 still alive, the backend's `POST /connect` + `/api` handshake produces
-a fresh capnweb session against the same in-memory VFS on the
-container side. If the container died too (e.g. host OOM took both),
+a fresh capnweb session against the same container-side VFS. If the
+container died too,
 the next sync round is a rev-0 baseline rebuild from the DO's store.
 
 ### Wake triggers
@@ -127,11 +127,22 @@ lifetime policy. From the DO's perspective:
 exits, and the backend's `#monitoring` flag drops the cached handle at
 that point so the next call rebuilds from scratch (see the container host and backend implementations under `packages/computer/src/backends/container/`).
 
-The critical asymmetry: the **container's VFS is process-lifetime
-in-memory**, while the **DO's VFS is durable SQLite**. A container
-restart loses container-side state. The durable object drives sync
-across the capnweb session it opens through `POST /connect`, and that
-is what brings state back on the next push/pull round.
+When `computerd` runs with its default in-memory store, the two sides
+differ: the **container's VFS lasts only as long as the process**,
+while the **DO's VFS is durable SQLite**. A container restart loses
+container-side state. The durable object drives sync across the
+capnweb session it opens through `POST /connect`, and that is what
+brings state back on the next push/pull round.
+
+Setting `COMPUTERD_DB` to a path changes this for a process restart.
+The container-side store is written to disk, sync cursors included,
+and reopened on the next start. The durable object then finds a peer
+that still knows what it was sent, and only sends the difference.
+
+The container's disk does not survive a container restart, so this
+helps a `computerd` crash inside a live container today. It will help
+a container restart once the platform offers disk snapshots. See the
+`computerd` README for the setting and its limits.
 
 ## Capnweb lifecycle
 
