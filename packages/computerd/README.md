@@ -47,6 +47,38 @@ Current filesystem support:
 - Synchronization is driven by whoever holds the other end of the session. The daemon serves `SyncRPC`; it does not run a sync loop of its own.
 - No on-disk persistence yet — the in-memory VFS is rebuilt on each start, and the host pushes state back after a restart.
 
+## `codemode`
+
+The package builds a second binary, `codemode`, for commands that run
+inside the container. It sends a script to the workspace's Durable
+Object and prints the result:
+
+```sh
+echo 'return await notes.list({})' | codemode
+codemode -e 'return 1 + 1'
+codemode run script.js
+codemode types                    # TypeScript declarations of every global
+codemode search "append a note"   # find connector methods and snippets
+codemode describe notes.add       # declarations for one connector or method
+codemode pending                  # actions a paused run is waiting on
+```
+
+The script is the body of an async function; `return` sends a value
+back and `console.log` lines arrive on stderr. The host runs it in a
+dynamic worker with the connectors its container backend was
+configured with (see the `codemode` option on
+`CloudflareContainerBackend` in `@cloudflare/computer`). Exit codes
+are 0 when the command finished, 1 when the script threw, 2 for a
+usage or connection error, and 3 when the run paused for approval.
+Approving is not something the container can do: a run pauses because
+a connector asked for a human's decision, and that decision stays on
+the host. `--json` prints raw output for any command.
+
+`codemode` dials `ws://computer.internal/codemode`, the egress host
+the container backend intercepts, and needs no credentials: running
+inside the container is what grants access. Set `CODEMODE_URL` to
+point it elsewhere.
+
 ## FUSE write model
 
 The FUSE driver in `src/fuse/driver.ts` is a thin adapter over the
@@ -161,4 +193,4 @@ Standalone binaries are release artifacts, not files published in the npm packag
 npm run build:bin --workspace=@cloudflare/computerd
 ```
 
-The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets per target.
+The binaries are produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles each CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets in the `computerd` binary; `codemode` carries only its bundle. Both land in the `computer-computerd-linux-x64` image, at `/usr/local/bin/computerd` and `/usr/local/bin/codemode`.

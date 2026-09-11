@@ -72,15 +72,18 @@ jobs:
       - name: Build all workspaces
         run: npm run build --workspaces --if-present
 
-      - name: Build the computerd binary
+      - name: Build the computerd and codemode binaries
         run: npm run build:bin --workspace @cloudflare/computerd
 
-      - name: Stage the computerd binary
+      - name: Stage the computerd and codemode binaries
         run: |
           mkdir -p packages/computer-computerd-linux-x64/bin
           cp artifacts/computerd/computerd-linux-x64 \
             packages/computer-computerd-linux-x64/bin/computerd
-          chmod 755 packages/computer-computerd-linux-x64/bin/computerd
+          cp artifacts/computerd/codemode-linux-x64 \
+            packages/computer-computerd-linux-x64/bin/codemode
+          chmod 755 packages/computer-computerd-linux-x64/bin/computerd \
+            packages/computer-computerd-linux-x64/bin/codemode
 
       - name: Set up buildx
         uses: docker/setup-buildx-action@v3

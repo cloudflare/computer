@@ -3,8 +3,8 @@
 // into the DO. Two-and-a-half pieces of logic to pin:
 //
 //   - /health answers 200 ok\n (the port-readiness probe).
-//   - /api looks up env[binding] and forwards the request to the
-//     named DO instance.
+//   - /api and /codemode look up env[binding] and forward the
+//     request to the named DO instance.
 //   - anything else is 404.
 //
 // Plus an error path: a missing binding name returns 500 with a
@@ -72,6 +72,14 @@ describe("WorkspaceProxy", () => {
       method: "POST",
       body: "payload",
     });
+  });
+
+  it("/codemode forwards to the DO at env[binding] with its headers intact", async () => {
+    const res = await SELF.fetch("http://proxy.test/codemode", {
+      headers: { "x-test-id": freshId(), "x-test-binding": "COMPUTERD", upgrade: "websocket" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("codemode-from-do:websocket");
   });
 
   it("/api returns 500 when env[binding] is missing", async () => {

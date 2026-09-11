@@ -24,6 +24,34 @@ const here = dirname(fileURLToPath(import.meta.url));
 const computerdRoot = resolve(here, "../..");
 const repoRoot = resolve(computerdRoot, "../..");
 
+// Bundle one CLI entry. `computerd` carries the FUSE native shims and
+// the compiled-in port; `codemode` is a plain client and needs neither.
+export async function bundleCli({ entry, outfile, target }) {
+  if (entry === "computerd") return bundleComputerd({ outfile, target });
+  await build({
+    entryPoints: [resolve(computerdRoot, `dist/cli/${entry}.cjs`)],
+    bundle: true,
+    platform: "node",
+    target: "node22",
+    format: "esm",
+    conditions: ["import", "node"],
+    outfile,
+    banner: { js: SEA_BANNER },
+    logLevel: "warning",
+  });
+}
+
+// Re-establish the CommonJS globals inside the ESM bundle. When running
+// inside SEA the module url is a data: URL, which createRequire rejects,
+// so process.execPath stands in and __dirname points at the binary.
+const SEA_BANNER = [
+  "import { createRequire as __cr } from 'node:module';",
+  "import { dirname as __dn } from 'node:path';",
+  "const __filename = process.execPath;",
+  "const __dirname = __dn(__filename);",
+  "const require = __cr(__filename);",
+].join("");
+
 export async function bundleComputerd({ outfile, target }) {
   const nodeGypBuildShim = `
 const { writeFileSync, chmodSync, existsSync, mkdirSync } = require("node:fs");
@@ -114,18 +142,7 @@ module.exports = { beforeMount: noop, beforeUnmount: noop, configure: noop, unco
     // (ESM-only after the SEA migration) still resolve via their exports map.
     conditions: ["import", "node"],
     outfile,
-    banner: {
-      js: [
-        "import { createRequire as __cr } from 'node:module';",
-        "import { dirname as __dn } from 'node:path';",
-        // When running inside SEA the module url is a data: URL, which",
-        // createRequire rejects. Use process.execPath so require can resolve",
-        // builtins and __dirname points at the directory holding the binary.",
-        "const __filename = process.execPath;",
-        "const __dirname = __dn(__filename);",
-        "const require = __cr(__filename);",
-      ].join(""),
-    },
+    banner: { js: SEA_BANNER },
     plugins: [nativeShimPlugin],
     logLevel: "warning",
   });

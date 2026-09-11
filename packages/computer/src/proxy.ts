@@ -51,6 +51,7 @@
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
+import { CODEMODE_PATH } from "./backends/container/codemode-session.js";
 import { WORKSPACE_EGRESS_TOKEN_HEADER, WORKSPACE_EGRESS_URL_HEADER } from "./runtime/egress.js";
 
 export interface WorkspaceProxyProps {
@@ -89,6 +90,14 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
       return new Response("ok\n", {
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
+    }
+
+    // A codemode session from a process inside the container. The
+    // container backend answers it on the same fetch() as /api.
+    if (url.pathname === CODEMODE_PATH) {
+      const stub = this.#hostStub();
+      if (stub === undefined) return this.#missingBindingResponse();
+      return stub.fetch(request);
     }
 
     // Both the plain and tokenized forms normalize to /api before

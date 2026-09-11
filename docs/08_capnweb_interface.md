@@ -210,6 +210,44 @@ converts to `string` when the caller passes `encoding: "utf8"`. Every
 event carries a monotonic `seq` (per exec id) so callers can resume
 from a known point after a disconnect.
 
+## `CodemodeRPC`
+
+The interfaces above run over the session the daemon serves. One more
+interface runs in the other direction: the host serves it, and a
+short-lived command inside the container is the client. A process
+that opens a WebSocket to `/codemode` on the egress host gets a
+session whose bootstrap stub is:
+
+```ts
+interface CodemodeRPC {
+  types(): Promise<{ types: string; connectors: string[] }>;
+  search(query: string): Promise<CodemodeSearch>;
+  describe(target: string): Promise<CodemodeDescription>;
+  execute(input: { code: string }): Promise<CodemodeResult>;
+  pending(executionId?: string): Promise<CodemodePendingAction[]>;
+}
+
+type CodemodeResult =
+  | { status: "completed"; executionId: string; result?: unknown; logs?: string[] }
+  | { status: "paused"; executionId: string; pending: CodemodePendingAction[] }
+  | { status: "error"; executionId: string; error: string; logs?: string[] };
+```
+
+`code` is the body of an async function. The host runs it through a
+codemode runtime in a dynamic worker, with the connectors the
+container backend was configured with as typed globals; `types` is
+the TypeScript declaration of all of them, and `search` and
+`describe` are the runtime's own discovery helpers for one method at
+a time. `execute` never rejects: a script that throws comes back as
+an `error` result, and a run that stops for approval on the host
+comes back as `paused` with the actions it waits on, which `pending`
+also lists. Approving or rejecting is deliberately absent: a run
+pauses because a connector asked for a human's decision, and handing
+that decision to the process that wrote the script would make the
+gate meaningless. Each connection is its own session and
+is disposed when the client closes the socket. The `codemode` binary
+in the container image is the reference client.
+
 ## Push and fetch semantics
 
 Push and fetch are symmetric. The same `ChangeEntry` shape moves in

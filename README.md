@@ -63,6 +63,9 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/egress`](examples/egress) — sends one URL through the container,
   Worker shell, and Worker JavaScript backends with matching `none`, `all`, or
   custom egress policies.
+- [`examples/codemode`](examples/codemode) — a container whose commands
+  can run `codemode < script.js`: the script runs on the Durable Object
+  in a dynamic worker, with the app's connectors as typed globals.
 - [`examples/mcp`](examples/mcp) — a Computer MCP example:
   one Code Mode `code` tool backed by a durable workspace, a Worker shell,
   and a full Linux container.

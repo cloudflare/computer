@@ -16,6 +16,13 @@
 // tests, a mock client for unit tests) without changing call sites.
 
 export type {
+  CodemodeDescription,
+  CodemodePendingAction,
+  CodemodeResult,
+  CodemodeRPC,
+  CodemodeSearch,
+  CodemodeSearchResult,
+  CodemodeTypes,
   ExecEvent,
   ShellRPC,
   SyncRPC,

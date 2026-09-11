@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/computer",
   "version": "0.2.1",
-  "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
+  "description": "Cloudflare Computer \u2014 a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
   "license": "MIT",
   "repository": {
     "directory": "packages/computer",
@@ -121,11 +121,15 @@
     "just-bash": "^3.0.1"
   },
   "peerDependencies": {
+    "@cloudflare/codemode": "^0.5.0",
     "@platformatic/vfs": "*",
     "ai": "^6.0.196 || ^7.0.0",
     "zod": "^4.4.3"
   },
   "peerDependenciesMeta": {
+    "@cloudflare/codemode": {
+      "optional": true
+    },
     "@platformatic/vfs": {
       "optional": true
     },
@@ -137,6 +141,7 @@
     }
   },
   "devDependencies": {
+    "@cloudflare/codemode": "^0.5.0",
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
     "@cloudflare/vitest-pool-workers": "^0.22.0",

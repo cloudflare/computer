@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Cross-compile computerd to a self-contained Node SEA binary for each supported
-// target. Steps per target:
+// Cross-compile each CLI (computerd, codemode) to a self-contained Node SEA
+// binary for each supported target. Steps per target:
 //   1. esbuild a single ESM bundle (see scripts/sea/bundle.mjs).
 //   2. Write a sea-config.json that names the bundle as main and lists the
 //      target-specific native assets (fuse-native prebuild + libfuse).
@@ -21,7 +21,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { bundleComputerd } from "./sea/bundle.mjs";
+import { bundleCli } from "./sea/bundle.mjs";
 
 const execFileP = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,10 +32,11 @@ const seaWorkDir = resolve(computerdRoot, "dist/sea");
 const nodeCacheDir = resolve(repoRoot, ".devbox/node-binaries");
 const nodeVersion = "v22.22.3";
 
-const targets = [
+// The platforms a binary is built for. Each CLI entry below is built
+// for every one of them.
+const platforms = [
   {
     name: "linux-x64",
-    outputName: "computerd-linux-x64",
     nodeArchive: `node-${nodeVersion}-linux-x64.tar.xz`,
     nodeBinaryInArchive: `node-${nodeVersion}-linux-x64/bin/node`,
     addon: "node_modules/fuse-native/prebuilds/linux-x64/node.napi.node",
@@ -46,7 +47,6 @@ const targets = [
   },
   {
     name: "macos-x64",
-    outputName: "computerd-macos-x64",
     nodeArchive: `node-${nodeVersion}-darwin-x64.tar.xz`,
     nodeBinaryInArchive: `node-${nodeVersion}-darwin-x64/bin/node`,
     addon: "node_modules/fuse-native/prebuilds/darwin-x64/node.napi.node",
@@ -68,21 +68,34 @@ async function main() {
   await mkdir(seaWorkDir, { recursive: true });
   await mkdir(nodeCacheDir, { recursive: true });
 
-  for (const target of targets) {
-    console.log(`[computerd-bin] building ${target.name}`);
-    await buildTarget(target);
+  for (const platform of platforms) {
+    for (const entry of ["computerd", "codemode"]) {
+      const target = { ...platform, entry, outputName: `${entry}-${platform.name}` };
+      console.log(`[computerd-bin] building ${target.outputName}`);
+      await buildTarget(target);
+    }
   }
 
   console.log(`wrote standalone binaries to ${outputDir}`);
 }
 
 async function buildTarget(target) {
-  const bundlePath = resolve(seaWorkDir, `${target.name}.bundle.mjs`);
-  const blobPath = resolve(seaWorkDir, `${target.name}.blob`);
-  const configPath = resolve(seaWorkDir, `${target.name}.sea-config.json`);
+  const bundlePath = resolve(seaWorkDir, `${target.outputName}.bundle.mjs`);
+  const blobPath = resolve(seaWorkDir, `${target.outputName}.blob`);
+  const configPath = resolve(seaWorkDir, `${target.outputName}.sea-config.json`);
   const outBin = resolve(outputDir, target.outputName);
 
-  await bundleComputerd({ outfile: bundlePath, target });
+  await bundleCli({ entry: target.entry, outfile: bundlePath, target });
+
+  // Only computerd loads the FUSE addon; codemode's SEA carries the
+  // bundle alone.
+  const nativeAssets =
+    target.entry === "computerd"
+      ? {
+          "fuse-native.node": resolve(repoRoot, target.addon),
+          [target.libfuseName]: resolve(repoRoot, target.libfuse),
+        }
+      : {};
 
   await writeFile(
     configPath,
@@ -95,8 +108,7 @@ async function buildTarget(target) {
         useCodeCache: false,
         assets: {
           "bundle.mjs": bundlePath,
-          "fuse-native.node": resolve(repoRoot, target.addon),
-          [target.libfuseName]: resolve(repoRoot, target.libfuse),
+          ...nativeAssets,
         },
       },
       null,

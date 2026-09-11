@@ -9,16 +9,20 @@ The "injected service" is the workspace daemon that runs *inside* the
 sandbox container. It owns the FUSE mount, the in-container VFS, the
 exec runner, and the capnweb RPC endpoint the DO talks to.
 
-The package ships it as a single self-contained Node SEA binary —
+The package ships it as a self-contained Node SEA binary —
 **`computerd`** — produced by `packages/computerd/` (npm package
 `@cloudflare/computerd`, bin name `computerd`). The binary embeds Node,
 the `fuse-native` prebuilds, and `libfuse` as SEA assets, so the host
-image does **not** need a Node runtime. Build it with:
+image does **not** need a Node runtime. The same build produces a second
+binary, **`codemode`**, the client for the host's code surface described
+under "HTTP / WS surface". Build both with:
 
 ```bash
 npm run build:bin --workspace @cloudflare/computerd
 # → artifacts/computerd/computerd-linux-x64
 # → artifacts/computerd/computerd-macos-x64
+# → artifacts/computerd/codemode-linux-x64
+# → artifacts/computerd/codemode-macos-x64
 ```
 
 `examples/container/Dockerfile` is the canonical recipe for
@@ -56,6 +60,21 @@ backend pins it to `8080`) and serves:
 | `/connect` | `POST` | Tells `computerd` to dial *out* to a caller-supplied endpoint and serve a `WorkspaceRPC` session over that outbound WebSocket. Used by the Cloudflare backend (see below). |
 | `/` | `GET` | Banner/info page. |
 
+One more route exists for processes inside the container, served by the
+host rather than by `computerd`. A request from the container to
+`http://computer.internal/codemode` with a WebSocket upgrade reaches the
+Durable Object through the same egress interception the daemon dials
+back through, and the container backend answers it with a capnweb
+session whose bootstrap stub is `CodemodeRPC` (doc 08). The `codemode`
+binary that ships next to `computerd` is the client for it: a command
+the workspace runs can execute a script on the host with
+`codemode < script.js`, print the host's TypeScript declarations with
+`codemode types`, and find one method with `codemode search` or
+`codemode describe`. Approving a paused run is deliberately not on
+this surface. The route answers `404` unless the backend was
+constructed with the `codemode` option, and it needs no credential:
+reaching it at all means running inside this workspace's container.
+
 `/api` is the workspace surface: the session itself, plus anything that
 reads through it. `/__computerd` is daemon introspection, which is why
 runtime info sits there and revisions do not.
@@ -76,7 +95,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY build/computerd-linux-x64 /usr/local/bin/computerd
-RUN chmod +x /usr/local/bin/computerd
+COPY build/codemode-linux-x64 /usr/local/bin/codemode
+RUN chmod +x /usr/local/bin/computerd /usr/local/bin/codemode
 
 ENV PORT=8080
 ENV MOUNT_POINT=/workspace

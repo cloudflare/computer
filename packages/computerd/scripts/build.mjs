@@ -11,10 +11,14 @@ const tscBin = process.platform === "win32" ? "tsc.cmd" : "tsc";
 await rm(resolve(packageRoot, "dist"), { recursive: true, force: true });
 await run(tscBin, ["-p", "tsconfig.json"], packageRoot);
 
-const jsEntry = resolve(packageRoot, "dist/cli/computerd.js");
-const cjsEntry = resolve(packageRoot, "dist/cli/computerd.cjs");
-await copyFile(jsEntry, cjsEntry);
-await chmod(cjsEntry, 0o755);
+// Each CLI entry is emitted as .js by tsc and copied to .cjs so the
+// bin points at an explicitly CommonJS file whatever the resolver sees.
+for (const entry of ["computerd", "codemode"]) {
+  const jsEntry = resolve(packageRoot, `dist/cli/${entry}.js`);
+  const cjsEntry = resolve(packageRoot, `dist/cli/${entry}.cjs`);
+  await copyFile(jsEntry, cjsEntry);
+  await chmod(cjsEntry, 0o755);
+}
 
 function run(command, args, cwd) {
   return new Promise((resolveRun, reject) => {

@@ -1,0 +1,18 @@
+{
+  // Test config: the same Worker without the containers block. The
+  // workers test opens /codemode on the Durable Object directly and
+  // runs scripts through the real runtime and dynamic worker.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-codemode-example-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-17",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CodemodeExample", "class_name": "CodemodeExample" },
+      { "name": "CODEMODE_RUNTIME", "class_name": "CodemodeRuntime" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CodemodeExample"] }]
+}

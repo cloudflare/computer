@@ -1,0 +1,27 @@
+{
+  "name": "@example/computer-codemode",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker + Durable Object whose container can run scripts on the host with the codemode CLI.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/codemode": "^0.5.0",
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/computer-rpc": "*",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "capnweb": "^0.10.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.107.1"
+  }
+}

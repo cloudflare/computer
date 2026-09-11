@@ -17,6 +17,10 @@ export {
   CloudflareContainerBackend,
   type CloudflareContainerBackendOptions,
 } from "./cloudflare-container.js";
+export type {
+  CodemodeConnectorLike,
+  CodemodeSessionOptions,
+} from "./codemode-session.js";
 export {
   type ContainerRuntimeInfo,
   type IWorkspaceContainerAPI,
