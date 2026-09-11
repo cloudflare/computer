@@ -392,6 +392,7 @@ interface GrepOptions {
   limit?: number;
   offset?: number;
   include?: string;
+  exclude?: string[];
 }
 
 interface WorkspaceGrepContextLine {
@@ -417,8 +418,9 @@ grep(
 Matching is literal and case-sensitive by default. Set `regex: true` to
 interpret `pattern` as a regular expression and `ignoreCase: true` to ignore
 letter case. `context` adds that many lines before and after each match.
-`include` is a glob relative to a searched directory. `limit` and `offset`
-paginate matching lines.
+`include` and `exclude` are globs relative to a searched directory. Exclusions
+use the same rules as `find` and prune matching directories before reading
+their contents. `limit` and `offset` paginate matching lines.
 
 `path` may be a directory or a single file. Directory searches return matches
 in deterministic depth-first discovery order, then line order within each

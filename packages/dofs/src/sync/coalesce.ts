@@ -1,7 +1,7 @@
 import type { Database } from "../storage.js";
 import { type ChangeEntry, materialiseChange } from "./changes.js";
 import { isIgnored } from "./ignore.js";
-import { pathsOf } from "./paths.js";
+import { pathsOfMany } from "./paths.js";
 import { type ChangeCursor, compareChangeCursors } from "./watermarks.js";
 
 // Yield one ChangeEntry per path touched after `after`. Per-path
@@ -63,11 +63,19 @@ export async function* coalesceChanges(
           lowerRev,
           through.rev,
         );
+  // Resolve every touched inode to its path(s) in one batched pass.
+  // Doing this per inode issued O(N x depth) statements, which
+  // dominated the tick once node_modules entered the sync set.
+  const pathsByInode = pathsOfMany(
+    db,
+    touched.map((row) => row.inode),
+  );
+
   for (const { inode, rev } of touched) {
     // One inode can carry several hardlink names; every name has to
     // become a candidate so the wire materialises each, not just the
     // arbitrary one pathOf would return.
-    for (const path of pathsOf(db, inode)) {
+    for (const path of pathsByInode.get(inode) ?? []) {
       if (!inCursorWindow({ rev, path }, cursor, through)) continue;
       if (isIgnored(path, ignore)) continue;
       const prior = candidates.get(path);
