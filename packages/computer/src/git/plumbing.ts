@@ -9,6 +9,9 @@
 
 import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
 
+/** The four object types git stores, as `cat-file -t` names them. */
+export type GitObjectType = "blob" | "tree" | "commit" | "tag";
+
 export interface IsomorphicGitPlumbingClient {
   hashBlob(args: { object: Uint8Array | string }): Promise<{ oid: string; type: string }>;
   writeBlob(args: { fs: object; dir: string; blob: Uint8Array }): Promise<string>;
@@ -26,8 +29,8 @@ export interface IsomorphicGitPlumbingClient {
     format?: "content" | "parsed" | "deflated" | "wrapped";
     cache?: object;
   }): Promise<
-    | { oid: string; type: string; format: string; object: Uint8Array }
-    | { oid: string; type: string; format: string; object: unknown }
+    | { oid: string; type: GitObjectType; format: string; object: Uint8Array }
+    | { oid: string; type: GitObjectType; format: string; object: unknown }
   >;
   writeRef(args: {
     fs: object;
@@ -113,6 +116,12 @@ export interface CatFileResult {
   oid: string;
   /** Raw object bytes. */
   bytes: Uint8Array;
+  /**
+   * Object type, as `git cat-file -t` reports it. Present when the
+   * object was read through `readObject`; a blob read by the fast path
+   * is always `"blob"`.
+   */
+  type?: GitObjectType;
 }
 
 export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult> {
@@ -130,7 +139,7 @@ export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult>
         filepath: opts.filepath,
         cache: opts.cache,
       });
-      return { oid, bytes: blob };
+      return { oid, bytes: blob, type: "blob" };
     }
     try {
       const { oid, blob } = await opts.git.readBlob({
@@ -139,7 +148,7 @@ export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult>
         oid: opts.oid,
         cache: opts.cache,
       });
-      return { oid, bytes: blob };
+      return { oid, bytes: blob, type: "blob" };
     } catch {
       // Not a blob; fall through to readObject's content form.
     }
@@ -152,7 +161,7 @@ export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult>
     });
     const bytes =
       obj.object instanceof Uint8Array ? obj.object : new TextEncoder().encode(String(obj.object));
-    return { oid: obj.oid, bytes };
+    return { oid: obj.oid, bytes, type: obj.type };
   } catch (cause) {
     if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
     throw new GitError("ECATFILEFAIL", `git cat-file failed: ${errorMessage(cause)}`, {
