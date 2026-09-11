@@ -9,8 +9,7 @@ const sqlJsEntry = fileURLToPath(import.meta.resolve("sql.js"));
 
 export const SQLITE_WASM_PATH = resolve(dirname(sqlJsEntry), "sql-wasm.wasm");
 
-const SQLITE_WORKER_ERROR =
-  "sqlite3 worker not found. Run 'pnpm build' to compile the worker.";
+const SQLITE_WORKER_ERROR = "sqlite3 worker not found. Run 'pnpm build' to compile the worker.";
 const FIND_WORKER =
   'for(let r of t)if(ce(r))return r;throw new Error("' + SQLITE_WORKER_ERROR + '")';
 const CREATE_WORKER =
@@ -46,17 +45,17 @@ export function sqliteWorkerPlugin() {
             source,
             FIND_WORKER,
             'return "inline:sqlite3"',
-            "sqlite worker lookup"
+            "sqlite worker lookup",
           );
           source = replaceExactlyOnce(
             source,
             CREATE_WORKER,
             "return __createInlineSqliteWorker(t)",
-            "sqlite Worker constructor"
+            "sqlite Worker constructor",
           );
           source =
             `import { createInlineSqliteWorker as __createInlineSqliteWorker } from ${JSON.stringify(
-              resolve(here, "sqlite-command-adapter.mjs")
+              resolve(here, "sqlite-command-adapter.mjs"),
             )};\n` + source;
           // Wrap the exported command so WorkspaceFsAdapter gets a stable
           // database-lock identity without changing the always-on adapter.
@@ -64,15 +63,15 @@ export function sqliteWorkerPlugin() {
             source,
             "export{$e as a,_e as b,Fe as c};",
             "const __sqliteCommand=__adaptSqliteCommand(_e);export{$e as a,__sqliteCommand as b,Fe as c};",
-            "sqlite command export"
+            "sqlite command export",
           );
           source =
             `import { adaptSqliteCommand as __adaptSqliteCommand } from ${JSON.stringify(
-              resolve(here, "sqlite-command-adapter.mjs")
+              resolve(here, "sqlite-command-adapter.mjs"),
             )};\n` + source;
           commandAdapted = true;
           return { contents: source, loader: "js", resolveDir: dirname(args.path) };
-        }
+        },
       );
 
       // Pull the worker's query implementation into the sqlite feature graph.
@@ -90,7 +89,7 @@ export function sqliteWorkerPlugin() {
           source,
           "    activateDefense();\n",
           "",
-          "worker defense activation"
+          "worker defense activation",
         );
         queryWorkerLoaded = true;
         return {
@@ -139,13 +138,13 @@ export function sqliteWorkerPlugin() {
           source,
           "globalThis.WorkerGlobalScope",
           "undefined",
-          "sql.js WorkerGlobalScope probe"
+          "sql.js WorkerGlobalScope probe",
         );
         source = replaceExactlyOnce(
           source,
           "globalThis.process?.versions?.node",
           "undefined",
-          "sql.js Node probe"
+          "sql.js Node probe",
         );
         sqlJsLoaded = true;
         return { contents: source, loader: "js", resolveDir: dirname(args.path) };
@@ -159,7 +158,7 @@ export function sqliteWorkerPlugin() {
               commandAdapted,
               queryWorkerLoaded,
               sqlJsLoaded,
-            })})`
+            })})`,
           );
         }
       });
