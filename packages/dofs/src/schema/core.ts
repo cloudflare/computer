@@ -13,9 +13,11 @@
 // dirents leaf so the (parent, name) resolve read is covering
 // (no separate index needed). Bumped to 7 when `_vfs_sync_operations`
 // and `_vfs_sync_skips` landed, carrying the durable half of a
-// restartable pull or push. See `schema/migrations.ts` for the
-// migration list; `sync.ts` carries the fresh-install DDL.
-export const SCHEMA_VERSION = 7;
+// restartable pull or push. Bumped to 8 when `vfs_changes` gained
+// `vfs_changes_by_op_rev`, so tombstone scans can restrict on the rev
+// window. See `schema/migrations.ts` for the migration list; `sync.ts`
+// carries the fresh-install DDL.
+export const SCHEMA_VERSION = 8;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [
