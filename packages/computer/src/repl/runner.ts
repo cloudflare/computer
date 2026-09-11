@@ -409,6 +409,7 @@ function helpText(name) {
         const d = shapes[n] && shapes[n].description;
         lines.push("  " + n + (d ? " — " + d : ""));
       }
+      lines.push("Capability calls are asynchronous — always await them.");
       lines.push("help(\\"name\\") shows a capability's methods and docs.");
     }
     return lines.join("\\n");
@@ -429,15 +430,15 @@ function helpText(name) {
 // surfaces), data snapshots with their current values, and children.
 function renderShapeHelp(lines, path, docPath, shape, docs) {
   if (shape.opaque) {
-    lines.push("  " + path + ".<method>(…) — surface unknown (opaque remote stub): call any method it supports");
+    lines.push("  await " + path + ".<method>(…) — surface unknown (opaque remote stub): call any method it supports");
     return;
   }
   if (shape.callable) {
-    lines.push("  " + path + "(…) — callable directly" + (docs[docPath] ? ": " + docs[docPath] : ""));
+    lines.push("  await " + path + "(…) — callable directly" + (docs[docPath] ? ": " + docs[docPath] : ""));
   }
   for (const m of shape.methods || []) {
     const dk = docPath === "" ? m : docPath + "." + m;
-    lines.push("  " + path + "." + m + "(…)" + (docs[dk] ? " — " + docs[dk] : ""));
+    lines.push("  await " + path + "." + m + "(…)" + (docs[dk] ? " — " + docs[dk] : ""));
   }
   for (const k of Object.keys(shape.data || {})) {
     let rendered;

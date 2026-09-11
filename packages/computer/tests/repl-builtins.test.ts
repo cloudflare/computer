@@ -42,6 +42,7 @@ describe("REPL help()", () => {
     const text = result.value as string;
     expect(text).toContain("weather — Weather lookups");
     expect(text).toContain("config");
+    expect(text).toContain("asynchronous — always await");
     expect(text).not.toContain("No capabilities are granted");
   });
 
@@ -52,6 +53,7 @@ describe("REPL help()", () => {
     const text = result.value as string;
     expect(text).toContain("Weather lookups");
     expect(text).toContain("get(city) → { city, temp, asOf }");
+    expect(text).toContain("await weather.get(");
     expect(text).toContain("weather.flaky(");
   });
 

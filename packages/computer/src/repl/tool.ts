@@ -152,6 +152,7 @@ function jsToolDescription(
     .join(", ");
   return (
     `${intro} Capabilities in session "${defaultSession}": ${grants}. ` +
+    "Capability calls are async — always `await` them. " +
     'Call `help("name")` in a cell for full docs on any of them.'
   );
 }

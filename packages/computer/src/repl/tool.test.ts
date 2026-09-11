@@ -64,6 +64,7 @@ describe("createJsToolDefinition", () => {
     expect(definition.description).toContain("weather (Weather lookups)");
     expect(definition.description).toContain("fetch (HTTP fetch restricted to: api.example.com)");
     expect(definition.description).toContain("bare");
+    expect(definition.description).toContain("async — always `await`");
     expect(definition.description).toContain('help("name")');
   });
 
