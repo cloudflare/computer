@@ -1,0 +1,41 @@
+.changeset/codemode-container-option.md
+  s_af88ca552b7a2d::t_6a27df91510fdf 1-5
+package-lock.json
+  s_af88ca552b7a2d::t_249ca226bc7dde 137,140,146-156,12944,12963,12969-12971,13008-13010,13013,13023-13032
+packages/computer/README.md
+  s_af88ca552b7a2d::t_ffd5a528fdd953 464-494
+packages/computer/package.json
+  s_af88ca552b7a2d::t_2c9b10fe6c77fe 4,124,130-132,144
+packages/computer/src/backends/container/cloudflare-container.test.ts
+  s_af88ca552b7a2d::t_168091ae03a61a 534-581
+packages/computer/src/backends/container/cloudflare-container.ts
+  s_af88ca552b7a2d::t_bce6e715010f59 58,134-144,158,201,205,226,417-419,461-486
+packages/computer/src/backends/container/codemode-session.test.ts
+  s_af88ca552b7a2d::t_f883c12a8c70a5 1-92
+packages/computer/src/backends/container/codemode-session.ts
+  s_af88ca552b7a2d::t_854c3c2b655eef 1-130
+packages/computer/src/backends/container/index.ts
+  s_af88ca552b7a2d::t_635b8610a60963 20-23
+packages/computer/src/proxy.ts
+  s_af88ca552b7a2d::t_db09a201e7554a 94-101
+packages/computer/tests/proxy-worker.ts
+  s_af88ca552b7a2d::t_91078e023e332b 38-40
+packages/computer/tests/proxy.test.ts
+  s_af88ca552b7a2d::t_3fe4795607a02f 6-7,77-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ef337c5205cf73e4355940fb1c3463558ba4940c",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

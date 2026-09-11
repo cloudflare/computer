@@ -1,0 +1,41 @@
+.changeset/codemode-cli-binary.md
+  s_af88ca552b7a2d::t_eecee86b952d43 1-5
+.github/workflows/next-computerd-image.yml
+  s_af88ca552b7a2d::t_4b556d27e2ab1e 75,78,83-86
+packages/computer-computerd-linux-x64/.dockerignore
+  s_af88ca552b7a2d::t_d302aa71139422 1,4
+packages/computer-computerd-linux-x64/Dockerfile
+  s_af88ca552b7a2d::t_5f4840a4e437a3 1-2,13,15-16,22
+packages/computerd/README.md
+  s_af88ca552b7a2d::t_681cbf259000d2 50-75,190
+packages/computerd/package.json
+  s_af88ca552b7a2d::t_55b81352f320d2 4,9,31-33
+packages/computerd/scripts/build-bin.mjs
+  s_af88ca552b7a2d::t_dbead18d06d8f8 2-3,24,35-37,71-76,83-85,88-98,111
+packages/computerd/scripts/build-docker.mjs
+  s_af88ca552b7a2d::t_22019e37d5a1e7 35-44
+packages/computerd/scripts/build.mjs
+  s_af88ca552b7a2d::t_fdb8c55a01b90b 14-21
+packages/computerd/scripts/sea/bundle.mjs
+  s_af88ca552b7a2d::t_eb375b3d670adb 27-54,145
+packages/computerd/src/cli/codemode.test.ts
+  s_af88ca552b7a2d::t_ce14b9f4ef91d2 1-140
+packages/computerd/src/cli/codemode.ts
+  s_af88ca552b7a2d::t_60584067573144 1-254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c6ada0b008871e028dbb20ede5de41b174491329",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+README.md
+  s_af88ca552b7a2d::t_ea5a8d7a5670a0 68
+src/machine-session.ts
+  s_af88ca552b7a2d::t_34c143b73d9190 26-27
+src/tests/machine-session.test.ts
+  s_af88ca552b7a2d::t_54edb39e428651 1,3,20-21,43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a1405e85a7a1504167e39a4f962d8598348b888a",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
