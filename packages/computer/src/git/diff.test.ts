@@ -31,6 +31,10 @@ async function init(): Promise<void> {
 }
 
 async function commitFile(path: string, content: string, message: string): Promise<string> {
+  const slash = path.lastIndexOf("/");
+  if (slash > 0) {
+    await memfs.promises.mkdir(`${DIR}/${path.slice(0, slash)}`, { recursive: true });
+  }
   await memfs.promises.writeFile(`${DIR}/${path}`, content);
   await git.add({ fs: memfs, dir: DIR, filepath: path });
   return git.commit({ fs: memfs, dir: DIR, message, author: AUTHOR });
@@ -42,7 +46,7 @@ async function stageThenRemove(path: string): Promise<void> {
   await memfs.promises.unlink(`${DIR}/${path}`);
 }
 
-async function runDiff(opts: { ref?: string } = {}): Promise<string> {
+async function runDiff(opts: { ref?: string; paths?: string[] } = {}): Promise<string> {
   return diffWith({
     git: isomorphicGit,
     fs: memfs,
@@ -50,6 +54,7 @@ async function runDiff(opts: { ref?: string } = {}): Promise<string> {
     readFile: (path) => memfs.promises.readFile(path) as Promise<Uint8Array | string>,
     dir: DIR,
     ref: opts.ref,
+    paths: opts.paths,
   });
 }
 
@@ -154,6 +159,70 @@ describe("diffWith (real isomorphic-git + memfs)", () => {
       statusSpy.mockRestore();
       blobSpy.mockRestore();
     }
+  });
+
+  it("scopes the status walk to the requested paths", async () => {
+    await init();
+    await commitFile("src/a.txt", "one\n", "init a");
+    await commitFile("vendor/b.txt", "two\n", "init b");
+    await memfs.promises.writeFile(`${DIR}/src/a.txt`, "one changed\n");
+    await memfs.promises.writeFile(`${DIR}/vendor/b.txt`, "two changed\n");
+
+    const statusSpy = vi.spyOn(git, "statusMatrix");
+    try {
+      const out = await runDiff({ paths: ["src"] });
+      // The walk must be told to stay inside `src` rather than
+      // scanning the whole tree and filtering afterwards.
+      expect(statusSpy.mock.calls[0][0]).toMatchObject({ filepaths: ["src"] });
+      // Result is unchanged by the scoping.
+      expect(out).toContain("+one changed");
+      expect(out).not.toContain("two changed");
+    } finally {
+      statusSpy.mockRestore();
+    }
+  });
+
+  it("walks the whole tree when no paths are given", async () => {
+    await init();
+    await commitFile("a.txt", "one\n", "init");
+    await memfs.promises.writeFile(`${DIR}/a.txt`, "one changed\n");
+
+    const statusSpy = vi.spyOn(git, "statusMatrix");
+    try {
+      await runDiff();
+      // No scope requested: isomorphic-git's default ('.') must stand.
+      expect(statusSpy.mock.calls[0][0]).not.toHaveProperty("filepaths");
+    } finally {
+      statusSpy.mockRestore();
+    }
+  });
+
+  it("produces the same diff scoped and unscoped", async () => {
+    await init();
+    await commitFile("src/a.txt", "one\n", "init a");
+    await commitFile("vendor/b.txt", "two\n", "init b");
+    await memfs.promises.writeFile(`${DIR}/src/a.txt`, "one changed\n");
+    await memfs.promises.writeFile(`${DIR}/vendor/b.txt`, "two changed\n");
+
+    const scoped = await runDiff({ paths: ["src"] });
+    const full = await runDiff();
+    // The scoped run must equal the src-only slice of the full run.
+    expect(scoped).toContain("+one changed");
+    expect(full).toContain("+one changed");
+    expect(full).toContain("+two changed");
+    expect(scoped).not.toContain("+two changed");
+  });
+
+  it("scopes correctly for an exact file path", async () => {
+    await init();
+    await commitFile("src/a.txt", "one\n", "init a");
+    await commitFile("src/b.txt", "two\n", "init b");
+    await memfs.promises.writeFile(`${DIR}/src/a.txt`, "one changed\n");
+    await memfs.promises.writeFile(`${DIR}/src/b.txt`, "two changed\n");
+
+    const out = await runDiff({ paths: ["src/a.txt"] });
+    expect(out).toContain("+one changed");
+    expect(out).not.toContain("two changed");
   });
 
   it("respects the `ref` argument when diffing against an older commit", async () => {
