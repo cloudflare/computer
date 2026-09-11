@@ -147,14 +147,39 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
         writeFetchCursor(this.db, senderCursor);
       }
     });
-    // A rejection propagates for the same reason it does in
-    // applyChangePack: the pre-command bracket pushes, advances its
-    // cursor on the acknowledgment, and only then spawns. Reporting
-    // success for an unflushed block retires it and lets the command
-    // read stale disk. The entries are committed either way, and a
-    // replayed block is absorbed by alreadyApplied().
+    // Settle the receiver's shim, and let the outcome decide what the
+    // caller is told — which differs by who the caller is.
+    //
+    // A peer push is replayable. Its sender holds a durable push
+    // cursor, so rejecting the acknowledgment leaves that cursor
+    // where it was and the next push replans the same block. That
+    // matters because the pre-command bracket pushes, advances on the
+    // acknowledgment, and only then spawns: acknowledging an
+    // unflushed block would retire it and let the command read stale
+    // disk. Replay is safe because these entries carry
+    // source: "upstream", which routes them through the
+    // already-applied and stale-tombstone guards.
+    //
+    // An external push is not replayable. It has no durable cursor to
+    // rewind, and its entries are applied as source: "local", which
+    // deliberately bypasses those guards because local writes are
+    // authored here rather than replayed. Reporting a failure after
+    // the commit therefore invites the caller to repeat a mutation
+    // that is not idempotent: a retried delete would carry the
+    // original revision and, with the stale-tombstone check skipped,
+    // remove a file some other writer recreated in between. So the
+    // failure is logged and the push acknowledged, leaving the shim's
+    // periodic reconcile to repair disk.
     if (this.options.afterApply !== undefined && entries.length > 0) {
-      await this.options.afterApply();
+      if (isPeer) {
+        await this.options.afterApply();
+      } else {
+        try {
+          await this.options.afterApply();
+        } catch (err) {
+          console.warn("[SyncRPCServer] afterApply hook failed for external push:", err);
+        }
+      }
     }
     return {
       rev: currentRev(this.db),

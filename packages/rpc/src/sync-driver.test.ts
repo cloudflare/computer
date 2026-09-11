@@ -372,6 +372,37 @@ describe("SyncRPC server — afterApply hook", () => {
     }
   });
 
+  it("acknowledges an external push whose settle rejects", async () => {
+    const b = makeReceiverWithSpy();
+    try {
+      // An external writer (senderRev 0) has no durable cursor to
+      // rewind, and its entries skip the stale-tombstone guard because
+      // they apply as local writes. Reporting a failure would invite a
+      // retry of a delete that could remove a newer recreation, so the
+      // settle failure is swallowed for this caller only.
+      const provider = new SQLiteWorkspaceProvider(b.db, { now: () => 1 });
+      provider.writeFileSync("/gone.txt", "x");
+
+      b.setAfterApply(() => {
+        throw new Error("settle blew up");
+      });
+
+      const changes = new ReadableStream<ChangeEntry>({
+        start(controller) {
+          controller.enqueue({ kind: "delete", rev: 1, path: "/gone.txt" });
+          controller.close();
+        },
+      });
+      const ack = await b.rpc.push({ senderRev: 0, changes });
+      expect(b.calls).toBe(1);
+      // Acknowledged despite the failed settle, and the delete stands.
+      expect(ack.appliedPushCursor).toEqual({ rev: 0, path: null });
+      expect(fileEntries(b.db)).not.toContain("gone.txt");
+    } finally {
+      b.close();
+    }
+  });
+
   it("replays the same block once the hook recovers", async () => {
     const a = makePeer();
     const b = makeReceiverWithSpy();
