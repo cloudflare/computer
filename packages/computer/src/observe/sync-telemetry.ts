@@ -1,10 +1,25 @@
 // Structured sync telemetry for Workers Logs.
 //
 // The observer hook in `../observe.ts` emits spans, which is the right
-// shape for tracing and nesting. It is not the shape the Workers
-// Observability query API can aggregate today: that API queries the
-// Workers Logs dataset, where a single JSON argument to `console.log`
-// becomes a set of filterable `$workers.event.*` fields.
+// shape for tracing and nesting. It is not a shape the Workers
+// Observability query API can aggregate.
+//
+// Measured against the live query API, not assumed. The `traces` view
+// does exist and does return real data: it lists traces, filters them,
+// and reports trace-level rollups (traceId, services, span count,
+// traceDurationMs). What it will not do is compute. A query carrying
+// `calculations` returns an empty trace list, with or without
+// `groupBys` — so `min(headroom) by mode`, the question this telemetry
+// exists to answer, is not expressible there. Trace-level fields also
+// do not surface the per-block attributes the span hook sets via
+// setAttribute.
+//
+// The `events` view, backed by Workers Logs, does aggregate: a single
+// JSON argument to `console.log` becomes filterable `$workers.event.*`
+// fields, and calculations over them return populated time series.
+// Hence a flat log record alongside the span hook rather than instead
+// of it. Spans remain useful as an independent cross-check, since
+// trace duration is recorded by the runtime rather than self-reported.
 //
 // So this module exists alongside the span hook rather than replacing
 // it. Spans answer "what happened inside this request"; these records

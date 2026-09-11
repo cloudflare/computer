@@ -183,6 +183,35 @@ I/O wait. If `blockMs` greatly exceeds `cpuTimeMs`, blocks are transport
 bound and larger blocks are safe; if they track each other, blocks are
 CPU bound and the sizing limit is real.
 
+### 6. Long traces, as a second independent check
+
+The `traces` view lists and filters traces, and its durations come from
+the runtime rather than from anything this library reports:
+
+```json
+{
+  "view": "traces",
+  "parameters": {
+    "filters": [
+      { "key": "$metadata.service", "operation": "eq", "value": "<worker>", "type": "string" }
+    ],
+    "calculations": [{ "operator": "count" }]
+  }
+}
+```
+
+Note the view's limits, which were measured rather than assumed. It
+lists and filters, but it does not aggregate: any query carrying
+`calculations` comes back with an empty trace list, with or without
+`groupBys`. So this is an eyeball check on the longest traces, not a
+percentile. Read `traceDurationMs` and `spans` from the returned rows.
+
+A sample of this account already shows a Durable Object trace at
+31,874 ms across 124 spans. That is wall time, not CPU, so it is not a
+limit breach — but it is the neighborhood `headroom` exists to watch,
+and it is why the self-reported numbers deserve an independent
+cross-check.
+
 ## Durable state cross-check
 
 `cloudflare_db` reads a SessionDO's SQLite directly, which is how to
