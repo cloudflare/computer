@@ -1,9 +1,10 @@
 import { createSyncServer } from "@cloudflare/computer-rpc/server";
 import { Database, initializeSchema, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
+import { createSyncLogger } from "./observe/sync-telemetry.js";
 import { Workspace } from "./workspace.js";
 
 // The public surface the plan asks for: two restartable iterables that
@@ -172,6 +173,111 @@ describe("Workspace.push", () => {
         .all<{ name: string }>("SELECT name FROM vfs_dirents WHERE parent_inode = 1")
         .map((r) => r.name);
       expect(names).toHaveLength(4);
+    } finally {
+      peer.close();
+    }
+  });
+});
+
+describe("sync telemetry", () => {
+  it("emits a queryable record per block and a summary per operation", async () => {
+    const peer = peerBackend("container");
+    try {
+      seed(peer.remote, 3);
+      const lines: string[] = [];
+      const ws = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [peer.backend],
+        syncTelemetry: createSyncLogger({ log: (line) => lines.push(line) }),
+      });
+      await ws.ready();
+
+      for await (const progress of ws.pull()) {
+        if (progress.complete) break;
+      }
+
+      const records = lines.map((line) => JSON.parse(line));
+      const blocks = records.filter((r) => r.event === "sync.block");
+      const operations = records.filter((r) => r.event === "sync.operation");
+
+      expect(blocks.length).toBeGreaterThan(0);
+      expect(operations).toHaveLength(1);
+      // The fields a production query needs to answer the CPU-headroom
+      // question must be present and numeric.
+      expect(typeof blocks[0].blockMs).toBe("number");
+      expect(typeof blocks[0].headroom === "number" || blocks[0].headroom === undefined).toBe(true);
+      expect(blocks[0].backend).toBe("container");
+      expect(blocks[0].direction).toBe("pull");
+      expect(operations[0].entries).toBe(3);
+    } finally {
+      peer.close();
+    }
+  });
+
+  it("is silent by default so a library consumer is not billed uninvited", async () => {
+    const peer = peerBackend("container");
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      seed(peer.remote, 2);
+      const ws = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [peer.backend],
+      });
+      await ws.ready();
+
+      for await (const progress of ws.pull()) {
+        if (progress.complete) break;
+      }
+
+      const emitted = spy.mock.calls.filter((call) => String(call[0]).includes('"event":"sync.'));
+      expect(emitted).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      peer.close();
+    }
+  });
+
+  it("emits to console.log when opted in without a custom sink", async () => {
+    const peer = peerBackend("container");
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      seed(peer.remote, 2);
+      const ws = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [peer.backend],
+        syncTelemetryEnabled: true,
+      });
+      await ws.ready();
+
+      for await (const progress of ws.pull()) {
+        if (progress.complete) break;
+      }
+
+      const emitted = spy.mock.calls.filter((call) => String(call[0]).includes('"event":"sync.'));
+      expect(emitted.length).toBeGreaterThan(0);
+    } finally {
+      spy.mockRestore();
+      peer.close();
+    }
+  });
+
+  it("is silent when telemetry is disabled", async () => {
+    const peer = peerBackend("container");
+    try {
+      seed(peer.remote, 2);
+      const lines: string[] = [];
+      const ws = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [peer.backend],
+        syncTelemetry: createSyncLogger({ enabled: false, log: (line) => lines.push(line) }),
+      });
+      await ws.ready();
+
+      for await (const progress of ws.pull()) {
+        if (progress.complete) break;
+      }
+
+      expect(lines).toEqual([]);
     } finally {
       peer.close();
     }

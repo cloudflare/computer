@@ -45,6 +45,17 @@ export type {
   MountWriteAPI,
 } from "./mounts/types.js";
 export {
+  createSyncLogger,
+  DEFAULT_CPU_LIMIT_MS,
+  type SyncBlockTelemetry,
+  type SyncLogger,
+  type SyncLoggerOptions,
+  type SyncOperationTelemetry,
+  syncBlockLog,
+  syncOperationLog,
+  type TelemetryRecord,
+} from "./observe/sync-telemetry.js";
+export {
   noopObserver,
   type WorkspaceAttributes,
   type WorkspaceAttributeValue,

@@ -42,6 +42,7 @@ import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
+import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { WorkspaceRuntime } from "./runtime/runtime.js";
 import {
@@ -102,6 +103,19 @@ export interface WorkspaceOptions {
   // do not opt in. See `./observe.ts` for the contract and the
   // adapter subpaths for the Cloudflare runtime and OpenTelemetry.
   observer?: WorkspaceObserver;
+
+  // Structured per-block sync telemetry, emitted as single-line JSON so
+  // the Workers Observability query API can aggregate it into the CPU
+  // headroom and transport throughput numbers local benchmarks can only
+  // model. See observe/sync-telemetry.ts for the queries.
+  //
+  // Off by default. Workers Logs is billed per event and a large sync
+  // emits one record per block, so writing to a consumer's log stream
+  // uninvited would be both surprising and metered. Set
+  // syncTelemetryEnabled to opt in, or pass syncTelemetry to route the
+  // records somewhere else.
+  syncTelemetry?: SyncLogger;
+  syncTelemetryEnabled?: boolean;
 
   // Optional git client factory. Omit it to keep the default
   // Workspace graph free of isomorphic-git; pass createGitClient()
@@ -209,6 +223,7 @@ export class Workspace {
   readonly #callableBackendIds: Set<string>;
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
+  readonly #syncLogger: SyncLogger;
   readonly #now: () => number;
   readonly #sessionId: string;
   readonly #gitFactory: WorkspaceGitFactory | undefined;
@@ -306,6 +321,8 @@ export class Workspace {
     }
     this.#defaultBackendId = registered[0]?.id;
     this.#observer = options.observer ?? noopObserver;
+    this.#syncLogger =
+      options.syncTelemetry ?? createSyncLogger({ enabled: options.syncTelemetryEnabled ?? false });
     this.#mounts = buildMountRegistry(options.mounts, {
       sessionId: options.sessionId,
       vfs: () => this.provider(),
@@ -548,9 +565,20 @@ export class Workspace {
     return {
       [Symbol.asyncIterator]: (): AsyncIterator<SyncProgress> => {
         let finished = false;
+        // Per-iterable rollup for the operation summary. Blocks driven
+        // from separate iterables (the eviction case) each report their
+        // own partial rollup, which is why the block records carry the
+        // operation id: a query can regroup them.
+        let blocks = 0;
+        let entries = 0;
+        let bytes = 0;
+        let skipped = 0;
+        let worstBlockMs = 0;
+        const operationStarted = Date.now();
         return {
           next: async (): Promise<IteratorResult<SyncProgress>> => {
             if (finished) return { done: true, value: undefined };
+            const blockStarted = Date.now();
             const result = await this.#serialize(id, (resolvedId) =>
               withSpan(
                 this.#observer,
@@ -593,7 +621,56 @@ export class Workspace {
                 },
               ),
             );
-            if (result.done || result.value.complete) finished = true;
+            if (result.done) return result;
+
+            // Structured telemetry alongside the span. The span nests
+            // for tracing; this record is what the Workers Observability
+            // query API can aggregate, so production runs can answer the
+            // CPU-headroom and throughput questions the local benchmarks
+            // could only model.
+            const blockMs = Date.now() - blockStarted;
+            const progress = result.value;
+            blocks += 1;
+            entries += progress.entries;
+            bytes += progress.bytes;
+            skipped += progress.skipped;
+            worstBlockMs = Math.max(worstBlockMs, blockMs);
+            this.#syncLogger.block({
+              backend: progress.backend,
+              direction: progress.direction,
+              mode: progress.mode,
+              operationId: progress.operationId,
+              generation: progress.generation,
+              entries: progress.entries,
+              bytes: progress.bytes,
+              skipped: progress.skipped,
+              complete: progress.complete,
+              blockMs,
+              cursorRev: progress.cursor.rev,
+              targetRev: progress.targetCursor.rev,
+            });
+
+            if (progress.complete) {
+              finished = true;
+              this.#syncLogger.operation({
+                backend: progress.backend,
+                direction: progress.direction,
+                mode: progress.mode,
+                operationId: progress.operationId,
+                generation: progress.generation,
+                blocks,
+                entries,
+                bytes,
+                skipped,
+                totalMs: Date.now() - operationStarted,
+                worstBlockMs,
+                // Every block after the first in one iterable reused
+                // the iterator; a caller that recreates the iterable
+                // per block reports blocks = 1 each time, so restarts
+                // is derivable across records by operation id.
+                restarts: 0,
+              });
+            }
             return result;
           },
           // Breaking out stops local driving. The operation stays
