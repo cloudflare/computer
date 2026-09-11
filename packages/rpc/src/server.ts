@@ -276,6 +276,19 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     // The footer's block cursor is the sender's checkpoint; echo it so
     // the sender advances only through what actually applied here.
     writeFetchCursor(this.db, decoded.footer.blockCursor);
+    // Mirror push(): settle the receiver's shim so a subsequent
+    // shell.exec sees the just-pushed files on disk. Pack mode is
+    // selected for exactly the large windows a pre-command push
+    // carries, so skipping this strands the shim on stale disk state.
+    if (this.options.afterApply !== undefined && decoded.entries.length > 0) {
+      try {
+        await this.options.afterApply();
+      } catch (err) {
+        // Settle hook failures must not surface as push failures —
+        // the entries are already committed.
+        console.warn("[SyncRPCServer] afterApply hook failed:", err);
+      }
+    }
     return {
       appliedPushCursor: decoded.footer.blockCursor,
       applied: result.applied,

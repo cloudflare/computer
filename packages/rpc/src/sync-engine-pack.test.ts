@@ -335,4 +335,58 @@ describe("pack mode push", () => {
       remote.close();
     }
   });
+
+  // A pre-command push carries exactly the large window that selects
+  // pack mode, and on a shim backend the spawned command reads from
+  // disk rather than the VFS. If the pack receiver skips the settle
+  // hook the command sees stale contents, so the hook has to fire on
+  // both transports.
+  it("settles the receiver's shim after a pack push", async () => {
+    const local = makePeer();
+    const storage = new SQLiteTestStorage();
+    const remoteDb = new Database(storage);
+    initializeSchema(remoteDb, () => 1000);
+    let calls = 0;
+    let namesAtHook: string[] = [];
+    const remoteRpc = createSyncServer(remoteDb, {
+      afterApply: () => {
+        calls += 1;
+        namesAtHook = names(remoteDb);
+      },
+    });
+    try {
+      seed(local.db, 8);
+      await drain(pushBlocks(local.db, remoteRpc, PACK_OPTIONS));
+
+      expect(calls).toBeGreaterThan(0);
+      // The entries must already be committed when the hook runs,
+      // mirroring the entry-mode guarantee.
+      expect(namesAtHook.length).toBeGreaterThan(0);
+      expect(names(remoteDb)).toHaveLength(8);
+    } finally {
+      local.close();
+      storage.close();
+    }
+  });
+
+  it("does not settle the shim when a pack push carries no entries", async () => {
+    const local = makePeer();
+    const storage = new SQLiteTestStorage();
+    const remoteDb = new Database(storage);
+    initializeSchema(remoteDb, () => 1000);
+    let calls = 0;
+    const remoteRpc = createSyncServer(remoteDb, {
+      afterApply: () => {
+        calls += 1;
+      },
+    });
+    try {
+      // Nothing written locally, so no block carries entries.
+      await drain(pushBlocks(local.db, remoteRpc, PACK_OPTIONS));
+      expect(calls).toBe(0);
+    } finally {
+      local.close();
+      storage.close();
+    }
+  });
 });
