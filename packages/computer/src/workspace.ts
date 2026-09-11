@@ -12,12 +12,15 @@
 import type { ShellRPC } from "@cloudflare/computer-rpc";
 import {
   pullBatch,
+  pullBlocks,
   pullOnce,
   pushBatch,
+  pushBlocks,
   pushOnce,
   reconcileWatermarks,
   type SyncBatchBudget,
   type SyncBatchResult,
+  type SyncProgress,
 } from "@cloudflare/computer-rpc/driver";
 import {
   type ApplyResult,
@@ -701,6 +704,115 @@ export class Workspace {
         },
       ),
     );
+  }
+
+  /**
+   * Restartable pull. One `next()` commits one durably checkpointed
+   * block.
+   *
+   * The caller supplies no cursor, target, or budget. Recreating the
+   * iterable resumes from the Workspace's durable cursor, so an
+   * application can drive one block per alarm, several per request, or
+   * abandon iteration and pick it up later:
+   *
+   * ```ts
+   * for await (const progress of workspace.pullBlocks()) {
+   *   if (progress.complete) break;
+   * }
+   * ```
+   *
+   * Workspace never sets or deletes an alarm. An application that
+   * wants a watchdog before a block schedules it itself; the yielded
+   * progress carries enough state to make that decision.
+   */
+  pullBlocks(id?: string): AsyncIterable<SyncProgress> {
+    return this.#syncBlocks(id, "pull");
+  }
+
+  /**
+   * Restartable push. Same contract as {@link pullBlocks} in the other
+   * direction; the local cursor advances only through the backend's
+   * acknowledgment.
+   */
+  pushBlocks(id?: string): AsyncIterable<SyncProgress> {
+    return this.#syncBlocks(id, "push");
+  }
+
+  // Shared plumbing for both iterables.
+  //
+  // Each `next()` is wrapped in the backend's mutation FIFO rather than
+  // the whole iteration, because holding the FIFO across a yield would
+  // block every other mutation for as long as the caller took to come
+  // back — and the caller may never come back. Serializing per block
+  // keeps the "one mutating sync block per backend and direction"
+  // guarantee without making an abandoned iterator wedge the workspace.
+  #syncBlocks(id: string | undefined, direction: "pull" | "push"): AsyncIterable<SyncProgress> {
+    const span = direction === "pull" ? "workspace.sync.pull.block" : "workspace.sync.push.block";
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<SyncProgress> => {
+        // One durable iterator per backend, created lazily so the
+        // backend id resolves inside the FIFO like every other call.
+        let inner: AsyncIterator<SyncProgress> | undefined;
+        let finished = false;
+        return {
+          next: async (): Promise<IteratorResult<SyncProgress>> => {
+            if (finished) return { done: true, value: undefined };
+            const result = await this.#serialize(id, (resolvedId) =>
+              withSpan(
+                this.#observer,
+                span,
+                { "workspace.sync.backend": resolvedId },
+                async (): Promise<IteratorResult<SyncProgress>> => {
+                  // A module backend has no sync wire. Report one
+                  // complete, empty block so a caller's loop
+                  // terminates instead of spinning.
+                  if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) {
+                    return {
+                      done: false,
+                      value: emptySyncProgress(resolvedId ?? "none", direction),
+                    };
+                  }
+                  return this.#runWithReconnect(
+                    resolvedId,
+                    `${direction}Blocks`,
+                    async (handle) => {
+                      if (handle.sync === "none") {
+                        return {
+                          done: false,
+                          value: emptySyncProgress(resolvedId, direction),
+                        };
+                      }
+                      if (inner === undefined) {
+                        const iterable =
+                          direction === "pull"
+                            ? pullBlocks(this.#db, handle.rpc.sync, { backend: resolvedId })
+                            : pushBlocks(this.#db, handle.rpc.sync, { backend: resolvedId });
+                        inner = iterable[Symbol.asyncIterator]();
+                      }
+                      return inner.next();
+                    },
+                  );
+                },
+                (spanRef, outcome) => {
+                  if (!outcome.ok || outcome.value.done) return;
+                  spanRef.setAttribute("workspace.sync.entries", outcome.value.value.entries);
+                },
+              ),
+            );
+            if (result.done || result.value.complete) finished = true;
+            return result;
+          },
+          // Breaking out stops local driving. The operation stays
+          // pending and its last cursor stays durable, so a later
+          // iterable resumes it.
+          return: async (): Promise<IteratorResult<SyncProgress>> => {
+            finished = true;
+            await inner?.return?.();
+            return { done: true, value: undefined };
+          },
+        };
+      },
+    };
   }
 
   /**
@@ -1478,6 +1590,27 @@ function emptyBatchResult(targetCursor?: ChangeCursor): SyncBatchResult {
     skipped: [],
     cursor: target,
     targetCursor: target,
+  };
+}
+
+// A backend with no sync wire (a module backend, or a handle that
+// reports sync: "none") still has to produce a terminating iterable.
+// One complete, empty block lets a caller's `for await` finish rather
+// than spin waiting for progress that will never come.
+function emptySyncProgress(backend: string, direction: "pull" | "push"): SyncProgress {
+  const cursor = { rev: 0, path: null };
+  return {
+    operationId: "none",
+    generation: "none",
+    backend,
+    direction,
+    mode: "entries",
+    cursor,
+    targetCursor: cursor,
+    entries: 0,
+    bytes: 0,
+    skipped: 0,
+    complete: true,
   };
 }
 
