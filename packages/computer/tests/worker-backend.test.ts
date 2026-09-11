@@ -147,6 +147,18 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(result.stdout).not.toMatch(/command not found/);
   });
 
+  it("runs sqlite queries and persists the database in the host filesystem", async () => {
+    const id = freshId();
+    const create = await exec(
+      id,
+      `sqlite3 data.db "CREATE TABLE notes(body TEXT); INSERT INTO notes VALUES ('hello');"`,
+    );
+    expect(create).toEqual({ exitCode: 0, stdout: "", stderr: "" });
+
+    const query = await exec(id, `sqlite3 data.db "SELECT body FROM notes;"`);
+    expect(query).toEqual({ exitCode: 0, stdout: "hello\n", stderr: "" });
+  });
+
   it("isolates state between separate workspace ids", async () => {
     // Two host-DO names → two distinct workspaces, two distinct
     // Dynamic Worker isolates (the loader caches by

@@ -67,7 +67,10 @@ interface WorkerLoaderCode {
   compatibilityDate: string;
   compatibilityFlags?: string[];
   mainModule: string;
-  modules: Record<string, string | { js?: string; cjs?: string; text?: string }>;
+  modules: Record<
+    string,
+    string | { js?: string; cjs?: string; text?: string; wasm?: ArrayBuffer }
+  >;
   env?: Record<string, unknown>;
   globalOutbound?: unknown;
 }

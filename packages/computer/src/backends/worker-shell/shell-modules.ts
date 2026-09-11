@@ -19,7 +19,9 @@ import coreModules from "@cloudflare/computer/shell/core";
 // One generated feature group: module name -> source string. The
 // core group and every @cloudflare/computer/shell/<feature> import
 // share this shape.
-export type ShellModuleGroup = Readonly<Record<string, { js: string }>>;
+export type ShellModuleGroup = Readonly<
+  Record<string, { js: string } | { wasm: ArrayBuffer }>
+>;
 
 // The always-on core group. Ships in every Worker shell; carries
 // the ShellWorker entry (shell.js), the base command set, and the
@@ -31,8 +33,8 @@ export const SHELL_CORE_MODULES: ShellModuleGroup = Object.freeze({ ...coreModul
 // build keeps groups disjoint so order never matters in practice.
 export function assembleShellModules(
   groups: readonly ShellModuleGroup[] = [],
-): Readonly<Record<string, { js: string }>> {
-  const modules: Record<string, { js: string }> = { ...coreModules };
+): ShellModuleGroup {
+  const modules: Record<string, { js: string } | { wasm: ArrayBuffer }> = { ...coreModules };
   for (const group of groups) {
     Object.assign(modules, group);
   }
