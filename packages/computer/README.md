@@ -476,17 +476,18 @@ When assigning a workspace to a Think agent's `workspace`, pass
 `useThink: true` so Think's compatibility methods are added alongside
 `workspace.fs` and `workspace.runtime`.
 
-### Durable pending-sync retries
+### Resuming an incomplete sync
 
 A command can change backend files and then have its post-command pull
-fail; the result exposes `sync: { status: "pending", ... }`. Configure a
-`SyncRetryScheduler` on `Workspace` to persist one coalesced retry per
-backend, then call `workspace.retryPendingSync(backend)` from your DO's
-alarm. Retries use bounded exponential backoff and return `"exhausted"`
-after the configured maximum. A container replacement returns `"lost"`
-and clears the unrecoverable intent so new work is not blocked. The library
-does not own your DO's alarm. See `SyncRetryScheduler`, `SyncRetryIntent`,
-and `SyncRetryOptions` in the package exports.
+fail; the result exposes `sync: { status: "pending", ... }`. Nothing
+further is required to recover it. The sync operation and its watermark
+hold the progress durably, so the next `pull()` resumes from where the
+failed one stopped and drains the rest of the fixed target.
+
+A deferred exec fixes that target when the command finishes, which pins
+the command's changes rather than capturing a newer target that could
+have raced ahead. Attempt counts, backoff, and exhaustion are not part
+of the API: a caller that wants to stop trying stops iterating.
 
 ### Observability
 

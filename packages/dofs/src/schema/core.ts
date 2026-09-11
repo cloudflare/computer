@@ -11,9 +11,11 @@
 // composite-PK lookups now read straight from the PK b-tree leaf
 // with no rowid indirection, and `child_inode` lives in the
 // dirents leaf so the (parent, name) resolve read is covering
-// (no separate index needed). See `schema/migrations.ts` for the
+// (no separate index needed). Bumped to 7 when `_vfs_sync_operations`
+// and `_vfs_sync_skips` landed, carrying the durable half of a
+// restartable pull or push. See `schema/migrations.ts` for the
 // migration list; `sync.ts` carries the fresh-install DDL.
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [

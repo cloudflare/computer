@@ -444,6 +444,64 @@ describe("initializeSchema", () => {
     expect(norm(tableSql("vfs_chunks"))).toBe(norm(freshSql("vfs_chunks")));
   });
 
+  it("upgrades a v6 database with the sync operation tables", () => {
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+
+    // A v6 database: everything the current baseline creates except
+    // the two tables v7 adds. Simulated by initializing at the
+    // current baseline, dropping the new tables, and winding the
+    // stamped version back — the migrator must create them rather
+    // than relying on the IF NOT EXISTS baseline having done it.
+    initializeSchema(db, () => 0);
+    db.run("DROP TABLE _vfs_sync_operations");
+    db.run("DROP TABLE _vfs_sync_skips");
+    db.run("UPDATE vfs_meta SET v = ? WHERE k = ?", 6, "schema_version");
+
+    // Existing sync progress must survive the upgrade untouched: the
+    // operation table is additive and backfills nothing.
+    db.run(
+      "INSERT INTO _vfs_watermark (k, backend, v) VALUES (?, ?, ?) " +
+        "ON CONFLICT(k, backend) DO UPDATE SET v = excluded.v",
+      "fetchRev",
+      "container",
+      77,
+    );
+
+    initializeSchema(db, () => 0);
+
+    expect(db.one<{ v: number }>("SELECT v FROM vfs_meta WHERE k = ?", "schema_version")?.v).toBe(
+      SCHEMA_VERSION,
+    );
+    expect(
+      db.scalar<number>(
+        "SELECT v FROM _vfs_watermark WHERE k = ? AND backend = ?",
+        "fetchRev",
+        "container",
+      ),
+    ).toBe(77);
+
+    // An upgraded database has no in-flight operation, so the first
+    // pull after the upgrade captures a fresh target.
+    expect(db.one<{ c: number }>("SELECT COUNT(*) AS c FROM _vfs_sync_operations")?.c).toBe(0);
+
+    // The migrated shape must match a fresh install, or the two
+    // install paths diverge and only one gets tested.
+    const tableSql = (source: Database, name: string): string =>
+      source.one<{ sql: string }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        name,
+      )?.sql ?? "";
+    const fresh = new Database(new SQLiteTestStorage());
+    initializeSchema(fresh, () => 0);
+    const norm = (sql: string): string => sql.replace(/\s+/g, " ").trim().toUpperCase();
+
+    expect(norm(tableSql(db, "_vfs_sync_operations"))).toBe(
+      norm(tableSql(fresh, "_vfs_sync_operations")),
+    );
+    expect(norm(tableSql(db, "_vfs_sync_skips"))).toBe(norm(tableSql(fresh, "_vfs_sync_skips")));
+  });
+
   it("is idempotent across repeat calls", () => {
     const storage = new SQLiteTestStorage();
     const db = new Database(storage);

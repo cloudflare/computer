@@ -16,14 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SyncRPC } from "./interface.js";
 import { createSyncServer } from "./server.js";
-import {
-  pullBatch,
-  pullOnce,
-  pushBatch,
-  pushOnce,
-  reconcileWatermarks,
-  tick,
-} from "./sync-driver.js";
+import { pullOnce, pushOnce, reconcileWatermarks, tick } from "./sync-driver.js";
 
 // Two peers wired up as direct in-process SyncRPC stubs. No
 // WebSocket; we already have the real-wire convergence test in
@@ -352,7 +345,65 @@ describe("SyncRPC server — afterApply hook", () => {
     }
   });
 
-  it("a thrown hook does not fail the push", async () => {
+  it("a thrown hook fails the push and leaves the sender cursor behind", async () => {
+    const a = makePeer();
+    const b = makeReceiverWithSpy();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
+      providerA.writeFileSync("/hi.txt", "hi");
+      const before = readWatermark(a.db, "pushRev");
+
+      b.setAfterApply(() => {
+        throw new Error("settle blew up");
+      });
+
+      // The caller spawns a command on the strength of this
+      // acknowledgment, so an unflushed block must not be reported as
+      // success. The entries do commit on the receiver — the failure
+      // is about disk visibility, not the log — but the sender must
+      // not retire the block.
+      await expect(pushOnce(a.db, b.rpc)).rejects.toThrow("settle blew up");
+      expect(b.calls).toBe(1);
+      expect(fileEntries(b.db)).toContain("hi.txt");
+      expect(readWatermark(a.db, "pushRev")).toBe(before);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it("acknowledges an external push whose settle rejects", async () => {
+    const b = makeReceiverWithSpy();
+    try {
+      // An external writer (senderRev 0) has no durable cursor to
+      // rewind, and its entries skip the stale-tombstone guard because
+      // they apply as local writes. Reporting a failure would invite a
+      // retry of a delete that could remove a newer recreation, so the
+      // settle failure is swallowed for this caller only.
+      const provider = new SQLiteWorkspaceProvider(b.db, { now: () => 1 });
+      provider.writeFileSync("/gone.txt", "x");
+
+      b.setAfterApply(() => {
+        throw new Error("settle blew up");
+      });
+
+      const changes = new ReadableStream<ChangeEntry>({
+        start(controller) {
+          controller.enqueue({ kind: "delete", rev: 1, path: "/gone.txt" });
+          controller.close();
+        },
+      });
+      const ack = await b.rpc.push({ senderRev: 0, changes });
+      expect(b.calls).toBe(1);
+      // Acknowledged despite the failed settle, and the delete stands.
+      expect(ack.appliedPushCursor).toEqual({ rev: 0, path: null });
+      expect(fileEntries(b.db)).not.toContain("gone.txt");
+    } finally {
+      b.close();
+    }
+  });
+
+  it("replays the same block once the hook recovers", async () => {
     const a = makePeer();
     const b = makeReceiverWithSpy();
     try {
@@ -360,14 +411,17 @@ describe("SyncRPC server — afterApply hook", () => {
       providerA.writeFileSync("/hi.txt", "hi");
 
       b.setAfterApply(() => {
-        throw new Error("settle blew up");
+        throw new Error("disk full");
       });
+      await expect(pushOnce(a.db, b.rpc)).rejects.toThrow("disk full");
 
-      // The push must still succeed — entries are committed before
-      // the hook runs, and the server logs+swallows hook errors.
+      // The retry replans the same block. Re-applying entries the
+      // receiver already holds is absorbed by alreadyApplied(), so the
+      // second attempt settles cleanly and advances the cursor.
+      b.setAfterApply(() => {});
       const pushed = await pushOnce(a.db, b.rpc);
-      expect(pushed).toBe(1);
-      expect(b.calls).toBe(1);
+      expect(pushed).toBeGreaterThan(0);
+      expect(b.calls).toBe(2);
       expect(fileEntries(b.db)).toContain("hi.txt");
     } finally {
       a.close();
@@ -1320,145 +1374,3 @@ async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   hash.update(bytes);
   return new Uint8Array(hash.digest());
 }
-
-describe("bounded synchronization", () => {
-  it("pulls one entry per batch and resumes at the captured target", async () => {
-    const upstream = makePeer();
-    const downstream = makePeer();
-    try {
-      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
-      await provider.writeFile("/one.txt", "one");
-      await provider.writeFile("/two.txt", "two");
-
-      const first = await pullBatch(downstream.db, upstream.rpc, {
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(first.status).toBe("pending");
-      expect(first.entries).toBe(1);
-
-      const second = await pullBatch(downstream.db, upstream.rpc, {
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(second.status).toBe("pending");
-      const third = await pullBatch(downstream.db, upstream.rpc, {
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(third.status).toBe("complete");
-      expect(second.entries + third.entries).toBe(1);
-      expect(fileEntries(downstream.db)).toEqual(["one.txt", "two.txt"]);
-    } finally {
-      upstream.close();
-      downstream.close();
-    }
-  });
-
-  it("stages a large file across pull batches without redownloading chunks", async () => {
-    const upstream = makePeer();
-    const downstream = makePeer();
-    try {
-      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
-      const large = new Uint8Array(3 * 512 * 1024);
-      large.fill(1, 0, 512 * 1024);
-      large.fill(2, 512 * 1024, 2 * 512 * 1024);
-      large.fill(3, 2 * 512 * 1024);
-      await provider.writeFile("/large.bin", large);
-      let fetches = 0;
-      const rpc = new Proxy(upstream.rpc as object, {
-        get(target, property, receiver) {
-          if (property === "fetchObjects") {
-            return (hashes: Uint8Array[]) => {
-              fetches += hashes.length;
-              return Reflect.get(target, property, receiver).call(target, hashes);
-            };
-          }
-          return Reflect.get(target, property, receiver);
-        },
-      }) as SyncRPC;
-
-      const first = await pullBatch(downstream.db, rpc, {
-        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
-      });
-      expect(first.status).toBe("pending");
-      expect(first.entries).toBe(0);
-      expect(first.bytes).toBe(512 * 1024);
-
-      const second = await pullBatch(downstream.db, rpc, {
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
-      });
-      expect(second.status).toBe("pending");
-      expect(second.bytes).toBe(512 * 1024);
-
-      const third = await pullBatch(downstream.db, rpc, {
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 8, maxBytes: 512 * 1024 },
-      });
-      expect(third.status).toBe("complete");
-      expect(fetches).toBe(3);
-    } finally {
-      upstream.close();
-      downstream.close();
-    }
-  });
-
-  it("pushes one bounded unit and resumes through a revision", async () => {
-    const upstream = makePeer();
-    const downstream = makePeer();
-    try {
-      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
-      await provider.writeFile("/one.txt", "one");
-      await provider.writeFile("/two.txt", "two");
-
-      const first = await pushBatch(upstream.db, downstream.rpc, {
-        backend: "container",
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(first.status).toBe("pending");
-      expect(first.entries).toBe(1);
-
-      const second = await pushBatch(upstream.db, downstream.rpc, {
-        backend: "container",
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(second.status).toBe("pending");
-      const third = await pushBatch(upstream.db, downstream.rpc, {
-        backend: "container",
-        targetCursor: first.targetCursor,
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-      expect(third.status).toBe("complete");
-      expect(fileEntries(downstream.db)).toEqual(["one.txt", "two.txt"]);
-    } finally {
-      upstream.close();
-      downstream.close();
-    }
-  });
-
-  it("leaves an advanced fetch cursor alone when an old target is already satisfied", async () => {
-    const upstream = makePeer();
-    const downstream = makePeer();
-    try {
-      const provider = new SQLiteWorkspaceProvider(upstream.db, { now: () => 1 });
-      await provider.writeFile("/one.txt", "one");
-      const oldTarget = { rev: currentRev(upstream.db), path: null };
-      await provider.writeFile("/two.txt", "two");
-      await pullOnce(downstream.db, upstream.rpc);
-      const advanced = readFetchCursor(downstream.db);
-
-      const result = await pullBatch(downstream.db, upstream.rpc, {
-        targetCursor: oldTarget,
-        budget: { maxEntries: 1, maxBytes: 1024 },
-      });
-
-      expect(result.status).toBe("complete");
-      expect(result.cursor).toEqual(advanced);
-      expect(readFetchCursor(downstream.db)).toEqual(advanced);
-    } finally {
-      upstream.close();
-      downstream.close();
-    }
-  });
-});

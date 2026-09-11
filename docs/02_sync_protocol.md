@@ -222,6 +222,148 @@ in-process state. A regression in the post-apply cursor advancement
 path trips the assertion on the next push or pull rather than
 corrupting data silently.
 
+## Restartable synchronization
+
+A large sync cannot assume it finishes in one invocation. A Durable
+Object can be evicted between two steps, an alarm has a hard cutoff,
+and a JavaScript generator survives neither. `Workspace.pull()`
+and `Workspace.push()` therefore treat the iterator as
+disposable and SQLite as the durability surface.
+
+One `next()` performs one complete block: plan it, transfer it, apply
+it, persist the cursor, yield. No RPC stream stays open across a yield,
+because the caller may never return. Recreating the iterable resumes
+from durable state, so these two lines are equivalent to iterating
+twice on one iterator:
+
+```ts
+await workspace.pull()[Symbol.asyncIterator]().next();
+// Durable Object may be evicted here.
+await workspace.pull()[Symbol.asyncIterator]().next();
+```
+
+Durable state lives in two places. `_vfs_sync_operations` holds one row
+per `(backend, direction)` carrying the fixed target, the generation
+that fences superseded executions, and the block sizing profile. The
+committed progress cursor stays in the watermark tables above, because
+filesystem application and cursor advancement have to commit together.
+The operation row records where a sync is going; the watermark records
+how far it got.
+
+Callers pass no cursor, target, or budget. Block sizing is internal and
+shrinks automatically when a block is detected as interrupted, so a
+caller cannot ask for a block too large to complete.
+
+### The library never owns an alarm
+
+`Workspace` does not call `setAlarm` or `deleteAlarm`. Scheduling
+belongs to the application, which knows what else its alarm is for.
+A strict one-step handler gives each block a fresh CPU allowance:
+
+```ts
+async alarm() {
+  // Leave a durable watchdog before entering a block. A hard reset
+  // cannot erase this future invocation.
+  await this.ctx.storage.setAlarm(Date.now() + 30_000);
+
+  const iterator = this.workspace.pull()[Symbol.asyncIterator]();
+  const { value, done } = await iterator.next();
+
+  if (done || value.complete) {
+    await this.ctx.storage.deleteAlarm();
+  } else {
+    await this.ctx.storage.setAlarm(Date.now() + 1_000);
+  }
+}
+```
+
+Completion is exposed on the yielded value rather than only through a
+following `done: true`, so a one-step handler can decide whether to
+reschedule without paying for a second `next()`.
+
+An application that would rather drive several blocks per invocation
+owns that wall-time budget too:
+
+```ts
+async alarm() {
+  const stopAt = Date.now() + 12 * 60_000;
+  await this.ctx.storage.setAlarm(Date.now() + 30_000);
+
+  for await (const progress of this.workspace.pull()) {
+    if (progress.complete) return;
+    if (Date.now() >= stopAt) {
+      await this.ctx.storage.setAlarm(Date.now() + 1_000);
+      return;
+    }
+  }
+}
+```
+
+Breaking out of either loop stops local driving without failing the
+operation. The last yielded cursor stays durable and a later iterable
+resumes from it. The corollary is that the library cannot guarantee
+convergence if the application never calls it again — that is the
+deliberate price of leaving scheduling to the implementor.
+
+### Entry mode and pack mode
+
+Small windows ship one `ChangeEntry` at a time, with a `hasObjects`
+probe and a `fetchObjects` pull for the bytes the receiver lacks. That
+is cheap for a handful of changes and hopeless for tens of thousands of
+them.
+
+Above either threshold the operation switches to a **change pack**: one
+gzip stream carrying the entries interleaved with the unique objects
+they reference, so a block needs no object round trips at all.
+
+| Threshold | Value |
+| --- | --- |
+| Entries in the cursor window | 20,000 |
+| Estimated payload bytes | 100 MiB |
+
+Selection happens once per operation and is persisted on the operation
+row. The mode cannot change mid-operation: a block's encoding must not
+depend on when it was requested, or a replayed block would not match
+the original and the receiver could not absorb it as a no-op. Since the
+target is fixed at creation, the window cannot grow underneath the
+estimate.
+
+Pack framing is length-prefixed records inside the gzip stream, closed
+by a footer carrying the start cursor, block cursor, target, generation,
+counts, and a digest. A truncated or tampered pack is rejected as a
+protocol error before anything applies, leaving the cursor untouched —
+advancing over entries that never arrived would lose them silently.
+
+`fetchChangePack` and `applyChangePack` are optional on `SyncRPC`. A
+peer that predates them keeps working in entry mode, so the two sides
+can be deployed in either order.
+
+### Replay and idempotency
+
+Because the cursor advances only after a block applies, any block
+interrupted before its acknowledgment is re-applied. Replay safety is
+per entry kind rather than a blanket property:
+
+| Entry | Replay behavior |
+| --- | --- |
+| `file` | `alreadyApplied` compares the manifest hash; identical content is a no-op. |
+| `dir` | Compares mode; a match is a no-op. |
+| `symlink` | Compares mode and target; a match is a no-op. |
+| `delete` | Compares the tombstone's rev against the live inode's. A path recreated **above** the tombstone rev is newer information, so the delete is dropped. |
+
+The delete case is why replay cannot be assumed idempotent for free. A
+tombstone describes a path as of the rev it was stamped with; replaying
+it against a newer local recreation would destroy data the tombstone
+never described. The recreation is itself a change the next push ships
+upstream, so dropping the stale delete loses no work.
+
+Entries the receiver refuses — most often a container-side write under
+a read-only mount — are reported in `SyncProgress.skipped` **and**
+written to `_vfs_sync_skips`. The cursor advances past them, because an
+entry that can never apply would otherwise stall the operation forever.
+Recording them durably keeps the drop auditable rather than visible
+only to whoever happened to read that one progress value.
+
 ## Wire shape
 
 The wire is symmetric: push and fetch both move `ChangeEntry`

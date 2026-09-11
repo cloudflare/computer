@@ -291,6 +291,11 @@ export async function applyChanges(
     if (options.source === "upstream" && entry.kind !== "delete") {
       if (alreadyApplied(db, entry)) continue;
     }
+    // A replayed tombstone must not delete a path that was recreated
+    // above the tombstone's revision.
+    if (options.source === "upstream" && entry.kind === "delete" && tombstoneIsStale(db, entry)) {
+      continue;
+    }
     // Read-only mount guard. Entries under a registered read-only
     // mount root are surfaced via the return value and not applied.
     // The owning workspace's surface (Workspace.pull, exec()) folds
@@ -415,6 +420,11 @@ export function applyChangesSync(
   for (const entry of entries) {
     if (options.source === "upstream" && entry.kind !== "delete") {
       if (alreadyApplied(db, entry)) continue;
+    }
+    // See tombstoneIsStale: a replayed delete must not clobber a
+    // newer local recreation.
+    if (options.source === "upstream" && entry.kind === "delete" && tombstoneIsStale(db, entry)) {
+      continue;
     }
     const blockingRoot = readOnlyRootFor(db, entry.path);
     if (blockingRoot !== undefined) {
@@ -555,6 +565,29 @@ function assertChunkSize(actual: number, declared: number, hash: Uint8Array, pat
   throw new Error(
     `applyChanges: chunk ${hex(hash)} for ${path} declares ${declared} bytes but holds ${actual}`,
   );
+}
+
+// Decide whether an upstream tombstone may delete the live path.
+//
+// A tombstone describes the path as of the revision it was stamped
+// with. Because the sync cursor only advances after a block applies,
+// any block interrupted before its acknowledgment is replayed — and a
+// replayed tombstone whose path was recreated locally in the meantime
+// would destroy content the tombstone never described.
+//
+// The guard is a revision comparison: apply the delete only when the
+// live path is no newer than the tombstone. A path recreated above the
+// tombstone's rev is newer information than the delete, so the delete
+// is stale and dropped. It is not lost work — the recreation is itself
+// a change that the next push ships upstream.
+//
+// Local deletes are exempt. They are authored here, not replayed, so
+// there is no earlier revision to compare against.
+function tombstoneIsStale(db: Database, entry: ChangeEntry & { kind: "delete" }): boolean {
+  const live = resolveInode(db, entry.path, { followSymlinks: false });
+  if (live === null) return false;
+  const row = db.one<{ rev: number }>("SELECT rev FROM vfs_nodes WHERE inode = ?", live.inode);
+  return row !== undefined && row.rev > entry.rev;
 }
 
 // Compare an entry against the local node graph. Returns true when

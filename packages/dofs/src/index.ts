@@ -41,6 +41,32 @@ export type { ApplyOptions, ApplyResult, SkippedEntry } from "./sync/apply.js";
 // to a Database.
 export { applyChanges, applyChangesSync } from "./sync/apply.js";
 export { stageBlob } from "./sync/blobs.js";
+export type {
+  BlockObject,
+  ModeDecision,
+  PlanBlockRequest,
+  PlannedBlock,
+  SelectModeRequest,
+} from "./sync/blocks.js";
+export {
+  PACK_THRESHOLD_BYTES,
+  PACK_THRESHOLD_ENTRIES,
+  planBlock,
+  selectMode,
+} from "./sync/blocks.js";
+export type {
+  DecodeChangePackOptions,
+  DecodedChangePack,
+  EncodeChangePackInput,
+  PackFooter,
+} from "./sync/change-pack.js";
+export {
+  decodeChangePack,
+  encodeChangePack,
+  PACK_FORMAT_VERSION,
+  PackProtocolError,
+  readPackFooter,
+} from "./sync/change-pack.js";
 export type { ChangeEntry } from "./sync/changes.js";
 export { materialiseChange } from "./sync/changes.js";
 export type { CoalesceOptions } from "./sync/coalesce.js";
@@ -50,6 +76,32 @@ export { DEFAULT_IGNORE, isIgnored } from "./sync/ignore.js";
 export { assertAppliedPushCursor } from "./sync/invariant.js";
 export type { ManifestChunk } from "./sync/manifests.js";
 export { buildManifest, MANIFEST_VERSION } from "./sync/manifests.js";
+export type {
+  BlockProfile,
+  OpenedOperation,
+  SyncDirection,
+  SyncMode,
+  SyncOperation,
+  SyncOperationStatus,
+  SyncSkip,
+  TerminalStatus,
+} from "./sync/operations.js";
+export {
+  beginCapture,
+  clearBlockMarker,
+  completeOperation,
+  DEFAULT_BLOCK_PROFILE,
+  failOperation,
+  fixTarget,
+  MIN_BLOCK_PROFILE,
+  markBlockStarted,
+  openOperation,
+  pruneSkips,
+  readOperation,
+  readSkips,
+  recordSkip,
+  shrinkBlockProfile,
+} from "./sync/operations.js";
 export { pushObjects } from "./sync/push.js";
 export type { ChangeCursor, WatermarkKey } from "./sync/watermarks.js";
 export {

@@ -12,9 +12,12 @@ import {
   compareChangeCursors,
   currentRev,
   type Database,
+  decodeChangePack,
+  encodeChangePack,
   fetchObjects,
   hasObjects,
   materialiseChange,
+  planBlock,
   readFetchCursor,
   readWatermark,
   stageBlob,
@@ -144,14 +147,38 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
         writeFetchCursor(this.db, senderCursor);
       }
     });
+    // Settle the receiver's shim, and let the outcome decide what the
+    // caller is told — which differs by who the caller is.
+    //
+    // A peer push is replayable. Its sender holds a durable push
+    // cursor, so rejecting the acknowledgment leaves that cursor
+    // where it was and the next push replans the same block. That
+    // matters because the pre-command bracket pushes, advances on the
+    // acknowledgment, and only then spawns: acknowledging an
+    // unflushed block would retire it and let the command read stale
+    // disk. Replay is safe because these entries carry
+    // source: "upstream", which routes them through the
+    // already-applied and stale-tombstone guards.
+    //
+    // An external push is not replayable. It has no durable cursor to
+    // rewind, and its entries are applied as source: "local", which
+    // deliberately bypasses those guards because local writes are
+    // authored here rather than replayed. Reporting a failure after
+    // the commit therefore invites the caller to repeat a mutation
+    // that is not idempotent: a retried delete would carry the
+    // original revision and, with the stale-tombstone check skipped,
+    // remove a file some other writer recreated in between. So the
+    // failure is logged and the push acknowledged, leaving the shim's
+    // periodic reconcile to repair disk.
     if (this.options.afterApply !== undefined && entries.length > 0) {
-      try {
+      if (isPeer) {
         await this.options.afterApply();
-      } catch (err) {
-        // Settle hook failures must not surface as push failures —
-        // the entries are already committed. Log so the operator
-        // notices a wedged shim, then return success.
-        console.warn("[SyncRPCServer] afterApply hook failed:", err);
+      } else {
+        try {
+          await this.options.afterApply();
+        } catch (err) {
+          console.warn("[SyncRPCServer] afterApply hook failed for external push:", err);
+        }
       }
     }
     return {
@@ -194,6 +221,105 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       stream: iterableToReadableStream(
         coalesceChanges(this.db, after, { ignore, through: currentCursor }),
       ),
+    };
+  }
+
+  // Bulk pull. Plans one block against the same cursor window
+  // fetchChanges uses, then encodes it as a pack so the caller needs no
+  // follow-up object round trips.
+  async fetchChangePack(input: {
+    after?: ChangeCursor;
+    through?: ChangeCursor;
+    ignore?: string[];
+    maxEntries: number;
+    maxBytes: number;
+    generation: string;
+  }): Promise<{
+    cursor: ChangeCursor;
+    drained: boolean;
+    entryCount: number;
+    appliedPushCursor: ChangeCursor;
+    stream: ReadableStream<Uint8Array>;
+  }> {
+    if (this.options.beforeFetch !== undefined) {
+      try {
+        await this.options.beforeFetch();
+      } catch (err) {
+        console.warn("[SyncRPCServer] beforeFetch hook failed:", err);
+      }
+    }
+    const after = input.after ?? { rev: 0, path: null };
+    const ignore = input.ignore ?? this.options.ignore;
+    const snapshotCursor = { rev: currentRev(this.db), path: null };
+    const target =
+      input.through !== undefined && compareChangeCursors(input.through, snapshotCursor) < 0
+        ? input.through
+        : snapshotCursor;
+
+    const block = await planBlock(this.db, {
+      after,
+      through: target,
+      profile: { maxEntries: input.maxEntries, maxBytes: input.maxBytes },
+      ...(ignore === undefined ? {} : { ignore }),
+    });
+
+    return {
+      cursor: block.cursor,
+      drained: block.drained,
+      entryCount: block.entries.length,
+      appliedPushCursor: readFetchCursor(this.db),
+      stream: encodeChangePack(this.db, {
+        block,
+        after,
+        target,
+        generation: input.generation,
+      }),
+    };
+  }
+
+  // Bulk push receiver. Decode fully before applying anything: a pack
+  // that fails validation must leave no partial state behind, because
+  // the sender advances its cursor on the acknowledgment this returns.
+  async applyChangePack(input: {
+    generation: string;
+    stream: ReadableStream<Uint8Array>;
+  }): Promise<{
+    appliedPushCursor: ChangeCursor;
+    applied: number;
+    entryCount: number;
+  }> {
+    const decoded = await decodeChangePack(input.stream, {
+      expectGeneration: input.generation,
+    });
+    for (const [key, bytes] of decoded.objects) {
+      stageBlob(this.db, hexToBytes(key), bytes, Date.now());
+    }
+    const result = applyChangesSync(this.db, decoded.entries, new Map(), {
+      source: "upstream",
+    });
+    // The footer's block cursor is the sender's checkpoint; echo it so
+    // the sender advances only through what actually applied here.
+    writeFetchCursor(this.db, decoded.footer.blockCursor);
+    // Mirror push(): settle the receiver's shim so a subsequent
+    // shell.exec sees the just-pushed files on disk. Pack mode is
+    // selected for exactly the large windows a pre-command push
+    // carries, so skipping this strands the shim on stale disk state.
+    //
+    // A rejection propagates rather than being logged. The caller
+    // treats an acknowledgment as "the receiver is ready", advances
+    // its durable push cursor on it, and then spawns the command, so
+    // acknowledging an unflushed block retires it permanently and
+    // lets the command read stale disk. Failing the RPC leaves the
+    // sender cursor where it was and the next push replans the same
+    // block; the entries are already committed here, and applying
+    // them again is absorbed by alreadyApplied().
+    if (this.options.afterApply !== undefined && decoded.entries.length > 0) {
+      await this.options.afterApply();
+    }
+    return {
+      appliedPushCursor: decoded.footer.blockCursor,
+      applied: result.applied,
+      entryCount: decoded.entries.length,
     };
   }
 
@@ -378,4 +504,13 @@ function iterableToReadableStream<T>(it: AsyncIterable<T>): ReadableStream<T> {
       if (iterator.return) await iterator.return(reason as undefined);
     },
   });
+}
+
+// Pack object keys are hex; stageBlob wants the raw hash bytes.
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
 }

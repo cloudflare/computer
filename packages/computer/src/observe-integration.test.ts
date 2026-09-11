@@ -152,7 +152,10 @@ describe("Workspace observer — connection", () => {
 });
 
 describe("Workspace observer — sync", () => {
-  it("emits workspace.sync.push with the entry count attribute", async () => {
+  // One span per committed block, not one per call: a sync is now a
+  // sequence of durably checkpointed blocks, and a caller that drives
+  // three blocks from three alarms should see three spans.
+  it("emits workspace.sync.push.block per committed block", async () => {
     const observer = makeRecorder();
     const ws = new Workspace({
       storage: makeStorage(),
@@ -160,13 +163,15 @@ describe("Workspace observer — sync", () => {
       observer,
     });
     await ws.ready();
-    const pushed = await ws.push();
-    const pushSpan = findSpan(observer.spans, "workspace.sync.push");
+    for await (const progress of ws.push()) {
+      if (progress.complete) break;
+    }
+    const pushSpan = findSpan(observer.spans, "workspace.sync.push.block");
     expect(pushSpan.outcome).toBe("ok");
-    expect(pushSpan.attributes["workspace.sync.pushed"]).toBe(pushed);
+    expect(pushSpan.attributes["workspace.sync.entries"]).toBe(0);
   });
 
-  it("emits workspace.sync.pull with applied and skipped counts", async () => {
+  it("emits workspace.sync.pull.block per committed block", async () => {
     const observer = makeRecorder();
     const ws = new Workspace({
       storage: makeStorage(),
@@ -174,10 +179,12 @@ describe("Workspace observer — sync", () => {
       observer,
     });
     await ws.ready();
-    await ws.pull();
-    const pullSpan = findSpan(observer.spans, "workspace.sync.pull");
-    expect(pullSpan.attributes["workspace.sync.applied"]).toBe(0);
-    expect(pullSpan.attributes["workspace.sync.skipped"]).toBe(0);
+    for await (const progress of ws.pull()) {
+      if (progress.complete) break;
+    }
+    const pullSpan = findSpan(observer.spans, "workspace.sync.pull.block");
+    expect(pullSpan.outcome).toBe("ok");
+    expect(pullSpan.attributes["workspace.sync.entries"]).toBe(0);
   });
 });
 

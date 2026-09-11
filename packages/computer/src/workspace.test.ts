@@ -9,6 +9,23 @@ import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
 
+// Drive a sync iterable to completion. push() and pull() are now
+// restartable block iterables, but these tests care about the folded
+// outcome — total entries shipped, or entries applied and skipped — so
+// each one drains the iterable and sums the progress values.
+async function drainSync(
+  iterable: AsyncIterable<{ entries: number; skipped: number; complete: boolean }>,
+): Promise<{ entries: number; skipped: number }> {
+  let entries = 0;
+  let skipped = 0;
+  for await (const progress of iterable) {
+    entries += progress.entries;
+    skipped += progress.skipped;
+    if (progress.complete) break;
+  }
+  return { entries, skipped };
+}
+
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();
 }
@@ -895,9 +912,9 @@ describe("Workspace backend selection", () => {
       const ws = new Workspace({ storage: makeStorage() });
       await ws.ready();
       await ws.fs.writeFile("/a.txt", "hi");
-      expect(await ws.push()).toBe(0);
-      const pulled = await ws.pull();
-      expect(pulled).toEqual({ applied: 0, skipped: [] });
+      expect((await drainSync(ws.push())).entries).toBe(0);
+      const pulled = await drainSync(ws.pull());
+      expect(pulled).toEqual({ entries: 0, skipped: 0 });
     });
 
     it("module-only push and pull are no-op synchronization", async () => {
@@ -910,8 +927,8 @@ describe("Workspace backend selection", () => {
         },
       };
       const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
-      expect(await ws.push()).toBe(0);
-      expect(await ws.pull()).toEqual({ applied: 0, skipped: [] });
+      expect((await drainSync(ws.push())).entries).toBe(0);
+      expect(await drainSync(ws.pull())).toEqual({ entries: 0, skipped: 0 });
     });
 
     it("stub() works and fs methods round-trip through it", async () => {
@@ -1014,7 +1031,7 @@ describe("Workspace backend selection", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     // Should rebuild silently and resolve to a push count, not throw.
-    const pushed = await ws.push();
+    const pushed = (await drainSync(ws.push())).entries;
     expect(pushed).toBeGreaterThanOrEqual(0);
     expect(connectCount).toBe(2);
   });
@@ -1058,6 +1075,8 @@ describe("Workspace backend selection", () => {
     const sync: import("@cloudflare/computer-rpc").SyncRPC = {
       push: () => tripwire("push"),
       fetchChanges: () => tripwire("fetchChanges"),
+      fetchChangePack: () => tripwire("fetchChangePack"),
+      applyChangePack: () => tripwire("applyChangePack"),
       readEntry: () => tripwire("readEntry"),
       hasObjects: () => tripwire("hasObjects"),
       fetchObjects: () => {
@@ -1089,11 +1108,11 @@ describe("Workspace backend selection", () => {
     expect(touched).toEqual([]);
 
     await ws.fs.writeFile("/local.txt", "hello");
-    const pushed = await ws.push();
-    const pulled = await ws.pull();
+    const pushed = (await drainSync(ws.push())).entries;
+    const pulled = await drainSync(ws.pull());
     expect(pushed).toBe(0);
-    expect(pulled.applied).toBe(0);
-    expect(pulled.skipped).toEqual([]);
+    expect(pulled.entries).toBe(0);
+    expect(pulled.skipped).toBe(0);
     expect(touched).toEqual([]);
   });
 });
@@ -1155,30 +1174,36 @@ describe("Workspace.fs against the local store", () => {
   });
 });
 
-describe("Workspace.pull return shape", () => {
-  it("resolves to the dofs ApplyResult shape", async () => {
-    // The fake SyncRPC's fetchChanges returns an empty stream, so
-    // applied is 0 and skipped is []. The point of the test isn't
-    // counts but the shape: pull() now returns the structured
-    // result so callers can read skipped[] without an extra
-    // round trip.
+describe("Workspace.pull progress shape", () => {
+  it("yields one complete progress value when there is nothing to apply", async () => {
+    // The fake SyncRPC has no changes to offer, so the operation
+    // completes in one empty block. The point is the contract: a
+    // terminating iterable whose last value is marked complete, with
+    // the cursors the caller needs to decide whether to reschedule.
     const ws = new Workspace({ storage: makeStorage(), backends: [makeBackend("fake")] });
     await ws.ready();
-    const result = await ws.pull();
-    expect(result).toEqual({ applied: 0, skipped: [] });
+
+    const seen = [];
+    for await (const progress of ws.pull()) seen.push(progress);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      backend: "fake",
+      direction: "pull",
+      entries: 0,
+      skipped: 0,
+      complete: true,
+    });
+    expect(seen[0].cursor).toBeDefined();
+    expect(seen[0].targetCursor).toBeDefined();
   });
 
-  it("uses batch options on pull without changing the default overload", async () => {
+  it("takes no cursor or budget from the caller", async () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [makeBackend("fake")] });
     await ws.ready();
-    const result = await ws.pull("fake", {
-      mode: "batch",
-      maxEntries: 1,
-      maxBytes: 1024,
-    });
-    expect(result.status).toBe("complete");
-    expect(result.entries).toBe(0);
-    expect(result.targetCursor).toEqual({ rev: 0, path: null });
+    // The only argument is the backend id.
+    expect(ws.pull.length).toBeLessThanOrEqual(1);
+    expect(ws.push.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -1229,8 +1254,8 @@ describe("Workspace mutation serialization", () => {
 
     // Fire two concurrent push() calls. Without the FIFO, both
     // enter pushOnce simultaneously and peakInFlight.push hits 2.
-    const a = ws.push();
-    const b = ws.push();
+    const a = drainSync(ws.push());
+    const b = drainSync(ws.push());
     // Let the event loop settle so any concurrent entries register.
     await new Promise((r) => setTimeout(r, 20));
     expect(peakInFlight.push).toBe(1);
@@ -1268,7 +1293,7 @@ describe("Workspace mutation serialization", () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [makeBackend("fake", rpc)] });
     await ws.ready();
     await ws.fs.writeFile("/a.txt", "hello");
-    const push = ws.push();
+    const push = drainSync(ws.push());
     // Wait a beat so push reaches the gated remote.push call.
     await new Promise((r) => setTimeout(r, 20));
     // Read while push is still in flight; must resolve fast.
@@ -1310,7 +1335,7 @@ describe("Workspace transport-failure invalidation", () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
     await ws.fs.writeFile("/a.txt", "hi");
 
-    await expect(ws.push()).resolves.toBeGreaterThan(0);
+    await expect(drainSync(ws.push()).then((r) => r.entries)).resolves.toBeGreaterThan(0);
     expect(connects).toBe(2);
     expect(closes).toBe(1);
     await expect(replacement.readEntry("/a.txt")).resolves.toMatchObject({
@@ -1351,7 +1376,7 @@ describe("Workspace transport-failure invalidation", () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
     await ws.fs.writeFile("/a.txt", "hi");
 
-    const push = ws.push();
+    const push = drainSync(ws.push());
     await closeBegan;
     const ready = ws.ready("only");
     await Promise.resolve();
@@ -1367,6 +1392,11 @@ describe("Workspace transport-failure invalidation", () => {
     let closes = 0;
     const stale: import("@cloudflare/computer-rpc").SyncRPC = {
       ...fakeRpc(),
+      // A pull opens with a settled watermarks() read to fix its
+      // target, so that is the call a dead session fails first.
+      async watermarks() {
+        throw new WorkspaceTransportError("RPC session was shut down");
+      },
       async fetchChanges() {
         throw new WorkspaceTransportError("RPC session was shut down");
       },
@@ -1387,7 +1417,7 @@ describe("Workspace transport-failure invalidation", () => {
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
 
-    await expect(ws.pull()).resolves.toEqual({ applied: 0, skipped: [] });
+    await expect(drainSync(ws.pull())).resolves.toEqual({ entries: 0, skipped: 0 });
     expect(connects).toBe(2);
     expect(closes).toBe(1);
   });
@@ -1410,7 +1440,7 @@ describe("Workspace transport-failure invalidation", () => {
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
     await ws.fs.writeFile("/ready.txt", "ready");
 
-    await expect(ws.push()).resolves.toBeGreaterThan(0);
+    await expect(drainSync(ws.push()).then((r) => r.entries)).resolves.toBeGreaterThan(0);
     expect(connects).toBe(2);
   });
 
@@ -1438,7 +1468,7 @@ describe("Workspace transport-failure invalidation", () => {
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
 
-    await expect(ws.pull()).resolves.toEqual({ applied: 0, skipped: [] });
+    await expect(drainSync(ws.pull())).resolves.toEqual({ entries: 0, skipped: 0 });
     expect(connects).toBe(2);
     expect(closes).toBe(1);
   });
@@ -1458,7 +1488,7 @@ describe("Workspace transport-failure invalidation", () => {
     };
     const ws = new Workspace({ storage: makeStorage(), backends: [backend] });
 
-    const error = await ws.pull().catch((caught: unknown) => caught);
+    const error = await drainSync(ws.pull()).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(WorkspaceTransportError);
     expect(error).toMatchObject({ cause: errors[1] });
     expect(String(error)).toMatch(/pull failed after 1 reconnect retry/);
@@ -1491,9 +1521,9 @@ describe("Workspace transport-failure invalidation", () => {
     await ws.ready("only");
     expect(connects).toBe(1);
     await ws.fs.writeFile("/a.txt", "hi");
-    await expect(ws.push()).rejects.toThrow(/EROFS/);
+    await expect(drainSync(ws.push())).rejects.toThrow(/EROFS/);
     // Cache survives a non-transport error.
-    await ws.push().catch(() => undefined);
+    await drainSync(ws.push()).catch(() => undefined);
     expect(connects).toBe(1);
   });
 

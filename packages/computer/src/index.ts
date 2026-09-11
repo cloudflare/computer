@@ -15,7 +15,7 @@
 // TestBackend stays on the main entry because it's a thin
 // test-only fake with no payload.
 
-export type { SyncBatchBudget, SyncBatchResult } from "@cloudflare/computer-rpc/driver";
+export type { SyncProgress } from "@cloudflare/computer-rpc/driver";
 export type {
   ApplyResult,
   DurableObjectStorageLike,
@@ -44,6 +44,17 @@ export type {
   MountFactory,
   MountWriteAPI,
 } from "./mounts/types.js";
+export {
+  createSyncLogger,
+  DEFAULT_CPU_LIMIT_MS,
+  type SyncBlockTelemetry,
+  type SyncLogger,
+  type SyncLoggerOptions,
+  type SyncOperationTelemetry,
+  syncBlockLog,
+  syncOperationLog,
+  type TelemetryRecord,
+} from "./observe/sync-telemetry.js";
 export {
   noopObserver,
   type WorkspaceAttributes,
@@ -97,13 +108,8 @@ export {
   withWorkspace,
 } from "./with-workspace.js";
 export {
-  type SyncBatchOptions,
-  type SyncRetryIntent,
-  type SyncRetryOptions,
-  type SyncRetryScheduler,
   type ThinkWorkspaceCompatibility,
   Workspace,
   type WorkspaceGitFactory,
   type WorkspaceOptions,
-  type WorkspaceRetryPendingSyncResult,
 } from "./workspace.js";
