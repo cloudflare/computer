@@ -166,14 +166,17 @@ Entries are in name order. A non-final page includes `nextOffset`; pass it as th
 
 ```ts
 {
-  path?: string;   // default /workspace
+  path?: string;      // default /workspace
   pattern: string;
-  limit?: number;  // default 200, maximum 1000
+  exclude?: string[];
+  limit?: number;     // default 200, maximum 1000
   offset?: number;
 }
 ```
 
 The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, and `?` matches one non-separator character. Results contain `path` and `type`; a non-final page includes `nextOffset`. Pagination reaches `workspace.fs.find`, which walks directory children in fixed-size pages and stops after collecting the requested page instead of materializing every match.
+
+`exclude` takes globs of the same shape, matched against the same relative path, and beats the inclusion pattern. An excluded directory is pruned rather than filtered, so `exclude: ["node_modules", "node_modules/**"]` keeps the walk out of a package tree instead of walking it and discarding the results.
 
 ## `grep`
 

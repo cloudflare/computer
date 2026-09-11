@@ -223,7 +223,9 @@ policy. The backend does not own the external runtime's lifecycle.
 - **No hard links, no `utimes`.** The adapter throws `ENOSYS` on
   `link` (the store has no hard-link model) and no-ops on
   `utimes` (no atime column). `chmod`, `symlink`, `readlink`,
-  and `lstat` all work end-to-end against the DO's store.
+  `lstat`, and `rename` all work end-to-end against the DO's
+  store, so `mv` moves an entry in one operation instead of
+  copying and then deleting it.
 - **No cross-request reattach.** `ShellWorker.getExec` always
   returns ENOENT; `killExec` is a no-op. Each exec is scoped to
   its own call. The previous in-isolate event log shape didn't

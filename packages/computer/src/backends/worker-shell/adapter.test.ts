@@ -275,6 +275,34 @@ describe("WorkspaceFsAdapter — composites", () => {
     expect(await workspace.fs.readFile("/dst", "utf8")).toBe("hello");
     await expect(workspace.fs.stat("/src")).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("mv moves through the store's rename rather than copy and delete", async () => {
+    await workspace.fs.writeFile("/src", "hello");
+    const rename = vi.spyOn(stub, "rename");
+    const writeFile = vi.spyOn(stub, "writeFile");
+    await adapter.mv("/src", "/dst");
+    expect(rename).toHaveBeenCalledWith("/src", "/dst");
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it("mv moves a directory tree in one operation", async () => {
+    await workspace.fs.mkdir("/src/inner", { recursive: true });
+    await workspace.fs.writeFile("/src/inner/b", "b");
+    await adapter.mv("/src", "/dst");
+    expect(await workspace.fs.readFile("/dst/inner/b", "utf8")).toBe("b");
+    await expect(workspace.fs.stat("/src")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("mv falls back to copy and delete when rename cannot replace the destination", async () => {
+    await workspace.fs.mkdir("/src", { recursive: true });
+    await workspace.fs.writeFile("/src/a", "a");
+    await workspace.fs.mkdir("/dst", { recursive: true });
+    await workspace.fs.writeFile("/dst/keep", "keep");
+    await adapter.mv("/src", "/dst");
+    expect(await workspace.fs.readFile("/dst/a", "utf8")).toBe("a");
+    expect(await workspace.fs.readFile("/dst/keep", "utf8")).toBe("keep");
+    await expect(workspace.fs.stat("/src")).rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 describe("WorkspaceFsAdapter — pure utilities", () => {

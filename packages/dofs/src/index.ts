@@ -27,6 +27,7 @@ export {
 export type { ReaddirOptions, WorkspaceDirentResult } from "./fs/readdir.js";
 export type { ReadFileOptions } from "./fs/readFile.js";
 export { readlink } from "./fs/readlink.js";
+export { rename } from "./fs/rename.js";
 export type { RmOptions } from "./fs/rm.js";
 export { lstat, stat, type WorkspaceStatResult } from "./fs/stat.js";
 export { symlink } from "./fs/symlink.js";

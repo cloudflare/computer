@@ -268,6 +268,19 @@ export class WorkspaceFilesystemStub extends RpcTarget {
     );
   }
 
+  // Move a path in one store operation. Replaces the copy-then-delete
+  // dance callers used to write, so a failure can no longer leave both
+  // ends behind. Overwrite and error behavior is documented in
+  // docs/04_filesystem_interface.md.
+  rename(oldPath: string, newPath: string): Promise<void> {
+    return withSpan(
+      this.#ws.observer,
+      "workspace.fs.rename",
+      { "workspace.fs.path": oldPath, "workspace.fs.destination": newPath },
+      () => this.#ws.fs.rename(oldPath, newPath),
+    );
+  }
+
   chmod(path: string, mode: number): Promise<void> {
     return withSpan(
       this.#ws.observer,

@@ -13,6 +13,13 @@ export interface FindOptions {
   limit?: number;
   /** Matching entries to skip in traversal order. */
   offset?: number;
+  /**
+   * Glob patterns whose matches are left out of the result. Matched
+   * against the same directory-relative path as the inclusion glob and
+   * applied first, so an exclusion always wins. An excluded directory
+   * is pruned: neither it nor anything below it is visited.
+   */
+  exclude?: string[];
 }
 
 interface ChildRow {
@@ -26,6 +33,7 @@ interface WalkStart {
   path: string;
   prefix: string;
   regex: RegExp | undefined;
+  excludes: RegExp[];
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -36,7 +44,7 @@ export function find(
   pattern?: string,
   options: FindOptions = {},
 ): WorkspaceFoundEntry[] {
-  const start = prepareWalk(db, directory, pattern);
+  const start = prepareWalk(db, directory, pattern, options.exclude);
   const limit = options.limit ?? Number.MAX_SAFE_INTEGER;
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new TypeError("find limit must be a non-negative safe integer");
@@ -49,7 +57,7 @@ export function find(
 
   const out: WorkspaceFoundEntry[] = [];
   let seen = 0;
-  for (const entry of walk(db, start.inode, start.path, start.prefix, start.regex)) {
+  for (const entry of walk(db, start.inode, start.path, start)) {
     if (seen >= offset) {
       out.push(entry);
       if (out.length >= limit) break;
@@ -63,12 +71,18 @@ export function* iterateFoundEntries(
   db: Database,
   directory: string,
   pattern?: string,
+  exclude?: string[],
 ): IterableIterator<WorkspaceFoundEntry> {
-  const start = prepareWalk(db, directory, pattern);
-  yield* walk(db, start.inode, start.path, start.prefix, start.regex);
+  const start = prepareWalk(db, directory, pattern, exclude);
+  yield* walk(db, start.inode, start.path, start);
 }
 
-function prepareWalk(db: Database, directory: string, pattern: string | undefined): WalkStart {
+function prepareWalk(
+  db: Database,
+  directory: string,
+  pattern: string | undefined,
+  exclude: string[] | undefined,
+): WalkStart {
   const { path: canonical } = canonicalizePath(directory);
   const node = resolveInode(db, canonical);
   if (node === null) {
@@ -82,11 +96,16 @@ function prepareWalk(db: Database, directory: string, pattern: string | undefine
   // everything rather than compiling it into `^$`, which would match
   // only empty relative paths and yield no results.
   const regex = pattern ? compileGlob(pattern) : undefined;
+  // An empty exclusion pattern is dropped rather than compiled: like
+  // the inclusion glob it would only match the empty relative path,
+  // which no candidate ever has.
+  const excludes = (exclude ?? []).filter((glob) => glob !== "").map(compileGlob);
   return {
     inode: node.inode,
     path: canonical,
     prefix: canonical === "/" ? "/" : `${canonical}/`,
     regex,
+    excludes,
   };
 }
 
@@ -94,9 +113,9 @@ function* walk(
   db: Database,
   parentInode: number,
   parentPath: string,
-  prefix: string,
-  regex: RegExp | undefined,
+  start: WalkStart,
 ): IterableIterator<WorkspaceFoundEntry> {
+  const { prefix, regex, excludes } = start;
   let afterName = "";
   while (true) {
     const children = readChildren(db, parentInode, afterName);
@@ -105,11 +124,17 @@ function* walk(
     for (const child of children) {
       const childPath = parentPath === "/" ? `/${child.name}` : `${parentPath}/${child.name}`;
       const relativePath = childPath.slice(prefix.length);
+      // Exclusion is decided before inclusion, and before any child
+      // query: an excluded directory takes its whole subtree with it,
+      // so the walker never reads below it.
+      if (excludes.some((excluded) => excluded.test(relativePath))) {
+        continue;
+      }
       if (regex === undefined || regex.test(relativePath)) {
         yield { path: childPath, type: child.type };
       }
       if (child.type === "dir") {
-        yield* walk(db, child.child_inode, childPath, prefix, regex);
+        yield* walk(db, child.child_inode, childPath, start);
       }
     }
 

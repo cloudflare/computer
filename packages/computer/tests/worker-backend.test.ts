@@ -111,6 +111,17 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(text).toBe("from inside the shell\n");
   });
 
+  it("moves a file with mv through the host's rename over Workers RPC", async () => {
+    const id = freshId();
+    await write(id, "/workspace/old.txt", "payload");
+    // `test -e` on the source proves the adapter renamed rather than
+    // copying and leaving both ends behind.
+    const result = await exec(id, "mv old.txt new.txt && cat new.txt && test -e old.txt");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toBe("payload");
+    expect(await read(id, "/workspace/new.txt")).toBe("payload");
+  });
+
   it("reports a non-zero exit code with stderr captured", async () => {
     const id = freshId();
     const result = await exec(id, "ls /nope 2>&1; echo done");

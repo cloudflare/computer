@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { find } from "./find.js";
 import { mkdir } from "./mkdir.js";
+import { resolveInode } from "./resolve.js";
 import { withDB } from "./with-db.js";
 import { writeFile } from "./writeFile.js";
 
@@ -128,6 +129,122 @@ describe("find", () => {
       expect(() => find(db, "/file.txt")).toThrowError(
         expect.objectContaining({ code: "ENOTDIR" }),
       );
+    });
+  });
+
+  describe("exclude", () => {
+    it("leaves an excluded file out of the results", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a", {}, () => 0);
+        await writeFile(db, "/a/keep.ts", "", {}, () => 0);
+        await writeFile(db, "/a/skip.ts", "", {}, () => 0);
+        const paths = find(db, "/a", "**/*.ts", { exclude: ["skip.ts"] }).map((e) => e.path);
+        expect(paths).toEqual(["/a/keep.ts"]);
+      });
+    });
+
+    it("matches exclusions relative to the search root", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/root/pkg/node_modules", { recursive: true }, () => 0);
+        await writeFile(db, "/root/pkg/index.ts", "", {}, () => 0);
+        await writeFile(db, "/root/pkg/node_modules/dep.ts", "", {}, () => 0);
+        // The pattern names the path below /root, not the absolute one.
+        const paths = find(db, "/root", "**/*.ts", { exclude: ["pkg/node_modules/**"] }).map(
+          (e) => e.path,
+        );
+        expect(paths).toEqual(["/root/pkg/index.ts"]);
+      });
+    });
+
+    it("accepts several patterns", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/node_modules", { recursive: true }, () => 0);
+        mkdir(db, "/a/.git", { recursive: true }, () => 0);
+        await writeFile(db, "/a/index.ts", "", {}, () => 0);
+        await writeFile(db, "/a/node_modules/dep.ts", "", {}, () => 0);
+        await writeFile(db, "/a/.git/hook.ts", "", {}, () => 0);
+        const paths = find(db, "/a", "**/*.ts", {
+          exclude: ["node_modules", "node_modules/**", ".git", ".git/**"],
+        }).map((e) => e.path);
+        expect(paths).toEqual(["/a/index.ts"]);
+      });
+    });
+
+    it("takes precedence over the inclusion glob", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a", {}, () => 0);
+        await writeFile(db, "/a/x.ts", "", {}, () => 0);
+        expect(find(db, "/a", "**/*.ts", { exclude: ["**/*.ts"] })).toEqual([]);
+      });
+    });
+
+    it("drops an excluded directory as well as its contents", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/build/nested", { recursive: true }, () => 0);
+        await writeFile(db, "/a/keep.txt", "", {}, () => 0);
+        await writeFile(db, "/a/build/out.txt", "", {}, () => 0);
+        await writeFile(db, "/a/build/nested/deep.txt", "", {}, () => 0);
+        const paths = find(db, "/a", undefined, { exclude: ["build"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/a/keep.txt"]);
+      });
+    });
+
+    it("prunes the excluded subtree instead of filtering it afterwards", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/build/nested", { recursive: true }, () => 0);
+        await writeFile(db, "/a/keep.txt", "", {}, () => 0);
+        await writeFile(db, "/a/build/nested/deep.txt", "", {}, () => 0);
+
+        const buildInode = resolveInode(db, "/a/build")?.inode;
+        const nestedInode = resolveInode(db, "/a/build/nested")?.inode;
+        expect(buildInode).toBeDefined();
+        expect(nestedInode).toBeDefined();
+
+        // Record the parent inode of every child listing the walk asks
+        // for. A pruned directory is never listed.
+        const listedParents: unknown[] = [];
+        const all = db.all.bind(db);
+        // biome-ignore lint/suspicious/noExplicitAny: test spy over the generic method
+        (db as any).all = (query: string, ...bindings: unknown[]) => {
+          if (query.includes("FROM vfs_dirents d")) listedParents.push(bindings[0]);
+          return all(query, ...bindings);
+        };
+        try {
+          find(db, "/a", undefined, { exclude: ["build"] });
+        } finally {
+          // biome-ignore lint/suspicious/noExplicitAny: restore the spied method
+          (db as any).all = all;
+        }
+
+        expect(listedParents).not.toContain(buildInode);
+        expect(listedParents).not.toContain(nestedInode);
+      });
+    });
+
+    it("applies limit and offset to the surviving matches", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/skip", { recursive: true }, () => 0);
+        await writeFile(db, "/a/1.ts", "", {}, () => 0);
+        await writeFile(db, "/a/2.ts", "", {}, () => 0);
+        await writeFile(db, "/a/3.ts", "", {}, () => 0);
+        await writeFile(db, "/a/skip/x.ts", "", {}, () => 0);
+        expect(
+          find(db, "/a", "**/*.ts", { exclude: ["skip", "skip/**"], offset: 1, limit: 1 }),
+        ).toEqual([{ path: "/a/2.ts", type: "file" }]);
+      });
+    });
+
+    it("ignores an empty exclusion list and empty patterns", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a", {}, () => 0);
+        await writeFile(db, "/a/x.ts", "", {}, () => 0);
+        expect(find(db, "/a", "**/*.ts", { exclude: [] }).map((e) => e.path)).toEqual(["/a/x.ts"]);
+        expect(find(db, "/a", "**/*.ts", { exclude: [""] }).map((e) => e.path)).toEqual([
+          "/a/x.ts",
+        ]);
+      });
     });
   });
 

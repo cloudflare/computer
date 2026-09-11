@@ -11,7 +11,7 @@ export interface FindWorkspaceLike {
     find(
       directory: string,
       pattern?: string,
-      options?: { limit?: number; offset?: number },
+      options?: { limit?: number; offset?: number; exclude?: string[] },
     ): Promise<FoundEntry[]>;
   };
 }
@@ -28,6 +28,12 @@ const inputSchema = z.object({
   pattern: z
     .string()
     .describe('Glob pattern relative to path, for example "**/*.ts" or "src/?.js".'),
+  exclude: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Glob patterns to leave out, for example ["node_modules/**", "**/.git/**"]. An excluded directory is skipped along with everything below it.',
+    ),
   limit: z.number().int().min(1).max(MAX_LIMIT).optional(),
   offset: z.number().int().min(0).optional(),
 });
@@ -37,13 +43,14 @@ export function createFindTool(options: FindToolOptions): Tool<z.infer<typeof in
     description:
       "Find files and directories matching a glob. * stays within one path segment, ** crosses directories, and ? matches one character.",
     inputSchema,
-    execute: async ({ path, pattern, limit, offset }) => {
+    execute: async ({ path, pattern, exclude, limit, offset }) => {
       try {
         const pageSize = limit ?? DEFAULT_LIMIT;
         const pageOffset = offset ?? 0;
         const matches = await options.workspace.fs.find(path, pattern, {
           limit: pageSize + 1,
           offset: pageOffset,
+          exclude,
         });
         const truncated = matches.length > pageSize;
         const entries = truncated ? matches.slice(0, pageSize) : matches;

@@ -3,8 +3,8 @@
 //
 // The adapter is a thin façade. Operations that map one-for-one
 // (writeFile, readdir, mkdir, rm, chmod, symlink, readlink, stat,
-// lstat) forward directly. Operations the stub doesn't expose —
-// appendFile, cp, mv, exists — synthesize from the available
+// lstat, rename) forward directly. Operations the stub doesn't
+// expose — appendFile, cp — synthesize from the available
 // primitives. Hard links and utimes aren't supported: link throws
 // ENOSYS so a script that depends on them fails loudly; utimes
 // is a documented no-op because the store has no atime column.
@@ -50,6 +50,7 @@ export interface WorkspaceFs {
   rm(path: string, options?: RmOptions): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
   symlink(target: string, path: string): Promise<void>;
+  rename(oldPath: string, newPath: string): Promise<void>;
 }
 
 // Matches the subset of just-bash's IFileSystem the adapter
@@ -213,10 +214,19 @@ export class WorkspaceFsAdapter {
   }
 
   async mv(src: string, dest: string): Promise<void> {
-    // The store doesn't have a native rename today, so model mv as
-    // copy+delete. POSIX mv is atomic when src and dest live on
-    // the same filesystem; this approach isn't, but it matches
-    // what just-bash's other adapters do.
+    // The store renames in one transaction, so an interrupted move can
+    // no longer leave the bytes at both paths or a directory half
+    // copied. A destination that rename refuses to replace — a
+    // non-empty directory, or a directory and a non-directory in
+    // either order — still falls back to copy-then-delete, which is
+    // what the shell's own `mv` expects when it merges a tree.
+    try {
+      await this.#fs.rename(src, dest);
+      return;
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== "ENOTEMPTY" && code !== "EISDIR" && code !== "ENOTDIR") throw err;
+    }
     await this.cp(src, dest, { recursive: true });
     await this.#fs.rm(src, { recursive: true });
   }
