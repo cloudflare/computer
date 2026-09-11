@@ -80,7 +80,7 @@ export async function runGitCli(
     case "help":
     case "--help":
     case "-h":
-      return printHelp();
+      return printHelp(rest[0]);
     case "version":
     case "--version":
       return printVersion();
@@ -155,14 +155,67 @@ export async function runGitCli(
 // help / version
 // ---------------------------------------------------------------
 
-function printHelp(): GitCliResult {
+// Usage lines for `git help <command>`. Only the flags this wrapper
+// actually accepts are listed: the whole point is to tell a caller what
+// works here, rather than what real git would take.
+const COMMAND_USAGE: Record<string, string> = {
+  add: "git add [-A|--all] [-f|--force] <path>...",
+  branch: "git branch [-d|-D|--delete] [-f|--force] [--show-current] [<name>]",
+  "cat-file": "git cat-file (-p|-t|-s) <oid>[:<path>]",
+  checkout: "git checkout [-b] [-f|--force] <ref> [--] [<path>...]",
+  clean: "git clean [-f|--force] [-d] [-n|--dry-run] [<path>...]",
+  clone:
+    "git clone [--depth <n>] [-b|--branch <ref>] [--single-branch|--no-single-branch] [--tags|--no-tags] <url> [<dir>]",
+  commit: 'git commit -m|--message <message> [-a|--all] [--amend] [--author "Name <email>"]',
+  config: "git config [--get|--get-all|--add|--unset] <key> [<value>]",
+  diff: "git diff [--stat] [--name-only] [--name-status] [<ref>] [--] [<path>...]",
+  fetch:
+    "git fetch [--depth <n>] [--single-branch|--no-single-branch] [--tags|--no-tags] [--prune] [<remote>] [<ref>]",
+  "hash-object": "git hash-object --stdin [-w]",
+  init: "git init [-b|--initial-branch <name>] [--bare] [<dir>]",
+  log: "git log [-n <count>] [-<count>] [--oneline] [--format|--pretty=<spec>] [<ref>]",
+  "ls-files": "git ls-files [--ref <ref>]",
+  "ls-tree": "git ls-tree <ref> [<path>]",
+  merge: "git merge [--ff-only] [--no-ff] [-m|--message <message>] <ref>",
+  pull: "git pull [--ff-only] [--no-ff] [<remote>] [<ref>]",
+  push: "git push [-f|--force] [-d|--delete] [<remote>] [<refspec>]",
+  remote: "git remote [add <name> <url>] [remove <name>]",
+  reset: "git reset [--hard] [<ref>] [--] [<path>...]",
+  "rev-parse": "git rev-parse [--abbrev-ref] [--show-toplevel] <rev>",
+  rm: "git rm [--cached] <path>...",
+  show: "git show [<ref>]",
+  stash: "git stash [push|pop|apply|list|drop]",
+  status: "git status [-s|--short] [--porcelain[=<version>]]",
+  switch: "git switch [-c] <ref>",
+  "symbolic-ref": "git symbolic-ref [--short] [-q|--quiet] <name> [<ref>]",
+  tag: "git tag [-d|--delete] [-f|--force] [<name> [<ref>]]",
+  "update-ref": "git update-ref [--force] <ref> <oid>",
+  help: "git help [<command>]",
+  version: "git version",
+};
+
+function printHelp(topic?: string): GitCliResult {
+  // `git help <command>` used to ignore its argument and reprint the
+  // full list, which left no way to discover a command's flags short of
+  // guessing and reading the exit code.
+  if (topic !== undefined) {
+    const usage = COMMAND_USAGE[topic];
+    if (usage === undefined) {
+      return {
+        stdout: "",
+        stderr: `git help: no help available for '${topic}'\n`,
+        exitCode: 1,
+      };
+    }
+    return { stdout: `usage: ${usage}\n`, stderr: "", exitCode: 0 };
+  }
   const lines = [
     "usage: git <command> [<args>]",
     "",
     "Supported workspace git commands:",
     "   add           Stage paths into the index.",
     "   branch        Create, delete, or list branches.",
-    "   cat-file      Read raw bytes for an object by oid.",
+    "   cat-file      Read an object's bytes (-p), type (-t), or size (-s).",
     "   checkout      Move HEAD to a ref, or restore paths.",
     "   clean         Remove untracked files from the working tree.",
     "   clone         Clone a remote repository into the workspace.",
@@ -189,7 +242,7 @@ function printHelp(): GitCliResult {
     "   symbolic-ref  Print the current branch name.",
     "   tag           Create, delete, or list tags.",
     "   update-ref    Write a ref directly.",
-    "   help          Show this help.",
+    "   help          Show this help, or usage for one command.",
     "   version       Print the workspace git wrapper version.",
     "",
   ];
@@ -762,14 +815,31 @@ async function runLog(
       shorthandDepth = m[1];
       continue;
     }
+    // --pretty is the same option as --format in real git. Normalize it
+    // to the one key so the parser's last-write behavior decides which
+    // wins: a caller appending an override to a command it did not build
+    // gets the last one written, whichever spelling either of them used.
+    if (arg === "--pretty" || arg.startsWith("--pretty=")) {
+      rewritten.push(`--format${arg.slice("--pretty".length)}`);
+      continue;
+    }
     rewritten.push(arg);
   }
   const parsed = parseFlags(rewritten, {
     n: { kind: "value" },
     oneline: { kind: "bool" },
+    format: { kind: "value" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git log: ${parsed.error}\n`, exitCode: 129 };
+  }
+  const formatSpec = parsed.flags.format as string | undefined;
+  if (formatSpec !== undefined && parsed.flags.oneline === true) {
+    return {
+      stdout: "",
+      stderr: "git log: --oneline cannot be combined with --format\n",
+      exitCode: 129,
+    };
   }
   if (shorthandDepth !== undefined && parsed.flags.n === undefined) {
     parsed.flags.n = shorthandDepth;
@@ -797,11 +867,62 @@ async function runLog(
   try {
     const ref = await resolveRevisionRef(client, dir, parsed.positional[0]);
     const commits = await client.log({ dir, ref, depth });
-    const stdout = parsed.flags.oneline ? formatLogOneline(commits) : formatLogFull(commits);
+    let stdout: string;
+    if (formatSpec !== undefined) {
+      // `oneline` is the one named format worth carrying, since it is
+      // the documented alias for the --oneline flag.
+      stdout =
+        formatSpec === "oneline" ? formatLogOneline(commits) : formatLogCustom(commits, formatSpec);
+    } else {
+      stdout = parsed.flags.oneline ? formatLogOneline(commits) : formatLogFull(commits);
+    }
     return { stdout, stderr: "", exitCode: 0 };
   } catch (cause) {
     return mapGitError("log", cause);
   }
+}
+
+// Expand the `%`-placeholders `git log --format` understands. This is
+// the commonly scripted subset, not the full set: a placeholder that is
+// not handled is left as written rather than silently dropped, so a
+// caller can see what was not understood.
+function formatLogCustom(commits: CommitView[], spec: string): string {
+  if (commits.length === 0) return "";
+  const out = commits.map((c) =>
+    // Two-letter codes are listed first: a character class holding `a`
+    // would otherwise match `%a` and leave the `n` of `%an` behind.
+    spec.replace(/%(a[dne]|c[dne]|[Hhsb%])/g, (match, code: string) => {
+      switch (code) {
+        case "H":
+          return c.oid;
+        case "h":
+          return c.oid.slice(0, 7);
+        case "s":
+          return firstLine(c.message);
+        case "b": {
+          const rest = c.message.split("\n").slice(1).join("\n");
+          return rest.replace(/^\n+/, "").trimEnd();
+        }
+        case "an":
+          return c.author.name;
+        case "ae":
+          return c.author.email;
+        case "ad":
+          return formatGitTimestamp(c.author.timestamp, c.author.timezoneOffset);
+        case "cn":
+          return c.committer.name;
+        case "ce":
+          return c.committer.email;
+        case "cd":
+          return formatGitTimestamp(c.committer.timestamp, c.committer.timezoneOffset);
+        case "%":
+          return "%";
+        default:
+          return match;
+      }
+    }),
+  );
+  return `${out.join("\n")}\n`;
 }
 
 function formatLogOneline(commits: CommitView[]): string {
@@ -1778,25 +1899,38 @@ async function runCatFile(
   args: string[],
   input: GitCliInput,
 ): Promise<GitCliResult> {
-  // `git cat-file -p <oid>` -- pretty-print the object's raw
-  // bytes to stdout. Other forms (`-t`, `-s`) are out of scope.
+  // `git cat-file (-p|-t|-s) <oid>` -- pretty-print the object's raw
+  // bytes, its type, or its size in bytes. Exactly one of the three
+  // has to be given, matching real git, which treats them as
+  // alternatives rather than combinable flags.
   const parsed = parseFlags(args, {
     p: { kind: "bool" },
+    t: { kind: "bool" },
+    s: { kind: "bool" },
   });
   if ("error" in parsed) {
     return { stdout: "", stderr: `git cat-file: ${parsed.error}\n`, exitCode: 129 };
   }
-  if (parsed.flags.p !== true) {
+  const modes = (["p", "t", "s"] as const).filter((f) => parsed.flags[f] === true);
+  if (modes.length === 0) {
     return {
       stdout: "",
-      stderr: "git cat-file: only -p is supported\n",
+      stderr: "git cat-file: one of -p, -t, or -s is required\n",
       exitCode: 129,
     };
   }
+  if (modes.length > 1) {
+    return {
+      stdout: "",
+      stderr: "git cat-file: -p, -t, and -s are mutually exclusive\n",
+      exitCode: 129,
+    };
+  }
+  const mode = modes[0];
   if (parsed.positional.length !== 1) {
     return {
       stdout: "",
-      stderr: "git cat-file: usage: git cat-file -p <oid>[:<path>]\n",
+      stderr: `git cat-file: usage: git cat-file -${mode} <oid>[:<path>]\n`,
       exitCode: 129,
     };
   }
@@ -1808,6 +1942,12 @@ async function runCatFile(
   const dir = resolveDir(undefined, input.cwd);
   try {
     const result = await client.catFile({ dir, oid, filepath });
+    if (mode === "t") {
+      return { stdout: `${result.type ?? "blob"}\n`, stderr: "", exitCode: 0 };
+    }
+    if (mode === "s") {
+      return { stdout: `${result.bytes.byteLength}\n`, stderr: "", exitCode: 0 };
+    }
     const text = new TextDecoder("utf-8", { fatal: false }).decode(result.bytes);
     return { stdout: text, stderr: "", exitCode: 0 };
   } catch (cause) {

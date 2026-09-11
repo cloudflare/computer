@@ -1754,11 +1754,11 @@ describe("runGitCli — cat-file", () => {
     });
   });
 
-  it("without -p is an error", async () => {
+  it("without a mode flag is an error", async () => {
     const { client } = fakeClient();
     const res = await runGitCli(client, { argv: ["cat-file", "a".repeat(40)] });
     expect(res.exitCode).toBe(129);
-    expect(res.stderr).toContain("only -p is supported");
+    expect(res.stderr).toContain("one of -p, -t, or -s is required");
   });
 });
 
@@ -2338,5 +2338,186 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     expect(res.exitCode).toBe(1);
     expect(res.stderr).toContain("could not resolve host");
     expect(res.stdout).toBe("");
+  });
+});
+
+describe("runGitCli â cat-file type and size", () => {
+  it("-t reports the object type", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        catFile: () => ({
+          oid: "a".repeat(40),
+          bytes: new TextEncoder().encode("hello\n"),
+          type: "commit" as const,
+        }),
+      },
+    );
+    const res = await runGitCli(client, { argv: ["cat-file", "-t", "a".repeat(40)] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("commit\n");
+  });
+
+  it("-s reports the object size in bytes", async () => {
+    const { client } = fakeClient(
+      {},
+      {
+        catFile: () => ({
+          oid: "a".repeat(40),
+          bytes: new TextEncoder().encode("hello\n"),
+        }),
+      },
+    );
+    const res = await runGitCli(client, { argv: ["cat-file", "-s", "a".repeat(40)] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("6\n");
+  });
+
+  it("rejects combining -p and -t", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["cat-file", "-p", "-t", "a".repeat(40)] });
+    expect(res.exitCode).toBe(129);
+    expect(res.stderr).toMatch(/mutually exclusive/);
+  });
+});
+
+describe("runGitCli â help for one command", () => {
+  it("prints usage for a named command", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["help", "log"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toMatch(/^usage: git log /);
+    expect(res.stdout).toMatch(/--oneline/);
+  });
+
+  it("still prints the command list when given no argument", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["help"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toMatch(/Supported workspace git commands/);
+  });
+
+  it("reports an unknown command rather than reprinting the list", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["help", "rebase"] });
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toMatch(/no help available for 'rebase'/);
+  });
+});
+
+describe("runGitCli — log --format", () => {
+  const sample = (oid: string, msg: string): CommitView => ({
+    oid,
+    message: msg,
+    tree: "",
+    parent: [],
+    author: { name: "A", email: "a@x", timestamp: 1_700_000_000, timezoneOffset: 0 },
+    committer: { name: "C", email: "c@x", timestamp: 1_700_000_000, timezoneOffset: 0 },
+  });
+
+  it("expands the common placeholders", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "second")] });
+    const res = await runGitCli(client, { argv: ["log", "--format=%h %s (%an)"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("aaaaaaa second (A)\n");
+  });
+
+  it("expands the full hash and the committer separately from the author", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "x")] });
+    const res = await runGitCli(client, { argv: ["log", "--format=%H|%an|%cn"] });
+    expect(res.stdout).toBe(`${"a".repeat(40)}|A|C\n`);
+  });
+
+  it("treats --pretty as an alias and understands the oneline format", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "second")] });
+    const res = await runGitCli(client, { argv: ["log", "--pretty=oneline"] });
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toBe("aaaaaaa second\n");
+  });
+
+  it("leaves an unknown placeholder as written", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "x")] });
+    const res = await runGitCli(client, { argv: ["log", "--format=%h %zz"] });
+    expect(res.stdout).toBe("aaaaaaa %zz\n");
+  });
+
+  it("lets the last of --format and --pretty win, in either order", async () => {
+    const { client } = fakeClient({}, { log: () => [sample("a".repeat(40), "release")] });
+    const formatThenPretty = await runGitCli(client, {
+      argv: ["log", "--format=%s", "--pretty=%h"],
+    });
+    expect(formatThenPretty.stdout).toBe("aaaaaaa\n");
+    const prettyThenFormat = await runGitCli(client, {
+      argv: ["log", "--pretty=%h", "--format=%s"],
+    });
+    expect(prettyThenFormat.stdout).toBe("release\n");
+  });
+
+  it("rejects --format combined with --oneline", async () => {
+    const { client } = fakeClient();
+    const res = await runGitCli(client, { argv: ["log", "--oneline", "--format=%h"] });
+    expect(res.exitCode).toBe(129);
+  });
+});
+
+describe("runGitCli — help stays honest about the flags each command takes", () => {
+  // The usage lines are maintained by hand, so they can drift from the
+  // parsers they describe. Rather than re-check every line by eye, take
+  // each long flag the help advertises and confirm the command does not
+  // reject it as unknown or unsupported. A flag that no longer exists,
+  // or was never accepted, fails here instead of misleading a caller.
+  const commands = [
+    "add",
+    "branch",
+    "cat-file",
+    "checkout",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "diff",
+    "fetch",
+    "hash-object",
+    "init",
+    "log",
+    "ls-files",
+    "ls-tree",
+    "merge",
+    "pull",
+    "push",
+    "remote",
+    "reset",
+    "rev-parse",
+    "rm",
+    "show",
+    "stash",
+    "status",
+    "switch",
+    "symbolic-ref",
+    "tag",
+    "update-ref",
+  ];
+
+  it("advertises only flags the command's parser accepts", async () => {
+    const offenders: string[] = [];
+    for (const command of commands) {
+      const { client } = fakeClient();
+      const help = await runGitCli(client, { argv: ["help", command] });
+      expect(help.exitCode, `git help ${command}`).toBe(0);
+
+      for (const flag of help.stdout.match(/--[a-z][a-z-]*/g) ?? []) {
+        const { client: probe } = fakeClient();
+        const res = await runGitCli(probe, { argv: [command, flag] });
+        // The parser rejects an unknown flag at 129 with a message naming
+        // it. Any other failure means the flag was understood and the
+        // command merely wanted different arguments, which is fine here.
+        const unknown =
+          res.stderr.includes(`unknown option '${flag}'`) ||
+          res.stderr.includes(`${flag} is not supported`) ||
+          res.stderr.includes(`only --stdin is supported`);
+        if (unknown) offenders.push(`${command} ${flag}: ${res.stderr.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
