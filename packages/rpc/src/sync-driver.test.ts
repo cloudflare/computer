@@ -345,7 +345,34 @@ describe("SyncRPC server — afterApply hook", () => {
     }
   });
 
-  it("a thrown hook does not fail the push", async () => {
+  it("a thrown hook fails the push and leaves the sender cursor behind", async () => {
+    const a = makePeer();
+    const b = makeReceiverWithSpy();
+    try {
+      const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
+      providerA.writeFileSync("/hi.txt", "hi");
+      const before = readWatermark(a.db, "pushRev");
+
+      b.setAfterApply(() => {
+        throw new Error("settle blew up");
+      });
+
+      // The caller spawns a command on the strength of this
+      // acknowledgment, so an unflushed block must not be reported as
+      // success. The entries do commit on the receiver — the failure
+      // is about disk visibility, not the log — but the sender must
+      // not retire the block.
+      await expect(pushOnce(a.db, b.rpc)).rejects.toThrow("settle blew up");
+      expect(b.calls).toBe(1);
+      expect(fileEntries(b.db)).toContain("hi.txt");
+      expect(readWatermark(a.db, "pushRev")).toBe(before);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
+  it("replays the same block once the hook recovers", async () => {
     const a = makePeer();
     const b = makeReceiverWithSpy();
     try {
@@ -353,14 +380,17 @@ describe("SyncRPC server — afterApply hook", () => {
       providerA.writeFileSync("/hi.txt", "hi");
 
       b.setAfterApply(() => {
-        throw new Error("settle blew up");
+        throw new Error("disk full");
       });
+      await expect(pushOnce(a.db, b.rpc)).rejects.toThrow("disk full");
 
-      // The push must still succeed — entries are committed before
-      // the hook runs, and the server logs+swallows hook errors.
+      // The retry replans the same block. Re-applying entries the
+      // receiver already holds is absorbed by alreadyApplied(), so the
+      // second attempt settles cleanly and advances the cursor.
+      b.setAfterApply(() => {});
       const pushed = await pushOnce(a.db, b.rpc);
-      expect(pushed).toBe(1);
-      expect(b.calls).toBe(1);
+      expect(pushed).toBeGreaterThan(0);
+      expect(b.calls).toBe(2);
       expect(fileEntries(b.db)).toContain("hi.txt");
     } finally {
       a.close();

@@ -147,15 +147,14 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
         writeFetchCursor(this.db, senderCursor);
       }
     });
+    // A rejection propagates for the same reason it does in
+    // applyChangePack: the pre-command bracket pushes, advances its
+    // cursor on the acknowledgment, and only then spawns. Reporting
+    // success for an unflushed block retires it and lets the command
+    // read stale disk. The entries are committed either way, and a
+    // replayed block is absorbed by alreadyApplied().
     if (this.options.afterApply !== undefined && entries.length > 0) {
-      try {
-        await this.options.afterApply();
-      } catch (err) {
-        // Settle hook failures must not surface as push failures —
-        // the entries are already committed. Log so the operator
-        // notices a wedged shim, then return success.
-        console.warn("[SyncRPCServer] afterApply hook failed:", err);
-      }
+      await this.options.afterApply();
     }
     return {
       rev: currentRev(this.db),
@@ -280,14 +279,17 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     // shell.exec sees the just-pushed files on disk. Pack mode is
     // selected for exactly the large windows a pre-command push
     // carries, so skipping this strands the shim on stale disk state.
+    //
+    // A rejection propagates rather than being logged. The caller
+    // treats an acknowledgment as "the receiver is ready", advances
+    // its durable push cursor on it, and then spawns the command, so
+    // acknowledging an unflushed block retires it permanently and
+    // lets the command read stale disk. Failing the RPC leaves the
+    // sender cursor where it was and the next push replans the same
+    // block; the entries are already committed here, and applying
+    // them again is absorbed by alreadyApplied().
     if (this.options.afterApply !== undefined && decoded.entries.length > 0) {
-      try {
-        await this.options.afterApply();
-      } catch (err) {
-        // Settle hook failures must not surface as push failures —
-        // the entries are already committed.
-        console.warn("[SyncRPCServer] afterApply hook failed:", err);
-      }
+      await this.options.afterApply();
     }
     return {
       appliedPushCursor: decoded.footer.blockCursor,

@@ -369,6 +369,36 @@ describe("pack mode push", () => {
     }
   });
 
+  it("fails a pack push whose settle rejects, leaving the block unretired", async () => {
+    const local = makePeer();
+    const storage = new SQLiteTestStorage();
+    const remoteDb = new Database(storage);
+    initializeSchema(remoteDb, () => 1000);
+    let fail = true;
+    const remoteRpc = createSyncServer(remoteDb, {
+      afterApply: () => {
+        if (fail) throw new Error("disk full");
+      },
+    });
+    try {
+      seed(local.db, 8);
+      // The sender advances its cursor on the acknowledgment and the
+      // caller spawns a command on it, so an unflushed pack must not
+      // acknowledge.
+      await expect(drain(pushBlocks(local.db, remoteRpc, PACK_OPTIONS))).rejects.toThrow(
+        "disk full",
+      );
+
+      // Once the shim recovers the same block replays and completes.
+      fail = false;
+      await drain(pushBlocks(local.db, remoteRpc, PACK_OPTIONS));
+      expect(names(remoteDb)).toHaveLength(8);
+    } finally {
+      local.close();
+      storage.close();
+    }
+  });
+
   it("does not settle the shim when a pack push carries no entries", async () => {
     const local = makePeer();
     const storage = new SQLiteTestStorage();
