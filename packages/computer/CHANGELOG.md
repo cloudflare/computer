@@ -1,5 +1,23 @@
 # @cloudflare/computer
 
+## 0.4.0
+
+### Minor Changes
+
+- [#124](https://github.com/cloudflare/computer/pull/124) `Workspace.fs` gains `rename(oldPath, newPath)`, exposing the store's existing transactional move through the public surface and through `WorkspaceFilesystemStub`. An existing destination is replaced when the two ends agree on kind — a file or symbolic link for a file or symbolic link, an empty directory for a directory — and the operation reports `ENOENT`, `ENOTEMPTY`, `EISDIR`, `ENOTDIR`, `EINVAL`, and `EROFS` as documented in `docs/04_filesystem_interface.md`. The Worker shell's `mv` now calls it, so an interrupted move no longer leaves the entry at both paths or a directory half copied. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) `find` accepts `exclude`, a list of glob patterns matched against the same directory-relative path as the inclusion glob. Exclusion is decided first, so it always wins, and an excluded directory is pruned during traversal: neither it nor anything below it is read. `limit` and `offset` apply to the matches that survive. The option travels through `WorkspaceFilesystem`, `WorkspaceFilesystemStub`, and the public find tool. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+  ```ts
+  const sources = await workspace.fs.find("/workspace", "**/*.ts", {
+    exclude: ["node_modules", "node_modules/**", ".git", ".git/**"],
+  });
+  ```
+
+### Patch Changes
+
+- [#124](https://github.com/cloudflare/computer/pull/124) Document the symbolic-link filesystem surface. `docs/04_filesystem_interface.md` claimed that symbolic links were internal and that `Workspace.fs` had no `symlink`, `readlink`, `lstat`, or `chmod`, none of which matched the shipped API. Those four methods now have sections of their own covering return values and the `ENOENT`, `EINVAL`, and `ELOOP` cases, the comparison with `node:fs/promises` maps them, and the specification explains that `stat` follows a trailing link while `lstat` reports the link itself. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.3.0
 
 ### Minor Changes
