@@ -62,6 +62,13 @@ export interface RunnerOptions {
   // Emit a heartbeat event every this many milliseconds while a child
   // process is alive. When unset or zero, no heartbeat events are emitted.
   heartbeatIntervalMs?: number;
+  // Absolute path to the interpreter each command runs under. Defaults to
+  // /bin/sh, which on a Debian-family image is dash: bash-only syntax a
+  // caller may reach for, notably ${PIPESTATUS[@]}, is a parse error there
+  // and aborts the command rather than degrading. Not inferred from SHELL,
+  // which names the caller's login shell and is deliberately absent from the
+  // env allowlist.
+  shell?: string;
   // Test seam: replaces Date.now() for retention math and log ts.
   now?: () => number;
 }

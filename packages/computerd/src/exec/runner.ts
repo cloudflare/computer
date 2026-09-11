@@ -61,6 +61,7 @@ const DEFAULTS = {
   // After SIGTERM, give the child this long to exit on its own
   // before sending SIGKILL.
   killGraceMs: 5_000,
+  shell: "/bin/sh",
 } as const;
 
 export interface RunnerInit extends RunnerOptions {
@@ -80,6 +81,7 @@ export class Runner {
     sweepIntervalMs: number;
     defaultTimeoutMs: number;
     heartbeatIntervalMs: number;
+    shell: string;
     now: () => number;
   };
   private readonly records = new Map<string, ExecRecord>();
@@ -96,8 +98,14 @@ export class Runner {
       sweepIntervalMs: init.sweepIntervalMs ?? DEFAULTS.sweepIntervalMs,
       defaultTimeoutMs: init.defaultTimeoutMs ?? DEFAULTS.defaultTimeoutMs,
       heartbeatIntervalMs: init.heartbeatIntervalMs ?? 0,
+      shell: init.shell ?? DEFAULTS.shell,
       now: init.now ?? Date.now,
     };
+    // Fail here rather than letting every exec() surface a bare ENOENT from
+    // spawn, which names the interpreter but not the misconfiguration.
+    if (!this.opts.shell.startsWith("/")) {
+      throw new Error(`shell must be an absolute path; got ${JSON.stringify(this.opts.shell)}`);
+    }
     initializeExecSchema(this.db);
     if (init.resetSchema !== false) clearExecState(this.db);
   }
@@ -131,7 +139,7 @@ export class Runner {
     // status pipe. If cwd lives inside computerd's own FUSE mount, the
     // child's chdir issues a FUSE LOOKUP that computerd can't service
     // (its event loop is stuck in uv_spawn), and the whole
-    // process deadlocks. Have /bin/sh do the chdir instead: by
+    // process deadlocks. Have the shell do the chdir instead: by
     // the time the shell runs its `cd`, computerd's event loop is back
     // and can answer the FUSE callback normally.
     //
@@ -143,7 +151,7 @@ export class Runner {
     // (`spawn("/bin/sh", ["-c", command])`) was already a shell-
     // owned exec, so this is no change in process shape.
     const wrapped = cwd !== undefined ? `cd ${shellQuote(cwd)} && ${command}` : command;
-    const child = spawn("/bin/sh", ["-c", wrapped], {
+    const child = spawn(this.opts.shell, ["-c", wrapped], {
       env,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
