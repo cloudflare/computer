@@ -32,6 +32,13 @@ import {
 
 import type { SyncRPC } from "./interface.js";
 
+// The restartable engine ships through the same ./driver entry point.
+// Explicit-cursor block helpers below remain the low-level surface for
+// callers that own their own destination store and checkpoint; the
+// engine is what the Workspace iterables are built on.
+export type { PullBlocksOptions, SyncProgress } from "./sync-engine.js";
+export { pullBlocks } from "./sync-engine.js";
+
 export interface SyncBatchBudget {
   maxEntries: number;
   maxBytes: number;
