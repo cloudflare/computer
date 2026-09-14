@@ -14,13 +14,14 @@ import { CELLD_JAVASCRIPT_BACKEND_ID, CelldJavaScriptBackend } from "./celld-jav
 
 const MODEL_ID = "@cf/zai-org/glm-5.2";
 
-// Keep the agent's bindings separate from the Worker Env, whose namespace
-// points back to CelldAgent and would make the mixin base type recursive.
-interface CelldAgentEnv {
-  CLOUDFLARE_ACCOUNT_ID: string;
-  CLOUDFLARE_API_TOKEN: string;
+// Bindings come from the generated worker-configuration.d.ts, which
+// wrangler writes from wrangler.jsonc plus .dev.vars.example. One
+// binding is missing from both: celld injects the Worker Loader when it
+// is started with CELLD_WORKER_LOADER=LOADER, so the agent declares it
+// as optional on top of the generated shape.
+type CelldAgentEnv = Env & {
   LOADER?: WorkspaceRuntimeLoader;
-}
+};
 
 class CelldAgentBase extends AIChatAgent<CelldAgentEnv> {
   protected readonly bindings: CelldAgentEnv;

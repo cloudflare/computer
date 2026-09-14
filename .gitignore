@@ -19,6 +19,13 @@ packages/computer/src/backends/worker-shell/generated/
 packages/computer-computerd-*/bin/computerd
 packages/computer/dist/bin/computerd-*
 
+# Worker binding types, generated per example by `wrangler types`
+# from wrangler.jsonc plus the example's committed env template. The
+# build:types script in each example's package.json writes this file,
+# and the repo-root postinstall hook runs those scripts, so a fresh
+# `npm install` produces every copy.
+worker-configuration.d.ts
+
 # Local secrets for `wrangler dev`. Examples document putting
 # Cloudflare API credentials in .dev.vars files that wrangler reads
 # from the example directory; they must never be committed.

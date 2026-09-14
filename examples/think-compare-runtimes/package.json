@@ -13,7 +13,7 @@
     "typecheck": "tsc -b --pretty false",
     "preview": "npm run build && vite preview",
     "deploy": "npm run build && wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "build:types": "wrangler types --env-file=.dev.vars.example"
   },
   "dependencies": {
     "@cloudflare/computer": "*",
@@ -41,7 +41,6 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.54.6",
-    "@cloudflare/workers-types": "^4.20260616.1",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",

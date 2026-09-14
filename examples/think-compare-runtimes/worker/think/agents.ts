@@ -6,11 +6,8 @@ import {
   type WorkspaceStub,
 } from "@cloudflare/computer";
 import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
-import {
-  WorkerShellBackend,
-  type WorkerShellBackendOptions,
-} from "@cloudflare/computer/backends/worker-shell";
-import { getSandbox, type Sandbox as SandboxDO } from "@cloudflare/sandbox";
+import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
+import { getSandbox } from "@cloudflare/sandbox";
 import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { getServerByName } from "partyserver";
@@ -18,12 +15,9 @@ import type { ExecutionTarget, RunEventKind, RuntimeId } from "../../shared/even
 import type { ComparisonFixture, FixtureFile } from "../../shared/fixture";
 import {
   type ContainerWarmPoolHandle,
-  type ContainerWarmPoolNamespace,
   containerSleepAfter,
   getWarmPoolHandle,
-  type WorkspaceContainerHost,
 } from "../container-pools";
-import type { CompareRun } from "../index";
 import {
   createSandboxRuntimeAdapter,
   createWorkspaceRuntimeAdapter,
@@ -48,18 +42,10 @@ import { createRuntimeThinkTools, type RuntimeThinkToolRecorder } from "./runtim
 
 export { WorkspaceProxy, WorkspaceServiceProxy };
 
-export interface RuntimeThinkAgentEnv {
-  AI: Ai;
-  CompareRun: DurableObjectNamespace<CompareRun>;
-  Sandbox: DurableObjectNamespace<SandboxDO>;
-  SandboxWarmPool: ContainerWarmPoolNamespace;
-  WorkspaceContainerHost: DurableObjectNamespace<WorkspaceContainerHost>;
-  WorkspaceWarmPool: ContainerWarmPoolNamespace;
-  CONTAINER_SLEEP_AFTER?: string;
-  FUSE_MOUNT?: string;
-  LOADER: WorkerShellBackendOptions["loader"];
-  WARM_POOL_RESET_KEY?: string;
-}
+// The agents read a subset of the Worker bindings, but the Think base
+// class constrains its env to the generated global Env, so alias that
+// rather than restating the shape here.
+export type RuntimeThinkAgentEnv = Env;
 
 interface RunConfig {
   runId: string;

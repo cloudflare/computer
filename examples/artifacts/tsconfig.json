@@ -4,7 +4,7 @@
     "lib": ["esnext"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["./worker-configuration.d.ts", "@cloudflare/workers-types"],
+    "types": ["./worker-configuration.d.ts"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,

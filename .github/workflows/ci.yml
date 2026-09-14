@@ -136,28 +136,24 @@ jobs:
           - name: artifacts
             workspace: "@example/computer-artifacts"
             path: examples/artifacts
-            typegen: "npx wrangler types"
           - name: assets
             workspace: "@example/computer-assets"
             path: examples/assets
           - name: container
             workspace: "@example/computer-container"
             path: examples/container
-            typegen: "npx wrangler types"
           - name: mcp
             workspace: "@example/computer-mcp"
             path: examples/mcp
           - name: think
             workspace: "@cloudflare/example-think"
             path: examples/think
-            typegen: "npx wrangler types"
           - name: think-compare-runtimes
             workspace: "@cloudflare/example-think-compare-runtimes"
             path: examples/think-compare-runtimes
           - name: tutorial
             workspace: "@example/computer-tutorial"
             path: examples/tutorial
-            typegen: "npm run build:types"
           - name: worker-javascript
             workspace: "@example/computer-worker-javascript"
             path: examples/worker-javascript
@@ -176,10 +172,12 @@ jobs:
       # typecheck resolves its imports.
       - run: npm run build --workspaces --if-present
 
+      # worker-configuration.d.ts is generated, not committed. The
+      # repo-root postinstall hook writes it for every example during
+      # install; this step is the explicit guard so the typecheck below
+      # still sees real bindings if that hook is ever skipped.
       - name: Generate worker types
-        if: matrix.typegen
-        run: ${{ matrix.typegen }}
-        working-directory: ${{ matrix.path }}
+        run: npm run build:types --workspace ${{ matrix.workspace }}
 
       - name: Lint + format check
         run: npx biome check ${{ matrix.path }}

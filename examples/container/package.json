@@ -9,13 +9,13 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "seed:r2": "wrangler r2 object put computer-container-hello/hello.txt --file ./seed/data/hello.txt --remote",
-    "seed:r2:local": "wrangler r2 object put computer-container-hello/hello.txt --file ./seed/data/hello.txt --local"
+    "seed:r2:local": "wrangler r2 object put computer-container-hello/hello.txt --file ./seed/data/hello.txt --local",
+    "build:types": "wrangler types"
   },
   "dependencies": {
     "@cloudflare/computer": "*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260616.1",
     "typescript": "^6.0.3",
     "wrangler": "^4.130.0"
   }

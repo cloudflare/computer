@@ -16,15 +16,12 @@
     "build:bin": "npm run build:bin --workspaces --if-present",
     "build:docker": "npm run build:docker --workspaces --if-present",
     "build:all": "npm run build && npm run build:bin && npm run build:docker",
+    "build:types": "npm run build:types --workspaces --if-present",
+    "postinstall": "npm run build:types",
     "format": "biome format --write .",
     "check": "biome check . && biome format . && sherif --fail-on-warnings",
     "check:fix": "biome check . --fix && sherif --fix --select highest",
     "changeset": "changeset"
-  },
-  "sherif": {
-    "ignoreDependency": [
-      "@cloudflare/workers-types@^5.20260722.1"
-    ]
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

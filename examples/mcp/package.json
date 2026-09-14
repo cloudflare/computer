@@ -9,7 +9,7 @@
     "deploy": "wrangler deploy",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit",
-    "cf-typegen": "wrangler types"
+    "build:types": "wrangler types"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
@@ -22,7 +22,6 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "@cloudflare/workers-types": "^5.20260722.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11",
     "wrangler": "^4.130.0"

@@ -8,7 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "chat": "node ./cli/chat.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:types": "wrangler types"
   },
   "bin": {
     "think-chat": "./cli/chat.mjs"
@@ -29,7 +30,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260616.1",
     "typescript": "^6.0.3",
     "wrangler": "^4.130.0"
   }

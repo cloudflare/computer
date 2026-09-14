@@ -11,7 +11,7 @@
     "typecheck": "tsc -b --pretty false",
     "preview": "npm run build && vite preview",
     "deploy": "npm run build && wrangler deploy",
-    "cf-typegen": "wrangler types"
+    "build:types": "wrangler types --env-file=.dev.vars.example"
   },
   "dependencies": {
     "@cloudflare/ai-chat": "^0.10.1",
@@ -26,7 +26,6 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.54.6",
-    "@cloudflare/workers-types": "^4.20260616.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",

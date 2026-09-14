@@ -1,11 +1,8 @@
-import type { WorkerShellBackendOptions } from "@cloudflare/computer/backends/worker-shell";
-import type { Sandbox as SandboxDO } from "@cloudflare/sandbox";
 import { getServerByName, routePartykitRequest, Server } from "partyserver";
 import type { RunEvent } from "../shared/events";
 import { comparisonFixture } from "../shared/fixture";
 import { runComparisonAgents } from "./comparison-agents";
 import {
-  type ContainerWarmPoolNamespace,
   getWarmPoolHandle,
   SandboxWarmPool,
   WorkspaceContainerHost,
@@ -33,23 +30,10 @@ export {
   WorkspaceWarmPool,
 };
 
-export interface Env {
-  AI: Ai;
-  CompareRun: DurableObjectNamespace<CompareRun>;
-  LOADER: WorkerShellBackendOptions["loader"];
-  SANDBOX_TRANSPORT: "rpc";
-  CONTAINER_SLEEP_AFTER?: string;
-  WARM_POOL_REFRESH_INTERVAL?: string;
-  WARM_POOL_RESET_KEY?: string;
-  WARM_POOL_TARGET?: string;
-  FUSE_MOUNT?: string;
-  Sandbox: DurableObjectNamespace<SandboxDO>;
-  SandboxWarmPool: ContainerWarmPoolNamespace;
-  WorkspaceContainerHost: DurableObjectNamespace<WorkspaceContainerHost>;
-  WorkspaceWarmPool: ContainerWarmPoolNamespace;
-  WorkspaceThinkAgent: DurableObjectNamespace<WorkspaceThinkAgent>;
-  SandboxThinkAgent: DurableObjectNamespace<SandboxThinkAgent>;
-}
+// Bindings come from the generated worker-configuration.d.ts, which
+// wrangler writes from wrangler.jsonc plus .dev.vars.example. The
+// alias keeps the rest of the worker importing one name.
+export type Env = Cloudflare.Env;
 
 const EVENTS_KEY = "events";
 

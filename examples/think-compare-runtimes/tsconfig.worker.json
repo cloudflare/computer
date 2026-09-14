@@ -5,7 +5,7 @@
     "lib": ["ES2022"],
     "allowImportingTsExtensions": true,
     "module": "ESNext",
-    "types": ["@cloudflare/workers-types"],
+    "types": ["./worker-configuration.d.ts"],
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "noEmit": true,
@@ -15,5 +15,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["worker", "shared"]
+  "include": ["worker", "shared", "worker-configuration.d.ts"]
 }

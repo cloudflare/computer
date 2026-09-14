@@ -84,10 +84,13 @@ New behavior needs a test. Bug fixes need a reproduction test that failed before
 ```bash
 npm run typecheck     # tsc --noEmit across workspaces
 npm run build         # library builds
+npm run build:types   # per-example worker-configuration.d.ts
 npm run build:all     # libraries, bundled binaries, docker images
 ```
 
 `build:all` is the union of `build`, `build:bin`, and `build:docker`. Only run it if you need the binary or Docker artifacts. It is slow.
+
+Every example's Worker binding types are generated, not committed. Each example owns a `build:types` script that runs `wrangler types` against its `wrangler.jsonc` and, where the example documents secrets, its committed env template. The repo-root `postinstall` hook runs all of them, so `npm install` leaves a `worker-configuration.d.ts` in every example. Rerun `npm run build:types` after changing a `wrangler.jsonc` or an env template; the example's typecheck fails against a stale file.
 
 ## Commit messages
 
@@ -175,4 +178,4 @@ For a prerelease channel (`alpha`, `beta`, `rc`), a maintainer runs
 - `node_modules/`, `dist/`, `artifacts/`. These are already ignored, but double-check `git status` before staging.
 - `.env` and `.dev.vars`. Local secrets and per-developer settings stay on your machine.
 - Editor or operating system scratch files. Add them to your global gitignore rather than to this repo's `.gitignore`.
-- Generated `worker-configuration.d.ts` files, except for the copies checked in under `examples/`.
+- Generated `worker-configuration.d.ts` files. Every copy is produced by an example's `build:types` script and ignored.

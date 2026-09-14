@@ -1,0 +1,12 @@
+# celld does not provide the managed Workers AI binding, so the agent
+# calls the Workers AI REST API with an account ID and an API token.
+# Create a token with Workers AI read access and export both names in
+# the shell that starts celld; `dev:local` forwards them as
+# CELLD_VAR_* Worker variables.
+#
+# This file is not read at runtime. It names the variables so the
+# generated worker-configuration.d.ts includes them:
+#   wrangler types --env-file=.dev.vars.example
+
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
