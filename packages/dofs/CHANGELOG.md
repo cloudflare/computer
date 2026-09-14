@@ -1,5 +1,19 @@
 # @cloudflare/dofs
 
+## 0.3.1
+
+### Patch Changes
+
+- [#146](https://github.com/cloudflare/computer/pull/146) Resolve sync change paths in batches and index tombstone scans by `(op, rev)`. ([`7ce8259`](https://github.com/cloudflare/computer/commit/7ce8259324d40d32e7b2db9d371ea5b19f4c8f63)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) Extend `Workspace.fs` to include `rename(oldPath, newPath)`. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) `find` now accepts `exclude` e.g. `ws.fs.find("/workspace", "**/*.ts", { exclude: ["node_modules/**"], })`. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) `mkdir` now follows symbolic links in intermediate path segments. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#123](https://github.com/cloudflare/computer/pull/123) Support `computerd` persisting its workspace to disk instead via `COMPUTERD_DB=<path>` — see [the `computerd` README](../packages/computerd/README.md#on-disk-store). ([`ef8cd11`](https://github.com/cloudflare/computer/commit/ef8cd11040b222875f1d04e7cfd6553068e07bb7)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.3.0
 
 ## 0.2.1

@@ -1,5 +1,17 @@
 # @cloudflare/computer
 
+## 0.3.1
+
+### Patch Changes
+
+- [#124](https://github.com/cloudflare/computer/pull/124) Document the symbolic-link filesystem surface under `docs/04_filesystem_interface.md`. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) Extend `Workspace.fs` to include `rename(oldPath, newPath)`. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#124](https://github.com/cloudflare/computer/pull/124) `find` now accepts `exclude` e.g. `ws.fs.find("/workspace", "**/*.ts", { exclude: ["node_modules/**"], })`. ([`e6a92c5`](https://github.com/cloudflare/computer/commit/e6a92c50cb53997bd601bdce0563b96276d0f8fc)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#145](https://github.com/cloudflare/computer/pull/145) Improve performance of git diff when given named paths. ([`a495760`](https://github.com/cloudflare/computer/commit/a495760138c163ac88d1b05632c90f3bcc4cd3f5)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.3.0
 
 ### Minor Changes
