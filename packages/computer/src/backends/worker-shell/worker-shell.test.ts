@@ -259,6 +259,63 @@ describe("WorkerShellBackend", () => {
     expect(result.skipped).toEqual([]);
   });
 
+  async function loadedId(
+    commands?: readonly Readonly<Record<string, { js: string }>>[],
+    overrides: { compatibilityDate?: string; compatibilityFlags?: string[] } = {},
+  ): Promise<string> {
+    let observed: string | undefined;
+    const backend = new WorkerShellBackend({
+      loader: {
+        get(name: string) {
+          observed = name;
+          return {
+            getEntrypoint: () =>
+              fakeFetcher(() => ({
+                id: "x",
+                events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+              })),
+          };
+        },
+      },
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx: { exports: { WorkspaceServiceProxy: () => ({}) } },
+      commands,
+      ...overrides,
+    });
+    await backend.connect();
+    if (observed === undefined) throw new Error("the backend never loaded a worker");
+    return observed;
+  }
+
+  async function loadedCode(
+    commands?: readonly Readonly<Record<string, { js: string }>>[],
+  ): Promise<{ modules: Record<string, unknown>; env: Record<string, unknown> }> {
+    let code: { modules: Record<string, unknown>; env: Record<string, unknown> } | undefined;
+    const backend = new WorkerShellBackend({
+      loader: {
+        get(
+          _name: string,
+          getCode: () => { modules: Record<string, unknown>; env: Record<string, unknown> },
+        ) {
+          code = getCode();
+          return {
+            getEntrypoint: () =>
+              fakeFetcher(() => ({
+                id: "x",
+                events: framedStream([{ id: "x", seq: 1, name: "exit", value: 0 }]),
+              })),
+          };
+        },
+      },
+      workspace: { binding: "WorkspaceHost", id: "abc" },
+      ctx: { exports: { WorkspaceServiceProxy: () => ({}) } },
+      commands,
+    });
+    await backend.connect();
+    if (code === undefined) throw new Error("the backend never loaded a worker");
+    return code;
+  }
+
   it("uses the current compatibility date for dynamic workers", async () => {
     let observedDate: string | undefined;
     let observedFlags: string[] | undefined;
@@ -294,6 +351,99 @@ describe("WorkerShellBackend", () => {
     expect(observedFlags).toEqual(["nodejs_compat"]);
   });
 
+  // Worker Loader caches a Dynamic Worker by the identifier the backend
+  // passes to loader.get. Two backends in one workspace share an
+  // identifier unless their command selection is part of it, and the
+  // first one to connect would then decide the module table and the
+  // environment for both.
+  it("gives backends with different commands different loader ids", async () => {
+    const plain = await loadedId();
+    const withGroup = await loadedId([{ "chunk-feature.js": { js: "export const x = 1;" } }]);
+
+    expect(withGroup).not.toBe(plain);
+  });
+
+  it("keeps one loader id for backends with matching commands", async () => {
+    const group = [{ "chunk-feature.js": { js: "export const x = 1;" } }];
+
+    expect(await loadedId(group)).toBe(await loadedId(group));
+  });
+
+  it("uses a SHA-256 fingerprint for the Worker definition", async () => {
+    expect(await loadedId()).toMatch(/:[0-9a-f]{64}$/);
+  });
+
+  it("separates groups that share a module name but not its source", async () => {
+    // Chunk names carry a content hash, but a fixed name such as the
+    // extras module does not, so its source has to reach the key.
+    const first = await loadedId([
+      { "workspace-shell-extras.js": { js: "export default () => ['browser'];" } },
+    ]);
+    const second = await loadedId([
+      { "workspace-shell-extras.js": { js: "export default () => ['other'];" } },
+    ]);
+
+    expect(second).not.toBe(first);
+  });
+
+  it("separates groups whose module name only looks content-addressed", async () => {
+    // A hand-written group can name a module in the same shape esbuild
+    // uses for its content-hashed chunks. The key cannot take that
+    // name as a stand-in for the source behind it.
+    const first = await loadedId([{ "chunk-feature.js": { js: "export const x = 1;" } }]);
+    const second = await loadedId([{ "chunk-feature.js": { js: "export const x = 2;" } }]);
+
+    expect(second).not.toBe(first);
+  });
+
+  it("separates backends that differ only by compatibility date", async () => {
+    const base = await loadedId(undefined, { compatibilityDate: "2026-06-17" });
+    const later = await loadedId(undefined, { compatibilityDate: "2026-07-01" });
+
+    expect(later).not.toBe(base);
+  });
+
+  it("separates backends that differ only by compatibility flags", async () => {
+    const base = await loadedId(undefined, {});
+    const extra = await loadedId(undefined, { compatibilityFlags: ["experimental"] });
+
+    expect(extra).not.toBe(base);
+  });
+
+  it("separates an extras-carrying group from a plain one", async () => {
+    const extras = await loadedId([
+      { "workspace-shell-extras.js": { js: "export default () => [];" } },
+    ]);
+
+    expect(extras).not.toBe(await loadedId());
+  });
+
+  it("registers no extra commands by default", async () => {
+    const code = await loadedCode();
+
+    expect(code.modules["workspace-shell-extras.js"]).toBeUndefined();
+    expect(code.env.WORKSPACE_SHELL_EXTRAS).toBeUndefined();
+  });
+
+  it("points the shell at a command group that carries extra commands", async () => {
+    const group = { "workspace-shell-extras.js": { js: "export default () => [];" } };
+
+    const code = await loadedCode([group]);
+
+    expect(code.env.WORKSPACE_SHELL_EXTRAS).toBe("workspace-shell-extras.js");
+    expect(code.modules["workspace-shell-extras.js"]).toEqual(group["workspace-shell-extras.js"]);
+    // The group adds to the table; the native-dependency stubs the
+    // runtime modules carry are still there.
+    expect(code.modules["seek-bzip"]).toBeDefined();
+  });
+
+  it("leaves the shell alone for a group that only carries chunks", async () => {
+    const code = await loadedCode([{ "chunk-abc.js": { js: "export const x = 1;" } }]);
+
+    expect(code.env.WORKSPACE_SHELL_EXTRAS).toBeUndefined();
+    expect(code.modules["chunk-abc.js"]).toBeDefined();
+  });
+
   it("blocks ambient egress by default", async () => {
     let loaderId: string | undefined;
     let workerCode: Record<string, unknown> | undefined;
@@ -318,7 +468,9 @@ describe("WorkerShellBackend", () => {
 
     await backend.connect();
 
-    expect(loaderId).toBe("workspace-shell:abc:egress-none");
+    // The trailing segment fingerprints the command selection; the
+    // egress identity is what this case is about.
+    expect(loaderId).toMatch(/^workspace-shell:abc:egress-none:[0-9a-f]{64}$/);
     expect(workerCode).toMatchObject({ globalOutbound: null });
   });
 
@@ -347,7 +499,7 @@ describe("WorkerShellBackend", () => {
 
     await backend.connect();
 
-    expect(loaderId).toBe("workspace-shell:abc:egress-direct");
+    expect(loaderId).toMatch(/^workspace-shell:abc:egress-direct:[0-9a-f]{64}$/);
     expect(workerCode).not.toHaveProperty("globalOutbound");
   });
 
@@ -377,7 +529,7 @@ describe("WorkerShellBackend", () => {
 
     await backend.connect();
 
-    expect(loaderId).toBe("workspace-shell:abc:egress-http-gateway-v1");
+    expect(loaderId).toMatch(/^workspace-shell:abc:egress-http-gateway-v1:[0-9a-f]{64}$/);
     expect(workerCode).toMatchObject({ globalOutbound: gateway });
   });
 
@@ -428,10 +580,11 @@ describe("WorkerShellBackend", () => {
     const second = await backend.connect();
 
     expect(randomUUID).toHaveBeenCalledOnce();
-    expect(loaderIds).toEqual([
-      "workspace-shell:abc:egress-http-gateway-generated-revision",
-      "workspace-shell:abc:egress-http-gateway-generated-revision",
-    ]);
+    expect(loaderIds).toHaveLength(2);
+    expect(loaderIds[0]).toMatch(
+      /^workspace-shell:abc:egress-http-gateway-generated-revision:[0-9a-f]{64}$/,
+    );
+    expect(loaderIds[1]).toBe(loaderIds[0]);
     await first.close();
     await second.close();
   });

@@ -67,17 +67,21 @@ export interface WorkspaceRuntimeFilesystem {
   symlink(target: string, path: string): Promise<void>;
 }
 
-export interface WorkspaceRuntimeLoader {
+export interface WorkspaceRuntimeLoadedWorker {
+  getEntrypoint(name?: string, options?: { limits?: { cpuMs?: number } }): unknown;
+  [Symbol.dispose]?: () => void;
+}
+
+export interface WorkspaceRuntimeLoader<LoadedWorker = WorkspaceRuntimeLoadedWorker> {
   load(code: {
     compatibilityDate: string;
     compatibilityFlags?: string[];
     limits?: { cpuMs?: number };
     mainModule: string;
     modules: Record<string, string | { js?: string }>;
+    env?: Record<string, unknown>;
     globalOutbound?: Fetcher | null;
-  }): {
-    getEntrypoint(name?: string, options?: { limits?: { cpuMs?: number } }): unknown;
-  };
+  }): LoadedWorker;
 }
 
 export type WorkspaceRuntimeStatus = "completed" | "failed" | "cancelled";

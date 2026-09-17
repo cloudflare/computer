@@ -139,6 +139,9 @@ jobs:
           - name: assets
             workspace: "@example/computer-assets"
             path: examples/assets
+          - name: browser-rendering
+            workspace: "@example/computer-browser-rendering"
+            path: examples/browser-rendering
           - name: container
             workspace: "@example/computer-container"
             path: examples/container

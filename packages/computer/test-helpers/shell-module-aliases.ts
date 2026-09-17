@@ -20,6 +20,7 @@ const groups = [
   "file",
   "xan",
   "jq",
+  "browser",
 ] as const;
 
 export const shellModuleAliases = groups.map((group) => ({

@@ -76,13 +76,13 @@ await workspace.runtime.exec(
 );
 ```
 
-Workspace parses the graph before loading the Worker, confines every durable path, rejects symlink traversal, and enforces aggregate source, module-count, and import-depth limits. Dynamic imports must use string literals.
+Workspace parses the graph before loading the Worker, confines every durable path, rejects symlink traversal, and enforces aggregate source, module-count, and import-depth limits. Dynamic imports must use string literals. Configured and plugin modules are stored once under an internal canonical name; small directory-local aliases provide bare-import resolution without duplicating bundled package source throughout a nested caller graph.
 
 ## Execution limits and retention
 
 The backend admits up to twenty-four executions at a time by default. A concurrent start past that ceiling fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Adjust `maxConcurrentExecutions` after measuring the Durable Object and Worker Loader limits for the deployment.
 
-Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
+Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. `maxSourceBytes` applies to caller-owned entry and relative module source, while `maxLoaderSourceBytes` and `maxLoaderModules` separately bound the complete generated Loader graph, including configured plugin bundles. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
 
 Completed execution records remain available for replay for sixty minutes by default. The backend also keeps at most 100 completed records. Configure these bounds with `retentionMs` and `maxRetainedExecutions`. Completed records leave the in-memory active set immediately; replay reads them from SQLite.
 
@@ -132,7 +132,44 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-Unknown bare imports fail before Worker creation. `node:fs` and `node:fs/promises` are host-installed exceptions backed by the durable Workspace. Configured modules are code, not host authority, and may not use the reserved `ws:` namespace or shadow either filesystem specifier.
+Unknown bare imports fail before Worker creation. `node:fs` and `node:fs/promises` are host-installed exceptions backed by the durable Workspace. Configured modules are code, not host authority, and may not use the reserved `ws:` namespace or shadow either filesystem specifier. On a backend with plugins, their dynamic imports must use string literals so the backend can keep the private plugin binding bridge out of ordinary configured modules.
+
+## Plugins and host bindings
+
+Plugins install a prebuilt module and the host bindings it needs. The bindings are fixed at backend construction, stay separate from `process.env`, and are not available to caller or ordinary configured modules. Plugins installed on one backend are mutually trusted.
+
+The Puppeteer plugin bundles Cloudflare's Worker-compatible client and passes a Browser Run binding into the Dynamic Worker:
+
+```ts
+import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import { puppeteer } from "@cloudflare/computer/plugins/puppeteer";
+
+new WorkerJavaScriptBackend({
+  loader: env.LOADER,
+  plugins: [puppeteer({ browser: env.BROWSER })],
+});
+```
+
+Execution source imports the configured package name. Browser objects remain inside that execution; Chromium runs in Browser Run:
+
+```js
+import { withBrowser } from "@cloudflare/puppeteer";
+
+export default function main(input) {
+  return withBrowser(async (browser) => {
+    const page = await browser.newPage();
+    await page.goto(input.url);
+    return { title: await page.title() };
+  }, {
+    guardrails: {
+      allowedDomains: [input.hostname, "*." + input.hostname],
+      allowedDomainSets: ["common-cdns"],
+    },
+  });
+}
+```
+
+See [Browser automation](./20_browser_automation.md) for the complete setup and [`examples/browser-rendering`](../examples/browser-rendering) for a working application.
 
 ## Trusted Workspace modules
 
@@ -184,7 +221,7 @@ Each execution receives a fresh Dynamic Worker with:
 - a host wall-clock deadline;
 - `globalOutbound: null` by default;
 - finite, acyclic JSON-compatible input and structured result validation;
-- configurable source/module graph, input, result, stdin, stdio, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxStdioBytes`, and `maxCapabilityBytes`);
+- configurable caller source, complete Loader graph, input, result, stdin, stdio, file/capability request, and response limits (`maxSourceBytes`, `maxLoaderSourceBytes`, `maxLoaderModules`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxStdioBytes`, and `maxCapabilityBytes`);
 - explicit entrypoint and Worker disposal;
 - host-owned cancellation;
 - retained events and result rows in the Workspace database.

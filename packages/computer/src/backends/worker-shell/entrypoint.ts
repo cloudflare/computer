@@ -23,6 +23,7 @@ import { Bash, type CustomCommand, type SecureFetch } from "just-bash";
 import { WorkspaceFsAdapter } from "./adapter.js";
 import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
 import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
+import type { BrowserCommandRuntime } from "./browser/command.js";
 import { defineGitCommand, type GitCommandHost } from "./git-command.js";
 
 export interface ExecInput {
@@ -82,7 +83,17 @@ const defaultSecureFetch: SecureFetch = async (url, options) => {
 // Env shape the host Worker is expected to wire through the
 // Loader callback. The shell calls env.HOST.getWorkspace() on
 // every exec; no caching.
+// Shape a command group's module exports so ShellWorker can call it.
+type ExtraCommandModule = { default(ws: HostWorkspaceStub): CustomCommand[] };
+
 export interface ShellWorkerEnv {
+  // Module name of a command group that registers extra commands,
+  // set by WorkerShellBackend when one of the opted-in groups carries
+  // it. The specifier is a runtime value rather than a literal on
+  // purpose: the module lives in the Worker Loader table, so a
+  // literal would be an unresolvable import for anyone bundling this
+  // package for the host side.
+  WORKSPACE_SHELL_EXTRAS?: string;
   // Fetcher pointing at a WorkspaceServiceProxy WorkerEntrypoint
   // on the host side. Its getWorkspace() method does the
   // DurableObjectNamespace lookup and returns a WorkspaceStub.
@@ -107,6 +118,10 @@ export interface ShellHostFetcher {
 export interface HostWorkspaceStub extends GitCommandHost, AssetsCommandHost {
   fs: import("./adapter.js").WorkspaceFs;
   artifacts: ArtifactsCommandHost["artifacts"];
+  // Execution surface the `browser` command group dispatches
+  // through. Present on every WorkspaceStub; the core command set
+  // does not use it.
+  runtime: BrowserCommandRuntime;
   [Symbol.dispose]?: () => void;
 }
 
@@ -200,15 +215,19 @@ export class ShellWorker<
       throw error;
     }
 
-    const customCommands: CustomCommand[] = [
-      defineGitCommand(ws),
-      defineAssetsCommand(ws),
-      defineArtifactsCommand({ artifacts: ws.artifacts, git: ws.git }),
-      ...this.extraCommands(ws),
-    ];
-
     let result: { stdout: string; stderr: string; exitCode: number };
     try {
+      // Assembled inside the try because loading a command group runs
+      // that group's module. A group that throws has to settle like any
+      // other execution failure, or the id, the timer, and the stub
+      // acquired above would outlive the call.
+      const customCommands: CustomCommand[] = [
+        defineGitCommand(ws),
+        defineAssetsCommand(ws),
+        defineArtifactsCommand({ artifacts: ws.artifacts, git: ws.git }),
+        ...(await loadExtraCommands(this.env.WORKSPACE_SHELL_EXTRAS, ws)),
+        ...this.extraCommands(ws),
+      ];
       if (this.bashFactoryOverride !== undefined) {
         result = await this.bashFactoryOverride(input.command, {
           cwd,
@@ -300,6 +319,18 @@ export class ShellWorker<
       .get(input.id)
       ?.abort(new Error(`Execution cancelled with ${input.signal ?? "SIGTERM"}`));
   }
+}
+
+// Load the opted-in command group from the Worker Loader modules
+// table. The import is cached by the runtime, so the cost lands on
+// the first exec of an isolate rather than on every call.
+async function loadExtraCommands(
+  specifier: string | undefined,
+  ws: HostWorkspaceStub,
+): Promise<CustomCommand[]> {
+  if (specifier === undefined) return [];
+  const module = (await import(specifier)) as ExtraCommandModule;
+  return module.default(ws);
 }
 
 function framedStream(events: WireEvent[]): ReadableStream<Uint8Array> {

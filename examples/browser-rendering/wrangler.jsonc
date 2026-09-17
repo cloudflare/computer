@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-browser-rendering-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "browser": {
+    "binding": "BROWSER"
+  },
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BrowserWorkspace",
+        "class_name": "BrowserWorkspace"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["BrowserWorkspace"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "traces": {
+      "enabled": true
+    }
+  }
+}
