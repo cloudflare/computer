@@ -1,0 +1,53 @@
+README.md
+  s_af88ca552b7a2d::t_3658d7d80b645a 66-68
+examples/codemode/.gitignore
+  s_af88ca552b7a2d::t_5d9761d4bb4811 1-2
+examples/codemode/Dockerfile
+  s_af88ca552b7a2d::t_7e40c190cafd81 1-24
+examples/codemode/README.md
+  s_af88ca552b7a2d::t_9b6f9619892bbe 1-73
+examples/codemode/package.json
+  s_af88ca552b7a2d::t_063329214233c7 1-27
+examples/codemode/script/run
+  s_af88ca552b7a2d::t_c16437bc8da6c0 1-35
+examples/codemode/src/index.test.ts
+  s_af88ca552b7a2d::t_de31b09b0029aa 1-79
+examples/codemode/src/index.ts
+  s_af88ca552b7a2d::t_beb3a57bbb3c78 1-137
+examples/codemode/src/notes-connector.ts
+  s_af88ca552b7a2d::t_82a3286d7ed3f4 3
+examples/codemode/tsconfig.json
+  s_af88ca552b7a2d::t_ad77ac09e181b5 1-17
+examples/codemode/vitest.config.ts
+  s_af88ca552b7a2d::t_6da25e0cbec1a7 1-13
+examples/codemode/worker-configuration.d.ts
+  s_af88ca552b7a2d::t_f247f093e3eaa5 1-14749
+examples/codemode/wrangler.jsonc
+  s_af88ca552b7a2d::t_5275267e03e119 1-30
+examples/codemode/wrangler.test.jsonc
+  s_af88ca552b7a2d::t_2e752066029d87 1-18
+examples/mcp/src/index.ts
+  s_af88ca552b7a2d::t_6c957b7b5e534f 61-63
+examples/mcp/wrangler.jsonc
+  s_af88ca552b7a2d::t_28adc18e8810ab 20
+examples/mcp/wrangler.test.jsonc
+  s_af88ca552b7a2d::t_a9e74ef14e10cc 10
+package-lock.json
+  s_af88ca552b7a2d::t_92ea675bc9d37a 93-120,2640-2643
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f629c631713b6a12bf8c0a28881d6c25897d82e4",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

@@ -1,0 +1,33 @@
+examples/mcp/Dockerfile
+  s_af88ca552b7a2d::t_0df77a827bde8a 11
+examples/mcp/README.md
+  s_af88ca552b7a2d::t_5083551c84ee87 123-140
+examples/mcp/package.json
+  s_af88ca552b7a2d::t_06e70a1a28fe46 24,27
+examples/mcp/src/index.test.ts
+  s_af88ca552b7a2d::t_3bd5261eef252b 2,5,136-186
+examples/mcp/src/index.ts
+  s_af88ca552b7a2d::t_f2e958a2ebdef8 18,27-30,49-55,73-75
+examples/mcp/src/notes-connector.ts
+  s_af88ca552b7a2d::t_06cc60fdfdfca3 1-62
+examples/mcp/wrangler.jsonc
+  s_af88ca552b7a2d::t_5a7d35510ce7f6 20-25
+examples/mcp/wrangler.test.jsonc
+  s_af88ca552b7a2d::t_1b7891056a368a 10-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7b11275b81b20ca15e9c58a00c62b89e72b54d79",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

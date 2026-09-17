@@ -1,0 +1,23 @@
+.changeset/codemode-rpc-interface.md
+  s_af88ca552b7a2d::t_0463ed98380da8 1-5
+packages/rpc/src/index.ts
+  s_af88ca552b7a2d::t_bec265b87f10d3 19-21
+packages/rpc/src/interface.ts
+  s_af88ca552b7a2d::t_5381e83258b497 162-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1fb59a44807f95197ca72d74185e9f6608e85256",
+  "prompts": {},
+  "sessions": {
+    "s_af88ca552b7a2d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d21fe160-c2ac-4275-82f9-7c2f8779a722",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
