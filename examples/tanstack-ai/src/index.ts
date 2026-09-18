@@ -71,9 +71,8 @@ export class TanStackAgent extends DurableObject<Env> {
         "You are working in a directory at /workspace. Use the tools to do what the user asks, then say what you did.",
       ],
       messages: [{ role: "user", content: task }],
-      // The tools arrive keyed by name, which is the shape a server
-      // registry wants; chat() takes them as a list.
-      tools: Object.values(tools),
+      // The tools arrive as a list, which is what chat() takes.
+      tools,
       // Stop after ten model turns, so a confused model cannot loop
       // forever on someone else's bill.
       agentLoopStrategy: maxIterations(10),

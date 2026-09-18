@@ -49,7 +49,7 @@ Sharing the implementation does not mean levelling every SDK down to the smalles
 | --- | --- |
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
 | `createPiTools` | Create pi tool declarations plus their executor. |
-| `createTanStackTools` | Create the TanStack AI tool record for a Workspace. |
+| `createTanStackTools` | Create the TanStack AI tool list for a Workspace. |
 | `createToolSpecs` | Build the SDK-neutral spec set the adapters share. |
 | `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
@@ -141,7 +141,7 @@ const { tools } = createPiTools({ workspace, constrainedSampling: "require" });
 
 ### TanStack AI
 
-A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The tools come back keyed by name, which is the shape a server-side registry and `mergeAgentTools` expect; `chat()` takes a list, so pass `Object.values(tools)`.
+A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The tools come back as a list, which is what every TanStack entry point takes: `chat({ tools })`, `mergeAgentTools`, and `createToolRegistry` all want an array. Use `tanStackToolsByName(tools)` to reach one tool directly, such as to adjust a single tool before the call.
 
 ```ts
 import { chat, toServerSentEventsResponse } from "@tanstack/ai";
@@ -163,7 +163,7 @@ export async function POST(request: Request) {
     chat({
       adapter: anthropicText("claude-sonnet-4-5"),
       messages,
-      tools: Object.values(tools),
+      tools,
       abortController,
     }),
   );

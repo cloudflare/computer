@@ -90,7 +90,7 @@ const stream = chat({
   adapter: scriptedAdapter,
   systemPrompts: ["You are working in a directory at /workspace."],
   messages: [{ role: "user", content: "Write a haiku to /workspace/haiku.txt then read it back." }],
-  tools: Object.values(tools),
+  tools,
   agentLoopStrategy: maxIterations(10),
 });
 

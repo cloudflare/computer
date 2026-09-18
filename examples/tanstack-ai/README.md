@@ -11,7 +11,7 @@ ten lines in [`src/index.ts`](src/index.ts).
 The workspace tools come from
 [`@cloudflare/computer/tools/tanstack`](../../docs/09_tool_interface.md):
 `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and `exec`. They
-arrive keyed by name, which is the shape `chat()` wants.
+arrive as a list, which is the shape `chat()` wants.
 
 The Cloudflare adapter talks to Workers AI through the `AI` binding, so the
 example needs no API key.

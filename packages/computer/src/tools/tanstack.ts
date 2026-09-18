@@ -6,9 +6,11 @@
  * which Zod v4 implements, so the schemas in `./spec.js` are passed
  * through untouched — no conversion and no second copy of any schema.
  *
- * `createTanStackTools` returns the tools keyed by name, which is the
- * shape a server-side registry and `mergeAgentTools` expect. `chat()`
- * itself takes a list, so pass `Object.values(tools)` there.
+ * `createTanStackTools` returns a list, which is what every TanStack
+ * entry point takes: `chat({ tools })`, `mergeAgentTools`, and
+ * `createToolRegistry` all want an array. Use `tanStackToolsByName`
+ * when a single tool has to be reached directly, such as to adjust one
+ * before the call.
  */
 
 import type { z } from "zod";
@@ -74,14 +76,34 @@ export interface TanStackToolExecutionContext {
 }
 
 /**
- * A tool set keyed by name.
+ * A list of tools, ready to pass to `chat({ tools })`.
  *
- * The element type erases its input to `unknown` rather than `never`:
- * `chat()` accepts a tool whose `execute` takes `any`, and a spec
- * validates its own input before use, so the looser parameter is
- * accurate here and lets the set be spread straight into `chat()`.
+ * The element type erases its input to `never` because `chat()` accepts
+ * a tool whose `execute` takes `any`, and a spec validates its own
+ * input before use, so the looser parameter is accurate here.
+ */
+export type TanStackToolList = TanStackTool<never>[];
+
+/**
+ * The same tools keyed by name.
+ *
+ * No TanStack entry point takes this shape — it is for reaching one
+ * tool directly, such as to adjust a single tool before the call.
  */
 export type TanStackToolSet = Record<string, TanStackTool<never>>;
+
+/**
+ * Look the tools up by name.
+ *
+ * A list is what TanStack consumes, so that is what the builders
+ * return; this is the escape hatch for the occasional caller that
+ * wants one tool rather than the set.
+ */
+export function tanStackToolsByName(tools: readonly TanStackTool<never>[]): TanStackToolSet {
+  const set: TanStackToolSet = {};
+  for (const tool of tools) set[tool.name] = tool;
+  return set;
+}
 
 export interface CreateTanStackToolsOptions extends CreateToolsOptions {
   /**
@@ -119,12 +141,13 @@ export interface CreateTanStackToolsOptions extends CreateToolsOptions {
 }
 
 /**
- * Build the TanStack AI tool set for a Workspace.
+ * Build the TanStack AI tools for a Workspace.
  *
- * The returned record is keyed by tool name and holds the same tools,
- * caps, and gating as the AI SDK and pi entrypoints.
+ * Returns a list, ready to pass straight to `chat({ tools })`. It holds
+ * the same tools, caps, and gating as the AI SDK and pi entrypoints.
+ * Wrap it in {@link tanStackToolsByName} to reach one tool directly.
  */
-export function createTanStackTools(options: CreateTanStackToolsOptions): TanStackToolSet {
+export function createTanStackTools(options: CreateTanStackToolsOptions): TanStackToolList {
   const specs = createToolSpecs(options);
   return toTanStackTools(specs, options);
 }
@@ -133,13 +156,13 @@ export function createTanStackTools(options: CreateTanStackToolsOptions): TanSta
 export function toTanStackTools(
   specs: ToolSpecSet,
   options: Omit<CreateTanStackToolsOptions, keyof CreateToolsOptions> = {},
-): TanStackToolSet {
-  const tools: TanStackToolSet = {};
+): TanStackToolList {
+  const tools: TanStackToolList = [];
 
   for (const spec of Object.values(specs)) {
     const needsApproval = wants(options.approve, spec.name, spec.traits?.mutates === true);
     const lazy = wants(options.lazy, spec.name, options.lazy === "all");
-    tools[spec.name] = {
+    tools.push({
       name: spec.name,
       description: spec.description,
       inputSchema: spec.inputSchema,
@@ -158,7 +181,7 @@ export function toTanStackTools(
             : await settle(returned);
         return toTanStackOutput(await applyModelOutput(spec, input, output));
       },
-    } as TanStackTool<never>;
+    } as TanStackTool<never>);
   }
 
   return tools;

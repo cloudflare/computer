@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Workspace } from "../workspace.js";
 import { defineTool } from "./spec.js";
-import { createTanStackTools, toTanStackTools } from "./tanstack.js";
+import { createTanStackTools, tanStackToolsByName, toTanStackTools } from "./tanstack.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
@@ -52,10 +52,13 @@ function streamingCommandBackend(events: import("@cloudflare/computer-rpc").Exec
 }
 
 describe("createTanStackTools", () => {
-  it("returns a record keyed by tool name", () => {
+  it("returns a list, the shape every TanStack entry point takes", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace() });
 
-    expect(Object.keys(tools).sort()).toEqual([
+    // chat(), mergeAgentTools and createToolRegistry all call array
+    // methods on what they are given, so an array is the contract.
+    expect(Array.isArray(tools)).toBe(true);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
       "delete",
       "edit",
       "find",
@@ -64,20 +67,29 @@ describe("createTanStackTools", () => {
       "read",
       "write",
     ]);
-    for (const [name, tool] of Object.entries(tools)) {
-      expect(tool.name).toBe(name);
+    for (const tool of tools) {
       expect(typeof tool.execute).toBe("function");
+    }
+  });
+
+  it("looks tools up by name on request", () => {
+    const tools = createTanStackTools({ workspace: makeWorkspace() });
+    const set = tanStackToolsByName(tools);
+
+    expect(Object.keys(set).sort()).toEqual(tools.map((tool) => tool.name).sort());
+    for (const [name, tool] of Object.entries(set)) {
+      expect(tool.name).toBe(name);
     }
   });
 
   it("omits mutating tools when readonly", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace(), readonly: true });
 
-    expect(Object.keys(tools).sort()).toEqual(["find", "grep", "ls", "read"]);
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
   it("passes the Zod schema through untouched for standard-schema validation", () => {
-    const tools = createTanStackTools({ workspace: makeWorkspace() });
+    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
 
     const schema = tools.write.inputSchema as unknown as {
       "~standard": { version: number };
@@ -89,17 +101,18 @@ describe("createTanStackTools", () => {
   });
 
   it("flags only the requested tools as needing approval", () => {
-    const tools = createTanStackTools({
-      workspace: makeWorkspace(),
-      approve: ["delete"],
-    });
+    const tools = tanStackToolsByName(
+      createTanStackTools({ workspace: makeWorkspace(), approve: ["delete"] }),
+    );
 
     expect(tools.delete.needsApproval).toBe(true);
     expect(tools.write.needsApproval).toBeUndefined();
   });
 
   it("gates every mutating tool from one keyword", () => {
-    const tools = createTanStackTools({ workspace: makeWorkspace(), approve: "mutating" });
+    const tools = tanStackToolsByName(
+      createTanStackTools({ workspace: makeWorkspace(), approve: "mutating" }),
+    );
 
     for (const name of ["write", "edit", "delete"]) {
       expect(tools[name].needsApproval).toBe(true);
@@ -111,7 +124,7 @@ describe("createTanStackTools", () => {
   });
 
   it("describes output shapes including the error branch", () => {
-    const tools = createTanStackTools({ workspace: makeWorkspace() });
+    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
 
     const schema = tools.write.outputSchema as unknown as {
       safeParse: (v: unknown) => { success: boolean };
@@ -131,7 +144,7 @@ describe("createTanStackTools", () => {
     workspace.fs.writeFile = async () => {
       throw new Error("read-only filesystem");
     };
-    const tools = createTanStackTools({ workspace });
+    const tools = tanStackToolsByName(createTanStackTools({ workspace }));
 
     const result = (await tools.write.execute({
       path: "/workspace/a.txt",
@@ -148,18 +161,22 @@ describe("createTanStackTools", () => {
   });
 
   it("marks tools lazy so they stay out of the prompt until discovered", () => {
-    const all = createTanStackTools({ workspace: makeWorkspace(), lazy: "all" });
+    const all = tanStackToolsByName(
+      createTanStackTools({ workspace: makeWorkspace(), lazy: "all" }),
+    );
     expect(all.read.lazy).toBe(true);
     expect(all.write.lazy).toBe(true);
 
-    const some = createTanStackTools({ workspace: makeWorkspace(), lazy: ["grep"] });
+    const some = tanStackToolsByName(
+      createTanStackTools({ workspace: makeWorkspace(), lazy: ["grep"] }),
+    );
     expect(some.grep.lazy).toBe(true);
     expect(some.read.lazy).toBeUndefined();
   });
 
   it("returns plain text for a complete read and objects for structured results", async () => {
     const workspace = makeWorkspace();
-    const tools = createTanStackTools({ workspace });
+    const tools = tanStackToolsByName(createTanStackTools({ workspace }));
 
     await tools.write.execute({ path: "/w/a.txt", content: "hi\n" } as never);
 
@@ -171,7 +188,7 @@ describe("createTanStackTools", () => {
   });
 
   it("returns an error object for a failed call", async () => {
-    const tools = createTanStackTools({ workspace: makeWorkspace() });
+    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
 
     const result = (await tools.read.execute({ path: "/w/missing.txt" } as never)) as {
       error: string;
@@ -192,10 +209,12 @@ describe("createTanStackTools", () => {
         ]) as never,
       ],
     });
-    const tools = createTanStackTools({
-      workspace,
-      shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
-    });
+    const tools = tanStackToolsByName(
+      createTanStackTools({
+        workspace,
+        shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
+      }),
+    );
 
     await expect(tools.exec.execute({ command: "echo hello" } as never)).resolves.toEqual({
       command: "echo hello",
@@ -212,20 +231,22 @@ describe("createTanStackTools", () => {
     const events: Array<{ name: string; value: Record<string, unknown> }> = [];
     // Exercise the event forwarding against the adapter's contract:
     // the last snapshot settles, earlier ones are emitted.
-    const tools = toTanStackTools(
-      {
-        fake: defineTool({
-          name: "fake",
-          description: "d",
-          inputSchema: z.object({}),
-          traits: { streams: true },
-          execute: async function* () {
-            yield { exitCode: null, stdout: "partial" };
-            yield { exitCode: 0, stdout: "complete" };
-          },
-        }) as never,
-      },
-      { streamEventName: "exec-progress" },
+    const tools = tanStackToolsByName(
+      toTanStackTools(
+        {
+          fake: defineTool({
+            name: "fake",
+            description: "d",
+            inputSchema: z.object({}),
+            traits: { streams: true },
+            execute: async function* () {
+              yield { exitCode: null, stdout: "partial" };
+              yield { exitCode: 0, stdout: "complete" };
+            },
+          }) as never,
+        },
+        { streamEventName: "exec-progress" },
+      ),
     );
 
     const result = await tools.fake.execute({} as never, {
