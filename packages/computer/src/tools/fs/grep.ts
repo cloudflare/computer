@@ -21,6 +21,7 @@ interface GrepOptions {
   limit?: number;
   offset?: number;
   include?: string;
+  exclude?: string[];
 }
 
 export interface GrepWorkspaceLike {
@@ -43,6 +44,12 @@ const inputSchema = z.object({
     .string()
     .optional()
     .describe('Glob relative to path that limits searched files, for example "**/*.ts".'),
+  exclude: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Glob patterns to leave out, for example ["node_modules/**", "**/.git/**"]. An excluded directory is skipped along with everything below it.',
+    ),
   regex: z.boolean().optional().describe("Interpret query as a regular expression."),
   ignoreCase: z.boolean().optional().describe("Ignore letter case."),
   context: z.number().int().min(0).max(10).optional(),
@@ -55,7 +62,17 @@ export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof in
     description:
       "Search workspace text with a literal string or regular expression. Results include paths and line numbers and can include surrounding lines.",
     inputSchema,
-    execute: async ({ path, query, include, regex, ignoreCase, context, limit, offset }) => {
+    execute: async ({
+      path,
+      query,
+      include,
+      exclude,
+      regex,
+      ignoreCase,
+      context,
+      limit,
+      offset,
+    }) => {
       try {
         const pageSize = limit ?? DEFAULT_LIMIT;
         const pageOffset = offset ?? 0;
@@ -67,6 +84,7 @@ export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof in
         const matches = await options.workspace.fs.grep(query, path, {
           ...searchOptions,
           include,
+          exclude,
           limit: pageSize + 1,
           offset: pageOffset,
         });

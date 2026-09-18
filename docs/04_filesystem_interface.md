@@ -392,6 +392,7 @@ interface GrepOptions {
   limit?: number;
   offset?: number;
   include?: string;
+  exclude?: string[];
 }
 
 interface WorkspaceGrepContextLine {
@@ -420,14 +421,23 @@ letter case. `context` adds that many lines before and after each match.
 `include` is a glob relative to a searched directory. `limit` and `offset`
 paginate matching lines.
 
+`exclude` takes globs of the same shape as `find`'s, matched against the same
+directory-relative path and applied before `include`, so an exclusion always
+wins. An excluded directory is pruned before its children are queried, so the
+subtree costs nothing rather than being read and filtered. As with `find`, name
+both the directory and its contents to skip a whole subtree: `node_modules/**`
+matches what is below `node_modules`, not `node_modules` itself.
+
 `path` may be a directory or a single file. Directory searches return matches
 in deterministic depth-first discovery order, then line order within each
-file. Results are not globally sorted by full path.
+file. Results are not globally sorted by full path. A single-file search has no
+traversal to prune, so `exclude` does not apply to it.
 
 ```ts
 const hits = await fs.grep("TODO", "/workspace/src", {
   ignoreCase: true,
   include: "**/*.ts",
+  exclude: ["node_modules", "node_modules/**"],
 });
 for (const hit of hits) {
   console.log(`${hit.path}:${hit.line}: ${hit.text}`);
@@ -517,7 +527,7 @@ maps to `Workspace.fs`:
 | `watch` | — | Low-level primitive in `fs/watch.ts` (`createWatcher`, `createWatchAsyncIterable`, `WatchHandle`, `WatchOptions`); not exposed on the `WorkspaceFilesystem` class. |
 | `open` / `FileHandle` | — | Use streams instead. |
 | `glob` | `find` | Limited glob support (`*`, `**`, `**/`, and `?`), plus `exclude` for pruning subtrees. |
-| — | `grep` | Not in `node:fs`; literal by default, with optional regular expressions. |
+| — | `grep` | Not in `node:fs`; literal by default, with optional regular expressions. Shares `find`'s `include`/`exclude` globs. |
 | — | `find` | Recursive directory walk with an optional glob, relative-rooted. |
 | — | `ls` | Flat list of file paths under a directory (segment-aware). |
 

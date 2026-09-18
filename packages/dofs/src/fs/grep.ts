@@ -31,6 +31,13 @@ export interface GrepOptions {
   offset?: number;
   /** Glob relative to a searched directory that limits files. */
   include?: string;
+  /**
+   * Glob patterns whose matches are not searched. Matched against the
+   * same directory-relative path as the inclusion glob and applied
+   * first, so an exclusion always wins. An excluded directory is
+   * pruned: neither it nor anything below it is read.
+   */
+  exclude?: string[];
 }
 
 interface ScanState {
@@ -68,7 +75,12 @@ export async function grep(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  const filePaths = node.type === "file" ? [canonical] : filesUnder(db, canonical, options.include);
+  // Grepping a single file has no traversal to prune, so `exclude` does not
+  // apply to it: the caller named the file explicitly.
+  const filePaths =
+    node.type === "file"
+      ? [canonical]
+      : filesUnder(db, canonical, options.include, options.exclude);
   for (const filePath of filePaths) {
     const complete = await scanFile(
       db,
@@ -117,8 +129,12 @@ function* filesUnder(
   db: Database,
   directory: string,
   include: string | undefined,
+  exclude: string[] | undefined,
 ): Iterable<string> {
-  for (const entry of iterateFoundEntries(db, directory, include)) {
+  // The find walker already prunes excluded directories before querying their
+  // children, so an excluded subtree costs nothing here rather than being
+  // walked and filtered.
+  for (const entry of iterateFoundEntries(db, directory, include, exclude)) {
     if (entry.type === "file") yield entry.path;
   }
 }

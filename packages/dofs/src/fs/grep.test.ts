@@ -148,6 +148,99 @@ describe("grep", () => {
     });
   });
 
+  describe("exclude", () => {
+    it("leaves an excluded file out of the results", async () => {
+      await withDB(async (db) => {
+        await writeFile(db, "/keep.ts", "TODO keep\n", {}, () => 0);
+        await writeFile(db, "/skip.ts", "TODO skip\n", {}, () => 0);
+
+        expect(
+          (await grep(db, "TODO", "/", { exclude: ["skip.ts"] })).map((match) => match.path),
+        ).toEqual(["/keep.ts"]);
+      });
+    });
+
+    it("drops an excluded directory along with everything below it", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/src", { recursive: true }, () => 0);
+        mkdir(db, "/node_modules/dep", { recursive: true }, () => 0);
+        await writeFile(db, "/src/index.ts", "TODO mine\n", {}, () => 0);
+        await writeFile(db, "/node_modules/dep/index.ts", "TODO theirs\n", {}, () => 0);
+
+        // Both forms, as the find tests do: `node_modules` prunes the
+        // directory and `node_modules/**` covers anything below it.
+        expect(
+          (
+            await grep(db, "TODO", "/", {
+              exclude: ["node_modules", "node_modules/**"],
+            })
+          ).map((match) => match.path),
+        ).toEqual(["/src/index.ts"]);
+      });
+    });
+
+    it("never reads a file below an excluded directory", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/src", { recursive: true }, () => 0);
+        mkdir(db, "/vendor", { recursive: true }, () => 0);
+        await writeFile(db, "/src/a.ts", "TODO mine\n", {}, () => 0);
+        await writeFile(db, "/vendor/b.ts", "TODO theirs\n", {}, () => 0);
+
+        // Pruning has to happen during the walk, not as a filter over
+        // results: the whole point is that the excluded subtree costs
+        // nothing. If the walker descended and grep then discarded the
+        // matches, the blob for b.ts would still be queried.
+        //
+        // The directory itself must be named to be pruned -- `vendor/**`
+        // matches what is *below* `vendor`, not `vendor` -- which is why the
+        // existing find tests pass both forms. With only `vendor/**` the
+        // walker still descends and excludes each child, costing a query.
+        const seen: string[] = [];
+        const all = db.all.bind(db);
+        vi.spyOn(db, "all").mockImplementation((query: unknown, ...args: unknown[]) => {
+          seen.push(String(query));
+          return all(query as never, ...(args as never[]));
+        });
+
+        await grep(db, "TODO", "/", { exclude: ["vendor", "vendor/**"] });
+        vi.restoreAllMocks();
+
+        // The walker reads children of / and of /src, but never of /vendor.
+        const childQueries = seen.filter((query) => query.includes("d.name > ?"));
+        expect(childQueries.length).toBe(2);
+      });
+    });
+
+    it("applies exclusion before the inclusion glob", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/pkg", { recursive: true }, () => 0);
+        await writeFile(db, "/pkg/keep.ts", "TODO keep\n", {}, () => 0);
+        await writeFile(db, "/pkg/skip.ts", "TODO skip\n", {}, () => 0);
+
+        expect(
+          (
+            await grep(db, "TODO", "/", {
+              include: "**/*.ts",
+              exclude: ["pkg/skip.ts"],
+            })
+          ).map((match) => match.path),
+        ).toEqual(["/pkg/keep.ts"]);
+      });
+    });
+
+    it("ignores exclusion when the path names a single file", async () => {
+      await withDB(async (db) => {
+        await writeFile(db, "/only.ts", "TODO here\n", {}, () => 0);
+
+        // The caller named the file, so there is no traversal to prune and
+        // nothing to second-guess.
+        expect(
+          (await grep(db, "TODO", "/only.ts", { exclude: ["only.ts"] })).map((match) => match.path),
+        ).toEqual(["/only.ts"]);
+      });
+    });
+  });
+
   it("walks each directory page once during a search", async () => {
     await withDB(async (db) => {
       for (let index = 0; index < 260; index += 1) {
