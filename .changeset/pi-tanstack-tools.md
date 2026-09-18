@@ -9,8 +9,8 @@ tools now work whichever of three libraries an agent is built on.
 apart from the code that runs the tools, so it returns both the
 declarations and a dispatcher. `@cloudflare/computer/tools/tanstack`
 serves TanStack AI, which runs the tools itself and takes them as a
-list, so a list is what it returns; `tanStackToolsByName` reaches a
-single tool when one has to be adjusted. Both are built from one
+list, so a list is what it returns; `format: "object"` keys them by
+name when a single tool has to be reached. Both are built from one
 shared description of each tool, so names, descriptions and limits
 match the existing AI SDK entrypoint, which is unchanged. Each library
 is an optional peer dependency, so installing one does not pull in the

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Workspace } from "../workspace.js";
 import { defineTool } from "./spec.js";
-import { createTanStackTools, tanStackToolsByName, toTanStackTools } from "./tanstack.js";
+import { createTanStackTools, toTanStackTools } from "./tanstack.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
@@ -72,10 +72,11 @@ describe("createTanStackTools", () => {
     }
   });
 
-  it("looks tools up by name on request", () => {
+  it("keys the tools by name when asked", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace() });
-    const set = tanStackToolsByName(tools);
+    const set = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
+    expect(Array.isArray(set)).toBe(false);
     expect(Object.keys(set).sort()).toEqual(tools.map((tool) => tool.name).sort());
     for (const [name, tool] of Object.entries(set)) {
       expect(tool.name).toBe(name);
@@ -89,7 +90,7 @@ describe("createTanStackTools", () => {
   });
 
   it("passes the Zod schema through untouched for standard-schema validation", () => {
-    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const schema = tools.write.inputSchema as unknown as {
       "~standard": { version: number };
@@ -101,18 +102,22 @@ describe("createTanStackTools", () => {
   });
 
   it("flags only the requested tools as needing approval", () => {
-    const tools = tanStackToolsByName(
-      createTanStackTools({ workspace: makeWorkspace(), approve: ["delete"] }),
-    );
+    const tools = createTanStackTools({
+      workspace: makeWorkspace(),
+      approve: ["delete"],
+      format: "object",
+    });
 
     expect(tools.delete.needsApproval).toBe(true);
     expect(tools.write.needsApproval).toBeUndefined();
   });
 
   it("gates every mutating tool from one keyword", () => {
-    const tools = tanStackToolsByName(
-      createTanStackTools({ workspace: makeWorkspace(), approve: "mutating" }),
-    );
+    const tools = createTanStackTools({
+      workspace: makeWorkspace(),
+      approve: "mutating",
+      format: "object",
+    });
 
     for (const name of ["write", "edit", "delete"]) {
       expect(tools[name].needsApproval).toBe(true);
@@ -124,7 +129,7 @@ describe("createTanStackTools", () => {
   });
 
   it("describes output shapes including the error branch", () => {
-    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const schema = tools.write.outputSchema as unknown as {
       safeParse: (v: unknown) => { success: boolean };
@@ -144,7 +149,7 @@ describe("createTanStackTools", () => {
     workspace.fs.writeFile = async () => {
       throw new Error("read-only filesystem");
     };
-    const tools = tanStackToolsByName(createTanStackTools({ workspace }));
+    const tools = createTanStackTools({ workspace, format: "object" });
 
     const result = (await tools.write.execute({
       path: "/workspace/a.txt",
@@ -161,22 +166,26 @@ describe("createTanStackTools", () => {
   });
 
   it("marks tools lazy so they stay out of the prompt until discovered", () => {
-    const all = tanStackToolsByName(
-      createTanStackTools({ workspace: makeWorkspace(), lazy: "all" }),
-    );
+    const all = createTanStackTools({
+      workspace: makeWorkspace(),
+      lazy: "all",
+      format: "object",
+    });
     expect(all.read.lazy).toBe(true);
     expect(all.write.lazy).toBe(true);
 
-    const some = tanStackToolsByName(
-      createTanStackTools({ workspace: makeWorkspace(), lazy: ["grep"] }),
-    );
+    const some = createTanStackTools({
+      workspace: makeWorkspace(),
+      lazy: ["grep"],
+      format: "object",
+    });
     expect(some.grep.lazy).toBe(true);
     expect(some.read.lazy).toBeUndefined();
   });
 
   it("returns plain text for a complete read and objects for structured results", async () => {
     const workspace = makeWorkspace();
-    const tools = tanStackToolsByName(createTanStackTools({ workspace }));
+    const tools = createTanStackTools({ workspace, format: "object" });
 
     await tools.write.execute({ path: "/w/a.txt", content: "hi\n" } as never);
 
@@ -188,7 +197,7 @@ describe("createTanStackTools", () => {
   });
 
   it("returns an error object for a failed call", async () => {
-    const tools = tanStackToolsByName(createTanStackTools({ workspace: makeWorkspace() }));
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const result = (await tools.read.execute({ path: "/w/missing.txt" } as never)) as {
       error: string;
@@ -209,12 +218,11 @@ describe("createTanStackTools", () => {
         ]) as never,
       ],
     });
-    const tools = tanStackToolsByName(
-      createTanStackTools({
-        workspace,
-        shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
-      }),
-    );
+    const tools = createTanStackTools({
+      workspace,
+      shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
+      format: "object",
+    });
 
     await expect(tools.exec.execute({ command: "echo hello" } as never)).resolves.toEqual({
       command: "echo hello",
@@ -231,22 +239,20 @@ describe("createTanStackTools", () => {
     const events: Array<{ name: string; value: Record<string, unknown> }> = [];
     // Exercise the event forwarding against the adapter's contract:
     // the last snapshot settles, earlier ones are emitted.
-    const tools = tanStackToolsByName(
-      toTanStackTools(
-        {
-          fake: defineTool({
-            name: "fake",
-            description: "d",
-            inputSchema: z.object({}),
-            traits: { streams: true },
-            execute: async function* () {
-              yield { exitCode: null, stdout: "partial" };
-              yield { exitCode: 0, stdout: "complete" };
-            },
-          }) as never,
-        },
-        { streamEventName: "exec-progress" },
-      ),
+    const tools = toTanStackTools(
+      {
+        fake: defineTool({
+          name: "fake",
+          description: "d",
+          inputSchema: z.object({}),
+          traits: { streams: true },
+          execute: async function* () {
+            yield { exitCode: null, stdout: "partial" };
+            yield { exitCode: 0, stdout: "complete" };
+          },
+        }) as never,
+      },
+      { streamEventName: "exec-progress", format: "object" },
     );
 
     const result = await tools.fake.execute({} as never, {

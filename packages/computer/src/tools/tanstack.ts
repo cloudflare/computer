@@ -8,9 +8,8 @@
  *
  * `createTanStackTools` returns a list, which is what every TanStack
  * entry point takes: `chat({ tools })`, `mergeAgentTools`, and
- * `createToolRegistry` all want an array. Use `tanStackToolsByName`
- * when a single tool has to be reached directly, such as to adjust one
- * before the call.
+ * `createToolRegistry` all want an array. Pass `format: "object"` to
+ * get the same tools keyed by name, for reaching one directly.
  */
 
 import type { z } from "zod";
@@ -93,19 +92,29 @@ export type TanStackToolList = TanStackTool<never>[];
 export type TanStackToolSet = Record<string, TanStackTool<never>>;
 
 /**
- * Look the tools up by name.
+ * Which shape the builders return.
  *
- * A list is what TanStack consumes, so that is what the builders
- * return; this is the escape hatch for the occasional caller that
- * wants one tool rather than the set.
+ * Defaults to `"array"`, because that is what every TanStack entry
+ * point takes: `chat({ tools })`, `mergeAgentTools`, and
+ * `createToolRegistry` all call array methods on what they are given.
+ * `"object"` keys the same tools by name, for a caller that reaches
+ * one tool directly rather than passing the set along.
  */
-export function tanStackToolsByName(tools: readonly TanStackTool<never>[]): TanStackToolSet {
-  const set: TanStackToolSet = {};
-  for (const tool of tools) set[tool.name] = tool;
-  return set;
-}
+export type TanStackToolFormat = "array" | "object";
 
-export interface CreateTanStackToolsOptions extends CreateToolsOptions {
+/** Return shape for a given {@link TanStackToolFormat}. */
+export type TanStackToolsFor<Format extends TanStackToolFormat> = Format extends "object"
+  ? TanStackToolSet
+  : TanStackToolList;
+
+export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = "array">
+  extends CreateToolsOptions {
+  /**
+   * Shape to return the tools in. Defaults to `"array"`, which is what
+   * every TanStack entry point takes. Pass `"object"` to get them
+   * keyed by name instead, for reaching one tool directly.
+   */
+  format?: Format;
   /**
    * Which tools pause for user approval before running.
    *
@@ -145,18 +154,20 @@ export interface CreateTanStackToolsOptions extends CreateToolsOptions {
  *
  * Returns a list, ready to pass straight to `chat({ tools })`. It holds
  * the same tools, caps, and gating as the AI SDK and pi entrypoints.
- * Wrap it in {@link tanStackToolsByName} to reach one tool directly.
+ * Pass `format: "object"` to get them keyed by name instead.
  */
-export function createTanStackTools(options: CreateTanStackToolsOptions): TanStackToolList {
+export function createTanStackTools<Format extends TanStackToolFormat = "array">(
+  options: CreateTanStackToolsOptions<Format>,
+): TanStackToolsFor<Format> {
   const specs = createToolSpecs(options);
   return toTanStackTools(specs, options);
 }
 
 /** Adapt an existing spec set to TanStack tools. */
-export function toTanStackTools(
+export function toTanStackTools<Format extends TanStackToolFormat = "array">(
   specs: ToolSpecSet,
-  options: Omit<CreateTanStackToolsOptions, keyof CreateToolsOptions> = {},
-): TanStackToolList {
+  options: Omit<CreateTanStackToolsOptions<Format>, keyof CreateToolsOptions> = {},
+): TanStackToolsFor<Format> {
   const tools: TanStackToolList = [];
 
   for (const spec of Object.values(specs)) {
@@ -184,7 +195,14 @@ export function toTanStackTools(
     } as TanStackTool<never>);
   }
 
-  return tools;
+  if (options.format === "object") {
+    const set: TanStackToolSet = {};
+    for (const tool of tools) set[tool.name] = tool;
+    // The generic resolves to one branch or the other at each call
+    // site, which a return inside the function cannot prove.
+    return set as TanStackToolsFor<Format>;
+  }
+  return tools as TanStackToolsFor<Format>;
 }
 
 /**

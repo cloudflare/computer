@@ -49,8 +49,9 @@ export {
   createTanStackTools,
   type TanStackTool,
   type TanStackToolExecutionContext,
+  type TanStackToolFormat,
   type TanStackToolList,
   type TanStackToolSet,
-  tanStackToolsByName,
+  type TanStackToolsFor,
   toTanStackTools,
 } from "./tanstack.js";

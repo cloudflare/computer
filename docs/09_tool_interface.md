@@ -141,7 +141,7 @@ const { tools } = createPiTools({ workspace, constrainedSampling: "require" });
 
 ### TanStack AI
 
-A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The tools come back as a list, which is what every TanStack entry point takes: `chat({ tools })`, `mergeAgentTools`, and `createToolRegistry` all want an array. Use `tanStackToolsByName(tools)` to reach one tool directly, such as to adjust a single tool before the call.
+A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The tools come back as a list, which is what every TanStack entry point takes: `chat({ tools })`, `mergeAgentTools`, and `createToolRegistry` all want an array. Pass `format: "object"` to get them keyed by name instead, for reaching one tool directly, such as to adjust a single tool before the call.
 
 ```ts
 import { chat, toServerSentEventsResponse } from "@tanstack/ai";
@@ -172,7 +172,7 @@ export async function POST(request: Request) {
 
 `approve` marks tools that pause for confirmation through TanStack's `needsApproval`. Pass a name list, or `"mutating"` to gate every tool that changes workspace state so the list does not have to be restated as the tool set grows. `lazy` takes the same shape and marks tools to withhold from the prompt until TanStack's lazy discovery asks for them, which keeps a workspace tool set out of the system prompt for an agent whose file work is occasional.
 
-The tools that have one fixed success shape — `write`, `edit`, `delete`, and `publish` — also carry an `outputSchema`, which TanStack validates client-side and threads into its typed hooks. Paged tools like `ls` omit it. The schema describes only success: an error result is a normal outcome, so validating every return against the success shape would reject legitimate errors.
+The tools that have one fixed result shape — `write`, `edit`, `delete`, and `publish` — also carry an `outputSchema`, which TanStack validates client-side and threads into its typed hooks. Paged tools like `ls` omit it. The schema covers the error branch as well as success, because TanStack validates every return against it: a success-only schema would replace a real failure reason with a validation complaint.
 
 Because the tool execution context carries no abort signal, pass `signal` to cancel a running `exec` when the request aborts. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
 
