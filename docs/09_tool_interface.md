@@ -1,6 +1,12 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`.
+`@cloudflare/computer/tools` ships ready-made tools for agents that use a `Workspace`. Three agent SDKs are supported from one implementation:
+
+| SDK | Entrypoint | Factory |
+| --- | --- | --- |
+| [AI SDK](https://github.com/vercel/ai) (`ai`) | `@cloudflare/computer/tools` | `createAITools` |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`) | `@cloudflare/computer/tools/pi` | `createPiTools` |
+| [TanStack AI](https://tanstack.com/ai) (`@tanstack/ai`) | `@cloudflare/computer/tools/tanstack` | `createTanStackTools` |
 
 The tools wrap three Workspace surfaces:
 
@@ -8,11 +14,38 @@ The tools wrap three Workspace surfaces:
 - `workspace.runtime.exec` for command execution when the caller opts in;
 - `workspace.assets` for publishing generated files when an assets publisher is configured.
 
+Every factory takes the same options and produces the same tools with the same names, descriptions, schemas, and caps. Only the returned shape differs, because each SDK wants a different one. Each SDK's package is an optional peer dependency: importing one adapter does not require the other two to be installed.
+
+## One implementation, three shapes
+
+A tool is described once as a `ToolSpec` — a name, a description, a Zod input schema, an executor, and an optional model-output hook — and `createToolSpecs()` assembles the set for a Workspace. The three factories are thin adapters over that set, so a change to a tool's behavior, schema, or description reaches all three SDKs at once.
+
+```
+              createToolSpecs()          ← tool set, gating, schemas, caps
+             /        |        \
+   createAITools  createPiTools  createTanStackTools
+        (ai)     (pi-ai, TypeBox)     (@tanstack/ai)
+```
+
+Where the SDKs genuinely differ, the adapter absorbs it:
+
+| Concern | AI SDK | pi | TanStack AI |
+| --- | --- | --- | --- |
+| Schema | Zod, passed through | converted to JSON Schema for TypeBox | Zod, passed through (Standard Schema) |
+| Execution | `execute` on the tool | caller's loop, via the returned `execute` dispatcher | `execute` on the tool |
+| Streaming `exec` | progressive tool results | terminal snapshot | terminal snapshot, optional custom events |
+| Images and PDFs | typed `file` output part | base64 `image` block (PDFs degrade to text) | base64 payload plus media type |
+
+`createToolSpecs` and the `ToolSpec` types are exported, so a fourth SDK is an adapter rather than a rewrite.
+
 ## What ships
 
 | Export | Purpose |
 | --- | --- |
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
+| `createPiTools` | Create pi tool declarations plus their executor. |
+| `createTanStackTools` | Create the TanStack AI tool record for a Workspace. |
+| `createToolSpecs` | Build the SDK-neutral spec set the adapters share. |
 | `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
 | `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
@@ -24,7 +57,7 @@ The tools wrap three Workspace surfaces:
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+Every factory always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -54,6 +87,79 @@ export class Agent {
 ```
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
+
+### pi
+
+pi splits a tool into data and execution: `Context.tools` carries declarations with TypeBox `parameters`, and the caller's own agent loop runs the calls. `createPiTools` returns both halves so they cannot drift apart.
+
+```ts
+import { createPiTools } from "@cloudflare/computer/tools/pi";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+
+const { tools, execute } = createPiTools({ workspace });
+const models = builtinModels();
+const model = models.getModel("anthropic", "claude-sonnet-4-5")!;
+
+const context = {
+  systemPrompt: "You are a coding agent working in /workspace.",
+  messages: [{ role: "user", content: "Summarize the README.", timestamp: Date.now() }],
+  tools,
+};
+
+// One turn of the caller's loop.
+const message = await models.complete(model, context);
+context.messages.push(message);
+
+for (const block of message.content) {
+  if (block.type !== "toolCall") continue;
+  const { content, isError } = await execute(block);
+  context.messages.push({
+    role: "toolResult",
+    toolCallId: block.id,
+    toolName: block.name,
+    content,
+    isError,
+    timestamp: Date.now(),
+  });
+}
+```
+
+`execute` validates the call's arguments against the tool's schema and returns pi `toolResult` content, reporting a bad call or a failed tool as `isError: true` so the model can retry instead of the loop throwing. The Zod schemas are converted to plain JSON Schema for TypeBox, so a field with a default stays optional for the model and pi applies the default during validation.
+
+### TanStack AI
+
+A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The result is the record `chat({ tools })` takes.
+
+```ts
+import { chat, toServerSentEventsResponse } from "@tanstack/ai";
+import { anthropicText } from "@tanstack/ai-anthropic";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack";
+
+export async function POST(request: Request) {
+  const { messages } = await request.json();
+  const abortController = new AbortController();
+
+  const tools = createTanStackTools({
+    workspace,
+    shell: { defaultBackend: "shell", backends: { shell: { description: "Worker shell." } } },
+    approve: ["delete", "exec"],
+    signal: abortController.signal,
+  });
+
+  return toServerSentEventsResponse(
+    chat({
+      adapter: anthropicText("claude-sonnet-4-5"),
+      messages,
+      tools,
+      abortController,
+    }),
+  );
+}
+```
+
+`approve` marks tools that should pause for confirmation through TanStack's `needsApproval`. Because the tool execution context carries no abort signal, pass `signal` to cancel a running `exec` when the request aborts. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
+
+### Shared options
 
 Pass `shell` only when the Workspace has matching backend ids:
 
