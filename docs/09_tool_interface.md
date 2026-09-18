@@ -35,6 +35,11 @@ Where the SDKs genuinely differ, the adapter absorbs it:
 | Execution | `execute` on the tool | caller's loop, via the returned `execute` dispatcher | `execute` on the tool |
 | Streaming `exec` | progressive tool results | terminal snapshot | terminal snapshot, optional custom events |
 | Images and PDFs | typed `file` output part | base64 `image` block (PDFs degrade to text) | base64 payload plus media type |
+| Argument enforcement | schema validation | provider-side constrained sampling | schema validation |
+| Result shape | `toModelOutput` | `toolResult` content blocks | `outputSchema` |
+| Approval and discovery | — | — | `needsApproval`, `lazy` |
+
+Sharing the implementation does not mean levelling every SDK down to the smallest common feature set. A spec carries SDK-agnostic *traits* — whether a tool mutates state, whether its arguments are fussy enough to be worth constraining, whether it streams — and each adapter lowers those onto whatever its SDK offers, ignoring the ones it cannot use. So `edit` asks to be constrained once, and pi turns that into provider-side strict sampling while the other two simply validate.
 
 `createToolSpecs` and the `ToolSpec` types are exported, so a fourth SDK is an adapter rather than a rewrite.
 
@@ -126,6 +131,14 @@ for (const block of message.content) {
 
 `execute` validates the call's arguments against the tool's schema and returns pi `toolResult` content, reporting a bad call or a failed tool as `isError: true` so the model can retry instead of the loop throwing. The Zod schemas are converted to plain JSON Schema for TypeBox, so a field with a default stays optional for the model and pi applies the default during validation.
 
+Tools whose arguments are structurally fussy — `read`, `write`, and `edit`, which carry byte offsets and long verbatim strings — are declared with pi's `constrainedSampling`, so a provider that supports it enforces the schema during sampling and a malformed `edit` never reaches the tool. Strict enforcement requires a closed schema in which every property is listed, so those declarations set `additionalProperties: false`, mark each optional field nullable, and the dispatcher drops the resulting top-level nulls before validation.
+
+The default is `strict: "prefer"`, which falls back to ordinary tool calling on a provider that cannot enforce a schema. Pass `constrainedSampling: "require"` to fail the request instead, when the caller pins a model known to support it, or `false` to opt out and get the open schemas:
+
+```ts
+const { tools } = createPiTools({ workspace, constrainedSampling: "require" });
+```
+
 ### TanStack AI
 
 A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The result is the record `chat({ tools })` takes.
@@ -142,7 +155,7 @@ export async function POST(request: Request) {
   const tools = createTanStackTools({
     workspace,
     shell: { defaultBackend: "shell", backends: { shell: { description: "Worker shell." } } },
-    approve: ["delete", "exec"],
+    approve: "mutating",
     signal: abortController.signal,
   });
 
@@ -157,7 +170,11 @@ export async function POST(request: Request) {
 }
 ```
 
-`approve` marks tools that should pause for confirmation through TanStack's `needsApproval`. Because the tool execution context carries no abort signal, pass `signal` to cancel a running `exec` when the request aborts. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
+`approve` marks tools that pause for confirmation through TanStack's `needsApproval`. Pass a name list, or `"mutating"` to gate every tool that changes workspace state so the list does not have to be restated as the tool set grows. `lazy` takes the same shape and marks tools to withhold from the prompt until TanStack's lazy discovery asks for them, which keeps a workspace tool set out of the system prompt for an agent whose file work is occasional.
+
+The tools that have one fixed success shape — `write`, `edit`, `delete`, and `publish` — also carry an `outputSchema`, which TanStack validates client-side and threads into its typed hooks. Paged tools like `ls` omit it. The schema describes only success: an error result is a normal outcome, so validating every return against the success shape would reject legitimate errors.
+
+Because the tool execution context carries no abort signal, pass `signal` to cancel a running `exec` when the request aborts. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
 
 ### Shared options
 

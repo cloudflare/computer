@@ -45,6 +45,15 @@ export const editInputSchema = z.object({
     ),
 });
 
+/** Successful edit. A failure returns `{ error }` instead. */
+export const editOutputSchema = z.object({
+  path: z.string(),
+  editsApplied: z.number().int(),
+  diff: z.string(),
+  patch: z.string(),
+  firstChangedLine: z.number().int().optional(),
+});
+
 export const editDescription =
   "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes touch the same block, merge them into one edit.";
 

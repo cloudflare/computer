@@ -98,6 +98,40 @@ describe("createTanStackTools", () => {
     expect(tools.write.needsApproval).toBeUndefined();
   });
 
+  it("gates every mutating tool from one keyword", () => {
+    const tools = createTanStackTools({ workspace: makeWorkspace(), approve: "mutating" });
+
+    for (const name of ["write", "edit", "delete"]) {
+      expect(tools[name].needsApproval).toBe(true);
+    }
+    // Reads and searches change nothing, so they run unattended.
+    for (const name of ["read", "ls", "find", "grep"]) {
+      expect(tools[name].needsApproval).toBeUndefined();
+    }
+  });
+
+  it("describes successful output shapes for the tools that have one", () => {
+    const tools = createTanStackTools({ workspace: makeWorkspace() });
+
+    const schema = tools.write.outputSchema as unknown as {
+      safeParse: (v: unknown) => { success: boolean };
+    };
+    expect(schema.safeParse({ path: "/w/a.txt", bytesWritten: 3 }).success).toBe(true);
+    expect(schema.safeParse({ path: "/w/a.txt" }).success).toBe(false);
+    // A paged listing has no fixed success shape worth asserting.
+    expect(tools.ls.outputSchema).toBeUndefined();
+  });
+
+  it("marks tools lazy so they stay out of the prompt until discovered", () => {
+    const all = createTanStackTools({ workspace: makeWorkspace(), lazy: "all" });
+    expect(all.read.lazy).toBe(true);
+    expect(all.write.lazy).toBe(true);
+
+    const some = createTanStackTools({ workspace: makeWorkspace(), lazy: ["grep"] });
+    expect(some.grep.lazy).toBe(true);
+    expect(some.read.lazy).toBeUndefined();
+  });
+
   it("returns plain text for a complete read and objects for structured results", async () => {
     const workspace = makeWorkspace();
     const tools = createTanStackTools({ workspace });
@@ -159,6 +193,7 @@ describe("createTanStackTools", () => {
           name: "fake",
           description: "d",
           inputSchema: z.object({}),
+          traits: { streams: true },
           execute: async function* () {
             yield { exitCode: null, stdout: "partial" };
             yield { exitCode: 0, stdout: "complete" };

@@ -72,6 +72,74 @@ describe("createPiTools declarations", () => {
   });
 });
 
+describe("createPiTools constrained sampling", () => {
+  it("requests provider-side strict schemas for the fussy tools only", () => {
+    const tools = createPiTools({ workspace: makeWorkspace() });
+
+    // `edit` and `write` carry long verbatim strings a model can mangle.
+    expect(declaration(tools, "edit").constrainedSampling).toEqual({
+      type: "json_schema",
+      strict: "prefer",
+    });
+    expect(declaration(tools, "write").constrainedSampling).toEqual({
+      type: "json_schema",
+      strict: "prefer",
+    });
+    // A plain listing has nothing worth constraining.
+    expect(declaration(tools, "ls").constrainedSampling).toBeUndefined();
+  });
+
+  it("closes a strict schema and makes optional fields nullable", () => {
+    const tools = createPiTools({ workspace: makeWorkspace() });
+
+    const read = declaration(tools, "read");
+    expect(read.parameters.additionalProperties).toBe(false);
+    // Strict mode requires every property; optional ones accept null.
+    expect(read.parameters.required?.sort()).toEqual(["byteOffset", "limit", "offset", "path"]);
+    const offset = read.parameters.properties?.offset as { type?: unknown };
+    expect(offset.type).toEqual(["integer", "null"]);
+    const path = read.parameters.properties?.path as { type?: unknown };
+    expect(path.type).toBe("string");
+  });
+
+  it("escalates to require or opts out when asked", () => {
+    const required = createPiTools({
+      workspace: makeWorkspace(),
+      constrainedSampling: "require",
+    });
+    expect(declaration(required, "edit").constrainedSampling).toEqual({
+      type: "json_schema",
+      strict: "require",
+    });
+
+    const off = createPiTools({ workspace: makeWorkspace(), constrainedSampling: false });
+    expect(declaration(off, "edit").constrainedSampling).toBeUndefined();
+    // Opting out also restores the open, minimally-required schema.
+    expect(declaration(off, "edit").parameters.additionalProperties).toBeUndefined();
+    expect(declaration(off, "read").parameters.required).toEqual(["path"]);
+  });
+
+  it("accepts a strict-mode call that fills optional fields with null", async () => {
+    const workspace = makeWorkspace();
+    const tools = createPiTools({ workspace });
+
+    await tools.execute({
+      id: "1",
+      name: "write",
+      arguments: { path: "/w/a.txt", content: "hi\n" },
+    });
+    // A provider enforcing the closed schema sends every property.
+    const result = await tools.execute({
+      id: "2",
+      name: "read",
+      arguments: { path: "/w/a.txt", offset: null, byteOffset: null, limit: null },
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+  });
+});
+
 describe("createPiTools execution", () => {
   it("runs a tool call and returns text content for a complete read", async () => {
     const workspace = makeWorkspace();

@@ -33,8 +33,20 @@ export interface TanStackTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  /**
+   * Shape of a successful result. TanStack validates a tool return
+   * against it client-side and threads it into the typed hooks, so a UI
+   * gets the result shape without restating it.
+   */
+  outputSchema?: z.ZodType;
   execute: (input: Input, context?: TanStackToolExecutionContext) => Promise<unknown>;
   needsApproval?: boolean;
+  /**
+   * Withheld from the prompt until discovered through TanStack lazy
+   * tool discovery, which keeps a large tool set out of the system
+   * prompt until it is wanted.
+   */
+  lazy?: boolean;
 }
 
 /**
@@ -53,13 +65,14 @@ export type TanStackToolSet = Record<string, TanStackTool<never>>;
 
 export interface CreateTanStackToolsOptions extends CreateToolsOptions {
   /**
-   * Tool names that should pause for user approval before running.
+   * Which tools pause for user approval before running.
    *
-   * TanStack surfaces approval as a tool-level flag, so this is the
-   * natural place to gate the destructive tools in a UI that wants a
-   * confirmation step: `{ approve: ["delete", "exec"] }`.
+   * A name list gates exactly those tools. `"mutating"` gates every
+   * tool that changes workspace state, which is the common case for a
+   * UI that wants a confirmation step and avoids restating the list
+   * when the tool set grows.
    */
-  approve?: string[];
+  approve?: string[] | "mutating";
   /**
    * Signal that cancels in-flight tool executions.
    *
@@ -77,6 +90,12 @@ export interface CreateTanStackToolsOptions extends CreateToolsOptions {
    * can show a command's output while it runs. Defaults to false.
    */
   streamEventName?: string;
+  /**
+   * Tools to withhold from the prompt until TanStack lazy discovery
+   * asks for them. `"all"` marks the whole set lazy, which suits an
+   * agent whose workspace work is occasional rather than central.
+   */
+  lazy?: string[] | "all";
 }
 
 /**
@@ -95,20 +114,27 @@ export function toTanStackTools(
   specs: ToolSpecSet,
   options: Omit<CreateTanStackToolsOptions, keyof CreateToolsOptions> = {},
 ): TanStackToolSet {
-  const approve = new Set(options.approve ?? []);
   const tools: TanStackToolSet = {};
 
   for (const spec of Object.values(specs)) {
+    const needsApproval = wants(options.approve, spec.name, spec.traits?.mutates === true);
+    const lazy = wants(options.lazy, spec.name, options.lazy === "all");
     tools[spec.name] = {
       name: spec.name,
       description: spec.description,
       inputSchema: spec.inputSchema,
-      needsApproval: approve.has(spec.name) ? true : undefined,
+      // Only a successful result is described. The error branch is a
+      // normal outcome, so validating every return against the success
+      // shape would reject legitimate error results.
+      outputSchema: spec.outputSchema,
+      needsApproval: needsApproval ? true : undefined,
+      lazy: lazy ? true : undefined,
       execute: async (input, context) => {
         const returned = runSpec(spec, input, { abortSignal: options.signal });
-        const output = options.streamEventName
-          ? await settleWithEvents(returned, options.streamEventName, context)
-          : await settle(returned);
+        const output =
+          options.streamEventName && spec.traits?.streams === true
+            ? await settleWithEvents(returned, options.streamEventName, context)
+            : await settle(returned);
         return toTanStackOutput(await applyModelOutput(spec, input, output));
       },
     } as TanStackTool<never>;
@@ -143,6 +169,18 @@ async function settleWithEvents<Output>(
   }
   if (!seen) throw new Error("tool executor yielded no result");
   return last as Output;
+}
+
+/**
+ * Resolve a name-list-or-keyword option for one tool.
+ *
+ * A list names tools explicitly; a keyword defers to the trait the
+ * caller asked to select on.
+ */
+function wants(option: string[] | string | undefined, name: string, byTrait: boolean): boolean {
+  if (option === undefined) return false;
+  if (Array.isArray(option)) return option.includes(name);
+  return byTrait;
 }
 
 function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {

@@ -51,12 +51,58 @@ export interface ToolSpec<Input = unknown, Output = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  /**
+   * Shape of a successful result.
+   *
+   * Optional and never used to gate execution: an executor returns
+   * either this shape or `{ error }`, and the error branch is a normal
+   * outcome rather than a validation failure. Adapters forward it to
+   * SDKs that can describe a tool's output to the model or type a
+   * client-side handler.
+   */
+  outputSchema?: z.ZodType;
   execute: (input: Input, context: ToolCallContext) => Promise<Output> | AsyncIterable<Output>;
   /**
    * Map a settled result onto its model-facing representation. Omit to
    * let the adapter apply its SDK's default encoding of the raw value.
    */
   toModelOutput?: (args: { input: Input; output: Output }) => ModelOutput | Promise<ModelOutput>;
+  /** SDK-agnostic traits adapters lower onto native features. */
+  traits?: ToolTraits;
+}
+
+/**
+ * Properties of a tool that some SDKs can act on natively.
+ *
+ * These describe the tool itself rather than any one SDK's encoding of
+ * it, so the shared registry can state them once and each adapter can
+ * use them where its SDK has a matching feature and ignore them where
+ * it does not.
+ */
+export interface ToolTraits {
+  /**
+   * The tool changes workspace state.
+   *
+   * Drives approval gating in SDKs that support it, so a caller asking
+   * to confirm destructive work does not have to restate which tools
+   * those are.
+   */
+  mutates?: boolean;
+  /**
+   * The tool's arguments are worth constraining during sampling.
+   *
+   * Set for tools whose arguments are structurally fussy enough that a
+   * malformed call costs a wasted turn — long verbatim strings, nested
+   * arrays. pi maps it to provider-side strict schema enforcement.
+   */
+  strictArguments?: boolean;
+  /**
+   * The tool emits progressive snapshots while it runs.
+   *
+   * Lets an adapter decide whether to wire streaming machinery at all,
+   * rather than inspecting the executor's return value at call time.
+   */
+  streams?: boolean;
 }
 
 /**
@@ -85,8 +131,10 @@ export interface AnyToolSpec {
   name: string;
   description: string;
   inputSchema: z.ZodType;
+  outputSchema?: z.ZodType;
   execute: (input: never, context: ToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
   toModelOutput?: (args: { input: never; output: never }) => ModelOutput | Promise<ModelOutput>;
+  traits?: ToolTraits;
 }
 
 /** A spec set keyed by model-facing tool name. */

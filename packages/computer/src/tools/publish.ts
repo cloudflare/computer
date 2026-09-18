@@ -23,6 +23,12 @@ export const publishInputSchema = z.object({
     .describe("Link lifetime in milliseconds. Defaults to one hour."),
 });
 
+/** Successful publish carries the link; a failure carries the reason. */
+export const publishOutputSchema = z.union([
+  z.object({ ok: z.literal(true), url: z.string() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
 export const publishDescription =
   "Publish a file from the workspace through the configured assets publisher and return a time-limited link. Use this to hand the user an artifact you produced, such as a chart, screenshot, build output, or report.";
 

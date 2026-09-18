@@ -19,6 +19,12 @@ export const writeInputSchema = z.object({
   content: z.string().describe("File content"),
 });
 
+/** Successful write. A failure returns `{ error }` instead. */
+export const writeOutputSchema = z.object({
+  path: z.string(),
+  bytesWritten: z.number().int(),
+});
+
 export const writeDescription =
   "Write content to a file. Overwrites any existing file at the path.";
 

@@ -22,6 +22,7 @@ import {
   deleteDescription,
   deleteFromStore,
   deleteInputSchema,
+  deleteOutputSchema,
 } from "./fs/delete.js";
 import {
   type EditInput,
@@ -29,6 +30,7 @@ import {
   editDescription,
   editInputSchema,
   editInStore,
+  editOutputSchema,
 } from "./fs/edit.js";
 import {
   type FindInput,
@@ -65,6 +67,7 @@ import {
   type WriteToolOptions,
   writeDescription,
   writeInputSchema,
+  writeOutputSchema,
   writeToStore,
 } from "./fs/write.js";
 import {
@@ -73,6 +76,7 @@ import {
   type PublishWorkspaceLike,
   publishDescription,
   publishInputSchema,
+  publishOutputSchema,
 } from "./publish.js";
 import { type AnyToolSpec, defineTool, type ToolSpec, type ToolSpecSet } from "./spec.js";
 
@@ -119,6 +123,9 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
       inputSchema: readInputSchema,
       execute: (input: ReadInput) => readExecutor(input),
       toModelOutput: readModelOutput(readOptions),
+      // Positioned reads hand back byte offsets the model must echo
+      // back verbatim on the next call, so constrain them.
+      traits: { strictArguments: true },
     }),
   );
 
@@ -161,6 +168,9 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
       description: writeDescription,
       inputSchema: writeInputSchema,
       execute: (input: WriteInput) => writeToStore(writeOptions, input),
+      outputSchema: writeOutputSchema,
+      // The whole file body travels as one string argument.
+      traits: { mutates: true, strictArguments: true },
     }),
   );
 
@@ -171,6 +181,10 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
       description: editDescription,
       inputSchema: editInputSchema,
       execute: (input: EditInput) => editInStore(editOptions, input),
+      outputSchema: editOutputSchema,
+      // A nested array of exact-match strings is the easiest shape for
+      // a model to malform, and a malformed edit costs a whole turn.
+      traits: { mutates: true, strictArguments: true },
     }),
   );
 
@@ -180,6 +194,8 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
       description: deleteDescription,
       inputSchema: deleteInputSchema,
       execute: (input: DeleteInput) => deleteFromStore({ store }, input),
+      outputSchema: deleteOutputSchema,
+      traits: { mutates: true },
     }),
   );
 
@@ -195,6 +211,7 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
         description: execDescription(execOptions),
         inputSchema: execInputSchema(execOptions),
         execute: (input: ExecInput, context) => executor(input, context),
+        traits: { mutates: true, streams: true },
       }),
     );
   }
@@ -208,6 +225,8 @@ export function createToolSpecs(options: CreateToolsOptions): ToolSpecSet {
         description: publishDescription,
         inputSchema: publishInputSchema,
         execute: (input: PublishInput) => executor(input),
+        outputSchema: publishOutputSchema,
+        traits: { mutates: true },
       }),
     );
   }

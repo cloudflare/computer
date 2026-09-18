@@ -39,6 +39,14 @@ export interface PiTool {
   name: string;
   description: string;
   parameters: PiJSONSchema;
+  /**
+   * Provider-side constrained sampling, when the tool asks for it.
+   *
+   * `strict: "prefer"` rather than `"require"` so a provider or model
+   * that cannot enforce a schema falls back to ordinary tool calling
+   * instead of failing the request.
+   */
+  constrainedSampling?: { type: "json_schema"; strict: "prefer" | "require" };
 }
 
 /** The JSON Schema subset TypeBox and pi exchange for tool parameters. */
@@ -87,13 +95,15 @@ export interface CreatePiToolsResult {
  * cannot drift apart. Callers that only need the declarations can
  * destructure `tools` and ignore `execute`.
  */
-export function createPiTools(options: CreateToolsOptions): CreatePiToolsResult {
+export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResult {
   const specs = createToolSpecs(options);
   return {
-    tools: piToolDeclarations(specs),
+    tools: piToolDeclarations(specs, options),
     execute: createSpecExecutor(specs),
   };
 }
+
+export interface CreatePiToolsOptions extends CreateToolsOptions, PiDeclarationOptions {}
 
 /**
  * Declarations only, for a caller that already has a spec set.
@@ -101,12 +111,35 @@ export function createPiTools(options: CreateToolsOptions): CreatePiToolsResult 
  * Useful when the same specs back both a declaration list sent to the
  * model and a separately-held dispatcher.
  */
-export function piToolDeclarations(specs: ToolSpecSet): PiTool[] {
-  return Object.values(specs).map((spec) => ({
-    name: spec.name,
-    description: spec.description,
-    parameters: toPiParameters(spec.inputSchema),
-  }));
+export function piToolDeclarations(
+  specs: ToolSpecSet,
+  options: PiDeclarationOptions = {},
+): PiTool[] {
+  const strict = options.constrainedSampling ?? "prefer";
+  return Object.values(specs).map((spec) => {
+    // Strict schemas must close the object: a provider enforcing the
+    // schema has to know no other properties are allowed.
+    const wantsStrict = strict !== false && spec.traits?.strictArguments === true;
+    const parameters = toPiParameters(spec.inputSchema, wantsStrict);
+    const tool: PiTool = { name: spec.name, description: spec.description, parameters };
+    if (wantsStrict) {
+      tool.constrainedSampling = { type: "json_schema", strict };
+    }
+    return tool;
+  });
+}
+
+export interface PiDeclarationOptions {
+  /**
+   * Whether to request provider-side constrained sampling for the tools
+   * that ask for it, and how strictly.
+   *
+   * `"prefer"` (the default) falls back to ordinary tool calling on a
+   * provider that cannot enforce the schema. `"require"` fails the
+   * request instead, which is only appropriate when the caller pins a
+   * model known to support it. `false` opts out entirely.
+   */
+  constrainedSampling?: "prefer" | "require" | false;
 }
 
 /**
@@ -132,7 +165,10 @@ export function createSpecExecutor(
       );
     }
 
-    const parsed = spec.inputSchema.safeParse(call.arguments ?? {});
+    // Strict schemas require every property, expressing "absent" as
+    // null, so drop those before validating against the Zod schema
+    // where the field is genuinely optional.
+    const parsed = spec.inputSchema.safeParse(dropNulls(call.arguments ?? {}));
     if (!parsed.success) {
       return errorResult(`Invalid arguments for ${call.name}: ${formatZodError(parsed.error)}`);
     }
@@ -196,7 +232,7 @@ function toPiResult(output: ModelOutput): PiToolResult {
  * may omit it. Emitting the output view instead would mark those fields
  * required and force the model to restate values it should not have to.
  */
-function toPiParameters(schema: z.ZodType): PiJSONSchema {
+function toPiParameters(schema: z.ZodType, strict = false): PiJSONSchema {
   const json = z.toJSONSchema(schema, {
     target: "draft-7",
     io: "input",
@@ -212,7 +248,44 @@ function toPiParameters(schema: z.ZodType): PiJSONSchema {
   if (json.type !== "object") {
     throw new Error(`pi tool parameters must be an object schema, got ${String(json.type)}`);
   }
+  // A provider enforcing a JSON schema needs the object closed, and
+  // OpenAI additionally requires every property to be listed in
+  // `required` — optional fields are expressed as nullable instead. Zod
+  // emits the open, minimally-required form, so close it here rather
+  // than restating each schema for the strict case.
+  if (strict) {
+    json.additionalProperties = false;
+    const properties = (json.properties ?? {}) as Record<string, Record<string, unknown>>;
+    const names = Object.keys(properties);
+    const required = new Set((json.required as string[] | undefined) ?? []);
+    for (const name of names) {
+      if (required.has(name)) continue;
+      const property = properties[name];
+      const type = property.type;
+      // Widen an optional property to accept null, so the model can
+      // fill the now-required slot without inventing a value.
+      if (typeof type === "string" && type !== "null") {
+        property.type = [type, "null"];
+      }
+    }
+    json.required = names;
+  }
   return json as PiJSONSchema;
+}
+
+/**
+ * Drop top-level null-valued keys.
+ *
+ * Only the top level, because a null nested inside an argument may be
+ * meaningful — `exec`'s structured `input` can legitimately carry one.
+ */
+function dropNulls(args: unknown): unknown {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    if (value !== null) out[key] = value;
+  }
+  return out;
 }
 
 function errorResult(message: string): PiToolResult {

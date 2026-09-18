@@ -15,6 +15,9 @@ export const deleteInputSchema = z.object({
     .describe("Remove a directory and all of its contents. Defaults to false."),
 });
 
+/** Successful delete. A failure returns `{ error }` instead. */
+export const deleteOutputSchema = z.object({ deleted: z.string() });
+
 export const deleteDescription =
   "Delete a file or directory. Set recursive to true to remove a non-empty directory.";
 

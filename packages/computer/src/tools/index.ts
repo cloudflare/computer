@@ -19,9 +19,11 @@ export { WorkspaceFileStore, type WorkspaceLike } from "./fs/store.js";
 export type { FileStat, FileStore, MutableFileStore } from "./fs/types.js";
 export { createWriteTool, type WriteToolOptions } from "./fs/write.js";
 export {
+  type CreatePiToolsOptions,
   type CreatePiToolsResult,
   createPiTools,
   createSpecExecutor,
+  type PiDeclarationOptions,
   type PiJSONSchema,
   type PiTool,
   type PiToolCall,
@@ -40,6 +42,7 @@ export {
   type ToolCallContext,
   type ToolSpec,
   type ToolSpecSet,
+  type ToolTraits,
 } from "./spec.js";
 export {
   type CreateTanStackToolsOptions,
