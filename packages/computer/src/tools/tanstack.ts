@@ -143,9 +143,10 @@ export function toTanStackTools(
       name: spec.name,
       description: spec.description,
       inputSchema: spec.inputSchema,
-      // Only a successful result is described. The error branch is a
-      // normal outcome, so validating every return against the success
-      // shape would reject legitimate error results.
+      // TanStack validates every return against this, including the
+      // error branch, so a spec's schema has to describe both outcomes.
+      // A success-only schema would replace a real failure reason with
+      // a schema complaint.
       outputSchema: spec.outputSchema,
       needsApproval: needsApproval ? true : undefined,
       lazy: lazy ? true : undefined,

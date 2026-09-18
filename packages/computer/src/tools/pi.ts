@@ -97,9 +97,10 @@ export interface CreatePiToolsResult {
  */
 export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResult {
   const specs = createToolSpecs(options);
+  const nullable = new Map<string, ReadonlySet<string>>();
   return {
-    tools: piToolDeclarations(specs, options),
-    execute: createSpecExecutor(specs),
+    tools: piToolDeclarations(specs, options, nullable),
+    execute: createSpecExecutor(specs, nullable),
   };
 }
 
@@ -114,14 +115,25 @@ export interface CreatePiToolsOptions extends CreateToolsOptions, PiDeclarationO
 export function piToolDeclarations(
   specs: ToolSpecSet,
   options: PiDeclarationOptions = {},
+  /**
+   * Filled in with the fields widened to nullable per tool. Pass the
+   * same map to {@link createSpecExecutor} so it can tell a placeholder
+   * null apart from one the tool accepts.
+   */
+  nullable?: Map<string, ReadonlySet<string>>,
 ): PiTool[] {
   const strict = options.constrainedSampling ?? "prefer";
   return Object.values(specs).map((spec) => {
     // Strict schemas must close the object: a provider enforcing the
     // schema has to know no other properties are allowed.
     const wantsStrict = strict !== false && spec.traits?.strictArguments === true;
-    const parameters = toPiParameters(spec.inputSchema, wantsStrict);
-    const tool: PiTool = { name: spec.name, description: spec.description, parameters };
+    const converted = toPiParameters(spec.inputSchema, wantsStrict);
+    nullable?.set(spec.name, converted.nullable);
+    const tool: PiTool = {
+      name: spec.name,
+      description: spec.description,
+      parameters: converted.parameters,
+    };
     if (wantsStrict) {
       tool.constrainedSampling = { type: "json_schema", strict };
     }
@@ -154,6 +166,12 @@ export interface PiDeclarationOptions {
  */
 export function createSpecExecutor(
   specs: ToolSpecSet,
+  /**
+   * Fields widened to nullable by the strict-schema transformation, per
+   * tool. Without it no null is treated as a placeholder, which is the
+   * right default for a caller that never asked for strict schemas.
+   */
+  nullable: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): (call: PiToolCall, context?: ToolCallContext) => Promise<PiToolResult> {
   return async (call, context = {}) => {
     const spec = specs[call.name];
@@ -166,9 +184,10 @@ export function createSpecExecutor(
     }
 
     // Strict schemas require every property, expressing "absent" as
-    // null, so drop those before validating against the Zod schema
-    // where the field is genuinely optional.
-    const parsed = spec.inputSchema.safeParse(dropNulls(call.arguments ?? {}));
+    // null. Drop those placeholders, but only for the fields that were
+    // widened, so a null the tool genuinely accepts survives.
+    const args = dropPlaceholderNulls(call.arguments ?? {}, nullable.get(spec.name) ?? EMPTY);
+    const parsed = spec.inputSchema.safeParse(args);
     if (!parsed.success) {
       return errorResult(`Invalid arguments for ${call.name}: ${formatZodError(parsed.error)}`);
     }
@@ -232,7 +251,10 @@ function toPiResult(output: ModelOutput): PiToolResult {
  * may omit it. Emitting the output view instead would mark those fields
  * required and force the model to restate values it should not have to.
  */
-function toPiParameters(schema: z.ZodType, strict = false): PiJSONSchema {
+function toPiParameters(
+  schema: z.ZodType,
+  strict = false,
+): { parameters: PiJSONSchema; nullable: Set<string> } {
   const json = z.toJSONSchema(schema, {
     target: "draft-7",
     io: "input",
@@ -253,6 +275,7 @@ function toPiParameters(schema: z.ZodType, strict = false): PiJSONSchema {
   // `required` — optional fields are expressed as nullable instead. Zod
   // emits the open, minimally-required form, so close it here rather
   // than restating each schema for the strict case.
+  const nullable = new Set<string>();
   if (strict) {
     json.additionalProperties = false;
     const properties = (json.properties ?? {}) as Record<string, Record<string, unknown>>;
@@ -263,30 +286,43 @@ function toPiParameters(schema: z.ZodType, strict = false): PiJSONSchema {
       const property = properties[name];
       const type = property.type;
       // Widen an optional property to accept null, so the model can
-      // fill the now-required slot without inventing a value.
+      // fill the now-required slot without inventing a value. Record it,
+      // so the dispatcher knows this null means "absent" rather than a
+      // value the tool asked for.
       if (typeof type === "string" && type !== "null") {
         property.type = [type, "null"];
+        nullable.add(name);
       }
     }
     json.required = names;
   }
-  return json as PiJSONSchema;
+  return { parameters: json as PiJSONSchema, nullable };
 }
 
 /**
- * Drop top-level null-valued keys.
+ * Drop the null placeholders strict mode introduced, and only those.
  *
- * Only the top level, because a null nested inside an argument may be
- * meaningful — `exec`'s structured `input` can legitimately carry one.
+ * A closed schema has to list every property as required, so an omitted
+ * optional field is sent as null instead. Those nulls mean "absent" and
+ * have to go before Zod sees them. A null the tool genuinely accepts
+ * must survive: `exec`'s structured `input` is any JSON value, so a
+ * model passing null there means it.
+ *
+ * `nullable` names the fields this adapter widened for one tool, so
+ * only those are stripped.
  */
-function dropNulls(args: unknown): unknown {
+function dropPlaceholderNulls(args: unknown, nullable: ReadonlySet<string>): unknown {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return args;
+  if (nullable.size === 0) return args;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
-    if (value !== null) out[key] = value;
+    if (value === null && nullable.has(key)) continue;
+    out[key] = value;
   }
   return out;
 }
+
+const EMPTY: ReadonlySet<string> = new Set();
 
 function errorResult(message: string): PiToolResult {
   return { content: [{ type: "text", text: message }], isError: true };

@@ -200,6 +200,34 @@ describe("createPiTools execution", () => {
     expect((result.content[0] as { text: string }).text).toContain('Unknown tool "nope"');
   });
 
+  it("keeps a null the tool genuinely accepts", async () => {
+    // `exec`'s structured input is any JSON value, so null means null.
+    // Only the placeholder nulls that strict mode introduces for
+    // omitted optional fields may be stripped.
+    const seen: Array<{ input: unknown }> = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { input?: unknown },
+    ) => {
+      seen.push({ input: options.input });
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    (workspace.runtime as unknown as Record<string, unknown>).isCallable = () => true;
+    const tools = createPiTools({
+      workspace,
+      shell: { defaultBackend: "js", backends: { js: { description: "callable" } } },
+    });
+
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: null } });
+    await tools.execute({ id: "2", name: "exec", arguments: { command: "b" } });
+
+    // An explicit null survives; an omitted field stays absent. A model
+    // that means null must be able to say so.
+    expect(seen[0].input).toBeNull();
+    expect(seen[1].input).toBeUndefined();
+  });
+
   it("applies a schema default when the model omits the field", async () => {
     const workspace = makeWorkspace();
     const tools = createPiTools({ workspace });

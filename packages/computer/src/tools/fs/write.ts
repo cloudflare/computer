@@ -19,11 +19,18 @@ export const writeInputSchema = z.object({
   content: z.string().describe("File content"),
 });
 
-/** Successful write. A failure returns `{ error }` instead. */
-export const writeOutputSchema = z.object({
-  path: z.string(),
-  bytesWritten: z.number().int(),
-});
+/**
+ * Shape of the result.
+ *
+ * A failure is an ordinary outcome for a filesystem tool, not a
+ * violation, so the error branch belongs in the schema. An SDK that
+ * validates a tool return against this would otherwise replace the
+ * real reason with a schema complaint.
+ */
+export const writeOutputSchema = z.union([
+  z.object({ path: z.string(), bytesWritten: z.number().int() }),
+  z.object({ error: z.string() }),
+]);
 
 export const writeDescription =
   "Write content to a file. Overwrites any existing file at the path.";

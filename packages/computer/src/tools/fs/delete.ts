@@ -15,8 +15,18 @@ export const deleteInputSchema = z.object({
     .describe("Remove a directory and all of its contents. Defaults to false."),
 });
 
-/** Successful delete. A failure returns `{ error }` instead. */
-export const deleteOutputSchema = z.object({ deleted: z.string() });
+/**
+ * Shape of the result.
+ *
+ * A failure is an ordinary outcome for a filesystem tool, not a
+ * violation, so the error branch belongs in the schema. An SDK that
+ * validates a tool return against this would otherwise replace the
+ * real reason with a schema complaint.
+ */
+export const deleteOutputSchema = z.union([
+  z.object({ deleted: z.string() }),
+  z.object({ error: z.string() }),
+]);
 
 export const deleteDescription =
   "Delete a file or directory. Set recursive to true to remove a non-empty directory.";

@@ -110,7 +110,7 @@ describe("createTanStackTools", () => {
     }
   });
 
-  it("describes successful output shapes for the tools that have one", () => {
+  it("describes output shapes including the error branch", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace() });
 
     const schema = tools.write.outputSchema as unknown as {
@@ -118,8 +118,33 @@ describe("createTanStackTools", () => {
     };
     expect(schema.safeParse({ path: "/w/a.txt", bytesWritten: 3 }).success).toBe(true);
     expect(schema.safeParse({ path: "/w/a.txt" }).success).toBe(false);
+    // TanStack validates every return against this schema, so a
+    // failure has to pass it too. A success-only schema would replace
+    // the real reason with a validation complaint.
+    expect(schema.safeParse({ error: "read-only filesystem" }).success).toBe(true);
     // A paged listing has no fixed success shape worth asserting.
     expect(tools.ls.outputSchema).toBeUndefined();
+  });
+
+  it("returns the real reason when a mutating tool fails", async () => {
+    const workspace = makeWorkspace();
+    workspace.fs.writeFile = async () => {
+      throw new Error("read-only filesystem");
+    };
+    const tools = createTanStackTools({ workspace });
+
+    const result = (await tools.write.execute({
+      path: "/workspace/a.txt",
+      content: "hi",
+    } as never)) as { error: string };
+
+    // Validating this against the tool's own outputSchema must keep the
+    // message intact, which is what TanStack does with every return.
+    expect(result.error).toContain("read-only filesystem");
+    const schema = tools.write.outputSchema as unknown as {
+      parse: (v: unknown) => unknown;
+    };
+    expect(schema.parse(result)).toEqual({ error: expect.stringContaining("read-only") });
   });
 
   it("marks tools lazy so they stay out of the prompt until discovered", () => {

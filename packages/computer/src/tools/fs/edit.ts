@@ -45,14 +45,24 @@ export const editInputSchema = z.object({
     ),
 });
 
-/** Successful edit. A failure returns `{ error }` instead. */
-export const editOutputSchema = z.object({
-  path: z.string(),
-  editsApplied: z.number().int(),
-  diff: z.string(),
-  patch: z.string(),
-  firstChangedLine: z.number().int().optional(),
-});
+/**
+ * Shape of the result.
+ *
+ * A failure is an ordinary outcome for a filesystem tool, not a
+ * violation, so the error branch belongs in the schema. An SDK that
+ * validates a tool return against this would otherwise replace the
+ * real reason with a schema complaint.
+ */
+export const editOutputSchema = z.union([
+  z.object({
+    path: z.string(),
+    editsApplied: z.number().int(),
+    diff: z.string(),
+    patch: z.string(),
+    firstChangedLine: z.number().int().optional(),
+  }),
+  z.object({ error: z.string() }),
+]);
 
 export const editDescription =
   "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes touch the same block, merge them into one edit.";
