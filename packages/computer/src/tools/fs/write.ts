@@ -14,10 +14,13 @@ export interface WriteToolOptions {
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 
-const inputSchema = z.object({
+export const writeInputSchema = z.object({
   path: z.string().describe("Absolute path, e.g. /workspace/main.zig"),
   content: z.string().describe("File content"),
 });
+
+export const writeDescription =
+  "Write content to a file. Overwrites any existing file at the path.";
 
 export interface WriteInput {
   path: string;
@@ -49,10 +52,10 @@ export async function writeToStore(
   });
 }
 
-export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof inputSchema>> {
+export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof writeInputSchema>> {
   return tool({
-    description: "Write content to a file. Overwrites any existing file at the path.",
-    inputSchema,
+    description: writeDescription,
+    inputSchema: writeInputSchema,
     execute: (input) => writeToStore(options, input),
   });
 }

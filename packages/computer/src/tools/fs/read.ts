@@ -1,5 +1,7 @@
-import { type JSONValue, type Tool, tool } from "ai";
+import { type Tool, tool } from "ai";
 import { z } from "zod";
+import { toAISDKOutput } from "../ai-output.js";
+import type { ModelOutput } from "../spec.js";
 import { detectMedia } from "./media.js";
 import type { FileStore } from "./types.js";
 
@@ -27,7 +29,7 @@ const DEFAULT_MAX_MODEL_BYTES = 3.5 * 1024 * 1024;
 const DEFAULT_MEDIA_SNIFF_BYTES = 512;
 const TRUNCATION_MARKER = "... (truncated)";
 
-const inputSchema = z
+export const readInputSchema = z
   .object({
     path: z.string().describe("Path to the file to read"),
     offset: z
@@ -84,7 +86,7 @@ interface MediaReadResult {
   unsupported?: true;
 }
 
-type ReadToolResult = ReadResult | MediaReadResult | { error: string };
+export type ReadToolResult = ReadResult | MediaReadResult | { error: string };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: false });
@@ -93,7 +95,7 @@ function utf8ByteLength(value: string): number {
   return encoder.encode(value).length;
 }
 
-function createReadExecutor(
+export function createReadExecutor(
   options: ReadToolOptions,
 ): (input: ReadInput) => Promise<ReadToolResult> {
   const { store } = options;
@@ -303,57 +305,84 @@ export function readFromStore(options: ReadToolOptions, input: ReadInput): Promi
   return createReadExecutor(options)(input);
 }
 
-export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof inputSchema>> {
+/**
+ * The model-facing description, which quotes the configured caps so the
+ * model can plan continuations instead of discovering the limit by
+ * hitting it.
+ */
+export function readDescription(options: ReadToolOptions): string {
   const maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  return `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`;
+}
+
+/**
+ * Build the SDK-neutral model representation for a read result.
+ *
+ * A complete, unpositioned text read is returned as bare text because
+ * that is what the model actually wants to see. Truncated, empty, and
+ * explicitly positioned reads keep their JSON envelope so the
+ * continuation offsets survive. Eligible images and PDFs become a
+ * `media` output carrying the bytes captured during execution, so
+ * regenerating prompt history cannot observe a later version of the
+ * file.
+ */
+export function readModelOutput(
+  options: ReadToolOptions,
+): (args: { input: ReadInput; output: ReadToolResult }) => ModelOutput {
   const maxModelBytes = validateBoundedReadLimit(
     "maxModelBytes",
     options.maxModelBytes ?? DEFAULT_MAX_MODEL_BYTES,
   );
 
+  return ({ input, output: settled }) => {
+    // Inspect the result as an open record. The union's members are
+    // distinguished by which fields are present rather than by a tag,
+    // so narrowing field-by-field is clearer than reconstructing the
+    // discriminator, and every branch below re-establishes the shape it
+    // needs before using it.
+    const output: Record<string, unknown> = settled as unknown as Record<string, unknown>;
+    if (!isRecord(output)) return { type: "text", value: String(output) };
+    if (typeof output.error === "string") {
+      return { type: "error-text", value: output.error };
+    }
+    if (typeof output.content === "string") {
+      const positioned =
+        isReadInput(input) && (input.offset !== undefined || input.byteOffset !== undefined);
+      return output.truncated === true || output.content.length === 0 || positioned
+        ? { type: "json", value: output }
+        : { type: "text", value: output.content };
+    }
+    if (output.kind === "binary") return { type: "json", value: output };
+    if (!isMediaReadResult(output)) return { type: "json", value: output };
+    if (output.sizeBytes > maxModelBytes) {
+      return inlineMediaLimitError(output, output.sizeBytes, maxModelBytes);
+    }
+    if (output.data === undefined) {
+      return { type: "error-text", value: `Could not read captured file bytes: ${output.path}` };
+    }
+    if (output.data.length === 0) {
+      return { type: "error-text", value: `Cannot attach empty file: ${output.path}` };
+    }
+    return {
+      type: "media",
+      text: `Read ${output.path} (${output.mediaType}, ${output.sizeBytes} bytes).`,
+      data: output.data,
+      mediaType: output.mediaType,
+      filename: output.name,
+    };
+  };
+}
+
+export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof readInputSchema>> {
+  const toModelOutput = readModelOutput(options);
+
   return tool({
-    description: `Read a workspace file. Images and PDFs are passed to capable models. Text output is capped at ${maxLines} lines or ${Math.round(maxBytes / 1024)}KB and includes line and byte continuations when truncated.`,
-    inputSchema,
+    description: readDescription(options),
+    inputSchema: readInputSchema,
     execute: createReadExecutor(options),
-    toModelOutput: async ({ input, output }: { input: unknown; output: unknown }) => {
-      if (!isRecord(output)) return { type: "text", value: String(output) };
-      if (typeof output.error === "string") {
-        return { type: "error-text", value: output.error };
-      }
-      if (typeof output.content === "string") {
-        const positioned =
-          isReadInput(input) && (input.offset !== undefined || input.byteOffset !== undefined);
-        return output.truncated === true || output.content.length === 0 || positioned
-          ? { type: "json", value: toJSONValue(output) }
-          : { type: "text", value: output.content };
-      }
-      if (output.kind === "binary") return { type: "json", value: toJSONValue(output) };
-      if (!isMediaReadResult(output)) return { type: "json", value: toJSONValue(output) };
-      if (output.sizeBytes > maxModelBytes) {
-        return inlineMediaLimitError(output, output.sizeBytes, maxModelBytes);
-      }
-      if (output.data === undefined) {
-        return { type: "error-text", value: `Could not read captured file bytes: ${output.path}` };
-      }
-      if (output.data.length === 0) {
-        return { type: "error-text", value: `Cannot attach empty file: ${output.path}` };
-      }
-      return {
-        type: "content",
-        value: [
-          {
-            type: "text",
-            text: `Read ${output.path} (${output.mediaType}, ${output.sizeBytes} bytes).`,
-          },
-          {
-            type: "file",
-            data: { type: "data", data: output.data },
-            mediaType: output.mediaType,
-            filename: output.name,
-          },
-        ],
-      };
-    },
+    toModelOutput: ({ input, output }: { input: unknown; output: unknown }) =>
+      toAISDKOutput(toModelOutput({ input: input as ReadInput, output: output as ReadToolResult })),
   });
 }
 
@@ -458,15 +487,6 @@ function inlineMediaLimitError(
     type: "error-text",
     value: `Read ${output.path} (${output.mediaType}, ${sizeBytes} bytes), but it exceeds the ${maxModelBytes}-byte inline model output limit.`,
   };
-}
-
-function toJSONValue(value: unknown): JSONValue {
-  try {
-    const json = JSON.stringify(value);
-    return json === undefined ? null : (JSON.parse(json) as JSONValue);
-  } catch {
-    return String(value);
-  }
 }
 
 function isReadInput(

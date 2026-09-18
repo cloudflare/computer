@@ -1,50 +1,56 @@
-import type { ToolSet } from "ai";
-import { createExecTool, type ExecToolOptions, type ExecWorkspaceLike } from "./exec.js";
-import { createDeleteTool } from "./fs/delete.js";
-import { createEditTool, type EditToolOptions } from "./fs/edit.js";
-import { createFindTool } from "./fs/find.js";
-import { createGrepTool } from "./fs/grep.js";
-import { createListTool } from "./fs/list.js";
-import { createReadTool, type ReadToolOptions } from "./fs/read.js";
-import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./fs/store.js";
-import { createWriteTool, type WriteToolOptions } from "./fs/write.js";
-import { createPublishTool, type PublishWorkspaceLike } from "./publish.js";
+/**
+ * Tools for the [AI SDK](https://github.com/vercel/ai) (`ai`).
+ *
+ * The AI SDK is the closest match to the shared spec shape: it takes a
+ * Zod `inputSchema`, an `execute` that may return an async iterable of
+ * progressive results, and an optional `toModelOutput`. So this adapter
+ * forwards the specs from `./registry.js` almost unchanged, lowering
+ * only the neutral `ModelOutput` onto the SDK's output parts.
+ */
 
-export interface CreateAIToolsOptions {
-  workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
-  readonly?: boolean;
-  assets?: boolean;
-  read?: Omit<ReadToolOptions, "store">;
-  write?: Omit<WriteToolOptions, "store">;
-  edit?: Omit<EditToolOptions, "store">;
-  shell?: Omit<ExecToolOptions, "workspace">;
+import { type Tool, type ToolSet, tool } from "ai";
+import { toAISDKOutput } from "./ai-output.js";
+import { type CreateToolsOptions, createToolSpecs } from "./registry.js";
+import { type AnyToolSpec, applyModelOutput, runSpec, type ToolSpecSet } from "./spec.js";
+
+export type CreateAIToolsOptions = CreateToolsOptions;
+
+/**
+ * Create the AI SDK `ToolSet` for a Workspace.
+ *
+ * Always includes `read`, `ls`, `find`, and `grep`. Adds `write`,
+ * `edit`, and `delete` unless `readonly` is set, `exec` when `shell`
+ * options are supplied, and `publish` when assets are configured.
+ */
+export function createAITools(options: CreateAIToolsOptions): ToolSet {
+  return toAITools(createToolSpecs(options));
 }
 
-export function createAITools(options: CreateAIToolsOptions): ToolSet {
-  const store = new WorkspaceFileStore(options.workspace);
-  const tools: ToolSet = {
-    read: createReadTool({ store, ...options.read }),
-    ls: createListTool({ workspace: options.workspace }),
-    find: createFindTool({ workspace: options.workspace }),
-    grep: createGrepTool({ workspace: options.workspace }),
-  };
-
-  if (options.readonly === true) return tools;
-
-  tools.write = createWriteTool({ store, ...options.write });
-  tools.edit = createEditTool({ store, ...options.edit });
-  tools.delete = createDeleteTool({ store });
-
-  if (options.shell !== undefined) {
-    tools.exec = createExecTool({
-      workspace: options.workspace as ExecWorkspaceLike,
-      ...options.shell,
-    });
+/** Adapt an existing spec set to AI SDK tools. */
+export function toAITools(specs: ToolSpecSet): ToolSet {
+  const tools: ToolSet = {};
+  for (const spec of Object.values(specs)) {
+    tools[spec.name] = toAITool(spec);
   }
-
-  if (options.assets !== false && options.workspace.assets !== undefined) {
-    tools.publish = createPublishTool({ workspace: options.workspace as PublishWorkspaceLike });
-  }
-
   return tools;
+}
+
+function toAITool(spec: AnyToolSpec): Tool {
+  const hasModelOutput = spec.toModelOutput !== undefined;
+  return tool({
+    description: spec.description,
+    inputSchema: spec.inputSchema,
+    // The AI SDK accepts either a promise or an async iterable from
+    // `execute`, which is the same contract a spec executor follows, so
+    // the return value passes straight through and a streaming tool
+    // keeps its progressive snapshots.
+    execute: (input: unknown, { abortSignal }: { abortSignal?: AbortSignal }) =>
+      runSpec(spec, input, { abortSignal }),
+    ...(hasModelOutput
+      ? {
+          toModelOutput: async ({ input, output }: { input: unknown; output: unknown }) =>
+            toAISDKOutput(await applyModelOutput(spec, input, output)),
+        }
+      : {}),
+  }) as Tool;
 }
