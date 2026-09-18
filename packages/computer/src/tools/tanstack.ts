@@ -6,9 +6,9 @@
  * which Zod v4 implements, so the schemas in `./spec.js` are passed
  * through untouched — no conversion and no second copy of any schema.
  *
- * `createTanStackTools` returns the record shape `chat({ tools })`
- * accepts, keyed by tool name, which is also what `mergeAgentTools`
- * expects for a server-side registry.
+ * `createTanStackTools` returns the tools keyed by name, which is the
+ * shape a server-side registry and `mergeAgentTools` expect. `chat()`
+ * itself takes a list, so pass `Object.values(tools)` there.
  */
 
 import type { z } from "zod";
@@ -39,7 +39,12 @@ export interface TanStackTool<Input = unknown> {
    * gets the result shape without restating it.
    */
   outputSchema?: z.ZodType;
-  execute: (input: Input, context?: TanStackToolExecutionContext) => Promise<unknown>;
+  // TanStack hands the validated arguments back as `any`, so the
+  // parameter is declared the same way here. A narrower parameter would
+  // be unsound in the position TanStack calls it from, and each spec
+  // validates its own input before using it.
+  // biome-ignore lint/suspicious/noExplicitAny: matches the signature chat() calls
+  execute: (input: any, context?: TanStackToolExecutionContext) => Promise<unknown>;
   needsApproval?: boolean;
   /**
    * Withheld from the prompt until discovered through TanStack lazy
@@ -47,6 +52,13 @@ export interface TanStackTool<Input = unknown> {
    * prompt until it is wanted.
    */
   lazy?: boolean;
+  /**
+   * Phantom marker TanStack uses to tell an ordinary tool apart from a
+   * provider-supplied one. It carries no value at runtime; declaring it
+   * `undefined` is what lets a tool built here satisfy the union
+   * `chat({ tools })` accepts.
+   */
+  readonly "~toolKind"?: undefined;
 }
 
 /**
@@ -61,6 +73,14 @@ export interface TanStackToolExecutionContext {
   emitCustomEvent?: (eventName: string, value: Record<string, unknown>) => void;
 }
 
+/**
+ * A tool set keyed by name.
+ *
+ * The element type erases its input to `unknown` rather than `never`:
+ * `chat()` accepts a tool whose `execute` takes `any`, and a spec
+ * validates its own input before use, so the looser parameter is
+ * accurate here and lets the set be spread straight into `chat()`.
+ */
 export type TanStackToolSet = Record<string, TanStackTool<never>>;
 
 export interface CreateTanStackToolsOptions extends CreateToolsOptions {

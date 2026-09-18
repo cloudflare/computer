@@ -141,7 +141,7 @@ const { tools } = createPiTools({ workspace, constrainedSampling: "require" });
 
 ### TanStack AI
 
-A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The result is the record `chat({ tools })` takes.
+A TanStack tool is a plain object whose `inputSchema` is a Standard Schema, which Zod implements, so the schemas are passed through with no conversion. The tools come back keyed by name, which is the shape a server-side registry and `mergeAgentTools` expect; `chat()` takes a list, so pass `Object.values(tools)`.
 
 ```ts
 import { chat, toServerSentEventsResponse } from "@tanstack/ai";
@@ -163,7 +163,7 @@ export async function POST(request: Request) {
     chat({
       adapter: anthropicText("claude-sonnet-4-5"),
       messages,
-      tools,
+      tools: Object.values(tools),
       abortController,
     }),
   );
