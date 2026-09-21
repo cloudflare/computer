@@ -63,9 +63,12 @@ export interface GitCloneOptions {
    */
   paths?: string[];
   /**
-   * Shallow-clone depth. Defaults to 1. Pass `0` or `Infinity` for
-   * full history. Even with depth=1, every blob reachable from the
-   * tip tree is fetched — see the package README for why.
+   * Shallow-clone depth. Defaults to full history. Pass a positive
+   * number for a shallow clone, which is faster but cannot be pushed
+   * elsewhere without losing the commits it did not fetch. `0` and
+   * `Infinity` both mean full history. Even at depth 1, every blob
+   * reachable from the tip tree is fetched — see the package README
+   * for why.
    */
   depth?: number;
   /** Fetch only the requested ref's branch. Default: true. */
@@ -105,10 +108,18 @@ export interface CloneWithDeps extends GitCloneOptions {
 export async function cloneWith(opts: CloneWithDeps): Promise<void> {
   const dir = opts.dir ?? "/";
   const ref = opts.ref;
-  const depthRaw = opts.depth ?? 1;
+  // Full history by default. A shallow clone used to be the default
+  // because it is faster, but it silently cost the caller their
+  // history: pushing such a clone elsewhere sends only the commits it
+  // fetched, reports success, and leaves a remote whose tip matches
+  // while every earlier commit is missing. Speed is the caller's call
+  // to make with --depth, correctness is not.
+  //
   // depth=0 and depth=Infinity both mean "no shallow limit" on this
   // surface. isomorphic-git interprets `undefined` that way.
-  const depth = depthRaw > 0 && Number.isFinite(depthRaw) ? depthRaw : undefined;
+  const depthRaw = opts.depth;
+  const depth =
+    depthRaw !== undefined && depthRaw > 0 && Number.isFinite(depthRaw) ? depthRaw : undefined;
 
   await opts.git.clone({
     fs: opts.fs,

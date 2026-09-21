@@ -44,6 +44,10 @@ clean       fetch         reset         rev-parse     switch
                                         update-ref
 ```
 
+`git help` lists these, and `git help <command>` prints the usage line for
+one of them, covering only the flags this wrapper accepts. Asking for a
+command that is not supported reports that rather than reprinting the list.
+
 Global options accepted before the subcommand:
 
 - **`-C <path>`** — run the subcommand as though invoked from
@@ -412,6 +416,7 @@ ws.git.log({
 | `-n <N>` | `depth` |
 | `-<N>` (e.g. `-1`, `-5`) | `depth` |
 | `--oneline` | (CLI formatter) |
+| `--format=<spec>` / `--pretty=<spec>` | (CLI formatter) |
 | `<ref>` (positional) | `ref` |
 
 The positional `<ref>` accepts revision suffixes (`HEAD~2`,
@@ -422,6 +427,12 @@ blocks; `--oneline` collapses each entry to `<short-oid>
 <subject>`. The typed surface returns `CommitView[]` (oid,
 message, tree, parent, author, committer) so callers can
 format their own way.
+
+`--format=<spec>` (and its alias `--pretty=<spec>`) expands the
+placeholders `%H`, `%h`, `%s`, `%b`, `%an`, `%ae`, `%ad`, `%cn`, `%ce`,
+`%cd`, and `%%`, plus the named format `oneline`. A placeholder outside
+that set is left as written, so an unsupported one is visible in the
+output rather than silently dropped.
 
 *Not mapped:* `--graph`, `--all`, `--since`, `--until`,
 `-p`, `--stat`, `--follow`, `--reverse`.
@@ -545,7 +556,7 @@ ws.git.clone({
   dir?: string,
   ref?: string,
   paths?: string[],         // partial checkout only
-  depth?: number,           // default 1
+  depth?: number,           // default: full history
   singleBranch?: boolean,
   noTags?: boolean,
   headers?: Record<string, string>,
@@ -563,6 +574,11 @@ ws.git.clone({
 | `--no-tags` / `--tags` | `noTags` |
 | `<url>` (positional) | `url` |
 | `<dir>` (positional) | `dir` |
+
+Clone fetches the full history unless `--depth` asks otherwise. A shallow
+clone is faster, but it can only push the commits it actually fetched: the
+push succeeds and the remote's tip matches, while every earlier commit is
+missing. Ask for a shallow clone when the history genuinely is not needed.
 
 When `<dir>` is omitted, the CLI derives it from the last path
 segment of the URL, stripping a trailing `.git` — `git clone
@@ -869,7 +885,7 @@ readback that the typed API serves better directly.
 ### `cat-file`
 
 ```
-git cat-file -p <oid>[:<path>]
+git cat-file (-p|-t|-s) <oid>[:<path>]
 ```
 
 ```ts
@@ -877,11 +893,13 @@ ws.git.catFile({
   dir?: string,
   oid: string,
   filepath?: string,
-}): Promise<{ oid: string; bytes: Uint8Array }>
+}): Promise<{ oid: string; bytes: Uint8Array; type?: string }>
 ```
 
-Supports the `<oid>:<path>` shorthand for tree subreads.
-*Not mapped:* `-t` type, `-s` size, `--batch`.
+Supports the `<oid>:<path>` shorthand for tree subreads. `-p` prints the
+object's bytes, `-t` its type, and `-s` its size in bytes; exactly one of
+the three is required, as in real git.
+*Not mapped:* `--batch`.
 
 ### `update-ref`
 
