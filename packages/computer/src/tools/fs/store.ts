@@ -48,6 +48,7 @@ export interface WorkspaceLike {
         limit?: number;
         offset?: number;
         include?: string;
+        exclude?: string[];
       },
     ): Promise<
       Array<{

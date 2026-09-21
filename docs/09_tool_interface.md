@@ -185,6 +185,7 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
   path?: string;          // default /workspace
   query: string;
   include?: string;       // glob relative to path
+  exclude?: string[];     // globs pruned from the walk
   regex?: boolean;        // default false
   ignoreCase?: boolean;   // default false
   context?: number;       // 0 through 10
@@ -195,9 +196,11 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
 
 The AI tool defaults to literal, case-sensitive matching. Set `regex: true` to interpret `query` as a regular expression and `ignoreCase: true` to ignore letter case. Matches include path, line number, text, and optional numbered context. Invalid regular expressions return a structured error. A non-final page includes `nextOffset`.
 
-The tool passes `include`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer. Directory searches return matches in deterministic depth-first discovery order, then line order within each file. They are not globally sorted by full path.
+`exclude` works exactly as it does on `find`: globs of the same shape, matched against the same relative path, applied before `include` so an exclusion always wins. An excluded directory is pruned before its children are queried rather than being read and filtered, so `exclude: ["node_modules", "node_modules/**"]` keeps the search out of a package tree. Name both forms, since `node_modules/**` matches what is below the directory rather than the directory itself. A single-file search has no traversal to prune, so `exclude` does not apply to it.
 
-The lower-level `workspace.fs.grep` uses the same literal, case-sensitive defaults. Its options also accept `limit`, `offset`, `include`, `context`, `regex`, and `ignoreCase`.
+The tool passes `include`, `exclude`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer. Directory searches return matches in deterministic depth-first discovery order, then line order within each file. They are not globally sorted by full path.
+
+The lower-level `workspace.fs.grep` uses the same literal, case-sensitive defaults. Its options also accept `limit`, `offset`, `include`, `exclude`, `context`, `regex`, and `ignoreCase`.
 
 ## `write`
 
