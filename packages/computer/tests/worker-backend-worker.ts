@@ -19,6 +19,7 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import curlModules from "@cloudflare/computer/shell/curl";
+import sqliteModules from "@cloudflare/computer/shell/sqlite";
 import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
 import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
@@ -45,7 +46,7 @@ export class HostDO extends DurableObject<Env> {
           ctx,
           // Opt curl in by importing its group and passing it; the
           // fetch-path curl integration test exercises the wiring.
-          commands: [curlModules],
+          commands: [curlModules, sqliteModules],
         }),
       ],
     });
