@@ -50,8 +50,11 @@ worker-shell and worker-javascript backends additionally need the
 own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
-feature: `ai` and `zod` (for `@cloudflare/computer/tools`),
-`@platformatic/vfs` (for the Node-side VFS provider).
+feature: `zod` plus one agent SDK for the tool entrypoints (`ai` for
+`@cloudflare/computer/tools`, `@earendil-works/pi-ai` for
+`@cloudflare/computer/tools/pi`, `@tanstack/ai` for
+`@cloudflare/computer/tools/tanstack`), `@platformatic/vfs` (for the
+Node-side VFS provider).
 
 ## Quick start
 
@@ -272,6 +275,14 @@ framework's `getTools()`. The default set is `read`, `ls`, `find`,
 when you configure them. Read-only mode keeps `read`, `ls`, `find`, and
 `grep`.
 
+The same tools are available for two other agent SDKs, built from one
+shared implementation so the names, descriptions, schemas, and caps
+match: `@cloudflare/computer/tools/pi` for
+[pi](https://github.com/earendil-works/pi) and
+`@cloudflare/computer/tools/tanstack` for
+[TanStack AI](https://tanstack.com/ai). Only the returned shape differs.
+See [docs/09_tool_interface.md](../../docs/09_tool_interface.md).
+
 ```ts
 import { createAITools } from "@cloudflare/computer/tools";
 
@@ -419,6 +430,8 @@ on a computerd instance.
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
+| `@cloudflare/computer/tools/pi` | The same tool set for pi (`@earendil-works/pi-ai`): TypeBox declarations plus a tool-call executor. |
+| `@cloudflare/computer/tools/tanstack` | The same tool set for TanStack AI (`@tanstack/ai`), keyed by tool name for `chat({ tools })`. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |

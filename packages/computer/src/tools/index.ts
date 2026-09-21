@@ -1,7 +1,9 @@
-export { type CreateAIToolsOptions, createAITools } from "./ai.js";
+export { type CreateAIToolsOptions, createAITools, toAITools } from "./ai.js";
+export { toAISDKOutput } from "./ai-output.js";
 export {
   createExecTool,
   type ExecBackendDescription,
+  type ExecInput,
   type ExecRuntimeHandle,
   type ExecStreamEvent,
   type ExecToolOptions,
@@ -16,4 +18,40 @@ export { createReadTool, type LineTruncation, type ReadToolOptions } from "./fs/
 export { WorkspaceFileStore, type WorkspaceLike } from "./fs/store.js";
 export type { FileStat, FileStore, MutableFileStore } from "./fs/types.js";
 export { createWriteTool, type WriteToolOptions } from "./fs/write.js";
+export {
+  type CreatePiToolsOptions,
+  type CreatePiToolsResult,
+  createPiTools,
+  createSpecExecutor,
+  type PiDeclarationOptions,
+  type PiJSONSchema,
+  type PiTool,
+  type PiToolCall,
+  type PiToolResult,
+  type PiToolResultContent,
+  piToolDeclarations,
+} from "./pi.js";
 export { createPublishTool, type PublishToolOptions } from "./publish.js";
+export { type CreateToolsOptions, createToolSpecs } from "./registry.js";
+export {
+  defaultModelOutput,
+  defineTool,
+  type ModelOutput,
+  modelOutputToText,
+  settle,
+  type ToolCallContext,
+  type ToolSpec,
+  type ToolSpecSet,
+  type ToolTraits,
+} from "./spec.js";
+export {
+  type CreateTanStackToolsOptions,
+  createTanStackTools,
+  type TanStackTool,
+  type TanStackToolExecutionContext,
+  type TanStackToolFormat,
+  type TanStackToolList,
+  type TanStackToolSet,
+  type TanStackToolsFor,
+  toTanStackTools,
+} from "./tanstack.js";

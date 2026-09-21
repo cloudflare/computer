@@ -1,0 +1,23 @@
+{
+  "name": "@example/computer-tanstack-ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker + Durable Object running a one-shot TanStack AI agent against a Workspace, with tools from @cloudflare/computer/tools/tanstack.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "build:types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*",
+    "@tanstack/ai": "^0.55.0",
+    "@tanstack/ai-cloudflare": "^0.1.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "^4.130.0"
+  }
+}

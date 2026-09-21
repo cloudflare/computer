@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { notCallableMessage } from "../runtime/runtime.js";
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
+import type { ToolCallContext } from "./spec.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -110,19 +111,26 @@ export type ExecToolOutput =
     }
   | { command: string; cwd: string | null; backend: string; error: string };
 
-export function createExecTool(options: ExecToolOptions): Tool<
-  {
-    command: string;
-    cwd?: string;
-    backend?: string;
-    env?: Record<string, string>;
-    input?: WorkspaceRuntimeValue;
-  },
-  ExecToolOutput
-> {
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
-  const now = options.now ?? Date.now;
+export interface ExecInput {
+  command: string;
+  cwd?: string;
+  backend?: string;
+  env?: Record<string, string>;
+  input?: WorkspaceRuntimeValue;
+}
+
+/**
+ * Resolve and validate the backend set once.
+ *
+ * Every entrypoint that builds an exec tool needs the same derived
+ * facts: the backend ids, which of them are callable, and the guard
+ * that `defaultBackend` is actually one of them. Doing it here means a
+ * misconfigured tool throws at construction for all SDKs alike.
+ */
+function resolveBackends(options: ExecToolOptions): {
+  backendIds: string[];
+  callableBackendIds: Set<string>;
+} {
   const backendIds = Object.keys(options.backends);
   if (backendIds.length === 0) {
     throw new Error("createExecTool: pass at least one backend in `backends`");
@@ -132,9 +140,20 @@ export function createExecTool(options: ExecToolOptions): Tool<
       `createExecTool: defaultBackend ${JSON.stringify(options.defaultBackend)} is not one of ${backendIds.map((id) => JSON.stringify(id)).join(", ")}`,
     );
   }
-
   const isCallable = options.workspace.runtime.isCallable?.bind(options.workspace.runtime);
   const callableBackendIds = new Set(backendIds.filter((id) => isCallable?.(id) === true));
+  return { backendIds, callableBackendIds };
+}
+
+/**
+ * The model-facing description, including each backend's own blurb.
+ *
+ * The model picks a backend from this text alone, so the caller's
+ * descriptions and the callable-backend note are folded in here rather
+ * than left to the prompt.
+ */
+export function execDescription(options: ExecToolOptions): string {
+  const { backendIds, callableBackendIds } = resolveBackends(options);
   const backendGuidance = backendIds
     .map((id) => {
       const suffix = callableBackendIds.has(id) ? " (callable)" : "";
@@ -148,7 +167,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
           `Callable backends (${[...callableBackendIds].map((id) => JSON.stringify(id)).join(", ")}) run \`command\` as module source rather than a shell command. Pass \`input\` to hand the module a structured value, and read the module's returned value back from the \`result\` field. Other backends reject \`input\`.`,
         ].join("\n")
       : "";
-  const description = [
+  return [
     "Run a shell command in the workspace. The workspace exposes multiple backends, each with different capabilities.",
     "Pick the cheapest backend that can run the command; fall back to a heavier one only when the lighter backend's command set doesn't cover what you need.",
     "",
@@ -159,7 +178,14 @@ export function createExecTool(options: ExecToolOptions): Tool<
     "Use for builds, test runs, typechecks, formatters, and git plumbing. Prefer the dedicated read, write, and edit tools for file operations. Long output is truncated to keep tool replies small.",
     callableGuidance,
   ].join("\n");
+}
 
+/**
+ * The input schema, whose `backend` enum is built from the configured
+ * backend ids so the model cannot name a backend that does not exist.
+ */
+export function execInputSchema(options: ExecToolOptions) {
+  const { backendIds } = resolveBackends(options);
   const backendSchema = z
     .enum(backendIds as [string, ...string[]])
     .optional()
@@ -171,129 +197,153 @@ export function createExecTool(options: ExecToolOptions): Tool<
       ].join(" "),
     );
 
-  return tool({
-    description,
-    inputSchema: z.object({
-      command: z
-        .string()
-        .describe(
-          "Shell command, e.g. 'npm test' or 'git diff HEAD'. For a callable backend this is the module source to run.",
-        ),
-      cwd: z.string().optional().describe("Working directory. Defaults to the workspace root."),
-      backend: backendSchema,
-      env: z
-        .record(z.string(), z.string())
-        .optional()
-        .describe(
-          "Environment variables for this run only. Values override the backend's base environment without affecting later runs.",
-        ),
-      input: jsonValueSchema
-        .optional()
-        .describe(
-          "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
-        ),
-    }),
-    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal }) {
-      const selectedBackend = backend ?? options.defaultBackend;
-      const base = { command, cwd: cwd ?? null, backend: selectedBackend };
-      if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
-        yield { ...base, error: notCallableMessage(selectedBackend) };
-        return;
-      }
-      let handle: ExecRuntimeHandle;
-      try {
-        handle = await options.workspace.runtime.exec(command, {
-          cwd,
-          encoding: "utf8",
-          backend: selectedBackend,
-          env,
-          input,
-        });
-      } catch (err) {
-        yield { ...base, error: errorMessage(err) };
-        return;
-      }
+  return z.object({
+    command: z
+      .string()
+      .describe(
+        "Shell command, e.g. 'npm test' or 'git diff HEAD'. For a callable backend this is the module source to run.",
+      ),
+    cwd: z.string().optional().describe("Working directory. Defaults to the workspace root."),
+    backend: backendSchema,
+    env: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe(
+        "Environment variables for this run only. Values override the backend's base environment without affecting later runs.",
+      ),
+    input: jsonValueSchema
+      .optional()
+      .describe(
+        "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
+      ),
+  });
+}
 
-      // Aborting the model turn kills the backend execution so it does
-      // not run on unobserved after the tool stops iterating. The run
-      // then emits its terminal event and the stream closes normally.
-      const onAbort = () => void handle.kill?.().catch(() => undefined);
-      if (abortSignal?.aborted) onAbort();
-      else abortSignal?.addEventListener("abort", onAbort, { once: true });
-      try {
-        yield* runExecution();
-      } finally {
-        abortSignal?.removeEventListener("abort", onAbort);
-      }
+/**
+ * Build the streaming exec executor.
+ *
+ * Yields progressive snapshots of the run and a terminal snapshot once
+ * the exit code lands. Each yielded value is a complete result, so an
+ * SDK that cannot forward intermediate tool output can simply keep the
+ * last one.
+ */
+export function createExecExecutor(
+  options: ExecToolOptions,
+): (input: ExecInput, context: ToolCallContext) => AsyncGenerator<ExecToolOutput> {
+  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
+  const now = options.now ?? Date.now;
+  const { callableBackendIds } = resolveBackends(options);
 
-      // Produce the run's snapshots. Streams the raw events when the
-      // handle is iterable; otherwise drains the aggregate result.
-      async function* runExecution(): AsyncGenerator<ExecToolOutput> {
-        // Stream stdout / stderr chunks as they arrive when the handle
-        // is iterable. Each chunk yields a fresh snapshot with the
-        // running output so the model sees progress before the run
-        // ends; the exit event settles the terminal snapshot.
-        if (typeof handle[Symbol.asyncIterator] === "function") {
-          const stdout = new StreamBuffer(streamMaxBytes);
-          const stderr = new StreamBuffer(streamMaxBytes);
-          let exitCode: number | null = null;
-          let value: unknown;
-          let hasValue = false;
-          // Coalesce running snapshots to at most one per interval. A
-          // chatty command would otherwise yield a full-buffer snapshot
-          // per chunk; the terminal snapshot below always fires.
-          let lastSnapshot = 0;
-          try {
-            for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
-              if (event.name === "stdout") stdout.push(event.value);
-              else if (event.name === "stderr") stderr.push(event.value);
-              else {
-                exitCode = event.code;
-                if ("result" in event) {
-                  value = event.result;
-                  hasValue = true;
-                }
-                continue;
-              }
-              const at = now();
-              if (at - lastSnapshot < STREAM_COALESCE_MS) continue;
-              lastSnapshot = at;
-              yield {
-                ...base,
-                exitCode: null,
-                stdout: stdout.render(maxBytes),
-                stderr: stderr.render(maxBytes),
-              };
-            }
-          } catch (err) {
-            yield { ...base, error: errorMessage(err) };
-            return;
-          }
-          yield {
-            ...base,
-            exitCode,
-            stdout: stdout.render(maxBytes),
-            stderr: stderr.render(maxBytes),
-            ...(hasValue ? { result: value } : {}),
-          };
-          return;
-        }
+  return async function* ({ command, cwd, backend, env, input }, { abortSignal } = {}) {
+    const selectedBackend = backend ?? options.defaultBackend;
+    const base = { command, cwd: cwd ?? null, backend: selectedBackend };
+    if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
+      yield { ...base, error: notCallableMessage(selectedBackend) };
+      return;
+    }
+    let handle: ExecRuntimeHandle;
+    try {
+      handle = await options.workspace.runtime.exec(command, {
+        cwd,
+        encoding: "utf8",
+        backend: selectedBackend,
+        env,
+        input,
+      });
+    } catch (err) {
+      yield { ...base, error: errorMessage(err) };
+      return;
+    }
 
-        // Non-streaming handle: drain the aggregate result.
+    // Aborting the model turn kills the backend execution so it does
+    // not run on unobserved after the tool stops iterating. The run
+    // then emits its terminal event and the stream closes normally.
+    const onAbort = () => void handle.kill?.().catch(() => undefined);
+    if (abortSignal?.aborted) onAbort();
+    else abortSignal?.addEventListener("abort", onAbort, { once: true });
+    try {
+      yield* runExecution();
+    } finally {
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+
+    // Produce the run's snapshots. Streams the raw events when the
+    // handle is iterable; otherwise drains the aggregate result.
+    async function* runExecution(): AsyncGenerator<ExecToolOutput> {
+      // Stream stdout / stderr chunks as they arrive when the handle
+      // is iterable. Each chunk yields a fresh snapshot with the
+      // running output so the model sees progress before the run
+      // ends; the exit event settles the terminal snapshot.
+      if (typeof handle[Symbol.asyncIterator] === "function") {
+        const stdout = new StreamBuffer(streamMaxBytes);
+        const stderr = new StreamBuffer(streamMaxBytes);
+        let exitCode: number | null = null;
+        let value: unknown;
+        let hasValue = false;
+        // Coalesce running snapshots to at most one per interval. A
+        // chatty command would otherwise yield a full-buffer snapshot
+        // per chunk; the terminal snapshot below always fires.
+        let lastSnapshot = 0;
         try {
-          const result = await handle.result();
-          yield {
-            ...base,
-            exitCode: result.exitCode,
-            stdout: truncate(result.stdout, maxBytes),
-            stderr: truncate(result.stderr, maxBytes),
-            ...(result.value === undefined ? {} : { result: result.value }),
-          };
+          for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
+            if (event.name === "stdout") stdout.push(event.value);
+            else if (event.name === "stderr") stderr.push(event.value);
+            else {
+              exitCode = event.code;
+              if ("result" in event) {
+                value = event.result;
+                hasValue = true;
+              }
+              continue;
+            }
+            const at = now();
+            if (at - lastSnapshot < STREAM_COALESCE_MS) continue;
+            lastSnapshot = at;
+            yield {
+              ...base,
+              exitCode: null,
+              stdout: stdout.render(maxBytes),
+              stderr: stderr.render(maxBytes),
+            };
+          }
         } catch (err) {
           yield { ...base, error: errorMessage(err) };
+          return;
         }
+        yield {
+          ...base,
+          exitCode,
+          stdout: stdout.render(maxBytes),
+          stderr: stderr.render(maxBytes),
+          ...(hasValue ? { result: value } : {}),
+        };
+        return;
       }
-    },
+
+      // Non-streaming handle: drain the aggregate result.
+      try {
+        const result = await handle.result();
+        yield {
+          ...base,
+          exitCode: result.exitCode,
+          stdout: truncate(result.stdout, maxBytes),
+          stderr: truncate(result.stderr, maxBytes),
+          ...(result.value === undefined ? {} : { result: result.value }),
+        };
+      } catch (err) {
+        yield { ...base, error: errorMessage(err) };
+      }
+    }
+  };
+}
+
+export function createExecTool(options: ExecToolOptions): Tool<ExecInput, ExecToolOutput> {
+  const executor = createExecExecutor(options);
+  return tool({
+    description: execDescription(options),
+    inputSchema: execInputSchema(options),
+    execute: (input, { abortSignal }) => executor(input, { abortSignal }),
   });
 }
 

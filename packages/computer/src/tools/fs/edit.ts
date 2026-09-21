@@ -36,7 +36,7 @@ const replacementSchema = z
   })
   .strict();
 
-const inputSchema = z.object({
+export const editInputSchema = z.object({
   path: z.string().describe("Path to the file to edit"),
   edits: z
     .array(replacementSchema)
@@ -44,6 +44,44 @@ const inputSchema = z.object({
       "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits.",
     ),
 });
+
+/**
+ * Shape of the result.
+ *
+ * A failure is an ordinary outcome for a filesystem tool, not a
+ * violation, so the error branch belongs in the schema. An SDK that
+ * validates a tool return against this would otherwise replace the
+ * real reason with a schema complaint.
+ */
+export const editOutputSchema = z.union([
+  z.object({
+    path: z.string(),
+    editsApplied: z.number().int(),
+    diff: z.string(),
+    patch: z.string(),
+    firstChangedLine: z.number().int().optional(),
+  }),
+  z.object({ error: z.string() }),
+]);
+
+export const editDescription =
+  "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes touch the same block, merge them into one edit.";
+
+export interface EditInput {
+  path: string;
+  edits: Edit[];
+}
+
+export interface EditSuccess {
+  path: string;
+  editsApplied: number;
+  diff: string;
+  patch: string;
+  /** Undefined when the edit produced no line-level change. */
+  firstChangedLine: number | undefined;
+}
+
+export type EditResult = EditSuccess | { error: string };
 
 /** Best-effort coercion for inputs from quirky models. */
 function prepareArguments(input: unknown): { path: string; edits: Edit[] } {
@@ -72,70 +110,78 @@ function prepareArguments(input: unknown): { path: string; edits: Edit[] } {
   return args as { path: string; edits: Edit[] };
 }
 
-export function createEditTool(options: EditToolOptions): Tool<z.infer<typeof inputSchema>> {
+/**
+ * Apply a batch of targeted replacements to one file.
+ *
+ * Takes the raw tool input because the coercion in `prepareArguments`
+ * has to run before validation: models sometimes pack `edits` into a
+ * JSON string or send a single `oldText`/`newText` pair at the root.
+ */
+export async function editInStore(
+  options: EditToolOptions,
+  rawInput: unknown,
+): Promise<EditResult> {
   const { store } = options;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const { path, edits } = prepareArguments(rawInput);
 
-  return tool({
-    description:
-      "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes touch the same block, merge them into one edit.",
-    inputSchema,
-    execute: async (rawInput: z.infer<typeof inputSchema>) => {
-      const { path, edits } = prepareArguments(rawInput);
+  if (!Array.isArray(edits) || edits.length === 0) {
+    return { error: "edits must contain at least one replacement." };
+  }
 
-      if (!Array.isArray(edits) || edits.length === 0) {
-        return { error: "edits must contain at least one replacement." };
+  return withFileLock(store, path, async () => {
+    try {
+      const stat = await store.stat(path);
+      if (!stat) return { error: `File not found: ${path}` };
+      if (stat.size > maxBytes) {
+        return {
+          error: `File too large to edit: ${stat.size} bytes exceeds the ${maxBytes}-byte cap. Use the write tool to rewrite the file from scratch.`,
+        };
       }
 
-      return withFileLock(store, path, async () => {
-        try {
-          const stat = await store.stat(path);
-          if (!stat) return { error: `File not found: ${path}` };
-          if (stat.size > maxBytes) {
-            return {
-              error: `File too large to edit: ${stat.size} bytes exceeds the ${maxBytes}-byte cap. Use the write tool to rewrite the file from scratch.`,
-            };
-          }
+      const bytes = await store.readAll(path);
+      if (!bytes) return { error: `File not found: ${path}` };
 
-          const bytes = await store.readAll(path);
-          if (!bytes) return { error: `File not found: ${path}` };
+      const rawContent = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes);
+      const { bom, text } = stripBom(rawContent);
+      const ending = detectLineEnding(text);
+      const normalized = normalizeToLF(text);
 
-          const rawContent = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
-            bytes,
-          );
-          const { bom, text } = stripBom(rawContent);
-          const ending = detectLineEnding(text);
-          const normalized = normalizeToLF(text);
+      let baseContent: string;
+      let newContent: string;
+      try {
+        ({ baseContent, newContent } = applyEditsToNormalizedContent(normalized, edits, path));
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) };
+      }
 
-          let baseContent: string;
-          let newContent: string;
-          try {
-            ({ baseContent, newContent } = applyEditsToNormalizedContent(normalized, edits, path));
-          } catch (err) {
-            return { error: err instanceof Error ? err.message : String(err) };
-          }
+      const finalContent = bom + restoreLineEndings(newContent, ending);
+      // Round-trip the file's mode so editing an executable script (or any
+      // file with a non-default mode) doesn't silently drop bits. `stat.mode`
+      // is undefined for stores that don't track modes; pass `undefined` in
+      // that case so the store applies its own default.
+      await store.write(path, new TextEncoder().encode(finalContent), { mode: stat.mode });
 
-          const finalContent = bom + restoreLineEndings(newContent, ending);
-          // Round-trip the file's mode so editing an executable script (or any
-          // file with a non-default mode) doesn't silently drop bits. `stat.mode`
-          // is undefined for stores that don't track modes; pass `undefined` in
-          // that case so the store applies its own default.
-          await store.write(path, new TextEncoder().encode(finalContent), { mode: stat.mode });
+      const diffResult = generateDiffString(baseContent, newContent);
+      const patch = generateUnifiedPatch(path, baseContent, newContent);
 
-          const diffResult = generateDiffString(baseContent, newContent);
-          const patch = generateUnifiedPatch(path, baseContent, newContent);
+      return {
+        path,
+        editsApplied: edits.length,
+        diff: diffResult.diff,
+        patch,
+        firstChangedLine: diffResult.firstChangedLine,
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+}
 
-          return {
-            path,
-            editsApplied: edits.length,
-            diff: diffResult.diff,
-            patch,
-            firstChangedLine: diffResult.firstChangedLine,
-          };
-        } catch (err) {
-          return { error: err instanceof Error ? err.message : String(err) };
-        }
-      });
-    },
+export function createEditTool(options: EditToolOptions): Tool<z.infer<typeof editInputSchema>> {
+  return tool({
+    description: editDescription,
+    inputSchema: editInputSchema,
+    execute: (rawInput) => editInStore(options, rawInput),
   });
 }

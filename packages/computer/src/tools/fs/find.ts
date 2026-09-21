@@ -23,7 +23,7 @@ export interface FindToolOptions {
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
-const inputSchema = z.object({
+export const findInputSchema = z.object({
   path: z.string().default("/workspace").describe("Absolute directory to search."),
   pattern: z
     .string()
@@ -38,34 +38,67 @@ const inputSchema = z.object({
   offset: z.number().int().min(0).optional(),
 });
 
-export function createFindTool(options: FindToolOptions): Tool<z.infer<typeof inputSchema>> {
+export const findDescription =
+  "Find files and directories matching a glob. * stays within one path segment, ** crosses directories, and ? matches one character.";
+
+export interface FindInput {
+  path?: string;
+  pattern: string;
+  exclude?: string[];
+  limit?: number;
+  offset?: number;
+}
+
+export type FindResult =
+  | {
+      path: string;
+      pattern: string;
+      count: number;
+      entries: FoundEntry[];
+      nextOffset?: number;
+    }
+  | { error: string };
+
+/**
+ * Page glob matches under a directory.
+ *
+ * `path` carries a schema default, but an executor can also be called
+ * directly by an SDK that does not apply Zod defaults, so the root
+ * fallback is repeated here.
+ */
+export async function findInWorkspace(
+  workspace: FindWorkspaceLike,
+  { path, pattern, exclude, limit, offset }: FindInput,
+): Promise<FindResult> {
+  const directory = path ?? "/workspace";
+  try {
+    const pageSize = limit ?? DEFAULT_LIMIT;
+    const pageOffset = offset ?? 0;
+    const matches = await workspace.fs.find(directory, pattern, {
+      limit: pageSize + 1,
+      offset: pageOffset,
+      exclude,
+    });
+    const truncated = matches.length > pageSize;
+    const entries = truncated ? matches.slice(0, pageSize) : matches;
+    const result: {
+      path: string;
+      pattern: string;
+      count: number;
+      entries: FoundEntry[];
+      nextOffset?: number;
+    } = { path: directory, pattern, count: entries.length, entries };
+    if (truncated) result.nextOffset = pageOffset + pageSize;
+    return result;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function createFindTool(options: FindToolOptions): Tool<z.infer<typeof findInputSchema>> {
   return tool({
-    description:
-      "Find files and directories matching a glob. * stays within one path segment, ** crosses directories, and ? matches one character.",
-    inputSchema,
-    execute: async ({ path, pattern, exclude, limit, offset }) => {
-      try {
-        const pageSize = limit ?? DEFAULT_LIMIT;
-        const pageOffset = offset ?? 0;
-        const matches = await options.workspace.fs.find(path, pattern, {
-          limit: pageSize + 1,
-          offset: pageOffset,
-          exclude,
-        });
-        const truncated = matches.length > pageSize;
-        const entries = truncated ? matches.slice(0, pageSize) : matches;
-        const result: {
-          path: string;
-          pattern: string;
-          count: number;
-          entries: FoundEntry[];
-          nextOffset?: number;
-        } = { path, pattern, count: entries.length, entries };
-        if (truncated) result.nextOffset = pageOffset + pageSize;
-        return result;
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
-      }
-    },
+    description: findDescription,
+    inputSchema: findInputSchema,
+    execute: (input) => findInWorkspace(options.workspace, input),
   });
 }

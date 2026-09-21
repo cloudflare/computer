@@ -69,6 +69,11 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/rlm`](examples/rlm) — shows how generated JavaScript can read long
   context from a Computer Workspace, call bounded model workers, and reduce their
   structured results with code.
+- [`examples/pi`](examples/pi) — a one-shot [pi](https://github.com/earendil-works/pi)
+  agent: a minimal loop that asks a model, runs the workspace tools it asks
+  for, and repeats until it is done.
+- [`examples/tanstack-ai`](examples/tanstack-ai) — the same one-shot agent on
+  [TanStack AI](https://tanstack.com/ai), where `chat()` owns the loop.
 - [`examples/think`](examples/think) — a [`@cloudflare/think`](https://www.npmjs.com/package/@cloudflare/think)
   chat agent that uses the workspace as its working directory, reachable
   from a terminal.

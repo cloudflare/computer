@@ -35,6 +35,14 @@
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
     },
+    "./tools/pi": {
+      "types": "./dist/tools/pi.d.ts",
+      "import": "./dist/tools/pi.js"
+    },
+    "./tools/tanstack": {
+      "types": "./dist/tools/tanstack.d.ts",
+      "import": "./dist/tools/tanstack.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
@@ -121,12 +129,20 @@
     "just-bash": "^3.0.1"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "^0.84.0 || ^0.85.0",
     "@platformatic/vfs": "*",
+    "@tanstack/ai": "^0.54.0 || ^0.55.0",
     "ai": "^6.0.196 || ^7.0.0",
     "zod": "^4.4.3"
   },
   "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
     "@platformatic/vfs": {
+      "optional": true
+    },
+    "@tanstack/ai": {
       "optional": true
     },
     "ai": {

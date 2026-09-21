@@ -36,7 +36,7 @@ export interface GrepToolOptions {
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
-const inputSchema = z.object({
+export const grepInputSchema = z.object({
   path: z.string().default("/workspace").describe("Absolute file or directory to search."),
   query: z.string().describe("Literal string or regular expression to search for."),
   include: z
@@ -50,40 +50,76 @@ const inputSchema = z.object({
   offset: z.number().int().min(0).optional(),
 });
 
-export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof inputSchema>> {
+export const grepDescription =
+  "Search workspace text with a literal string or regular expression. Results include paths and line numbers and can include surrounding lines.";
+
+export interface GrepInput {
+  path?: string;
+  query: string;
+  include?: string;
+  regex?: boolean;
+  ignoreCase?: boolean;
+  context?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export type GrepResult =
+  | {
+      path: string;
+      query: string;
+      count: number;
+      matches: GrepMatch[];
+      nextOffset?: number;
+    }
+  | { error: string };
+
+/**
+ * Page matches for one query.
+ *
+ * Matching is literal and case-sensitive unless the caller opts into
+ * `regex` or `ignoreCase`, which keeps a model's plain-string query from
+ * being reinterpreted as a pattern.
+ */
+export async function grepInWorkspace(
+  workspace: GrepWorkspaceLike,
+  { path, query, include, regex, ignoreCase, context, limit, offset }: GrepInput,
+): Promise<GrepResult> {
+  const target = path ?? "/workspace";
+  try {
+    const pageSize = limit ?? DEFAULT_LIMIT;
+    const pageOffset = offset ?? 0;
+    const searchOptions = {
+      regex: regex ?? false,
+      ignoreCase: ignoreCase ?? false,
+      context: context ?? 0,
+    };
+    const matches = await workspace.fs.grep(query, target, {
+      ...searchOptions,
+      include,
+      limit: pageSize + 1,
+      offset: pageOffset,
+    });
+    const truncated = matches.length > pageSize;
+    const page = truncated ? matches.slice(0, pageSize) : matches;
+    const result: {
+      path: string;
+      query: string;
+      count: number;
+      matches: GrepMatch[];
+      nextOffset?: number;
+    } = { path: target, query, count: page.length, matches: page };
+    if (truncated) result.nextOffset = pageOffset + pageSize;
+    return result;
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof grepInputSchema>> {
   return tool({
-    description:
-      "Search workspace text with a literal string or regular expression. Results include paths and line numbers and can include surrounding lines.",
-    inputSchema,
-    execute: async ({ path, query, include, regex, ignoreCase, context, limit, offset }) => {
-      try {
-        const pageSize = limit ?? DEFAULT_LIMIT;
-        const pageOffset = offset ?? 0;
-        const searchOptions = {
-          regex: regex ?? false,
-          ignoreCase: ignoreCase ?? false,
-          context: context ?? 0,
-        };
-        const matches = await options.workspace.fs.grep(query, path, {
-          ...searchOptions,
-          include,
-          limit: pageSize + 1,
-          offset: pageOffset,
-        });
-        const truncated = matches.length > pageSize;
-        const page = truncated ? matches.slice(0, pageSize) : matches;
-        const result: {
-          path: string;
-          query: string;
-          count: number;
-          matches: GrepMatch[];
-          nextOffset?: number;
-        } = { path, query, count: page.length, matches: page };
-        if (truncated) result.nextOffset = pageOffset + pageSize;
-        return result;
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
-      }
-    },
+    description: grepDescription,
+    inputSchema: grepInputSchema,
+    execute: (input) => grepInWorkspace(options.workspace, input),
   });
 }
