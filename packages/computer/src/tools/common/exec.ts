@@ -1,9 +1,7 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 
-import { notCallableMessage } from "../runtime/runtime.js";
-import type { WorkspaceRuntimeValue } from "../runtime/types.js";
-import type { ToolCallContext } from "./spec.js";
+import { notCallableMessage } from "../../runtime/runtime.js";
+import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -46,6 +44,16 @@ export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent
   // turn aborts, so the backend stops rather than running on after
   // the tool stops iterating.
   kill?(): Promise<void>;
+}
+
+/**
+ * Per-call information the exec executor reads.
+ *
+ * Only cancellation, which is all this executor needs. A provider may
+ * carry more in its own call context and pass just the signal here.
+ */
+export interface ExecCallContext {
+  abortSignal?: AbortSignal;
 }
 
 export interface ExecWorkspaceLike {
@@ -229,7 +237,7 @@ export function execInputSchema(options: ExecToolOptions) {
  */
 export function createExecExecutor(
   options: ExecToolOptions,
-): (input: ExecInput, context: ToolCallContext) => AsyncGenerator<ExecToolOutput> {
+): (input: ExecInput, context: ExecCallContext) => AsyncGenerator<ExecToolOutput> {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
@@ -336,15 +344,6 @@ export function createExecExecutor(
       }
     }
   };
-}
-
-export function createExecTool(options: ExecToolOptions): Tool<ExecInput, ExecToolOutput> {
-  const executor = createExecExecutor(options);
-  return tool({
-    description: execDescription(options),
-    inputSchema: execInputSchema(options),
-    execute: (input, { abortSignal }) => executor(input, { abortSignal }),
-  });
 }
 
 function errorMessage(err: unknown): string {

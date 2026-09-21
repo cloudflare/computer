@@ -1,6 +1,5 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
-import type { AssetsClient } from "../assets/index.js";
+import type { AssetsClient } from "../../assets/index.js";
 
 export interface PublishWorkspaceLike {
   readonly sessionId: string;
@@ -66,15 +65,4 @@ export function createPublishExecutor(
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   };
-}
-
-export function createPublishTool(
-  options: PublishToolOptions,
-): Tool<z.infer<typeof publishInputSchema>> {
-  const execute = createPublishExecutor(options.workspace);
-  return tool({
-    description: publishDescription,
-    inputSchema: publishInputSchema,
-    execute: (input) => execute(input),
-  });
 }

@@ -9,7 +9,7 @@
  */
 
 import type { JSONValue } from "ai";
-import type { ModelOutput } from "./spec.js";
+import type { ModelOutput } from "../common/model-output.js";
 
 export function toAISDKOutput(output: ModelOutput) {
   switch (output.type) {

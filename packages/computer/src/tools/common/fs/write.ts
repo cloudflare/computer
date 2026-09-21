@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 import { withFileLock } from "./locks.js";
 import type { FileStore } from "./types.js";
@@ -62,13 +61,5 @@ export async function writeToStore(
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
-  });
-}
-
-export function createWriteTool(options: WriteToolOptions): Tool<z.infer<typeof writeInputSchema>> {
-  return tool({
-    description: writeDescription,
-    inputSchema: writeInputSchema,
-    execute: (input) => writeToStore(options, input),
   });
 }

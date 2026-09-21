@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 
 export interface ListWorkspaceLike {
@@ -101,12 +100,4 @@ export async function listWorkspace(
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
-}
-
-export function createListTool(options: ListToolOptions): Tool<z.infer<typeof listInputSchema>> {
-  return tool({
-    description: listDescription,
-    inputSchema: listInputSchema,
-    execute: (input) => listWorkspace(options.workspace, input),
-  });
 }

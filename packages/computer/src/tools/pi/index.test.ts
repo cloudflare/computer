@@ -1,7 +1,7 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
-import { Workspace } from "../workspace.js";
-import { createPiTools } from "./pi.js";
+import { Workspace } from "../../workspace.js";
+import { createPiTools } from "./index.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });

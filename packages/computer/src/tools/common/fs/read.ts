@@ -1,7 +1,5 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
-import { toAISDKOutput } from "../ai-output.js";
-import type { ModelOutput } from "../spec.js";
+import type { ModelOutput } from "../model-output.js";
 import { detectMedia } from "./media.js";
 import type { FileStore } from "./types.js";
 
@@ -372,18 +370,6 @@ export function readModelOutput(
       filename: output.name,
     };
   };
-}
-
-export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof readInputSchema>> {
-  const toModelOutput = readModelOutput(options);
-
-  return tool({
-    description: readDescription(options),
-    inputSchema: readInputSchema,
-    execute: createReadExecutor(options),
-    toModelOutput: ({ input, output }: { input: unknown; output: unknown }) =>
-      toAISDKOutput(toModelOutput({ input: input as ReadInput, output: output as ReadToolResult })),
-  });
 }
 
 function validateBoundedReadLimit(name: string, value: number): number {

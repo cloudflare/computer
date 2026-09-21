@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 
 interface GrepContextLine {
@@ -114,12 +113,4 @@ export async function grepInWorkspace(
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-export function createGrepTool(options: GrepToolOptions): Tool<z.infer<typeof grepInputSchema>> {
-  return tool({
-    description: grepDescription,
-    inputSchema: grepInputSchema,
-    execute: (input) => grepInWorkspace(options.workspace, input),
-  });
 }

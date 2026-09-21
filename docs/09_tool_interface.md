@@ -16,18 +16,33 @@ The tools wrap three Workspace surfaces:
 
 Every factory takes the same options and produces the same tools with the same names, descriptions, schemas, and caps. Only the returned shape differs, because each SDK wants a different one. Each SDK's package is an optional peer dependency: importing one adapter does not require the other two to be installed.
 
-## One implementation, three shapes
+## Shared logic, separate tools
 
-A tool is described once as a `ToolSpec` — a name, a description, a Zod input schema, an executor, and an optional model-output hook — and `createToolSpecs()` assembles the set for a Workspace. The three factories are thin adapters over that set, so a change to a tool's behavior, schema, or description reaches all three SDKs at once.
+Each library gets its own directory, and declares its own tools in that
+library's own terms:
 
 ```
-              createToolSpecs()          ← tool set, gating, schemas, caps
-             /        |        \
-   createAITools  createPiTools  createTanStackTools
-        (ai)     (pi-ai, TypeBox)     (@tanstack/ai)
+tools/
+  common/        ← executors, schemas, descriptions, options, helpers
+  ai-sdk/        ← createAITools      (ai)
+  pi/            ← createPiTools      (pi-ai, TypeBox)
+  tanstack-ai/   ← createTanStackTools (@tanstack/ai)
 ```
 
-Where the SDKs genuinely differ, the adapter absorbs it:
+`common/` is deliberately not a tool abstraction. It holds the workspace
+logic underneath the tools — reading a file by line and byte offset,
+applying an edit and rendering its diff, buffering a command's output —
+along with each tool's Zod schema and description text, the shared
+options, and a few helpers with no library in them. A provider directory
+imports those executors and writes out its own tool declarations.
+
+That means the same tool is declared three times, once per library. The
+duplication is intentional: it is a few lines of declaration each, and
+in exchange every provider can use its library's own features directly
+instead of through a lowest-common-denominator layer.
+
+Where the libraries genuinely differ, each provider handles it in its
+own file:
 
 | Concern | AI SDK | pi | TanStack AI |
 | --- | --- | --- | --- |
@@ -39,9 +54,17 @@ Where the SDKs genuinely differ, the adapter absorbs it:
 | Result shape | `toModelOutput` | `toolResult` content blocks | `outputSchema` |
 | Approval and discovery | — | — | `needsApproval`, `lazy` |
 
-Sharing the implementation does not mean levelling every SDK down to the smallest common feature set. A spec carries SDK-agnostic *traits* — whether a tool mutates state, whether its arguments are fussy enough to be worth constraining, whether it streams — and each adapter lowers those onto whatever its SDK offers, ignoring the ones it cannot use. So `edit` asks to be constrained once, and pi turns that into provider-side strict sampling while the other two simply validate.
+Because each provider owns its declarations, it can act on what its
+library supports without asking the others to agree. pi marks `edit` and
+`write` for provider-side constrained sampling because their arguments
+are easy to malform; TanStack marks the mutating tools `needsApproval`
+and can emit progressive `exec` output as custom events; the AI SDK
+hands an async iterable straight to `execute` so streaming works with no
+draining at all.
 
-`createToolSpecs` and the `ToolSpec` types are exported, so a fourth SDK is an adapter rather than a rewrite.
+A fourth library is a new directory next to these three. It imports the
+executors and schemas from `common/` and declares its tools however that
+library wants them.
 
 ## What ships
 
@@ -50,7 +73,6 @@ Sharing the implementation does not mean levelling every SDK down to the smalles
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
 | `createPiTools` | Create pi tool declarations plus their executor. |
 | `createTanStackTools` | Create the TanStack AI tool list for a Workspace. |
-| `createToolSpecs` | Build the SDK-neutral spec set the adapters share. |
 | `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
 | `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
@@ -61,6 +83,7 @@ Sharing the implementation does not mean levelling every SDK down to the smalles
 | `createExecTool` | Run a command through a configured Workspace backend. |
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
+| `resolveToolOptions` | Resolve the shared options and tool-inclusion rules. |
 
 Every factory always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 

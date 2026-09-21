@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 
 interface FoundEntry {
@@ -93,12 +92,4 @@ export async function findInWorkspace(
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-export function createFindTool(options: FindToolOptions): Tool<z.infer<typeof findInputSchema>> {
-  return tool({
-    description: findDescription,
-    inputSchema: findInputSchema,
-    execute: (input) => findInWorkspace(options.workspace, input),
-  });
 }

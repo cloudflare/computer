@@ -11,22 +11,84 @@
  *   call and runs the matching workspace tool, handing back pi's
  *   `toolResult` content blocks.
  *
- * TypeBox schemas are plain JSON Schema, and pi validates against them
- * with TypeBox's validator, so the Zod schemas in `./spec.js` are
- * converted rather than rewritten. That keeps one schema per tool across
- * all three SDK entrypoints.
+ * Each tool is declared here in pi's own terms. The executors and Zod
+ * schemas come from `../common`, which holds the workspace logic that
+ * is genuinely not provider-specific; pi's declarations, its JSON
+ * Schema conversion, and its result encoding are written out in this
+ * file rather than derived from a shared tool abstraction.
+ *
+ * TypeBox schemas are plain JSON Schema and pi validates against them
+ * with TypeBox's validator, so the Zod schemas are converted here
+ * rather than rewritten by hand.
  */
 
 import { z } from "zod";
-import { type CreateToolsOptions, createToolSpecs } from "./registry.js";
+import { createExecExecutor, execDescription, execInputSchema } from "../common/exec.js";
+import { deleteDescription, deleteFromStore, deleteInputSchema } from "../common/fs/delete.js";
+import { editDescription, editInputSchema, editInStore } from "../common/fs/edit.js";
 import {
-  applyModelOutput,
-  type ModelOutput,
-  runSpec,
-  settle,
-  type ToolCallContext,
-  type ToolSpecSet,
-} from "./spec.js";
+  type FindWorkspaceLike,
+  findDescription,
+  findInputSchema,
+  findInWorkspace,
+} from "../common/fs/find.js";
+import {
+  type GrepWorkspaceLike,
+  grepDescription,
+  grepInputSchema,
+  grepInWorkspace,
+} from "../common/fs/grep.js";
+import {
+  type ListWorkspaceLike,
+  listDescription,
+  listInputSchema,
+  listWorkspace,
+} from "../common/fs/list.js";
+import {
+  createReadExecutor,
+  type ReadInput,
+  type ReadToolResult,
+  readDescription,
+  readInputSchema,
+  readModelOutput,
+} from "../common/fs/read.js";
+import { writeDescription, writeInputSchema, writeToStore } from "../common/fs/write.js";
+import { defaultModelOutput, type ModelOutput } from "../common/model-output.js";
+import { type CreateToolsOptions, resolveToolOptions } from "../common/options.js";
+import {
+  createPublishExecutor,
+  type PublishWorkspaceLike,
+  publishDescription,
+  publishInputSchema,
+} from "../common/publish.js";
+import { settle } from "../common/stream.js";
+
+/**
+ * Per-call information an executor may use.
+ *
+ * Only cancellation is portable, so that is all this carries. Keeping
+ * it an object rather than a bare signal lets later additions stay
+ * backward compatible.
+ */
+export interface ToolCallContext {
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * One workspace tool as pi needs it.
+ *
+ * Internal to this module: the declaration fields pi sends to the
+ * model, plus how to run the tool and how to present its result.
+ */
+interface PiToolEntry {
+  name: string;
+  description: string;
+  inputSchema: z.ZodType;
+  /** Close the schema and constrain sampling for fussy arguments. */
+  strictArguments?: boolean;
+  execute: (input: never, context: ToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
+  toModelOutput?: (args: { input: never; output: never }) => ModelOutput;
+}
 
 /**
  * A pi tool declaration.
@@ -96,42 +158,128 @@ export interface CreatePiToolsResult {
  * destructure `tools` and ignore `execute`.
  */
 export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResult {
-  const specs = createToolSpecs(options);
+  const entries = piToolEntries(options);
   const nullable = new Map<string, ReadonlySet<string>>();
   return {
-    tools: piToolDeclarations(specs, options, nullable),
-    execute: createSpecExecutor(specs, nullable),
+    tools: declarations(entries, options, nullable),
+    execute: dispatcher(entries, nullable),
   };
 }
 
 export interface CreatePiToolsOptions extends CreateToolsOptions, PiDeclarationOptions {}
 
 /**
- * Declarations only, for a caller that already has a spec set.
+ * The workspace tools pi offers, in pi's own terms.
  *
- * Useful when the same specs back both a declaration list sent to the
- * model and a separately-held dispatcher.
+ * Always includes `read`, `ls`, `find`, and `grep`. Adds `write`,
+ * `edit`, and `delete` unless `readonly` is set, `exec` when `shell`
+ * options are supplied, and `publish` when assets are configured.
  */
-export function piToolDeclarations(
-  specs: ToolSpecSet,
-  options: PiDeclarationOptions = {},
-  /**
-   * Filled in with the fields widened to nullable per tool. Pass the
-   * same map to {@link createSpecExecutor} so it can tell a placeholder
-   * null apart from one the tool accepts.
-   */
-  nullable?: Map<string, ReadonlySet<string>>,
+function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
+  const resolved = resolveToolOptions(options);
+  const workspace = resolved.workspace;
+  const readExecutor = createReadExecutor(resolved.read);
+  const toReadOutput = readModelOutput(resolved.read);
+
+  const entries: PiToolEntry[] = [
+    {
+      name: "read",
+      description: readDescription(resolved.read),
+      inputSchema: readInputSchema,
+      // Positioned reads hand back byte offsets the model must echo
+      // back verbatim on the next call, so constrain them.
+      strictArguments: true,
+      execute: (input: ReadInput) => readExecutor(input),
+      toModelOutput: ({ input, output }: { input: ReadInput; output: ReadToolResult }) =>
+        toReadOutput({ input, output }),
+    } as PiToolEntry,
+    {
+      name: "ls",
+      description: listDescription,
+      inputSchema: listInputSchema,
+      execute: (input) => listWorkspace(workspace as ListWorkspaceLike, input),
+    } as PiToolEntry,
+    {
+      name: "find",
+      description: findDescription,
+      inputSchema: findInputSchema,
+      execute: (input) => findInWorkspace(workspace as FindWorkspaceLike, input),
+    } as PiToolEntry,
+    {
+      name: "grep",
+      description: grepDescription,
+      inputSchema: grepInputSchema,
+      execute: (input) => grepInWorkspace(workspace as GrepWorkspaceLike, input),
+    } as PiToolEntry,
+  ];
+
+  if (resolved.readonly) return entries;
+
+  entries.push(
+    {
+      name: "write",
+      description: writeDescription,
+      inputSchema: writeInputSchema,
+      // The whole file body travels as one string argument.
+      strictArguments: true,
+      execute: (input) => writeToStore(resolved.write, input),
+    } as PiToolEntry,
+    {
+      name: "edit",
+      description: editDescription,
+      inputSchema: editInputSchema,
+      // A nested array of exact-match strings is the easiest shape for
+      // a model to malform, and a malformed edit costs a whole turn.
+      strictArguments: true,
+      execute: (input) => editInStore(resolved.edit, input),
+    } as PiToolEntry,
+    {
+      name: "delete",
+      description: deleteDescription,
+      inputSchema: deleteInputSchema,
+      execute: (input) => deleteFromStore(resolved.delete, input),
+    } as PiToolEntry,
+  );
+
+  if (resolved.exec !== undefined) {
+    const executor = createExecExecutor(resolved.exec);
+    entries.push({
+      name: "exec",
+      description: execDescription(resolved.exec),
+      inputSchema: execInputSchema(resolved.exec),
+      execute: (input, context) => executor(input, context),
+    } as PiToolEntry);
+  }
+
+  if (resolved.publish) {
+    const executor = createPublishExecutor(workspace as PublishWorkspaceLike);
+    entries.push({
+      name: "publish",
+      description: publishDescription,
+      inputSchema: publishInputSchema,
+      execute: (input) => executor(input),
+    } as PiToolEntry);
+  }
+
+  return entries;
+}
+
+/** Build the declarations pi puts in `Context.tools`. */
+function declarations(
+  entries: readonly PiToolEntry[],
+  options: PiDeclarationOptions,
+  nullable: Map<string, ReadonlySet<string>>,
 ): PiTool[] {
   const strict = options.constrainedSampling ?? "prefer";
-  return Object.values(specs).map((spec) => {
+  return entries.map((entry) => {
     // Strict schemas must close the object: a provider enforcing the
     // schema has to know no other properties are allowed.
-    const wantsStrict = strict !== false && spec.traits?.strictArguments === true;
-    const converted = toPiParameters(spec.inputSchema, wantsStrict);
-    nullable?.set(spec.name, converted.nullable);
+    const wantsStrict = strict !== false && entry.strictArguments === true;
+    const converted = toPiParameters(entry.inputSchema, wantsStrict);
+    nullable.set(entry.name, converted.nullable);
     const tool: PiTool = {
-      name: spec.name,
-      description: spec.description,
+      name: entry.name,
+      description: entry.description,
       parameters: converted.parameters,
     };
     if (wantsStrict) {
@@ -155,7 +303,7 @@ export interface PiDeclarationOptions {
 }
 
 /**
- * Build a dispatcher over a spec set.
+ * Build the dispatcher that runs one tool call.
  *
  * Arguments are validated against the tool's own Zod schema before the
  * executor runs. pi's loop may also validate with `validateToolCall`;
@@ -164,21 +312,17 @@ export interface PiDeclarationOptions {
  * failure comes back as an error result the model can retry against
  * rather than a thrown exception that breaks the loop.
  */
-export function createSpecExecutor(
-  specs: ToolSpecSet,
-  /**
-   * Fields widened to nullable by the strict-schema transformation, per
-   * tool. Without it no null is treated as a placeholder, which is the
-   * right default for a caller that never asked for strict schemas.
-   */
-  nullable: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
+function dispatcher(
+  entries: readonly PiToolEntry[],
+  nullable: ReadonlyMap<string, ReadonlySet<string>>,
 ): (call: PiToolCall, context?: ToolCallContext) => Promise<PiToolResult> {
+  const byName = new Map(entries.map((entry) => [entry.name, entry]));
   return async (call, context = {}) => {
-    const spec = specs[call.name];
-    if (!spec) {
+    const entry = byName.get(call.name);
+    if (!entry) {
       return errorResult(
-        `Unknown tool ${JSON.stringify(call.name)}. Available tools: ${Object.keys(specs)
-          .map((name) => JSON.stringify(name))
+        `Unknown tool ${JSON.stringify(call.name)}. Available tools: ${entries
+          .map((e) => JSON.stringify(e.name))
           .join(", ")}.`,
       );
     }
@@ -186,20 +330,29 @@ export function createSpecExecutor(
     // Strict schemas require every property, expressing "absent" as
     // null. Drop those placeholders, but only for the fields that were
     // widened, so a null the tool genuinely accepts survives.
-    const args = dropPlaceholderNulls(call.arguments ?? {}, nullable.get(spec.name) ?? EMPTY);
-    const parsed = spec.inputSchema.safeParse(args);
+    const args = dropPlaceholderNulls(call.arguments ?? {}, nullable.get(entry.name) ?? EMPTY);
+    const parsed = entry.inputSchema.safeParse(args);
     if (!parsed.success) {
       return errorResult(`Invalid arguments for ${call.name}: ${formatZodError(parsed.error)}`);
     }
 
     let output: unknown;
     try {
-      output = await settle(runSpec(spec, parsed.data, context));
+      const run = entry.execute as (
+        i: unknown,
+        c: ToolCallContext,
+      ) => Promise<unknown> | AsyncIterable<unknown>;
+      output = await settle(run(parsed.data, context));
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
     }
 
-    return toPiResult(await applyModelOutput(spec, parsed.data, output));
+    const toOutput = entry.toModelOutput as
+      | ((args: { input: unknown; output: unknown }) => ModelOutput)
+      | undefined;
+    return toPiResult(
+      toOutput ? toOutput({ input: parsed.data, output }) : defaultModelOutput(output),
+    );
   };
 }
 

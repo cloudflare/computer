@@ -1,7 +1,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
-import { Workspace } from "../workspace.js";
+import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../../runtime/types.js";
+import { Workspace } from "../../workspace.js";
+import { WorkspaceFileStore } from "../common/fs/store.js";
+import type { FileStore } from "../common/fs/types.js";
 import {
   createAITools,
   createDeleteTool,
@@ -10,8 +12,6 @@ import {
   createGrepTool,
   createReadTool,
   createWriteTool,
-  type FileStore,
-  WorkspaceFileStore,
 } from "./index.js";
 
 const toolOptions = { toolCallId: "test-call", messages: [] };

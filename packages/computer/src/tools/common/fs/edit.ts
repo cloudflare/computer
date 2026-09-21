@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 import {
   applyEditsToNormalizedContent,
@@ -175,13 +174,5 @@ export async function editInStore(
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
-  });
-}
-
-export function createEditTool(options: EditToolOptions): Tool<z.infer<typeof editInputSchema>> {
-  return tool({
-    description: editDescription,
-    inputSchema: editInputSchema,
-    execute: (rawInput) => editInStore(options, rawInput),
   });
 }

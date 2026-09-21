@@ -3,8 +3,13 @@
  *
  * A TanStack tool is a plain object with a `name`, a `description`, an
  * `inputSchema`, and an `execute`. `inputSchema` is a Standard Schema,
- * which Zod v4 implements, so the schemas in `./spec.js` are passed
+ * which Zod v4 implements, so the Zod schemas in `../common` are passed
  * through untouched — no conversion and no second copy of any schema.
+ *
+ * Each tool is declared here in TanStack's own terms. The executors and
+ * schemas come from `../common`, which holds the workspace logic that
+ * is genuinely not provider-specific; what TanStack sees is written out
+ * in this file rather than derived from a shared tool abstraction.
  *
  * `createTanStackTools` returns a list, which is what every TanStack
  * entry point takes: `chat({ tools })`, `mergeAgentTools`, and
@@ -13,15 +18,61 @@
  */
 
 import type { z } from "zod";
-import { type CreateToolsOptions, createToolSpecs } from "./registry.js";
+import { createExecExecutor, execDescription, execInputSchema } from "../common/exec.js";
 import {
-  applyModelOutput,
-  type ModelOutput,
-  modelOutputToText,
-  runSpec,
-  settle,
-  type ToolSpecSet,
-} from "./spec.js";
+  deleteDescription,
+  deleteFromStore,
+  deleteInputSchema,
+  deleteOutputSchema,
+} from "../common/fs/delete.js";
+import {
+  editDescription,
+  editInputSchema,
+  editInStore,
+  editOutputSchema,
+} from "../common/fs/edit.js";
+import {
+  type FindWorkspaceLike,
+  findDescription,
+  findInputSchema,
+  findInWorkspace,
+} from "../common/fs/find.js";
+import {
+  type GrepWorkspaceLike,
+  grepDescription,
+  grepInputSchema,
+  grepInWorkspace,
+} from "../common/fs/grep.js";
+import {
+  type ListWorkspaceLike,
+  listDescription,
+  listInputSchema,
+  listWorkspace,
+} from "../common/fs/list.js";
+import {
+  createReadExecutor,
+  type ReadInput,
+  type ReadToolResult,
+  readDescription,
+  readInputSchema,
+  readModelOutput,
+} from "../common/fs/read.js";
+import {
+  writeDescription,
+  writeInputSchema,
+  writeOutputSchema,
+  writeToStore,
+} from "../common/fs/write.js";
+import { defaultModelOutput, type ModelOutput, modelOutputToText } from "../common/model-output.js";
+import { type CreateToolsOptions, resolveToolOptions } from "../common/options.js";
+import {
+  createPublishExecutor,
+  type PublishWorkspaceLike,
+  publishDescription,
+  publishInputSchema,
+  publishOutputSchema,
+} from "../common/publish.js";
+import { settle } from "../common/stream.js";
 
 /**
  * A TanStack AI server tool.
@@ -159,40 +210,128 @@ export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = 
 export function createTanStackTools<Format extends TanStackToolFormat = "array">(
   options: CreateTanStackToolsOptions<Format>,
 ): TanStackToolsFor<Format> {
-  const specs = createToolSpecs(options);
-  return toTanStackTools(specs, options);
-}
+  const resolved = resolveToolOptions(options);
+  const workspace = resolved.workspace;
+  const readExecutor = createReadExecutor(resolved.read);
+  const toReadOutput = readModelOutput(resolved.read);
 
-/** Adapt an existing spec set to TanStack tools. */
-export function toTanStackTools<Format extends TanStackToolFormat = "array">(
-  specs: ToolSpecSet,
-  options: Omit<CreateTanStackToolsOptions<Format>, keyof CreateToolsOptions> = {},
-): TanStackToolsFor<Format> {
   const tools: TanStackToolList = [];
-
-  for (const spec of Object.values(specs)) {
-    const needsApproval = wants(options.approve, spec.name, spec.traits?.mutates === true);
-    const lazy = wants(options.lazy, spec.name, options.lazy === "all");
+  const add = (entry: {
+    name: string;
+    description: string;
+    inputSchema: z.ZodType;
+    outputSchema?: z.ZodType;
+    mutates?: boolean;
+    streams?: boolean;
+    run: (input: never, context?: TanStackToolExecutionContext) => unknown;
+  }) => {
+    const needsApproval = wants(options.approve, entry.name, entry.mutates === true);
+    const lazy = wants(options.lazy, entry.name, options.lazy === "all");
     tools.push({
-      name: spec.name,
-      description: spec.description,
-      inputSchema: spec.inputSchema,
+      name: entry.name,
+      description: entry.description,
+      inputSchema: entry.inputSchema,
       // TanStack validates every return against this, including the
-      // error branch, so a spec's schema has to describe both outcomes.
-      // A success-only schema would replace a real failure reason with
-      // a schema complaint.
-      outputSchema: spec.outputSchema,
+      // error branch, so a schema has to describe both outcomes. A
+      // success-only schema would replace a real failure reason with a
+      // schema complaint.
+      outputSchema: entry.outputSchema,
       needsApproval: needsApproval ? true : undefined,
       lazy: lazy ? true : undefined,
-      execute: async (input, context) => {
-        const returned = runSpec(spec, input, { abortSignal: options.signal });
-        const output =
-          options.streamEventName && spec.traits?.streams === true
+      execute: entry.run,
+    } as TanStackTool<never>);
+  };
+
+  add({
+    name: "read",
+    description: readDescription(resolved.read),
+    inputSchema: readInputSchema,
+    run: async (input: ReadInput) => {
+      const output = (await readExecutor(input)) as ReadToolResult;
+      return toTanStackOutput(toReadOutput({ input, output }));
+    },
+  });
+
+  add({
+    name: "ls",
+    description: listDescription,
+    inputSchema: listInputSchema,
+    run: async (input: never) => plain(await listWorkspace(workspace as ListWorkspaceLike, input)),
+  });
+
+  add({
+    name: "find",
+    description: findDescription,
+    inputSchema: findInputSchema,
+    run: async (input: never) =>
+      plain(await findInWorkspace(workspace as FindWorkspaceLike, input)),
+  });
+
+  add({
+    name: "grep",
+    description: grepDescription,
+    inputSchema: grepInputSchema,
+    run: async (input: never) =>
+      plain(await grepInWorkspace(workspace as GrepWorkspaceLike, input)),
+  });
+
+  if (!resolved.readonly) {
+    add({
+      name: "write",
+      description: writeDescription,
+      inputSchema: writeInputSchema,
+      outputSchema: writeOutputSchema,
+      mutates: true,
+      run: async (input: never) => plain(await writeToStore(resolved.write, input)),
+    });
+
+    add({
+      name: "edit",
+      description: editDescription,
+      inputSchema: editInputSchema,
+      outputSchema: editOutputSchema,
+      mutates: true,
+      run: async (input: never) => plain(await editInStore(resolved.edit, input)),
+    });
+
+    add({
+      name: "delete",
+      description: deleteDescription,
+      inputSchema: deleteInputSchema,
+      outputSchema: deleteOutputSchema,
+      mutates: true,
+      run: async (input: never) => plain(await deleteFromStore(resolved.delete, input)),
+    });
+
+    if (resolved.exec !== undefined) {
+      const executor = createExecExecutor(resolved.exec);
+      add({
+        name: "exec",
+        description: execDescription(resolved.exec),
+        inputSchema: execInputSchema(resolved.exec),
+        mutates: true,
+        streams: true,
+        run: async (input: never, context?: TanStackToolExecutionContext) => {
+          const returned = executor(input, { abortSignal: options.signal });
+          const output = options.streamEventName
             ? await settleWithEvents(returned, options.streamEventName, context)
             : await settle(returned);
-        return toTanStackOutput(await applyModelOutput(spec, input, output));
-      },
-    } as TanStackTool<never>);
+          return plain(output);
+        },
+      });
+    }
+
+    if (resolved.publish) {
+      const executor = createPublishExecutor(workspace as PublishWorkspaceLike);
+      add({
+        name: "publish",
+        description: publishDescription,
+        inputSchema: publishInputSchema,
+        outputSchema: publishOutputSchema,
+        mutates: true,
+        run: async (input: never) => plain(await executor(input)),
+      });
+    }
   }
 
   if (options.format === "object") {
@@ -203,6 +342,17 @@ export function toTanStackTools<Format extends TanStackToolFormat = "array">(
     return set as TanStackToolsFor<Format>;
   }
   return tools as TanStackToolsFor<Format>;
+}
+
+/**
+ * Present a plain executor result to the model.
+ *
+ * TanStack serializes whatever a tool returns, so a structured result
+ * stays an object and only an `{ error }` needs the neutral treatment
+ * that turns it into TanStack's error shape.
+ */
+function plain(output: unknown): unknown {
+  return toTanStackOutput(defaultModelOutput(output));
 }
 
 /**

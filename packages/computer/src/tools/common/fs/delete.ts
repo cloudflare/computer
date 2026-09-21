@@ -1,4 +1,3 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 import { withFileLock } from "./locks.js";
 import type { MutableFileStore } from "./types.js";
@@ -53,14 +52,4 @@ export function deleteFromStore(
     },
     { subtree: recursive === true },
   );
-}
-
-export function createDeleteTool(
-  options: DeleteToolOptions,
-): Tool<z.infer<typeof deleteInputSchema>> {
-  return tool({
-    description: deleteDescription,
-    inputSchema: deleteInputSchema,
-    execute: (input) => deleteFromStore(options, input),
-  });
 }

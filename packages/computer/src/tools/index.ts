@@ -1,49 +1,66 @@
-export { type CreateAIToolsOptions, createAITools, toAITools } from "./ai.js";
-export { toAISDKOutput } from "./ai-output.js";
+/**
+ * Workspace tools.
+ *
+ * Each supported agent library has its own directory — `./ai-sdk`,
+ * `./pi`, `./tanstack-ai` — and declares its own tools in that
+ * library's terms. `./common` holds the workspace logic underneath
+ * them: the executors, their Zod schemas and descriptions, the shared
+ * options, and a few helpers that are not tied to any library.
+ *
+ * This barrel is the AI SDK entrypoint as well, for backward
+ * compatibility with `@cloudflare/computer/tools`.
+ */
+
+export { type CreateAIToolsOptions, createAITools } from "./ai-sdk/index.js";
+export { toAISDKOutput } from "./ai-sdk/output.js";
 export {
+  createDeleteTool,
+  createEditTool,
   createExecTool,
-  type ExecBackendDescription,
-  type ExecInput,
-  type ExecRuntimeHandle,
-  type ExecStreamEvent,
-  type ExecToolOptions,
-  type ExecToolOutput,
-} from "./exec.js";
-export { createDeleteTool, type DeleteToolOptions } from "./fs/delete.js";
-export { createEditTool, type EditToolOptions } from "./fs/edit.js";
-export { createFindTool, type FindToolOptions } from "./fs/find.js";
-export { createGrepTool, type GrepToolOptions } from "./fs/grep.js";
-export { createListTool, type ListToolOptions } from "./fs/list.js";
-export { createReadTool, type LineTruncation, type ReadToolOptions } from "./fs/read.js";
-export { WorkspaceFileStore, type WorkspaceLike } from "./fs/store.js";
-export type { FileStat, FileStore, MutableFileStore } from "./fs/types.js";
-export { createWriteTool, type WriteToolOptions } from "./fs/write.js";
+  createFindTool,
+  createGrepTool,
+  createListTool,
+  createPublishTool,
+  createReadTool,
+  createWriteTool,
+} from "./ai-sdk/tools.js";
+export type {
+  ExecBackendDescription,
+  ExecInput,
+  ExecRuntimeHandle,
+  ExecStreamEvent,
+  ExecToolOptions,
+  ExecToolOutput,
+} from "./common/exec.js";
+export type { DeleteToolOptions } from "./common/fs/delete.js";
+export type { EditToolOptions } from "./common/fs/edit.js";
+export type { FindToolOptions } from "./common/fs/find.js";
+export type { GrepToolOptions } from "./common/fs/grep.js";
+export type { ListToolOptions } from "./common/fs/list.js";
+export type { LineTruncation, ReadToolOptions } from "./common/fs/read.js";
+export { WorkspaceFileStore, type WorkspaceLike } from "./common/fs/store.js";
+export type { FileStat, FileStore, MutableFileStore } from "./common/fs/types.js";
+export type { WriteToolOptions } from "./common/fs/write.js";
+export {
+  defaultModelOutput,
+  type ModelOutput,
+  modelOutputToText,
+} from "./common/model-output.js";
+export { type CreateToolsOptions, resolveToolOptions } from "./common/options.js";
+export type { PublishToolOptions } from "./common/publish.js";
+export { settle } from "./common/stream.js";
 export {
   type CreatePiToolsOptions,
   type CreatePiToolsResult,
   createPiTools,
-  createSpecExecutor,
   type PiDeclarationOptions,
   type PiJSONSchema,
   type PiTool,
   type PiToolCall,
   type PiToolResult,
   type PiToolResultContent,
-  piToolDeclarations,
-} from "./pi.js";
-export { createPublishTool, type PublishToolOptions } from "./publish.js";
-export { type CreateToolsOptions, createToolSpecs } from "./registry.js";
-export {
-  defaultModelOutput,
-  defineTool,
-  type ModelOutput,
-  modelOutputToText,
-  settle,
   type ToolCallContext,
-  type ToolSpec,
-  type ToolSpecSet,
-  type ToolTraits,
-} from "./spec.js";
+} from "./pi/index.js";
 export {
   type CreateTanStackToolsOptions,
   createTanStackTools,
@@ -53,5 +70,4 @@ export {
   type TanStackToolList,
   type TanStackToolSet,
   type TanStackToolsFor,
-  toTanStackTools,
-} from "./tanstack.js";
+} from "./tanstack-ai/index.js";

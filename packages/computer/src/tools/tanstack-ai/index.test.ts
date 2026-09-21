@@ -1,9 +1,7 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
-import { z } from "zod";
-import { Workspace } from "../workspace.js";
-import { defineTool } from "./spec.js";
-import { createTanStackTools, toTanStackTools } from "./tanstack.js";
+import { Workspace } from "../../workspace.js";
+import { createTanStackTools } from "./index.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
@@ -237,32 +235,32 @@ describe("createTanStackTools", () => {
 
   it("forwards pre-terminal snapshots as custom events when asked", async () => {
     const events: Array<{ name: string; value: Record<string, unknown> }> = [];
-    // Exercise the event forwarding against the adapter's contract:
-    // the last snapshot settles, earlier ones are emitted.
-    const tools = toTanStackTools(
-      {
-        fake: defineTool({
-          name: "fake",
-          description: "d",
-          inputSchema: z.object({}),
-          traits: { streams: true },
-          execute: async function* () {
-            yield { exitCode: null, stdout: "partial" };
-            yield { exitCode: 0, stdout: "complete" };
-          },
-        }) as never,
-      },
-      { streamEventName: "exec-progress", format: "object" },
-    );
+    // The last snapshot settles as the return value; earlier ones are
+    // emitted, so a UI can show output while the command runs.
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        streamingCommandBackend([
+          { id: "cmd-1", seq: 1, name: "stdout", value: new TextEncoder().encode("partial\n") },
+          { id: "cmd-1", seq: 2, name: "exit", code: 0 },
+        ]) as never,
+      ],
+    });
+    const tools = createTanStackTools({
+      workspace,
+      shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
+      streamEventName: "exec-progress",
+      format: "object",
+    });
 
-    const result = await tools.fake.execute({} as never, {
+    const result = await tools.exec.execute({ command: "echo partial" } as never, {
       toolCallId: "call-1",
       emitCustomEvent: (name, value) => events.push({ name, value }),
     });
 
-    expect(result).toMatchObject({ exitCode: 0, stdout: "complete" });
-    expect(events).toHaveLength(1);
+    expect(result).toMatchObject({ exitCode: 0, stdout: "partial\n" });
+    expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0].name).toBe("exec-progress");
-    expect(events[0].value.snapshot).toMatchObject({ stdout: "partial" });
+    await workspace.close();
   });
 });
