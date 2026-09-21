@@ -1,0 +1,23 @@
+{
+  "name": "@example/computer-browser-rendering",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser Run demo that executes Cloudflare Puppeteer inside the Computer Worker JavaScript backend.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build:types": "wrangler types",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.130.0"
+  }
+}

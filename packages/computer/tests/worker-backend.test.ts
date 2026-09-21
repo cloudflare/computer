@@ -147,6 +147,63 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(result.stdout).not.toMatch(/command not found/);
   });
 
+  it("runs a workspace task module through the browser command", async () => {
+    // The whole parity path in one call: just-bash dispatches the
+    // `browser` command, the command reaches the host Workspace
+    // runtime, the JavaScript backend mints a second Dynamic Worker,
+    // the generated entry imports the task from the durable
+    // Workspace, and the task's return value comes back as JSON.
+    const id = freshId();
+    // The task lives in its own directory, so the execution also
+    // proves the generated entry runs from the task's directory
+    // rather than from the shell's working directory.
+    await exec(id, "mkdir -p tasks");
+    await write(
+      id,
+      "/workspace/tasks/title.js",
+      `export default async ({ url, browser, depth }) => {
+         const page = await browser.newPage();
+         await page.goto(url);
+         return { title: await page.title(), depth };
+       };`,
+    );
+
+    const result = await exec(
+      id,
+      "browser puppeteer --url https://example.com/ --input '{\"depth\":2}' tasks/title.js",
+    );
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      title: "Fake https://example.com/",
+      depth: 2,
+    });
+  });
+
+  it("runs a task piped in on stdin and leaves no temporary module behind", async () => {
+    const id = freshId();
+    const task = "export default async ({ url }) => ({ visited: url });";
+
+    const result = await exec(
+      id,
+      `echo ${JSON.stringify(task)} | browser puppeteer --url https://example.com/ --stdin && ls -a`,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"visited": "https://example.com/"');
+    expect(result.stdout).not.toContain(".browser-task-");
+  });
+
+  it("reports a task module that is not in the workspace", async () => {
+    const id = freshId();
+
+    const result = await exec(id, "browser puppeteer --url https://example.com/ missing.js");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("/workspace/missing.js");
+  });
+
   it("isolates state between separate workspace ids", async () => {
     // Two host-DO names → two distinct workspaces, two distinct
     // Dynamic Worker isolates (the loader caches by

@@ -47,6 +47,10 @@
       "types": "./dist/backends/worker-shell/index.d.ts",
       "import": "./dist/backends/worker-shell/index.js"
     },
+    "./plugins/puppeteer": {
+      "types": "./dist/plugins/puppeteer/index.d.ts",
+      "import": "./dist/plugins/puppeteer/index.js"
+    },
     "./shell/core": {
       "types": "./dist/backends/worker-shell/shell/core.d.ts",
       "default": "./dist/backends/worker-shell/shell/core.js"
@@ -87,6 +91,10 @@
       "types": "./dist/backends/worker-shell/shell/jq.d.ts",
       "default": "./dist/backends/worker-shell/shell/jq.js"
     },
+    "./shell/browser": {
+      "types": "./dist/backends/worker-shell/shell/browser.d.ts",
+      "default": "./dist/backends/worker-shell/shell/browser.js"
+    },
     "./observe/cloudflare": {
       "types": "./dist/observe/cloudflare.d.ts",
       "import": "./dist/observe/cloudflare.js"
@@ -101,10 +109,12 @@
   "scripts": {
     "build:deps": "npm run build --workspace @cloudflare/computer-rpc",
     "build:shell-bundle": "node ./src/backends/worker-shell/script/build-bundle.mjs",
-    "prebuild": "npm run build:deps && npm run build:shell-bundle",
-    "pretest": "npm run build:shell-bundle",
-    "pretypecheck": "npm run build:deps && npm run build:shell-bundle",
-    "prepare": "npm run build:shell-bundle",
+    "build:puppeteer-bundle": "node ./src/plugins/puppeteer/build-bundle.mjs",
+    "build:runtime-bundles": "npm run build:shell-bundle && npm run build:puppeteer-bundle",
+    "prebuild": "npm run build:deps && npm run build:runtime-bundles",
+    "pretest": "npm run build:runtime-bundles",
+    "pretypecheck": "npm run build:deps && npm run build:runtime-bundles",
+    "prepare": "npm run build:runtime-bundles",
     "build": "rolldown -c",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run && vitest run --config vitest.config.proxy.ts && vitest run --config vitest.config.worker-backend.ts && vitest run --config vitest.config.script-runner.ts && vitest run --config vitest.config.stub-soak.ts",
@@ -139,6 +149,7 @@
   "devDependencies": {
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
+    "@cloudflare/puppeteer": "1.4.0",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1",
     "@platformatic/vfs": "^0.4.0",

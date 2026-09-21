@@ -34,6 +34,7 @@ export default defineConfig({
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",
     "backends/worker-shell/index": "src/backends/worker-shell/index.ts",
+    "plugins/puppeteer/index": "src/plugins/puppeteer/index.ts",
     // The shell-module groups build-bundle.mjs emits. Each is its
     // own entry so it lands at the dist path the ./shell/* package
     // exports point at; shell-modules.ts imports the core group by
@@ -51,6 +52,10 @@ export default defineConfig({
     "backends/worker-shell/shell/file": "src/backends/worker-shell/generated/file.ts",
     "backends/worker-shell/shell/xan": "src/backends/worker-shell/generated/xan.ts",
     "backends/worker-shell/shell/jq": "src/backends/worker-shell/generated/jq.ts",
+    // Not one of just-bash's commands: the `browser` command is
+    // this package's own, bundled separately and published under
+    // the extras seam name the shell entrypoint imports.
+    "backends/worker-shell/shell/browser": "src/backends/worker-shell/generated/browser.ts",
     "observe/cloudflare": "src/observe/cloudflare.ts",
   },
   external: [

@@ -12,18 +12,63 @@ export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
 const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
 const CAPABILITIES_MODULE = "workspace-capabilities.js";
+const PLUGIN_BINDINGS_MODULE = "workspace-plugin-bindings.js";
+const CONFIGURED_MODULES_DIRECTORY = "workspace-configured-modules";
 const TRUSTED_MODULES = ["node:fs", "node:fs/promises", "ws:git", "ws:artifacts"] as const;
+
+export interface PreparedConfiguredModule {
+  source: string;
+  hasDefault: boolean;
+}
+
+export type PreparedConfiguredModules = Readonly<Record<string, PreparedConfiguredModule>>;
 
 export interface BuildModuleGraphOptions {
   source: string;
   cwd: string;
   capability: WorkspaceRuntimeCapability;
-  configuredModules: Record<string, string>;
+  configuredModules: PreparedConfiguredModules;
   trustedModuleNames?: string[];
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
   maxDepth?: number;
+}
+
+export function prepareConfiguredModules(
+  sources: Record<string, string>,
+  pluginModuleNames: ReadonlySet<string>,
+  protectPluginBindings: boolean,
+): PreparedConfiguredModules {
+  const prepared: Record<string, PreparedConfiguredModule> = Object.create(null);
+  for (const [specifier, source] of Object.entries(sources)) {
+    let ast: ModuleAst;
+    try {
+      ast = parseModule(source);
+    } catch (error) {
+      throw new Error(
+        `Configured module ${JSON.stringify(specifier)} is not valid JavaScript: ${messageOf(error)}`,
+        { cause: error },
+      );
+    }
+    if (protectPluginBindings && !pluginModuleNames.has(specifier)) {
+      let imported: string[];
+      try {
+        imported = importSpecifiers(ast);
+      } catch (error) {
+        throw new Error(`Configured module ${JSON.stringify(specifier)}: ${messageOf(error)}`, {
+          cause: error,
+        });
+      }
+      if (imported.some((name) => name.split("/").at(-1) === PLUGIN_BINDINGS_MODULE)) {
+        throw new Error(
+          `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(PLUGIN_BINDINGS_MODULE)}, which is reserved for installed plugin modules.`,
+        );
+      }
+    }
+    prepared[specifier] = { source, hasDefault: hasDefaultExport(ast) };
+  }
+  return prepared;
 }
 
 export async function buildModuleGraph(options: BuildModuleGraphOptions) {
@@ -33,6 +78,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   const modules: Record<string, string | { js?: string }> = Object.assign(Object.create(null), {
     [entryName]: options.source,
     [CAPABILITIES_MODULE]: capabilitiesModule(options.maxCapabilityBytes),
+    [PLUGIN_BINDINGS_MODULE]: { js: pluginBindingsModule() },
   });
   const seen = new Set<string>();
   const directories = new Set<string>([directoryName(entryName)]);
@@ -64,7 +110,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
 
     for (const specifier of imports(source)) {
       if (trustedModuleNames.has(specifier)) continue;
-      if (specifier === CAPABILITIES_MODULE) {
+      if (specifier === CAPABILITIES_MODULE || specifier === PLUGIN_BINDINGS_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
       }
       if (specifier.startsWith("ws:")) {
@@ -118,7 +164,9 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
       specifier === ENTRY_BASENAME ||
       specifier === RUNNER_MODULE ||
       specifier === CAPABILITIES_MODULE ||
-      specifier.includes("/")
+      specifier.split("/").at(-1) === PLUGIN_BINDINGS_MODULE ||
+      specifier === CONFIGURED_MODULES_DIRECTORY ||
+      !isConfiguredModuleName(specifier)
     ) {
       throw new Error(
         `Configured module ${JSON.stringify(specifier)} uses a reserved module name.`,
@@ -131,7 +179,21 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   modules["node:fs/promises"] = { js: nodeFsPromisesModule() };
   modules["node:fs"] = { js: nodeFsModule() };
 
-  for (const directory of directories) {
+  const configuredModules = Object.entries(options.configuredModules).map(
+    ([specifier, configured]) => ({
+      specifier,
+      ...configured,
+      canonicalName: `${CONFIGURED_MODULES_DIRECTORY}/${specifier}`,
+    }),
+  );
+  const resolutionDirectories = new Set(directories);
+  for (const configured of configuredModules) {
+    modules[configured.canonicalName] = { js: configured.source };
+    resolutionDirectories.add(directoryName(configured.canonicalName));
+    installPluginBindingAlias(modules, directoryName(configured.canonicalName));
+  }
+
+  for (const directory of resolutionDirectories) {
     const prefix = directory ? `${directory}/` : "";
     const toCapabilities = relativeModule(directory, CAPABILITIES_MODULE);
     modules[`${prefix}ws:git`] = { js: gitModule(toCapabilities) };
@@ -141,24 +203,74 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         js: trustedModule(toCapabilities, specifier),
       };
     }
-    for (const [specifier, source] of Object.entries(options.configuredModules)) {
-      const key = `${prefix}${specifier}`;
+    for (const configured of configuredModules) {
+      const key = `${prefix}${configured.specifier}`;
+      if (key === configured.canonicalName) continue;
       if (key in modules) {
         throw new Error(
-          `Configured module ${JSON.stringify(specifier)} collides with ${JSON.stringify(key)}.`,
+          `Configured module ${JSON.stringify(configured.specifier)} collides with ${JSON.stringify(key)}.`,
         );
       }
-      modules[key] = { js: source };
+      modules[key] = {
+        js: configuredModuleAlias(
+          relativeModule(directoryName(key), configured.canonicalName),
+          configured.hasDefault,
+        ),
+      };
     }
   }
 
   return { entryName, modules };
 }
 
+function installPluginBindingAlias(
+  modules: Record<string, string | { js?: string }>,
+  moduleDirectory: string,
+) {
+  const alias = `${moduleDirectory ? `${moduleDirectory}/` : ""}${PLUGIN_BINDINGS_MODULE}`;
+  if (!(alias in modules)) {
+    modules[alias] = {
+      js: `export { binding } from ${JSON.stringify(relativeModule(moduleDirectory, PLUGIN_BINDINGS_MODULE))};`,
+    };
+  }
+}
+
+function configuredModuleAlias(target: string, hasDefault: boolean) {
+  return `export * from ${JSON.stringify(target)};${
+    hasDefault ? `\nexport { default } from ${JSON.stringify(target)};` : ""
+  }`;
+}
+
+interface ModuleAst {
+  body: unknown[];
+}
+
+function parseModule(source: string): ModuleAst {
+  return parse(source, { ecmaVersion: "latest", sourceType: "module" }) as unknown as ModuleAst;
+}
+
+function hasDefaultExport(ast: ModuleAst): boolean {
+  const nodes = ast.body as Array<{
+    type?: string;
+    exported?: { name?: unknown; value?: unknown } | null;
+    specifiers?: Array<{ exported?: { name?: unknown; value?: unknown } }>;
+  }>;
+  const isDefault = (name: { name?: unknown; value?: unknown } | null | undefined) =>
+    name?.name === "default" || name?.value === "default";
+  return nodes.some(
+    (node) =>
+      node.type === "ExportDefaultDeclaration" ||
+      (node.type === "ExportNamedDeclaration" &&
+        node.specifiers?.some((specifier) => isDefault(specifier.exported))) ||
+      (node.type === "ExportAllDeclaration" && isDefault(node.exported)),
+  );
+}
+
 function imports(source: string): string[] {
-  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" }) as unknown as {
-    body: unknown[];
-  };
+  return importSpecifiers(parseModule(source));
+}
+
+function importSpecifiers(ast: ModuleAst): string[] {
   const found: string[] = [];
   walk(ast, (node) => {
     const item = node as { type?: string; source?: { type?: string; value?: unknown } };
@@ -177,6 +289,10 @@ function imports(source: string): string[] {
     }
   });
   return found;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function walk(value: unknown, visit: (node: unknown) => void): void {
@@ -228,12 +344,38 @@ function directoryName(name: string) {
 function isInternalModuleName(name: string) {
   return (
     name === CAPABILITIES_MODULE ||
+    name === PLUGIN_BINDINGS_MODULE ||
+    name === CONFIGURED_MODULES_DIRECTORY ||
+    name.startsWith(`${CONFIGURED_MODULES_DIRECTORY}/`) ||
     name === RUNNER_MODULE ||
     name === ENTRY_BASENAME ||
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
+    name.endsWith(`/${PLUGIN_BINDINGS_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
     name.split("/").at(-1)?.startsWith("ws:") === true
   );
+}
+
+function isConfiguredModuleName(name: string) {
+  return (
+    (name !== "." && name !== ".." && name.length > 0 && !name.includes("/")) ||
+    /^@[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)
+  );
+}
+
+function pluginBindingsModule() {
+  return `
+    let bindings = Object.create(null);
+    export function install(value) {
+      bindings = value || Object.create(null);
+    }
+    export function binding(name) {
+      if (!Object.hasOwn(bindings, name)) {
+        throw new Error("Workspace JavaScript plugin binding " + JSON.stringify(name) + " is unavailable");
+      }
+      return bindings[name];
+    }
+  `;
 }
 
 function capabilitiesModule(maxCapabilityBytes: number) {
