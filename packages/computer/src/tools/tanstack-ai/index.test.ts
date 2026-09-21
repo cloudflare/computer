@@ -7,9 +7,8 @@ function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
 }
 
-// An in-process command backend that streams a fixed event sequence,
-// so the exec tool runs against a real WorkspaceRuntime handle rather
-// than a hand-shaped fake.
+// Streams a fixed event sequence through a real WorkspaceRuntime
+// handle, rather than a hand-shaped fake.
 function streamingCommandBackend(events: import("@cloudflare/computer-rpc").ExecEvent[]): {
   id: string;
   type: string;
@@ -134,9 +133,7 @@ describe("createTanStackTools", () => {
     };
     expect(schema.safeParse({ path: "/w/a.txt", bytesWritten: 3 }).success).toBe(true);
     expect(schema.safeParse({ path: "/w/a.txt" }).success).toBe(false);
-    // TanStack validates every return against this schema, so a
-    // failure has to pass it too. A success-only schema would replace
-    // the real reason with a validation complaint.
+    // TanStack validates every return against this, failures included.
     expect(schema.safeParse({ error: "read-only filesystem" }).success).toBe(true);
     // A paged listing has no fixed success shape worth asserting.
     expect(tools.ls.outputSchema).toBeUndefined();
@@ -154,8 +151,6 @@ describe("createTanStackTools", () => {
       content: "hi",
     } as never)) as { error: string };
 
-    // Validating this against the tool's own outputSchema must keep the
-    // message intact, which is what TanStack does with every return.
     expect(result.error).toContain("read-only filesystem");
     const schema = tools.write.outputSchema as unknown as {
       parse: (v: unknown) => unknown;

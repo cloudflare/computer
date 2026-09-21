@@ -1,17 +1,8 @@
 /**
- * Draining a progressive executor.
- *
- * `exec` yields successive complete snapshots of one run rather than
- * deltas, so a library that cannot forward progressive tool output just
- * keeps the last one. That rule is the same everywhere, so it lives
- * here rather than being restated per provider.
- */
-
-/**
  * Drain an executor to its settled result.
  *
- * The last yielded snapshot is the terminal one; an iterable that
- * yields nothing is a contract violation by the executor.
+ * A streaming executor yields successive complete snapshots of one run
+ * rather than deltas, so the last one is the whole result.
  */
 export async function settle<Output>(
   returned: Promise<Output> | AsyncIterable<Output>,

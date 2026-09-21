@@ -1,15 +1,4 @@
-/**
- * Workspace tools.
- *
- * Each supported agent library has its own directory — `./ai-sdk`,
- * `./pi`, `./tanstack-ai` — and declares its own tools in that
- * library's terms. `./common` holds the workspace logic underneath
- * them: the executors, their Zod schemas and descriptions, the shared
- * options, and a few helpers that are not tied to any library.
- *
- * This barrel is the AI SDK entrypoint as well, for backward
- * compatibility with `@cloudflare/computer/tools`.
- */
+/** Also the AI SDK entrypoint, published as `@cloudflare/computer/tools`. */
 
 export { type CreateAIToolsOptions, createAITools } from "./ai-sdk/index.js";
 export { toAISDKOutput } from "./ai-sdk/output.js";

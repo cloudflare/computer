@@ -1,10 +1,7 @@
-// Drive the pi example's agent loop locally, with no Cloudflare account.
-//
-// The loop, the tool declarations, and the dispatcher are the real ones
-// from @cloudflare/computer/tools/pi against a real Workspace. Only two
-// things are substituted: pi's own fauxProvider stands in for Workers
-// AI, so the tool calls are scripted rather than chosen by a model, and
-// an in-memory SQLite storage stands in for Durable Object storage.
+// Drive the pi example's agent loop locally, with no Cloudflare
+// account. The loop, tools, and Workspace are real; only the model and
+// the storage are substituted, so the tool calls below are scripted
+// rather than chosen.
 //
 //   node run-local.mjs
 
@@ -22,9 +19,9 @@ import {
 const MAX_TURNS = 10;
 
 const workspace = new Workspace({ storage: new SQLiteTestStorage() });
-// `exec` needs a backend to be declared. There is no shell backend in
-// plain node, so calling it fails at the backend — which is after the
-// argument handling this script is checking.
+// Declared so `exec` exists. No shell backend runs under plain node,
+// so a call fails at the backend — past the argument handling checked
+// at the end of this script.
 const { tools, execute } = createPiTools({
   workspace,
   shell: { defaultBackend: "shell", backends: { shell: { description: "test shell" } } },
@@ -35,8 +32,7 @@ const models = createModels();
 models.setProvider(faux.provider);
 const model = faux.getModel();
 
-// What the model "decides" to do, one reply per turn: write a file,
-// read it back, then answer.
+// One scripted reply per turn: write a file, read it back, then answer.
 faux.setResponses([
   fauxAssistantMessage(
     [
@@ -90,7 +86,6 @@ for (let turn = 0; turn < MAX_TURNS; turn += 1) {
     });
   }
 
-  // Script the next reply, now that this turn's tools have run.
   if (turn === 0) {
     faux.setResponses([
       fauxAssistantMessage([fauxToolCall("read", { path: "/workspace/haiku.txt" })], {
@@ -108,7 +103,7 @@ console.log("\nanswer:", answer);
 const onDisk = await workspace.fs.readFile("/workspace/haiku.txt", "utf8");
 console.log("file on disk:", JSON.stringify(onDisk));
 
-// And that a failure comes back as a retryable error result.
+// A failure must come back as a retryable error result, not a throw.
 const missing = await execute({
   id: "x",
   name: "read",
@@ -120,7 +115,8 @@ console.log(
   JSON.stringify(missing.content).slice(0, 80),
 );
 
-// The review's item 3: a deliberate null input to a callable backend.
+// A deliberate null must reach the backend rather than being dropped
+// as if the argument had been omitted.
 const nulled = await execute({
   id: "y",
   name: "exec",

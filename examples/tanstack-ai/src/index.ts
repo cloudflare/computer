@@ -1,9 +1,4 @@
-// A one-shot agent built on TanStack AI, working in a durable Workspace.
-//
-// POST a task, and the agent uses the workspace tools to carry it out.
-// TanStack AI owns the loop: `chat()` calls the tools the model asks
-// for, feeds the results back, and keeps going until the model is done.
-// `streamToText` waits for that to finish and returns the final text.
+// A one-shot agent on TanStack AI, working in a durable Workspace.
 //
 //   client ──► Worker / ──► TanStackAgent DO ──► Workspace (files + shell)
 //                                       │
@@ -23,8 +18,7 @@ import { chat, maxIterations, streamToText } from "@tanstack/ai";
 import { cloudflareText } from "@tanstack/ai-cloudflare";
 
 // The worker-shell backend reaches back into this durable object by
-// binding name and id, so the in-isolate shell shares one filesystem
-// with the agent.
+// binding name and id, so the shell shares the agent's filesystem.
 export { WorkspaceServiceProxy };
 
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
@@ -58,23 +52,17 @@ export class TanStackAgent extends DurableObject<Env> {
     });
 
     const stream = chat({
-      // The Cloudflare adapter talks to Workers AI through the binding,
-      // so this example needs no API key.
-      //
-      // The cast is a version mismatch, not a real one: the adapter
-      // depends on version 4 of @cloudflare/workers-types while this
-      // repository is on version 5, so TypeScript sees two structurally
-      // identical `Ai` types from different packages and declines to
-      // unify them. Drop the cast once the adapter moves to version 5.
+      // The cast is a version mismatch, not a real one: the adapter is
+      // on @cloudflare/workers-types v4 and this repo is on v5, so the
+      // two structurally identical `Ai` types will not unify. Drop it
+      // once the adapter moves to v5.
       adapter: cloudflareText(MODEL, { binding: this.env.AI as unknown as never }),
       systemPrompts: [
         "You are working in a directory at /workspace. Use the tools to do what the user asks, then say what you did.",
       ],
       messages: [{ role: "user", content: task }],
-      // The tools arrive as a list, which is what chat() takes.
       tools,
-      // Stop after ten model turns, so a confused model cannot loop
-      // forever on someone else's bill.
+      // Bound the spend if the model fails to converge.
       agentLoopStrategy: maxIterations(10),
     });
 

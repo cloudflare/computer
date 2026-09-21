@@ -1,10 +1,7 @@
 // Drive the TanStack AI example's agent loop locally, with no
-// Cloudflare account.
-//
-// `chat()`, the agent loop, the tools, and the Workspace are the real
-// ones. Only the provider is substituted: a hand-written adapter
-// replays scripted assistant turns instead of calling Workers AI, so
-// the tool calls are fixed rather than chosen by a model.
+// Cloudflare account. `chat()`, the tools, and the Workspace are real;
+// only the provider is substituted, so the tool calls below are
+// scripted rather than chosen.
 //
 //   node run-local.mjs
 
@@ -16,8 +13,7 @@ import { chat, maxIterations } from "@tanstack/ai";
 const workspace = new Workspace({ storage: new SQLiteTestStorage() });
 const tools = createTanStackTools({ workspace });
 
-// Scripted turns: write a file, read it back, then answer. Each entry is
-// what the "model" emits for that iteration of the agent loop.
+// One scripted turn per agent-loop iteration.
 const script = [
   {
     toolCalls: [
@@ -36,8 +32,8 @@ const script = [
 
 let turn = 0;
 
-// The smallest adapter shape chat() will drive. It yields AG-UI events
-// for one assistant turn, then stops.
+// The smallest adapter shape chat() will drive: AG-UI events for one
+// assistant turn, then stop.
 const scriptedAdapter = {
   name: "scripted",
   model: "scripted",
@@ -94,7 +90,6 @@ const stream = chat({
   agentLoopStrategy: maxIterations(10),
 });
 
-// Watch the tool results go by, then take the final text.
 const chunks = [];
 for await (const chunk of stream) {
   if (chunk.type === "TOOL_CALL_END") {

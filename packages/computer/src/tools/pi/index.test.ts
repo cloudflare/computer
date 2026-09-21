@@ -202,8 +202,6 @@ describe("createPiTools execution", () => {
 
   it("keeps a null the tool genuinely accepts", async () => {
     // `exec`'s structured input is any JSON value, so null means null.
-    // Only the placeholder nulls that strict mode introduces for
-    // omitted optional fields may be stripped.
     const seen: Array<{ input: unknown }> = [];
     const workspace = makeWorkspace();
     (workspace.runtime as unknown as Record<string, unknown>).exec = async (
@@ -222,8 +220,6 @@ describe("createPiTools execution", () => {
     await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: null } });
     await tools.execute({ id: "2", name: "exec", arguments: { command: "b" } });
 
-    // An explicit null survives; an omitted field stays absent. A model
-    // that means null must be able to say so.
     expect(seen[0].input).toBeNull();
     expect(seen[1].input).toBeUndefined();
   });

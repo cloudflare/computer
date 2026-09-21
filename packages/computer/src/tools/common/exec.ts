@@ -46,12 +46,6 @@ export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent
   kill?(): Promise<void>;
 }
 
-/**
- * Per-call information the exec executor reads.
- *
- * Only cancellation, which is all this executor needs. A provider may
- * carry more in its own call context and pass just the signal here.
- */
 export interface ExecCallContext {
   abortSignal?: AbortSignal;
 }

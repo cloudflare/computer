@@ -1,25 +1,7 @@
 /**
- * Tools for [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`).
- *
- * pi splits a tool in two. `Tool` is pure data — a name, a description,
- * and a TypeBox `parameters` schema — that travels in `Context.tools`,
- * while execution stays with the caller's own agent loop. So this module
- * exposes both halves and keeps them consistent:
- *
- * - `createPiTools` returns the declarations to put in the context.
- * - `createPiToolExecutor` returns a dispatcher that validates a tool
- *   call and runs the matching workspace tool, handing back pi's
- *   `toolResult` content blocks.
- *
- * Each tool is declared here in pi's own terms. The executors and Zod
- * schemas come from `../common`, which holds the workspace logic that
- * is genuinely not provider-specific; pi's declarations, its JSON
- * Schema conversion, and its result encoding are written out in this
- * file rather than derived from a shared tool abstraction.
- *
- * TypeBox schemas are plain JSON Schema and pi validates against them
- * with TypeBox's validator, so the Zod schemas are converted here
- * rather than rewritten by hand.
+ * pi keeps tool declarations and tool execution apart: declarations
+ * travel in `Context.tools` while the caller's own agent loop runs the
+ * tools. So this module returns both halves together.
  */
 
 import { z } from "zod";
@@ -63,55 +45,27 @@ import {
 } from "../common/publish.js";
 import { settle } from "../common/stream.js";
 
-/**
- * Per-call information an executor may use.
- *
- * Only cancellation is portable, so that is all this carries. Keeping
- * it an object rather than a bare signal lets later additions stay
- * backward compatible.
- */
 export interface ToolCallContext {
   abortSignal?: AbortSignal;
 }
 
-/**
- * One workspace tool as pi needs it.
- *
- * Internal to this module: the declaration fields pi sends to the
- * model, plus how to run the tool and how to present its result.
- */
 interface PiToolEntry {
   name: string;
   description: string;
   inputSchema: z.ZodType;
-  /** Close the schema and constrain sampling for fussy arguments. */
   strictArguments?: boolean;
   execute: (input: never, context: ToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
   toModelOutput?: (args: { input: never; output: never }) => ModelOutput;
 }
 
-/**
- * A pi tool declaration.
- *
- * Structurally compatible with `Tool` from `@earendil-works/pi-ai`, but
- * declared locally so this module does not need pi at build time. pi
- * only reads `name`, `description`, and `parameters`.
- */
+/** Structurally compatible with `Tool` from `@earendil-works/pi-ai`, declared locally so pi is not a build-time dependency. */
 export interface PiTool {
   name: string;
   description: string;
   parameters: PiJSONSchema;
-  /**
-   * Provider-side constrained sampling, when the tool asks for it.
-   *
-   * `strict: "prefer"` rather than `"require"` so a provider or model
-   * that cannot enforce a schema falls back to ordinary tool calling
-   * instead of failing the request.
-   */
   constrainedSampling?: { type: "json_schema"; strict: "prefer" | "require" };
 }
 
-/** The JSON Schema subset TypeBox and pi exchange for tool parameters. */
 export interface PiJSONSchema {
   type: "object";
   properties?: Record<string, unknown>;
@@ -126,37 +80,21 @@ export interface PiToolCall {
   arguments?: unknown;
 }
 
-/** Content blocks pi accepts on a `toolResult` message. */
 export type PiToolResultContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
 
-/**
- * A settled tool result in pi's shape, minus the routing fields.
- *
- * The caller owns `toolCallId`, `toolName`, and `timestamp` because it
- * owns the transcript; this module supplies only what running the tool
- * determined.
- */
+/** A tool result minus the routing fields (`toolCallId`, `toolName`, `timestamp`), which the caller owns. */
 export interface PiToolResult {
   content: PiToolResultContent[];
   isError: boolean;
 }
 
 export interface CreatePiToolsResult {
-  /** Declarations for `Context.tools`. */
   tools: PiTool[];
-  /** Run one tool call and get back pi `toolResult` content. */
   execute: (call: PiToolCall, context?: ToolCallContext) => Promise<PiToolResult>;
 }
 
-/**
- * Build pi tool declarations and their executor for a Workspace.
- *
- * Returns both halves together so the declarations and the dispatcher
- * cannot drift apart. Callers that only need the declarations can
- * destructure `tools` and ignore `execute`.
- */
 export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResult {
   const entries = piToolEntries(options);
   const nullable = new Map<string, ReadonlySet<string>>();
@@ -168,13 +106,6 @@ export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResul
 
 export interface CreatePiToolsOptions extends CreateToolsOptions, PiDeclarationOptions {}
 
-/**
- * The workspace tools pi offers, in pi's own terms.
- *
- * Always includes `read`, `ls`, `find`, and `grep`. Adds `write`,
- * `edit`, and `delete` unless `readonly` is set, `exec` when `shell`
- * options are supplied, and `publish` when assets are configured.
- */
 function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
   const resolved = resolveToolOptions(options);
   const workspace = resolved.workspace;
@@ -186,8 +117,7 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
       name: "read",
       description: readDescription(resolved.read),
       inputSchema: readInputSchema,
-      // Positioned reads hand back byte offsets the model must echo
-      // back verbatim on the next call, so constrain them.
+      // Byte offsets must be echoed back verbatim on the next call.
       strictArguments: true,
       execute: (input: ReadInput) => readExecutor(input),
       toModelOutput: ({ input, output }: { input: ReadInput; output: ReadToolResult }) =>
@@ -228,8 +158,7 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
       name: "edit",
       description: editDescription,
       inputSchema: editInputSchema,
-      // A nested array of exact-match strings is the easiest shape for
-      // a model to malform, and a malformed edit costs a whole turn.
+      // A nested array of exact-match strings is easy to malform.
       strictArguments: true,
       execute: (input) => editInStore(resolved.edit, input),
     } as PiToolEntry,
@@ -264,7 +193,6 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
   return entries;
 }
 
-/** Build the declarations pi puts in `Context.tools`. */
 function declarations(
   entries: readonly PiToolEntry[],
   options: PiDeclarationOptions,
@@ -291,26 +219,17 @@ function declarations(
 
 export interface PiDeclarationOptions {
   /**
-   * Whether to request provider-side constrained sampling for the tools
-   * that ask for it, and how strictly.
-   *
-   * `"prefer"` (the default) falls back to ordinary tool calling on a
-   * provider that cannot enforce the schema. `"require"` fails the
-   * request instead, which is only appropriate when the caller pins a
-   * model known to support it. `false` opts out entirely.
+   * `"prefer"` (default) falls back to ordinary tool calling where the
+   * provider cannot enforce a schema; `"require"` fails the request
+   * instead, so it suits only a pinned model known to support it.
    */
   constrainedSampling?: "prefer" | "require" | false;
 }
 
 /**
- * Build the dispatcher that runs one tool call.
- *
- * Arguments are validated against the tool's own Zod schema before the
- * executor runs. pi's loop may also validate with `validateToolCall`;
- * validating here as well means a caller that skips that step still
- * cannot reach an executor with malformed input, and a validation
- * failure comes back as an error result the model can retry against
- * rather than a thrown exception that breaks the loop.
+ * Validation failures and thrown executors both come back as error
+ * results rather than exceptions, so a bad call costs the model a turn
+ * instead of breaking the caller's loop.
  */
 function dispatcher(
   entries: readonly PiToolEntry[],
@@ -327,9 +246,6 @@ function dispatcher(
       );
     }
 
-    // Strict schemas require every property, expressing "absent" as
-    // null. Drop those placeholders, but only for the fields that were
-    // widened, so a null the tool genuinely accepts survives.
     const args = dropPlaceholderNulls(call.arguments ?? {}, nullable.get(entry.name) ?? EMPTY);
     const parsed = entry.inputSchema.safeParse(args);
     if (!parsed.success) {
@@ -356,7 +272,6 @@ function dispatcher(
   };
 }
 
-/** Lower a neutral `ModelOutput` onto pi's tool-result content blocks. */
 function toPiResult(output: ModelOutput): PiToolResult {
   switch (output.type) {
     case "text":
@@ -369,10 +284,8 @@ function toPiResult(output: ModelOutput): PiToolResult {
         isError: false,
       };
     case "media": {
-      // pi carries images as base64 blocks on a tool result. Anything
-      // else that reached a media output (a PDF) has no tool-result
-      // representation, so it degrades to its descriptive text rather
-      // than being dropped silently.
+      // pi's tool results carry images but nothing else, so a PDF
+      // degrades to text rather than being dropped.
       if (!output.mediaType.startsWith("image/")) {
         return {
           content: [
@@ -396,13 +309,9 @@ function toPiResult(output: ModelOutput): PiToolResult {
 }
 
 /**
- * Convert a Zod schema to the JSON Schema pi hands to TypeBox.
- *
- * `io: "input"` is what makes a field carrying a Zod `.default()`
- * optional in the emitted schema: the default is recorded as a JSON
- * Schema `default` that TypeBox applies during conversion, so the model
- * may omit it. Emitting the output view instead would mark those fields
- * required and force the model to restate values it should not have to.
+ * `io: "input"` keeps a field with a Zod `.default()` optional: the
+ * default is emitted as a JSON Schema `default` for TypeBox to apply.
+ * The output view would instead mark those fields required.
  */
 function toPiParameters(
   schema: z.ZodType,
@@ -411,11 +320,7 @@ function toPiParameters(
   const json = z.toJSONSchema(schema, {
     target: "draft-7",
     io: "input",
-    // Tool parameters are consumed by providers that reject `$ref`
-    // pointers into a definitions section, so inline every subschema.
-    // The one recursive schema here (`exec`'s structured `input`) would
-    // otherwise need a ref, and is reported rather than silently
-    // emitted as something the provider will reject.
+    // Providers reject `$ref` pointers into a definitions section.
     reused: "inline",
     unrepresentable: "any",
   }) as Record<string, unknown>;
@@ -423,11 +328,9 @@ function toPiParameters(
   if (json.type !== "object") {
     throw new Error(`pi tool parameters must be an object schema, got ${String(json.type)}`);
   }
-  // A provider enforcing a JSON schema needs the object closed, and
-  // OpenAI additionally requires every property to be listed in
-  // `required` — optional fields are expressed as nullable instead. Zod
-  // emits the open, minimally-required form, so close it here rather
-  // than restating each schema for the strict case.
+  // A provider enforcing the schema needs the object closed, and
+  // OpenAI further requires every property in `required`, so an
+  // optional field becomes required-but-nullable instead.
   const nullable = new Set<string>();
   if (strict) {
     json.additionalProperties = false;
@@ -438,10 +341,8 @@ function toPiParameters(
       if (required.has(name)) continue;
       const property = properties[name];
       const type = property.type;
-      // Widen an optional property to accept null, so the model can
-      // fill the now-required slot without inventing a value. Record it,
-      // so the dispatcher knows this null means "absent" rather than a
-      // value the tool asked for.
+      // Recorded so the dispatcher can tell this null, which means
+      // "absent", from one the tool genuinely accepts.
       if (typeof type === "string" && type !== "null") {
         property.type = [type, "null"];
         nullable.add(name);
@@ -453,16 +354,9 @@ function toPiParameters(
 }
 
 /**
- * Drop the null placeholders strict mode introduced, and only those.
- *
- * A closed schema has to list every property as required, so an omitted
- * optional field is sent as null instead. Those nulls mean "absent" and
- * have to go before Zod sees them. A null the tool genuinely accepts
- * must survive: `exec`'s structured `input` is any JSON value, so a
- * model passing null there means it.
- *
- * `nullable` names the fields this adapter widened for one tool, so
- * only those are stripped.
+ * Strips only the nulls that {@link toPiParameters} introduced, named
+ * by `nullable`. A null on any other field is a value the tool accepts
+ * — `exec`'s structured `input` is any JSON — and must survive.
  */
 function dropPlaceholderNulls(args: unknown, nullable: ReadonlySet<string>): unknown {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return args;

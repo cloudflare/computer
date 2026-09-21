@@ -1,13 +1,3 @@
-/**
- * Lowering from the neutral `ModelOutput` onto the AI SDK's tool output
- * parts.
- *
- * Kept in its own module because both the `./ai.js` adapter and the
- * standalone `createReadTool` in `./fs/read.js` need it, and `ai.js`
- * imports the registry that `read.js` feeds — importing it from there
- * would close a cycle.
- */
-
 import type { JSONValue } from "ai";
 import type { ModelOutput } from "../common/model-output.js";
 

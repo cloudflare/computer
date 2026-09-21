@@ -1,10 +1,6 @@
-// pi's Workers AI provider, transported over the `AI` binding.
-//
-// The catalog, request shaping, and streaming parser are pi's own. Only
-// the transport changes: instead of posting to the REST endpoint with an
-// API token, each request goes through
-// `binding.run(model, body, { returnRawResponse: true })`, so the
-// example needs no API key and AI Gateway attaches by id.
+// pi's Workers AI provider, transported over the `AI` binding rather
+// than the REST endpoint, so the example needs no API key. Only the
+// transport differs from pi's own provider.
 //
 // Lifted from the pi harness example in cloudflare/agents.
 
@@ -34,7 +30,6 @@ function bodyText(body: BodyInit | null | undefined): string {
   throw new TypeError("Workers AI pi requests require a JSON request body");
 }
 
-/** One Workers AI model, described the way pi wants it. */
 function model(id: string): Model<"openai-completions"> {
   return {
     id,

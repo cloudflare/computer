@@ -1,12 +1,3 @@
-/**
- * Individual AI SDK tools.
- *
- * `createAITools` in `./index.js` builds the whole set at once, which
- * is what most callers want. These are the same tools one at a time,
- * for a caller assembling a bespoke tool set — a different name, a
- * subset, or an extra tool of its own alongside them.
- */
-
 import { type Tool, tool } from "ai";
 import type { z } from "zod";
 import {

@@ -1,8 +1,5 @@
-// A one-shot agent built on pi, working in a durable Workspace.
-//
-// POST a task, and the agent uses the workspace tools to carry it out.
-// The whole loop is the `run` method below: ask the model, run whatever
-// tools it asked for, repeat until it stops asking.
+// A one-shot agent on pi, working in a durable Workspace. pi leaves
+// the agent loop to the caller, so `run` below is that whole loop.
 //
 //   client ──► Worker / ──► PiAgent DO ──► Workspace (files + shell)
 //                                  │
@@ -23,14 +20,12 @@ import { createModels, type Message } from "@earendil-works/pi-ai";
 import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai.js";
 
 // The worker-shell backend reaches back into this durable object by
-// binding name and id, so the in-isolate shell shares one filesystem
-// with the agent.
+// binding name and id, so the shell shares the agent's filesystem.
 export { WorkspaceServiceProxy };
 
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-// Stop after this many model turns, so a confused model cannot loop
-// forever on someone else's bill.
+// Bound the spend if the model fails to converge.
 const MAX_TURNS = 10;
 
 export class PiAgent extends DurableObject<Env> {
@@ -53,8 +48,6 @@ export class PiAgent extends DurableObject<Env> {
   }
 
   async run(task: string): Promise<string> {
-    // `tools` is the list the model sees. `execute` runs one of its
-    // requests and hands back a result to put in the transcript.
     const { tools, execute } = createPiTools({
       workspace: this.workspace,
       shell: {
@@ -80,7 +73,6 @@ export class PiAgent extends DurableObject<Env> {
       messages.push(reply);
 
       const calls = reply.content.filter((block) => block.type === "toolCall");
-      // Nothing left to run, so this reply is the answer.
       if (calls.length === 0) {
         return reply.content
           .filter((block) => block.type === "text")
