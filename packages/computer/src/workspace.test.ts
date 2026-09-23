@@ -1431,7 +1431,7 @@ describe("Workspace transport-failure invalidation", () => {
         connects++;
         if (connects === 1) {
           throw new WorkspaceTransportError(
-            "CloudflareContainerBackend(only): connect failed at stage=health",
+            "LegacyContainerBackend(only): connect failed at stage=health",
           );
         }
         return { rpc: composite(fakeRpc()), close: async () => {} };

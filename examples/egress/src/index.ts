@@ -11,9 +11,9 @@ import {
   withWorkspace,
 } from "@cloudflare/computer";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
 import {
   WorkerShellBackend,
@@ -43,12 +43,14 @@ export class EgressGateway extends WorkerEntrypoint<Env> {
   }
 }
 
-class EgressContainerBase extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+class EgressContainerBase extends withLegacyWorkspaceContainer(
+  class extends DurableObject<Env> {},
+) {
   readonly egress = workspaceEgressPolicy(this.env.EGRESS_MODE, () =>
     this.ctx.exports.EgressGateway({}),
   );
 
-  readonly containerBackend = new CloudflareContainerBackend({
+  readonly containerBackend = new LegacyContainerBackend({
     container: () => this,
     workspace: { binding: "EgressExample", id: this.ctx.id.toString() },
     egress: this.egress,

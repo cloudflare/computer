@@ -1,6 +1,6 @@
 // Container lifecycle helpers.
 //
-// `WorkspaceContainerAPI` is constructed fresh on every
+// `LegacyWorkspaceContainerAPI` is constructed fresh on every
 // getWorkspaceContainer() call, so instance fields can't track
 // monitor state across calls. The state lives in a module-level
 // WeakMap keyed by the owning DO's ctx; each DO gets one slot,
@@ -137,7 +137,7 @@ export async function destroyContainerExpectingExit(
   await container.destroy();
   // Wait for the destroyed generation's monitor handler to run so
   // its expected-exit log fires before the caller (e.g.
-  // WorkspaceContainerAPI.restart) installs the next generation's
+  // LegacyWorkspaceContainerAPI.restart) installs the next generation's
   // monitor and bumps currentGeneration out from under it. The
   // platform settles monitor() asynchronously relative to
   // destroy(); without this await the next install supersedes the

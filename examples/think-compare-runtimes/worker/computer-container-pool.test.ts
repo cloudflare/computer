@@ -1,4 +1,4 @@
-import type { ContainerLaunchSpec } from "@cloudflare/computer/backends/container";
+import type { ContainerLaunchSpec } from "@cloudflare/computer/backends/container-legacy";
 import { describe, expect, test, vi } from "vitest";
 import type { WorkspaceContainerHost } from "./computer-container-pool";
 

@@ -1,9 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   type ContainerLaunchSpec,
-  type IWorkspaceContainerAPI,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  type ILegacyWorkspaceContainerAPI,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { type ContainerPoolConfigEnv, containerSleepAfterMs } from "./container-config";
 import type { WarmPoolRuntime } from "./container-pool-manager";
 import { ContainerWarmPool } from "./container-warm-pool";
@@ -17,7 +17,7 @@ export interface WorkspacePoolEnv extends ContainerPoolConfigEnv {
 }
 
 export interface WorkspaceContainerHostHandle {
-  getWorkspaceContainer(): IWorkspaceContainerAPI | Promise<IWorkspaceContainerAPI>;
+  getWorkspaceContainer(): ILegacyWorkspaceContainerAPI | Promise<ILegacyWorkspaceContainerAPI>;
   startWarmContainer(spec: ContainerLaunchSpec, inactivityTimeoutMs: number): Promise<void>;
   destroyWarmContainer(): Promise<void>;
   isWarmContainerHealthy(): Promise<boolean>;
@@ -31,7 +31,7 @@ export class WorkspaceWarmPool extends ContainerWarmPool<WorkspacePoolEnv> {
 
 class WorkspaceContainerHostDurableObject extends DurableObject<WorkspacePoolEnv> {}
 
-class WorkspaceContainerHostBase extends withWorkspaceContainer(
+class WorkspaceContainerHostBase extends withLegacyWorkspaceContainer(
   WorkspaceContainerHostDurableObject,
 ) {}
 
@@ -122,7 +122,7 @@ function workspaceLaunchSpec(env: WorkspacePoolEnv): ContainerLaunchSpec {
 }
 
 // The subset of the workspace container API a warm start needs.
-// Structurally satisfied by IWorkspaceContainerAPI.
+// Structurally satisfied by ILegacyWorkspaceContainerAPI.
 interface WorkspaceWarmStartAPI {
   setInactivityTimeout(durationMs: number): Promise<void>;
   start(spec: ContainerLaunchSpec): Promise<unknown>;

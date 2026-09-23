@@ -8,7 +8,7 @@ A Cloudflare Worker + Durable Object that runs a Workspace whose
 shell is a **Dynamic Worker** loaded through `env.LOADER`. The
 shell is [`just-bash`](https://github.com/vercel-labs/just-bash);
 the user-facing HTTP surface mirrors
-[`examples/container`](../container) so the same `curl`
+[`examples/container-legacy`](../container-legacy) so the same `curl`
 recipes work, just without the container.
 
 ## Architecture

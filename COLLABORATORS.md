@@ -11,7 +11,7 @@ Requirements:
 - Node 22 or newer. `packages/computerd` declares `"engines": { "node": ">=22" }`.
 - npm. This repo uses npm workspaces, not pnpm or yarn.
 - Linux with FUSE if you want to run `packages/computerd` end-to-end. The rest of the workspace builds and tests on macOS as well.
-- Docker, optionally, for `examples/container`.
+- Docker, optionally, for `examples/container-legacy`.
 
 Clone and install from the repo root:
 

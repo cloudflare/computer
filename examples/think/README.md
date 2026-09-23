@@ -76,7 +76,7 @@ does not configure the assets publisher, so `publish` is not offered.
   has no public network of its own. Only `https://` URLs are
   supported.
 - `"container"` — a Cloudflare Container running `computerd` over capnweb,
-  modelled on [`examples/container`](../container). It has full Linux
+  modelled on [`examples/container-legacy`](../container-legacy). It has full Linux
   userland, public network, `npm`, `node`, `python`, package managers,
   test runners, and other real binaries on `$PATH`. It cold-starts
   more slowly, so use it when the shell backend cannot run the
@@ -87,7 +87,7 @@ The system prompt tells the model to prefer `read`/`ls` over
 fast `shell` backend before falling through to `container`. See
 [`docs/05_runtime_interface.md`](../../docs/05_runtime_interface.md),
 [`docs/13_git_interface.md`](../../docs/13_git_interface.md), and
-[`examples/container`](../container).
+[`examples/container-legacy`](../container-legacy).
 
 ## Running it locally
 

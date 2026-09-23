@@ -125,7 +125,7 @@ lifetime policy. From the DO's perspective:
 `computerd` is a long-lived process. It outlives DO restarts — the
 `Container.monitor()` promise resolves only when the container itself
 exits, and the backend's `#monitoring` flag drops the cached handle at
-that point so the next call rebuilds from scratch (see the container host and backend implementations under `packages/computer/src/backends/container/`).
+that point so the next call rebuilds from scratch (see the container host and backend implementations under `packages/computer/src/backends/container-legacy/`).
 
 When `computerd` runs with its default in-memory store, the two sides
 differ: the **container's VFS lasts only as long as the process**,
@@ -169,7 +169,7 @@ the `close` callback, the session is gone.
 ### Where capnweb attaches in our code
 
 On the DO side: `newWebSocketRpcSession(ws)` in
-`CloudflareContainerBackend.connect()` in `packages/computer/src/backends/container/cloudflare-container.ts`.
+`LegacyContainerBackend.connect()` in `packages/computer/src/backends/container-legacy/cloudflare-container.ts`.
 This installs `addEventListener("message", ...)` on the accepted
 WebSocket, which means **the DO must be alive in memory to receive
 frames**. There is no hibernation-aware variant today.
@@ -293,7 +293,7 @@ prove no unbounded growth under sustained workloads.
 
 > [!NOTE]
 > This section describes a target architecture, not shipped code.
-> Today's `CloudflareContainerBackend` uses `server.accept()`, which
+> Today's `LegacyContainerBackend` uses `server.accept()`, which
 > is **not** the hibernation API. The DO stays in memory for the
 > lifetime of the WebSocket. Enabling hibernation requires changes
 > across capnweb and the backend; the work is sketched here so the

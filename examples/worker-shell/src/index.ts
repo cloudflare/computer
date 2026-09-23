@@ -85,7 +85,7 @@ export class ContainerExample extends withWorkspace(class extends DurableObject<
 }) {}
 
 // ---------------------------------------------------------------
-// Worker HTTP surface (mirrors examples/container)
+// Worker HTTP surface (mirrors examples/container-legacy)
 // ---------------------------------------------------------------
 
 interface ExecRequest {

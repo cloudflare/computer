@@ -21,7 +21,7 @@ npm run build:bin --workspace @cloudflare/computerd
 # → artifacts/computerd/computerd-macos-x64
 ```
 
-`examples/container/Dockerfile` is the canonical recipe for
+`examples/container-legacy/Dockerfile` is the canonical recipe for
 staging the binary into a container image.
 
 ## Responsibilities
@@ -65,7 +65,7 @@ The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
 
 ## Installing into your sandbox image
 
-The canonical recipe is `examples/container/Dockerfile`:
+The canonical recipe is `examples/container-legacy/Dockerfile`:
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:stable-slim
@@ -118,10 +118,10 @@ Provider-agnostic shape — three steps, in order:
 
 ### Cloudflare Containers specifics
 
-`CloudflareContainerBackend` (`packages/computer/src/backends/container/cloudflare-container.ts`)
+`LegacyContainerBackend` (`packages/computer/src/backends/container-legacy/cloudflare-container.ts`)
 wires it like this:
 
-1. **Start.** `WorkspaceContainerAPI.start({ env, enableInternet })`,
+1. **Start.** `LegacyWorkspaceContainerAPI.start({ env, enableInternet })`,
    which reaches the Cloudflare Containers API — not the
    `@cloudflare/sandbox` SDK. There is no process-name registry, no
    `startProcess`/`getProcess`, and no `node /app/...` command (the
@@ -157,7 +157,7 @@ Sharp edges actually present in `cloudflare-container.ts`:
 - `#armUpgrade` must be set up *before* `#postConnect`, because `computerd`
   can dial back before the `POST /connect` response returns.
 - The container host records each monitored generation's exit reason. The dead container closes its WebSocket, and `fetchPort()` also short-circuits later requests with a transport error; either path invalidates the matching Workspace handle.
-- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `CloudflareContainerBackend.connect()` again. The replacement runs the complete start, egress-interception, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
+- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `LegacyContainerBackend.connect()` again. The replacement runs the complete start, egress-interception, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
 
 ## Environment variables
 

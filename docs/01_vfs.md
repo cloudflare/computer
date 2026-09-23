@@ -16,12 +16,12 @@ container, not on `WorkspaceOptions`).
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
-import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
+import { LegacyContainerBackend } from "@cloudflare/computer/backends/container-legacy";
 
 new Workspace({
   storage:  ctx.storage,
   backends: [
-    new CloudflareContainerBackend({
+    new LegacyContainerBackend({
       container: () => this,
       workspace: { binding: "ContainerExample", id: ctx.id.toString() },
     }),
@@ -126,7 +126,7 @@ by the in-image `FUSE_MOUNT` env var (`auto` by default; see doc 07).
 On Cloudflare Containers `/dev/fuse` is exposed and the real kernel
 FUSE backend mounts; under `wrangler dev` it isn't, and `auto` falls
 back to the userspace shim. Either way the in-container view is a
-live mirror of the DO-side VFS. Earlier revisions of `CloudflareContainerBackend`
+live mirror of the DO-side VFS. Earlier revisions of `LegacyContainerBackend`
 pinned `DISABLE_FUSE=1`, which produced a degraded mode where:
 
 - The in-container filesystem at `/workspace` is the container's own

@@ -5,7 +5,7 @@ import {
   WorkspaceServiceProxy,
   type WorkspaceStub,
 } from "@cloudflare/computer";
-import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
+import { LegacyContainerBackend } from "@cloudflare/computer/backends/container-legacy";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { getSandbox } from "@cloudflare/sandbox";
 import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
@@ -236,7 +236,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
   readonly runtime = "workspace";
   readonly runtimeLabel = "Workspace";
   readonly #ctx: DurableObjectState;
-  #activeBackend: CloudflareContainerBackend | null = null;
+  #activeBackend: LegacyContainerBackend | null = null;
   #activeWorkspace: Workspace | null = null;
 
   constructor(ctx: DurableObjectState, env: RuntimeThinkAgentEnv) {
@@ -296,7 +296,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
   ): WorkspaceRunSession {
     const workspaceRef = { binding: "WorkspaceThinkAgent", id: this.#ctx.id.toString() };
     let assignedContainerId: string | null = null;
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       id: "container",
       container: async () => {
         const containerId = await getWarmPoolHandle(this.env.WorkspaceWarmPool).getContainer(
@@ -416,7 +416,7 @@ export class SandboxThinkAgent extends RuntimeThinkAgent {
 }
 
 interface WorkspaceRunSession {
-  backend: CloudflareContainerBackend;
+  backend: LegacyContainerBackend;
   workspace: Workspace;
   close(): Promise<void>;
 }

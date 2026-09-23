@@ -59,8 +59,8 @@ vi.mock("@cloudflare/computer", () => ({
   WorkspaceServiceProxy: class {},
 }));
 
-vi.mock("@cloudflare/computer/backends/container", () => ({
-  CloudflareContainerBackend: class {
+vi.mock("@cloudflare/computer/backends/container-legacy", () => ({
+  LegacyContainerBackend: class {
     readonly id: string;
 
     constructor(options: Record<string, unknown>) {

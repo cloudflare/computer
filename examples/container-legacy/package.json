@@ -1,5 +1,5 @@
 {
-  "name": "@example/computer-container",
+  "name": "@example/computer-container-legacy",
   "version": "0.0.0",
   "private": true,
   "type": "module",

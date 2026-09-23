@@ -8,9 +8,9 @@ import {
   withWorkspace,
 } from "@cloudflare/computer";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createGitClient } from "@cloudflare/computer/git";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -29,7 +29,7 @@ const TOKEN_ENCODER = new TextEncoder();
 
 class ComputerMCPDurableObject extends DurableObject<Env> {}
 
-class ComputerMCPBase extends withWorkspaceContainer(ComputerMCPDurableObject) {
+class ComputerMCPBase extends withLegacyWorkspaceContainer(ComputerMCPDurableObject) {
   readonly workerShell = new WorkerShellBackend({
     loader: this.env.LOADER,
     workspace: { binding: "COMPUTER_MCP", id: this.ctx.id.toString() },
@@ -37,7 +37,7 @@ class ComputerMCPBase extends withWorkspaceContainer(ComputerMCPDurableObject) {
     egress: { mode: "none" },
   });
 
-  readonly containerShell = new CloudflareContainerBackend({
+  readonly containerShell = new LegacyContainerBackend({
     container: () => this,
     workspace: { binding: "COMPUTER_MCP", id: this.ctx.id.toString() },
     egress: { mode: "direct" },

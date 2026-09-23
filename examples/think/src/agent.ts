@@ -15,8 +15,8 @@
  *     store, agentic loop, and chat protocol.
  *   - We own a `@cloudflare/computer.Workspace` with two backends:
  *     a WorkerShellBackend (`"shell"`) for fast just-bash text tooling and
- *     a CloudflareContainerBackend (`"container"`) for full Linux
- *     userland through computerd. This mirrors examples/container while
+ *     a LegacyContainerBackend (`"container"`) for full Linux
+ *     userland through computerd. This mirrors examples/container-legacy while
  *     keeping the chat surface unchanged.
  *   - `useThink: true` adds the string-based compatibility surface
  *     Think expects; the cast promotes it from optional to present.
@@ -33,9 +33,9 @@ import {
   type WorkspaceStub,
 } from "@cloudflare/computer";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createAITools } from "@cloudflare/computer/tools";
 import { Think } from "@cloudflare/think";
@@ -58,11 +58,11 @@ function workspaceRef(ctx: DurableObjectState) {
   return { binding: "Assistant", id: ctx.id.toString() };
 }
 
-// Anchor Think's generic before the mixin so withWorkspaceContainer
+// Anchor Think's generic before the mixin so withLegacyWorkspaceContainer
 // sees a concrete constructor.
 class AssistantBase extends Think<Env> {}
 
-export class Assistant extends withWorkspaceContainer(AssistantBase) {
+export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
   /** We have a dedicated `exec` tool; skip Think's built-in bash. */
   override workspaceBash = false;
 
@@ -72,11 +72,11 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
   /**
    * Container backend used when `exec` needs a real Linux userland.
    * The DO itself owns the container binding through the
-   * withWorkspaceContainer mixin; CloudflareContainerBackend handles
+   * withLegacyWorkspaceContainer mixin; LegacyContainerBackend handles
    * startup, outbound egress interception, the /api upgrade, and the
    * capnweb session.
    */
-  readonly #containerBackend = new CloudflareContainerBackend({
+  readonly #containerBackend = new LegacyContainerBackend({
     id: "container",
     container: () => this,
     workspace: workspaceRef(this.ctx),

@@ -25,9 +25,9 @@ import {
 } from "@cloudflare/computer";
 import { createAssets } from "@cloudflare/computer/assets";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { Think } from "@cloudflare/think";
 import { getAgentByName } from "agents";
 
@@ -37,7 +37,7 @@ export { WorkspaceProxy };
 
 class RecipeBase extends Think<Env> {}
 
-export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
+export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
   override maxSteps = 10;
   override fetchTools = {
     allowlist: ["https://openstove.org/**"],
@@ -45,7 +45,7 @@ export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
     maxModelChars: 64_000,
   };
 
-  readonly #backend = new CloudflareContainerBackend({
+  readonly #backend = new LegacyContainerBackend({
     container: () => this,
     workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
     egress: { mode: "direct" },
