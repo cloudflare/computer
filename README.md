@@ -51,9 +51,14 @@ for setup, build, and test instructions.
 The [`examples/`](examples) directory holds runnable consumers of the
 public surface. Each is a Worker workspace with its own README.
 
-- [`examples/container-legacy`](examples/container-legacy) — runs `computerd` inside a
-  container, mounts a workspace, and talks to a Durable Object over
-  capnweb. A `write` / `read` / `exec` HTTP surface.
+- [`examples/container`](examples/container) — runs `computerd` inside a
+  container the Durable Object schedules itself, mounts a workspace, and
+  talks to the object over capnweb. A `write` / `read` / `exec` HTTP
+  surface. The launch names the image and the instance size, because
+  `scheduling_policy: "durable_object"` moves both out of the config.
+- [`examples/container-legacy`](examples/container-legacy) — the same
+  surface against a container the platform schedules and sizes from the
+  `containers` block.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the
   container example, but the shell runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker loaded through `env.LOADER`. No container.

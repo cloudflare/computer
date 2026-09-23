@@ -1,4 +1,5 @@
-// Duplicated verbatim from ../container-legacy/. The two backends serve
+// Duplicated from ../container-legacy/, differing only in the name of
+// the host interface it probes through. The two backends serve
 // different container scheduling policies, but this file touches
 // neither the launch spec nor the policy, so there is no divergence
 // pressure on it and the copy is deliberate rather than overlooked.

@@ -21,8 +21,8 @@ npm run build:bin --workspace @cloudflare/computerd
 # → artifacts/computerd/computerd-macos-x64
 ```
 
-`examples/container-legacy/Dockerfile` is the canonical recipe for
-staging the binary into a container image.
+`examples/container/Dockerfile` is the canonical recipe for staging the
+binary into a container image.
 
 ## Responsibilities
 
@@ -65,7 +65,7 @@ The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
 
 ## Installing into your sandbox image
 
-The canonical recipe is `examples/container-legacy/Dockerfile`:
+The canonical recipe is `examples/container/Dockerfile`:
 
 ```dockerfile
 FROM --platform=linux/amd64 debian:stable-slim
@@ -118,46 +118,43 @@ Provider-agnostic shape — three steps, in order:
 
 ### Cloudflare Containers specifics
 
-`LegacyContainerBackend` (`packages/computer/src/backends/container-legacy/cloudflare-container.ts`)
-wires it like this:
+Cloudflare Computer has one backend for each container scheduling policy.
 
-1. **Start.** `LegacyWorkspaceContainerAPI.start({ env, enableInternet })`,
-   which reaches the Cloudflare Containers API — not the
-   `@cloudflare/sandbox` SDK. There is no process-name registry, no
-   `startProcess`/`getProcess`, and no `node /app/...` command (the
-   container's `ENTRYPOINT` runs `computerd` directly). `containerEnv`
-   pins `PORT=8080` and lets the image's own `FUSE_MOUNT` value
-   (typically `auto`) win, and the API adds `RPC_CLIENT_SECRET`.
+`ContainerBackend` is the default. It works with containers that the durable
+object schedules, configured with `scheduling_policy: "durable_object"` and
+an `images` map. Each launch selects an image from
+`ctx.container.images`. The backend can also request an `instance` size and
+pass options such as `entrypoint`, `labels`, and snapshot settings to
+`container.start()`.
 
-   Neither the environment nor the internet flag can be changed on a
-   running container, so the launch records both and a container found
-   already running is only adopted when it matches. Otherwise it is
-   relaunched, which is what keeps a warm pool from handing a workspace
-   a container configured for something else. A container started
-   outside this API has no record and is relaunched too.
+`LegacyContainerBackend` works with containers that the platform schedules.
+The containers block chooses the image and instance size, so this backend
+passes only the environment and internet setting when it starts the
+container.
+
+Both backends use the same connection flow:
+
+1. **Start the container.** The image's `ENTRYPOINT` runs `computerd`
+   directly. The backend sets `PORT=8080`, preserves the image's
+   `FUSE_MOUNT` setting, and adds `RPC_CLIENT_SECRET`. It records the launch
+   settings so it can reject or replace a running container with the wrong
+   configuration.
 2. **Wire egress.** `container.interceptOutboundHttp(egressHost, egress)`
-   routes outbound HTTP from the container at `egressHost` back to a
-   Worker `Fetcher` the DO controls.
-3. **Probe.** `container.getTcpPort(containerPort).fetch("/health", { method: "HEAD" })`,
-   repeated until it returns `200`.
-4. **Invert the WebSocket.** The DO arms an upgrade slot
-   (`#armUpgrade`) and then `POST`s to `/connect` on the container
-   (`#postConnect`). The request names the egress base and both paths,
-   so `computerd` polls `base + health` and then dials `base + api`;
-   the daemon assembles no paths of its own. Because the egress is
-   intercepted,
-   that outbound dial loops back to the DO's `handleFetch()`, which
-   accepts the upgrade and resolves the in-flight `#pendingUpgrade`.
-   The capnweb session then runs over that socket. **The WebSocket
-   carrier is inverted** versus a naive "host dials into container"
-   model.
+   routes outbound HTTP from the container back to a Worker `Fetcher` owned
+   by the durable object.
+3. **Probe health.** The backend sends `HEAD /health` through the
+   container's TCP port until `computerd` responds.
+4. **Open the WebSocket.** The backend prepares an upgrade slot before it
+   posts to `/connect`. `computerd` then dials the intercepted egress URL,
+   which routes the upgrade back to `handleFetch()`. The capnweb session
+   runs over that WebSocket.
 
-Sharp edges actually present in `cloudflare-container.ts`:
-
-- `#armUpgrade` must be set up *before* `#postConnect`, because `computerd`
-  can dial back before the `POST /connect` response returns.
-- The container host records each monitored generation's exit reason. The dead container closes its WebSocket, and `fetchPort()` also short-circuits later requests with a transport error; either path invalidates the matching Workspace handle.
-- **Reconnect replaces the whole session.** If the WebSocket dies, `Workspace` invalidates and closes the matching backend handle, then calls `LegacyContainerBackend.connect()` again. The replacement runs the complete start, egress-interception, health, `/connect`, and reverse-WebSocket sequence; the backend never splices a new carrier into the dead capnweb session. Replay-safe sync and process lifecycle operations get one retry. Command spawn is retried only when no request was dispatched.
+A reconnect creates a complete new session. If the WebSocket closes,
+`Workspace` drops the old backend handle and calls the selected backend's
+`connect()` method again. The replacement starts or adopts the container,
+checks health, and repeats the `/connect` handshake. Sync and process
+lifecycle operations get one retry when replay is safe. A command is only
+retried when the request was not dispatched.
 
 ## Environment variables
 

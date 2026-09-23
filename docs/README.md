@@ -43,7 +43,8 @@ The package ships several entrypoints:
 | Entrypoint | Purpose |
 | --- | --- |
 | `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
-| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`, for a container the durable object schedules (`scheduling_policy: "durable_object"`). Same sync plumbing; the launch names the image and the instance size. |
+| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
@@ -58,7 +59,7 @@ Wire types shared with the in-container service live in the sibling package `@cl
 ### Sandbox container image
 
 The container needs the `computerd` daemon alongside a FUSE runtime. The
-simplest pattern, used by [`examples/container-legacy/Dockerfile`](../examples/container-legacy/Dockerfile),
+simplest pattern, used by [`examples/container/Dockerfile`](../examples/container/Dockerfile),
 copies the prebuilt binary out of the public GHCR image and into a thin
 Debian base:
 
@@ -87,32 +88,38 @@ To build the binary from source instead, run `npm run build:bin
 `artifacts/computerd/computerd-linux-x64`, then `COPY` that into the
 image.
 
-`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what `examples/container-legacy/` uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
+`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what [`examples/container`](../examples/container) uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
 
 ## Example
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
 import {
-  LegacyContainerBackend,
-  withLegacyWorkspaceContainer,
-} from "@cloudflare/computer/backends/container-legacy";
+  ContainerBackend,
+  withWorkspaceContainer,
+} from "@cloudflare/computer/backends/container";
 import { DurableObject } from "cloudflare:workers";
 
-export class Agent extends withLegacyWorkspaceContainer(class extends DurableObject<Env> {}) {
+export class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  readonly backend = new ContainerBackend({
+    container: () => this,
+    workspace: { binding: "Agent", id: this.ctx.id.toString() },
+    name: "app",
+    instance: "standard-2",
+  });
+
   readonly workspace = new Workspace({
-    storage: this.ctx.storage, // DO storage → VFS lives here
-    backends: [
-      new LegacyContainerBackend({
-        container: () => this,
-        workspace: { binding: "Agent", id: this.ctx.id.toString() },
-      }),
-    ],
+    storage: this.ctx.storage, // Durable Object storage → VFS lives here
+    backends: [this.backend],
   });
 
   async initialize() {
     await this.workspace.ready();
     await this.workspace.fs.mkdir("/workspace", { recursive: true });
+  }
+
+  override fetch(request: Request): Promise<Response> {
+    return this.backend.handleFetch(request);
   }
 }
 ```

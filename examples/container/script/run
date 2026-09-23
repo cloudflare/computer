@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Four-step smoke test against a running `wrangler dev` of this
+# example. Demonstrates the round-trip between the file HTTP
+# surface (which writes through the DO into the workspace VFS) and
+# the exec HTTP surface (which runs commands inside the container,
+# where computerd's FUSE / shim mount exposes the same tree at
+# /workspace).
+#
+# Run `npm run dev` in another terminal first, then:
+#   ./script/run                          # against http://127.0.0.1:8787
+#   ./script/run https://my-deploy.example.workers.dev
+#   NAME=foo ./script/run                 # use DO instance 'foo' instead of 'demo'
+
+set -euo pipefail
+
+BASE_URL="${1:-http://127.0.0.1:8787}"
+BASE_URL="${BASE_URL%/}"
+NAME="${NAME:-demo}"
+PATH_VIA_API="api-wrote.txt"
+PATH_VIA_EXEC="exec-wrote.txt"
+
+step() { printf '\n=== %s ===\n' "$*"; }
+fail() { printf '\nFAIL: %s\n' "$*" >&2; exit 1; }
+
+step "1. write via API: PUT /c/${NAME}/file/workspace/${PATH_VIA_API}"
+printf 'hello-from-api' | curl -fsS -X PUT --data-binary @- \
+  "${BASE_URL}/c/${NAME}/file/workspace/${PATH_VIA_API}" \
+  -w 'HTTP %{http_code}\n'
+
+step "2. read via exec: cat /workspace/${PATH_VIA_API} inside the container"
+read_via_exec=$(curl -fsS -X POST "${BASE_URL}/c/${NAME}/exec" \
+  -H 'content-type: application/json' \
+  -d "{\"command\":\"cat /workspace/${PATH_VIA_API}\",\"encoding\":\"utf8\"}")
+printf '%s\n' "$read_via_exec"
+echo "$read_via_exec" | grep -q 'hello-from-api' \
+  || fail "exec did not see the file the API just wrote"
+
+step "3. write via exec: echo … > /workspace/${PATH_VIA_EXEC}"
+curl -fsS -X POST "${BASE_URL}/c/${NAME}/exec" \
+  -H 'content-type: application/json' \
+  -d "{\"command\":\"echo hello-from-exec > /workspace/${PATH_VIA_EXEC} && cat /workspace/${PATH_VIA_EXEC}\",\"encoding\":\"utf8\"}"
+printf '\n'
+# No settle wait needed: computerd's `beforeFetch` hook runs the shim's
+# disk→VFS reconcile synchronously inside `fetchChanges`, so the
+# GET below is guaranteed to see whatever the exec just wrote.
+
+step "4. read via API: GET /c/${NAME}/file/workspace/${PATH_VIA_EXEC}"
+read_via_api=$(curl -fsS "${BASE_URL}/c/${NAME}/file/workspace/${PATH_VIA_EXEC}")
+printf '%s\n' "$read_via_api"
+[[ "$read_via_api" == "hello-from-exec" ]] \
+  || fail "API did not see the file exec just wrote (got: $read_via_api)"
+
+printf '\nOK — both directions round-tripped through the VFS.\n'
