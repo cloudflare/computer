@@ -5,6 +5,7 @@
   "compatibility_date": "2026-06-23",
   "compatibility_flags": ["nodejs_compat", "experimental"],
   "worker_loaders": [{ "binding": "LOADER" }],
+  "services": [{ "binding": "SELF", "service": "repl-tests" }],
   "durable_objects": {
     "bindings": [{ "name": "HOST", "class_name": "ReplHostDO" }]
   },

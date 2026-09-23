@@ -28,6 +28,8 @@
 //     deterministically, but replay re-waits real delays — committed
 //     sleeps make replay slow, never wrong.
 
+import { decodeReplValue, encodeReplValue } from "./codec.js";
+
 export const REPL_RUNNER_MODULE = "__repl_runner__.js";
 export const REPL_CELLS_MODULE = "__repl_cells__.js";
 
@@ -56,11 +58,25 @@ const MAX_LOG_ENTRY_CHARS = 8_192;
 
 // The runner source. A template-built string (matching how the
 // worker-javascript backend ships its runtime module) so the package build
-// needs no extra bundling step for isolate-side code.
+// needs no extra bundling step for isolate-side code. The value codec is
+// injected from its host-side definition via Function.prototype.toString()
+// — one codec, both runtimes.
 export function replRunnerModule(): string {
+  const codecSource = `${encodeReplValue.toString()}\n${decodeReplValue.toString()}`;
   return `
 import { WorkerEntrypoint } from "cloudflare:workers";
 import cells from "./${REPL_CELLS_MODULE}";
+
+// Bundler-safety prelude. When the package consumer bundles with esbuild's
+// keepNames option (wrangler's default), the codec sources injected below
+// via Function.prototype.toString() arrive laced with __name(...) helper
+// calls whose definition lives in the consumer bundle, not in this isolate.
+// Define the same helper here so injected sources run either way. This
+// module itself is a template string, so bundlers never transform it.
+const __name = (target, value) =>
+  Object.defineProperty(target, "name", { value, configurable: true });
+
+${codecSource}
 
 const fx = { mode: "record", queue: [], recorded: [] };
 const DIVERGENCE = "__repl_replay_divergence__: ";
@@ -91,6 +107,123 @@ function effect(kind, make) {
   }
   return entry.value;
 }
+
+// --- capability proxies -------------------------------------------------
+//
+// Granted capabilities appear as globals. Every method call crosses the
+// bridge in record mode and is logged (value, minted handle, or error —
+// errors too, so a cell that caught one replays identically). In serve
+// mode the log answers everything: zero live calls. Call identity is
+// id + path + encoded args; any mismatch is a hard divergence error.
+
+let BRIDGE;
+const PROXY_META = new WeakMap();
+const INJECTED = new Map();
+
+function joinPath(path, prop) {
+  return path === "" ? prop : path + "." + prop;
+}
+
+function makeCap(id, shape, recipe, path) {
+  const base = shape && shape.callable ? function () {} : {};
+  const proxy = new Proxy(base, {
+    get(_target, prop) {
+      if (typeof prop !== "string") return undefined;
+      // Never look like a thenable: \`await cap\` must yield the proxy.
+      if (prop === "then") return undefined;
+      if (shape && !shape.opaque) {
+        if (shape.data && Object.prototype.hasOwnProperty.call(shape.data, prop)) {
+          return decodeReplValue(shape.data[prop]);
+        }
+        if (shape.children && Object.prototype.hasOwnProperty.call(shape.children, prop)) {
+          return makeCap(id, shape.children[prop], recipe, joinPath(path, prop));
+        }
+        if (shape.methods && shape.methods.includes(prop)) {
+          return (...args) => doCall(id, joinPath(path, prop), args, recipe);
+        }
+        return undefined;
+      }
+      // Opaque surface (RPC stub): assume every property is a method.
+      return (...args) => doCall(id, joinPath(path, prop), args, recipe);
+    },
+    apply(_target, _thisArg, args) {
+      return doCall(id, path, args, recipe);
+    },
+  });
+  PROXY_META.set(proxy, { id, recipe });
+  return proxy;
+}
+
+function capError(e) {
+  const error = new Error(e.message);
+  error.name = e.name;
+  if (e.kind) error.replKind = e.kind;
+  return error;
+}
+
+async function doCall(id, path, args, recipe) {
+  // Arg encoding failures are deterministic (same code, same throw), so
+  // they need no effect entry — replay reproduces them from code alone.
+  const encArgs = encodeReplValue(args, (candidate) => {
+    const meta = PROXY_META.get(candidate);
+    if (meta) return { $repl: "handle", id: meta.id, recipe: meta.recipe };
+    return undefined;
+  });
+  const callId = id + "|" + (path === "" ? "()" : path) + "|" + JSON.stringify(encArgs);
+  if (fx.mode === "record") {
+    const reply = await BRIDGE.invoke(id, path, encArgs, recipe);
+    if (!reply.ok) {
+      fx.recorded.push({ kind: "cap", value: { call: callId, r: { t: "e", e: reply.error } } });
+      throw capError(reply.error);
+    }
+    if (reply.handle) {
+      fx.recorded.push({ kind: "cap", value: { call: callId, r: { t: "h", h: reply.handle } } });
+      return makeCap(reply.handle.id, reply.handle.shape, reply.handle.recipe, "");
+    }
+    fx.recorded.push({ kind: "cap", value: { call: callId, r: { t: "v", v: reply.value } } });
+    return decodeReplValue(reply.value);
+  }
+  const entry = fx.queue.shift();
+  if (!entry || entry.kind !== "cap" || !entry.value || entry.value.call !== callId) {
+    const found = !entry
+      ? "nothing"
+      : entry.kind !== "cap"
+        ? "a " + JSON.stringify(entry.kind) + " effect"
+        : "a different call (" + entry.value.call + ")";
+    throw new Error(
+      DIVERGENCE + "expected the recorded capability call " + callId + ", log had " + found +
+      ". Committed cells must replay exactly; this session's log no longer matches its code."
+    );
+  }
+  const r = entry.value.r;
+  if (r.t === "e") throw capError(r.e);
+  if (r.t === "h") return makeCap(r.h.id, r.h.shape, r.h.recipe, "");
+  return decodeReplValue(r.v);
+}
+
+// (Re)inject capability globals for one cell. Replayed cells get the grant
+// shapes they were recorded under — including their data snapshots — and
+// the new cell gets the current attachment's. Injection happens at every
+// cell start in both modes, so grants win over leftover same-name bindings
+// identically live and on replay.
+function injectGrants(shapes) {
+  // Restore whatever a grant name shadowed (e.g. the ambient-fetch error
+  // when a capability was granted as \`fetch\`), then remove our proxies.
+  for (const [name, prior] of INJECTED) {
+    try {
+      if (prior) Object.defineProperty(globalThis, name, prior);
+      else delete globalThis[name];
+    } catch {}
+  }
+  INJECTED.clear();
+  if (!shapes) return;
+  for (const name of Object.keys(shapes)) {
+    INJECTED.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    globalThis[name] = makeCap(name, shapes[name], name, "");
+  }
+}
+
+// --- recorded nondeterminism shims ---------------------------------------
 
 Math.random = () => effect("random", realRandom);
 if (realRandomUUID) crypto.randomUUID = () => effect("uuid", realRandomUUID);
@@ -128,6 +261,18 @@ if (globalThis.performance && typeof performance.now === "function") {
   performance.now = () => effect("perf-now", realPerfNow);
 }
 
+// Ambient network is deny-by-default (globalOutbound is null); replace
+// fetch so the failure names the fix instead of a connection error.
+if (typeof globalThis.fetch === "function") {
+  globalThis.fetch = () => {
+    throw new Error(
+      "No ambient network in REPL sessions — egress is deny-by-default. " +
+      "Network access arrives only as a granted fetch capability: call that " +
+      "by its granted name, or ask the host to grant one (fetchCapability())."
+    );
+  };
+}
+
 // GC timing (WeakRef/FinalizationRegistry) and cross-isolate cache state
 // cannot replay; remove the globals so use is a loud ReferenceError.
 for (const name of ["WeakRef", "FinalizationRegistry", "caches"]) {
@@ -163,6 +308,8 @@ for (const level of ["log", "info", "debug", "warn", "error"]) {
 
 function inspect(value, depth) {
   if (value === null) return "null";
+  const capMeta = PROXY_META.get(value);
+  if (capMeta) return "[capability handle: " + capMeta.recipe + "]";
   const t = typeof value;
   if (t === "string") return depth === 0 ? value : JSON.stringify(value);
   if (t === "number" || t === "boolean" || t === "bigint" || t === "undefined") return String(value);
@@ -189,7 +336,9 @@ function describeError(error, kind) {
     name: isError ? error.name : "Error",
     message: String(isError ? error.message : error),
     traceback: isError && error.stack ? String(error.stack) : undefined,
-    kind,
+    // Bridge-classified failures (stale-lease, not-granted, …) carry their
+    // kind on the thrown error; pass it through to the result.
+    kind: kind ?? (isError && error.replKind ? error.replKind : undefined),
   };
 }
 
@@ -198,10 +347,14 @@ export default class ReplRunner extends WorkerEntrypoint {
   // final cell in record mode. Returns a structured outcome; never throws
   // for cell-level failures (structure survives the RPC boundary, thrown
   // errors don't).
-  async run(effectLog) {
+  async run(effectLog, bridge, grants) {
+    BRIDGE = bridge;
+    const perCell = (grants && grants.perCell) || [];
+    const current = (grants && grants.current) || {};
     for (let i = 0; i < cells.length - 1; i++) {
       fx.mode = "serve";
       fx.queue = (effectLog[i] || []).slice();
+      injectGrants(perCell[i]);
       try {
         await cells[i]();
       } catch (error) {
@@ -224,6 +377,7 @@ export default class ReplRunner extends WorkerEntrypoint {
     fx.recorded = [];
     logs.entries = [];
     logs.dropped = 0;
+    injectGrants(current);
     let value;
     try {
       value = await cells[cells.length - 1]();
@@ -243,6 +397,9 @@ export default class ReplRunner extends WorkerEntrypoint {
       results: [],
     };
     try {
+      // A capability handle is not a value — it structured-clones as an
+      // empty shell — so it ships as a rendering instead.
+      if (PROXY_META.has(value)) throw new Error("capability handle");
       structuredClone(value);
       outcome.value = value;
       outcome.hasValue = true;

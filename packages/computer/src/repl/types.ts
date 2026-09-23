@@ -32,7 +32,28 @@ export type ReplErrorKind =
    * The cell exceeded its wall-clock or CPU budget and was destroyed.
    * Nothing was committed; split the work or raise timeoutMs.
    */
-  | "timeout";
+  | "timeout"
+  /**
+   * New code used a handle whose live object died with a session host
+   * restart. The error message carries the handle's acquisition recipe —
+   * re-run it to get a fresh handle. Committed cells replay from the log
+   * and never hit this.
+   */
+  | "stale-lease"
+  /**
+   * New code called a capability that is not granted in the current
+   * attachment — either directly, or through a handle descending from a
+   * root grant that was since revoked. Grants are attach-time: the host
+   * must re-attach the session with the capability before new code can
+   * use it.
+   */
+  | "not-granted"
+  /**
+   * A capability call returned more than the per-call recorded ceiling.
+   * Recorded values are replay input and are never truncated, so the cell
+   * failed instead. Write large data to workspace files and return a path.
+   */
+  | "oversized-result";
 
 export interface ReplExecutionError {
   name: string;

@@ -13,6 +13,8 @@
 import type { Database } from "@cloudflare/dofs";
 
 import type { WorkspaceRuntimeLoader } from "../runtime/types.js";
+import { ReplCapabilityBridge } from "./bridge.js";
+import type { ReplCapability, ReplCapabilityShape } from "./capability.js";
 import {
   REPL_CELLS_MODULE,
   REPL_RUNNER_MODULE,
@@ -31,7 +33,24 @@ export interface ReplSessionOptions {
   name: string;
   db: Database;
   loader: WorkspaceRuntimeLoader;
+  /**
+   * Capabilities granted to this attachment, by global name. Grants are
+   * attach-time: they apply to evals started after this attach. Committed
+   * cells always replay against the grants they were recorded with.
+   */
+  capabilities?: Record<string, ReplCapability>;
   timeoutMs?: number;
+  /**
+   * Per-effect recorded-value ceiling in JSON bytes (default 1 MiB).
+   * Oversized capability results are rejected, never truncated — the error
+   * tells the model to write large data to workspace files and pass paths.
+   * Lower it to push data toward files earlier (every recorded effect is
+   * reloaded on every future eval, so lean logs keep evals fast) or when a
+   * harness meters session weight per tenant. There is little headroom to
+   * raise it: effects are SQLite rows, and Durable Object SQLite caps a
+   * row at ~2 MB.
+   */
+  maxEffectBytes?: number;
   compatibilityDate?: string;
   now?: () => number;
 }
@@ -44,6 +63,8 @@ interface CommittedCell {
   code: string;
   transformed: string;
   effects: ReplEffect[];
+  /** Grant shapes (with data snapshots) this cell was recorded under. */
+  grants: Record<string, ReplCapabilityShape>;
 }
 
 interface RunOutcome {
@@ -57,8 +78,17 @@ interface RunOutcome {
   value?: unknown;
 }
 
+interface RunnerGrants {
+  perCell: Array<Record<string, ReplCapabilityShape>>;
+  current: Record<string, ReplCapabilityShape>;
+}
+
 interface RunnerEntrypoint {
-  run(effectLog: ReplEffect[][]): Promise<RunOutcome>;
+  run(
+    effectLog: ReplEffect[][],
+    bridge: ReplCapabilityBridge,
+    grants: RunnerGrants,
+  ): Promise<RunOutcome>;
   [Symbol.dispose]?: () => void;
 }
 
@@ -71,6 +101,10 @@ export class ReplSession {
   readonly #timeoutMs: number;
   readonly #compatibilityDate: string;
   readonly #now: () => number;
+  readonly #maxEffectBytes: number | undefined;
+  // Session-lifetime capability bridge: attach() swaps its root grants,
+  // while handles the session has acquired persist until host restart.
+  readonly #bridge: ReplCapabilityBridge;
   // Committed log, lazily loaded from SQLite; the DO is the single writer.
   #cells: CommittedCell[] | undefined;
   // Tail promise serializing evals on this session.
@@ -83,7 +117,22 @@ export class ReplSession {
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#compatibilityDate = options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE;
     this.#now = options.now ?? Date.now;
+    this.#maxEffectBytes = options.maxEffectBytes;
+    this.#bridge = new ReplCapabilityBridge(
+      options.capabilities ?? {},
+      this.#maxEffectBytes === undefined ? {} : { maxEffectBytes: this.#maxEffectBytes },
+    );
     initializeReplSchema(this.#db);
+  }
+
+  /**
+   * Replace this session's grants. Applies to evals started afterwards;
+   * an eval already in flight keeps the grants it started with. Handles
+   * acquired earlier stay alive, but are only callable while the root
+   * grant they descend from is still attached.
+   */
+  attach(capabilities: Record<string, ReplCapability>): void {
+    this.#bridge.attach(capabilities);
   }
 
   eval(code: string, options?: ReplEvalOptions): Promise<ReplExecutionResult> {
@@ -95,6 +144,12 @@ export class ReplSession {
   async #eval(code: string, options?: ReplEvalOptions): Promise<ReplExecutionResult> {
     const cells = this.#load();
     const executionCount = cells.length + 1;
+    const bridge = this.#bridge;
+    // Pin the attachment's grant shapes for this whole eval: an attach()
+    // racing a queued eval must not swap grants under a running cell or
+    // its commit row. (attach() replaces the shapes object wholesale, so
+    // this reference stays internally consistent.)
+    const grantShapes = bridge.shapes();
 
     let transformed: string;
     try {
@@ -113,10 +168,15 @@ export class ReplSession {
     }
 
     const timeoutMs = options?.timeoutMs ?? this.#timeoutMs;
-    const outcome = await this.#run(cells, transformed, timeoutMs);
+    const outcome = await this.#run(cells, transformed, timeoutMs, bridge, grantShapes);
 
     if (outcome.ok) {
-      this.#commit(cells, { code, transformed, effects: outcome.effects ?? [] });
+      this.#commit(cells, {
+        code,
+        transformed,
+        effects: outcome.effects ?? [],
+        grants: grantShapes,
+      });
       const result: ReplExecutionResult = {
         code,
         logs: outcome.logs ?? EMPTY_LOGS(),
@@ -137,7 +197,13 @@ export class ReplSession {
     };
   }
 
-  async #run(cells: CommittedCell[], transformed: string, timeoutMs: number): Promise<RunOutcome> {
+  async #run(
+    cells: CommittedCell[],
+    transformed: string,
+    timeoutMs: number,
+    bridge: ReplCapabilityBridge,
+    grantShapes: Record<string, ReplCapabilityShape>,
+  ): Promise<RunOutcome> {
     const modules: Record<string, string> = {
       [REPL_RUNNER_MODULE]: replRunnerModule(),
       [REPL_CELLS_MODULE]: replCellsModule(cells.length + 1),
@@ -164,7 +230,11 @@ export class ReplSession {
     });
     try {
       const effectLog = cells.map((cell) => cell.effects);
-      const run = Promise.resolve().then(() => entrypoint.run(effectLog));
+      const grants: RunnerGrants = {
+        perCell: cells.map((cell) => cell.grants),
+        current: grantShapes,
+      };
+      const run = Promise.resolve().then(() => entrypoint.run(effectLog, bridge, grants));
       // If the timeout wins the race, the losing run promise rejects later
       // (its isolate is disposed) with nobody awaiting it — swallow that so
       // it can't surface as an unhandled rejection.
@@ -197,8 +267,8 @@ export class ReplSession {
 
   #load(): CommittedCell[] {
     if (this.#cells !== undefined) return this.#cells;
-    const rows = this.#db.all<{ seq: number; code: string; transformed: string }>(
-      "SELECT seq, code, transformed FROM repl_cells WHERE session = ? ORDER BY seq",
+    const rows = this.#db.all<{ seq: number; code: string; transformed: string; grants: string }>(
+      "SELECT seq, code, transformed, grants FROM repl_cells WHERE session = ? ORDER BY seq",
       this.name,
     );
     const effectRows = this.#db.all<{ cell_seq: number; kind: string; value: string }>(
@@ -215,23 +285,25 @@ export class ReplSession {
       code: row.code,
       transformed: row.transformed,
       effects: effectsBySeq.get(row.seq) ?? [],
+      grants: JSON.parse(row.grants) as Record<string, ReplCapabilityShape>,
     }));
     return this.#cells;
   }
 
   #commit(cells: CommittedCell[], cell: CommittedCell): void {
     // Effect values are stored verbatim — they are replay input and must
-    // never be truncated. Today's effects are ≤36-byte scalars by
-    // construction; future effect sources with sizable results (capability
-    // calls) must REJECT the cell, not truncate the value.
+    // never be truncated. Shim effects are ≤36-byte scalars by
+    // construction; capability results are size-guarded at the bridge,
+    // which REJECTS the call (failing the cell) rather than truncating.
     const seq = cells.length + 1;
     this.#db.transactionSync(() => {
       this.#db.run(
-        "INSERT INTO repl_cells (session, seq, code, transformed, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO repl_cells (session, seq, code, transformed, grants, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         this.name,
         seq,
         cell.code,
         cell.transformed,
+        JSON.stringify(cell.grants),
         this.#now(),
       );
       cell.effects.forEach((effect, index) => {
@@ -270,6 +342,7 @@ function initializeReplSchema(db: Database): void {
       seq INTEGER NOT NULL,
       code TEXT NOT NULL,
       transformed TEXT NOT NULL,
+      grants TEXT NOT NULL DEFAULT '{}',
       created_at INTEGER NOT NULL,
       PRIMARY KEY (session, seq)
     )`,
