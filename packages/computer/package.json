@@ -39,6 +39,10 @@
       "types": "./dist/backends/container-legacy/index.d.ts",
       "import": "./dist/backends/container-legacy/index.js"
     },
+    "./backends/container": {
+      "types": "./dist/backends/container/index.d.ts",
+      "import": "./dist/backends/container/index.js"
+    },
     "./backends/worker-javascript": {
       "types": "./dist/backends/worker-javascript/index.d.ts",
       "import": "./dist/backends/worker-javascript/index.js"

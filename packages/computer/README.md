@@ -238,7 +238,8 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 
 | Backend | Import | Runs | Needs |
 | --- | --- | --- | --- |
-| **Container** | `@cloudflare/computer/backends/container-legacy` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd` |
+| **Container** | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
+| **Container (legacy)** | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
 | **Worker shell** | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
 | **Worker JavaScript** | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding; `experimental` flag |
 

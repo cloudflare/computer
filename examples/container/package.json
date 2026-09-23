@@ -1,0 +1,20 @@
+{
+  "name": "@example/computer-container",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker + Durable Object that uses @cloudflare/computer inside a container the Durable Object schedules itself.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "build:types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "^4.137.0"
+  }
+}

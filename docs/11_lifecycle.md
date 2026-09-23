@@ -125,7 +125,10 @@ lifetime policy. From the DO's perspective:
 `computerd` is a long-lived process. It outlives DO restarts — the
 `Container.monitor()` promise resolves only when the container itself
 exits, and the backend's `#monitoring` flag drops the cached handle at
-that point so the next call rebuilds from scratch (see the container host and backend implementations under `packages/computer/src/backends/container-legacy/`).
+that point so the next call rebuilds from scratch. The primary implementation
+lives under `packages/computer/src/backends/container/`; the
+platform-scheduled variant lives under
+`packages/computer/src/backends/container-legacy/`.
 
 When `computerd` runs with its default in-memory store, the two sides
 differ: the **container's VFS lasts only as long as the process**,
@@ -168,11 +171,13 @@ the `close` callback, the session is gone.
 
 ### Where capnweb attaches in our code
 
-On the DO side: `newWebSocketRpcSession(ws)` in
-`LegacyContainerBackend.connect()` in `packages/computer/src/backends/container-legacy/cloudflare-container.ts`.
-This installs `addEventListener("message", ...)` on the accepted
-WebSocket, which means **the DO must be alive in memory to receive
-frames**. There is no hibernation-aware variant today.
+On the durable object side, `ContainerBackend.connect()` calls
+`newWebSocketRpcSession(ws)` in
+`packages/computer/src/backends/container/container-backend.ts`.
+`LegacyContainerBackend` uses the same session setup. This installs
+`addEventListener("message", ...)` on the accepted WebSocket, which means
+**the durable object must be alive in memory to receive frames**. There is
+no hibernation-aware variant today.
 
 On the container side, `acceptWebSocketSession(ws, rpc)` is attached by the inbound upgrade and outbound `/connect` paths in `packages/computerd/src/cli/computerd.ts`. Both attach to a `ws`
 package WebSocket and require the `computerd` process to be live.
@@ -293,11 +298,10 @@ prove no unbounded growth under sustained workloads.
 
 > [!NOTE]
 > This section describes a target architecture, not shipped code.
-> Today's `LegacyContainerBackend` uses `server.accept()`, which
-> is **not** the hibernation API. The DO stays in memory for the
-> lifetime of the WebSocket. Enabling hibernation requires changes
-> across capnweb and the backend; the work is sketched here so the
-> direction is clear.
+> Today's container backends use `server.accept()`, which is **not** the
+> hibernation API. The durable object stays in memory for the lifetime of
+> the WebSocket. Enabling hibernation requires changes across capnweb and
+> both backends; the work is sketched here so the direction is clear.
 
 ### What hibernation gives us
 

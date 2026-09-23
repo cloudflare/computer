@@ -16,17 +16,29 @@ container, not on `WorkspaceOptions`).
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
-import { LegacyContainerBackend } from "@cloudflare/computer/backends/container-legacy";
+import {
+  ContainerBackend,
+  withWorkspaceContainer,
+} from "@cloudflare/computer/backends/container";
+import { DurableObject } from "cloudflare:workers";
 
-new Workspace({
-  storage:  ctx.storage,
-  backends: [
-    new LegacyContainerBackend({
-      container: () => this,
-      workspace: { binding: "ContainerExample", id: ctx.id.toString() },
-    }),
-  ],
-});
+class WorkspaceHost extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  readonly backend = new ContainerBackend({
+    container: () => this,
+    workspace: { binding: "WorkspaceHost", id: this.ctx.id.toString() },
+    name: "app",
+    instance: "standard-2",
+  });
+
+  readonly workspace = new Workspace({
+    storage: this.ctx.storage,
+    backends: [this.backend],
+  });
+
+  override fetch(request: Request): Promise<Response> {
+    return this.backend.handleFetch(request);
+  }
+}
 ```
 
 `backends` is optional. Omit it to construct a filesystem-only
@@ -126,7 +138,7 @@ by the in-image `FUSE_MOUNT` env var (`auto` by default; see doc 07).
 On Cloudflare Containers `/dev/fuse` is exposed and the real kernel
 FUSE backend mounts; under `wrangler dev` it isn't, and `auto` falls
 back to the userspace shim. Either way the in-container view is a
-live mirror of the DO-side VFS. Earlier revisions of `LegacyContainerBackend`
+live mirror of the DO-side VFS. Earlier revisions of the container backend
 pinned `DISABLE_FUSE=1`, which produced a degraded mode where:
 
 - The in-container filesystem at `/workspace` is the container's own

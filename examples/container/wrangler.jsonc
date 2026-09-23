@@ -1,0 +1,62 @@
+{
+  // Example: Worker + Durable Object hosting a Cloudflare Container that
+  // the Durable Object schedules itself, rather than one the platform
+  // places and sizes.
+  //
+  // The containers block below is the whole difference from
+  // examples/container-legacy. Under `scheduling_policy: "durable_object"`
+  // the object owns the container lifecycle, so:
+  //
+  //   - `images` replaces `image`. Wrangler prepares each entry and
+  //     exposes it as `ctx.container.images.<key>`; the backend's `name`
+  //     option names the key to boot.
+  //   - `instance_type` and `max_instances` are rejected. Sizing belongs
+  //     to the object now, so it is requested at launch through the
+  //     backend's `instance` option (see src/index.ts).
+  //
+  // Wrangler accepts only `name`, `class_name`, `scheduling_policy`,
+  // `images`, `observability`, and `unsafe.configuration.experimental_flags`
+  // under this policy. Anything else fails the deploy.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-container-instance-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "containers": [
+    {
+      "class_name": "ContainerExample",
+      "scheduling_policy": "durable_object",
+      "images": {
+        // Built from the local Dockerfile, which COPYs the computerd
+        // binary staged into ./build/ by the predev / predeploy hook.
+        "app": { "dockerfile": "./Dockerfile" }
+      },
+      "observability": {
+        "enabled": true
+      }
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ContainerExample",
+        "class_name": "ContainerExample"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ContainerExample"]
+    }
+  ],
+
+  "observability": {
+    "traces": {
+      "enabled": true
+    }
+  }
+}
