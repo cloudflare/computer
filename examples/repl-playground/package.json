@@ -1,0 +1,21 @@
+{
+  "name": "@example/computer-repl-playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser + HTTP playground for the durable JavaScript REPL: persistent sessions, recorded capability grants, and zero-call replay.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "play": "node scripts/play.mjs"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.107.1"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  // Durable REPL playground: a Worker + Durable Object hosting a real
+  // Workspace with persistent REPL sessions, driven over HTTP and a small
+  // browser UI. One Durable Object per workspace name (`ws` param).
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-repl-playground-example",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+
+  // Each REPL eval runs in a fresh Dynamic Worker minted via env.LOADER.
+  "worker_loaders": [{ "binding": "LOADER" }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "HOST", "class_name": "PlaygroundHostDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlaygroundHostDO"] }],
+
+  "observability": { "enabled": true },
+
+  // Auth: every endpoint except /health requires either
+  //   - Authorization: Bearer <PLAYGROUND_TOKEN>   (set as a secret:
+  //     `wrangler secret put PLAYGROUND_TOKEN`, or in .dev.vars locally), or
+  //   - a verified Cloudflare Access JWT, when ACCESS_TEAM/ACCESS_AUDS are set.
+  // The playground runs arbitrary code with the grants below — don't deploy
+  // it publicly without one of these in front.
+  "vars": {
+    // e.g. "https://<your-team>.cloudflareaccess.com" — empty disables Access JWT auth.
+    "ACCESS_TEAM": "",
+    // Comma-separated AUD tag(s) of the Access application covering this hostname.
+    "ACCESS_AUDS": ""
+  }
+}
