@@ -135,7 +135,9 @@ export class WorkspaceRuntimeCapability {
     this.#requireWrite();
     const resolved = await this.#resolveSafe(path, true);
     const parent = resolved.slice(0, resolved.lastIndexOf("/")) || this.#root;
-    await this.#fs.mkdir(parent, { recursive: true });
+    // dofs treats mkdir("/") as EEXIST even with recursive — root always
+    // exists — so writes to root-level files must not try to create it.
+    if (parent !== "/") await this.#fs.mkdir(parent, { recursive: true });
     await this.#assertSafeComponents(parent, false);
     await this.#fs.writeFile(resolved, content);
   }

@@ -12,7 +12,13 @@ import type {
   ReplEvalOptions,
   ReplExecutionResult,
 } from "../src/index.js";
-import { capability, fetchCapability, Workspace, workspaceFs } from "../src/index.js";
+import {
+  capability,
+  createJsToolDefinition,
+  fetchCapability,
+  Workspace,
+  workspaceFs,
+} from "../src/index.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<ReplHostDO>;
@@ -235,6 +241,29 @@ export class ReplHostDO extends DurableObject<Env> {
     options?: ReplEvalOptions,
   ): Promise<ReplExecutionResult> {
     return this.#ws().repl(session, { loader: this.env.LOADER }).eval(code, options);
+  }
+
+  // End-to-end path for the framework-agnostic js tool: the real
+  // Workspace must satisfy JsToolWorkspaceLike, and run() must route to
+  // real durable sessions.
+  async jsToolRun(
+    fixtures: string[],
+    code: string,
+    sessionName?: string,
+  ): Promise<ReplExecutionResult> {
+    return this.#jsTool(fixtures).run({ code, ...(sessionName === undefined ? {} : { sessionName }) });
+  }
+
+  jsToolDescription(fixtures: string[]): string {
+    return this.#jsTool(fixtures).description;
+  }
+
+  #jsTool(fixtures: string[]) {
+    return createJsToolDefinition({
+      workspace: this.#ws(),
+      loader: this.env.LOADER,
+      capabilities: this.#fixtures(fixtures),
+    });
   }
 
   // Simulate DO eviction: drop every in-memory object. Storage survives.

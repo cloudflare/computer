@@ -11,6 +11,13 @@
 export interface ReplResultData {
   /** Inspect-style text rendering of an output. */
   text: string;
+  /**
+   * The output's structured value (an `emit(value)` argument, cloned at
+   * emit time). Present when the value can cross the boundary and fits
+   * the per-entry ceiling; absent for pure renderings — unclonable
+   * values, capability handles, and oversized emits.
+   */
+  value?: unknown;
 }
 
 export type ReplLogLevel = "log" | "info" | "debug" | "warn" | "error";
@@ -82,7 +89,13 @@ export interface ReplExecutionResult {
    * preserved. `dropped` counts entries discarded past the cap.
    */
   logs: { entries: ReplLogEntry[]; dropped?: number };
-  /** Display renderings (e.g. of an unclonable value). */
+  /**
+   * Display outputs, in order: the new cell's `emit(value)` entries,
+   * then a rendering of the completion value when it could not ship on
+   * `value`. Replayed cells' emits never reappear here — like console
+   * output, they belong to the eval that ran them. A failing cell's
+   * emits still arrive (they narrate the failure).
+   */
   results: ReplResultData[];
   error?: ReplExecutionError;
   /** 1-based cell sequence (the would-be sequence for failed cells). */

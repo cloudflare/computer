@@ -73,7 +73,7 @@ interface RunOutcome {
   error?: ReplExecutionError;
   effects?: ReplEffect[];
   logs?: { entries: ReplLogEntry[]; dropped?: number };
-  results?: Array<{ text: string }>;
+  results?: Array<{ text: string; value?: unknown }>;
   hasValue?: boolean;
   value?: unknown;
 }
@@ -191,7 +191,7 @@ export class ReplSession {
     return {
       code,
       logs: outcome.logs ?? EMPTY_LOGS(),
-      results: [],
+      results: outcome.results ?? [],
       error: outcome.error ?? { name: "Error", message: "REPL evaluation failed." },
       executionCount,
     };
