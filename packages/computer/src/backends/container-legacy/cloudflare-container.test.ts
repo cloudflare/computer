@@ -1,5 +1,5 @@
-// CloudflareContainerBackend tests — exercise the lifecycle
-// plumbing against an in-process fake IWorkspaceContainerAPI.
+// LegacyContainerBackend tests — exercise the lifecycle
+// plumbing against an in-process fake ILegacyWorkspaceContainerAPI.
 //
 // The successful connect() path constructs a WebSocketPair, which
 // is a workerd global not available under the vitest node runner.
@@ -12,8 +12,8 @@
 import { describe, expect, test, vi } from "vitest";
 
 import { WorkspaceTransportError } from "../../transport-failure.js";
-import { CloudflareContainerBackend } from "./cloudflare-container.js";
-import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
+import { LegacyContainerBackend } from "./cloudflare-container.js";
+import type { ILegacyWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 
 interface FakeHostOptions {
   // Status the container returns for an unauthenticated request to a
@@ -37,7 +37,7 @@ interface FakeHostOptions {
 }
 
 interface FakeHost {
-  host: IWorkspaceContainerAPI;
+  host: ILegacyWorkspaceContainerAPI;
   calls: { name: string; args: unknown[] }[];
   connectBody?: Record<string, unknown>;
   connectAuthorization?: string | null;
@@ -88,7 +88,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       state.clientSecret ??= "00112233445566778899aabbccddeeff";
       state.running = true;
       // A successful start clears any prior exit, matching
-      // WorkspaceContainerAPI.start.
+      // LegacyWorkspaceContainerAPI.start.
       state.exit = null;
       return {
         runtimeId: state.runtimeId ?? "missing-runtime",
@@ -141,7 +141,7 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       throw new Error(`unexpected port path: ${url.pathname}`);
     },
     port() {
-      throw new Error("cross-boundary Fetchers should not be used by CloudflareContainerBackend");
+      throw new Error("cross-boundary Fetchers should not be used by LegacyContainerBackend");
     },
     async restart(spec) {
       const { env, enableInternet } = spec;
@@ -170,13 +170,13 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
       calls.push({ name: "exitInfo", args: [] });
       return state.exit;
     },
-  } satisfies IWorkspaceContainerAPI;
+  } satisfies ILegacyWorkspaceContainerAPI;
   return state;
 }
 
 const fakeWorkspace: WorkspaceRef = { binding: "TestDO", id: "abc123" };
 
-describe("CloudflareContainerBackend", () => {
+describe("LegacyContainerBackend", () => {
   test("connect() classifies a container start failure as transport", async () => {
     const platformError = new Error(
       "There is no container instance that can be provided to this Durable Object, try again later",
@@ -186,7 +186,7 @@ describe("CloudflareContainerBackend", () => {
         throw platformError;
       },
     });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -205,7 +205,7 @@ describe("CloudflareContainerBackend", () => {
         throw platformError;
       },
     });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -219,7 +219,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() throws when the container port never opens", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -240,7 +240,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("blocks ambient egress by default", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -253,7 +253,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("enables direct ambient egress", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -274,7 +274,7 @@ describe("CloudflareContainerBackend", () => {
         return new Response(request.url);
       }),
     } as unknown as Fetcher;
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -306,7 +306,7 @@ describe("CloudflareContainerBackend", () => {
     const gateway = {
       fetch: vi.fn(async () => new Response("forwarded")),
     } as unknown as Fetcher;
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -332,7 +332,7 @@ describe("CloudflareContainerBackend", () => {
     const gateway = {
       fetch: vi.fn(async () => new Response("forwarded")),
     } as unknown as Fetcher;
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -352,7 +352,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("egressHost option overrides the default", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       egressHost: "computerd.local",
@@ -364,7 +364,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("containerEnv option merges onto the start() env", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       containerEnv: { CUSTOM: "1", PORT: "9000" },
@@ -381,7 +381,7 @@ describe("CloudflareContainerBackend", () => {
   test("container factory is invoked per connect()", async () => {
     const fake = makeFakeHost({ healthy: false });
     const factory = vi.fn(() => ({ getWorkspaceContainer: () => fake.host }));
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: factory,
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
@@ -395,7 +395,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("async container factory is awaited", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: async () => {
         await Promise.resolve();
         return { getWorkspaceContainer: () => fake.host };
@@ -409,7 +409,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() throws when /connect returns non-2xx", async () => {
     const fake = makeFakeHost({ connectStatus: 502 });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -425,7 +425,7 @@ describe("CloudflareContainerBackend", () => {
     // request has to carry them. A missing field would leave the
     // daemon with nothing to dial.
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -449,7 +449,7 @@ describe("CloudflareContainerBackend", () => {
     // everything. Connecting anyway would hand a session to a container
     // that is not authorizing anyone, so this refuses instead.
     const fake = makeFakeHost({ authProbeStatus: 200 });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -465,7 +465,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() gets past the check when the container refuses an unauthenticated request", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -483,7 +483,7 @@ describe("CloudflareContainerBackend", () => {
     // The probe is on the critical path, so an unbounded request would
     // wedge the connect past its own timeout.
     const fake = makeFakeHost({ authProbeHang: true });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -500,7 +500,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() throws a transport error when the /api upgrade never arrives", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -513,7 +513,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("handleFetch rejects non-/api paths", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
     });
@@ -523,7 +523,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("handleFetch rejects missing upgrade header", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
     });
@@ -536,7 +536,7 @@ describe("CloudflareContainerBackend", () => {
     // endpoint is reachable from inside the container. Without a token,
     // any command the workspace runs could take the daemon's place.
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -576,7 +576,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("handleFetch accepts a dial-back presenting the secret, in any scheme case", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -600,7 +600,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() consults host.exitInfo() before host.start()", async () => {
     const fake = makeFakeHost();
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -622,7 +622,7 @@ describe("CloudflareContainerBackend", () => {
       healthy: false,
       priorExit: { exitedAt: Date.now() - 5_000, reason: "OOM killed" },
     });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,
@@ -654,7 +654,7 @@ describe("CloudflareContainerBackend", () => {
         true,
       ],
     });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 2000,
@@ -671,7 +671,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() surfaces stage='health' when readiness exhausts all attempts", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 800,
@@ -692,7 +692,7 @@ describe("CloudflareContainerBackend", () => {
 
   test("connect() reports stage='health' when restartAttempts=0 and probe never succeeds", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const backend = new CloudflareContainerBackend({
+    const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
       workspace: fakeWorkspace,
       connectTimeoutMs: 600,

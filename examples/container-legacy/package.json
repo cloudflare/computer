@@ -1,5 +1,5 @@
 {
-  "name": "@example/computer-container",
+  "name": "@example/computer-container-legacy",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,6 +17,6 @@
   },
   "devDependencies": {
     "typescript": "^6.0.3",
-    "wrangler": "^4.130.0"
+    "wrangler": "^4.137.0"
   }
 }

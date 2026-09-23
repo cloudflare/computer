@@ -22,7 +22,7 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 
 ## When to reach for it
 
-The container backend (`@cloudflare/computer/backends/container`)
+The container backend (`@cloudflare/computer/backends/container-legacy`)
 gives you a real Linux environment with arbitrary binaries on
 `$PATH`, optional network access, and a full POSIX filesystem. It costs a
 container per session and a real roundtrip on every filesystem op.
@@ -289,7 +289,7 @@ network-bound `git` subcommands do. See
 ## Example
 
 `examples/worker-shell/` is a single wrangler project that mirrors
-`examples/container/` beat for beat:
+`examples/container-legacy/` beat for beat:
 
 - One `wrangler.jsonc` with the Durable Object, an R2 mount at
   `/workspace/r2`, and a `worker_loaders` binding named `LOADER`.

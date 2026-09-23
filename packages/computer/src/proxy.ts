@@ -18,7 +18,7 @@
 //   class ComputerdContainer extends DurableObject<Env> {
 //     constructor(ctx: DurableObjectState, env: Env) {
 //       super(ctx, env);
-//       this.#backend = new CloudflareContainerBackend({
+//       this.#backend = new LegacyContainerBackend({
 //         container: () => ctx.container!,
 //         egress: ctx.exports.WorkspaceProxy({
 //           props: {

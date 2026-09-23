@@ -238,7 +238,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 
 | Backend | Import | Runs | Needs |
 | --- | --- | --- | --- |
-| **Container** | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd` |
+| **Container** | `@cloudflare/computer/backends/container-legacy` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd` |
 | **Worker shell** | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
 | **Worker JavaScript** | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding; `experimental` flag |
 
@@ -246,7 +246,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   environment. The container owns its own SQLite-backed VFS and this
   package syncs the two stores across a capnweb WebSocket. See
   [`docs/07_injected_service.md`](../../docs/07_injected_service.md) for
-  the container image, and [`examples/container`](../../examples/container).
+  the container image, and [`examples/container-legacy`](../../examples/container-legacy).
 - **Worker shell** is fast and needs no container. Every filesystem
   operation forwards back to the same Durable Object, so there's no
   second store and no sync round trip. See
@@ -415,7 +415,7 @@ on a computerd instance.
 | Entrypoint | Purpose |
 | --- | --- |
 | `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
-| `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
@@ -443,7 +443,7 @@ const ws = new Workspace({
   storage: ctx.storage,
   backends: [
     new WorkerShellBackend({ id: "shell", loader: env.LOADER, /* ... */ }),
-    new CloudflareContainerBackend({ id: "sandbox", container: () => this, /* ... */ }),
+    new LegacyContainerBackend({ id: "sandbox", container: () => this, /* ... */ }),
   ],
 });
 
@@ -508,7 +508,7 @@ An adapter for the Cloudflare runtime lives at
   No container.
 - [`examples/worker-javascript`](../../examples/worker-javascript) — the
   same shape, running ECMAScript modules instead of shell commands.
-- [`examples/container`](../../examples/container) — the container
+- [`examples/container-legacy`](../../examples/container-legacy) — the container
   backend running `computerd`.
 - [`examples/think`](../../examples/think) — a chat agent that uses the
   workspace as its working directory.

@@ -51,7 +51,7 @@ for setup, build, and test instructions.
 The [`examples/`](examples) directory holds runnable consumers of the
 public surface. Each is a Worker workspace with its own README.
 
-- [`examples/container`](examples/container) — runs `computerd` inside a
+- [`examples/container-legacy`](examples/container-legacy) — runs `computerd` inside a
   container, mounts a workspace, and talks to a Durable Object over
   capnweb. A `write` / `read` / `exec` HTTP surface.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the

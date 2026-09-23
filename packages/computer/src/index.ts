@@ -9,7 +9,7 @@
 // backend, etc.) can be tree-shaken when a consumer only uses
 // one of them:
 //
-//   import { CloudflareContainerBackend } from "@cloudflare/computer/backends/container";
+//   import { LegacyContainerBackend } from "@cloudflare/computer/backends/container-legacy";
 //   import { WorkerShellBackend }         from "@cloudflare/computer/backends/worker-shell";
 //
 // TestBackend stays on the main entry because it's a thin

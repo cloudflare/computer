@@ -7,7 +7,7 @@
 // pool that started the container itself and left no record.
 import { describe, expect, test, vi } from "vitest";
 
-import { WorkspaceContainerAPI } from "./container-host.js";
+import { LegacyWorkspaceContainerAPI } from "./container-host.js";
 import type { ContainerLaunchSpec } from "./container-launch-record.js";
 
 function fakeCtx(options: { running?: boolean } = {}) {
@@ -60,11 +60,11 @@ const spec: ContainerLaunchSpec = {
   enableInternet: false,
 };
 
-describe("WorkspaceContainerAPI.start", () => {
+describe("LegacyWorkspaceContainerAPI.start", () => {
   test("launches when nothing is running", async () => {
     const { ctx, starts } = fakeCtx();
 
-    const info = await new WorkspaceContainerAPI(ctx).start(spec);
+    const info = await new LegacyWorkspaceContainerAPI(ctx).start(spec);
 
     expect(info.outcome).toBe("launched");
     expect(starts).toHaveLength(1);
@@ -74,7 +74,7 @@ describe("WorkspaceContainerAPI.start", () => {
 
   test("adopts a container it launched with the same spec", async () => {
     const { ctx, starts, destroyCount } = fakeCtx();
-    const api = new WorkspaceContainerAPI(ctx);
+    const api = new LegacyWorkspaceContainerAPI(ctx);
     const first = await api.start(spec);
 
     const second = await api.start(spec);
@@ -95,7 +95,7 @@ describe("WorkspaceContainerAPI.start", () => {
     container.running = true;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const info = await new WorkspaceContainerAPI(ctx).start(spec);
+      const info = await new LegacyWorkspaceContainerAPI(ctx).start(spec);
 
       expect(info.outcome).toBe("relaunched");
       expect(destroyCount()).toBe(1);
@@ -111,7 +111,7 @@ describe("WorkspaceContainerAPI.start", () => {
     // The egress case: a container launched with the internet enabled
     // must not serve a workspace that asked for it off.
     const { ctx, starts } = fakeCtx();
-    const api = new WorkspaceContainerAPI(ctx);
+    const api = new LegacyWorkspaceContainerAPI(ctx);
     await api.start({ ...spec, enableInternet: true });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -127,7 +127,7 @@ describe("WorkspaceContainerAPI.start", () => {
 
   test("relaunches when the environment differs", async () => {
     const { ctx, starts } = fakeCtx();
-    const api = new WorkspaceContainerAPI(ctx);
+    const api = new LegacyWorkspaceContainerAPI(ctx);
     await api.start(spec);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -148,7 +148,7 @@ describe("WorkspaceContainerAPI.start", () => {
     // The secret is durable, so a replacement container is launched with
     // the value the host already holds.
     const { ctx } = fakeCtx();
-    const api = new WorkspaceContainerAPI(ctx);
+    const api = new LegacyWorkspaceContainerAPI(ctx);
     const first = await api.start(spec);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

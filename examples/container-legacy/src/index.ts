@@ -1,7 +1,7 @@
 // Example Worker + container-enabled Durable Object that runs a
 // Workspace inside a Cloudflare Container.
 //
-// The DO is a thin shell over CloudflareContainerBackend: it picks
+// The DO is a thin shell over LegacyContainerBackend: it picks
 // the container (this.ctx.container) and the egress fetcher
 // (ctx.exports.WorkspaceProxy bound to this DO instance), forwards
 // container-bound /api upgrades back through the backend, and
@@ -28,9 +28,9 @@ import {
   withWorkspace,
 } from "@cloudflare/computer";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { createCloudflareObserver } from "@cloudflare/computer/observe/cloudflare";
 
 // Re-export so the runtime can build a loopback binding for the
@@ -48,8 +48,8 @@ export { WorkspaceProxy };
 // ContainerExample because withWorkspace's options callback needs it
 // while constructing the Workspace: base-class fields are initialized
 // by the time the callback runs, subclass fields are not.
-class ContainerBase extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
-  readonly backend = new CloudflareContainerBackend({
+class ContainerBase extends withLegacyWorkspaceContainer(class extends DurableObject<Env> {}) {
+  readonly backend = new LegacyContainerBackend({
     container: () => this,
     workspace: { binding: "ContainerExample", id: this.ctx.id.toString() },
     egress: { mode: "direct" },

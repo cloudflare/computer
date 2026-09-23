@@ -1,15 +1,15 @@
-// CloudflareContainerBackend — backs Workspace with a computerd instance
+// LegacyContainerBackend — backs Workspace with a computerd instance
 // running inside a Cloudflare Container.
 //
-// The backend drives container lifecycle through an IWorkspaceContainerAPI
+// The backend drives container lifecycle through an ILegacyWorkspaceContainerAPI
 // abstraction. Same-DO and cross-DO callers look identical from
 // here; whether ctx.container is reached directly or through an
-// RPC stub is a concern of the IWorkspaceContainerAPI implementation.
+// RPC stub is a concern of the ILegacyWorkspaceContainerAPI implementation.
 //
 // Same-DO shape (one DO owns both the container and the Workspace):
 //
 //   class ComputerdContainer extends DurableObject<Env> {
-//     #backend = new CloudflareContainerBackend({
+//     #backend = new LegacyContainerBackend({
 //       container: () => this.ws,
 //       workspace: { binding: "ComputerdContainer", id: this.ctx.id.toString() },
 //     });
@@ -24,7 +24,7 @@
 // owns the container):
 //
 //   class AgentDO extends DurableObject<Env> {
-//     #backend = new CloudflareContainerBackend({
+//     #backend = new LegacyContainerBackend({
 //       container: async () => {
 //         const memberId = await pickPoolMember(this.env, this.ctx.id);
 //         return this.env.ComputerdHost.get(this.env.ComputerdHost.idFromString(memberId));
@@ -55,26 +55,26 @@ import {
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress.js";
 import { WorkspaceTransportError } from "../../transport-failure.js";
-import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
+import type { ILegacyWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
 // What the backend's `container` factory returns: anything with
-// a getWorkspaceContainer() method — the shape withWorkspaceContainer
+// a getWorkspaceContainer() method — the shape withLegacyWorkspaceContainer
 // installs. Same-DO callers pass `this`; cross-DO callers pass a
-// DO stub whose target was extended with withWorkspaceContainer
+// DO stub whose target was extended with withLegacyWorkspaceContainer
 // (Workers RPC exposes the method as a pipelined callable).
 export interface ContainerHostHolder {
-  getWorkspaceContainer(): IWorkspaceContainerAPI | Promise<IWorkspaceContainerAPI>;
+  getWorkspaceContainer(): ILegacyWorkspaceContainerAPI | Promise<ILegacyWorkspaceContainerAPI>;
 }
 
-export interface CloudflareContainerBackendOptions {
+export interface LegacyContainerBackendOptions {
   // Resolves the container host to drive on each connect(). Called
   // anew per dial so a pool-backed factory can re-pick. Returning
   // a Promise is supported for pickers that consult external state
   // (KV, a coordinator DO, etc.).
   //
   // The returned value exposes getWorkspaceContainer() — the same
-  // shape withWorkspaceContainer installs. Pass `this` (same-DO)
+  // shape withLegacyWorkspaceContainer installs. Pass `this` (same-DO)
   // or a DO stub (cross-DO); the backend calls the method itself.
   container: () => ContainerHostHolder | Promise<ContainerHostHolder>;
 
@@ -178,17 +178,17 @@ function bearerMatches(header: string | null, expected: string | undefined): boo
   return differences === 0;
 }
 
-export class CloudflareContainerBackend implements WorkspaceBackend {
+export class LegacyContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
   readonly id: string;
 
   readonly #options: Required<
     Omit<
-      CloudflareContainerBackendOptions,
+      LegacyContainerBackendOptions,
       "container" | "workspace" | "containerEnv" | "egress" | "id"
     >
   > &
-    Pick<CloudflareContainerBackendOptions, "container" | "workspace" | "containerEnv">;
+    Pick<LegacyContainerBackendOptions, "container" | "workspace" | "containerEnv">;
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
   // Set once start() reports it, before the upgrade slot is armed, so
@@ -205,7 +205,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   // or when the underlying WebSocket reports `close` / `error`.
   #handle: BackendHandle | undefined;
 
-  constructor(options: CloudflareContainerBackendOptions) {
+  constructor(options: LegacyContainerBackendOptions) {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
@@ -462,7 +462,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   // connect deadline elapses. On a failed attempt with restarts
   // remaining, run host.restart(env) and try again.
   async #readyWithRestarts(
-    host: IWorkspaceContainerAPI,
+    host: ILegacyWorkspaceContainerAPI,
     env: Record<string, string>,
     deadline: number,
     priorExit: { exitedAt: number; reason: string } | null,
@@ -529,7 +529,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     );
   }
 
-  async #probeUntilHealthy(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+  async #probeUntilHealthy(host: ILegacyWorkspaceContainerAPI, deadline: number): Promise<void> {
     let delay = this.#options.healthRetryInitialDelayMs;
     let lastError: unknown;
     while (Date.now() < deadline) {
@@ -566,7 +566,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   ): string {
     const priorExit = info.priorExit ? ` priorExit=${JSON.stringify(info.priorExit.reason)}` : "";
     return (
-      `CloudflareContainerBackend(${this.id}): connect failed at ` +
+      `LegacyContainerBackend(${this.id}): connect failed at ` +
       `stage=${stage} port=${this.#options.containerPort} ` +
       `attempt=${info.attempt}/${info.maxAttempts} restarts=${info.restarts} ` +
       `timeoutMs=${this.#options.connectTimeoutMs}${priorExit} ` +
@@ -593,7 +593,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
   // not. A probe that cannot complete is not evidence either way and is
   // allowed through: the readiness loop above is what decides whether the
   // container is alive.
-  async #requireAuthEnforced(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {
+  async #requireAuthEnforced(host: ILegacyWorkspaceContainerAPI, deadline: number): Promise<void> {
     let status: number;
     try {
       const res = await host.fetchPort(this.#options.containerPort, "http://container/api", {
@@ -616,14 +616,14 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
     this.#rejectUpgrade?.(new Error("container is not enforcing RPC_CLIENT_SECRET"));
     this.#clearUpgrade();
     throw new WorkspaceTransportError(
-      `CloudflareContainerBackend(${this.id}) [stage=auth]: container served an unauthenticated ` +
+      `LegacyContainerBackend(${this.id}) [stage=auth]: container served an unauthenticated ` +
         `request to /api with ${status}, so this workspace would run without authorization. ` +
         `A container or image predating RPC_CLIENT_SECRET has to be recycled.`,
     );
   }
 
   async #postConnect(
-    host: IWorkspaceContainerAPI,
+    host: ILegacyWorkspaceContainerAPI,
     deadline: number,
     clientSecret: string,
   ): Promise<void> {
@@ -647,7 +647,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       this.#rejectUpgrade?.(error);
       this.#clearUpgrade();
       throw new WorkspaceTransportError(
-        `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect failed: ${describeError(error)}`,
+        `LegacyContainerBackend(${this.id}) [stage=connect]: POST /connect failed: ${describeError(error)}`,
         { cause: error },
       );
     }
@@ -657,7 +657,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
       this.#rejectUpgrade?.(cause);
       this.#clearUpgrade();
       throw new WorkspaceTransportError(
-        `CloudflareContainerBackend(${this.id}) [stage=connect]: POST /connect returned ${res.status}: ${body}`,
+        `LegacyContainerBackend(${this.id}) [stage=connect]: POST /connect returned ${res.status}: ${body}`,
         { cause },
       );
     }
@@ -665,7 +665,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
 
   async #waitForUpgrade(deadline: number): Promise<WebSocket> {
     const upgrade = this.#pendingUpgrade;
-    if (!upgrade) throw new Error("CloudflareContainerBackend: upgrade promise missing");
+    if (!upgrade) throw new Error("LegacyContainerBackend: upgrade promise missing");
 
     const remaining = Math.max(0, deadline - Date.now());
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -677,7 +677,7 @@ export class CloudflareContainerBackend implements WorkspaceBackend {
             () =>
               reject(
                 new WorkspaceTransportError(
-                  `CloudflareContainerBackend(${this.id}) [stage=ws]: /api upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
+                  `LegacyContainerBackend(${this.id}) [stage=ws]: /api upgrade did not arrive within ${this.#options.connectTimeoutMs}ms`,
                 ),
               ),
             remaining,

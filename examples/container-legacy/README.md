@@ -25,8 +25,8 @@ client ─► Worker /c/<name>/{file,exec}
              └────────── capnweb session ◄──────┘
 ```
 
-1. The DO constructs a `CloudflareContainerBackend` from
-   `@cloudflare/computer/backends/container` and hands it to a
+1. The DO constructs a `LegacyContainerBackend` from
+   `@cloudflare/computer/backends/container-legacy` and hands it to a
    `Workspace` instance. That backend owns the entire computerd lifecycle:
    container start,
    outbound egress interception, port-readiness polling, POST
@@ -59,7 +59,7 @@ client ─► Worker /c/<name>/{file,exec}
 
 The DO extends the plain `DurableObject` class from
 `cloudflare:workers`. The container lifecycle plumbing all lives
-in `CloudflareContainerBackend` — the DO is a thin host.
+in `LegacyContainerBackend` — the DO is a thin host.
 
 The container mounts computerd's VFS at `MOUNT_POINT` (`/workspace`) so
 `exec`'d commands see the same tree the RPC surface reads and

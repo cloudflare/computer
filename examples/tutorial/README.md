@@ -131,16 +131,16 @@ works in both places.
 
 ## 4. Give Think a Computer workspace
 
-The durable object owns a `CloudflareContainerBackend`, which is the
+The durable object owns a `LegacyContainerBackend`, which is the
 container the workspace is mounted in. The `Workspace` instance enables
 Computer's Think-compatible methods so Think's built-in tools use the
 same filesystem as the container.
 
 ```ts
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { Think } from "@cloudflare/think";
 import {
   type DurableObjectStorageLike,
@@ -150,8 +150,8 @@ import {
 
 class RecipeBase extends Think<Env> {}
 
-export class RecipeAgent extends withWorkspaceContainer(RecipeBase) {
-  readonly #backend = new CloudflareContainerBackend({
+export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
+  readonly #backend = new LegacyContainerBackend({
     container: () => this,
     workspace: { binding: "RecipeAgent", id: this.ctx.id.toString() },
     egress: { mode: "direct" },
@@ -175,7 +175,7 @@ The explicit `direct` policy preserves the example's outbound Internet
 access. Use `{ mode: "none" }` when commands in the container do not need
 network access.
 
-`withWorkspaceContainer` mixes the container lifecycle into Think, so
+`withLegacyWorkspaceContainer` mixes the container lifecycle into Think, so
 the durable object can start and stop its own container. The
 `workspace: { binding, id }` pair is how the container finds its way
 home: it dials the named binding at that id, which is why `fetch` has to

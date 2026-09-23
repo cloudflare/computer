@@ -66,7 +66,7 @@ a clean checkout: `packages/computerd` imports the sibling `@cloudflare/dofs`
 and `@cloudflare/computer-rpc` packages from their `dist/`
 directories, `packages/computerd`'s `src/cli/computerd.test.ts` spawns the bundled
 CLI at `dist/cli/computerd.cjs`, and `examples/think-compare-runtimes`
-imports `@cloudflare/computer/backends/container`, which exists only
+imports `@cloudflare/computer/backends/container-legacy`, which exists only
 after the `computer` package is built. Run `npm run build` across the
 npm workspace before `npm test` on a clean checkout.
 
@@ -179,6 +179,6 @@ file and add it to the list above.
   backed tests only run on Linux and are skipped elsewhere
   automatically.
 - **Examples are real consumers.** `examples/think`,
-  `examples/container`, and `examples/worker-shell` exercise the public
+  `examples/container-legacy`, and `examples/worker-shell` exercise the public
   surface. If you change a public API, update them in the same
   change.

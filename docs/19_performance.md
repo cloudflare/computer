@@ -3,7 +3,7 @@
 Numbers from `script/fs-bench.sh` and a full
 `npm install` of [`cloudflare/sandbox-sdk`](https://github.com/cloudflare/sandbox-sdk)
 (854 packages, 36,675 files), running
-[`examples/container`](../examples/container) on a Cloudflare
+[`examples/container-legacy`](../examples/container-legacy) on a Cloudflare
 Containers **standard-2** instance (1 vCPU, 6 GiB memory, 12 GB disk).
 The computerd FUSE mount lives at `/workspace`; the comparison columns are
 an in-memory `tmpfs` at `/tmp` and the container's ext4 root disk at

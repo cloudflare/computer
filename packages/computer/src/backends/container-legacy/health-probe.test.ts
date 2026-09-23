@@ -1,22 +1,22 @@
 import { describe, expect, test, vi } from "vitest";
 
-import type { IWorkspaceContainerAPI } from "./container-host.js";
+import type { ILegacyWorkspaceContainerAPI } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
 // probeComputerdHealth only consumes fetchPort. The helper is typed
-// against the wider IWorkspaceContainerAPI to make ergonomic
+// against the wider ILegacyWorkspaceContainerAPI to make ergonomic
 // same-isolate calls cheap, but the test scope is narrower — use
 // the minimal structural type so the fake doesn't have to stub
 // methods it never reaches.
-type HealthProbeHost = Pick<IWorkspaceContainerAPI, "fetchPort">;
+type HealthProbeHost = Pick<ILegacyWorkspaceContainerAPI, "fetchPort">;
 
 function fakeHost(
   handler: (port: number, input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
-): IWorkspaceContainerAPI {
+): ILegacyWorkspaceContainerAPI {
   const host: HealthProbeHost = {
     fetchPort: vi.fn(handler),
   };
-  return host as IWorkspaceContainerAPI;
+  return host as ILegacyWorkspaceContainerAPI;
 }
 
 describe("probeComputerdHealth", () => {

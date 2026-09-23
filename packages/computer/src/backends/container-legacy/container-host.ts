@@ -1,4 +1,4 @@
-// IWorkspaceContainerAPI — the seam CloudflareContainerBackend
+// ILegacyWorkspaceContainerAPI — the seam LegacyContainerBackend
 // drives instead of talking to a Container binding directly. Two
 // reasons it exists:
 //
@@ -7,15 +7,15 @@
 //      from the DO that owns the Container binding (a pool member
 //      that can be re-leased between sessions). The pool member's
 //      ctx.container isn't reachable from the Agent's isolate, but
-//      an RpcTarget stub satisfying IWorkspaceContainerAPI is.
+//      an RpcTarget stub satisfying ILegacyWorkspaceContainerAPI is.
 //
 //   2. Testability. The interface is narrower than `Container` —
 //      three methods — and fakes don't need to mimic the full
 //      runtime surface.
 //
 // Consumers don't implement this interface directly. They mix
-// `withWorkspaceContainer(Base)` into their DO class, which adds a
-// single `ws` accessor returning a `WorkspaceContainerAPI` —
+// `withLegacyWorkspaceContainer(Base)` into their DO class, which adds a
+// single `ws` accessor returning a `LegacyWorkspaceContainerAPI` —
 // an RpcTarget so it works the same in-isolate and across RPC.
 
 import { RpcTarget } from "cloudflare:workers";
@@ -48,9 +48,9 @@ export interface WorkspaceRef {
   id: string;
 }
 
-// Driver surface CloudflareContainerBackend talks to. Implemented
-// by WorkspaceContainerAPI below; exposed on consumer DOs through
-// the `ws` accessor that withWorkspaceContainer installs.
+// Driver surface LegacyContainerBackend talks to. Implemented
+// by LegacyWorkspaceContainerAPI below; exposed on consumer DOs through
+// the `ws` accessor that withLegacyWorkspaceContainer installs.
 export interface ContainerRuntimeInfo {
   runtimeId: string;
   // Shared secret the container requires on its HTTP surface. Durable,
@@ -66,7 +66,7 @@ export interface ContainerRuntimeInfo {
   outcome: "launched" | "adopted" | "relaunched";
 }
 
-export interface IWorkspaceContainerAPI {
+export interface ILegacyWorkspaceContainerAPI {
   // Idempotent start. Returns the durable identity of the running
   // container process once the runtime has accepted the start command;
   // readiness is verified by the backend through probeComputerdHealth.
@@ -119,9 +119,9 @@ export interface IWorkspaceContainerAPI {
 
 // Concrete implementation. Extends RpcTarget so it travels intact
 // across a Workers RPC boundary; in-isolate callers see plain
-// method calls. Constructed by withWorkspaceContainer's `ws`
+// method calls. Constructed by withLegacyWorkspaceContainer's `ws`
 // getter — consumers don't instantiate this directly.
-export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContainerAPI {
+export class LegacyWorkspaceContainerAPI extends RpcTarget implements ILegacyWorkspaceContainerAPI {
   readonly #container: NonNullable<DurableObjectState["container"]>;
   readonly #ctx: DurableObjectState;
   readonly #runtimeIdentity: CurrentContainerRuntimeIdentity;
@@ -131,7 +131,9 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
   constructor(ctx: DurableObjectState) {
     super();
     if (!ctx.container) {
-      throw new Error("WorkspaceContainerAPI: DO is not container-enabled (check wrangler.jsonc)");
+      throw new Error(
+        "LegacyWorkspaceContainerAPI: DO is not container-enabled (check wrangler.jsonc)",
+      );
     }
     this.#container = ctx.container;
     this.#ctx = ctx;
@@ -178,7 +180,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
       console.warn({
         message:
           actual === null
-            ? "container was started outside WorkspaceContainerAPI; relaunching so the requested environment applies"
+            ? "container was started outside LegacyWorkspaceContainerAPI; relaunching so the requested environment applies"
             : "running container was launched with a different spec; relaunching",
         component: "workspace-container",
         requested,
@@ -305,7 +307,7 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
 type DOCtor = new (...args: any[]) => object;
 
 // Mixin: add a single `getWorkspaceContainer()` method to a DO
-// class. Returns a fresh WorkspaceContainerAPI bound to this DO's
+// class. Returns a fresh LegacyWorkspaceContainerAPI bound to this DO's
 // ctx. One name added to the consumer's class — nothing to
 // forward to super, nothing else to override. A method (not a
 // getter) so it crosses Workers RPC as a callable, and the
@@ -314,10 +316,10 @@ type DOCtor = new (...args: any[]) => object;
 //
 // Same-DO usage (Agent owns the container):
 //
-//   export class Agent extends withWorkspaceContainer(
+//   export class Agent extends withLegacyWorkspaceContainer(
 //     class extends DurableObject<Env> {},
 //   ) {
-//     #backend = new CloudflareContainerBackend({
+//     #backend = new LegacyContainerBackend({
 //       container: () => this,
 //       workspace: { binding: "Agent", id: this.ctx.id.toString() },
 //     });
@@ -325,11 +327,11 @@ type DOCtor = new (...args: any[]) => object;
 //
 // Cross-DO usage (pool member owns the container):
 //
-//   export class ComputerdHost extends withWorkspaceContainer(
+//   export class ComputerdHost extends withLegacyWorkspaceContainer(
 //     class extends DurableObject<Env> {},
 //   ) {}
 //
-//   #backend = new CloudflareContainerBackend({
+//   #backend = new LegacyContainerBackend({
 //     container: () => this.env.ComputerdHost.get(memberId),
 //     workspace: { binding: "Agent", id: this.ctx.id.toString() },
 //   });
@@ -341,14 +343,14 @@ export type WithWorkspaceContainerCtor<TBase extends DOCtor> = TBase &
   (new (
     // biome-ignore lint/suspicious/noExplicitAny: mirror mixin constructor shape
     ...args: any[]
-  ) => InstanceType<TBase> & { getWorkspaceContainer(): WorkspaceContainerAPI });
+  ) => InstanceType<TBase> & { getWorkspaceContainer(): LegacyWorkspaceContainerAPI });
 
-export function withWorkspaceContainer<TBase extends DOCtor>(
+export function withLegacyWorkspaceContainer<TBase extends DOCtor>(
   Base: TBase,
 ): WithWorkspaceContainerCtor<TBase> {
   class WithWorkspaceContainer extends Base {
-    getWorkspaceContainer(): WorkspaceContainerAPI {
-      return new WorkspaceContainerAPI((this as unknown as { ctx: DurableObjectState }).ctx);
+    getWorkspaceContainer(): LegacyWorkspaceContainerAPI {
+      return new LegacyWorkspaceContainerAPI((this as unknown as { ctx: DurableObjectState }).ctx);
     }
   }
   return WithWorkspaceContainer as WithWorkspaceContainerCtor<TBase>;

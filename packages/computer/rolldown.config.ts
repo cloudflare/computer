@@ -31,7 +31,7 @@ export default defineConfig({
     "artifacts/index": "src/artifacts/index.ts",
     "assets/index": "src/assets/index.ts",
     "tools/index": "src/tools/index.ts",
-    "backends/container/index": "src/backends/container/index.ts",
+    "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",
     "backends/worker-shell/index": "src/backends/worker-shell/index.ts",
     // The shell-module groups build-bundle.mjs emits. Each is its

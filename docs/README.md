@@ -43,7 +43,7 @@ The package ships several entrypoints:
 | Entrypoint | Purpose |
 | --- | --- |
 | `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
-| `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
@@ -58,7 +58,7 @@ Wire types shared with the in-container service live in the sibling package `@cl
 ### Sandbox container image
 
 The container needs the `computerd` daemon alongside a FUSE runtime. The
-simplest pattern, used by [`examples/container/Dockerfile`](../examples/container/Dockerfile),
+simplest pattern, used by [`examples/container-legacy/Dockerfile`](../examples/container-legacy/Dockerfile),
 copies the prebuilt binary out of the public GHCR image and into a thin
 Debian base:
 
@@ -87,23 +87,23 @@ To build the binary from source instead, run `npm run build:bin
 `artifacts/computerd/computerd-linux-x64`, then `COPY` that into the
 image.
 
-`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what `examples/container/` uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
+`computerd`'s own default port is `45678`; the Cloudflare container backend pins the in-image listener to `8080`, which is what `examples/container-legacy/` uses. See [07. Injected Service](./07_injected_service.md) for the env vars (`PORT`, `MOUNT_POINT`, `FUSE_MOUNT`, `EXEC_LOG_MAX_BYTES`) and the reverse-dial boot sequence.
 
 ## Example
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
 import {
-  CloudflareContainerBackend,
-  withWorkspaceContainer,
-} from "@cloudflare/computer/backends/container";
+  LegacyContainerBackend,
+  withLegacyWorkspaceContainer,
+} from "@cloudflare/computer/backends/container-legacy";
 import { DurableObject } from "cloudflare:workers";
 
-export class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+export class Agent extends withLegacyWorkspaceContainer(class extends DurableObject<Env> {}) {
   readonly workspace = new Workspace({
     storage: this.ctx.storage, // DO storage → VFS lives here
     backends: [
-      new CloudflareContainerBackend({
+      new LegacyContainerBackend({
         container: () => this,
         workspace: { binding: "Agent", id: this.ctx.id.toString() },
       }),
