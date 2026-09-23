@@ -38,8 +38,16 @@
     "@cloudflare/dofs": "*",
     "capnweb": "^0.10.0"
   },
+  "peerDependencies": {
+    "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1"
+  },
+  "peerDependenciesMeta": {
+    "@cloudflare/workers-types": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260616.1",
+    "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
     "@types/ws": "^8.18.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11",
