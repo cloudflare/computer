@@ -1,0 +1,313 @@
+{
+  "schemaVersion": "gardener.lock/v1",
+  "target": {
+    "id": "github-actions/v1",
+    "adapterVersion": "1",
+    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@ec7eded3ffeae332f745200e270f3601d8b35aa8"
+  },
+  "release": {
+    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@ec7eded3ffeae332f745200e270f3601d8b35aa8"
+  },
+  "tasks": {
+    "mention-reply": {
+      "source": "tasks/mention-reply/TASK.md",
+      "bundleHash": "54bf0217b72e54428e9341e6b89e73f6e7f48f5665c032685a18392b8108b333",
+      "workflow": ".github/workflows/gardener-mention-reply.yml",
+      "bundle": {
+        "schemaVersion": "gardener.task-bundle/v1",
+        "taskId": "mention-reply",
+        "name": "Mention reply",
+        "description": "Answers when someone mentions the bot, and rebases a pull request on request.",
+        "instructions": "Someone mentioned you in a comment. Read their comment and reply once, on the same thread:\n`issue.comment.create` for an issue, `pull_request.comment.create` for a pull request,\n`discussion.comment.create` for a discussion.\n\n- Start the reply with `@` followed by the comment author's login.\n- Answer their request in at most 80 words. Read repository files first if it is about the code.\n- If it needs a code change, say so; do not claim to have changed anything.\n- Never write the handle you were mentioned by.\n- If the comment is on a pull request and asks you to rebase or update it, read the pull request\n  with the provider API, then propose your reply followed by `pull_request.update_branch` with\n  `method` `rebase` (or `merge` if they ask to merge the base in), using its current head and base.\n\nThen finish.",
+        "triggers": [
+          {
+            "kind": "github.issue_comment.created",
+            "labelsAll": [],
+            "mentions": [
+              "gardener-cf"
+            ],
+            "authors": "maintainers"
+          },
+          {
+            "kind": "github.workflow_dispatch"
+          },
+          {
+            "kind": "github.discussion_comment.created",
+            "labelsAll": [],
+            "mentions": [
+              "gardener-cf"
+            ],
+            "authors": "maintainers"
+          }
+        ],
+        "tools": [
+          "repository.list_files",
+          "repository.read_file",
+          "provider.api.read"
+        ],
+        "effects": [
+          "issue.comment.create",
+          "pull_request.comment.create",
+          "pull_request.update_branch",
+          "discussion.comment.create"
+        ],
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "limits": {
+          "runtimeSeconds": 480,
+          "maxTurns": 12,
+          "maxToolCalls": 16,
+          "inputTokens": 128000,
+          "outputTokens": 16000
+        },
+        "model": "@cf/zai-org/glm-5.3"
+      },
+      "deployment": {
+        "schemaVersion": "gardener.github-actions-task-plan/v1",
+        "target": "github-actions/v1",
+        "taskId": "mention-reply",
+        "planningPermissions": {
+          "checks": "read",
+          "contents": "read",
+          "discussions": "read",
+          "id-token": "write",
+          "issues": "read",
+          "pull-requests": "read",
+          "statuses": "read"
+        },
+        "effectsPermissions": {
+          "contents": "write",
+          "discussions": "write",
+          "id-token": "write",
+          "issues": "write",
+          "pull-requests": "write"
+        },
+        "callerPermissions": {
+          "checks": "read",
+          "contents": "write",
+          "discussions": "write",
+          "id-token": "write",
+          "issues": "write",
+          "pull-requests": "write",
+          "statuses": "read"
+        },
+        "triggers": [
+          {
+            "kind": "github.issue_comment.created",
+            "event": "issue_comment",
+            "action": "created",
+            "labelsExpression": "github.event.issue.labels.*.name",
+            "forkSensitive": false
+          },
+          {
+            "kind": "github.workflow_dispatch",
+            "event": "workflow_dispatch",
+            "forkSensitive": false
+          },
+          {
+            "kind": "github.discussion_comment.created",
+            "event": "discussion_comment",
+            "action": "created",
+            "labelsExpression": "github.event.discussion.labels.*.name",
+            "forkSensitive": false
+          }
+        ],
+        "requiresSameRepositoryGuard": false,
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "effectLimits": {}
+      }
+    },
+    "pr-review": {
+      "source": "tasks/pr-review/TASK.md",
+      "bundleHash": "505781cf84de959f637889ce1ef27b48a87ad4356737caef0f48465aebdf5b70",
+      "workflow": ".github/workflows/gardener-pr-review.yml",
+      "bundle": {
+        "schemaVersion": "gardener.task-bundle/v1",
+        "taskId": "pr-review",
+        "name": "Pull request review",
+        "description": "Leaves one comment-only review when a pull request is opened.",
+        "instructions": "Use the provider API to read the pull request's changed files\n(`GET /repos/{owner}/{repo}/pulls/{number}/files`), then read related code if you need context.\n\nSubmit one review with event `comment`: a two-sentence summary of the change, then at most three\nconcrete observations (bugs, missing tests, or unclear code), each naming the file. Do not approve or\nrequest changes, and skip style nits. Then finish.",
+        "triggers": [
+          {
+            "kind": "github.pull_request.opened",
+            "labelsAll": [],
+            "mentions": [],
+            "authors": "maintainers"
+          },
+          {
+            "kind": "github.workflow_dispatch"
+          }
+        ],
+        "tools": [
+          "repository.list_files",
+          "repository.read_file",
+          "provider.api.read"
+        ],
+        "effects": [
+          "pull_request.review.submit"
+        ],
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "limits": {
+          "runtimeSeconds": 480,
+          "maxTurns": 16,
+          "maxToolCalls": 24,
+          "inputTokens": 128000,
+          "outputTokens": 16000
+        },
+        "model": "@cf/zai-org/glm-5.3"
+      },
+      "deployment": {
+        "schemaVersion": "gardener.github-actions-task-plan/v1",
+        "target": "github-actions/v1",
+        "taskId": "pr-review",
+        "planningPermissions": {
+          "checks": "read",
+          "contents": "read",
+          "discussions": "read",
+          "id-token": "write",
+          "issues": "read",
+          "pull-requests": "read",
+          "statuses": "read"
+        },
+        "effectsPermissions": {
+          "id-token": "write",
+          "pull-requests": "write"
+        },
+        "callerPermissions": {
+          "checks": "read",
+          "contents": "read",
+          "discussions": "read",
+          "id-token": "write",
+          "issues": "read",
+          "pull-requests": "write",
+          "statuses": "read"
+        },
+        "triggers": [
+          {
+            "kind": "github.pull_request.opened",
+            "event": "pull_request",
+            "action": "opened",
+            "labelsExpression": "github.event.pull_request.labels.*.name",
+            "forkSensitive": true
+          },
+          {
+            "kind": "github.workflow_dispatch",
+            "event": "workflow_dispatch",
+            "forkSensitive": false
+          }
+        ],
+        "requiresSameRepositoryGuard": true,
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "effectLimits": {}
+      }
+    },
+    "triage": {
+      "source": "tasks/triage/TASK.md",
+      "bundleHash": "0f8a7a5d18486d304d7952d16c7d3599658d2e5d105daca8ee83aea5c54eff47",
+      "workflow": ".github/workflows/gardener-triage.yml",
+      "bundle": {
+        "schemaVersion": "gardener.task-bundle/v1",
+        "taskId": "triage",
+        "name": "Triage",
+        "description": "Summarises new issues, points out likely duplicates, and applies existing labels.",
+        "instructions": "Triage the issue that triggered this run.\n\n1. Use the provider API to list the repository's labels (`GET /repos/{owner}/{repo}/labels`) and to\n   search for similar open issues (`GET /search/issues` with `q=repo:{owner}/{repo} is:issue\n   is:open` plus two or three key words from the title).\n2. Read repository files only if the issue is about specific code.\n3. Propose `issue.comment.create`: at most 80 words, summarising the problem and the likely area of\n   the code. If any open issue looks like a duplicate, link it. Do not promise a fix.\n4. Propose `issue.label.add` for at most two labels that already exist and clearly fit. Skip this\n   step if none fit; never invent a label.\n\nThen finish.",
+        "triggers": [
+          {
+            "kind": "github.issue.opened",
+            "labelsAll": [],
+            "mentions": [],
+            "authors": "maintainers"
+          },
+          {
+            "kind": "github.workflow_dispatch"
+          }
+        ],
+        "tools": [
+          "repository.list_files",
+          "repository.read_file",
+          "provider.api.read"
+        ],
+        "effects": [
+          "issue.label.add",
+          "issue.comment.create"
+        ],
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "limits": {
+          "runtimeSeconds": 300,
+          "maxTurns": 12,
+          "maxToolCalls": 16,
+          "inputTokens": 80000,
+          "outputTokens": 16000
+        },
+        "model": "@cf/zai-org/glm-5.3"
+      },
+      "deployment": {
+        "schemaVersion": "gardener.github-actions-task-plan/v1",
+        "target": "github-actions/v1",
+        "taskId": "triage",
+        "planningPermissions": {
+          "checks": "read",
+          "contents": "read",
+          "discussions": "read",
+          "id-token": "write",
+          "issues": "read",
+          "pull-requests": "read",
+          "statuses": "read"
+        },
+        "effectsPermissions": {
+          "id-token": "write",
+          "issues": "write"
+        },
+        "callerPermissions": {
+          "checks": "read",
+          "contents": "read",
+          "discussions": "read",
+          "id-token": "write",
+          "issues": "write",
+          "pull-requests": "read",
+          "statuses": "read"
+        },
+        "triggers": [
+          {
+            "kind": "github.issue.opened",
+            "event": "issues",
+            "action": "opened",
+            "labelsExpression": "github.event.issue.labels.*.name",
+            "forkSensitive": false
+          },
+          {
+            "kind": "github.workflow_dispatch",
+            "event": "workflow_dispatch",
+            "forkSensitive": false
+          }
+        ],
+        "requiresSameRepositoryGuard": false,
+        "network": {
+          "default": "deny",
+          "allow": [],
+          "deny": []
+        },
+        "effectLimits": {}
+      }
+    }
+  }
+}

@@ -17,6 +17,7 @@
       "!**/.devbox",
       "!**/.venv",
       "!package-lock.json",
+      "!.gardener/gardener.lock.json",
       "!**/worker-configuration.d.ts"
     ]
   },
