@@ -2,7 +2,7 @@
   "schemaVersion": "gardener.project/v1",
   "target": "github-actions/v1",
   "release": {
-    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@aad5c2bb2560f5a2f9830f9ff4d9456dd48985a4"
+    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@ce457eb2b4ec4ea85f2e6e5dd9ce794d196da711"
   },
   "handle": "gardener-cf"
 }
