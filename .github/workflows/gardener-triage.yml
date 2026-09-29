@@ -27,7 +27,7 @@ jobs:
   gardener:
     if: >-
       ${{
-        (github.event_name == 'issues' && github.event.action == 'opened' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+        (github.event_name == 'issues' && github.event.action == 'opened')
         || github.event_name == 'workflow_dispatch'
       }}
     permissions:
@@ -38,7 +38,7 @@ jobs:
       issues: write
       pull-requests: read
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@ec7eded3ffeae332f745200e270f3601d8b35aa8
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@aad5c2bb2560f5a2f9830f9ff4d9456dd48985a4
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "triage"
