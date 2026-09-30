@@ -1,0 +1,25 @@
+.changeset/exec-tool-single-backend.md
+  s_b2fd9413bbc158::t_2adade4d9e1f81 1-5
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_a6c666ed33ca1a 58-71,262-271
+packages/computer/src/tools/ai.test.ts
+  s_b2fd9413bbc158::t_7ecb44c9abaad5 3,89-99,1712-1803
+packages/computer/src/tools/exec.ts
+  s_b2fd9413bbc158::t_be9402486f2df1 76-78,80-82,118-126,131-132,135-142,144,150-158,162,164,267-391
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6fe7901a291fa428edbd8d765299a0991c66b2d8",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

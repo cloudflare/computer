@@ -1,0 +1,123 @@
+examples/browser-rendering/.gitignore
+  s_de0b486c128948::t_609fb676327b97 4
+  s_de0b486c128948::t_a5140268bedacc 1-3
+packages/computer/src/plugins/puppeteer/index.ts
+  s_de0b486c128948::t_0f2c04d4d08d14 1-29
+packages/computer/tests/script-runner-worker.ts
+  s_de0b486c128948::t_7906120ef7798b 10,17-22,28-34,48-59
+examples/browser-rendering/src/demo-auth.test.ts
+  s_de0b486c128948::t_929dca26a1cd3a 1-49
+  s_de0b486c128948::t_ef79c6a371c059 50-52
+  s_de0b486c128948::t_d6e450ff5326f0 53-55
+  s_de0b486c128948::t_321bcfbda08d23 56
+examples/browser-rendering/src/index.ts
+  s_de0b486c128948::t_bea63dfa289392 1-253
+packages/computer/tests/script-runner.test.ts
+  s_de0b486c128948::t_bf33903e0d3ea7 55-56,75-81,103-109
+package-lock.json
+  s_5da66bf6bc6455::t_43b9509d419971 50-69,1488-1503,2566-2569,4062-4225,5000-5006,5154-5164,5362-5371,5589-5601,5642-5656,5676-5760,5794-5803,6016-6025,6279-6298,6457-6466,6567-6581,6633-6639,6763,6938-6959,6974-6983,7004-7013,7047-7056,7173-7193,7200-7206,7289-7298,7574-7589,7606-7620,7874-7901,8073-8082,9948-9957,10211-10244,10414-10420,10608-10617,10641-10677,10682,11049-11058,11803-11813,11826-11866,11933-11944,12179-12188,12202-12211,12241-12247,12533-12568,13575-13585,13665
+packages/computer/src/plugins/puppeteer/constants.ts
+  s_de0b486c128948::t_67a03bc6a8e338 1
+examples/browser-rendering/README.md
+  s_de0b486c128948::t_fd6859608de5ce 1-105
+examples/browser-rendering/src/ui.ts
+  s_de0b486c128948::t_1e0d78e310c91a 1-453
+examples/browser-rendering/src/demo-auth.ts
+  s_de0b486c128948::t_603b8d54a350c2 1-36
+examples/browser-rendering/wrangler.jsonc
+  s_de0b486c128948::t_7c7c16dc8d27cc 1-40
+packages/computer/src/backends/worker-javascript/index.ts
+  s_de0b486c128948::t_d1392d00ff45ce 5
+examples/browser-rendering/src/ui.test.ts
+  s_de0b486c128948::t_b8747e2927c2cc 1-48
+packages/computer/README.md
+  s_a0bfc15824dcad::t_6f0619982093b0 49-51,263-295,455,546-548
+packages/computer/src/plugins/puppeteer/runtime.ts
+  s_de0b486c128948::t_ecdbbbe3be310f 2-34
+  s_5da66bf6bc6455::t_97dc4f26571870 1
+docs/20_browser_automation.md
+  s_de0b486c128948::t_53b66de3f0ea56 1-157
+packages/computer/src/plugins/puppeteer/build-bundle.mjs
+  s_de0b486c128948::t_826a939e548eb8 1-70
+packages/computer/src/runtime/types.ts
+  s_de0b486c128948::t_df75295c1df3d6 77
+.changeset/tidy-browsers-render.md
+  s_de0b486c128948::t_fdd5f59d21ec48 6-7
+  s_de0b486c128948::t_659c8136d18695 1-5
+docs/README.md
+  s_de0b486c128948::t_22d8680d77637d 23,49,247
+examples/browser-rendering/package.json
+  s_de0b486c128948::t_7390625e197272 1-23
+examples/browser-rendering/src/execution-source.test.ts
+  s_de0b486c128948::t_5fbaa78313ca8c 1-28
+packages/computer/src/plugins/puppeteer/runtime-helpers.test.ts
+  s_de0b486c128948::t_8aa97ef3b0f0bf 1-53
+packages/computer/src/plugins/puppeteer/runtime-helpers.ts
+  s_de0b486c128948::t_eb5c668ee65e28 1-26
+packages/computer/src/plugins/puppeteer/index.test.ts
+  s_de0b486c128948::t_056298ab019c74 1-21
+examples/browser-rendering/src/execution-source.ts
+  s_de0b486c128948::t_843340c29f181f 1-176
+  s_de0b486c128948::t_50d843dd922517 177
+  s_5da66bf6bc6455::t_d7224b0e4c8eec 178
+examples/browser-rendering/tsconfig.json
+  s_de0b486c128948::t_1f9cfd40ea536a 1-14
+.github/workflows/ci.yml
+  s_5da66bf6bc6455::t_0f4ace8ff00c2f 142-144
+.gitignore
+  s_5da66bf6bc6455::t_a076b5d96479f5 14
+README.md
+  s_5da66bf6bc6455::t_b3325d64ec3d13 63-65
+docs/17_isolate_javascript.md
+  s_5da66bf6bc6455::t_862486c188b1bd 79,85,135-153
+examples/browser-rendering/src/artifact-response.test.ts
+  s_5da66bf6bc6455::t_5ea5a1e52f1622 1-21
+examples/browser-rendering/src/artifact-response.ts
+  s_5da66bf6bc6455::t_1122eaa043051b 1-15
+examples/browser-rendering/src/retryable-once.test.ts
+  s_5da66bf6bc6455::t_bd70d7b0a6fbac 1-38
+examples/browser-rendering/src/retryable-once.ts
+  s_5da66bf6bc6455::t_84b2b9ee048842 1-12
+packages/computer/package.json
+  s_5da66bf6bc6455::t_c8e03cba41cf9a 50-53,108-113,148
+packages/computer/rolldown.config.ts
+  s_5da66bf6bc6455::t_1b899e9eb32377 37
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_5da66bf6bc6455::t_a36b33dcbc6ee4 15,18-24,29,37-58,151-152,165-181,191-193,196,199-204,211-241,244,263-266,316-317,326-332
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5da66bf6bc6455::t_4bc34ea2f974ba 232-274,429-608,1223-1324,1364-1385
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5da66bf6bc6455::t_c85ad22234cb33 17-37,44,46-47,55,117,119,215-216,226-227,263,330-343,395,400,467-470,986,1001,1244-1274,1280-1281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c0c97aa19f17d8db1b4d84e80ea14f7ea8b08abe",
+  "prompts": {},
+  "sessions": {
+    "s_5da66bf6bc6455": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a79b-d357-7ec9-952b-746d1a0724ea",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_a0bfc15824dcad": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c33a-e2f0-7812-a993-00bceebbde4e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
