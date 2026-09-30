@@ -227,3 +227,61 @@ Each host function receives the arguments the isolate passed, as an array of JSO
 The backend checks trusted modules when it is constructed. A specifier must be a simple `ws:*` name that does not shadow `ws:git` or `ws:artifacts`. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
 These modules are fixed at construction, and caller source cannot supply or replace them.
+
+### Container commands with `ws:container`
+
+`createContainerModule()` from `@cloudflare/computer/backends/container` builds a ready-made `ws:container` module. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
+
+```ts
+import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import {
+  CloudflareContainerBackend,
+  createContainerModule,
+  describeContainerModule,
+} from "@cloudflare/computer/backends/container";
+import { createAITools } from "@cloudflare/computer/tools";
+
+this.workspace = new Workspace({
+  storage: ctx.storage,
+  backends: [
+    new WorkerJavaScriptBackend({
+      loader: env.LOADER,
+      access: "read-write",
+      trustedModules: {
+        "ws:container": createContainerModule({ runtime: () => this.workspace.runtime }),
+      },
+    }),
+    new CloudflareContainerBackend({ /* ... */ }),
+  ],
+});
+
+const tools = createAITools({
+  workspace: this.workspace,
+  shell: {
+    backends: {
+      "worker-javascript": {
+        description: `Isolated JavaScript with the durable workspace filesystem. ${describeContainerModule()}`,
+      },
+    },
+  },
+});
+```
+
+```js
+import { exec } from "ws:container";
+
+export default async function () {
+  const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace/app" });
+  return { passed: exitCode === 0, stdout, stderr };
+}
+```
+
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend (`"container-shell"` unless you pass `backend`). The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+
+A few limits follow from `exec` being a host call:
+
+- Output comes back when the command finishes, not while it runs. Each stream is cut at `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`.
+- The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
+- Cancelling the execution kills the running command.
+
+A container command can write to the Workspace and reach the network, whatever the JavaScript backend's `access` and egress settings say. Install `ws:container` only on a read-write backend you would also trust with a shell.

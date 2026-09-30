@@ -9,6 +9,7 @@
 //
 //   import {
 //     CloudflareContainerBackend,
+//     createContainerModule,
 //     withWorkspaceContainer,
 //   } from "@cloudflare/computer/backends/container";
 
@@ -25,3 +26,12 @@ export {
   withWorkspaceContainer,
 } from "./container-host.js";
 export type { ContainerLaunchSpec } from "./container-launch-record.js";
+export {
+  type ContainerModule,
+  type ContainerModuleExecHandle,
+  type ContainerModuleExecOptions,
+  type ContainerModuleOptions,
+  type ContainerModuleRuntime,
+  createContainerModule,
+  describeContainerModule,
+} from "./container-module.js";
