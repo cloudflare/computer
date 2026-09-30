@@ -1,0 +1,29 @@
+.changeset/ws-container-module.md
+  s_b2fd9413bbc158::t_a6cc9eda28d7a0 1-5
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_99592a83b33456 230-287
+packages/computer/src/backends/container/container-module.test.ts
+  s_b2fd9413bbc158::t_61ccea932aa7b7 1-192
+packages/computer/src/backends/container/index.ts
+  s_b2fd9413bbc158::t_02105bf4648fcf 12,29-37
+packages/computer/tests/script-runner-worker.ts
+  s_b2fd9413bbc158::t_93520db7c8d8c1 1,3-4,19-55,75-77,111
+packages/computer/tests/script-runner.test.ts
+  s_b2fd9413bbc158::t_b416c34540834c 335-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "33152a4d9957295c6b56e13b79425d76306f8368",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
