@@ -20,6 +20,8 @@ import {
   buildModuleGraph,
   type ParsedModules,
   parseModules,
+  type PreparedConfiguredModules,
+  prepareConfiguredModules,
 } from "./module-graph.js";
 
 export interface WorkerJavaScriptBackendOptions {
@@ -256,6 +258,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  #configuredModules: PreparedConfiguredModules | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
   #closed = false;
@@ -328,6 +331,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
+  #preparedConfiguredModules(): PreparedConfiguredModules {
+    this.#configuredModules ??= prepareConfiguredModules(this.#options.modules.source);
+    return this.#configuredModules;
+  }
+
   async exec(input: ModuleExecutionInput): Promise<ModuleExecutionEnvelope> {
     if (this.#closed) throw runtimeError("ECLOSED", "Workspace JavaScript backend is closed");
     const id = input.id ?? crypto.randomUUID();
@@ -377,7 +385,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         source: input.source,
         cwd: input.cwd ?? this.#options.root,
         capability,
-        configuredModules: this.#options.modules.source,
+        configuredModules: this.#preparedConfiguredModules(),
         hostModules: this.#hostModuleFunctions,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
@@ -1205,13 +1213,19 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
   `;
 }
 
+// Every Loader module has a fixed startup cost regardless of its size, and
+// the per-directory entries generated for ws:* and configured modules grow
+// with the number of directories a caller spreads its files across. The
+// byte limit does not bound that, so the module count is capped too.
+const MAX_LOADER_MODULES = 512;
+
 function assertLoaderGraph(
   modules: Record<string, string | { js?: string }>,
   maxSourceBytes: number,
 ) {
   const entries = Object.values(modules);
-  if (entries.length > 256) {
-    throw new Error("Workspace JavaScript loader graph exceeds 256 modules.");
+  if (entries.length > MAX_LOADER_MODULES) {
+    throw new Error(`Workspace JavaScript loader graph exceeds ${MAX_LOADER_MODULES} modules.`);
   }
   const bytes = entries.reduce(
     (total, value) =>

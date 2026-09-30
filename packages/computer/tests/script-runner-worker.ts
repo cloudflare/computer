@@ -13,6 +13,12 @@ import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
 
+// Large enough that three per-directory copies would exceed the default
+// 1 MiB Loader graph limit, while one shared copy fits.
+const LARGE_MODULE = `export const token = {};
+export const padding = ${JSON.stringify("x".repeat(400_000))};
+export default "large";`;
+
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
   LOADER: WorkerLoader;
@@ -112,6 +118,15 @@ export class HostDO extends DurableObject<Env> {
           },
         }),
         fakeContainerBackend(),
+        new WorkerJavaScriptBackend({
+          id: "configured-modules",
+          loader: env.LOADER,
+          modules: {
+            large: LARGE_MODULE,
+            "named-only": "export const double = (value) => value * 2;",
+            facade: `import { double } from "named-only"; export default double;`,
+          },
+        }),
       ],
     });
   }
@@ -145,10 +160,11 @@ export class HostDO extends DurableObject<Env> {
     id?: string;
     env?: Record<string, string>;
     stdin?: string;
+    backend?: string;
   }) {
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: "worker-javascript",
+      backend: input.backend ?? "worker-javascript",
       cwd: input.cwd,
       input: input.value,
       id: input.id,

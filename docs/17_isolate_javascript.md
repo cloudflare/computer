@@ -148,7 +148,7 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+Each configured module is installed once per execution and shared by every importing directory, so a large bundle is neither copied nor evaluated more than once. An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
 
 The backend describes its modules for a model in `backend.description`, which `workspace.runtime.backends()` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
 
