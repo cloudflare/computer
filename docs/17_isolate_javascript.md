@@ -132,7 +132,7 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-Unknown bare imports fail before Worker creation. `node:fs` and `node:fs/promises` are host-installed exceptions backed by the durable Workspace. Configured modules are code, not host authority, and may not use the reserved `ws:` namespace or shadow either filesystem specifier.
+Each configured module is installed once per execution and shared by every importing directory, so a large bundle is neither copied nor evaluated more than once. Unknown bare imports fail before Worker creation. `node:fs` and `node:fs/promises` are host-installed exceptions backed by the durable Workspace. Configured modules are code, not host authority, and may not use the reserved `ws:` namespace or shadow either filesystem specifier.
 
 ## Trusted Workspace modules
 

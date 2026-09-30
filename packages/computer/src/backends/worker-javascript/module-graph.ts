@@ -12,18 +12,47 @@ export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
 const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
 const CAPABILITIES_MODULE = "workspace-capabilities.js";
+const CONFIGURED_MODULES_DIRECTORY = "workspace-configured-modules";
 const TRUSTED_MODULES = ["node:fs", "node:fs/promises", "ws:git", "ws:artifacts"] as const;
+
+export interface PreparedConfiguredModule {
+  source: string;
+  hasDefault: boolean;
+}
+
+export type PreparedConfiguredModules = Readonly<Record<string, PreparedConfiguredModule>>;
 
 export interface BuildModuleGraphOptions {
   source: string;
   cwd: string;
   capability: WorkspaceRuntimeCapability;
-  configuredModules: Record<string, string>;
+  configuredModules: PreparedConfiguredModules;
   trustedModuleNames?: string[];
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
   maxDepth?: number;
+}
+
+// An alias can re-export `default` only when its target has one, so each
+// configured module is parsed once up front. Callers cache the result
+// rather than parsing a large bundle on every execution.
+export function prepareConfiguredModules(
+  sources: Record<string, string>,
+): PreparedConfiguredModules {
+  const prepared: Record<string, PreparedConfiguredModule> = Object.create(null);
+  for (const [specifier, source] of Object.entries(sources)) {
+    let ast: ModuleAst;
+    try {
+      ast = parseModule(source);
+    } catch (error) {
+      throw new Error(`Configured module ${JSON.stringify(specifier)} is not valid JavaScript.`, {
+        cause: error,
+      });
+    }
+    prepared[specifier] = { source, hasDefault: hasDefaultExport(ast) };
+  }
+  return prepared;
 }
 
 export async function buildModuleGraph(options: BuildModuleGraphOptions) {
@@ -118,6 +147,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
       specifier === ENTRY_BASENAME ||
       specifier === RUNNER_MODULE ||
       specifier === CAPABILITIES_MODULE ||
+      specifier === CONFIGURED_MODULES_DIRECTORY ||
       specifier.includes("/")
     ) {
       throw new Error(
@@ -131,6 +161,24 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   modules["node:fs/promises"] = { js: nodeFsPromisesModule() };
   modules["node:fs"] = { js: nodeFsModule() };
 
+  // Bare imports resolve next to the importing file, so every directory
+  // needs an entry for each configured module. Store each module once and
+  // give each directory a one-line alias, so a large module is neither
+  // copied per directory nor evaluated more than once. The storage
+  // directory gets aliases too, for configured modules that import each
+  // other.
+  const configuredModules = Object.entries(options.configuredModules).map(
+    ([specifier, configured]) => ({
+      specifier,
+      ...configured,
+      storedName: `${CONFIGURED_MODULES_DIRECTORY}/${specifier}`,
+    }),
+  );
+  for (const configured of configuredModules) {
+    modules[configured.storedName] = { js: configured.source };
+  }
+  if (configuredModules.length > 0) directories.add(CONFIGURED_MODULES_DIRECTORY);
+
   for (const directory of directories) {
     const prefix = directory ? `${directory}/` : "";
     const toCapabilities = relativeModule(directory, CAPABILITIES_MODULE);
@@ -141,26 +189,56 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         js: trustedModule(toCapabilities, specifier),
       };
     }
-    for (const [specifier, source] of Object.entries(options.configuredModules)) {
-      const key = `${prefix}${specifier}`;
+    for (const configured of configuredModules) {
+      const key = `${prefix}${configured.specifier}`;
+      if (key === configured.storedName) continue;
       if (key in modules) {
         throw new Error(
-          `Configured module ${JSON.stringify(specifier)} collides with ${JSON.stringify(key)}.`,
+          `Configured module ${JSON.stringify(configured.specifier)} collides with ${JSON.stringify(key)}.`,
         );
       }
-      modules[key] = { js: source };
+      modules[key] = {
+        js: configuredModuleAlias(
+          relativeModule(directory, configured.storedName),
+          configured.hasDefault,
+        ),
+      };
     }
   }
 
   return { entryName, modules };
 }
 
+function configuredModuleAlias(target: string, hasDefault: boolean) {
+  const from = JSON.stringify(target);
+  return `export * from ${from};${hasDefault ? `\nexport { default } from ${from};` : ""}`;
+}
+
+interface ModuleAst {
+  body: unknown[];
+}
+
+function parseModule(source: string): ModuleAst {
+  return parse(source, { ecmaVersion: "latest", sourceType: "module" }) as unknown as ModuleAst;
+}
+
+function hasDefaultExport(ast: ModuleAst): boolean {
+  type Name = { name?: unknown; value?: unknown } | null | undefined;
+  const isDefault = (name: Name) => name?.name === "default" || name?.value === "default";
+  return (
+    ast.body as Array<{ type?: string; exported?: Name; specifiers?: { exported?: Name }[] }>
+  ).some(
+    (node) =>
+      node.type === "ExportDefaultDeclaration" ||
+      (node.type === "ExportNamedDeclaration" &&
+        node.specifiers?.some((specifier) => isDefault(specifier.exported))) ||
+      (node.type === "ExportAllDeclaration" && isDefault(node.exported)),
+  );
+}
+
 function imports(source: string): string[] {
-  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" }) as unknown as {
-    body: unknown[];
-  };
   const found: string[] = [];
-  walk(ast, (node) => {
+  walk(parseModule(source), (node) => {
     const item = node as { type?: string; source?: { type?: string; value?: unknown } };
     if (
       item.type === "ImportDeclaration" ||
@@ -230,6 +308,8 @@ function isInternalModuleName(name: string) {
     name === CAPABILITIES_MODULE ||
     name === RUNNER_MODULE ||
     name === ENTRY_BASENAME ||
+    name === CONFIGURED_MODULES_DIRECTORY ||
+    name.startsWith(`${CONFIGURED_MODULES_DIRECTORY}/`) ||
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
     name.split("/").at(-1)?.startsWith("ws:") === true
