@@ -55,7 +55,20 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-Pass `shell` only when the Workspace has matching backend ids:
+Pass `shell` only when the Workspace has matching backend ids. With one backend, `exec` has no `backend` argument and always runs there:
+
+```ts
+const tools = createAITools({
+  workspace,
+  shell: {
+    backends: {
+      "worker-javascript": { description: "Isolated JavaScript with the durable workspace filesystem." },
+    },
+  },
+});
+```
+
+With more than one, pass `defaultBackend` and the model picks a backend per call:
 
 ```ts
 const tools = createAITools({
@@ -245,6 +258,16 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 ## `exec`
 
 `exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language.
+
+The tool's arguments depend on how many backends you pass:
+
+| Backends | Arguments | Description |
+| --- | --- | --- |
+| One shell backend | `command`, `cwd`, `env` | Describes a shell command. |
+| One callable backend | `command`, `cwd`, `env`, `input` | Describes `command` as ES module source and the return value as `result`. |
+| More than one | `command`, `cwd`, `backend`, `env`, `input` | Lists every backend and the default. `defaultBackend` is required. |
+
+A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 
