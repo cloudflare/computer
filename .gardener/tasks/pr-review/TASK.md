@@ -3,6 +3,7 @@ schema: gardener.task/v1
 id: pr-review
 name: Pull request review
 description: Leaves one comment-only review when a pull request is opened.
+model: anthropic/claude-opus-5-5
 trigger:
   event: github.pull_request.opened
   authors: maintainers
@@ -19,7 +20,7 @@ network:
 limits:
   runtime-seconds: 480
   max-turns: 16
-  max-tool-calls: 24
+  max-tool-calls: 30
   input-tokens: 128000
   output-tokens: 16000
 ---

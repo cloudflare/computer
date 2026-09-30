@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/pr-review/TASK.md
 # Task: pr-review
-# Bundle: sha256:505781cf84de959f637889ce1ef27b48a87ad4356737caef0f48465aebdf5b70
+# Bundle: sha256:77af82ee2fd029d1b614c606189cc6fa4aec4aa880f973f116e8ac4b4e2124e0
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Pull request review"
@@ -44,4 +44,4 @@ jobs:
       task-id: "pr-review"
       task-name: "Pull request review"
       task-source: ".gardener/tasks/pr-review/TASK.md"
-      task-bundle-hash: 505781cf84de959f637889ce1ef27b48a87ad4356737caef0f48465aebdf5b70
+      task-bundle-hash: 77af82ee2fd029d1b614c606189cc6fa4aec4aa880f973f116e8ac4b4e2124e0

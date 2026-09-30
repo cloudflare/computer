@@ -11,7 +11,7 @@
   "tasks": {
     "mention-reply": {
       "source": "tasks/mention-reply/TASK.md",
-      "bundleHash": "54bf0217b72e54428e9341e6b89e73f6e7f48f5665c032685a18392b8108b333",
+      "bundleHash": "154c3c04a6edfc61953f52e141a8dfbd4b35fcc40184e4964eb8be18b6485d40",
       "workflow": ".github/workflows/gardener-mention-reply.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -63,7 +63,7 @@
           "inputTokens": 128000,
           "outputTokens": 16000
         },
-        "model": "@cf/zai-org/glm-5.3"
+        "model": "openai/gpt-6.1-sol"
       },
       "deployment": {
         "schemaVersion": "gardener.github-actions-task-plan/v1",
@@ -126,7 +126,7 @@
     },
     "pr-review": {
       "source": "tasks/pr-review/TASK.md",
-      "bundleHash": "505781cf84de959f637889ce1ef27b48a87ad4356737caef0f48465aebdf5b70",
+      "bundleHash": "77af82ee2fd029d1b614c606189cc6fa4aec4aa880f973f116e8ac4b4e2124e0",
       "workflow": ".github/workflows/gardener-pr-review.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -161,11 +161,11 @@
         "limits": {
           "runtimeSeconds": 480,
           "maxTurns": 16,
-          "maxToolCalls": 24,
+          "maxToolCalls": 30,
           "inputTokens": 128000,
           "outputTokens": 16000
         },
-        "model": "@cf/zai-org/glm-5.3"
+        "model": "anthropic/claude-opus-5-5"
       },
       "deployment": {
         "schemaVersion": "gardener.github-actions-task-plan/v1",
@@ -218,7 +218,7 @@
     },
     "triage": {
       "source": "tasks/triage/TASK.md",
-      "bundleHash": "0f8a7a5d18486d304d7952d16c7d3599658d2e5d105daca8ee83aea5c54eff47",
+      "bundleHash": "0bb7a5125f0c4cb7d83da0ccbc955748b9b3be62edd9e52f2aeaf2cf2ae1aceb",
       "workflow": ".github/workflows/gardener-triage.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -258,7 +258,7 @@
           "inputTokens": 80000,
           "outputTokens": 16000
         },
-        "model": "@cf/zai-org/glm-5.3"
+        "model": "anthropic/claude-sonnet-5-5"
       },
       "deployment": {
         "schemaVersion": "gardener.github-actions-task-plan/v1",

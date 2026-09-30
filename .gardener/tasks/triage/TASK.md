@@ -3,6 +3,7 @@ schema: gardener.task/v1
 id: triage
 name: Triage
 description: Summarises new issues, points out likely duplicates, and applies existing labels.
+model: anthropic/claude-sonnet-5-5
 trigger:
   event: github.issue.opened
   authors: maintainers

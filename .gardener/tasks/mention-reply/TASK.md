@@ -3,6 +3,7 @@ schema: gardener.task/v1
 id: mention-reply
 name: Mention reply
 description: Answers when someone mentions the bot, and rebases a pull request on request.
+model: openai/gpt-6.1-sol
 triggers:
   - event: github.issue_comment.created
     mentions: [self]
