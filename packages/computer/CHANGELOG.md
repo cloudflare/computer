@@ -1,5 +1,11 @@
 # @cloudflare/computer
 
+## 0.3.2
+
+### Patch Changes
+
+- [#150](https://github.com/cloudflare/computer/pull/150) Add an `exclude` option to `fs.grep`, matching `fs.find`. ([`e5e28a7`](https://github.com/cloudflare/computer/commit/e5e28a79d74f1e173006193bf3eeb0d990c98930)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.3.1
 
 ### Patch Changes
