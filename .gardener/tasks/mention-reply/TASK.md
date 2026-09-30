@@ -79,8 +79,8 @@ Your reply:
 2. Propose `branch.create` for `gardener/<short-name>` from the commit the run started at.
 3. Propose `commit.create` on that branch with a short message. Its files come from your edits.
 4. Propose `pull_request.open` (or `pull_request.open_draft` if they ask for a draft) into the
-   default branch, as step `open-pr`. The body explains the change and links the comment that
-   asked for it.
+   default branch, as step `open-pr`, with `labels` set to `["allow-pr"]`: this repository closes
+   pull requests without it. The body explains the change and links the comment that asked for it.
 5. Reply with a link to the pull request.
 
 You cannot push to an existing pull request's branch. If asked to change one, say so, and offer

@@ -27,7 +27,7 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-    uses: scuffi/gardener/.github/workflows/gardener-check.yml@ce457eb2b4ec4ea85f2e6e5dd9ce794d196da711
+    uses: scuffi/gardener/.github/workflows/gardener-check.yml@3a0bc85d1f5cffccb50fba787b18334e4c21ba72
 
   sync:
     if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -37,6 +37,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: scuffi/gardener/.github/workflows/gardener-sync.yml@ce457eb2b4ec4ea85f2e6e5dd9ce794d196da711
+    uses: scuffi/gardener/.github/workflows/gardener-sync.yml@3a0bc85d1f5cffccb50fba787b18334e4c21ba72
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
