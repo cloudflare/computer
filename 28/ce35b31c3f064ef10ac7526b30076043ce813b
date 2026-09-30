@@ -1,0 +1,180 @@
+examples/rlm/worker/agent-common.ts
+  s_787e7a19ec5bac::t_17f70ae7243cd3 1-105
+examples/rlm/worker/benchmark-suite.test.ts
+  s_787e7a19ec5bac::t_c1b0aba02868ad 1-29
+examples/rlm/worker/direct-agent.ts
+  s_949bcac099bf67::t_7160bb1b76dd78 1-128
+examples/rlm/worker/executor-agent.ts
+  s_949bcac099bf67::t_5275c59963d68b 1-167,173-204
+examples/rlm/worker/fixture-types.ts
+  s_787e7a19ec5bac::t_0fee1fc8b0999f 1-70
+examples/rlm/worker/model.ts
+  s_fa99c3bea94522::t_6dea4dd5c4f4bf 1-19
+examples/rlm/worker/oolong-synth.ts
+  s_787e7a19ec5bac::t_c19c078dcfaff8 1-452
+examples/rlm/worker/prompts.ts
+  s_787e7a19ec5bac::t_5ee704b849ff64 1-47
+examples/rlm/worker/raw.d.ts
+  s_327c6895331a7d::t_dae6959c13dde5 1-4
+examples/rlm/worker/step-settings.test.ts
+  s_949bcac099bf67::t_17e8f79505c487 1-33
+examples/rlm/worker/step-settings.ts
+  s_949bcac099bf67::t_3567ca64330d87 1-46
+examples/rlm/worker/structured-rlm.test.ts
+  s_787e7a19ec5bac::t_c2e0a5db6890f8 1-120
+examples/rlm/worker/structured-rlm.ts
+  s_787e7a19ec5bac::t_c3164c26a2551a 1-84
+examples/rlm/wrangler.jsonc
+  s_45f75d0eccbe75::t_eb037e457efc6a 1-44
+package-lock.json
+  s_787e7a19ec5bac::t_15240439d5cd52 133-147,149-153,156-157,1466-1469
+  s_5da66bf6bc6455::t_43b9509d419971 50-69,1488-1503,2566-2569,4062-4225,5000-5006,5154-5164,5362-5371,5589-5601,5642-5656,5676-5760,5794-5803,6016-6025,6279-6298,6457-6466,6567-6581,6633-6639,6763,6938-6959,6974-6983,7004-7013,7047-7056,7173-7193,7200-7206,7289-7298,7574-7589,7606-7620,7874-7901,8073-8082,9948-9957,10211-10244,10414-10420,10608-10617,10641-10677,10682,11049-11058,11803-11813,11826-11866,11933-11944,12179-12188,12202-12211,12241-12247,12533-12568,13575-13585,13665
+examples/rlm/src/App.tsx
+  s_787e7a19ec5bac::t_13e1aa7d435d2b 391-395,556-564,566-571,573,575-585
+examples/rlm/src/layout.test.tsx
+  s_f25b18529e48a3::t_2b60b5432e34b2 15,23-29
+examples/rlm/src/styles.css
+  s_949bcac099bf67::t_18d9f36efe2f30 76,104-111
+examples/rlm/worker/executor-tool.ts
+  s_f382eec39031b7::t_d3636e9c4f3053 8,53,57,67-83
+.changeset/tidy-browsers-render.md
+  s_de0b486c128948::t_659c8136d18695 1-5
+docs/20_browser_automation.md
+  s_de0b486c128948::t_53b66de3f0ea56 1-225
+docs/README.md
+  s_de0b486c128948::t_22d8680d77637d 23,49,247
+examples/browser-rendering/.gitignore
+  s_de0b486c128948::t_a5140268bedacc 1-3
+examples/browser-rendering/README.md
+  s_de0b486c128948::t_fd6859608de5ce 1-102
+examples/browser-rendering/package.json
+  s_de0b486c128948::t_7390625e197272 1-22
+examples/browser-rendering/src/browser-target-url.test.ts
+  s_de0b486c128948::t_c849aec870ea13 1-28
+examples/browser-rendering/src/browser-target-url.ts
+  s_de0b486c128948::t_18dd13fd5f933d 1-25
+examples/browser-rendering/src/execution-source.test.ts
+  s_de0b486c128948::t_5fbaa78313ca8c 1-20
+examples/browser-rendering/src/execution-source.ts
+  s_de0b486c128948::t_843340c29f181f 1-203
+examples/browser-rendering/src/index.ts
+  s_de0b486c128948::t_bea63dfa289392 1-284
+examples/browser-rendering/src/ui.test.ts
+  s_de0b486c128948::t_b8747e2927c2cc 1-36
+examples/browser-rendering/src/ui.ts
+  s_de0b486c128948::t_1e0d78e310c91a 1-1008
+examples/browser-rendering/tsconfig.json
+  s_de0b486c128948::t_1f9cfd40ea536a 1-14
+examples/browser-rendering/worker-configuration.d.ts
+  s_5da66bf6bc6455::t_004f60db70ad16 1-14749
+examples/browser-rendering/wrangler.jsonc
+  s_de0b486c128948::t_7c7c16dc8d27cc 1-40
+packages/computer/LICENSE
+  s_de0b486c128948::t_2539eb243fe20a 1-21
+packages/computer/THIRD_PARTY_NOTICES.md
+  s_5da66bf6bc6455::t_32a5f6be911144 1-304
+packages/computer/src/backends/worker-javascript/index.ts
+  s_de0b486c128948::t_d1392d00ff45ce 5
+packages/computer/src/plugins/puppeteer/build-bundle.mjs
+  s_de0b486c128948::t_826a939e548eb8 1-88
+packages/computer/src/plugins/puppeteer/constants.ts
+  s_de0b486c128948::t_67a03bc6a8e338 1
+packages/computer/src/plugins/puppeteer/index.test.ts
+  s_de0b486c128948::t_056298ab019c74 1-21
+packages/computer/src/plugins/puppeteer/index.ts
+  s_de0b486c128948::t_0f2c04d4d08d14 1-29
+packages/computer/src/plugins/puppeteer/runtime-helpers.test.ts
+  s_de0b486c128948::t_8aa97ef3b0f0bf 1-65
+packages/computer/src/plugins/puppeteer/runtime-helpers.ts
+  s_de0b486c128948::t_eb5c668ee65e28 1-40
+packages/computer/src/plugins/puppeteer/runtime.ts
+  s_de0b486c128948::t_ecdbbbe3be310f 1-31
+packages/computer/src/plugins/puppeteer/workspace-bindings.d.ts
+  s_de0b486c128948::t_ca5601181dfea3 1-3
+packages/computer/src/runtime/types.ts
+  s_de0b486c128948::t_df75295c1df3d6 70-75,82,84
+packages/computer/tests/script-runner-worker.ts
+  s_de0b486c128948::t_7906120ef7798b 10,17-22,28-34,48-59
+packages/computer/tests/script-runner.test.ts
+  s_de0b486c128948::t_bf33903e0d3ea7 55-56,75-81,103-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "28ce35b31c3f064ef10ac7526b30076043ce813b",
+  "prompts": {},
+  "sessions": {
+    "s_327c6895331a7d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01ead-97d4-7965-950f-a4383b764d5c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_45f75d0eccbe75": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019ff645-ea9a-76d8-8692-3134b832744c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_5da66bf6bc6455": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a79b-d357-7ec9-952b-746d1a0724ea",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_787e7a19ec5bac": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "04044ad8-50fa-441e-adee-685027f6db26",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_949bcac099bf67": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a34-d619-7f6e-b91c-df77af1bcb63",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_f25b18529e48a3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a03979-599f-795e-b6c8-2537a19d9713",
+        "model": "claude-opus-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_f382eec39031b7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a03979-5b82-70e7-9556-09a47761d227",
+        "model": "claude-opus-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_fa99c3bea94522": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019febc3-d8c4-767a-a92e-32d16d2fe47c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

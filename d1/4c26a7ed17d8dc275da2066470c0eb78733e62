@@ -1,0 +1,87 @@
+.changeset/tidy-browsers-render.md
+  s_de0b486c128948::t_659c8136d18695 1-5
+docs/20_browser_automation.md
+  s_de0b486c128948::t_53b66de3f0ea56 1-225
+docs/README.md
+  s_de0b486c128948::t_22d8680d77637d 23,49,247
+examples/browser-rendering/.gitignore
+  s_de0b486c128948::t_a5140268bedacc 1-3
+examples/browser-rendering/README.md
+  s_de0b486c128948::t_fd6859608de5ce 1-102
+examples/browser-rendering/package.json
+  s_de0b486c128948::t_7390625e197272 1-22
+examples/browser-rendering/src/browser-target-url.test.ts
+  s_de0b486c128948::t_c849aec870ea13 1-28
+examples/browser-rendering/src/browser-target-url.ts
+  s_de0b486c128948::t_18dd13fd5f933d 1-25
+examples/browser-rendering/src/execution-source.test.ts
+  s_de0b486c128948::t_5fbaa78313ca8c 1-20
+examples/browser-rendering/src/execution-source.ts
+  s_de0b486c128948::t_843340c29f181f 1-203
+examples/browser-rendering/src/index.ts
+  s_de0b486c128948::t_bea63dfa289392 1-284
+examples/browser-rendering/src/ui.test.ts
+  s_de0b486c128948::t_b8747e2927c2cc 1-36
+examples/browser-rendering/src/ui.ts
+  s_de0b486c128948::t_1e0d78e310c91a 1-1008
+examples/browser-rendering/tsconfig.json
+  s_de0b486c128948::t_1f9cfd40ea536a 1-14
+examples/browser-rendering/worker-configuration.d.ts
+  s_5da66bf6bc6455::t_004f60db70ad16 1-14749
+examples/browser-rendering/wrangler.jsonc
+  s_de0b486c128948::t_7c7c16dc8d27cc 1-40
+package-lock.json
+  s_5da66bf6bc6455::t_43b9509d419971 65-84,1567-1582,3251-3254,4747-4910,5685-5691,5839-5849,6047-6056,6274-6286,6327-6341,6361-6445,6479-6488,6701-6710,6964-6983,7142-7151,7252-7266,7318-7324,7448,7623-7644,7659-7668,7689-7698,7732-7741,7858-7878,7885-7891,7974-7983,8259-8274,8291-8305,8559-8586,8758-8767,10646-10655,10909-10942,11112-11118,11306-11315,11339-11375,11380,11747-11756,12501-12511,12524-12564,12631-12642,12877-12886,12900-12909,12939-12945,13231-13266,14273-14283,14363
+packages/computer/LICENSE
+  s_de0b486c128948::t_2539eb243fe20a 1-21
+packages/computer/THIRD_PARTY_NOTICES.md
+  s_5da66bf6bc6455::t_32a5f6be911144 1-304
+packages/computer/src/backends/worker-javascript/index.ts
+  s_de0b486c128948::t_d1392d00ff45ce 5
+packages/computer/src/plugins/puppeteer/build-bundle.mjs
+  s_de0b486c128948::t_826a939e548eb8 1-88
+packages/computer/src/plugins/puppeteer/constants.ts
+  s_de0b486c128948::t_67a03bc6a8e338 1
+packages/computer/src/plugins/puppeteer/index.test.ts
+  s_de0b486c128948::t_056298ab019c74 1-21
+packages/computer/src/plugins/puppeteer/index.ts
+  s_de0b486c128948::t_0f2c04d4d08d14 1-29
+packages/computer/src/plugins/puppeteer/runtime-helpers.test.ts
+  s_de0b486c128948::t_8aa97ef3b0f0bf 1-65
+packages/computer/src/plugins/puppeteer/runtime-helpers.ts
+  s_de0b486c128948::t_eb5c668ee65e28 1-40
+packages/computer/src/plugins/puppeteer/runtime.ts
+  s_de0b486c128948::t_ecdbbbe3be310f 1-31
+packages/computer/src/plugins/puppeteer/workspace-bindings.d.ts
+  s_de0b486c128948::t_ca5601181dfea3 1-3
+packages/computer/src/runtime/types.ts
+  s_de0b486c128948::t_df75295c1df3d6 70-75,82,84
+packages/computer/tests/script-runner-worker.ts
+  s_de0b486c128948::t_7906120ef7798b 10,17-22,28-34,48-59
+packages/computer/tests/script-runner.test.ts
+  s_de0b486c128948::t_bf33903e0d3ea7 55-56,75-81,103-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d14c26a7ed17d8dc275da2066470c0eb78733e62",
+  "prompts": {},
+  "sessions": {
+    "s_5da66bf6bc6455": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a79b-d357-7ec9-952b-746d1a0724ea",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

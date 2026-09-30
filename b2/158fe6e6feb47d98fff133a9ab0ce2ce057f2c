@@ -1,0 +1,27 @@
+.gardener/gardener.json
+  s_de0b486c128948::t_d13db7283b26ae 1-8
+.gardener/tasks/mention-reply/TASK.md
+  s_de0b486c128948::t_84acef13c658ea 1-43
+.gardener/tasks/pr-review/TASK.md
+  s_de0b486c128948::t_ac229b89102a27 1-31
+.gardener/tasks/triage/TASK.md
+  s_de0b486c128948::t_becfca078b4ecc 1-38
+biome.jsonc
+  s_de0b486c128948::t_d224eeb887657b 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b2158fe6e6feb47d98fff133a9ab0ce2ce057f2c",
+  "prompts": {},
+  "sessions": {
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

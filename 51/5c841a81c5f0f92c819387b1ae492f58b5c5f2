@@ -1,0 +1,41 @@
+.gardener/gardener.lock.json
+  s_de0b486c128948::t_10a690d41f9d78 14,66,129,164,168,221,261
+.gardener/tasks/mention-reply/TASK.md
+  s_6d4bb4ea7a8f53::t_ca9b95d75cd526 6
+.gardener/tasks/pr-review/TASK.md
+  s_6d4bb4ea7a8f53::t_b3ba96514c40dc 6,23
+.gardener/tasks/triage/TASK.md
+  s_6d4bb4ea7a8f53::t_a0943f2376f560 6
+.github/workflows/gardener-mention-reply.yml
+  s_de0b486c128948::t_d113a53e69d514 5,50
+.github/workflows/gardener-pr-review.yml
+  s_de0b486c128948::t_66108319f33caf 5,47
+.github/workflows/gardener-triage.yml
+  s_de0b486c128948::t_86aed5fbb7f9fe 5,47
+package.json
+  s_6d4bb4ea7a8f53::t_9f450352924f94 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "515c841a81c5f0f92c819387b1ae492f58b5c5f2",
+  "prompts": {},
+  "sessions": {
+    "s_6d4bb4ea7a8f53": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f1a7-b789-71cb-9f9c-d8e777300564",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
