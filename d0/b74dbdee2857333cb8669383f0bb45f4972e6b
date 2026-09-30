@@ -1,0 +1,31 @@
+.changeset/shared-configured-modules.md
+  s_5da66bf6bc6455::t_f2e36608198caa 1-5
+docs/17_isolate_javascript.md
+  s_5da66bf6bc6455::t_e32015fa08d373 135
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_5da66bf6bc6455::t_e80e200b761690 15,18-24,29,37-57,150,164-181,192-194,197,200-205,212-238,241,311-312
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5da66bf6bc6455::t_3305781828625b 1059-1163
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5da66bf6bc6455::t_e7c946e9dcddf7 17-21,239,306-310,366,1205-1210,1216-1217
+packages/computer/tests/script-runner-worker.ts
+  s_5da66bf6bc6455::t_cde44b792bea7f 11-16,60-68,102,106
+packages/computer/tests/script-runner.test.ts
+  s_5da66bf6bc6455::t_190616d386e404 475-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d0b74dbdee2857333cb8669383f0bb45f4972e6b",
+  "prompts": {},
+  "sessions": {
+    "s_5da66bf6bc6455": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a79b-d357-7ec9-952b-746d1a0724ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
