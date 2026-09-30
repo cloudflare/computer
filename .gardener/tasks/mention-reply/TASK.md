@@ -42,11 +42,11 @@ network:
   allow: []
   deny: []
 limits:
-  runtime-seconds: 480
-  max-turns: 16
-  max-tool-calls: 64
-  input-tokens: 128000
-  output-tokens: 32000
+  runtime-seconds: 1800
+  max-turns: 100
+  max-tool-calls: 200
+  input-tokens: 400000
+  output-tokens: 200000
 ---
 A maintainer mentioned you in a comment. Do what they ask, using only the effects this task
 declares, then reply once on the same thread: `issue.comment.create` for an issue,

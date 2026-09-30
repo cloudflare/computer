@@ -3,15 +3,15 @@
   "target": {
     "id": "github-actions/v1",
     "adapterVersion": "1",
-    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@3a0bc85d1f5cffccb50fba787b18334e4c21ba72"
+    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@aae337cf4d2ad0c5fa33771c37cc811eccf39ff0"
   },
   "release": {
-    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@3a0bc85d1f5cffccb50fba787b18334e4c21ba72"
+    "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@aae337cf4d2ad0c5fa33771c37cc811eccf39ff0"
   },
   "tasks": {
     "mention-reply": {
       "source": "tasks/mention-reply/TASK.md",
-      "bundleHash": "ecb0bdc092aef7e5cfd3e9a3fe56bbae870d61236b3bf04f0964797eb5757071",
+      "bundleHash": "0980fb762bddd6564da80e353d307b83b45b2daa952d413ad9cb17d289906b6a",
       "workflow": ".github/workflows/gardener-mention-reply.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -76,11 +76,11 @@
           "deny": []
         },
         "limits": {
-          "runtimeSeconds": 480,
-          "maxTurns": 16,
-          "maxToolCalls": 64,
-          "inputTokens": 128000,
-          "outputTokens": 32000
+          "runtimeSeconds": 1800,
+          "maxTurns": 100,
+          "maxToolCalls": 200,
+          "inputTokens": 400000,
+          "outputTokens": 200000
         },
         "model": "openai/gpt-6.1-sol"
       },
