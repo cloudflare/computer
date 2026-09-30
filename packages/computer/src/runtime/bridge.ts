@@ -229,7 +229,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
     assertBridgeValues(args);
-    const result = await fn(args, context);
+    const result = (await fn(args, context)) ?? null;
     assertBridgeValues([result]);
     return result;
   }
@@ -256,7 +256,10 @@ function assertBridgeValues(
       if (prototype !== Object.prototype && prototype !== null) {
         throw new Error("Host module values must contain only plain objects.");
       }
-      for (const item of Object.values(value as Record<string, unknown>)) visit(item);
+      // An undefined field is absent, as in JSON. encodeBridgeValue drops it.
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        if (item !== undefined) visit(item);
+      }
     }
     seen.delete(value);
   };
@@ -275,7 +278,9 @@ function encodeBridgeValue(value: unknown): unknown {
   if (Array.isArray(value)) return wrap("array", { items: value.map(encodeBridgeValue) });
   if (value && typeof value === "object") {
     return wrap("object", {
-      entries: Object.entries(value).map(([key, child]) => [key, encodeBridgeValue(child)]),
+      entries: Object.entries(value)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, encodeBridgeValue(child)]),
     });
   }
   return value;

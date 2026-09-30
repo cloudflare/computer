@@ -13,12 +13,14 @@
 // pending Workspace writes before the command and pulls the
 // container's changes after it.
 
-import { defineModule } from "../runtime/module.js";
 import type {
-  WorkspaceHostModule,
   WorkspaceModuleCallContext,
+  WorkspaceModuleFactory,
+  WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
+import { truncateText } from "../text-truncation.js";
 
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -51,18 +53,21 @@ export interface ContainerModuleOptions {
  * the JavaScript backend do not apply to the container.
  *
  * @param options - Which backend to use and how much output to return.
- * @returns The module to pass as `modules["ws:container"]`.
+ * @returns The module to pass as `modules["ws:container"]`. Its
+ *   `description` tells the model how to use it.
  * @throws When `maxOutputBytes` is not a positive integer. The host
  *   configured the module wrongly.
  */
-export function createContainerModule(options: ContainerModuleOptions = {}): WorkspaceHostModule {
+export function createContainerModule(
+  options: ContainerModuleOptions = {},
+): WorkspaceModuleFactory {
   const backend = options.backend ?? DEFAULT_BACKEND;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
   }
 
-  return defineModule((host) => ({
+  const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => ({
     async exec(args, context) {
       if (context.access !== "read-write") {
         throw new Error("ws:container exec requires Workspace write access.");
@@ -88,34 +93,23 @@ export function createContainerModule(options: ContainerModuleOptions = {}): Wor
         const result = await handle.result();
         return {
           exitCode: result.exitCode,
-          stdout: truncate(result.stdout, maxOutputBytes),
-          stderr: truncate(result.stderr, maxOutputBytes),
+          stdout: truncateText(result.stdout, maxOutputBytes),
+          stderr: truncateText(result.stderr, maxOutputBytes),
         };
       } finally {
         context.signal.removeEventListener("abort", kill);
       }
     },
-  }));
+  });
+  return Object.assign(create, { description: DESCRIPTION });
 }
 
-/**
- * Describe `ws:container` for a model.
- *
- * Append the returned text to the JavaScript backend's description in
- * the `exec` tool, so the model knows the module exists and when to
- * reach for it.
- *
- * @param specifier - The specifier the module is installed under.
- * @returns A short plain-text description with a usage example.
- */
-export function describeContainerModule(specifier = "ws:container"): string {
-  return [
-    `\`import { exec } from ${JSON.stringify(specifier)}\` runs a shell command in a full Linux container that shares this workspace's files.`,
-    "Use it for npm, node, python, package managers, native binaries, and network access. The container can take a while to start on first use.",
-    'Call it as `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
-    "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
-  ].join(" ");
-}
+const DESCRIPTION = [
+  "Runs shell commands in a full Linux container that shares this workspace's files.",
+  "Use it for npm, node, python, package managers, native binaries, and network access. The container can take a while to start on first use.",
+  'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
+  "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
+].join(" ");
 
 interface ExecRequest {
   readonly command: string;
@@ -193,20 +187,4 @@ function remainingTime(requested: number | undefined, context: WorkspaceModuleCa
   const remaining = context.deadline - Date.now();
   if (remaining <= 0) throw new Error("exec: the host call deadline has already passed.");
   return requested === undefined ? remaining : Math.min(requested, remaining);
-}
-
-const encoder = new TextEncoder();
-
-function truncate(value: string, maxBytes: number): string {
-  const totalBytes = encoder.encode(value).byteLength;
-  if (totalBytes <= maxBytes) return value;
-  let usedBytes = 0;
-  let endOffset = 0;
-  for (const char of value) {
-    const charBytes = encoder.encode(char).byteLength;
-    if (usedBytes + charBytes > maxBytes) break;
-    usedBytes += charBytes;
-    endOffset += char.length;
-  }
-  return `${value.slice(0, endOffset)}\n\n[truncated, ${totalBytes - usedBytes} more bytes]`;
 }

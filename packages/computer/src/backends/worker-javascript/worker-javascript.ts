@@ -16,10 +16,9 @@ import type {
 } from "../../runtime/types.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
+  assertHostModuleExports,
   buildModuleGraph,
-  type HostModuleExports,
   type ParsedModules,
-  parseHostModuleExports,
   parseModules,
 } from "./module-graph.js";
 
@@ -32,13 +31,15 @@ export interface WorkerJavaScriptBackendOptions {
    * Modules caller source can import by specifier.
    *
    * A string value is JavaScript source bundled into the isolate, such as
-   * a library build. A host module runs in the Durable Object under a
-   * `ws:*` specifier, and each of its functions becomes a named export:
+   * a library build. An object of functions, or a factory that builds
+   * one, is a host module: it runs in the Durable Object under a `ws:*`
+   * specifier, and each function becomes a named export.
    *
    * ```ts
    * modules: {
+   *   "tar-stream": TAR_STREAM_BUNDLE,
    *   "ws:container": createContainerModule(),
-   *   "ws:git": createGitModule(),
+   *   "ws:weather": { forecast: ([city]) => lookUpForecast(String(city)) },
    * }
    * ```
    *
@@ -156,6 +157,8 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
   readonly type = "worker-javascript";
   readonly callable = true;
+  /** What this backend tells a model: the source language and every importable module. */
+  readonly description: string;
   readonly id: string;
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
 
@@ -240,6 +243,14 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       compatibilityDate,
       compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],
     };
+    this.description = [
+      "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
+      ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
+      ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
+      "",
+      "Modules code can import:",
+      this.#options.modules.description,
+    ].join("\n");
   }
 
   async connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle> {
@@ -251,7 +262,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
-  readonly #hostModuleExports: HostModuleExports;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
   #closed = false;
@@ -264,18 +274,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#options = options;
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
-    const exports = new Map<string, readonly string[]>();
-    for (const [specifier, module] of options.modules.host) {
-      const built = module.create({
-        git: host.git,
-        artifacts: host.artifacts,
-        runtime: host.runtime,
-      });
-      exports.set(specifier, parseHostModuleExports(specifier, built));
+    for (const [specifier, factory] of options.modules.host) {
+      const built = factory({ git: host.git, artifacts: host.artifacts, runtime: host.runtime });
+      assertHostModuleExports(specifier, built);
       functions.set(specifier, built);
     }
     this.#hostModuleFunctions = functions;
-    this.#hostModuleExports = exports;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -387,7 +391,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         cwd: input.cwd ?? this.#options.root,
         capability,
         configuredModules: this.#options.modules.source,
-        hostModules: this.#hostModuleExports,
+        hostModules: this.#hostModuleFunctions,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });

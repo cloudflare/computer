@@ -27,17 +27,21 @@ export interface WorkspaceModuleCallContext {
  * One host function exported by a host module.
  *
  * `args` holds the arguments the isolate passed, decoded from the wire.
- * They come from untrusted code, so parse them before use.
+ * They come from untrusted code, so parse them before use. The function
+ * may return a value or a promise of one. The result must be
+ * JSON-compatible: the bridge checks it at runtime, treats `undefined`
+ * as `null`, and drops `undefined` object fields, the way
+ * `JSON.stringify` does.
  */
 export type WorkspaceModuleFunction = (
   args: readonly WorkspaceRuntimeValue[],
   context: WorkspaceModuleCallContext,
-) => Promise<WorkspaceRuntimeValue>;
+) => unknown;
 
 /** Named functions a host module exports into the isolate. */
 export type WorkspaceModuleFunctions = Readonly<Record<string, WorkspaceModuleFunction>>;
 
-/** Workspace services a host module can build its functions from. */
+/** Workspace services a host module factory can build its functions from. */
 export interface WorkspaceModuleHost {
   /** The Workspace's Git client. Throws on use when Git is not configured. */
   readonly git: import("../git/index.js").GitClient;
@@ -48,29 +52,34 @@ export interface WorkspaceModuleHost {
 }
 
 /**
- * A module whose functions run in the Durable Object rather than in the
- * isolate. Build one with `defineModule()`, or use a prebuilt one from
- * `@cloudflare/computer/modules/*`.
+ * Builds a host module's functions from the Workspace's services. The
+ * backend calls it once when it connects to its Workspace. The
+ * prebuilt modules in `@cloudflare/computer/modules/*` are factories.
  */
-export interface WorkspaceHostModule {
-  readonly kind: "host";
+export interface WorkspaceModuleFactory {
+  (host: WorkspaceModuleHost): WorkspaceModuleFunctions;
   /**
-   * Build the module's functions. The backend calls this once when it
-   * connects to its Workspace.
+   * What the module does and how to call it, for a model. The
+   * JavaScript backend adds it to its own description, which the exec
+   * tool shows. Objects of functions are listed by their export names.
    */
-  create(host: WorkspaceModuleHost): WorkspaceModuleFunctions;
+  readonly description?: string;
 }
 
 /**
  * A module caller source can import.
  *
- * A string is JavaScript source bundled into the isolate. It is plain
- * code with no host access. A host module runs in the Durable Object,
- * must use a `ws:*` specifier, and each of its functions becomes a
- * named export: `{ "ws:container": createContainerModule() }` lets code
- * write `import { exec } from "ws:container"`.
+ * - A string is JavaScript source bundled into the isolate, with no host access.
+ * - An object of functions is a host module. Its functions run in the
+ *   Durable Object and each becomes a named export:
+ *   `{ "ws:weather": { forecast } }` lets code write
+ *   `import { forecast } from "ws:weather"`.
+ * - A factory is a host module that needs the Workspace's Git client,
+ *   Artifacts client, or runtime, such as `createContainerModule()`.
+ *
+ * Host modules must use a `ws:*` specifier.
  */
-export type WorkspaceModule = string | WorkspaceHostModule;
+export type WorkspaceModule = string | WorkspaceModuleFunctions | WorkspaceModuleFactory;
 
 export type WorkspaceRuntimeValue =
   | null
@@ -251,6 +260,8 @@ export interface WorkspaceModuleBackend {
   readonly id: string;
   readonly type: string;
   readonly callable?: boolean;
+  /** What the backend tells a model about itself. Shown by the exec tool. */
+  readonly description?: string;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
 }
 

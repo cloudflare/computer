@@ -60,11 +60,7 @@ Pass `shell` only when the Workspace has matching backend ids. With one backend,
 ```ts
 const tools = createAITools({
   workspace,
-  shell: {
-    backends: {
-      "worker-javascript": { description: "Isolated JavaScript with the durable workspace filesystem." },
-    },
-  },
+  shell: { backends: { "worker-javascript": {} } },
 });
 ```
 
@@ -257,15 +253,17 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language.
+`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output.
 
-The tool's arguments depend on how many backends you pass:
+Each backend's entry in the tool description joins two parts: the `description` you pass, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so `{ "worker-javascript": {} }` is enough and the list stays in step with `modules`. A backend that does not describe itself needs a `description`. Describe capabilities and startup cost in plain language.
 
-| Backends | Arguments | Description |
-| --- | --- | --- |
-| One shell backend | `command`, `cwd`, `env` | Describes a shell command. |
-| One callable backend | `command`, `cwd`, `env`, `input` | Describes `command` as ES module source and the return value as `result`. |
-| More than one | `command`, `cwd`, `backend`, `env`, `input` | Lists every backend and the default. `defaultBackend` is required. |
+The tool offers only the arguments that can work:
+
+| Backends | Arguments |
+| --- | --- |
+| One shell backend | `command`, `cwd`, `env` |
+| One callable backend | `command`, `cwd`, `env`, `input` |
+| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable. `defaultBackend` is required. |
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 

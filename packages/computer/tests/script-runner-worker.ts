@@ -8,7 +8,7 @@ import type {
   WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "../src/index.js";
-import { defineModule, Workspace } from "../src/index.js";
+import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
@@ -78,7 +78,7 @@ export class HostDO extends DurableObject<Env> {
             "ws:git": createGitModule(),
             "ws:artifacts": createArtifactsModule(),
             "ws:container": createContainerModule(),
-            "ws:test-host": defineModule({
+            "ws:test-host": {
               async echo(args) {
                 return { args: [...args] };
               },
@@ -108,7 +108,7 @@ export class HostDO extends DurableObject<Env> {
                   keep: true,
                 };
               },
-            }),
+            },
           },
         }),
         fakeContainerBackend(),

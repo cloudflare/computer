@@ -5,7 +5,7 @@ import type {
   WorkspaceModuleFunction,
   WorkspaceModuleHost,
 } from "../runtime/types.js";
-import { createContainerModule, describeContainerModule } from "./container.js";
+import { createContainerModule } from "./container.js";
 
 interface ExecOptions {
   readonly backend: string;
@@ -65,7 +65,7 @@ function build(
 ): { readonly exec: WorkspaceModuleFunction } {
   // SAFETY: The module only calls runtime.exec, and the fake implements the part of WorkspaceRuntime it uses.
   const host = { runtime, git: undefined, artifacts: undefined } as unknown as WorkspaceModuleHost;
-  const functions = createContainerModule(options).create(host);
+  const functions = createContainerModule(options)(host);
   const exec = functions.exec;
   if (!exec) throw new Error("ws:container must export exec");
   return { exec };
@@ -202,8 +202,7 @@ describe("createContainerModule", () => {
     expect(() => createContainerModule({ maxOutputBytes: 0 })).toThrow(/maxOutputBytes/);
   });
 
-  it("describes the module under its installed specifier", () => {
-    expect(describeContainerModule("ws:linux")).toContain('import { exec } from "ws:linux"');
-    expect(describeContainerModule()).toContain('"ws:container"');
+  it("describes itself for a model", () => {
+    expect(createContainerModule().description).toContain("full Linux container");
   });
 });

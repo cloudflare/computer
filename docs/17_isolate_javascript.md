@@ -127,10 +127,9 @@ Caller source can import three kinds of module, and all of them are fixed when t
 | --- | --- | --- | --- |
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "ws:name": hostModule }` | The Durable Object | `ws:git`, `ws:container`, your own |
+| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
 
 ```ts
-import { defineModule } from "@cloudflare/computer";
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
 import { createContainerModule } from "@cloudflare/computer/modules/container";
 import { createGitModule } from "@cloudflare/computer/modules/git";
@@ -142,12 +141,30 @@ new WorkerJavaScriptBackend({
     "ws:git": createGitModule(),
     "ws:artifacts": createArtifactsModule(),
     "ws:container": createContainerModule(),
-    "ws:model": defineModule({ async batch(args, context) { /* ... */ } }),
+    "ws:weather": {
+      forecast: ([city]) => lookUpForecast(String(city)),
+    },
   },
 });
 ```
 
 An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+
+The backend describes its modules for a model in `backend.description`, and the `exec` tool shows that text, so the list the model reads always matches what is installed:
+
+```text
+`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
+Code has no direct network access.
+
+Modules code can import:
+- `node:fs/promises` (also `node:fs`): the workspace's files. ...
+- `tar-stream`: a bundled library.
+- `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
+- `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
+- `ws:weather`: exports `forecast`.
+```
+
+A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 
@@ -173,17 +190,26 @@ A string value is JavaScript source installed as a bare import, such as a bundle
 
 A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `ws:*` specifier. Nothing under `ws:` is installed unless you configure it.
 
-Build your own with `defineModule()`. Pass the functions directly, or pass a factory that builds them from the Workspace's Git client, Artifacts client, and runtime. The backend calls the factory once when it connects to its Workspace:
+Pass an object of functions:
 
 ```ts
 modules: {
-  "ws:repo": defineModule((host) => ({
+  "ws:weather": {
+    forecast: ([city]) => lookUpForecast(String(city)),
+  },
+}
+```
+
+When the functions need the Workspace's Git client, Artifacts client, or runtime, pass a factory instead. The backend calls it once when it connects to its Workspace. This is how the prebuilt modules work:
+
+```ts
+modules: {
+  "ws:repo": (host) => ({
     async recent(args, context) {
       const dir = await context.resolvePath(String(args[0] ?? "."));
-      const commits = await host.git.log({ dir, depth: 5 });
-      return commits.map((commit) => ({ oid: commit.oid, message: commit.message }));
+      return host.git.log({ dir, depth: 5 });
     },
-  })),
+  }),
 }
 ```
 
@@ -201,9 +227,9 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 | `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
 | `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
 
-The arguments come from caller code, so parse them before use. The return value must be JSON-compatible and fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
+The arguments come from caller code, so parse them before use. A function may return a value or a promise. The result must be JSON-compatible, and the bridge checks it at runtime: `undefined` becomes `null` and `undefined` object fields are dropped, as with `JSON.stringify`. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
 
-Specifiers are checked at construction, and export names when the backend connects. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
+Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
 ### `ws:git`
 
@@ -240,13 +266,7 @@ this.workspace = new Workspace({
 
 const tools = createAITools({
   workspace: this.workspace,
-  shell: {
-    backends: {
-      "worker-javascript": {
-        description: `Isolated JavaScript with the durable workspace filesystem. ${describeContainerModule()}`,
-      },
-    },
-  },
+  shell: { backends: { "worker-javascript": {} } },
 });
 ```
 

@@ -67,7 +67,7 @@ const backend = new WorkerJavaScriptBackend({
   access: "read",
   egress: { mode: "none" },
   modules: {
-    "ws:model": defineModule(modelCapability),
+    "ws:model": modelCapability,
   },
 });
 

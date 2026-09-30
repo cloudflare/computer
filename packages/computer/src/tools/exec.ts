@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { notCallableMessage } from "../runtime/runtime.js";
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
+import { truncateText, utf8Prefix } from "../text-truncation.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -64,11 +65,18 @@ export interface ExecWorkspaceLike {
     // are callable; the runtime derives it from each backend's
     // `callable` flag. Omit when no backend is callable.
     isCallable?(id: string): boolean;
+    // What a backend says about itself for a model, such as the
+    // language it runs and the modules that code can import. The tool
+    // shows it after the caller's own description.
+    describe?(id: string): string | undefined;
   };
 }
 
 export interface ExecBackendDescription {
-  description: string;
+  // Guidance for the model about this backend, shown before whatever
+  // the backend says about itself. Required only when the backend does
+  // not describe itself.
+  description?: string;
 }
 
 export interface ExecToolOptions {
@@ -128,34 +136,63 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
   const backendIds = Object.keys(options.backends);
-  const [onlyBackend, ...otherBackends] = backendIds;
-  if (onlyBackend === undefined) {
+  if (backendIds.length === 0) {
     throw new Error("createExecTool: pass at least one backend in `backends`");
   }
-  const single = otherBackends.length === 0;
-  const defaultBackend = options.defaultBackend ?? (single ? onlyBackend : undefined);
-  if (defaultBackend === undefined) {
+  const single = backendIds.length === 1;
+  const defaultBackend = options.defaultBackend ?? (single ? backendIds[0] : undefined);
+  if (defaultBackend === undefined || !backendIds.includes(defaultBackend)) {
     throw new Error(
-      "createExecTool: pass `defaultBackend` when more than one backend is configured",
-    );
-  }
-  if (!backendIds.includes(defaultBackend)) {
-    throw new Error(
-      `createExecTool: defaultBackend ${JSON.stringify(defaultBackend)} is not one of ${backendIds.map((id) => JSON.stringify(id)).join(", ")}`,
+      `createExecTool: pass a defaultBackend that is one of ${backendIds.map((id) => JSON.stringify(id)).join(", ")}`,
     );
   }
 
-  const isCallable = options.workspace.runtime.isCallable?.bind(options.workspace.runtime);
-  const callableBackendIds = new Set(backendIds.filter((id) => isCallable?.(id) === true));
-  const description = single
-    ? singleBackendDescription(
-        options.backends[onlyBackend].description,
-        callableBackendIds.has(onlyBackend),
-      )
-    : multipleBackendDescription(options.backends, defaultBackend, callableBackendIds);
-  const inputSchema = single
-    ? singleBackendInputSchema(callableBackendIds.has(onlyBackend))
-    : multipleBackendInputSchema(backendIds, defaultBackend);
+  const runtime = options.workspace.runtime;
+  const backends = backendIds.map((id) => {
+    const text = [options.backends[id]?.description, runtime.describe?.(id)]
+      .filter((part) => part !== undefined && part !== "")
+      .join("\n\n");
+    if (text === "") {
+      throw new Error(
+        `createExecTool: backend ${JSON.stringify(id)} does not describe itself; pass a description`,
+      );
+    }
+    return { id, text, callable: runtime.isCallable?.(id) === true };
+  });
+  const callableBackendIds = new Set(backends.filter((b) => b.callable).map((b) => b.id));
+  const description = describeTool(backends, defaultBackend);
+  // Offer only the fields that can work: `backend` when there is a
+  // choice, `input` when some backend accepts it.
+  const shape: Record<string, z.ZodType> = {
+    command: z.string().describe(commandHint(backends)),
+    cwd: z.string().optional().describe("Working directory. Defaults to the workspace root."),
+    env: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe(
+        "Environment variables for this run only. Values override the base environment without affecting later runs.",
+      ),
+  };
+  if (!single) {
+    shape.backend = z
+      // SAFETY: createExecTool checked that backendIds has at least one entry.
+      .enum(backendIds as [string, ...string[]])
+      .optional()
+      .describe(
+        `Which backend to run on. Omit to use the default (${JSON.stringify(defaultBackend)}). If a command fails because the backend lacks that tool, retry on a backend whose description covers it.`,
+      );
+  }
+  if (callableBackendIds.size > 0) {
+    shape.input = jsonValueSchema
+      .optional()
+      .describe(
+        single
+          ? "Structured value handed to the module."
+          : "Structured value handed to a callable backend's module. Other backends reject it.",
+      );
+  }
+  // SAFETY: Every field in `shape` has the type ExecToolInput gives it, and the fields left out are optional there.
+  const inputSchema = z.object(shape) as unknown as z.ZodType<ExecToolInput>;
 
   return tool({
     description,
@@ -252,8 +289,8 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
           yield {
             ...base,
             exitCode: result.exitCode,
-            stdout: truncate(result.stdout, maxBytes),
-            stderr: truncate(result.stderr, maxBytes),
+            stdout: truncateText(result.stdout, maxBytes),
+            stderr: truncateText(result.stderr, maxBytes),
             ...(result.value === undefined ? {} : { result: result.value }),
           };
         } catch (err) {
@@ -266,127 +303,58 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
 
 const FILE_TOOLS_HINT =
   "Prefer the dedicated read, write, and edit tools for file operations. Long output is truncated to keep tool replies small.";
-const SHELL_USE_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
-const CALLABLE_GUIDANCE =
-  "`command` is ES module source, not a shell command. Pass `input` to hand the module's default export a structured value, and read its return value back from the `result` field.";
+const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
+const CALLABLE_HINT =
+  "Pass `input` to hand the module a structured value, and read its return value back from the `result` field.";
 
-// One backend: describe what it does and nothing about choosing one.
-function singleBackendDescription(backendDescription: string, callable: boolean): string {
-  return callable
-    ? [
-        "Run a JavaScript module in the workspace.",
-        "",
-        backendDescription,
-        "",
-        CALLABLE_GUIDANCE,
-        FILE_TOOLS_HINT,
-      ].join("\n")
-    : [
-        "Run a shell command in the workspace.",
-        "",
-        backendDescription,
-        "",
-        `${SHELL_USE_HINT} ${FILE_TOOLS_HINT}`,
-      ].join("\n");
+interface DescribedBackend {
+  readonly id: string;
+  readonly text: string;
+  readonly callable: boolean;
 }
 
-function multipleBackendDescription(
-  backends: Record<string, ExecBackendDescription>,
-  defaultBackend: string,
-  callableBackendIds: ReadonlySet<string>,
-): string {
-  const backendGuidance = Object.entries(backends)
-    .map(([id, backend]) => {
-      const suffix = callableBackendIds.has(id) ? " (callable)" : "";
-      return `- ${JSON.stringify(id)}${suffix}: ${backend.description}`;
-    })
-    .join("\n");
-  const callableGuidance =
-    callableBackendIds.size > 0
-      ? [
+// With one backend the description is about what it does. With several
+// it lists them and explains how to choose.
+function describeTool(backends: readonly DescribedBackend[], defaultBackend: string): string {
+  const [only, ...others] = backends;
+  if (only !== undefined && others.length === 0) {
+    return only.callable
+      ? ["Run code in the workspace.", "", only.text, "", CALLABLE_HINT, FILE_TOOLS_HINT].join("\n")
+      : [
+          "Run a shell command in the workspace.",
           "",
-          `Callable backends (${[...callableBackendIds].map((id) => JSON.stringify(id)).join(", ")}) run \`command\` as module source rather than a shell command. Pass \`input\` to hand the module a structured value, and read the module's returned value back from the \`result\` field. Other backends reject \`input\`.`,
-        ].join("\n")
-      : "";
+          only.text,
+          "",
+          `${SHELL_HINT} ${FILE_TOOLS_HINT}`,
+        ].join("\n");
+  }
+  const callable = backends.filter((backend) => backend.callable).map((b) => JSON.stringify(b.id));
   return [
     "Run a shell command in the workspace. The workspace exposes multiple backends, each with different capabilities.",
     "Pick the cheapest backend that can run the command; fall back to a heavier one only when the lighter backend's command set doesn't cover what you need.",
     "",
     "Backends:",
-    backendGuidance,
+    ...backends.map(
+      (b) => `- ${JSON.stringify(b.id)}${b.callable ? " (callable)" : ""}: ${b.text}`,
+    ),
     "",
     `Default backend: ${JSON.stringify(defaultBackend)}. Try this first for any command you're not sure about; if it fails with a "command not found" or a similar capability error, retry on a backend whose description covers the missing tool.`,
-    `${SHELL_USE_HINT} ${FILE_TOOLS_HINT}`,
-    callableGuidance,
+    `${SHELL_HINT} ${FILE_TOOLS_HINT}`,
+    ...(callable.length === 0
+      ? []
+      : [
+          "",
+          `Callable backends (${callable.join(", ")}) run \`command\` as module source rather than a shell command. ${CALLABLE_HINT} Other backends reject \`input\`.`,
+        ]),
   ].join("\n");
 }
 
-const cwdSchema = z
-  .string()
-  .optional()
-  .describe("Working directory. Defaults to the workspace root.");
-const envSchema = z
-  .record(z.string(), z.string())
-  .optional()
-  .describe(
-    "Environment variables for this run only. Values override the base environment without affecting later runs.",
-  );
-
-// One backend: no `backend` argument, and `input` only when the
-// backend can accept it.
-function singleBackendInputSchema(callable: boolean): z.ZodType<ExecToolInput> {
-  if (!callable) {
-    return z.object({
-      command: z.string().describe("Shell command, e.g. 'npm test' or 'git diff HEAD'."),
-      cwd: cwdSchema,
-      env: envSchema,
-    });
+function commandHint(backends: readonly DescribedBackend[]): string {
+  if (backends.every((backend) => backend.callable)) return "Module source to run.";
+  if (backends.every((backend) => !backend.callable)) {
+    return "Shell command, e.g. 'npm test' or 'git diff HEAD'.";
   }
-  return z.object({
-    command: z
-      .string()
-      .describe(
-        "ES module source to run. Its default export receives `input` and its return value comes back as `result`.",
-      ),
-    cwd: cwdSchema.describe(
-      "Working directory for relative imports. Defaults to the workspace root.",
-    ),
-    env: envSchema,
-    input: jsonValueSchema
-      .optional()
-      .describe("Structured value handed to the module's default export."),
-  });
-}
-
-function multipleBackendInputSchema(
-  backendIds: string[],
-  defaultBackend: string,
-): z.ZodType<ExecToolInput> {
-  return z.object({
-    command: z
-      .string()
-      .describe(
-        "Shell command, e.g. 'npm test' or 'git diff HEAD'. For a callable backend this is the module source to run.",
-      ),
-    cwd: cwdSchema,
-    backend: z
-      // SAFETY: createExecTool checked that backendIds has at least one entry before calling this.
-      .enum(backendIds as [string, ...string[]])
-      .optional()
-      .describe(
-        [
-          "Which backend to run on. Omit to use the default",
-          `(${JSON.stringify(defaultBackend)}). Set explicitly when the`,
-          "default backend is not capable of running the command. If a command fails because the backend lacks that tool, retry on a backend whose description covers it.",
-        ].join(" "),
-      ),
-    env: envSchema,
-    input: jsonValueSchema
-      .optional()
-      .describe(
-        "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
-      ),
-  });
+  return "Shell command, e.g. 'npm test' or 'git diff HEAD'. For a callable backend this is the module source to run.";
 }
 
 function errorMessage(err: unknown): string {
@@ -421,47 +389,16 @@ class StreamBuffer {
     }
     // The chunk crosses the cap: keep the largest whole-character
     // prefix that fits, then stop growing the head.
-    let used = this.#headBytes;
-    let end = 0;
-    for (const char of chunk) {
-      const charBytes = encoder.encode(char).byteLength;
-      if (used + charBytes > this.#cap) break;
-      used += charBytes;
-      end += char.length;
-    }
-    this.#head += chunk.slice(0, end);
-    this.#headBytes = used;
+    const prefix = utf8Prefix(chunk, this.#cap - this.#headBytes);
+    this.#head += prefix.text;
+    this.#headBytes += prefix.bytes;
   }
 
   render(maxBytes: number): string {
     if (this.#totalBytes <= maxBytes && this.#totalBytes === this.#headBytes) {
       return this.#head;
     }
-    let used = 0;
-    let end = 0;
-    for (const char of this.#head) {
-      const charBytes = encoder.encode(char).byteLength;
-      if (used + charBytes > maxBytes) break;
-      used += charBytes;
-      end += char.length;
-    }
-    return `${this.#head.slice(0, end)}\n\n[truncated, ${this.#totalBytes - used} more bytes]`;
+    const shown = utf8Prefix(this.#head, maxBytes);
+    return `${shown.text}\n\n[truncated, ${this.#totalBytes - shown.bytes} more bytes]`;
   }
-}
-
-function truncate(value: string, maxBytes: number): string {
-  if (!value) return value;
-  const totalBytes = encoder.encode(value).byteLength;
-  if (totalBytes <= maxBytes) return value;
-
-  let usedBytes = 0;
-  let endOffset = 0;
-  for (const char of value) {
-    const charBytes = encoder.encode(char).byteLength;
-    if (usedBytes + charBytes > maxBytes) break;
-    usedBytes += charBytes;
-    endOffset += char.length;
-  }
-
-  return `${value.slice(0, endOffset)}\n\n[truncated, ${totalBytes - usedBytes} more bytes]`;
 }

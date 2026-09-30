@@ -9,10 +9,11 @@
 // isolate's own egress settings do not stop them.
 
 import type { GitClient } from "../git/index.js";
-import { defineModule } from "../runtime/module.js";
 import type {
-  WorkspaceHostModule,
   WorkspaceModuleCallContext,
+  WorkspaceModuleFactory,
+  WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
 
@@ -38,7 +39,7 @@ export interface GitModuleOptions {
  * @param options - Whether network commands are allowed.
  * @returns The module to pass as `modules["ws:git"]`.
  */
-export function createGitModule(options: GitModuleOptions = {}): WorkspaceHostModule {
+export function createGitModule(options: GitModuleOptions = {}): WorkspaceModuleFactory {
   const allowNetwork = options.allowNetwork ?? false;
   const requireNetwork = (operation: string) => {
     if (!allowNetwork) {
@@ -46,15 +47,14 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceHostMo
     }
   };
 
-  return defineModule((host) => ({
+  const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => ({
     async clone([value], context) {
       requireWrite(context, "Git clone");
       requireNetwork("Git clone");
       // SAFETY: The isolate's options object passes through to the Git client, as it did when ws:git was built in. The client checks its own options; only the path is rewritten here.
-      await host.git.clone(
+      return host.git.clone(
         (await withDir(value, context, true)) as unknown as Parameters<GitClient["clone"]>[0],
       );
-      return null;
     },
     async diff([value], context) {
       // SAFETY: As for clone.
@@ -62,17 +62,11 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceHostMo
     },
     async status([value], context) {
       // SAFETY: As for clone.
-      const entries = await host.git.status(
-        (await withDir(value, context)) as Parameters<GitClient["status"]>[0],
-      );
-      return toRuntimeValue(entries);
+      return host.git.status((await withDir(value, context)) as Parameters<GitClient["status"]>[0]);
     },
     async log([value], context) {
       // SAFETY: As for clone.
-      const commits = await host.git.log(
-        (await withDir(value, context)) as Parameters<GitClient["log"]>[0],
-      );
-      return toRuntimeValue(commits);
+      return host.git.log((await withDir(value, context)) as Parameters<GitClient["log"]>[0]);
     },
     async cli([value], context) {
       requireWrite(context, "Git CLI");
@@ -82,13 +76,15 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceHostMo
       if (input.argv?.some((argument) => NETWORK_COMMANDS.has(argument.toLowerCase()))) {
         requireNetwork("Git CLI network command");
       }
-      const result = await host.git.cli({
+      return host.git.cli({
         ...input,
         cwd: await context.resolvePath(input.cwd ?? ".", { allowMissing: true }),
       });
-      return toRuntimeValue(result);
     },
-  }));
+  });
+  return Object.assign(create, {
+    description: `The workspace's Git repository tools: \`status({ dir })\`, \`diff({ dir })\`, \`log({ dir, depth })\`, \`clone({ url, dir })\`, and \`cli({ argv, cwd })\` for any other git subcommand.${allowNetwork ? "" : " Network commands such as clone, fetch, and push are not allowed."}`,
+  });
 }
 
 function requireWrite(context: WorkspaceModuleCallContext, operation: string) {
@@ -128,11 +124,4 @@ function assertSafeCliArguments(argv: string[] | undefined) {
       "Git CLI path overrides are not available inside a confined Workspace runtime.",
     );
   }
-}
-
-// Git results are plain data, but may carry `undefined` fields that the
-// bridge rejects. A JSON round trip drops them.
-function toRuntimeValue(value: unknown): WorkspaceRuntimeValue {
-  // SAFETY: JSON.parse of a JSON.stringify result is always a JSON value.
-  return JSON.parse(JSON.stringify(value ?? null)) as WorkspaceRuntimeValue;
 }

@@ -1,7 +1,6 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import {
   type DurableObjectStorageLike,
-  defineModule,
   Workspace,
   type WorkspaceRuntimeLoader,
 } from "@cloudflare/computer";
@@ -108,7 +107,7 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
       root: WORKSPACE_ROOT,
       access: "read",
       egress: { mode: "none" },
-      modules: { "ws:model": defineModule(modelCapability) },
+      modules: { "ws:model": modelCapability },
       maxConcurrentExecutions: 1,
       maxConcurrentCapabilityCalls: 4,
       // One manifest read + 24 chunk reads + one bounded ws:model batch.

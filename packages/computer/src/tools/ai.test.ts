@@ -1,6 +1,8 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { WorkerJavaScriptBackend } from "../backends/worker-javascript/worker-javascript.js";
+import { createContainerModule } from "../modules/container.js";
 import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
 import { Workspace } from "../workspace.js";
 import {
@@ -1709,9 +1711,78 @@ describe("createAITools callable exec", () => {
       },
     });
 
-    expect(toolDescription(tools.exec)).toContain("Run a JavaScript module");
-    expect(toolDescription(tools.exec)).toContain("ES module source");
+    expect(toolDescription(tools.exec)).toContain("Run code in the workspace");
+    expect(toolDescription(tools.exec)).toContain("`result` field");
     expect(toolDescription(tools.exec)).toContain("JavaScript module runtime");
+  });
+
+  it("adds what the backend says about itself after the caller's description", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+        isCallable: () => true,
+        describe: (id: string) =>
+          id === "js" ? "Modules: `ws:weather` exports `forecast`." : undefined,
+      },
+    };
+    const withBoth = createAITools({
+      workspace,
+      shell: { backends: { js: { description: "Use for data work." } } },
+    });
+    const withBackendOnly = createAITools({ workspace, shell: { backends: { js: {} } } });
+
+    expect(toolDescription(withBoth.exec)).toContain(
+      "Use for data work.\n\nModules: `ws:weather` exports `forecast`.",
+    );
+    expect(toolDescription(withBackendOnly.exec)).toContain("`ws:weather` exports `forecast`");
+  });
+
+  it("requires a description for a backend that does not describe itself", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+
+    expect(() => createAITools({ workspace, shell: { backends: { shell: {} } } })).toThrow(
+      /does not describe itself/,
+    );
+  });
+});
+
+describe("createAITools exec against a real JavaScript backend", () => {
+  it("lists the backend's modules in the tool description", () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load: () => ({ getEntrypoint: () => ({}) }) },
+          modules: {
+            "tar-stream": "export default {};",
+            "ws:weather": { forecast: ([city]) => ({ city, sky: "clear" }) },
+            "ws:container": createContainerModule(),
+          },
+        }),
+      ],
+    });
+    const tools = createAITools({
+      workspace,
+      shell: { backends: { "worker-javascript": {} } },
+    });
+    const description = toolDescription(tools.exec);
+
+    expect(description).toContain("`node:fs/promises`");
+    expect(description).toContain("- `tar-stream`: a bundled library.");
+    expect(description).toContain("- `ws:weather`: exports `forecast`.");
+    expect(description).toContain(
+      "- `ws:container`: Runs shell commands in a full Linux container",
+    );
+    expect(description).toContain("no direct network access");
+    expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
   });
 });
 
