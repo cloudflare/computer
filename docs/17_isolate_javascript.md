@@ -88,7 +88,7 @@ Completed execution records remain available for replay for sixty minutes by def
 
 Cancellation stops new host capability calls, disposes the Dynamic Worker, and waits for host calls that were already accepted. Exit 130 is published only after those calls settle. Normal completion uses the same drain rule, so an unawaited capability call cannot mutate the workspace after exit 0.
 
-Host calls have a caller-visible deadline, controlled by `maxHostCallMs` and defaulting to `maxTimeoutMs`. Missing the deadline fails the capability call and marks the execution failed, even if caller code catches that error. Execution still waits for the accepted host operation itself before publishing a terminal event because many host APIs cannot roll back an external side effect after dispatch. Trusted modules receive an optional `{ signal, deadline }` context and must stop promptly when the signal aborts. A trusted module that ignores cancellation and never settles will keep execution in its finalizing state. `compatibilityDate` and `compatibilityFlags` control the Dynamic Worker runtime and default to the package-tested settings.
+Host calls have a caller-visible deadline, controlled by `maxHostCallMs` and defaulting to `maxTimeoutMs`. Missing the deadline fails the capability call and marks the execution failed, even if caller code catches that error. Execution still waits for the accepted host operation itself before publishing a terminal event because many host APIs cannot roll back an external side effect after dispatch. Host module functions receive a `signal` in their context and must stop promptly when it aborts. A host module that ignores cancellation and never settles will keep execution in its finalizing state. `compatibilityDate` and `compatibilityFlags` control the Dynamic Worker runtime and default to the package-tested settings.
 
 ## Environment, standard input, and the `process` shim
 
@@ -119,22 +119,37 @@ const handle = await workspace.runtime.exec(
 );
 ```
 
-## Configured modules
+## Modules
 
-Bare imports are installed at backend construction, not passed on individual executions:
+Caller source can import three kinds of module, and all of them are fixed when the backend is constructed:
+
+| Kind | Configured with | Runs in | Example |
+| --- | --- | --- | --- |
+| Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
+| Source | `modules: { name: "source" }` | The isolate | a bundled library |
+| Host | `modules: { "ws:name": hostModule }` | The Durable Object | `ws:git`, `ws:container`, your own |
 
 ```ts
+import { defineModule } from "@cloudflare/computer";
+import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
+import { createContainerModule } from "@cloudflare/computer/modules/container";
+import { createGitModule } from "@cloudflare/computer/modules/git";
+
 new WorkerJavaScriptBackend({
   loader: env.LOADER,
   modules: {
     "tar-stream": TAR_STREAM_BUNDLE,
+    "ws:git": createGitModule(),
+    "ws:artifacts": createArtifactsModule(),
+    "ws:container": createContainerModule(),
+    "ws:model": defineModule({ async batch(args, context) { /* ... */ } }),
   },
 });
 ```
 
-Unknown bare imports fail before Worker creation. `node:fs` and `node:fs/promises` are host-installed exceptions backed by the durable Workspace. Configured modules are code, not host authority, and may not use the reserved `ws:` namespace or shadow either filesystem specifier.
+An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
 
-## Trusted Workspace modules
+### Built-in filesystem
 
 Filesystem access uses the familiar asynchronous Node API, but is backed by the durable Workspace rather than an isolate-local filesystem. Both forms are installed automatically:
 
@@ -148,7 +163,47 @@ await fs.writeFile("/workspace/output.txt", text.toUpperCase());
 
 Supported promise APIs are `readFile`, `writeFile`, `mkdir`, `rm`, `chmod`, `symlink`, `readlink`, `readdir`, `stat`, `lstat`, and `access`. `readFile` returns bytes when encoding is omitted and supports `"utf8"` / `"utf-8"` for text; other encodings are rejected. `writeFile` supports the default `"w"` flag and exclusive `"wx"`; other Node flags are rejected, and—as in Node—the parent directory must already exist. Relative symlink targets are preserved by `readlink`, while reads and writes through symlinks are rejected by the Workspace confinement boundary. Synchronous and callback-style Node filesystem APIs are intentionally unavailable because every operation crosses the isolate-to-Workspace capability boundary.
 
-The entire `ws:` namespace remains reserved for other Workspace-maintained host capabilities. The built-in runtime installs `ws:git` and `ws:artifacts`.
+Path confinement rejects lexical escapes and every symlink component before an operation. These checks are not an atomic inode-style “resolve beneath root” primitive: do not treat one isolate capability as a security boundary against a separate, more privileged principal concurrently replacing paths in the same mutable Workspace. Deployments requiring that adversarial concurrency need a future transactional DOFS primitive or separate Workspace identities.
+
+### Source modules
+
+A string value is JavaScript source installed as a bare import, such as a bundled library. It is plain code with no host access, and it cannot use the `ws:` namespace or replace `node:fs` or `node:fs/promises`.
+
+### Host modules
+
+A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `ws:*` specifier. Nothing under `ws:` is installed unless you configure it.
+
+Build your own with `defineModule()`. Pass the functions directly, or pass a factory that builds them from the Workspace's Git client, Artifacts client, and runtime. The backend calls the factory once when it connects to its Workspace:
+
+```ts
+modules: {
+  "ws:repo": defineModule((host) => ({
+    async recent(args, context) {
+      const dir = await context.resolvePath(String(args[0] ?? "."));
+      const commits = await host.git.log({ dir, depth: 5 });
+      return commits.map((commit) => ({ oid: commit.oid, message: commit.message }));
+    },
+  })),
+}
+```
+
+```js
+import { recent } from "ws:repo";
+export default () => recent("/workspace/app");
+```
+
+Each function receives the arguments the isolate passed, as an array of JSON-compatible values, and a context:
+
+| Field | Meaning |
+| --- | --- |
+| `signal` | Aborts when the call passes its deadline or the execution is cancelled. |
+| `deadline` | Epoch milliseconds after which the isolate stops waiting. |
+| `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
+| `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
+
+The arguments come from caller code, so parse them before use. The return value must be JSON-compatible and fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
+
+Specifiers are checked at construction, and export names when the backend connects. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
 ### `ws:git`
 
@@ -156,100 +211,28 @@ The entire `ws:` namespace remains reserved for other Workspace-maintained host 
 import { clone, diff, status, log, cli } from "ws:git";
 ```
 
-`ws:git` is explicit host authority rather than ambient isolate networking. Clone, fetch, pull, push, `ls-remote`, and submodule commands can perform host-side requests even when the Dynamic Worker has `globalOutbound: null`, so they are denied by default. Enable them only on a trusted backend construction with `allowGitNetwork: true`; local Git operations remain available without that authority. Remote `ws:artifacts.importArtifact()` is independently denied unless backend construction sets `allowArtifactNetwork: true`.
+`createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Every `dir` and `cwd` is confined to the backend root, `clone` and `cli` need a read-write backend, and `cli` rejects `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
 
 ### `ws:artifacts`
 
 ```js
-import {
-  create,
-  get,
-  list,
-  importArtifact,
-  deleteArtifact,
-} from "ws:artifacts";
+import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts";
 ```
 
-These modules are sandbox-side shims over host RPC. Loader bindings, credentials, Durable Object storage, and unrestricted Workspace objects never enter user code. The host bridge checks the backend's fixed read/read-write authority on every mutation. Artifacts methods fail clearly when no Artifacts binding is configured.
+`createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
 
-Caller modules and durable files cannot shadow `node:fs`, `node:fs/promises`, or `ws:*`.
+### `ws:container`
 
-Path confinement rejects lexical escapes and every symlink component before an operation. These checks are not an atomic inode-style “resolve beneath root” primitive: do not treat one isolate capability as a security boundary against a separate, more privileged principal concurrently replacing paths in the same mutable Workspace. Deployments requiring that adversarial concurrency need a future transactional DOFS primitive or separate Workspace identities.
-
-## Isolation and lifecycle
-
-Each execution receives a fresh Dynamic Worker with:
-
-- explicit Worker Loader CPU limits;
-- a host wall-clock deadline;
-- `globalOutbound: null` by default;
-- finite, acyclic JSON-compatible input and structured result validation;
-- configurable source/module graph, input, result, stdin, stdio, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxStdioBytes`, and `maxCapabilityBytes`);
-- explicit entrypoint and Worker disposal;
-- host-owned cancellation;
-- retained events and result rows in the Workspace database.
-
-Standard output and standard error stream live. The Dynamic Worker hands the readable end of its output stream to the host through the `attachOutput` bridge call, and the host drains it frame by frame while user code is still running, appending each chunk to the execution event stream as it arrives rather than buffering the run and publishing at the end. The structured result and the exit event settle once the output stream closes, so the terminal events always follow the last output. Output remains bounded by `maxStdioBytes` across both streams. Completed writes are durable immediately. Failure or cancellation does not roll back filesystem effects already completed.
-
-## Trusted integrations
-
-A host can add its own reserved modules through `WorkerJavaScriptBackend.trustedModules`. Each module is an object of host functions, and each function becomes a named export in the isolate:
+`createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
 
 ```ts
-new WorkerJavaScriptBackend({
-  loader: env.LOADER,
-  trustedModules: {
-    "ws:container": {
-      async exec(args, { signal }) {
-        const command = parseCommand(args);
-        const handle = await workspace.runtime.exec(command, { backend: "container" });
-        signal.addEventListener("abort", () => void handle.kill());
-        const result = await handle.result();
-        return { exitCode: result.exitCode };
-      },
-    },
-  },
-});
-```
-
-Caller source imports the functions by name:
-
-```js
-import { exec } from "ws:container";
-
-export default async function () {
-  return exec("npm test");
-}
-```
-
-Each host function receives the arguments the isolate passed, as an array of JSON-compatible values, and a `{ signal, deadline }` context. The arguments come from caller code, so parse them before use. The return value must be JSON-compatible and fits within the same capability byte limits as every other host call.
-
-The backend checks trusted modules when it is constructed. A specifier must be a simple `ws:*` name that does not shadow `ws:git` or `ws:artifacts`. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
-
-These modules are fixed at construction, and caller source cannot supply or replace them.
-
-### Container commands with `ws:container`
-
-`createContainerModule()` from `@cloudflare/computer/backends/container` builds a ready-made `ws:container` module. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
-
-```ts
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
-import {
-  CloudflareContainerBackend,
-  createContainerModule,
-  describeContainerModule,
-} from "@cloudflare/computer/backends/container";
-import { createAITools } from "@cloudflare/computer/tools";
-
 this.workspace = new Workspace({
   storage: ctx.storage,
   backends: [
     new WorkerJavaScriptBackend({
       loader: env.LOADER,
       access: "read-write",
-      trustedModules: {
-        "ws:container": createContainerModule({ runtime: () => this.workspace.runtime }),
-      },
+      modules: { "ws:container": createContainerModule() },
     }),
     new CloudflareContainerBackend({ /* ... */ }),
   ],
@@ -284,4 +267,19 @@ A few limits follow from `exec` being a host call:
 - The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
 - Cancelling the execution kills the running command.
 
-A container command can write to the Workspace and reach the network, whatever the JavaScript backend's `access` and egress settings say. Install `ws:container` only on a read-write backend you would also trust with a shell.
+A container command can write to the Workspace and reach the network, whatever the JavaScript backend's egress settings say. `exec` refuses to run on a read-only backend.
+
+## Isolation and lifecycle
+
+Each execution receives a fresh Dynamic Worker with:
+
+- explicit Worker Loader CPU limits;
+- a host wall-clock deadline;
+- `globalOutbound: null` by default;
+- finite, acyclic JSON-compatible input and structured result validation;
+- configurable source/module graph, input, result, stdin, stdio, file/capability request, and response byte limits (`maxSourceBytes`, `maxInputBytes`, `maxResultBytes`, `maxStdinBytes`, `maxStdioBytes`, and `maxCapabilityBytes`);
+- explicit entrypoint and Worker disposal;
+- host-owned cancellation;
+- retained events and result rows in the Workspace database.
+
+Standard output and standard error stream live. The Dynamic Worker hands the readable end of its output stream to the host through the `attachOutput` bridge call, and the host drains it frame by frame while user code is still running, appending each chunk to the execution event stream as it arrives rather than buffering the run and publishing at the end. The structured result and the exit event settle once the output stream closes, so the terminal events always follow the last output. Output remains bounded by `maxStdioBytes` across both streams. Completed writes are durable immediately. Failure or cancellation does not roll back filesystem effects already completed.

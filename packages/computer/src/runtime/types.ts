@@ -4,36 +4,73 @@ import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
-/** Cancellation and timing for one call into a trusted module function. */
-export interface WorkspaceTrustedCallContext {
+/** Per-call context the backend passes to every host module function. */
+export interface WorkspaceModuleCallContext {
   /** Aborts when the call passes its deadline or the execution is cancelled. */
   readonly signal: AbortSignal;
   /** Epoch milliseconds after which the caller stops waiting for this call. */
   readonly deadline: number;
+  /** Access level of the backend running the call. */
+  readonly access: WorkspaceRuntimeAccess;
+  /**
+   * Resolve a path the isolate passed against the backend's root.
+   * Rejects paths that escape the root or pass through a symlink.
+   *
+   * @param path - An absolute path, or one relative to the backend root.
+   * @param options - Set `allowMissing` when the path may not exist yet.
+   * @returns The confined absolute path.
+   */
+  resolvePath(path: string, options?: { readonly allowMissing?: boolean }): Promise<string>;
 }
 
 /**
- * One host function exported by a trusted module.
+ * One host function exported by a host module.
  *
  * `args` holds the arguments the isolate passed, decoded from the wire.
  * They come from untrusted code, so parse them before use.
  */
-export type WorkspaceTrustedFunction = (
+export type WorkspaceModuleFunction = (
   args: readonly WorkspaceRuntimeValue[],
-  context: WorkspaceTrustedCallContext,
+  context: WorkspaceModuleCallContext,
 ) => Promise<WorkspaceRuntimeValue>;
 
+/** Named functions a host module exports into the isolate. */
+export type WorkspaceModuleFunctions = Readonly<Record<string, WorkspaceModuleFunction>>;
+
+/** Workspace services a host module can build its functions from. */
+export interface WorkspaceModuleHost {
+  /** The Workspace's Git client. Throws on use when Git is not configured. */
+  readonly git: import("../git/index.js").GitClient;
+  /** The Workspace's Artifacts client. Throws on use when Artifacts is not configured. */
+  readonly artifacts: import("../artifacts/index.js").ArtifactClient;
+  /** The Workspace runtime, for running commands on other backends. */
+  readonly runtime: import("./runtime.js").WorkspaceRuntime;
+}
+
 /**
- * A host-owned module installed under a reserved `ws:*` specifier.
- *
- * Each key becomes a named export in the isolate, so
- * `{ exec: async (args) => ... }` installed as `ws:container` lets
- * code write `import { exec } from "ws:container"`. Keys must be
- * JavaScript identifier names other than `default` and `then`. A
- * reserved word such as `delete` works, but code must rename it on
- * import: `import { delete as remove } from "ws:files"`.
+ * A module whose functions run in the Durable Object rather than in the
+ * isolate. Build one with `defineModule()`, or use a prebuilt one from
+ * `@cloudflare/computer/modules/*`.
  */
-export type WorkspaceTrustedModule = Readonly<Record<string, WorkspaceTrustedFunction>>;
+export interface WorkspaceHostModule {
+  readonly kind: "host";
+  /**
+   * Build the module's functions. The backend calls this once when it
+   * connects to its Workspace.
+   */
+  create(host: WorkspaceModuleHost): WorkspaceModuleFunctions;
+}
+
+/**
+ * A module caller source can import.
+ *
+ * A string is JavaScript source bundled into the isolate. It is plain
+ * code with no host access. A host module runs in the Durable Object,
+ * must use a `ws:*` specifier, and each of its functions becomes a
+ * named export: `{ "ws:container": createContainerModule() }` lets code
+ * write `import { exec } from "ws:container"`.
+ */
+export type WorkspaceModule = string | WorkspaceHostModule;
 
 export type WorkspaceRuntimeValue =
   | null
@@ -203,7 +240,11 @@ export interface WorkspaceModuleBackendHandle {
   close?(): Promise<void>;
 }
 
-export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost;
+/** What a module backend receives when it connects to its Workspace. */
+export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost & {
+  /** The Workspace runtime, handed to host modules. */
+  readonly runtime: import("./runtime.js").WorkspaceRuntime;
+};
 
 export interface WorkspaceModuleBackend {
   readonly protocol: "module";

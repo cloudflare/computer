@@ -998,6 +998,7 @@ export class Workspace {
           fs: this.#fs,
           git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
           artifacts: this.#artifacts,
+          runtime: this.runtime,
         }),
     )
       .then(async (handle) => {

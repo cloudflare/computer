@@ -70,12 +70,19 @@ export {
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
 export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
+export { defineModule } from "./runtime/module.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
+  WorkspaceHostModule,
+  WorkspaceModule,
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFunction,
+  WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
   WorkspaceRegisteredBackend,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeDisposeOptions,
@@ -88,9 +95,6 @@ export type {
   WorkspaceRuntimeResult,
   WorkspaceRuntimeStatus,
   WorkspaceRuntimeValue,
-  WorkspaceTrustedCallContext,
-  WorkspaceTrustedFunction,
-  WorkspaceTrustedModule,
 } from "./runtime/types.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";

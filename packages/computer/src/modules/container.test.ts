@@ -1,30 +1,38 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkspaceTrustedCallContext } from "../../runtime/types.js";
-import {
-  type ContainerModuleExecOptions,
-  type ContainerModuleRuntime,
-  createContainerModule,
-  describeContainerModule,
-} from "./container-module.js";
+import type {
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFunction,
+  WorkspaceModuleHost,
+} from "../runtime/types.js";
+import { createContainerModule, describeContainerModule } from "./container.js";
+
+interface ExecOptions {
+  readonly backend: string;
+  readonly encoding: "utf8";
+  readonly cwd?: string;
+  readonly env?: Record<string, string>;
+  readonly stdin?: string;
+  readonly timeoutMs: number;
+}
 
 interface Run {
   readonly command: string;
-  readonly options: ContainerModuleExecOptions;
+  readonly options: ExecOptions;
   killed: boolean;
 }
 
-// An in-memory runtime that records each command and finishes it with
-// the given output, or holds it open until it is killed.
+// An in-memory Workspace runtime that records each command and finishes
+// it with the given output, or holds it open until it is killed.
 function fakeRuntime(output: {
   exitCode?: number;
   stdout?: string;
   stderr?: string;
   hang?: boolean;
-}): { runtime: ContainerModuleRuntime; runs: Run[] } {
+}) {
   const runs: Run[] = [];
-  const runtime: ContainerModuleRuntime = {
-    async exec(command, options) {
+  const runtime = {
+    async exec(command: string, options: ExecOptions) {
       const run: Run = { command, options, killed: false };
       runs.push(run);
       let stop: () => void = () => undefined;
@@ -50,10 +58,27 @@ function fakeRuntime(output: {
   return { runtime, runs };
 }
 
-function callContext(overrides: Partial<WorkspaceTrustedCallContext> = {}) {
+// Build the module's functions the way the backend does when it connects.
+function build(
+  runtime: ReturnType<typeof fakeRuntime>["runtime"],
+  options?: Parameters<typeof createContainerModule>[0],
+): { readonly exec: WorkspaceModuleFunction } {
+  // SAFETY: The module only calls runtime.exec, and the fake implements the part of WorkspaceRuntime it uses.
+  const host = { runtime, git: undefined, artifacts: undefined } as unknown as WorkspaceModuleHost;
+  const functions = createContainerModule(options).create(host);
+  const exec = functions.exec;
+  if (!exec) throw new Error("ws:container must export exec");
+  return { exec };
+}
+
+function callContext(
+  overrides: Partial<WorkspaceModuleCallContext> = {},
+): WorkspaceModuleCallContext {
   return {
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
+    access: "read-write",
+    resolvePath: async (path) => path,
     ...overrides,
   };
 }
@@ -61,7 +86,7 @@ function callContext(overrides: Partial<WorkspaceTrustedCallContext> = {}) {
 describe("createContainerModule", () => {
   it("runs the command on the container backend and returns its output", async () => {
     const { runtime, runs } = fakeRuntime({ exitCode: 3, stdout: "out", stderr: "err" });
-    const container = createContainerModule({ runtime: () => runtime });
+    const container = build(runtime);
 
     await expect(
       container.exec(
@@ -84,7 +109,7 @@ describe("createContainerModule", () => {
 
   it("uses the configured backend id and omits unset options", async () => {
     const { runtime, runs } = fakeRuntime({});
-    const container = createContainerModule({ runtime: () => runtime, backend: "linux" });
+    const container = build(runtime, { backend: "linux" });
 
     await container.exec(["ls"], callContext());
     expect(Object.keys(runs[0]?.options ?? {}).sort()).toEqual([
@@ -95,24 +120,19 @@ describe("createContainerModule", () => {
     expect(runs[0]?.options.backend).toBe("linux");
   });
 
-  it("resolves the runtime on each call, so it can be built before the Workspace", async () => {
-    let current: ContainerModuleRuntime | undefined;
-    const container = createContainerModule({
-      runtime: () => {
-        if (!current) throw new Error("Workspace not constructed yet");
-        return current;
-      },
-    });
+  it("refuses to run on a read-only backend", async () => {
     const { runtime, runs } = fakeRuntime({});
-    current = runtime;
+    const container = build(runtime);
 
-    await container.exec(["true"], callContext());
-    expect(runs).toHaveLength(1);
+    await expect(container.exec(["ls"], callContext({ access: "read" }))).rejects.toThrow(
+      /write access/,
+    );
+    expect(runs).toHaveLength(0);
   });
 
   it("caps the timeout at the time left before the host call deadline", async () => {
     const { runtime, runs } = fakeRuntime({});
-    const container = createContainerModule({ runtime: () => runtime });
+    const container = build(runtime);
 
     await container.exec(
       ["sleep 1", { timeoutMs: 600_000 }],
@@ -125,7 +145,7 @@ describe("createContainerModule", () => {
 
   it("kills the command when the call is aborted", async () => {
     const { runtime, runs } = fakeRuntime({ hang: true });
-    const container = createContainerModule({ runtime: () => runtime });
+    const container = build(runtime);
     const controller = new AbortController();
 
     const pending = container.exec(["sleep 100"], callContext({ signal: controller.signal }));
@@ -138,7 +158,7 @@ describe("createContainerModule", () => {
 
   it("does not start a command once the call is aborted", async () => {
     const { runtime, runs } = fakeRuntime({});
-    const container = createContainerModule({ runtime: () => runtime });
+    const container = build(runtime);
     const controller = new AbortController();
     controller.abort(new Error("cancelled"));
 
@@ -150,7 +170,7 @@ describe("createContainerModule", () => {
 
   it("truncates each stream on UTF-8 boundaries", async () => {
     const { runtime } = fakeRuntime({ stdout: "a🙂b", stderr: "🙂🙂" });
-    const container = createContainerModule({ runtime: () => runtime, maxOutputBytes: 5 });
+    const container = build(runtime, { maxOutputBytes: 5 });
 
     await expect(container.exec(["echo"], callContext())).resolves.toEqual({
       exitCode: 0,
@@ -171,7 +191,7 @@ describe("createContainerModule", () => {
     ["a non-positive timeout", ["ls", { timeoutMs: 0 }], /timeoutMs must be a positive number/],
   ])("rejects %s without running anything", async (_label, args, message) => {
     const { runtime, runs } = fakeRuntime({});
-    const container = createContainerModule({ runtime: () => runtime });
+    const container = build(runtime);
 
     // SAFETY: Each case hands exec arguments that isolate code could send; the cast only widens the test table's inferred type.
     await expect(container.exec(args as never, callContext())).rejects.toThrow(message);
@@ -179,10 +199,7 @@ describe("createContainerModule", () => {
   });
 
   it("rejects a bad maxOutputBytes at construction", () => {
-    const { runtime } = fakeRuntime({});
-    expect(() => createContainerModule({ runtime: () => runtime, maxOutputBytes: 0 })).toThrow(
-      /maxOutputBytes/,
-    );
+    expect(() => createContainerModule({ maxOutputBytes: 0 })).toThrow(/maxOutputBytes/);
   });
 
   it("describes the module under its installed specifier", () => {

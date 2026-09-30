@@ -49,7 +49,7 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("executes an ES module with configured and trusted modules", async () => {
+  it("executes an ES module with source and host modules", async () => {
     const response = await runtime({
       source: `
         import { double } from "math-kit";
@@ -234,7 +234,7 @@ describe("WorkspaceRuntime", () => {
     expect(payload.result.stdout).toContain("stdio truncated");
   });
 
-  it("bounds oversized trusted-module error responses", async () => {
+  it("bounds oversized host module error responses", async () => {
     const response = await runtime({
       source: `
         import { largeError } from "ws:test-host";
@@ -278,7 +278,7 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value).toEqual(["fulfilled", "fulfilled", "rejected"]);
   });
 
-  it("rejects non-plain results from host trusted modules", async () => {
+  it("rejects non-plain results from host modules", async () => {
     const response = await runtime({
       source: `
         import { invalidResult } from "ws:test-host";
@@ -296,7 +296,7 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("exposes only the functions a trusted module declares", async () => {
+  it("exposes only the functions a host module declares", async () => {
     const response = await runtime({
       source: `
         import * as host from "ws:test-host";
@@ -317,7 +317,7 @@ describe("WorkspaceRuntime", () => {
     ]);
   });
 
-  it("fails to link an import the trusted module does not export", async () => {
+  it("fails to link an import the host module does not export", async () => {
     const response = await runtime({
       source: `
         import { call } from "ws:test-host";
@@ -439,7 +439,7 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("confines trusted Git operations to the backend root", async () => {
+  it("confines ws:git operations to the backend root", async () => {
     const response = await runtime({
       source: `
         import { status } from "ws:git";
@@ -488,7 +488,7 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text), text).toMatchObject({
       result: {
         status: "failed",
-        stderr: expect.stringContaining("allowArtifac"),
+        stderr: expect.stringContaining("createArtifactsModule"),
       },
     });
   });
@@ -506,12 +506,12 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text), text).toMatchObject({
       result: {
         status: "failed",
-        stderr: expect.stringContaining("allowGitNetwork"),
+        stderr: expect.stringContaining("createGitModule"),
       },
     });
   });
 
-  it("rejects trusted Git paths that traverse a symlink", async () => {
+  it("rejects ws:git paths that traverse a symlink", async () => {
     await write("/outside/repository/README.md", "outside");
     await symlink("/outside/repository", "/workspace/linked-repository");
     const response = await runtime({

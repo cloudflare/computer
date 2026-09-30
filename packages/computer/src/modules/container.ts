@@ -1,9 +1,9 @@
-// A trusted module that lets isolate JavaScript run shell commands in
-// the Workspace's container backend.
+// `ws:container`: lets isolate JavaScript run shell commands in the
+// Workspace's container backend.
 //
-// Installed on a WorkerJavaScriptBackend as `ws:container`, it turns
-// the container into a library the JavaScript backend calls, rather
-// than a second backend the model has to choose between:
+// Installed on a WorkerJavaScriptBackend, it turns the container into a
+// library the JavaScript backend calls, rather than a second backend
+// the model has to choose between:
 //
 //   import { exec } from "ws:container";
 //   const { exitCode, stdout } = await exec("npm test", { cwd: "/workspace" });
@@ -13,55 +13,19 @@
 // pending Workspace writes before the command and pulls the
 // container's changes after it.
 
+import { defineModule } from "../runtime/module.js";
 import type {
+  WorkspaceHostModule,
+  WorkspaceModuleCallContext,
   WorkspaceRuntimeValue,
-  WorkspaceTrustedCallContext,
-  WorkspaceTrustedFunction,
-} from "../../runtime/types.js";
+} from "../runtime/types.js";
 
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const EXEC_OPTION_KEYS = new Set(["cwd", "env", "stdin", "timeoutMs"]);
 
-/** Options the container module passes to `workspace.runtime.exec`. */
-export interface ContainerModuleExecOptions {
-  /** Backend id the command runs on. */
-  readonly backend: string;
-  /** Output encoding. The module always asks for text. */
-  readonly encoding: "utf8";
-  /** Working directory inside the container. */
-  readonly cwd?: string;
-  /** Environment variables for this command only. */
-  readonly env?: Record<string, string>;
-  /** Text piped to the command's standard input. */
-  readonly stdin?: string;
-  /** Wall-clock limit for the command, in milliseconds. */
-  readonly timeoutMs: number;
-}
-
-/** The part of a Workspace execution handle the container module uses. */
-export interface ContainerModuleExecHandle {
-  /** Wait for the command to finish and return its output. */
-  result(): Promise<{ exitCode: number; stdout: string; stderr: string }>;
-  /** Stop the command. */
-  kill(): Promise<void>;
-}
-
-/** The part of `workspace.runtime` the container module uses. */
-export interface ContainerModuleRuntime {
-  /** Start a command on a Workspace backend. */
-  exec(command: string, options: ContainerModuleExecOptions): Promise<ContainerModuleExecHandle>;
-}
-
 /** Options for {@link createContainerModule}. */
 export interface ContainerModuleOptions {
-  /**
-   * Returns the Workspace runtime. It is called on every command
-   * rather than once, so the module can be built before the
-   * Workspace that owns both backends: pass
-   * `() => this.workspace.runtime`.
-   */
-  readonly runtime: () => ContainerModuleRuntime;
   /** Id of the container backend. Defaults to `"container-shell"`. */
   readonly backend?: string;
   /**
@@ -73,45 +37,41 @@ export interface ContainerModuleOptions {
   readonly maxOutputBytes?: number;
 }
 
-/** The `ws:container` trusted module. */
-export type ContainerModule = {
-  /**
-   * Run a shell command in the container.
-   *
-   * Isolate code calls `exec(command, { cwd, env, stdin, timeoutMs })`
-   * and gets `{ exitCode, stdout, stderr }` back once the command
-   * finishes. A non-zero exit code is a normal result, not an error.
-   */
-  readonly exec: WorkspaceTrustedFunction;
-};
-
 /**
- * Build the `ws:container` trusted module over a Workspace's container
+ * Build the `ws:container` host module over the Workspace's container
  * backend.
  *
- * Install it only on a read-write JavaScript backend. A container
- * command can write to the Workspace and reach the network, whatever
- * the isolate's own access and egress settings are.
+ * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
+ * returns `{ exitCode, stdout, stderr }` once the command finishes. A
+ * non-zero exit code is a normal result, not an error. Cancelling the
+ * execution kills the command.
  *
- * @param options - How to reach the Workspace runtime and which backend to use.
- * @returns The module to pass as `trustedModules["ws:container"]`.
+ * A container command can write to the Workspace and reach the network,
+ * so `exec` refuses to run on a read-only backend. Egress settings on
+ * the JavaScript backend do not apply to the container.
+ *
+ * @param options - Which backend to use and how much output to return.
+ * @returns The module to pass as `modules["ws:container"]`.
  * @throws When `maxOutputBytes` is not a positive integer. The host
  *   configured the module wrongly.
  */
-export function createContainerModule(options: ContainerModuleOptions): ContainerModule {
+export function createContainerModule(options: ContainerModuleOptions = {}): WorkspaceHostModule {
   const backend = options.backend ?? DEFAULT_BACKEND;
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
   }
 
-  return {
+  return defineModule((host) => ({
     async exec(args, context) {
+      if (context.access !== "read-write") {
+        throw new Error("ws:container exec requires Workspace write access.");
+      }
       const request = parseExecArgs(args);
       const timeoutMs = remainingTime(request.timeoutMs, context);
       context.signal.throwIfAborted();
 
-      const handle = await options.runtime().exec(request.command, {
+      const handle = await host.runtime.exec(request.command, {
         backend,
         encoding: "utf8",
         timeoutMs,
@@ -135,7 +95,7 @@ export function createContainerModule(options: ContainerModuleOptions): Containe
         context.signal.removeEventListener("abort", kill);
       }
     },
-  };
+  }));
 }
 
 /**
@@ -229,7 +189,7 @@ function optionalTimeout(value: WorkspaceRuntimeValue | undefined) {
 // The command must finish before the host call deadline, or the
 // isolate stops waiting while the container keeps working. Cap the
 // requested timeout at the time left.
-function remainingTime(requested: number | undefined, context: WorkspaceTrustedCallContext) {
+function remainingTime(requested: number | undefined, context: WorkspaceModuleCallContext) {
   const remaining = context.deadline - Date.now();
   if (remaining <= 0) throw new Error("exec: the host call deadline has already passed.");
   return requested === undefined ? remaining : Math.min(requested, remaining);

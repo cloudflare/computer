@@ -1,3 +1,4 @@
+import type { WorkspaceModuleCallContext } from "@cloudflare/computer";
 import type { LanguageModel } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,8 +31,13 @@ function successfulResult(text = "ok") {
   };
 }
 
-function context() {
-  return { signal: new AbortController().signal, deadline: Date.now() + 1_000 };
+function context(signal = new AbortController().signal): WorkspaceModuleCallContext {
+  return {
+    signal,
+    deadline: Date.now() + 1_000,
+    access: "read",
+    resolvePath: async (path) => path,
+  };
 }
 
 async function waitForCalls(count: number): Promise<void> {
@@ -190,10 +196,7 @@ describe("recursive model batch capability", () => {
     const signal = new AbortController().signal;
 
     await expect(
-      capability.batch([[{ prompt: "classify", input: { evidence: "safe" } }]], {
-        signal,
-        deadline: Date.now() + 1_000,
-      }),
+      capability.batch([[{ prompt: "classify", input: { evidence: "safe" } }]], context(signal)),
     ).resolves.toEqual([
       { id: expect.any(String), index: 0, ok: true, text: "classification", error: null },
     ]);
@@ -261,7 +264,7 @@ describe("recursive model batch capability", () => {
     const controller = new AbortController();
     const result = capability.batch(
       [Array.from({ length: 8 }, (_, index) => ({ prompt: `request ${index}`, input: null }))],
-      { signal: controller.signal, deadline: Date.now() + 1_000 },
+      context(controller.signal),
     );
 
     await waitForCalls(4);

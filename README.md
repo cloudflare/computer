@@ -14,8 +14,8 @@ SQLite and exposes one pluggable execution surface through
   Workers RPC, so there is no second store or sync round trip.
 - **Isolate JavaScript** runs an ECMAScript module in a fresh Dynamic
   Worker with structured input/results, durable relative imports,
-  configured libraries, Workspace-backed `node:fs/promises`, and trusted `ws:git` and
-  `ws:artifacts` modules.
+  configured libraries, Workspace-backed `node:fs/promises`, and host modules such as
+  `ws:git`, `ws:artifacts`, and `ws:container`.
 
 A Workspace may register multiple backends under stable IDs.
 `workspace.runtime.exec(source, { backend })` is the single execution

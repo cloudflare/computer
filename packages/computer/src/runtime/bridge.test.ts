@@ -13,13 +13,7 @@ function bridge(limits: {
 }) {
   return new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
     ...limits,
-    trustedModules: {
-      "ws:test": {
-        async run() {
-          return "ok";
-        },
-      },
-    },
+    hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
   });
 }
 
@@ -30,9 +24,9 @@ async function message(response: Promise<string>) {
 describe("WorkspaceRuntimeBridge cumulative limits", () => {
   it("accepts the configured call count and rejects the next call", async () => {
     const target = bridge({ maxCalls: 2 });
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toContain(
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
       "exceeds 2 capability calls",
     );
   });
@@ -40,20 +34,20 @@ describe("WorkspaceRuntimeBridge cumulative limits", () => {
   it("accepts requests at the cumulative byte boundary and rejects the next request", async () => {
     const bytes = encoder.encode(args).byteLength;
     const target = bridge({ maxTotalRequestBytes: bytes * 2 });
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toContain(
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
       `requests exceed ${bytes * 2} bytes`,
     );
   });
 
   it("accepts responses at the cumulative byte boundary and rejects the next response", async () => {
-    const sample = await bridge({}).call("trusted/ws:test.run", args);
+    const sample = await bridge({}).call("host/ws:test.run", args);
     const bytes = encoder.encode(sample).byteLength;
     const target = bridge({ maxTotalResponseBytes: bytes * 2 });
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toBeUndefined();
-    await expect(message(target.call("trusted/ws:test.run", args))).resolves.toContain(
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
       `responses exceed ${bytes * 2} bytes`,
     );
   });

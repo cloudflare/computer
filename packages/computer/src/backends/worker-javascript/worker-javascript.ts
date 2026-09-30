@@ -4,20 +4,23 @@ import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/e
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
+  WorkspaceModule,
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
+  WorkspaceModuleFunctions,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeLoader,
   WorkspaceRuntimeValue,
-  WorkspaceTrustedModule,
 } from "../../runtime/types.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   buildModuleGraph,
-  parseTrustedModuleExports,
-  type TrustedModuleExports,
+  type HostModuleExports,
+  type ParsedModules,
+  parseHostModuleExports,
+  parseModules,
 } from "./module-graph.js";
 
 export interface WorkerJavaScriptBackendOptions {
@@ -25,16 +28,25 @@ export interface WorkerJavaScriptBackendOptions {
   id?: string;
   root?: string;
   access?: WorkspaceRuntimeAccess;
-  modules?: Record<string, string>;
   /**
-   * Host-owned capability modules installed under reserved ws:* specifiers.
-   * Each function in a module becomes a named export, so
-   * `{ "ws:container": { exec } }` lets caller source write
-   * `import { exec } from "ws:container"`. Caller source may import these
-   * modules, but cannot provide or replace them. The constructor throws
-   * when a specifier or function name is not allowed.
+   * Modules caller source can import by specifier.
+   *
+   * A string value is JavaScript source bundled into the isolate, such as
+   * a library build. A host module runs in the Durable Object under a
+   * `ws:*` specifier, and each of its functions becomes a named export:
+   *
+   * ```ts
+   * modules: {
+   *   "ws:container": createContainerModule(),
+   *   "ws:git": createGitModule(),
+   * }
+   * ```
+   *
+   * `node:fs` and `node:fs/promises` are always installed and cannot be
+   * replaced. The constructor throws when a specifier is not allowed, and
+   * connecting throws when a host module's export names are not allowed.
    */
-  trustedModules?: Record<`ws:${string}`, WorkspaceTrustedModule>;
+  modules?: Record<string, WorkspaceModule>;
   defaultTimeoutMs?: number;
   maxTimeoutMs?: number;
   maxSourceBytes?: number;
@@ -64,10 +76,6 @@ export interface WorkerJavaScriptBackendOptions {
   compatibilityFlags?: string[];
   egress?: WorkspaceEgressPolicy;
   globalOutbound?: Fetcher | null;
-  /** Allow ws:git operations that can perform host-side network requests. */
-  allowGitNetwork?: boolean;
-  /** Allow ws:artifacts imports from caller-selected remote URLs. */
-  allowArtifactNetwork?: boolean;
 }
 
 type ResolvedWorkerJavaScriptBackendOptions = Required<
@@ -98,9 +106,9 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "compatibilityFlags"
   >
 > &
-  Omit<WorkerJavaScriptBackendOptions, "egress" | "globalOutbound"> & {
+  Omit<WorkerJavaScriptBackendOptions, "egress" | "globalOutbound" | "modules"> & {
     egress: WorkspaceEgressPolicy;
-    trustedModuleExports: TrustedModuleExports;
+    modules: ParsedModules;
   };
 
 interface WorkspaceExecutionContext {
@@ -207,7 +215,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     this.#options = {
       ...backendOptions,
       egress: resolvedEgress,
-      trustedModuleExports: parseTrustedModuleExports(options.trustedModules ?? {}),
+      modules: parseModules(options.modules ?? {}),
       root: options.root ?? "/workspace",
       access: options.access ?? "read-write",
       defaultTimeoutMs,
@@ -242,6 +250,8 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
 class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
+  readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  readonly #hostModuleExports: HostModuleExports;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
   #closed = false;
@@ -253,6 +263,19 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   constructor(options: ResolvedWorkerJavaScriptBackendOptions, host: WorkspaceModuleBackendHost) {
     this.#options = options;
     this.#host = host;
+    const functions = new Map<string, WorkspaceModuleFunctions>();
+    const exports = new Map<string, readonly string[]>();
+    for (const [specifier, module] of options.modules.host) {
+      const built = module.create({
+        git: host.git,
+        artifacts: host.artifacts,
+        runtime: host.runtime,
+      });
+      exports.set(specifier, parseHostModuleExports(specifier, built));
+      functions.set(specifier, built);
+    }
+    this.#hostModuleFunctions = functions;
+    this.#hostModuleExports = exports;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -363,8 +386,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         source: input.source,
         cwd: input.cwd ?? this.#options.root,
         capability,
-        configuredModules: this.#options.modules ?? {},
-        trustedModules: this.#options.trustedModuleExports,
+        configuredModules: this.#options.modules.source,
+        hostModules: this.#hostModuleExports,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
@@ -399,11 +422,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       this.#records.set(id, record);
       try {
         const bridge = new WorkspaceRuntimeBridge(capability, {
-          git: this.#host.git,
-          artifacts: this.#host.artifacts,
-          trustedModules: this.#options.trustedModules,
-          allowGitNetwork: this.#options.allowGitNetwork ?? false,
-          allowArtifactNetwork: this.#options.allowArtifactNetwork ?? false,
+          hostModules: this.#hostModuleFunctions,
           maxPayloadBytes: this.#options.maxCapabilityBytes,
           maxCallDurationMs: this.#options.maxHostCallMs,
           maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,

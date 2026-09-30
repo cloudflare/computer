@@ -1,4 +1,4 @@
-import type { WorkspaceRuntimeValue, WorkspaceTrustedFunction } from "@cloudflare/computer";
+import type { WorkspaceModuleFunction, WorkspaceRuntimeValue } from "@cloudflare/computer";
 import { generateText, type LanguageModel } from "ai";
 import { z } from "zod";
 
@@ -76,7 +76,7 @@ interface ChildHooks {
 /** The `ws:model` trusted module: one `batch` function over bounded child requests. */
 export type ModelCapability = {
   /** Run up to 24 child model requests and return one result per request. */
-  readonly batch: WorkspaceTrustedFunction;
+  readonly batch: WorkspaceModuleFunction;
 };
 
 export function createModelCapability(model: LanguageModel, hooks: ChildHooks): ModelCapability {

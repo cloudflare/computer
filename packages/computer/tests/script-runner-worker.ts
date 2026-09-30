@@ -1,7 +1,6 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
 import type { WorkspaceBackend } from "../src/backend.js";
-import { createContainerModule } from "../src/backends/container/index.js";
 import { WorkerJavaScriptBackend } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
 import type {
@@ -9,7 +8,10 @@ import type {
   WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "../src/index.js";
-import { Workspace } from "../src/index.js";
+import { defineModule, Workspace } from "../src/index.js";
+import { createArtifactsModule } from "../src/modules/artifacts.js";
+import { createContainerModule } from "../src/modules/container.js";
+import { createGitModule } from "../src/modules/git.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
@@ -73,12 +75,10 @@ export class HostDO extends DurableObject<Env> {
           maxConcurrentCapabilityCalls: 2,
           modules: {
             "math-kit": "export const double = (value) => value * 2;",
-          },
-          trustedModules: {
-            "ws:container": createContainerModule({
-              runtime: () => this.#workspace.runtime,
-            }),
-            "ws:test-host": {
+            "ws:git": createGitModule(),
+            "ws:artifacts": createArtifactsModule(),
+            "ws:container": createContainerModule(),
+            "ws:test-host": defineModule({
               async echo(args) {
                 return { args: [...args] };
               },
@@ -108,7 +108,7 @@ export class HostDO extends DurableObject<Env> {
                   keep: true,
                 };
               },
-            },
+            }),
           },
         }),
         fakeContainerBackend(),

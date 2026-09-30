@@ -66,8 +66,8 @@ const backend = new WorkerJavaScriptBackend({
   root: "/workspace",
   access: "read",
   egress: { mode: "none" },
-  trustedModules: {
-    "ws:model": modelCapability,
+  modules: {
+    "ws:model": defineModule(modelCapability),
   },
 });
 
@@ -77,7 +77,7 @@ const workspace = new Workspace({
 });
 ```
 
-The important line is `trustedModules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `ws:model` interface.
+The important line is `modules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `ws:model` interface.
 
 A generated module follows this shape:
 
