@@ -1,7 +1,7 @@
 import { parse } from "acorn";
 
 import type { WorkspaceRuntimeCapability } from "../../runtime/capability.js";
-import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
+import type { WorkspaceRuntimeLoader, WorkspaceTrustedModule } from "../../runtime/types.js";
 
 export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
   load(code: { modules: infer Modules }): unknown;
@@ -13,13 +13,65 @@ const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
 const CAPABILITIES_MODULE = "workspace-capabilities.js";
 const TRUSTED_MODULES = ["node:fs", "node:fs/promises", "ws:git", "ws:artifacts"] as const;
+const TRUSTED_SPECIFIER = /^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+// `default` would turn the function into the default export, and a
+// `then` export makes the module namespace look like a promise to
+// `await import(...)`.
+const RESERVED_EXPORT_NAMES = new Set(["default", "then"]);
+
+/** Specifier of a host trusted module mapped to the function names it exports. */
+export type TrustedModuleExports = ReadonlyMap<string, readonly string[]>;
+
+/**
+ * Check host trusted modules once, at backend construction, and record
+ * the named exports each one installs.
+ *
+ * @param trustedModules - The modules passed to the backend.
+ * @returns The export names of each module, keyed by specifier.
+ * @throws When a specifier or function name is not allowed. The host
+ *   configured the backend wrongly and no execution can use it.
+ */
+export function parseTrustedModuleExports(
+  trustedModules: Readonly<Record<string, WorkspaceTrustedModule>>,
+): TrustedModuleExports {
+  const parsed = new Map<string, readonly string[]>();
+  for (const [specifier, module] of Object.entries(trustedModules)) {
+    if (
+      !TRUSTED_SPECIFIER.test(specifier) ||
+      TRUSTED_MODULES.some((reserved) => reserved === specifier)
+    ) {
+      throw new Error(
+        `Trusted module ${JSON.stringify(specifier)} must use a unique simple reserved ws:* name.`,
+      );
+    }
+    const names = Object.keys(module);
+    if (names.length === 0) {
+      throw new Error(`Trusted module ${JSON.stringify(specifier)} must export a function.`);
+    }
+    for (const name of names) {
+      if (!EXPORT_NAME.test(name) || RESERVED_EXPORT_NAMES.has(name)) {
+        throw new Error(
+          `Trusted module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a JavaScript identifier other than "default" or "then".`,
+        );
+      }
+      if (typeof module[name] !== "function") {
+        throw new Error(
+          `Trusted module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a function.`,
+        );
+      }
+    }
+    parsed.set(specifier, names);
+  }
+  return parsed;
+}
 
 export interface BuildModuleGraphOptions {
   source: string;
   cwd: string;
   capability: WorkspaceRuntimeCapability;
   configuredModules: Record<string, string>;
-  trustedModuleNames?: string[];
+  trustedModules: TrustedModuleExports;
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
@@ -39,18 +91,10 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
   const maxModules = options.maxModules ?? 128;
   const maxDepth = options.maxDepth ?? 32;
-  const trustedModuleNames = new Set<string>(TRUSTED_MODULES);
-  for (const name of options.trustedModuleNames ?? []) {
-    if (
-      !/^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) ||
-      TRUSTED_MODULES.includes(name as (typeof TRUSTED_MODULES)[number])
-    ) {
-      throw new Error(
-        `Trusted module ${JSON.stringify(name)} must use a unique simple reserved ws:* name.`,
-      );
-    }
-    trustedModuleNames.add(name);
-  }
+  const trustedModuleNames = new Set<string>([
+    ...TRUSTED_MODULES,
+    ...options.trustedModules.keys(),
+  ]);
 
   async function visit(path: string, source: string, depth: number): Promise<void> {
     if (depth > maxDepth) throw new Error(`Workspace JavaScript import depth exceeds ${maxDepth}.`);
@@ -136,9 +180,9 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
     const toCapabilities = relativeModule(directory, CAPABILITIES_MODULE);
     modules[`${prefix}ws:git`] = { js: gitModule(toCapabilities) };
     modules[`${prefix}ws:artifacts`] = { js: artifactsModule(toCapabilities) };
-    for (const specifier of options.trustedModuleNames ?? []) {
+    for (const [specifier, names] of options.trustedModules) {
       modules[`${prefix}${specifier}`] = {
-        js: trustedModule(toCapabilities, specifier),
+        js: trustedModule(toCapabilities, specifier, names),
       };
     }
     for (const [specifier, source] of Object.entries(options.configuredModules)) {
@@ -304,10 +348,15 @@ function proxyModule(capabilitiesImport: string, namespace: string, methods: str
   `;
 }
 
-function trustedModule(capabilitiesImport: string, specifier: string) {
+// Exports go through `export { local as name }` rather than
+// `export const name`, so a reserved word such as `delete` still works
+// as an export name.
+function trustedModule(capabilitiesImport: string, specifier: string, names: readonly string[]) {
+  const namespace = JSON.stringify(`trusted/${specifier}`);
   return `
-    import { call as hostCall } from ${JSON.stringify(capabilitiesImport)};
-    export const call = (method, ...args) => hostCall(${JSON.stringify(`trusted/${specifier}`)}, "call", [method, ...args]);
+    import { call } from ${JSON.stringify(capabilitiesImport)};
+    ${names.map((name, index) => `const fn${index} = (...args) => call(${namespace}, ${JSON.stringify(name)}, args);`).join("\n")}
+    export { ${names.map((name, index) => `fn${index} as ${name}`).join(", ")} };
   `;
 }
 

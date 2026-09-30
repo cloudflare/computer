@@ -193,4 +193,37 @@ Standard output and standard error stream live. The Dynamic Worker hands the rea
 
 ## Trusted integrations
 
-A host can configure additional reserved capability modules through `WorkerJavaScriptBackend.trustedModules`; these modules are fixed when the backend is constructed and cannot be supplied or replaced by caller source.
+A host can add its own reserved modules through `WorkerJavaScriptBackend.trustedModules`. Each module is an object of host functions, and each function becomes a named export in the isolate:
+
+```ts
+new WorkerJavaScriptBackend({
+  loader: env.LOADER,
+  trustedModules: {
+    "ws:container": {
+      async exec(args, { signal }) {
+        const command = parseCommand(args);
+        const handle = await workspace.runtime.exec(command, { backend: "container" });
+        signal.addEventListener("abort", () => void handle.kill());
+        const result = await handle.result();
+        return { exitCode: result.exitCode };
+      },
+    },
+  },
+});
+```
+
+Caller source imports the functions by name:
+
+```js
+import { exec } from "ws:container";
+
+export default async function () {
+  return exec("npm test");
+}
+```
+
+Each host function receives the arguments the isolate passed, as an array of JSON-compatible values, and a `{ signal, deadline }` context. The arguments come from caller code, so parse them before use. The return value must be JSON-compatible and fits within the same capability byte limits as every other host call.
+
+The backend checks trusted modules when it is constructed. A specifier must be a simple `ws:*` name that does not shadow `ws:git` or `ws:artifacts`. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
+
+These modules are fixed at construction, and caller source cannot supply or replace them.

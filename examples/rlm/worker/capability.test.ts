@@ -30,6 +30,10 @@ function successfulResult(text = "ok") {
   };
 }
 
+function context() {
+  return { signal: new AbortController().signal, deadline: Date.now() + 1_000 };
+}
+
 async function waitForCalls(count: number): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (generateTextMock.mock.calls.length >= count) return;
@@ -44,28 +48,25 @@ beforeEach(() => {
 });
 
 describe("recursive model batch capability", () => {
-  it("exposes only the batch method", async () => {
+  it("exposes only the batch function", () => {
     const capability = createModelCapability(model, hooks());
 
-    await expect(capability.call("generate", [[]])).rejects.toThrow(
-      "Unknown model capability method",
-    );
-    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(Object.keys(capability)).toEqual(["batch"]);
   });
 
   it("strictly validates the external argument and request shapes", async () => {
     const capability = createModelCapability(model, hooks());
 
-    await expect(capability.call("batch", [])).rejects.toThrow("exactly one argument");
-    await expect(capability.call("batch", [null])).rejects.toThrow("non-empty array");
-    await expect(capability.call("batch", [[]])).rejects.toThrow("non-empty array");
+    await expect(capability.batch([], context())).rejects.toThrow("exactly one argument");
+    await expect(capability.batch([null], context())).rejects.toThrow("non-empty array");
+    await expect(capability.batch([[]], context())).rejects.toThrow("non-empty array");
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: null, extra: true }], null]),
+      capability.batch([[{ prompt: "classify", input: null, extra: true }], null], context()),
     ).rejects.toThrow("exactly one argument");
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: null, extra: true }]]),
+      capability.batch([[{ prompt: "classify", input: null, extra: true }]], context()),
     ).rejects.toThrow("Invalid batch request");
-    await expect(capability.call("batch", [[{ prompt: "", input: null }]])).rejects.toThrow(
+    await expect(capability.batch([[{ prompt: "", input: null }]], context())).rejects.toThrow(
       "requires a prompt",
     );
     expect(generateTextMock).not.toHaveBeenCalled();
@@ -78,7 +79,9 @@ describe("recursive model batch capability", () => {
       input: null,
     }));
 
-    await expect(capability.call("batch", [requests])).rejects.toThrow("cannot exceed 24 requests");
+    await expect(capability.batch([requests], context())).rejects.toThrow(
+      "cannot exceed 24 requests",
+    );
     expect(generateTextMock).not.toHaveBeenCalled();
   });
 
@@ -88,7 +91,7 @@ describe("recursive model batch capability", () => {
     const capability = createModelCapability(model, { ...observed, admit });
     const requests = [{ prompt: "classify", input: "evidence" }];
 
-    await expect(capability.call("batch", [requests])).rejects.toThrow(
+    await expect(capability.batch([requests], context())).rejects.toThrow(
       "exhausted its child-model call budget",
     );
     expect(admit).toHaveBeenCalledWith(1);
@@ -99,7 +102,7 @@ describe("recursive model batch capability", () => {
     const capability = createModelCapability(model, hooks());
 
     await expect(
-      capability.call("batch", [[{ prompt: "é".repeat(8 * 1024 + 1), input: null }]]),
+      capability.batch([[{ prompt: "é".repeat(8 * 1024 + 1), input: null }]], context()),
     ).rejects.toThrow("16384 bytes");
     expect(generateTextMock).not.toHaveBeenCalled();
   });
@@ -109,10 +112,10 @@ describe("recursive model batch capability", () => {
     const maximumBody = "x".repeat(48 * 1024 - 11);
 
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: { body: maximumBody } }]]),
+      capability.batch([[{ prompt: "classify", input: { body: maximumBody } }]], context()),
     ).resolves.toHaveLength(1);
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: { body: `${maximumBody}x` } }]]),
+      capability.batch([[{ prompt: "classify", input: { body: `${maximumBody}x` } }]], context()),
     ).rejects.toThrow("49152 bytes");
   });
 
@@ -123,7 +126,7 @@ describe("recursive model batch capability", () => {
       input: { body: "x".repeat(48 * 1024 - 12) },
     }));
 
-    await expect(capability.call("batch", [requests])).rejects.toThrow(
+    await expect(capability.batch([requests], context())).rejects.toThrow(
       "Model batch request cannot exceed",
     );
     expect(generateTextMock).not.toHaveBeenCalled();
@@ -145,9 +148,10 @@ describe("recursive model batch capability", () => {
         }),
     );
     const capability = createModelCapability(model, hooks());
-    const resultPromise = capability.call("batch", [
-      Array.from({ length: 8 }, (_, index) => ({ prompt: `request ${index}`, input: null })),
-    ]);
+    const resultPromise = capability.batch(
+      [Array.from({ length: 8 }, (_, index) => ({ prompt: `request ${index}`, input: null }))],
+      context(),
+    );
 
     await waitForCalls(4);
     expect(generateTextMock).toHaveBeenCalledTimes(4);
@@ -186,7 +190,7 @@ describe("recursive model batch capability", () => {
     const signal = new AbortController().signal;
 
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: { evidence: "safe" } }]], {
+      capability.batch([[{ prompt: "classify", input: { evidence: "safe" } }]], {
         signal,
         deadline: Date.now() + 1_000,
       }),
@@ -225,7 +229,7 @@ describe("recursive model batch capability", () => {
     const capability = createModelCapability(model, observer);
 
     await expect(
-      capability.call("batch", [[{ prompt: "classify", input: null }]]),
+      capability.batch([[{ prompt: "classify", input: null }]], context()),
     ).resolves.toEqual([
       {
         id: expect.any(String),
@@ -255,8 +259,7 @@ describe("recursive model batch capability", () => {
     const observer = hooks();
     const capability = createModelCapability(model, observer);
     const controller = new AbortController();
-    const result = capability.call(
-      "batch",
+    const result = capability.batch(
       [Array.from({ length: 8 }, (_, index) => ({ prompt: `request ${index}`, input: null }))],
       { signal: controller.signal, deadline: Date.now() + 1_000 },
     );
@@ -274,9 +277,10 @@ describe("recursive model batch capability", () => {
     const observer = hooks();
     const capability = createModelCapability(model, observer);
 
-    await capability.call("batch", [
-      [{ prompt: "SECRET_PROMPT", input: { evidence: "SECRET_INPUT" } }],
-    ]);
+    await capability.batch(
+      [[{ prompt: "SECRET_PROMPT", input: { evidence: "SECRET_INPUT" } }]],
+      context(),
+    );
 
     const synchronizedHookData = JSON.stringify({
       started: observer.started.mock.calls,

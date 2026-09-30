@@ -4,14 +4,36 @@ import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
-export interface WorkspaceTrustedModule {
-  /** Dispatch a call made through a host-installed reserved ws:* module. */
-  call(
-    method: string,
-    args: WorkspaceRuntimeValue[],
-    context?: { signal: AbortSignal; deadline: number },
-  ): Promise<WorkspaceRuntimeValue>;
+/** Cancellation and timing for one call into a trusted module function. */
+export interface WorkspaceTrustedCallContext {
+  /** Aborts when the call passes its deadline or the execution is cancelled. */
+  readonly signal: AbortSignal;
+  /** Epoch milliseconds after which the caller stops waiting for this call. */
+  readonly deadline: number;
 }
+
+/**
+ * One host function exported by a trusted module.
+ *
+ * `args` holds the arguments the isolate passed, decoded from the wire.
+ * They come from untrusted code, so parse them before use.
+ */
+export type WorkspaceTrustedFunction = (
+  args: readonly WorkspaceRuntimeValue[],
+  context: WorkspaceTrustedCallContext,
+) => Promise<WorkspaceRuntimeValue>;
+
+/**
+ * A host-owned module installed under a reserved `ws:*` specifier.
+ *
+ * Each key becomes a named export in the isolate, so
+ * `{ exec: async (args) => ... }` installed as `ws:container` lets
+ * code write `import { exec } from "ws:container"`. Keys must be
+ * JavaScript identifier names other than `default` and `then`. A
+ * reserved word such as `delete` works, but code must rename it on
+ * import: `import { delete as remove } from "ws:files"`.
+ */
+export type WorkspaceTrustedModule = Readonly<Record<string, WorkspaceTrustedFunction>>;
 
 export type WorkspaceRuntimeValue =
   | null

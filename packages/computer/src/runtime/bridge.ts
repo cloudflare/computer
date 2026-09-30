@@ -3,7 +3,7 @@ import { RpcTarget } from "cloudflare:workers";
 import type { ArtifactClient } from "../artifacts/index.js";
 import type { GitClient } from "../git/index.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
-import type { WorkspaceTrustedModule } from "./types.js";
+import type { WorkspaceTrustedCallContext, WorkspaceTrustedModule } from "./types.js";
 
 export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #capability: WorkspaceRuntimeCapability;
@@ -221,21 +221,27 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
   }
 
-  async #callTrusted(
-    name: string,
-    args: unknown[],
-    context: { signal: AbortSignal; deadline: number },
-  ) {
-    const suffix = ".call";
-    const specifier = name.endsWith(suffix) ? name.slice("trusted/".length, -suffix.length) : "";
-    const trusted = this.#trustedModules[specifier];
-    if (!trusted) {
+  // `name` is `trusted/<specifier>.<function>`. Function names are
+  // identifiers and never contain a dot, so the last dot splits them
+  // from a specifier such as `ws:a.b`. Own-property checks keep
+  // isolate code from reaching `toString` or other inherited members.
+  async #callTrusted(name: string, args: unknown[], context: WorkspaceTrustedCallContext) {
+    const target = name.slice("trusted/".length);
+    const dot = target.lastIndexOf(".");
+    const specifier = dot === -1 ? "" : target.slice(0, dot);
+    const functionName = dot === -1 ? "" : target.slice(dot + 1);
+    const trusted = Object.hasOwn(this.#trustedModules, specifier)
+      ? this.#trustedModules[specifier]
+      : undefined;
+    const fn =
+      trusted !== undefined && Object.hasOwn(trusted, functionName)
+        ? trusted[functionName]
+        : undefined;
+    if (typeof fn !== "function") {
       throw new Error(`Unknown trusted Workspace module call ${JSON.stringify(name)}.`);
     }
-    const method = String(args[0]);
-    const callArgs = args.slice(1);
-    assertBridgeValues(callArgs);
-    const result = await trusted.call(method, callArgs, context);
+    assertBridgeValues(args);
+    const result = await fn(args, context);
     assertBridgeValues([result]);
     return result;
   }

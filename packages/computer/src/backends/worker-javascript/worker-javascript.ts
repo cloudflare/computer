@@ -14,7 +14,11 @@ import type {
   WorkspaceTrustedModule,
 } from "../../runtime/types.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
-import { buildModuleGraph } from "./module-graph.js";
+import {
+  buildModuleGraph,
+  parseTrustedModuleExports,
+  type TrustedModuleExports,
+} from "./module-graph.js";
 
 export interface WorkerJavaScriptBackendOptions {
   loader: WorkspaceRuntimeLoader;
@@ -24,7 +28,11 @@ export interface WorkerJavaScriptBackendOptions {
   modules?: Record<string, string>;
   /**
    * Host-owned capability modules installed under reserved ws:* specifiers.
-   * Caller source may import them, but cannot provide or replace them.
+   * Each function in a module becomes a named export, so
+   * `{ "ws:container": { exec } }` lets caller source write
+   * `import { exec } from "ws:container"`. Caller source may import these
+   * modules, but cannot provide or replace them. The constructor throws
+   * when a specifier or function name is not allowed.
    */
   trustedModules?: Record<`ws:${string}`, WorkspaceTrustedModule>;
   defaultTimeoutMs?: number;
@@ -92,6 +100,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
 > &
   Omit<WorkerJavaScriptBackendOptions, "egress" | "globalOutbound"> & {
     egress: WorkspaceEgressPolicy;
+    trustedModuleExports: TrustedModuleExports;
   };
 
 interface WorkspaceExecutionContext {
@@ -198,6 +207,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     this.#options = {
       ...backendOptions,
       egress: resolvedEgress,
+      trustedModuleExports: parseTrustedModuleExports(options.trustedModules ?? {}),
       root: options.root ?? "/workspace",
       access: options.access ?? "read-write",
       defaultTimeoutMs,
@@ -354,7 +364,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         cwd: input.cwd ?? this.#options.root,
         capability,
         configuredModules: this.#options.modules ?? {},
-        trustedModuleNames: Object.keys(this.#options.trustedModules ?? {}),
+        trustedModules: this.#options.trustedModuleExports,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });

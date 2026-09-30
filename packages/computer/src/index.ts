@@ -88,6 +88,8 @@ export type {
   WorkspaceRuntimeResult,
   WorkspaceRuntimeStatus,
   WorkspaceRuntimeValue,
+  WorkspaceTrustedCallContext,
+  WorkspaceTrustedFunction,
   WorkspaceTrustedModule,
 } from "./runtime/types.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";

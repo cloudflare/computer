@@ -764,9 +764,9 @@ describe("WorkerJavaScriptBackend", () => {
       maxHostCallMs: 5,
       trustedModules: {
         "ws:test": {
-          call(_method, _args, context) {
+          run(_args, context) {
             return new Promise((_resolve, reject) => {
-              context?.signal.addEventListener("abort", () => {
+              context.signal.addEventListener("abort", () => {
                 aborted = true;
                 reject(context.signal.reason);
               });
@@ -783,7 +783,7 @@ describe("WorkerJavaScriptBackend", () => {
                   _input: unknown,
                   host: { call(name: string, args: string): Promise<string> },
                 ) {
-                  await host.call("trusted/ws:test.call", JSON.stringify(["run"]));
+                  await host.call("trusted/ws:test.run", JSON.stringify([]));
                 },
               };
             },
@@ -997,28 +997,77 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close();
   });
 
-  it("rejects malformed host trusted-module names", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      backends: [
+  it.each([
+    [
+      "a specifier with a path",
+      { "ws:bad/path": { run: async () => null } },
+      /simple reserved ws:\*/,
+    ],
+    ["a built-in specifier", { "ws:git": { run: async () => null } }, /simple reserved ws:\*/],
+    ["a module with no functions", { "ws:empty": {} }, /must export a function/],
+    [
+      "a non-identifier name",
+      { "ws:test": { "not-a-name": async () => null } },
+      /JavaScript identifier/,
+    ],
+    ["a default export", { "ws:test": { default: async () => null } }, /JavaScript identifier/],
+    [
+      "a then export",
+      // biome-ignore lint/suspicious/noThenProperty: The case checks that the backend rejects a `then` export.
+      { "ws:test": { then: async () => null } },
+      /JavaScript identifier/,
+    ],
+    ["a non-function export", { "ws:test": { run: "nope" } }, /must be a function/],
+  ])("rejects trusted modules with %s at construction", (_label, trustedModules, message) => {
+    expect(
+      () =>
         new WorkerJavaScriptBackend({
           loader: throwingLoader("must not load"),
-          trustedModules: {
-            "ws:bad/path": {
-              async call() {
-                return null;
-              },
-            },
-          } as never,
+          // SAFETY: Each case hands the constructor a shape the types forbid, to check its runtime guard.
+          trustedModules: trustedModules as never,
         }),
-      ],
+    ).toThrow(message);
+  });
+
+  it("does not dispatch inherited members of a trusted module", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let response = "";
+    const backend = new WorkerJavaScriptBackend({
+      trustedModules: { "ws:test": { run: async () => null } },
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { call(name: string, args: string): Promise<string> },
+                ) {
+                  response = await host.call("trusted/ws:test.toString", JSON.stringify([]));
+                },
+              };
+            },
+          };
+        },
+      },
     });
-    await workspace.fs.mkdir("/workspace", { recursive: true });
-    await expect(
-      workspace.runtime.exec(`import { call } from "ws:bad/path"; export default call;`, {
-        backend: "worker-javascript",
-      }),
-    ).rejects.toThrow(/simple reserved ws:\*/);
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+    });
+    const execution = await handle.exec({ id: "inherited", source: "export default 1" });
+    for await (const _event of execution.events) {
+      // Drain the run so the host call settles.
+    }
+    expect(JSON.parse(response)).toMatchObject({
+      error: { message: expect.stringContaining("Unknown trusted Workspace module call") },
+    });
+    await handle.close?.();
   });
 
   it("rejects relative imports that collide with internal Loader modules", async () => {
