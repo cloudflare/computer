@@ -1,5 +1,5 @@
-import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
 import type { WorkspaceBackend } from "../src/backend.js";
 import { createContainerModule } from "../src/backends/container/index.js";
 import { WorkerJavaScriptBackend } from "../src/backends/worker-javascript/index.js";
@@ -43,7 +43,10 @@ function fakeContainerBackend(): WorkspaceBackend {
     disposeExec: () => Promise.resolve(),
   };
   // SAFETY: The fake backend declares sync "none", so the Workspace never calls these methods.
-  const sync = new Proxy({}, { get: () => () => Promise.reject(new Error("sync: none")) }) as SyncRPC;
+  const sync = new Proxy(
+    {},
+    { get: () => () => Promise.reject(new Error("sync: none")) },
+  ) as SyncRPC;
   return {
     id: "container-shell",
     type: "fake-container",
