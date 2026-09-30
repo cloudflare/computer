@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/mention-reply/TASK.md
 # Task: mention-reply
-# Bundle: sha256:4409ac632e519b99f3c82d878bd88b528070963bc5c51ca2ff653b96cc0d5f36
+# Bundle: sha256:3bf622bfc461f69c6deaf1a7d7fa2a23696c3aa1dbdf5ae8542ec80d6aa13c9b
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Mention reply"
@@ -47,4 +47,4 @@ jobs:
       task-id: "mention-reply"
       task-name: "Mention reply"
       task-source: ".gardener/tasks/mention-reply/TASK.md"
-      task-bundle-hash: 4409ac632e519b99f3c82d878bd88b528070963bc5c51ca2ff653b96cc0d5f36
+      task-bundle-hash: 3bf622bfc461f69c6deaf1a7d7fa2a23696c3aa1dbdf5ae8542ec80d6aa13c9b
