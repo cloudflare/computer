@@ -147,6 +147,10 @@ export interface BuildModuleGraphOptions {
 // An alias can re-export `default` only when its target has one, so each
 // configured module is parsed once up front. Callers cache the result
 // rather than parsing a large bundle on every execution.
+//
+// Configured modules are stored together, so a relative import can only
+// name another configured module. Anything else would resolve against
+// the caller's files, which host code must not depend on.
 export function prepareConfiguredModules(
   sources: Record<string, string>,
 ): PreparedConfiguredModules {
@@ -159,6 +163,13 @@ export function prepareConfiguredModules(
       throw new Error(`Configured module ${JSON.stringify(specifier)} is not valid JavaScript.`, {
         cause: error,
       });
+    }
+    for (const imported of literalImports(ast)) {
+      if (imported.startsWith(".") && !Object.hasOwn(sources, imported.slice(2))) {
+        throw new Error(
+          `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not a configured module.`,
+        );
+      }
     }
     prepared[specifier] = { source, hasDefault: hasDefaultExport(ast) };
   }
@@ -322,25 +333,39 @@ function hasDefaultExport(ast: ModuleAst): boolean {
   );
 }
 
-function imports(source: string): string[] {
+// Import specifiers written as string literals. Computed dynamic imports
+// are skipped; configured modules may use them, and they resolve at run
+// time.
+function literalImports(ast: ModuleAst): string[] {
   const found: string[] = [];
-  walk(parseModule(source), (node) => {
+  walk(ast, (node) => {
     const item = node as { type?: string; source?: { type?: string; value?: unknown } };
     if (
       item.type === "ImportDeclaration" ||
       item.type === "ExportNamedDeclaration" ||
-      item.type === "ExportAllDeclaration"
+      item.type === "ExportAllDeclaration" ||
+      item.type === "ImportExpression"
     ) {
       if (typeof item.source?.value === "string") found.push(item.source.value);
     }
-    if (item.type === "ImportExpression") {
-      if (item.source?.type !== "Literal" || typeof item.source.value !== "string") {
-        throw new Error("Workspace JavaScript dynamic imports must use a string literal.");
-      }
-      found.push(item.source.value);
-    }
   });
   return found;
+}
+
+// Caller source must be fully analyzable, so computed dynamic imports are
+// rejected before the literal specifiers are collected.
+function imports(source: string): string[] {
+  const ast = parseModule(source);
+  walk(ast, (node) => {
+    const item = node as { type?: string; source?: { type?: string; value?: unknown } };
+    if (
+      item.type === "ImportExpression" &&
+      (item.source?.type !== "Literal" || typeof item.source.value !== "string")
+    ) {
+      throw new Error("Workspace JavaScript dynamic imports must use a string literal.");
+    }
+  });
+  return literalImports(ast);
 }
 
 function walk(value: unknown, visit: (node: unknown) => void): void {

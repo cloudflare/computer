@@ -125,6 +125,7 @@ export class HostDO extends DurableObject<Env> {
             large: LARGE_MODULE,
             "named-only": "export const double = (value) => value * 2;",
             facade: `import { double } from "named-only"; export default double;`,
+            "relative-facade": `export { double as default } from "./named-only";`,
           },
         }),
       ],

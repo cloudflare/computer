@@ -681,7 +681,8 @@ describe("WorkspaceRuntime", () => {
     await write(
       "/workspace/kits/nested/use.js",
       `import { double } from "named-only"; import facade from "facade";
-       export default () => [double(2), facade(3)];`,
+       import relativeFacade from "relative-facade";
+       export default () => [double(2), facade(3), relativeFacade(4)];`,
     );
     const response = await runtime({
       backend: "configured-modules",
@@ -691,7 +692,7 @@ describe("WorkspaceRuntime", () => {
     const text = await response.text();
     expect(response.status, text).toBe(200);
     expect(JSON.parse(text), text).toMatchObject({
-      result: { status: "completed", value: [4, 6] },
+      result: { status: "completed", value: [4, 6, 8] },
     });
   });
 

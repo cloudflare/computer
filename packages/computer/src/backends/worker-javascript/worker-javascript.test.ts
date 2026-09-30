@@ -1273,6 +1273,51 @@ describe("WorkerJavaScriptBackend", () => {
       expect(load).not.toHaveBeenCalled();
     });
 
+    it("rejects configured modules that import Workspace files", async () => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { lib: `import { value } from "./helper.js"; export default value;` },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      await workspace.fs.writeFile("/workspace/helper.js", "export const value = 1;");
+
+      await expect(
+        workspace.runtime.exec(`import "./helper.js"; import "lib"; export default 1;`),
+      ).rejects.toThrow(
+        /Configured module "lib" imports "\.\/helper\.js", which is not a configured module/,
+      );
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it("lets configured modules import each other and use computed imports", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: {
+              base: "export const value = 1;",
+              relative: `export { value } from "./base";`,
+              computed: "export const load = (specifier) => import(specifier);",
+            },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(
+        `import "relative"; import "computed"; export default 1;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+    });
+
     it("keeps Workspace code out of the directory that stores configured modules", async () => {
       const load = vi.fn();
       const imported = new Workspace({

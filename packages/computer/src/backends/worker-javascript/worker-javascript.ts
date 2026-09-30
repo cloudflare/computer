@@ -19,8 +19,8 @@ import {
   assertHostModuleExports,
   buildModuleGraph,
   type ParsedModules,
-  parseModules,
   type PreparedConfiguredModules,
+  parseModules,
   prepareConfiguredModules,
 } from "./module-graph.js";
 
