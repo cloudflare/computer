@@ -179,7 +179,6 @@ export async function POST(request: Request) {
     workspace,
     shell: { defaultBackend: "shell", backends: { shell: { description: "Worker shell." } } },
     approve: "mutating",
-    signal: abortController.signal,
   });
 
   return toServerSentEventsResponse(
@@ -197,7 +196,7 @@ export async function POST(request: Request) {
 
 The tools that have one fixed result shape — `write`, `edit`, `delete`, and `publish` — also carry an `outputSchema`, which TanStack validates client-side and threads into its typed hooks. Paged tools like `ls` omit it. The schema covers the error branch as well as success, because TanStack validates every return against it: a success-only schema would replace a real failure reason with a validation complaint.
 
-Because the tool execution context carries no abort signal, pass `signal` to cancel a running `exec` when the request aborts. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
+Aborting the chat run through its `abortController` kills a running `exec`, because TanStack hands each tool call the run's abort signal. A TanStack tool settles on one value, so `exec` returns the run's terminal snapshot; set `streamEventName` to also forward each pre-terminal snapshot through `emitCustomEvent` for a live view of a command's output.
 
 ### Shared options
 

@@ -74,9 +74,10 @@ export interface TanStackTool<Input = unknown> {
   readonly "~toolKind"?: undefined;
 }
 
-/** TanStack's context carries no abort signal, so cancellation comes from the `signal` option instead. */
 export interface TanStackToolExecutionContext {
   toolCallId?: string;
+  /** Fires when the chat run's `abortController` aborts; a running `exec` is killed. */
+  abortSignal?: AbortSignal;
   emitCustomEvent?: (eventName: string, value: Record<string, unknown>) => void;
 }
 
@@ -96,8 +97,6 @@ export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = 
   format?: Format;
   /** Tools that pause for approval. `"mutating"` selects every tool that changes workspace state. */
   approve?: string[] | "mutating";
-  /** Cancels in-flight executions. TanStack's context carries no signal, so pass the one given to `chat({ abortController })`. */
-  signal?: AbortSignal;
   /** Forward pre-terminal `exec` snapshots through `emitCustomEvent` under this name; otherwise they are discarded. */
   streamEventName?: string;
   /** Tools withheld from the prompt until TanStack lazy discovery asks for them. */
@@ -207,7 +206,7 @@ export function createTanStackTools<Format extends TanStackToolFormat = "array">
         mutates: true,
         streams: true,
         run: async (input: never, context?: TanStackToolExecutionContext) => {
-          const returned = executor(input, { abortSignal: options.signal });
+          const returned = executor(input, { abortSignal: context?.abortSignal });
           const output = options.streamEventName
             ? await settleWithEvents(returned, options.streamEventName, context)
             : await settle(returned);

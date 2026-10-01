@@ -48,6 +48,53 @@ function streamingCommandBackend(events: import("@cloudflare/computer-rpc").Exec
   };
 }
 
+// A command that prints once and then stays quiet until killed or
+// released, the shape that exposes buffering and cancellation bugs.
+function quietCommandBackend(): {
+  backend: ReturnType<typeof streamingCommandBackend>;
+  killed: Promise<void>;
+  release(): void;
+} {
+  let finish: (() => void) | undefined;
+  let markKilled: () => void = () => {};
+  const killed = new Promise<void>((resolve) => {
+    markKilled = resolve;
+  });
+  const base = streamingCommandBackend([]);
+  const backend = {
+    ...base,
+    async connect() {
+      const connection = await base.connect();
+      connection.rpc.shell.exec = async (input) => {
+        const id = input.id ?? "cmd-1";
+        return {
+          id,
+          events: new ReadableStream({
+            start(controller) {
+              controller.enqueue({
+                id,
+                seq: 1,
+                name: "stdout",
+                value: new TextEncoder().encode("starting\n"),
+              });
+              finish = () => {
+                controller.enqueue({ id, seq: 2, name: "exit", code: 0 });
+                controller.close();
+              };
+            },
+          }),
+        };
+      };
+      connection.rpc.shell.killExec = async () => {
+        markKilled();
+        finish?.();
+      };
+      return connection;
+    },
+  };
+  return { backend, killed, release: () => finish?.() };
+}
+
 describe("createTanStackTools", () => {
   it("returns a list, the shape every TanStack entry point takes", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace() });
@@ -256,6 +303,30 @@ describe("createTanStackTools", () => {
     expect(result).toMatchObject({ exitCode: 0, stdout: "partial\n" });
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0].name).toBe("exec-progress");
+    await workspace.close();
+  });
+
+  it("kills exec when the chat run's abort signal fires", async () => {
+    const quiet = quietCommandBackend();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [quiet.backend as never],
+    });
+    const tools = createTanStackTools({
+      workspace,
+      shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
+      format: "object",
+    });
+    const controller = new AbortController();
+
+    const pending = tools.exec.execute({ command: "npm test" } as never, {
+      toolCallId: "call-1",
+      abortSignal: controller.signal,
+    });
+    controller.abort();
+
+    await quiet.killed;
+    await pending;
     await workspace.close();
   });
 });
