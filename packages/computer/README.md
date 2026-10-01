@@ -255,7 +255,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 - **Worker JavaScript** evaluates a module with structured
   input/results, durable relative imports, configured libraries,
   Workspace-backed `node:fs/promises`, and host modules such as
-  `ws:git` and `ws:artifacts`. It runs after `runtime.exec()` returns; the
+  `ws:git`, `ws:artifacts`, and `ws:container`. It runs after `runtime.exec()` returns; the
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
@@ -418,6 +418,7 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |

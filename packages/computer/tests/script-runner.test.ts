@@ -332,6 +332,49 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("runs container commands from isolate code through ws:container", async () => {
+    const response = await runtime({
+      source: `
+        import { exec } from "ws:container";
+        export default () =>
+          exec("npm test", { cwd: "/workspace/app", env: { WHO: "isolate" }, stdin: "y" });
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "completed",
+        value: {
+          exitCode: 8,
+          stdout: "ran npm test in /workspace/app with isolate and y\n",
+          stderr: "warn\n",
+        },
+      },
+    });
+  });
+
+  it("rejects a malformed ws:container call inside the isolate", async () => {
+    const response = await runtime({
+      source: `
+        import { exec } from "ws:container";
+        export default async () => {
+          try {
+            await exec("ls", { shell: "zsh" });
+            return "ran";
+          } catch (error) {
+            return error.message;
+          }
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value).toContain('unknown option "shell"');
+  });
+
   it("does not expose unrestricted host operations through the node:fs dispatcher", async () => {
     const response = await runtime({
       source: `

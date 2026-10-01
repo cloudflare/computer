@@ -1,4 +1,6 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
+import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
+import type { WorkspaceBackend } from "../src/backend.js";
 import { WorkerJavaScriptBackend } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
 import type {
@@ -8,11 +10,52 @@ import type {
 } from "../src/index.js";
 import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
+import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
   LOADER: WorkerLoader;
+}
+
+// A command backend that stands in for the container. It echoes the
+// command, working directory, one environment variable, and standard
+// input, and exits with the length of the command.
+function fakeContainerBackend(): WorkspaceBackend {
+  const encoder = new TextEncoder();
+  const shell: ShellRPC = {
+    async exec(input) {
+      const id = input.id ?? crypto.randomUUID();
+      const stdin = input.stdin ? new TextDecoder().decode(input.stdin) : "";
+      const stdout = `ran ${input.source} in ${input.cwd ?? "?"} with ${input.env?.WHO ?? "-"} and ${stdin || "-"}\n`;
+      return {
+        id,
+        events: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ id, seq: 1, name: "stdout", value: encoder.encode(stdout) });
+            controller.enqueue({ id, seq: 2, name: "stderr", value: encoder.encode("warn\n") });
+            controller.enqueue({ id, seq: 3, name: "exit", code: input.source.length % 256 });
+            controller.close();
+          },
+        }),
+      };
+    },
+    getExec: () => Promise.reject(new Error("not used")),
+    killExec: () => Promise.resolve(),
+    disposeExec: () => Promise.resolve(),
+  };
+  // SAFETY: The fake backend declares sync "none", so the Workspace never calls these methods.
+  const sync = new Proxy(
+    {},
+    { get: () => () => Promise.reject(new Error("sync: none")) },
+  ) as SyncRPC;
+  return {
+    id: "container-shell",
+    type: "fake-container",
+    async connect() {
+      return { rpc: { sync, shell }, sync: "none", close: async () => {} };
+    },
+  };
 }
 
 export class HostDO extends DurableObject<Env> {
@@ -34,6 +77,7 @@ export class HostDO extends DurableObject<Env> {
             "math-kit": "export const double = (value) => value * 2;",
             "ws:git": createGitModule(),
             "ws:artifacts": createArtifactsModule(),
+            "ws:container": createContainerModule(),
             "ws:test-host": {
               async echo(args) {
                 return { args: [...args] };
@@ -67,6 +111,7 @@ export class HostDO extends DurableObject<Env> {
             },
           },
         }),
+        fakeContainerBackend(),
       ],
     });
   }

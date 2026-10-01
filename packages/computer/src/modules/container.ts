@@ -1,0 +1,190 @@
+// `ws:container`: lets isolate JavaScript run shell commands in the
+// Workspace's container backend.
+//
+// Installed on a WorkerJavaScriptBackend, it turns the container into a
+// library the JavaScript backend calls, rather than a second backend
+// the model has to choose between:
+//
+//   import { exec } from "ws:container";
+//   const { exitCode, stdout } = await exec("npm test", { cwd: "/workspace" });
+//
+// Each call goes through `workspace.runtime.exec`, so the container
+// sees the same files as the isolate: the usual sync bracket pushes
+// pending Workspace writes before the command and pulls the
+// container's changes after it.
+
+import type {
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFactory,
+  WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
+  WorkspaceRuntimeValue,
+} from "../runtime/types.js";
+import { truncateText } from "../text-truncation.js";
+
+const DEFAULT_BACKEND = "container-shell";
+const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
+const EXEC_OPTION_KEYS = new Set(["cwd", "env", "stdin", "timeoutMs"]);
+
+/** Options for {@link createContainerModule}. */
+export interface ContainerModuleOptions {
+  /** Id of the container backend. Defaults to `"container-shell"`. */
+  readonly backend?: string;
+  /**
+   * Largest standard output and standard error returned to the
+   * isolate, in bytes per stream. Output past it is cut and ends with
+   * a truncation marker. Defaults to 64 KiB. Keep both streams well
+   * under the backend's `maxCapabilityBytes`.
+   */
+  readonly maxOutputBytes?: number;
+}
+
+/**
+ * Build the `ws:container` host module over the Workspace's container
+ * backend.
+ *
+ * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
+ * returns `{ exitCode, stdout, stderr }` once the command finishes. A
+ * non-zero exit code is a normal result, not an error. Cancelling the
+ * execution kills the command.
+ *
+ * A container command can write to the Workspace and reach the network,
+ * so `exec` refuses to run on a read-only backend. Egress settings on
+ * the JavaScript backend do not apply to the container.
+ *
+ * @param options - Which backend to use and how much output to return.
+ * @returns The module to pass as `modules["ws:container"]`. Its
+ *   `description` tells the model how to use it.
+ * @throws When `maxOutputBytes` is not a positive integer. The host
+ *   configured the module wrongly.
+ */
+export function createContainerModule(
+  options: ContainerModuleOptions = {},
+): WorkspaceModuleFactory {
+  const backend = options.backend ?? DEFAULT_BACKEND;
+  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
+    throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
+  }
+
+  const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => ({
+    async exec(args, context) {
+      if (context.access !== "read-write") {
+        throw new Error("ws:container exec requires Workspace write access.");
+      }
+      const request = parseExecArgs(args);
+      const timeoutMs = remainingTime(request.timeoutMs, context);
+      context.signal.throwIfAborted();
+
+      const handle = await host.runtime.exec(request.command, {
+        backend,
+        encoding: "utf8",
+        timeoutMs,
+        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        ...(request.env === undefined ? {} : { env: request.env }),
+        ...(request.stdin === undefined ? {} : { stdin: request.stdin }),
+      });
+      // Cancelling the isolate execution, or passing the host call
+      // deadline, stops the command instead of leaving it running.
+      const kill = () => void handle.kill().catch(() => undefined);
+      if (context.signal.aborted) kill();
+      else context.signal.addEventListener("abort", kill, { once: true });
+      try {
+        const result = await handle.result();
+        return {
+          exitCode: result.exitCode,
+          stdout: truncateText(result.stdout, maxOutputBytes),
+          stderr: truncateText(result.stderr, maxOutputBytes),
+        };
+      } finally {
+        context.signal.removeEventListener("abort", kill);
+      }
+    },
+  });
+  return Object.assign(create, { description: DESCRIPTION });
+}
+
+const DESCRIPTION = [
+  "Runs shell commands in a full Linux container that shares this workspace's files.",
+  "Use it for npm, node, python, package managers, native binaries, and network access. The container can take a while to start on first use.",
+  'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
+  "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
+].join(" ");
+
+interface ExecRequest {
+  readonly command: string;
+  readonly cwd: string | undefined;
+  readonly env: Record<string, string> | undefined;
+  readonly stdin: string | undefined;
+  readonly timeoutMs: number | undefined;
+}
+
+// Arguments come from isolate code. A malformed call throws, and the
+// bridge hands that error back to the isolate as a rejected promise.
+function parseExecArgs(args: readonly WorkspaceRuntimeValue[]): ExecRequest {
+  if (args.length === 0 || args.length > 2) {
+    throw new TypeError("exec(command, options?) takes a command and an optional options object.");
+  }
+  const [command, options] = args;
+  if (typeof command !== "string" || command.trim().length === 0) {
+    throw new TypeError("exec: command must be a non-empty string.");
+  }
+  if (options === undefined || options === null) {
+    return { command, cwd: undefined, env: undefined, stdin: undefined, timeoutMs: undefined };
+  }
+  if (typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError("exec: options must be an object.");
+  }
+  for (const key of Object.keys(options)) {
+    if (!EXEC_OPTION_KEYS.has(key)) {
+      throw new TypeError(
+        `exec: unknown option ${JSON.stringify(key)}. Use cwd, env, stdin, or timeoutMs.`,
+      );
+    }
+  }
+  return {
+    command,
+    cwd: optionalString(options.cwd, "cwd"),
+    env: optionalEnv(options.env),
+    stdin: optionalString(options.stdin, "stdin"),
+    timeoutMs: optionalTimeout(options.timeoutMs),
+  };
+}
+
+function optionalString(value: WorkspaceRuntimeValue | undefined, name: string) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new TypeError(`exec: ${name} must be a string.`);
+  return value;
+}
+
+function optionalEnv(value: WorkspaceRuntimeValue | undefined) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("exec: env must be an object of strings.");
+  }
+  const env: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") {
+      throw new TypeError(`exec: env ${JSON.stringify(key)} must be a string.`);
+    }
+    env[key] = entry;
+  }
+  return env;
+}
+
+function optionalTimeout(value: WorkspaceRuntimeValue | undefined) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new TypeError("exec: timeoutMs must be a positive number.");
+  }
+  return value;
+}
+
+// The command must finish before the host call deadline, or the
+// isolate stops waiting while the container keeps working. Cap the
+// requested timeout at the time left.
+function remainingTime(requested: number | undefined, context: WorkspaceModuleCallContext) {
+  const remaining = context.deadline - Date.now();
+  if (remaining <= 0) throw new Error("exec: the host call deadline has already passed.");
+  return requested === undefined ? remaining : Math.min(requested, remaining);
+}

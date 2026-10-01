@@ -127,10 +127,11 @@ Caller source can import three kinds of module, and all of them are fixed when t
 | --- | --- | --- | --- |
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:artifacts`, your own |
+| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
+import { createContainerModule } from "@cloudflare/computer/modules/container";
 import { createGitModule } from "@cloudflare/computer/modules/git";
 
 new WorkerJavaScriptBackend({
@@ -139,6 +140,7 @@ new WorkerJavaScriptBackend({
     "tar-stream": TAR_STREAM_BUNDLE,
     "ws:git": createGitModule(),
     "ws:artifacts": createArtifactsModule(),
+    "ws:container": createContainerModule(),
     "ws:weather": {
       forecast: ([city]) => lookUpForecast(String(city)),
     },
@@ -158,6 +160,7 @@ Modules code can import:
 - `node:fs/promises` (also `node:fs`): the workspace's files. ...
 - `tar-stream`: a bundled library.
 - `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
+- `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
 - `ws:weather`: exports `forecast`.
 ```
 
@@ -243,6 +246,48 @@ import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts"
 ```
 
 `createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
+
+### `ws:container`
+
+`createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
+
+```ts
+this.workspace = new Workspace({
+  storage: ctx.storage,
+  backends: [
+    new WorkerJavaScriptBackend({
+      loader: env.LOADER,
+      access: "read-write",
+      modules: { "ws:container": createContainerModule() },
+    }),
+    new CloudflareContainerBackend({ /* ... */ }),
+  ],
+});
+
+const tools = createAITools({
+  workspace: this.workspace,
+  shell: { backends: { "worker-javascript": {} } },
+});
+```
+
+```js
+import { exec } from "ws:container";
+
+export default async function () {
+  const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace/app" });
+  return { passed: exitCode === 0, stdout, stderr };
+}
+```
+
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend (`"container-shell"` unless you pass `backend`). The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+
+A few limits follow from `exec` being a host call:
+
+- Output comes back when the command finishes, not while it runs. Each stream is cut at `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`.
+- The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
+- Cancelling the execution kills the running command.
+
+A container command can write to the Workspace and reach the network, whatever the JavaScript backend's egress settings say. `exec` refuses to run on a read-only backend.
 
 ## Isolation and lifecycle
 
