@@ -1,0 +1,21 @@
+packages/computer/src/backends/container/container-backend-launch.test.ts
+  s_b2fd9413bbc158::t_0f26c130e70c7d 109-125
+packages/computer/src/backends/container/container-backend.ts
+  s_b2fd9413bbc158::t_b8f14226b547d4 165-172,218-219,252-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "86206a18c97d31d21f9cd4ea575f8150363c5efd",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
