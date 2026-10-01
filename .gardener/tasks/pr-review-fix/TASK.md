@@ -42,7 +42,8 @@ Your checkout is the pull request's head commit.
    your checkout is not the pull request's head commit (a manual run checks out the default
    branch), finish immediately without proposing anything.
 2. **Check the round count.** Read the pull request's conversation comments with the provider API
-   (`GET /repos/{owner}/{repo}/issues/{number}/comments`). Count only comments written by
+   (`GET /repos/{owner}/{repo}/issues/{number}/comments?per_page=100`, reading every page until
+   one returns fewer than 100). Count only comments written by
    `github-actions[bot]` whose body contains `<!-- gardener-review-round -->`; ignore everyone
    else's. If a comment by `github-actions[bot]` already contains `<!-- gardener-review-done -->`,
    finish immediately without proposing anything. If there are 3 or more rounds, propose one
@@ -52,7 +53,9 @@ Your checkout is the pull request's head commit.
 3. **Read the unresolved review threads** with the provider API's GraphQL transport: the pull
    request's `reviewThreads` (`isResolved`, `path`, `line`, and each thread's comments with author
    and body). Answer every unresolved thread, not only those from the review that started this
-   run: a round can absorb a review whose own run GitHub dropped.
+   run: a round can absorb a review whose own run GitHub dropped. Also treat the body of the
+   review that started this run as feedback to verify, since a reviewer may write findings there
+   rather than inline.
 4. **Verify each finding.** Read the code and reproduce the problem, ideally with a failing test.
    A finding is real only if you can show it. Decline the rest, with a reason.
 5. **Fix the real ones** in the checkout using `repository.exec`. Keep changes minimal and focused
