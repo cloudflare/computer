@@ -24,7 +24,7 @@ The tools wrap three Workspace surfaces:
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: false`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: {}`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -55,16 +55,14 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-By default `exec` offers every backend the Workspace has, with the Workspace's default first. Each backend describes itself to the model. Pick backends with `exec`, either as a list or as a map to text for the model (`true` adds none). The first entry is the default:
+`exec` lists the backends the model can use, each with a note for the model. Leave it out to use every backend.
 
 ```ts
-createAITools({ workspace });                                              // every backend
-createAITools({ workspace, exec: ["worker-javascript"] });                 // just one
-createAITools({ workspace, exec: { "worker-javascript": "Use for data work." } }); // with your own text
-createAITools({ workspace, exec: false });                                 // no exec tool
+createAITools({ workspace });                                                       // every backend
+createAITools({ workspace, exec: { "worker-javascript": "Use for data work." } });  // just this one
 ```
 
-With one backend, `exec` has no `backend` argument and always runs there.
+Each backend also describes itself, so a note can be `""`. The first backend is the default, and `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there.
 
 ## `createAITools`
 
@@ -88,7 +86,7 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `exec` | every backend | A list of backend ids, or a map from id to text for the model. The first is the default. `false` omits `exec`. |
+| `exec` | every backend | Backend id to a note for the model (`""` for none). The first is the default. `{}` omits `exec`. |
 | `shell` | omitted | Deprecated. `{ backends: { id: { description } }, defaultBackend }` becomes `exec: { id: description }` with the default first. |
 
 ## `read`
@@ -255,7 +253,7 @@ The tool offers only the arguments that can work:
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: false` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: {}` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 
 ## `publish`
 

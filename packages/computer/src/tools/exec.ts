@@ -76,11 +76,12 @@ export interface ExecWorkspaceLike {
 }
 
 /**
- * Which backends the exec tool may run on: a list of backend ids, or a
- * map from id to text shown to the model before the backend's own
- * description (`true` for none). The first entry is the default.
+ * The backends the exec tool may run on, each with a note for the
+ * model: `{ "worker-javascript": "Use for data work." }`. The note comes
+ * before the backend's own description; use `""` for none. The first
+ * backend is the default.
  */
-export type ExecBackends = readonly string[] | Readonly<Record<string, string | true>>;
+export type ExecBackends = Readonly<Record<string, string>>;
 
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
@@ -351,13 +352,8 @@ function selectBackends(
       throw new Error("createExecTool: pass `backends`; this workspace cannot list its backends");
     }
     selected = known.map((id) => ({ id, guidance: undefined }));
-  } else if (isBackendList(backends)) {
-    selected = backends.map((id) => ({ id, guidance: undefined }));
   } else {
-    selected = Object.entries(backends).map(([id, text]) => ({
-      id,
-      guidance: text === true ? undefined : text,
-    }));
+    selected = Object.entries(backends).map(([id, note]) => ({ id, guidance: note }));
   }
   const unknown = known === undefined ? [] : selected.filter((b) => !known.includes(b.id));
   if (unknown.length > 0) {
@@ -366,10 +362,6 @@ function selectBackends(
     );
   }
   return selected;
-}
-
-function isBackendList(backends: ExecBackends): backends is readonly string[] {
-  return Array.isArray(backends);
 }
 
 function commandHint(backends: readonly DescribedBackend[]): string {

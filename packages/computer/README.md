@@ -278,8 +278,8 @@ import { createAITools } from "@cloudflare/computer/tools";
 const tools = createAITools({
   workspace,
   read: { maxBytes: 32 * 1024, maxLines: 800 },
-  // Omit `exec` to offer every backend, the Workspace default first.
-  exec: { shell: "Try this first.", container: true },
+  // The backends the model can use, each with a note. Omit for every backend.
+  exec: { shell: "Try this first.", container: "" },
 });
 ```
 

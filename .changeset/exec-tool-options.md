@@ -2,7 +2,7 @@
 "@cloudflare/computer": minor
 ---
 
-`createAITools` takes an `exec` option, and offers the `exec` tool over every backend the Workspace has when you leave it out. Pass a list of backend ids, or a map from id to text for the model, with the default first: `exec: { "worker-javascript": "Use for data work." }`. `true` exposes a backend with no extra text, and `exec: false` turns the tool off. `createExecTool` takes the same `backends`, and `defaultBackend` goes away.
+`createAITools` takes an `exec` option that lists the backends the model can use, each with a note for the model: `exec: { "worker-javascript": "Use for data work." }`. Leave it out to use every backend the Workspace has. The first backend is the default, a note can be `""`, and `exec: {}` means no exec tool. `createExecTool` takes the same map as `backends`, and `defaultBackend` goes away.
 
 `WorkerShellBackend` and `CloudflareContainerBackend` now describe themselves to the model, as `WorkerJavaScriptBackend` does, so the default needs no descriptions. A backend that says nothing gets a one-line default instead of an error.
 

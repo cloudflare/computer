@@ -1338,7 +1338,7 @@ describe("createAITools exec tool", () => {
 
     expect(createAITools({ workspace: makeWorkspace() }).exec).toBeUndefined();
     expect(createAITools({ workspace: withBackend }).exec).toBeDefined();
-    expect(createAITools({ workspace: withBackend, exec: false }).exec).toBeUndefined();
+    expect(createAITools({ workspace: withBackend, exec: {} }).exec).toBeUndefined();
     expect(createAITools({ workspace: withBackend, readonly: true }).exec).toBeUndefined();
   });
 
@@ -1361,7 +1361,7 @@ describe("createAITools exec tool", () => {
     expect(toolDescription(tools.exec)).toContain("ECMAScript module source");
   });
 
-  it("takes backends as a list or as a map to the model's guidance", () => {
+  it("takes the backends to offer, each with a note for the model", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
@@ -1369,10 +1369,10 @@ describe("createAITools exec tool", () => {
         new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
-    const listed = createAITools({ workspace, exec: ["worker-javascript"] });
+    const listed = createAITools({ workspace, exec: { "worker-javascript": "" } });
     const mapped = createAITools({
       workspace,
-      exec: { "worker-javascript": "Use for data work.", shell: true },
+      exec: { "worker-javascript": "Use for data work.", shell: "" },
     });
 
     expect(inputProperties(listed.exec)).not.toContain("backend");
@@ -1565,7 +1565,7 @@ describe("createAITools exec tool", () => {
   });
 
   it("rejects a backend the workspace does not have", () => {
-    expect(() => createAITools({ workspace: makeWorkspace(), exec: ["missing"] })).toThrow(
+    expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: "" } })).toThrow(
       /unknown backend "missing"/,
     );
   });
@@ -1778,7 +1778,7 @@ describe("createAITools callable exec", () => {
         },
       },
     };
-    const tools = createAITools({ workspace, exec: ["shell"] });
+    const tools = createAITools({ workspace, exec: { shell: "" } });
 
     expect(toolDescription(tools.exec)).toContain("Runs shell commands.");
   });
