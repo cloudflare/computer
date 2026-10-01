@@ -1,0 +1,57 @@
+.changeset/pi-ai-tanstack-ai-tools.md
+  s_4f96e4ffcaca65::t_8d815966887c37 5,7
+docs/09_tool_interface.md
+  s_4f96e4ffcaca65::t_4d897d1d23e707 8-9,24-25,81,85,88,90,109,111,116,127,130,173
+docs/10_project_layout.md
+  s_4f96e4ffcaca65::t_4f65de35c0c319 181-182
+docs/README.md
+  s_4f96e4ffcaca65::t_b917980b3df1f2 25,57-58
+examples/pi-ai/README.md
+  s_4f96e4ffcaca65::t_5eef63d0311ce0 9
+examples/pi-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_caea572797d9df 9,24
+examples/pi-ai/src/index.ts
+  s_4f96e4ffcaca65::t_5e8ed391d1edff 17,53
+examples/tanstack-ai/README.md
+  s_4f96e4ffcaca65::t_2c736b5a19a4bd 39
+examples/tanstack-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_481aca68460b95 9,14
+examples/tanstack-ai/src/index.ts
+  s_4f96e4ffcaca65::t_6c5ac18055e1d4 16,46
+package-lock.json
+  s_4f96e4ffcaca65::t_bff7d3decb422e 24935
+packages/computer/README.md
+  s_4f96e4ffcaca65::t_ab759e745f8131 310-311,314,317,441-442
+packages/computer/package.json
+  s_4f96e4ffcaca65::t_dbbb7cc475b6ec 176
+packages/computer/src/tools/common/options.ts
+  s_4f96e4ffcaca65::t_035f5e58117414 8
+packages/computer/src/tools/index.ts
+  s_4f96e4ffcaca65::t_bb32590220c8e0 5-6
+packages/computer/src/tools/pi-ai/index.test.ts
+  s_4f96e4ffcaca65::t_48bd170e5b14c4 2-3,7,19,25,27,45,56,72,88-89,95,109,111,126-127,129-146,150,159,166,185,188,203,215,228,237,257,268,297,313
+packages/computer/src/tools/pi-ai/index.ts
+  s_4f96e4ffcaca65::t_5a98fb5c06b35b 78,83,86-87,91,180-183,189,191,216,289,291,303-315,317,321-323
+packages/computer/src/tools/pi-ai/model-output.test.ts
+  s_4f96e4ffcaca65::t_85741152f76e79 4,18,21
+packages/computer/src/tools/tanstack-ai/index.test.ts
+  s_4f96e4ffcaca65::t_7ccc12b5b50d61 7,101,103,123-124,134,140,152,163,179,197,212,220,231,243,256,284,297,313,343,367,407
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_4f96e4ffcaca65::t_bf518409933df9 80,91-92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e67085327b9c54a95e581dfb486fa3eaa1f0f1a4",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
