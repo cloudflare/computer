@@ -20,7 +20,7 @@ It provides:
  - R2-backed mounts for pre-filling read-only data into the workspace tree.
  - Durability over DO restarts for all file operations.
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
- - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:artifacts`, and managed execution records.
+ - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:container`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
  - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/computer/tools`.
 
@@ -49,6 +49,7 @@ The package ships several entrypoints:
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped wrapper over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
