@@ -32,6 +32,11 @@ function fakeRuntime(output: {
 }) {
   const runs: Run[] = [];
   const runtime = {
+    backends: () => [
+      { id: "container-shell", callable: false },
+      { id: "linux", callable: false },
+      { id: "worker-javascript", callable: true },
+    ],
     async exec(command: string, options: ExecOptions) {
       const run: Run = { command, options, killed: false };
       runs.push(run);
@@ -200,6 +205,18 @@ describe("createContainerModule", () => {
 
   it("rejects a bad maxOutputBytes at construction", () => {
     expect(() => createContainerModule({ maxOutputBytes: 0 })).toThrow(/maxOutputBytes/);
+  });
+
+  it("fails when it connects to a Workspace without the backend", () => {
+    const { runtime } = fakeRuntime({});
+    expect(() => build(runtime, { backend: "missing" })).toThrow(/no backend "missing"/);
+  });
+
+  it("refuses a backend that runs modules instead of shell commands", () => {
+    const { runtime } = fakeRuntime({});
+    expect(() => build(runtime, { backend: "worker-javascript" })).toThrow(
+      /runs modules, not shell commands/,
+    );
   });
 
   it("describes itself for a model", () => {
