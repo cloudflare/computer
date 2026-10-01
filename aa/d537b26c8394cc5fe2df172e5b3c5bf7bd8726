@@ -1,0 +1,67 @@
+packages/computer/package.json
+  s_4f96e4ffcaca65::t_d9820e705b96e5 54-61
+packages/computer/rolldown.config.ts
+  s_4f96e4ffcaca65::t_4b69c65677f4cb 34-36
+packages/computer/src/client.test.ts
+  s_4f96e4ffcaca65::t_5127e575ed5441 18
+packages/computer/src/tools/ai-sdk/index.test.ts
+  s_4f96e4ffcaca65::t_676f3e5fb1c5e3 4-7,17-18
+packages/computer/src/tools/ai-sdk/index.ts
+  s_4f96e4ffcaca65::t_42cc5227059c4c 1-69
+packages/computer/src/tools/ai-sdk/output.ts
+  s_4f96e4ffcaca65::t_4b1b6bf1cdf30d 1-35
+packages/computer/src/tools/ai-sdk/tools.ts
+  s_4f96e4ffcaca65::t_e71644290f4fed 1-141
+packages/computer/src/tools/common/exec.ts
+  s_4f96e4ffcaca65::t_1a4c094288389d 2-5,126,132-148,150-155,162,191,206-207,209,212,320,380,392
+packages/computer/src/tools/common/fs/delete.ts
+  s_4f96e4ffcaca65::t_c4b294c957beca 9,17-32
+packages/computer/src/tools/common/fs/edit.ts
+  s_4f96e4ffcaca65::t_b1886e72e46a25 38,47-84,112-122,125-142,144-147,149-154,157-176
+packages/computer/src/tools/common/fs/find.ts
+  s_4f96e4ffcaca65::t_3064a85265e1f4 25,40-94
+packages/computer/src/tools/common/fs/grep.ts
+  s_4f96e4ffcaca65::t_602adf0af5cc5b 39,59-105,108-124
+packages/computer/src/tools/common/fs/list.ts
+  s_4f96e4ffcaca65::t_545779a868a580 28,40-102
+packages/computer/src/tools/common/fs/read.ts
+  s_4f96e4ffcaca65::t_dfdf51c1b914e5 2,30,87,96,306-311,314-330,336-372
+packages/computer/src/tools/common/fs/write.ts
+  s_4f96e4ffcaca65::t_a8aa66e6b2de24 16,21-36
+packages/computer/src/tools/common/model-output.ts
+  s_4f96e4ffcaca65::t_d944f658fd0cba 1-34
+packages/computer/src/tools/common/options.ts
+  s_4f96e4ffcaca65::t_57b31e282f08ea 1-3,5-6,8-9,11,13,18-22,37-50,52-61,63,65-66,68-71,74-75
+packages/computer/src/tools/common/publish.ts
+  s_4f96e4ffcaca65::t_9bdbb6ca820e97 2,15-51,56-67
+packages/computer/src/tools/common/stream.ts
+  s_4f96e4ffcaca65::t_df0c12a87c649b 1-29
+packages/computer/src/tools/index.ts
+  s_4f96e4ffcaca65::t_284058f574c2c4 1-6,8-9,11-35
+packages/computer/src/tools/pi-ai/index.test.ts
+  s_4f96e4ffcaca65::t_ea35f9cbcc537e 1-300
+packages/computer/src/tools/pi-ai/index.ts
+  s_4f96e4ffcaca65::t_88a17df5e450f7 1-392
+packages/computer/src/tools/pi-ai/model-output.test.ts
+  s_4f96e4ffcaca65::t_d83a6160e5bf9b 1-32
+packages/computer/src/tools/tanstack-ai/index.test.ts
+  s_4f96e4ffcaca65::t_c0467e7644fbb9 1-399
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_4f96e4ffcaca65::t_bf7ab0556d2519 1-314
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "aad537b26c8394cc5fe2df172e5b3c5bf7bd8726",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
