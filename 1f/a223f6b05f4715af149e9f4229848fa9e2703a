@@ -1,0 +1,23 @@
+.gardener/gardener.lock.json
+  s_de0b486c128948::t_ba821da62bd1f6 6,9,146-247
+.gardener/tasks/pr-review-fix/TASK.md
+  s_de0b486c128948::t_3e2fc823be6494 1-69
+.github/workflows/gardener-pr-review-fix.yml
+  s_de0b486c128948::t_5a19c9c2c8baff 1-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "1fa223f6b05f4715af149e9f4229848fa9e2703a",
+  "prompts": {},
+  "sessions": {
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
