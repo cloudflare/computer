@@ -250,7 +250,6 @@ above, then dive into the area you're working on.
 | [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
-| [20. Local-only paths](./20_local_only_paths.md) | `MOUNT_IGNORE`: keeping `node_modules` and other rebuildable trees on the container's disk, the durability trade-off, and the `EXDEV` rename contract. |
 
 ## High-level API
 

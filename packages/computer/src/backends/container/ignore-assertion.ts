@@ -1,6 +1,6 @@
 // Client-side assertion over the container's local-only path set. The
 // set is owned by the image; a client can only state what it expects
-// and refuse to connect on disagreement. See docs/20_local_only_paths.md.
+// and refuse to connect on disagreement. See packages/computerd/README.md.
 //
 // Fails the connection rather than warning, because the failure it
 // guards is silent and expensive: an image built without MOUNT_IGNORE

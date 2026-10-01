@@ -62,7 +62,7 @@ the more realistic baseline for general usage.
 >
 > If you are sizing a workload against these figures, add the transfer
 > yourself, or keep the tree out of sync entirely — see
-> [20. Local-only paths](./20_local_only_paths.md).
+> [`computerd`: Local-only paths](../packages/computerd/README.md#local-only-paths-mount_ignore).
 
 ## Local-only paths (`MOUNT_IGNORE`)
 

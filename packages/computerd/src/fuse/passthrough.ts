@@ -1,5 +1,5 @@
 // Local-only passthrough for the FUSE op layer. See
-// docs/20_local_only_paths.md.
+// packages/computerd/README.md.
 //
 // A decorator over FuseOps rather than branches inside makeFUSEOps, so
 // the VFS driver stays unaware of the feature and an empty ignore set

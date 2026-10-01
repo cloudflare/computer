@@ -1,4 +1,4 @@
-// Local-only subpaths of the mount. See docs/20_local_only_paths.md.
+// Local-only subpaths of the mount. See packages/computerd/README.md.
 //
 // Entries are plain paths relative to the mount root: no glob syntax
 // and no negation. Deliberate, because an entry then resolves to a
