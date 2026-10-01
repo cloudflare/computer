@@ -177,6 +177,20 @@ function makeFakeHost(opts: FakeHostOptions = {}): FakeHost {
 const fakeWorkspace: WorkspaceRef = { binding: "TestDO", id: "abc123" };
 
 describe("CloudflareContainerBackend", () => {
+  it.each([
+    [undefined, "It has no network access."],
+    [{ mode: "none" as const }, "It has no network access."],
+    [{ mode: "direct" as const }, "It has network access."],
+  ])("describes network access that matches egress %o", (egress, expected) => {
+    const backend = new CloudflareContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => ({}) }) as never,
+      workspace: fakeWorkspace,
+      ...(egress === undefined ? {} : { egress }),
+    });
+
+    expect(backend.description).toContain(expected);
+  });
+
   test("connect() classifies a container start failure as transport", async () => {
     const platformError = new Error(
       "There is no container instance that can be provided to this Durable Object, try again later",

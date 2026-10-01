@@ -1565,6 +1565,24 @@ describe("createAITools exec tool", () => {
     });
   });
 
+  it("lets exec win over the deprecated shell option", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+
+    expect(
+      createAITools({
+        workspace,
+        exec: {},
+        shell: { backends: { shell: { description: "Commands." } } },
+      }).exec,
+    ).toBeUndefined();
+  });
+
   it("rejects a backend the workspace does not have", () => {
     expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: {} } })).toThrow(
       /unknown backend "missing"/,

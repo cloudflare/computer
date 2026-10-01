@@ -28,6 +28,16 @@ export function notCallableMessage(backend: string): string {
   return `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`;
 }
 
+/** What a registered backend says about itself. */
+export interface WorkspaceBackendInfo {
+  /** The id the backend is registered under. */
+  readonly id: string;
+  /** Whether the backend takes structured `input` and returns a `result`. */
+  readonly callable: boolean;
+  /** What the backend tells a model about itself. */
+  readonly description?: string;
+}
+
 export class WorkspaceRuntime {
   readonly #options: WorkspaceRuntimeRouterOptions;
 
@@ -43,11 +53,21 @@ export class WorkspaceRuntime {
     return this.#options.backends.get(id)?.callable === true;
   }
 
-  // Every registered backend id, in registration order. The first is
-  // the default. The exec tool uses this when the caller does not pick
-  // backends itself.
+  // Every registered backend id, in registration order. The exec tool
+  // uses this when the caller does not pick backends itself.
   backendIds(): string[] {
     return [...this.#options.backends.keys()];
+  }
+
+  // What each backend says about itself, in one plain value. A
+  // Workspace client takes this snapshot when it is created, so it can
+  // answer backendIds, isCallable, and describe without a round trip.
+  backends(): WorkspaceBackendInfo[] {
+    return [...this.#options.backends].map(([id, backend]) => ({
+      id,
+      callable: backend.callable === true,
+      ...(backend.description === undefined ? {} : { description: backend.description }),
+    }));
   }
 
   // What the named backend says about itself for a model: its source

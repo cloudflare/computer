@@ -84,10 +84,12 @@ function execOptions(
   options: CreateAIToolsOptions,
   runtime: ExecWorkspaceLike["runtime"],
 ): Omit<ExecToolOptions, "workspace"> & { backends: ExecBackends } {
+  // `exec` wins over the deprecated `shell`, so `exec: {}` always means
+  // no exec tool.
+  if (options.exec !== undefined) return { backends: options.exec };
   if (options.shell !== undefined) {
     const { backends, defaultBackend: _ignored, ...limits } = options.shell;
     return { ...limits, backends };
   }
-  if (options.exec !== undefined) return { backends: options.exec };
   return { backends: Object.fromEntries((runtime.backendIds?.() ?? []).map((id) => [id, {}])) };
 }

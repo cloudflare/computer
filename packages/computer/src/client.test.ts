@@ -9,8 +9,11 @@
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
+import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript.js";
 import { getWorkspace, type WorkspaceClient } from "./client.js";
+import { createAITools } from "./tools/ai-sdk.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
 
@@ -70,6 +73,9 @@ function fakeRuntime(promisedProperties = false) {
       disposeExec(id: string, options?: Record<string, unknown>) {
         calls.push({ command: `dispose:${id}`, options });
         return Promise.resolve();
+      },
+      backends() {
+        return promisedProperties ? Promise.resolve([]) : [];
       },
     },
   };
@@ -328,4 +334,49 @@ describe("client runtime.exec — remote handle rebuild", () => {
     handle[Symbol.dispose]?.();
     expect(disposedHandles()).toBe(1);
   });
+});
+
+describe("getWorkspace — backend information", () => {
+  // A Workspace with one callable JavaScript backend that describes its
+  // modules. The loader is never reached; only construction runs.
+  function workspaceWithJavaScript() {
+    return new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load: () => ({ getEntrypoint: () => ({}) }) },
+          modules: { "ws:weather": { forecast: () => null } },
+        }),
+      ],
+    });
+  }
+
+  for (const [path, connect] of [
+    ["local", (ws: Workspace) => getWorkspace({ [WORKSPACE]: ws })],
+    [
+      "remote",
+      (ws: Workspace) => getWorkspace({ __getWorkspaceStub: () => Promise.resolve(ws.stub()) }),
+    ],
+  ] as const) {
+    it(`answers backend questions on a ${path} client`, async () => {
+      const client = await connect(workspaceWithJavaScript());
+
+      expect(client.runtime.backendIds()).toEqual(["worker-javascript"]);
+      expect(client.runtime.isCallable("worker-javascript")).toBe(true);
+      expect(client.runtime.isCallable("missing")).toBe(false);
+      expect(client.runtime.describe("worker-javascript")).toContain("`ws:weather`: exports");
+    });
+
+    it(`builds a callable exec tool from a ${path} client`, async () => {
+      const client = await connect(workspaceWithJavaScript());
+      const tools = createAITools({ workspace: client });
+      const exec = tools.exec as { description?: string; inputSchema?: unknown } | undefined;
+      if (!(exec?.inputSchema instanceof z.ZodType))
+        throw new Error("exec has no zod input schema");
+      const schema = z.toJSONSchema(exec.inputSchema) as { properties: Record<string, unknown> };
+
+      expect(exec.description).toContain("`ws:weather`: exports `forecast`.");
+      expect(Object.keys(schema.properties)).toContain("input");
+    });
+  }
 });
