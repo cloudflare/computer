@@ -33,6 +33,7 @@ export default defineConfig({
     "tools/index": "src/tools/index.ts",
     "tools/pi-ai": "src/tools/pi-ai/index.ts",
     "tools/tanstack-ai": "src/tools/tanstack-ai/index.ts",
+    "modules/container": "src/modules/container.ts",
     "modules/git": "src/modules/git.ts",
     "modules/artifacts": "src/modules/artifacts.ts",
     "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
