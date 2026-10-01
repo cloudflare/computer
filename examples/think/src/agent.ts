@@ -154,35 +154,8 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
   }
 
   override getTools(): ToolSet {
-    return createAITools({
-      workspace: this.workspace,
-      shell: {
-        defaultBackend: "shell",
-        backends: {
-          shell: {
-            description:
-              "just-bash in a Dynamic Worker. Cold-start fast, no " +
-              "container, no public network. Good for cat / grep / sed / " +
-              "awk / jq / head / tail / sort / find, quick file " +
-              "inspection, text transformations, and `git` (clone / " +
-              "status / diff / log) — the shell registers a built-in " +
-              "`git` command that forwards to the host workspace, so " +
-              "network-bound subcommands like `git clone` work even " +
-              "though the isolate itself has no public network. Only " +
-              "https:// URLs are supported. Cannot run npm, node, python, " +
-              "or any binary outside just-bash's built-in command set.",
-          },
-          container: {
-            description:
-              "Cloudflare Container running computerd over capnweb. Full Linux " +
-              "userland: npm, node, python, package managers, test " +
-              "runners, real binaries on $PATH, and public network. Cold " +
-              "start is much slower because the container must boot; " +
-              "reach for it when the shell backend can't run the command. " +
-              "For git itself, prefer the shell backend.",
-          },
-        },
-      },
-    });
+    // Every backend the Workspace has, "shell" first. Both describe
+    // themselves to the model.
+    return createAITools({ workspace: this.workspace });
   }
 }

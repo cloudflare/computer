@@ -1,5 +1,10 @@
 import type { ToolSet } from "ai";
-import { createExecTool, type ExecToolOptions, type ExecWorkspaceLike } from "./exec.js";
+import {
+  createExecTool,
+  type ExecBackends,
+  type ExecToolOptions,
+  type ExecWorkspaceLike,
+} from "./exec.js";
 import { createDeleteTool } from "./fs/delete.js";
 import { createEditTool, type EditToolOptions } from "./fs/edit.js";
 import { createFindTool } from "./fs/find.js";
@@ -17,7 +22,22 @@ export interface CreateAIToolsOptions {
   read?: Omit<ReadToolOptions, "store">;
   write?: Omit<WriteToolOptions, "store">;
   edit?: Omit<EditToolOptions, "store">;
-  shell?: Omit<ExecToolOptions, "workspace">;
+  // Which backends `exec` may run on: a list of backend ids, or a map
+  // from id to text for the model (`true` for none). The first is the
+  // default. Omit to offer every backend the Workspace has; pass
+  // `false` for no exec tool.
+  exec?: ExecBackends | false;
+  /**
+   * @deprecated Use `exec`. `{ backends: { id: { description } },
+   * defaultBackend }` becomes `exec: { id: description }` with the
+   * default listed first. Output limits move to `createExecTool`.
+   */
+  shell?: LegacyShellOptions;
+}
+
+interface LegacyShellOptions extends Omit<ExecToolOptions, "workspace" | "backends"> {
+  backends: Record<string, { description?: string }>;
+  defaultBackend?: string;
 }
 
 export function createAITools(options: CreateAIToolsOptions): ToolSet {
@@ -35,11 +55,12 @@ export function createAITools(options: CreateAIToolsOptions): ToolSet {
   tools.edit = createEditTool({ store, ...options.edit });
   tools.delete = createDeleteTool({ store });
 
-  if (options.shell !== undefined) {
-    tools.exec = createExecTool({
-      workspace: options.workspace as ExecWorkspaceLike,
-      ...options.shell,
-    });
+  const runtime = options.workspace.runtime;
+  if (runtime !== undefined && options.exec !== false) {
+    const exec = execOptions(options);
+    if (exec.backends !== undefined || (runtime.backendIds?.().length ?? 0) > 0) {
+      tools.exec = createExecTool({ workspace: { runtime }, ...exec });
+    }
   }
 
   if (options.assets !== false && options.workspace.assets !== undefined) {
@@ -47,4 +68,21 @@ export function createAITools(options: CreateAIToolsOptions): ToolSet {
   }
 
   return tools;
+}
+
+// Turn `exec`, or the deprecated `shell`, into createExecTool options.
+function execOptions(options: CreateAIToolsOptions): Omit<ExecToolOptions, "workspace"> {
+  if (options.shell === undefined) {
+    return options.exec === undefined || options.exec === false ? {} : { backends: options.exec };
+  }
+  const { backends, defaultBackend, ...limits } = options.shell;
+  const ids = Object.keys(backends);
+  const ordered =
+    defaultBackend === undefined
+      ? ids
+      : [defaultBackend, ...ids.filter((id) => id !== defaultBackend)];
+  return {
+    ...limits,
+    backends: Object.fromEntries(ordered.map((id) => [id, backends[id]?.description ?? true])),
+  };
 }

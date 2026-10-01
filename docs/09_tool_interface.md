@@ -5,7 +5,7 @@
 The tools wrap three Workspace surfaces:
 
 - `workspace.fs` for file reads, writes, edits, searches, listings, and deletion;
-- `workspace.runtime.exec` for command execution when the caller opts in;
+- `workspace.runtime.exec` for running commands and code on the Workspace's backends;
 - `workspace.assets` for publishing generated files when an assets publisher is configured.
 
 ## What ships
@@ -24,7 +24,7 @@ The tools wrap three Workspace surfaces:
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: false`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -55,29 +55,16 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-Pass `shell` only when the Workspace has matching backend ids. With one backend, `exec` has no `backend` argument and always runs there:
+By default `exec` offers every backend the Workspace has, with the Workspace's default first. Each backend describes itself to the model. Pick backends with `exec`, either as a list or as a map to text for the model (`true` adds none). The first entry is the default:
 
 ```ts
-const tools = createAITools({
-  workspace,
-  shell: { backends: { "worker-javascript": {} } },
-});
+createAITools({ workspace });                                              // every backend
+createAITools({ workspace, exec: ["worker-javascript"] });                 // just one
+createAITools({ workspace, exec: { "worker-javascript": "Use for data work." } }); // with your own text
+createAITools({ workspace, exec: false });                                 // no exec tool
 ```
 
-With more than one, pass `defaultBackend` and the model picks a backend per call:
-
-```ts
-const tools = createAITools({
-  workspace,
-  shell: {
-    defaultBackend: "shell",
-    backends: {
-      shell: { description: "Fast Worker shell with built-in text commands." },
-      container: { description: "Full Linux userland in a Cloudflare Container." },
-    },
-  },
-});
-```
+With one backend, `exec` has no `backend` argument and always runs there.
 
 ## `createAITools`
 
@@ -89,7 +76,7 @@ createAITools({
   read?,
   write?,
   edit?,
-  shell?,
+  exec?,
 });
 ```
 
@@ -101,7 +88,8 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `shell` | omitted | Options passed to `createExecTool`. |
+| `exec` | every backend | A list of backend ids, or a map from id to text for the model. The first is the default. `false` omits `exec`. |
+| `shell` | omitted | Deprecated. `{ backends: { id: { description } }, defaultBackend }` becomes `exec: { id: description }` with the default first. |
 
 ## `read`
 
@@ -253,9 +241,9 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output.
+`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, streamMaxBytes? })` takes the same `backends` as the `exec` option, plus output limits.
 
-Each backend's entry in the tool description joins two parts: the `description` you pass, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so `{ "worker-javascript": {} }` is enough and the list stays in step with `modules`. A backend that does not describe itself needs a `description`. Describe capabilities and startup cost in plain language.
+Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `CloudflareContainerBackend` describe their command sets and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
 The tool offers only the arguments that can work:
 
@@ -263,11 +251,11 @@ The tool offers only the arguments that can work:
 | --- | --- |
 | One shell backend | `command`, `cwd`, `env` |
 | One callable backend | `command`, `cwd`, `env`, `input` |
-| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable. `defaultBackend` is required. |
+| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable |
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: false` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 
 ## `publish`
 

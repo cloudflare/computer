@@ -139,6 +139,9 @@ const DEFAULT_COMPAT_FLAGS = ["nodejs_compat"];
 
 export class WorkerShellBackend implements WorkspaceBackend {
   readonly type = "worker-shell";
+  /** What this backend tells a model: a fast shell with a fixed command set. */
+  readonly description =
+    "A just-bash shell in a Dynamic Worker. Starts fast, with no container and no direct network. Good for cat, grep, sed, awk, jq, head, tail, sort, find, text transformations, and a built-in `git` (clone, status, diff, log) that works through the workspace. Cannot run npm, node, python, or binaries outside its built-in command set.";
   readonly id: string;
   readonly #options: WorkerShellBackendOptions;
   readonly #egress: WorkspaceEgressPolicy;

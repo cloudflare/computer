@@ -67,27 +67,26 @@ export interface ExecWorkspaceLike {
     isCallable?(id: string): boolean;
     // What a backend says about itself for a model, such as the
     // language it runs and the modules that code can import. The tool
-    // shows it after the caller's own description.
+    // shows it after the caller's own text.
     describe?(id: string): string | undefined;
+    // Every registered backend id, default first. Used when the caller
+    // does not pick backends, and to reject an unknown id up front.
+    backendIds?(): string[];
   };
 }
 
-export interface ExecBackendDescription {
-  // Guidance for the model about this backend, shown before whatever
-  // the backend says about itself. Required only when the backend does
-  // not describe itself.
-  description?: string;
-}
+/**
+ * Which backends the exec tool may run on: a list of backend ids, or a
+ * map from id to text shown to the model before the backend's own
+ * description (`true` for none). The first entry is the default.
+ */
+export type ExecBackends = readonly string[] | Readonly<Record<string, string | true>>;
 
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
-  // Backends the model may run on. With exactly one, the tool has no
-  // `backend` argument and always runs there, so the model never has
-  // to reason about backends.
-  backends: Record<string, ExecBackendDescription>;
-  // Backend used when the model omits `backend`. Required when more
-  // than one backend is configured; with one it defaults to that one.
-  defaultBackend?: string;
+  // Omit to offer every backend the Workspace has, its default first.
+  // With exactly one backend the tool has no `backend` argument.
+  backends?: ExecBackends;
   // Per-snapshot display cap for each of stdout and stderr, in bytes.
   // Output past it is shown as a truncation marker. Defaults to 64 KiB.
   maxBytes?: number;
@@ -135,29 +134,20 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
-  const backendIds = Object.keys(options.backends);
-  if (backendIds.length === 0) {
-    throw new Error("createExecTool: pass at least one backend in `backends`");
-  }
-  const single = backendIds.length === 1;
-  const defaultBackend = options.defaultBackend ?? (single ? backendIds[0] : undefined);
-  if (defaultBackend === undefined || !backendIds.includes(defaultBackend)) {
-    throw new Error(
-      `createExecTool: pass a defaultBackend that is one of ${backendIds.map((id) => JSON.stringify(id)).join(", ")}`,
-    );
-  }
-
   const runtime = options.workspace.runtime;
-  const backends = backendIds.map((id) => {
-    const text = [options.backends[id]?.description, runtime.describe?.(id)]
-      .filter((part) => part !== undefined && part !== "")
-      .join("\n\n");
-    if (text === "") {
-      throw new Error(
-        `createExecTool: backend ${JSON.stringify(id)} does not describe itself; pass a description`,
-      );
-    }
-    return { id, text, callable: runtime.isCallable?.(id) === true };
+  const selected = selectBackends(options.backends, runtime);
+  const [first] = selected;
+  if (first === undefined) throw new Error("createExecTool: no backends to run on");
+  const defaultBackend = first.id;
+  const backendIds = selected.map((backend) => backend.id);
+  const single = backendIds.length === 1;
+  const backends = selected.map(({ id, guidance }) => {
+    const callable = runtime.isCallable?.(id) === true;
+    const own = runtime.describe?.(id);
+    const text =
+      [guidance, own].filter((part) => part !== undefined && part !== "").join("\n\n") ||
+      (callable ? "Runs `command` as module source." : "Runs shell commands.");
+    return { id, text, callable };
   });
   const callableBackendIds = new Set(backends.filter((b) => b.callable).map((b) => b.id));
   const description = describeTool(backends, defaultBackend);
@@ -347,6 +337,39 @@ function describeTool(backends: readonly DescribedBackend[], defaultBackend: str
           `Callable backends (${callable.join(", ")}) run \`command\` as module source rather than a shell command. ${CALLABLE_HINT} Other backends reject \`input\`.`,
         ]),
   ].join("\n");
+}
+
+// Resolve the caller's choice to an ordered list, default first.
+function selectBackends(
+  backends: ExecBackends | undefined,
+  runtime: ExecWorkspaceLike["runtime"],
+): Array<{ id: string; guidance: string | undefined }> {
+  const known = runtime.backendIds?.();
+  let selected: Array<{ id: string; guidance: string | undefined }>;
+  if (backends === undefined) {
+    if (known === undefined) {
+      throw new Error("createExecTool: pass `backends`; this workspace cannot list its backends");
+    }
+    selected = known.map((id) => ({ id, guidance: undefined }));
+  } else if (isBackendList(backends)) {
+    selected = backends.map((id) => ({ id, guidance: undefined }));
+  } else {
+    selected = Object.entries(backends).map(([id, text]) => ({
+      id,
+      guidance: text === true ? undefined : text,
+    }));
+  }
+  const unknown = known === undefined ? [] : selected.filter((b) => !known.includes(b.id));
+  if (unknown.length > 0) {
+    throw new Error(
+      `createExecTool: unknown backend ${unknown.map((b) => JSON.stringify(b.id)).join(", ")}; the workspace has ${known?.map((id) => JSON.stringify(id)).join(", ") || "none"}`,
+    );
+  }
+  return selected;
+}
+
+function isBackendList(backends: ExecBackends): backends is readonly string[] {
+  return Array.isArray(backends);
 }
 
 function commandHint(backends: readonly DescribedBackend[]): string {

@@ -11,29 +11,22 @@ export async function createComputerMCPServer(workspace: WorkspaceClient, loader
   const tools = createAITools({
     workspace,
     assets: false,
-    shell: {
-      backends: {
-        "worker-shell": {
-          description:
-            "just-bash in an isolated Dynamic Worker. Starts quickly, " +
-            "does not boot a container, and has no ambient outbound network. " +
-            "Use it for common shell commands, quick file inspection, and " +
-            "text transformations. Its built-in git command supports clone, " +
-            "status, diff, and log; clone accepts HTTPS URLs through the " +
-            "durable workspace. Prefer the dedicated read, write, and edit " +
-            "tools for file operations. Cannot run npm, Node.js, Python, " +
-            "package managers, or arbitrary native binaries.",
-        },
-        "container-shell": {
-          description:
-            "Full Debian Linux in a Cloudflare Container with Node.js, npm, " +
-            "git, package management, native binaries, and outbound network. " +
-            "Use it for dependency installation, builds, tests, or commands " +
-            "that worker-shell cannot run. Cold starts more slowly because " +
-            "the container must boot; prefer worker-shell for simple tasks.",
-        },
-      },
-      defaultBackend: "worker-shell",
+    exec: {
+      "worker-shell":
+        "just-bash in an isolated Dynamic Worker. Starts quickly, " +
+        "does not boot a container, and has no ambient outbound network. " +
+        "Use it for common shell commands, quick file inspection, and " +
+        "text transformations. Its built-in git command supports clone, " +
+        "status, diff, and log; clone accepts HTTPS URLs through the " +
+        "durable workspace. Prefer the dedicated read, write, and edit " +
+        "tools for file operations. Cannot run npm, Node.js, Python, " +
+        "package managers, or arbitrary native binaries.",
+      "container-shell":
+        "Full Debian Linux in a Cloudflare Container with Node.js, npm, " +
+        "git, package management, native binaries, and outbound network. " +
+        "Use it for dependency installation, builds, tests, or commands " +
+        "that worker-shell cannot run. Cold starts more slowly because " +
+        "the container must boot; prefer worker-shell for simple tasks.",
     },
   });
 

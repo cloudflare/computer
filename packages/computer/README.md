@@ -278,18 +278,14 @@ import { createAITools } from "@cloudflare/computer/tools";
 const tools = createAITools({
   workspace,
   read: { maxBytes: 32 * 1024, maxLines: 800 },
-  shell: {
-    defaultBackend: "shell",
-    backends: {
-      shell: { description: "Fast Worker shell with built-in text commands." },
-      container: { description: "Full Linux userland in a Cloudflare Container." },
-    },
-  },
+  // Omit `exec` to offer every backend, the Workspace default first.
+  exec: { shell: "Try this first.", container: true },
 });
 ```
 
-The model reads each backend's `description` when deciding where a
-command should run, so write them in plain language. Truncated text
+Each backend describes itself to the model, and the text you give in
+`exec` comes first. The model reads both when deciding where a command
+should run, so write yours in plain language. Truncated text
 model output keeps both line and byte continuations; pass both to the
 next call to avoid transferring the same bytes again. Eligible image and
 PDF bytes are captured once during the bounded tool execution and returned
