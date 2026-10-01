@@ -1,0 +1,45 @@
+.changeset/exec-tool-options.md
+  s_b2fd9413bbc158::t_4d14a87aca4dd3 10-11
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_4836913d63f401 3,33
+docs/10_project_layout.md
+  s_b2fd9413bbc158::t_23ecd5d997f920 178-181
+docs/README.md
+  s_b2fd9413bbc158::t_8a394892962ec0 25,55
+examples/celld/README.md
+  s_b2fd9413bbc158::t_e2950c05205673 131
+examples/celld/src/index.ts
+  s_b2fd9413bbc158::t_a69b710c7339ca 8
+examples/mcp/src/server.ts
+  s_b2fd9413bbc158::t_21666c340fea20 4
+examples/think/README.md
+  s_b2fd9413bbc158::t_c2c5e3d95b3018 27,56-59
+examples/think/src/agent.ts
+  s_b2fd9413bbc158::t_36768b2e856358 40
+packages/computer/README.md
+  s_b2fd9413bbc158::t_b19f73eefb7c5a 268,271-272,276,421
+packages/computer/package.json
+  s_b2fd9413bbc158::t_f46ab9e24378c1 50-53
+packages/computer/rolldown.config.ts
+  s_b2fd9413bbc158::t_02258a753fb849 34
+packages/computer/src/tools/ai-sdk.test.ts
+  s_b2fd9413bbc158::t_b3b22acf522193 8
+packages/computer/src/tools/ai-sdk.ts
+  s_b2fd9413bbc158::t_394e8e7929390a 18,43-51
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fcc86e771c1f3e6c136d6d0e14406d52915b48c6",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
