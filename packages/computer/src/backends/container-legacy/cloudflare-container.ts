@@ -138,15 +138,6 @@ export interface LegacyContainerBackendOptions {
 }
 
 const DEFAULT_EGRESS_HOST = "computer.internal";
-// What the model is told about network access, by egress mode. The
-// container only gets the internet with "direct"; "http-gateway"
-// routes HTTP through the host, and "none" blocks it.
-const NETWORK_DESCRIPTION: Record<WorkspaceEgressPolicy["mode"], string> = {
-  direct: "It has network access.",
-  "http-gateway": "Outbound HTTP goes through a gateway the host controls.",
-  none: "It has no network access.",
-};
-
 // Paths the egress proxy serves. The container assembles no paths of
 // its own, so these travel in the /connect request and both ends stay
 // in step from one place.
@@ -189,8 +180,6 @@ function bearerMatches(header: string | null, expected: string | undefined): boo
 
 export class LegacyContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
-  /** What this backend tells a model: a full Linux shell, its network access, and its slow start. */
-  readonly description: string;
   readonly id: string;
 
   readonly #options: Required<
@@ -220,11 +209,6 @@ export class LegacyContainerBackend implements WorkspaceBackend {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
-    this.description = [
-      "A shell in a full Linux container: npm, node, python, package managers, test runners, and native binaries.",
-      NETWORK_DESCRIPTION[this.#egress.mode],
-      "Starts much more slowly than an in-Worker backend because the container must boot.",
-    ].join(" ");
     this.#options = {
       container: options.container,
       workspace: options.workspace,
