@@ -66,7 +66,7 @@ const backend = new WorkerJavaScriptBackend({
   root: "/workspace",
   access: "read",
   egress: { mode: "none" },
-  trustedModules: {
+  modules: {
     "ws:model": modelCapability,
   },
 });
@@ -77,13 +77,13 @@ const workspace = new Workspace({
 });
 ```
 
-The important line is `trustedModules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `ws:model` interface.
+The important line is `modules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `ws:model` interface.
 
 A generated module follows this shape:
 
 ```js
 import fs from "node:fs/promises";
-import { call as callModel } from "ws:model";
+import { batch } from "ws:model";
 
 export default async function () {
   const manifest = JSON.parse(
@@ -96,7 +96,7 @@ export default async function () {
     })),
   );
 
-  const mapped = await callModel("batch", requests);
+  const mapped = await batch(requests);
   const totals = validateAndSum(mapped);
   return { answer: largestLabel(totals) };
 }
@@ -150,7 +150,7 @@ The reducer is exact relative to its inputs. Model classifications can still be 
 The shortest path through the example is:
 
 1. [`worker/rlm-agent.ts`](worker/rlm-agent.ts) wires together the model, Workspace, Worker JavaScript backend, executor tool, and `ws:model`.
-2. [`worker/capability.ts`](worker/capability.ts) implements the bounded `ws:model("batch", requests)` interface.
+2. [`worker/capability.ts`](worker/capability.ts) implements the bounded `batch(requests)` function behind `ws:model`.
 3. [`worker/structured-rlm.ts`](worker/structured-rlm.ts) describes the map result and JavaScript reduction for each task family.
 4. [`worker/agent-common.ts`](worker/agent-common.ts) writes the same corpus into each Computer Workspace.
 5. [`worker/executor-tool.ts`](worker/executor-tool.ts) creates the native Computer executor tool and keeps its browser-facing result small.

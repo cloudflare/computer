@@ -1,7 +1,12 @@
 import { parse } from "acorn";
 
 import type { WorkspaceRuntimeCapability } from "../../runtime/capability.js";
-import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
+import type {
+  WorkspaceModule,
+  WorkspaceModuleFactory,
+  WorkspaceModuleFunctions,
+  WorkspaceRuntimeLoader,
+} from "../../runtime/types.js";
 
 export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
   load(code: { modules: infer Modules }): unknown;
@@ -12,14 +17,119 @@ export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
 const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
 const CAPABILITIES_MODULE = "workspace-capabilities.js";
-const TRUSTED_MODULES = ["node:fs", "node:fs/promises", "ws:git", "ws:artifacts"] as const;
+// Installed in every execution and backed by the Workspace. No module
+// in the `modules` option may use these names.
+const BUILT_IN_MODULES = ["node:fs", "node:fs/promises"] as const;
+const HOST_SPECIFIER = /^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+// `default` would turn the function into the default export, and a
+// `then` export makes the module namespace look like a promise to
+// `await import(...)`.
+const RESERVED_EXPORT_NAMES = new Set(["default", "then"]);
+
+/** The `modules` option, parsed once when the backend is constructed. */
+export interface ParsedModules {
+  readonly source: Readonly<Record<string, string>>;
+  readonly host: ReadonlyMap<string, WorkspaceModuleFactory>;
+  /** One markdown bullet per importable module, for a model. */
+  readonly description: string;
+}
+
+const FILESYSTEM_DESCRIPTION =
+  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, and `access`. Async only.";
+
+/**
+ * Parse the backend's `modules` option: split it into bundled source
+ * and host module factories, check every specifier and every object's
+ * export names, and describe each module for a model. A factory's
+ * export names are checked when the backend connects and it runs.
+ *
+ * @param modules - The modules passed to the backend.
+ * @returns Source modules, host module factories, and their description.
+ * @throws When a specifier or an object's export names are not allowed.
+ *   The host configured the backend wrongly and no execution can use it.
+ */
+export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
+  const source: Record<string, string> = Object.create(null);
+  const host = new Map<string, WorkspaceModuleFactory>();
+  const lines = [FILESYSTEM_DESCRIPTION];
+  for (const [specifier, module] of Object.entries(modules)) {
+    const name = `\`${specifier}\``;
+    if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) {
+      throw new Error(`Module ${JSON.stringify(specifier)} is built in and cannot be replaced.`);
+    }
+    if (typeof module === "string") {
+      if (specifier.startsWith("ws:")) {
+        throw new Error(
+          `Module ${JSON.stringify(specifier)} uses the ws:* namespace, which is only for host modules.`,
+        );
+      }
+      if (specifier.includes("/") || isInternalModuleName(specifier)) {
+        throw new Error(`Module ${JSON.stringify(specifier)} uses a reserved module name.`);
+      }
+      source[specifier] = module;
+      lines.push(`- ${name}: a bundled library.`);
+      continue;
+    }
+    if (!HOST_SPECIFIER.test(specifier)) {
+      throw new Error(
+        `Host module ${JSON.stringify(specifier)} must use a simple ws:* name, such as "ws:git".`,
+      );
+    }
+    if (typeof module === "function") {
+      host.set(specifier, module);
+      lines.push(`- ${name}: ${module.description ?? "a host module."}`);
+      continue;
+    }
+    if (module === null || typeof module !== "object" || Array.isArray(module)) {
+      throw new Error(
+        `Module ${JSON.stringify(specifier)} must be source text, an object of functions, or a factory.`,
+      );
+    }
+    assertHostModuleExports(specifier, module);
+    host.set(specifier, () => module);
+    const exports = Object.keys(module).map((key) => `\`${key}\``);
+    lines.push(`- ${name}: exports ${exports.join(", ")}.`);
+  }
+  return { source, host, description: lines.join("\n") };
+}
+
+/**
+ * Check the functions a host module exports.
+ *
+ * @param specifier - The module's specifier, for error messages.
+ * @param functions - The module's functions.
+ * @throws When the module exports nothing, a name is not allowed, or a
+ *   value is not a function.
+ */
+export function assertHostModuleExports(
+  specifier: string,
+  functions: WorkspaceModuleFunctions,
+): void {
+  const names = Object.keys(functions);
+  if (names.length === 0) {
+    throw new Error(`Host module ${JSON.stringify(specifier)} must export a function.`);
+  }
+  for (const name of names) {
+    if (!EXPORT_NAME.test(name) || RESERVED_EXPORT_NAMES.has(name)) {
+      throw new Error(
+        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a JavaScript identifier other than "default" or "then".`,
+      );
+    }
+    if (typeof functions[name] !== "function") {
+      throw new Error(
+        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a function.`,
+      );
+    }
+  }
+}
 
 export interface BuildModuleGraphOptions {
   source: string;
   cwd: string;
   capability: WorkspaceRuntimeCapability;
-  configuredModules: Record<string, string>;
-  trustedModuleNames?: string[];
+  configuredModules: Readonly<Record<string, string>>;
+  hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
@@ -39,18 +149,10 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
   const maxModules = options.maxModules ?? 128;
   const maxDepth = options.maxDepth ?? 32;
-  const trustedModuleNames = new Set<string>(TRUSTED_MODULES);
-  for (const name of options.trustedModuleNames ?? []) {
-    if (
-      !/^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) ||
-      TRUSTED_MODULES.includes(name as (typeof TRUSTED_MODULES)[number])
-    ) {
-      throw new Error(
-        `Trusted module ${JSON.stringify(name)} must use a unique simple reserved ws:* name.`,
-      );
-    }
-    trustedModuleNames.add(name);
-  }
+  const importableModuleNames = new Set<string>([
+    ...BUILT_IN_MODULES,
+    ...options.hostModules.keys(),
+  ]);
 
   async function visit(path: string, source: string, depth: number): Promise<void> {
     if (depth > maxDepth) throw new Error(`Workspace JavaScript import depth exceeds ${maxDepth}.`);
@@ -63,12 +165,14 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
     }
 
     for (const specifier of imports(source)) {
-      if (trustedModuleNames.has(specifier)) continue;
+      if (importableModuleNames.has(specifier)) continue;
       if (specifier === CAPABILITIES_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
       }
       if (specifier.startsWith("ws:")) {
-        throw new Error(`Unknown trusted Workspace module ${JSON.stringify(specifier)}.`);
+        throw new Error(
+          `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option.`,
+        );
       }
       if (specifier.startsWith(".")) {
         const resolved = resolveRelative(path, specifier);
@@ -111,21 +215,6 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
 
   await visit(entryPath, options.source, 0);
 
-  for (const specifier of Object.keys(options.configuredModules)) {
-    if (
-      trustedModuleNames.has(specifier) ||
-      specifier.startsWith("ws:") ||
-      specifier === ENTRY_BASENAME ||
-      specifier === RUNNER_MODULE ||
-      specifier === CAPABILITIES_MODULE ||
-      specifier.includes("/")
-    ) {
-      throw new Error(
-        `Configured module ${JSON.stringify(specifier)} uses a reserved module name.`,
-      );
-    }
-  }
-
   // node:* specifiers use protocol-style resolution and therefore need exact
   // module-map keys rather than the importer-directory aliases used by ws:*.
   modules["node:fs/promises"] = { js: nodeFsPromisesModule() };
@@ -134,11 +223,9 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   for (const directory of directories) {
     const prefix = directory ? `${directory}/` : "";
     const toCapabilities = relativeModule(directory, CAPABILITIES_MODULE);
-    modules[`${prefix}ws:git`] = { js: gitModule(toCapabilities) };
-    modules[`${prefix}ws:artifacts`] = { js: artifactsModule(toCapabilities) };
-    for (const specifier of options.trustedModuleNames ?? []) {
+    for (const [specifier, functions] of options.hostModules) {
       modules[`${prefix}${specifier}`] = {
-        js: trustedModule(toCapabilities, specifier),
+        js: hostModule(toCapabilities, specifier, Object.keys(functions)),
       };
     }
     for (const [specifier, source] of Object.entries(options.configuredModules)) {
@@ -297,17 +384,15 @@ function capabilitiesModule(maxCapabilityBytes: number) {
   `;
 }
 
-function proxyModule(capabilitiesImport: string, namespace: string, methods: string[]) {
+// Exports go through `export { local as name }` rather than
+// `export const name`, so a reserved word such as `delete` still works
+// as an export name.
+function hostModule(capabilitiesImport: string, specifier: string, names: readonly string[]) {
+  const namespace = JSON.stringify(`host/${specifier}`);
   return `
     import { call } from ${JSON.stringify(capabilitiesImport)};
-    ${methods.map((method) => `export const ${method} = (...args) => call(${JSON.stringify(namespace)}, ${JSON.stringify(method)}, args);`).join("\n")}
-  `;
-}
-
-function trustedModule(capabilitiesImport: string, specifier: string) {
-  return `
-    import { call as hostCall } from ${JSON.stringify(capabilitiesImport)};
-    export const call = (method, ...args) => hostCall(${JSON.stringify(`trusted/${specifier}`)}, "call", [method, ...args]);
+    ${names.map((name, index) => `const fn${index} = (...args) => call(${namespace}, ${JSON.stringify(name)}, args);`).join("\n")}
+    export { ${names.map((name, index) => `fn${index} as ${name}`).join(", ")} };
   `;
 }
 
@@ -369,18 +454,4 @@ function nodeFsPromisesModule() {
 
 function nodeFsModule() {
   return `${nodeFsPromisesModule()}\nexport { default as promises } from "node:fs/promises";`;
-}
-
-function gitModule(capabilitiesImport: string) {
-  return proxyModule(capabilitiesImport, "git", ["clone", "diff", "status", "log", "cli"]);
-}
-
-function artifactsModule(capabilitiesImport: string) {
-  return proxyModule(capabilitiesImport, "artifacts", [
-    "create",
-    "get",
-    "list",
-    "importArtifact",
-    "deleteArtifact",
-  ]);
 }

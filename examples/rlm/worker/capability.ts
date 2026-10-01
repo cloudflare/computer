@@ -1,4 +1,4 @@
-import type { WorkspaceRuntimeValue, WorkspaceTrustedModule } from "@cloudflare/computer";
+import type { WorkspaceModuleFunction, WorkspaceRuntimeValue } from "@cloudflare/computer";
 import { generateText, type LanguageModel } from "ai";
 import { z } from "zod";
 
@@ -73,18 +73,20 @@ interface ChildHooks {
   failed(metadata: FailedMetadata): void;
 }
 
-export function createModelCapability(
-  model: LanguageModel,
-  hooks: ChildHooks,
-): WorkspaceTrustedModule {
+/** The `ws:model` trusted module: one `batch` function over bounded child requests. */
+export type ModelCapability = {
+  /** Run up to 24 child model requests and return one result per request. */
+  readonly batch: WorkspaceModuleFunction;
+};
+
+export function createModelCapability(model: LanguageModel, hooks: ChildHooks): ModelCapability {
   return {
-    async call(method, args, context) {
-      if (method !== "batch") throw new Error(`Unknown model capability method: ${method}`);
+    async batch(args, context) {
       const requests = parseBatchArgs(args);
       if (hooks.admit && !hooks.admit(requests.length)) {
         throw new Error("This run has exhausted its child-model call budget.");
       }
-      const signal = context?.signal;
+      const signal = context.signal;
       throwIfAborted(signal);
 
       const results: Array<ChildResult | undefined> = new Array(requests.length);
@@ -165,7 +167,7 @@ async function runChild(
   }
 }
 
-function parseBatchArgs(args: WorkspaceRuntimeValue[]): ChildRequest[] {
+function parseBatchArgs(args: readonly WorkspaceRuntimeValue[]): ChildRequest[] {
   if (args.length !== 1) throw new Error("Model batch requires exactly one argument.");
   const value = args[0];
   if (!Array.isArray(value) || value.length === 0) {
