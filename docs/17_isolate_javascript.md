@@ -252,17 +252,25 @@ import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts"
 `createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
 
 ```ts
-this.workspace = new Workspace({
-  storage: ctx.storage,
-  backends: [
-    new WorkerJavaScriptBackend({
-      loader: env.LOADER,
-      access: "read-write",
-      modules: { "ws:container": createContainerModule() },
-    }),
-    new CloudflareContainerBackend({ /* ... */ }),
-  ],
-});
+import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
+
+class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  workspace = new Workspace({
+    storage: this.ctx.storage,
+    backends: [
+      new WorkerJavaScriptBackend({
+        loader: this.env.LOADER,
+        access: "read-write",
+        modules: { "ws:container": createContainerModule() },
+      }),
+      new ContainerBackend({
+        container: () => this,
+        workspace: { binding: "Agent", id: this.ctx.id.toString() },
+        egress: { mode: "direct" },
+      }),
+    ],
+  });
+}
 
 // Offer only the JavaScript backend; the container is reached through ws:container.
 const tools = createAITools({ workspace: this.workspace, exec: { "worker-javascript": {} } });
@@ -277,7 +285,7 @@ export default async function () {
 }
 ```
 
-`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend (`"container-shell"` unless you pass `backend`). The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. The backend must exist and run shell commands, or the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
 
 A few limits follow from `exec` being a host call:
 
@@ -285,7 +293,7 @@ A few limits follow from `exec` being a host call:
 - The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
 - Cancelling the execution kills the running command.
 
-A container command can write to the Workspace and reach the network, whatever the JavaScript backend's egress settings say. `exec` refuses to run on a read-only backend.
+A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the JavaScript backend's.
 
 ## Isolation and lifecycle
 
