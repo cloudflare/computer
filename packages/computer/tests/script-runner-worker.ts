@@ -7,10 +7,17 @@ import type {
   WorkspaceStub,
 } from "../src/index.js";
 import { Workspace } from "../src/index.js";
+import { puppeteer } from "../src/plugins/puppeteer/index.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
   LOADER: WorkerLoader;
+}
+
+export class PluginProbe extends WorkerEntrypoint {
+  value(): string {
+    return "from-plugin-binding";
+  }
 }
 
 export class HostDO extends DurableObject<Env> {
@@ -18,6 +25,13 @@ export class HostDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const pluginProbe = (
+      ctx as DurableObjectState & {
+        exports: {
+          PluginProbe(options: { props: Record<string, never> }): PluginProbe;
+        };
+      }
+    ).exports.PluginProbe({ props: {} });
     this.#workspace = new Workspace({
       storage: ctx.storage as unknown as DurableObjectStorageLike,
       waitUntil: ctx.waitUntil.bind(ctx),
@@ -31,6 +45,18 @@ export class HostDO extends DurableObject<Env> {
           modules: {
             "math-kit": "export const double = (value) => value * 2;",
           },
+          plugins: [
+            puppeteer({ browser: pluginProbe }),
+            {
+              modules: {
+                "@example/plugin": `
+                  import { binding } from "workspace-plugin-bindings.js";
+                  export default () => typeof binding("PLUGIN_PROBE").value;
+                `,
+              },
+              bindings: { PLUGIN_PROBE: pluginProbe },
+            },
+          ],
           trustedModules: {
             "ws:test-host": {
               async call(method, args) {

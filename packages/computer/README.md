@@ -46,8 +46,9 @@ npm install @cloudflare/computer
 
 Your Worker needs the `nodejs_compat` compatibility flag. The
 worker-shell and worker-javascript backends additionally need the
-`experimental` flag and a Worker Loader binding. Each backend has its
-own binding requirements — see [Choosing a backend](#choosing-a-backend).
+`experimental` flag and a Worker Loader binding. The Puppeteer plugin
+also needs a Browser Run binding. Each backend has its own binding
+requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
 feature: `ai` and `zod` (for `@cloudflare/computer/tools`),
@@ -134,7 +135,10 @@ one optional group per command at
 `@cloudflare/computer/shell/<feature>`. Import the groups you want
 and pass them to `WorkerShellBackend`'s `commands` option; a group you
 never import is unreachable in your bundle and the bundler drops
-it. The optional groups are `curl`, `html-to-markdown`, `python`,
+it. The `browser` group is this package's own command rather than one
+of just-bash's; it needs a JavaScript backend carrying the Puppeteer
+plugin in the same Workspace. The optional groups are `browser`,
+`curl`, `html-to-markdown`, `python`,
 `sqlite`, `js-exec`, `yq`, `file`, `xan`, and `jq`. `curl` runs on
 the isolate's global `fetch` (no `undici` in the bundle); egress
 stays governed by the Dynamic Worker's `globalOutbound`.
@@ -259,6 +263,58 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
+  Add `@cloudflare/computer/plugins/puppeteer` to run the Puppeteer client
+  and its `Browser` / `Page` objects inside these isolated executions.
+  [`examples/browser-rendering`](../../examples/browser-rendering) shows a
+  page scraped and written to the Workspace as Markdown, JSON, and a
+  screenshot, driven both from a JavaScript module and from the shell.
+
+### Browser automation
+
+Add a Browser Run binding to an isolated JavaScript backend with the Puppeteer plugin:
+
+```ts
+import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import { puppeteer } from "@cloudflare/computer/plugins/puppeteer";
+
+const backend = new WorkerJavaScriptBackend({
+  loader: env.LOADER,
+  plugins: [puppeteer({ browser: env.BROWSER })],
+});
+```
+
+Execution source can then import the bound helper:
+
+```js
+import { withBrowser } from "@cloudflare/puppeteer";
+
+export default ({ url }) => withBrowser(async (browser) => {
+  const page = await browser.newPage();
+  await page.goto(url);
+  return page.title();
+});
+```
+
+The worker shell reaches the same capability through the `browser`
+command group, which runs a task module from the Workspace against the
+JavaScript backend that carries the plugin:
+
+```ts
+import browser from "@cloudflare/computer/shell/browser";
+
+const shell = new WorkerShellBackend({
+  loader: env.LOADER,
+  workspace: { binding: "Agent", id: ctx.id.toString() },
+  ctx,
+  commands: [browser],
+});
+```
+
+```sh
+browser puppeteer --url https://example.com/ tasks/title.js
+```
+
+See [Browser automation](https://github.com/cloudflare/computer/blob/main/docs/20_browser_automation.md) for the complete setup and API.
 
 You can register several backends on one Workspace and route each call
 to a named one — see [Multiple backends](#multiple-backends).
@@ -418,6 +474,8 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
+| `@cloudflare/computer/plugins/puppeteer` | Opt-in Cloudflare Puppeteer module and Browser Run binding for Worker JavaScript executions. |
+| `@cloudflare/computer/shell/browser` | Opt-in `browser` command that runs a Workspace task module against that plugin. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
@@ -508,6 +566,9 @@ An adapter for the Cloudflare runtime lives at
   No container.
 - [`examples/worker-javascript`](../../examples/worker-javascript) — the
   same shape, running ECMAScript modules instead of shell commands.
+- [`examples/browser-rendering`](../../examples/browser-rendering) — one
+  browser task run two ways, as a JavaScript module and as a shell
+  command, writing the same durable Markdown, JSON, and screenshot.
 - [`examples/container`](../../examples/container) — the container
   backend running `computerd`.
 - [`examples/think`](../../examples/think) — a chat agent that uses the

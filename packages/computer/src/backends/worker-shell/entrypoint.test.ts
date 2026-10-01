@@ -83,6 +83,7 @@ interface FakeEnv {
   HOST: {
     getWorkspace(): Promise<FakeWorkspace>;
   };
+  WORKSPACE_SHELL_EXTRAS?: string;
 }
 
 function fakeEnv(
@@ -217,6 +218,82 @@ describe("ShellWorker", () => {
     const bytes = new TextEncoder().encode("piped");
     await drain((await worker.exec({ command: "cat", stdin: bytes })).events);
     expect(observedStdin).toEqual(bytes);
+  });
+
+  // A command group's module is loaded per exec, after the execution
+  // id, the timeout timer, and the workspace stub are already live. A
+  // group that fails to load must not strand any of them.
+  describe("when a command group fails to load", () => {
+    function brokenExtrasEnv() {
+      let disposed = 0;
+      const env = {
+        ...fakeEnv({
+          onGetWorkspace: () => ({
+            fs: {
+              async readFile() {
+                return "";
+              },
+              async writeFile() {},
+            },
+            artifacts: {
+              cli: async () => ({ stdout: "", stderr: "", exitCode: 1 }),
+            },
+            [Symbol.dispose]() {
+              disposed += 1;
+            },
+          }),
+        }),
+        // Nothing supplies this module, so the dynamic import rejects.
+        WORKSPACE_SHELL_EXTRAS: "./missing-command-group.js",
+      };
+      return {
+        env,
+        get disposed() {
+          return disposed;
+        },
+      };
+    }
+
+    it("reports the failure as a normal execution result", async () => {
+      const harness = brokenExtrasEnv();
+      const worker = TestShellWorker.withFakeBash(harness.env, async () => ({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      }));
+
+      const events = await drain((await worker.exec({ command: "echo hi" })).events);
+
+      expect(events.at(-1)).toMatchObject({ name: "exit", value: 1 });
+      expect(JSON.stringify(events)).toContain("missing-command-group");
+    });
+
+    it("releases the execution id so the same id can be retried", async () => {
+      const harness = brokenExtrasEnv();
+      const worker = TestShellWorker.withFakeBash(harness.env, async () => ({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      }));
+
+      await drain((await worker.exec({ command: "echo hi", id: "run-1" })).events);
+      const retry = await worker.exec({ command: "echo hi", id: "run-1" });
+
+      expect(retry.id).toBe("run-1");
+    });
+
+    it("disposes the workspace stub", async () => {
+      const harness = brokenExtrasEnv();
+      const worker = TestShellWorker.withFakeBash(harness.env, async () => ({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      }));
+
+      await drain((await worker.exec({ command: "echo hi" })).events);
+
+      expect(harness.disposed).toBe(1);
+    });
   });
 
   it("getExec without a prior exec throws ENOENT", async () => {

@@ -20,7 +20,7 @@ It provides:
  - R2-backed mounts for pre-filling read-only data into the workspace tree.
  - Durability over DO restarts for all file operations.
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
- - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed execution records.
+ - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, plugin bindings, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
  - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/computer/tools`.
 
@@ -46,6 +46,7 @@ The package ships several entrypoints:
 | `@cloudflare/computer/backends/container` | `CloudflareContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
+| `@cloudflare/computer/plugins/puppeteer` | Opt-in Cloudflare Puppeteer module and Browser Run binding for isolated JavaScript. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped wrapper over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
@@ -243,6 +244,7 @@ above, then dive into the area you're working on.
 | [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, trusted `ws:git` / `ws:artifacts`, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
+| [20. Browser automation](./20_browser_automation.md) | Reach Cloudflare Browser Run from isolated JavaScript through the Puppeteer plugin or from the shell through the `browser` command, and persist browser artifacts. |
 
 ## High-level API
 

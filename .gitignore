@@ -11,6 +11,7 @@ PLAN.md
 # packages/computer/src/backends/worker-shell/script/build-bundle.mjs on
 # prepare / pretest / pretypecheck.
 packages/computer/src/backends/worker-shell/generated/
+packages/computer/src/plugins/puppeteer/generated.ts
 
 # SEA binary destinations populated at publish time from
 # artifacts/computerd/ via the build-bin step. The @cloudflare/computer

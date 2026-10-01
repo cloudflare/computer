@@ -52,6 +52,8 @@ describe("WorkspaceRuntime", () => {
   it("executes an ES module with configured and trusted modules", async () => {
     const response = await runtime({
       source: `
+        import pluginValue from "@example/plugin";
+        import cloudflarePuppeteer, { browserBinding, launch, withBrowser } from "@cloudflare/puppeteer";
         import { double } from "math-kit";
         import fs from "node:fs/promises";
         import { promises as nodeFs } from "node:fs";
@@ -69,6 +71,13 @@ describe("WorkspaceRuntime", () => {
             nodeFs: {
               isFile: (await nodeFs.stat("/workspace/runtime-result.txt")).isFile(),
               entries: await nodeFs.readdir("/workspace"),
+            },
+            pluginValue: await pluginValue(),
+            puppeteerPlugin: {
+              officialLaunch: typeof cloudflarePuppeteer.launch,
+              boundLaunch: typeof launch,
+              withBrowser: typeof withBrowser,
+              browserFetch: typeof browserBinding.fetch,
             },
           };
         }
@@ -90,6 +99,13 @@ describe("WorkspaceRuntime", () => {
           nodeFs: {
             isFile: true,
             entries: expect.arrayContaining(["runtime-result.txt"]),
+          },
+          pluginValue: "function",
+          puppeteerPlugin: {
+            officialLaunch: "function",
+            boundLaunch: "function",
+            withBrowser: "function",
+            browserFetch: "function",
           },
         },
       },

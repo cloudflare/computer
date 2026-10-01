@@ -18,7 +18,9 @@
 //     SELF.fetch instead of holding a DO reference itself.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import browserModules from "@cloudflare/computer/shell/browser";
 import curlModules from "@cloudflare/computer/shell/curl";
+import { WorkerJavaScriptBackend } from "../src/backends/worker-javascript/index.js";
 import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
 import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
@@ -29,6 +31,40 @@ export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
   LOADER: WorkerLoader;
 }
+
+// Stand-in for the module the Puppeteer plugin installs. The shell
+// `browser` command only cares that some module named
+// "@cloudflare/puppeteer" exports withBrowser, so this harness proves
+// the dispatch path, the durable task import, and the result and exit
+// code it returns, without reaching Browser Run.
+//
+// What it does not prove is that the real bundle drives Browser Run.
+// The plugin's own Worker Loader tests load that bundle and check its
+// bindings and exports, but nothing in the suite opens a session,
+// which would spend quota on every run.
+const FAKE_PUPPETEER = `
+export async function withBrowser(callback) {
+  const pages = [];
+  const browser = {
+    async newPage() {
+      const page = {
+        url: null,
+        async goto(target) { page.url = target; },
+        async title() { return \`Fake \${page.url}\`; },
+      };
+      pages.push(page);
+      return page;
+    },
+    closed: false,
+    async close() { browser.closed = true; },
+  };
+  try {
+    return await callback(browser);
+  } finally {
+    await browser.close();
+  }
+}
+`;
 
 export class HostDO extends DurableObject<Env> {
   readonly #workspace: Workspace;
@@ -45,7 +81,13 @@ export class HostDO extends DurableObject<Env> {
           ctx,
           // Opt curl in by importing its group and passing it; the
           // fetch-path curl integration test exercises the wiring.
-          commands: [curlModules],
+          // The browser group adds the `browser` command, which
+          // dispatches into the JavaScript backend below.
+          commands: [curlModules, browserModules],
+        }),
+        new WorkerJavaScriptBackend({
+          loader: env.LOADER,
+          modules: { "@cloudflare/puppeteer": FAKE_PUPPETEER },
         }),
       ],
     });

@@ -134,6 +134,10 @@ export interface WorkerShellBackendOptions {
   commands?: readonly ShellModuleGroup[];
 }
 
+// Module name a command group uses to register commands beyond the
+// shell's own. Groups that only carry just-bash chunks never define
+// it.
+const SHELL_EXTRAS_MODULE = "workspace-shell-extras.js";
 const DEFAULT_COMPAT_DATE = "2026-06-17";
 const DEFAULT_COMPAT_FLAGS = ["nodejs_compat"];
 
@@ -226,21 +230,33 @@ export class WorkerShellBackend implements WorkspaceBackend {
     if (this.#egressCacheKey === undefined) {
       this.#egressCacheKey = egressCacheKey(this.#egress);
     }
-    const loaderId = `${this.#options.loaderId ?? `workspace-shell:${workspace.id}`}:${this.#egressCacheKey}`;
     const compatibilityDate = this.#options.compatibilityDate ?? DEFAULT_COMPAT_DATE;
     const compatibilityFlags = this.#options.compatibilityFlags
       ? [...DEFAULT_COMPAT_FLAGS, ...this.#options.compatibilityFlags]
       : DEFAULT_COMPAT_FLAGS;
 
+    const modules = {
+      ...SHELL_RUNTIME_MODULES,
+      ...assembleShellModules(this.#options.commands),
+    };
+    // Everything that varies in the loaded Worker belongs in the cache
+    // key. Worker Loader keys a Dynamic Worker on this identifier
+    // alone, so two backends in one workspace that ask for different
+    // code or settings would otherwise share whichever connected first.
+    const loaderId = `${this.#options.loaderId ?? `workspace-shell:${workspace.id}`}:${this.#egressCacheKey}:${await workerCacheKey(modules, compatibilityDate, compatibilityFlags)}`;
     const worker = loader.get(loaderId, () => ({
       compatibilityDate,
       compatibilityFlags,
       mainModule: "shell.js",
-      modules: {
-        ...assembleShellModules(this.#options.commands),
-        ...SHELL_RUNTIME_MODULES,
-      },
+      modules,
       env: {
+        // Point the shell at a command group that registers extra
+        // commands, when one of the opted-in groups carries the
+        // module. Absent that, the shell registers only its own
+        // commands and never reaches for the module.
+        ...(Object.hasOwn(modules, SHELL_EXTRAS_MODULE)
+          ? { WORKSPACE_SHELL_EXTRAS: SHELL_EXTRAS_MODULE }
+          : {}),
         // Loopback Fetcher pointing at this DO's getWorkspace().
         // The shell calls env.HOST.getWorkspace() on every exec;
         // the proxy resolves env[binding].get(id).getWorkspace()
@@ -356,6 +372,49 @@ function reshape(event: {
     };
   }
   return { id: event.id, seq: event.seq, name: "exit", code: event.value as number };
+}
+
+// Fingerprint the Worker definition for the Loader cache key: the
+// module table plus the compatibility settings that change how the
+// same modules run. Loader caches solely by this key, so a collision
+// would return the wrong Worker even though this is not a security
+// boundary.
+//
+// Every source is included rather than trusting a name to stand for
+// its content. esbuild's own chunk names carry a content hash, but a
+// hand-written command group can use that same shape for a module
+// whose source changes freely.
+async function workerCacheKey(
+  modules: Readonly<Record<string, unknown>>,
+  compatibilityDate: string,
+  compatibilityFlags: readonly string[],
+): Promise<string> {
+  const fields = [
+    compatibilityDate,
+    JSON.stringify(compatibilityFlags),
+    ...Object.keys(modules)
+      .sort()
+      .flatMap((name) => [name, moduleSource(modules[name])]),
+  ];
+  const encoder = new TextEncoder();
+  const componentDigests = new Uint8Array(fields.length * 32);
+  for (const [index, field] of fields.entries()) {
+    const digest = await crypto.subtle.digest("SHA-256", encoder.encode(field));
+    componentDigests.set(new Uint8Array(digest), index * 32);
+  }
+  const digest = await crypto.subtle.digest("SHA-256", componentDigests);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function moduleSource(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null) {
+    const module = value as { js?: unknown; cjs?: unknown; text?: unknown };
+    for (const source of [module.js, module.cjs, module.text]) {
+      if (typeof source === "string") return source;
+    }
+  }
+  return "";
 }
 
 function egressCacheKey(policy: WorkspaceEgressPolicy): string {
