@@ -264,10 +264,8 @@ this.workspace = new Workspace({
   ],
 });
 
-const tools = createAITools({
-  workspace: this.workspace,
-  shell: { backends: { "worker-javascript": {} } },
-});
+// Offer only the JavaScript backend; the container is reached through ws:container.
+const tools = createAITools({ workspace: this.workspace, exec: { "worker-javascript": {} } });
 ```
 
 ```js

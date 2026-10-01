@@ -273,7 +273,7 @@ describe("createTanStackTools", () => {
     expect(isContentPartArray(result)).toBe(true);
   });
 
-  it("offers the backends `shell` lists and defaults to one", () => {
+  it("offers every workspace backend by default and requires one per call", async () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
@@ -281,23 +281,21 @@ describe("createTanStackTools", () => {
         new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
-    const shell = {
-      backends: {
-        shell: { description: "fast shell" },
-        "worker-javascript": { description: "isolate JavaScript" },
-      },
-      defaultBackend: "shell",
-    };
-    const tools = createTanStackTools({ workspace, shell, format: "object" });
+    const tools = createTanStackTools({ workspace, format: "object" });
     const schema = z.toJSONSchema(tools.exec.inputSchema) as {
       properties: Record<string, { enum?: string[] }>;
       required?: string[];
     };
 
     expect(schema.properties.backend?.enum).toEqual(["shell", "worker-javascript"]);
-    expect(schema.required ?? []).not.toContain("backend");
+    expect(schema.required).toContain("backend");
+    // Only the callable backend takes structured input.
     expect(schema.properties).toHaveProperty("input");
-    expect(createTanStackTools({ workspace }).map((t) => t.name)).not.toContain("exec");
+    await expect(tools.exec.execute({ command: "ls" } as never)).resolves.toEqual({
+      error: "Name a backend to run on.",
+    });
+    expect(createTanStackTools({ workspace, exec: {} }).map((t) => t.name)).not.toContain("exec");
+    await workspace.close();
   });
 
   it("settles a streaming exec tool on its terminal snapshot", async () => {
@@ -314,7 +312,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
+      exec: { shell: { description: "fast shell" } },
       format: "object",
     });
 
@@ -344,7 +342,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
+      exec: { shell: { description: "fast shell" } },
       streamEventName: "exec-progress",
       format: "object",
     });
@@ -368,7 +366,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
+      exec: { shell: { description: "fast shell" } },
       streamEventName: "exec-progress",
       format: "object",
     });
@@ -408,7 +406,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
+      exec: { shell: { description: "fast shell" } },
       format: "object",
     });
     const controller = new AbortController();

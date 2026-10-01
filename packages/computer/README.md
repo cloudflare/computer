@@ -51,7 +51,7 @@ own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
 feature: `zod` for every tools entry point, `ai` for
-`@cloudflare/computer/tools`, and
+`@cloudflare/computer/tools` and `@cloudflare/computer/tools/ai-sdk`, and
 `@platformatic/vfs` for the Node-side VFS provider. The pi and TanStack
 AI entry points need nothing beyond `zod`; your agent brings its own
 library.
@@ -269,31 +269,27 @@ to a named one — see [Multiple backends](#multiple-backends).
 
 ## Tools for agents
 
-`@cloudflare/computer/tools` ships AI SDK tools that wrap the Workspace
+`@cloudflare/computer/tools/ai-sdk` ships `createAITools()`, AI SDK tools that wrap the Workspace
 surfaces, ready to hand to `generateText`, `streamText`, or an agent
 framework's `getTools()`. The default set is `read`, `ls`, `find`,
-`grep`, `write`, `edit`, and `delete`; `exec` and `publish` are added
-when you configure them. Read-only mode keeps `read`, `ls`, `find`, and
+`grep`, `write`, `edit`, and `delete`, plus `exec` when the Workspace
+has a backend and `publish` when assets are configured. Read-only mode keeps `read`, `ls`, `find`, and
 `grep`.
 
 ```ts
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 
 const tools = createAITools({
   workspace,
   read: { maxBytes: 32 * 1024, maxLines: 800 },
-  shell: {
-    defaultBackend: "shell",
-    backends: {
-      shell: { description: "Fast Worker shell with built-in text commands." },
-      container: { description: "Full Linux userland in a Cloudflare Container." },
-    },
-  },
+  // The backends the model can use. Omit for every backend.
+  exec: { shell: { description: "Try this first." }, container: {} },
 });
 ```
 
-The model reads each backend's `description` when deciding where a
-command should run, so write them in plain language. Truncated text
+Each backend describes itself to the model, and the text you give in
+`exec` comes first. The model reads both when deciding where a command
+should run, so write yours in plain language. Truncated text
 model output keeps both line and byte continuations; pass both to the
 next call to avoid transferring the same bytes again. Eligible image and
 PDF bytes are captured once during the bounded tool execution and returned
@@ -441,6 +437,7 @@ on a computerd instance.
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
+| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
 | `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`). |
 | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |

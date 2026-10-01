@@ -45,10 +45,6 @@ export class TanStackAgent extends DurableObject<Env> {
   async run(task: string): Promise<string> {
     const tools = createTanStackTools({
       workspace: this.workspace,
-      shell: {
-        backends: { shell: { description: "A just-bash shell over the workspace files." } },
-        defaultBackend: "shell",
-      },
     });
 
     const stream = chat({
