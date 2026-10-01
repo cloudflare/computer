@@ -244,7 +244,13 @@ describe("WorkerJavaScriptBackend", () => {
     );
     const fs = new WorkspaceFilesystem(db);
     const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("unused") });
-    await backend.connect({ db, fs, git: undefined as never, artifacts: undefined as never });
+    await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+      runtime: undefined as never,
+    });
     const columns = db.all<{ name: string }>("PRAGMA table_info(workspace_runtime_executions)");
     expect(columns.map((column) => column.name)).toEqual(
       expect.arrayContaining(["created_at", "finished_at"]),
@@ -310,6 +316,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = handle.exec({
       source: `import task from "./task.js"; export default task;`,
@@ -564,6 +571,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "successful-host-call", source: "export default 1" });
     let settled = false;
@@ -628,6 +636,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "live-stream", source: "export default 1" });
     const reader = execution.events.getReader();
@@ -682,6 +691,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "kill-mid-stream", source: "export default 1" });
     const reader = execution.events.getReader();
@@ -744,6 +754,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "no-exit", source: "export default 1" });
     const events = [];
@@ -754,7 +765,7 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close();
   });
 
-  it("aborts cooperative trusted-module calls at their deadline", async () => {
+  it("aborts cooperative host module calls at their deadline", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
     const fs = new WorkspaceFilesystem(db);
@@ -762,11 +773,11 @@ describe("WorkerJavaScriptBackend", () => {
     let aborted = false;
     const backend = new WorkerJavaScriptBackend({
       maxHostCallMs: 5,
-      trustedModules: {
+      modules: {
         "ws:test": {
-          call(_method, _args, context) {
+          run(_args, context) {
             return new Promise((_resolve, reject) => {
-              context?.signal.addEventListener("abort", () => {
+              context.signal.addEventListener("abort", () => {
                 aborted = true;
                 reject(context.signal.reason);
               });
@@ -783,7 +794,7 @@ describe("WorkerJavaScriptBackend", () => {
                   _input: unknown,
                   host: { call(name: string, args: string): Promise<string> },
                 ) {
-                  await host.call("trusted/ws:test.call", JSON.stringify(["run"]));
+                  await host.call("host/ws:test.run", JSON.stringify([]));
                 },
               };
             },
@@ -796,6 +807,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "trusted-timeout", source: "export default 1" });
     const events = [];
@@ -847,6 +859,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     const execution = await handle.exec({ id: "cancel-host-call", source: "export default 1" });
     await started;
@@ -989,6 +1002,7 @@ describe("WorkerJavaScriptBackend", () => {
       fs,
       git: undefined as never,
       artifacts: undefined as never,
+      runtime: undefined as never,
     });
     await handle.exec({ id: "subscribers", source: "export default 1" });
     await handle.getExec({ id: "subscribers", after: "tail" });
@@ -997,28 +1011,163 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close();
   });
 
-  it("rejects malformed host trusted-module names", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      backends: [
+  it.each([
+    ["a host module with a path", { "ws:bad/path": { run: async () => null } }, /simple ws:\*/],
+    ["a host module outside ws:*", { container: { run: async () => null } }, /simple ws:\*/],
+    ["source under ws:*", { "ws:lib": "export const x = 1;" }, /only for host modules/],
+    ["a replacement node:fs", { "node:fs": "export default {};" }, /built in/],
+    [
+      "a replacement node:fs host module",
+      { "node:fs/promises": { run: async () => null } },
+      /built in/,
+    ],
+    ["a number", { "ws:test": 42 }, /source text, an object of functions, or a factory/],
+    ["an object with no functions", { "ws:test": {} }, /must export a function/],
+    [
+      "an object with a non-identifier name",
+      { "ws:test": { "not-a-name": async () => null } },
+      /JavaScript identifier/,
+    ],
+    [
+      "an object with a default export",
+      { "ws:test": { default: async () => null } },
+      /JavaScript identifier/,
+    ],
+    [
+      "an object with a then export",
+      // biome-ignore lint/suspicious/noThenProperty: The case checks that the backend rejects a `then` export.
+      { "ws:test": { then: async () => null } },
+      /JavaScript identifier/,
+    ],
+    ["an object with a non-function export", { "ws:test": { run: "nope" } }, /must be a function/],
+  ])("rejects %s at construction", (_label, modules, message) => {
+    expect(
+      () =>
         new WorkerJavaScriptBackend({
           loader: throwingLoader("must not load"),
-          trustedModules: {
-            "ws:bad/path": {
-              async call() {
-                return null;
-              },
-            },
-          } as never,
+          // SAFETY: Each case hands the constructor a shape the types may forbid, to check its runtime guard.
+          modules: modules as never,
         }),
-      ],
+    ).toThrow(message);
+  });
+
+  it("rejects a factory whose functions are not allowed when it connects", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: { "ws:test": () => ({ "not-a-name": async () => null }) },
+    });
+    await expect(
+      backend.connect({
+        db,
+        fs: new WorkspaceFilesystem(db),
+        git: undefined as never,
+        artifacts: undefined as never,
+        runtime: undefined as never,
+      }),
+    ).rejects.toThrow(/JavaScript identifier/);
+  });
+
+  it("describes its modules for a model", () => {
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      access: "read",
+      modules: {
+        lib: "export const x = 1;",
+        "ws:weather": { forecast: () => null, alerts: () => null },
+        "ws:described": Object.assign(() => ({ run: () => null }), {
+          description: "Does a thing.",
+        }),
+        "ws:plain": () => ({ run: () => null }),
+      },
+    });
+
+    expect(backend.description).toContain("ECMAScript module source");
+    expect(backend.description).toContain("read-only");
+    expect(backend.description).toContain("- `lib`: a bundled library.");
+    expect(backend.description).toContain("- `ws:weather`: exports `forecast`, `alerts`.");
+    expect(backend.description).toContain("- `ws:described`: Does a thing.");
+    expect(backend.description).toContain("- `ws:plain`: a host module.");
+  });
+
+  it("builds host modules from the Workspace services when it connects", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const git = { marker: "git" };
+    let seen: unknown;
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: {
+        "ws:test": (host) => {
+          seen = host.git;
+          return { run: async () => null };
+        },
+      },
+    });
+    await backend.connect({
+      db,
+      fs: new WorkspaceFilesystem(db),
+      git: git as never,
+      artifacts: undefined as never,
+      runtime: undefined as never,
+    });
+    expect(seen).toBe(git);
+  });
+
+  it("does not dispatch inherited members of a host module", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const fs = new WorkspaceFilesystem(db);
+    await fs.mkdir("/workspace", { recursive: true });
+    let response = "";
+    const backend = new WorkerJavaScriptBackend({
+      modules: { "ws:test": { run: async () => null } },
+      loader: {
+        load() {
+          return {
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: { call(name: string, args: string): Promise<string> },
+                ) {
+                  response = await host.call("host/ws:test.toString", JSON.stringify([]));
+                },
+              };
+            },
+          };
+        },
+      },
+    });
+    const handle = await backend.connect({
+      db,
+      fs,
+      git: undefined as never,
+      artifacts: undefined as never,
+      runtime: undefined as never,
+    });
+    const execution = await handle.exec({ id: "inherited", source: "export default 1" });
+    for await (const _event of execution.events) {
+      // Drain the run so the host call settles.
+    }
+    expect(JSON.parse(response)).toMatchObject({
+      error: { message: expect.stringContaining("Unknown Workspace host module call") },
+    });
+    await handle.close?.();
+  });
+
+  it("does not install ws:git or ws:artifacts unless they are configured", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
-    await expect(
-      workspace.runtime.exec(`import { call } from "ws:bad/path"; export default call;`, {
-        backend: "worker-javascript",
-      }),
-    ).rejects.toThrow(/simple reserved ws:\*/);
+    for (const specifier of ["ws:git", "ws:artifacts"]) {
+      await expect(
+        workspace.runtime.exec(`import * as m from "${specifier}"; export default () => m;`),
+      ).rejects.toThrow(/is not configured/);
+    }
   });
 
   it("rejects relative imports that collide with internal Loader modules", async () => {
@@ -1036,24 +1185,16 @@ describe("WorkerJavaScriptBackend", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("rejects configured module names that collide with generated modules", async () => {
-    const load = vi.fn();
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      backends: [
-        new WorkerJavaScriptBackend({
-          loader: { load },
-          modules: {
-            "__workspace_entry__.js": "export default 42",
-            "node:fs": "export default {};",
-          },
-        }),
-      ],
-    });
-    await workspace.fs.mkdir("/workspace", { recursive: true });
-    await expect(
-      workspace.runtime.exec("export default 1", { backend: "worker-javascript" }),
-    ).rejects.toThrow(/reserved module name/);
-    expect(load).not.toHaveBeenCalled();
-  });
+  it.each(["__workspace_entry__.js", "workspace-capabilities.js", "nested/lib"])(
+    "rejects a source module named %s at construction",
+    (specifier) => {
+      expect(
+        () =>
+          new WorkerJavaScriptBackend({
+            loader: throwingLoader("must not load"),
+            modules: { [specifier]: "export default 42" },
+          }),
+      ).toThrow(/reserved module name/);
+    },
+  );
 });

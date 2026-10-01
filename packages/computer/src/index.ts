@@ -73,9 +73,15 @@ export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
+  WorkspaceModule,
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFactory,
+  WorkspaceModuleFunction,
+  WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
   WorkspaceRegisteredBackend,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeDisposeOptions,
@@ -88,7 +94,6 @@ export type {
   WorkspaceRuntimeResult,
   WorkspaceRuntimeStatus,
   WorkspaceRuntimeValue,
-  WorkspaceTrustedModule,
 } from "./runtime/types.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
