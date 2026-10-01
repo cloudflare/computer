@@ -308,12 +308,17 @@ function makeRuntimeClient(
   const killExec = (id: string, options?: RuntimeKillOptions) => runtime.killExec(id, options);
   const disposeExec = (id: string, options?: { backend?: string }) =>
     runtime.disposeExec(id, options);
+  // Frozen so a caller that edits the list cannot change what later
+  // tool sets see.
+  const snapshot: readonly WorkspaceBackendInfo[] = Object.freeze(
+    backends.map((info) => Object.freeze({ ...info })),
+  );
   return {
     exec,
     getExec,
     killExec,
     disposeExec,
-    backends: () => backends,
+    backends: () => snapshot,
   } as WorkspaceRuntimeClient;
 }
 

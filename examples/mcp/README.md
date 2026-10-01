@@ -126,7 +126,7 @@ You do not need to call the underlying Computer tools individually. The `code` t
 
 | Backend | Use it for |
 | --- | --- |
-| `worker-shell` | The fast default for common commands. It has no ambient network access; its built-in Git command supports HTTPS remotes. |
+| `worker-shell` | Fast, and the one to try first for common commands. It has no ambient network access; its built-in Git command supports HTTPS remotes. |
 | `container-shell` | Full Debian Linux with Node.js, npm, git, native binaries, and outbound networking. |
 
 The model can select a backend in `codemode.exec()`. The example does not retry automatically, so backend choice, cost, and failures remain visible.

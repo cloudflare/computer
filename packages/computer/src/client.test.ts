@@ -13,6 +13,8 @@ import { z } from "zod";
 
 import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript.js";
 import { getWorkspace, type WorkspaceClient } from "./client.js";
+import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
+import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { createAITools } from "./tools/ai-sdk.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
@@ -336,6 +338,44 @@ describe("client runtime.exec — remote handle rebuild", () => {
   });
 });
 
+// A callable module backend that answers every execution with the
+// structured input it was given, so a test can follow `input` from the
+// exec tool through a client to the backend and back.
+function echoBackend(): WorkspaceModuleBackend {
+  return {
+    protocol: "module",
+    id: "echo",
+    type: "echo",
+    callable: true,
+    description: "Echoes its input.",
+    async connect() {
+      return {
+        async exec(input) {
+          const id = input.id ?? "echo-1";
+          return {
+            id,
+            events: new ReadableStream({
+              start(controller) {
+                controller.enqueue({
+                  id,
+                  seq: 1,
+                  name: "exit",
+                  code: 0,
+                  result: { received: input.input ?? null },
+                });
+                controller.close();
+              },
+            }),
+          };
+        },
+        getExec: () => Promise.reject(new Error("not used")),
+        killExec: () => Promise.resolve(),
+        disposeExec: () => Promise.resolve(),
+      };
+    },
+  };
+}
+
 describe("getWorkspace — backend information", () => {
   // A Workspace with one callable JavaScript backend that describes its
   // modules. The loader is never reached; only construction runs.
@@ -350,6 +390,51 @@ describe("getWorkspace — backend information", () => {
       ],
     });
   }
+
+  for (const [path, connect] of [
+    ["local", (ws: Workspace) => getWorkspace({ [WORKSPACE]: ws })],
+    [
+      "remote",
+      (ws: Workspace) => getWorkspace({ __getWorkspaceStub: () => Promise.resolve(ws.stub()) }),
+    ],
+  ] as const) {
+    it(`sends structured input through a ${path} client to a callable backend`, async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [echoBackend()],
+      });
+      const client = await connect(workspace);
+      const exec = createAITools({ workspace: client }).exec as {
+        execute?: (input: unknown, options: unknown) => AsyncIterable<unknown>;
+      };
+      if (!exec.execute) throw new Error("exec has no execute function");
+
+      let last: unknown;
+      for await (const snapshot of exec.execute(
+        { command: "export default (input) => input", input: { value: 42 } },
+        { toolCallId: "call", messages: [] },
+      )) {
+        last = snapshot;
+      }
+
+      expect(last).toMatchObject({
+        backend: "echo",
+        exitCode: 0,
+        result: { received: { value: 42 } },
+      });
+      await workspace.close();
+    });
+  }
+
+  it("keeps its backend snapshot from being edited", async () => {
+    const client = await getWorkspace({
+      [WORKSPACE]: new Workspace({ storage: new SQLiteTestStorage(), backends: [echoBackend()] }),
+    });
+    const list = client.runtime.backends();
+
+    expect(() => (list as WorkspaceBackendInfo[]).pop()).toThrow();
+    expect(client.runtime.backends()).toHaveLength(1);
+  });
 
   for (const [path, connect] of [
     ["local", (ws: Workspace) => getWorkspace({ [WORKSPACE]: ws })],
