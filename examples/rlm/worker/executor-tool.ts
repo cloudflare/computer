@@ -19,7 +19,6 @@ export function createExecutorTool(
           "Callable isolated JavaScript. The command must be a complete ES module with a default async function.",
       },
     },
-    defaultBackend: backend,
     maxBytes: 16 * 1024,
     streamMaxBytes: 16 * 1024,
   });

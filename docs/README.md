@@ -22,7 +22,7 @@ It provides:
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
  - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:container`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
- - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `@cloudflare/computer/tools`.
+ - Out-of-the-box AI SDK tools for `@cloudflare/agents` through `createAITools()` in `@cloudflare/computer/tools/ai-sdk`.
 
 It comes with the following limitations:
 
@@ -53,6 +53,7 @@ The package ships several entrypoints:
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
+| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
 
 A consumer that only uses the container backend never imports the
 worker subpath, so the just-bash payload tree-shakes away.

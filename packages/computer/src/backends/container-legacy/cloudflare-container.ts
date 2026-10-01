@@ -180,6 +180,9 @@ function bearerMatches(header: string | null, expected: string | undefined): boo
 
 export class LegacyContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
+  /** What this backend tells a model: a full Linux shell that is slower to start. */
+  readonly description =
+    "A shell in a full Linux container: npm, node, python, package managers, test runners, native binaries, and network access. Starts much more slowly than an in-Worker backend because the container must boot.";
   readonly id: string;
 
   readonly #options: Required<

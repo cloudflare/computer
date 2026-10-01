@@ -128,7 +128,7 @@ the message or `CELLD_EXPECT` to use a different expected phrase.
 
 ## Workspace tools
 
-The agent receives these tools from `@cloudflare/computer/tools`:
+The agent receives these tools from `createAITools()` in `@cloudflare/computer/tools/ai-sdk`:
 
 | Tool | Purpose |
 | --- | --- |

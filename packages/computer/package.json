@@ -51,6 +51,10 @@
       "types": "./dist/backends/container-legacy/index.d.ts",
       "import": "./dist/backends/container-legacy/index.js"
     },
+    "./tools/ai-sdk": {
+      "types": "./dist/tools/ai-sdk.d.ts",
+      "import": "./dist/tools/ai-sdk.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
