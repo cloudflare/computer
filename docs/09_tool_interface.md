@@ -55,14 +55,18 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-`exec` lists the backends the model can use, each with a note for the model. Leave it out to use every backend.
+`exec` lists the backends the model can use, keyed by backend id. Leave it out to use every backend.
 
 ```ts
 createAITools({ workspace });                                                       // every backend
-createAITools({ workspace, exec: { "worker-javascript": "Use for data work." } });  // just this one
+createAITools({ workspace, exec: { "worker-javascript": {} } });                     // just this one
+createAITools({
+  workspace,
+  exec: { "worker-javascript": { description: "Use for data work." } },             // with your own text
+});
 ```
 
-Each backend also describes itself, so a note can be `""`. The first backend is the default, and `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there.
+Each backend describes itself, and a `description` you pass comes first. The first backend is the default, and `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there.
 
 ## `createAITools`
 
@@ -86,8 +90,8 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `exec` | every backend | Backend id to a note for the model (`""` for none). The first is the default. `{}` omits `exec`. |
-| `shell` | omitted | Deprecated. `{ backends: { id: { description } }, defaultBackend }` becomes `exec: { id: description }` with the default first. |
+| `exec` | every backend | Backend id to `{ description? }`. The first is the default. `{}` omits `exec`. |
+| `shell` | omitted | Deprecated. `{ backends, defaultBackend }` becomes `exec: backends` with the default first. |
 
 ## `read`
 

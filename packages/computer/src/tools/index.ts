@@ -1,6 +1,7 @@
 export { type CreateAIToolsOptions, createAITools } from "./ai.js";
 export {
   createExecTool,
+  type ExecBackendOptions,
   type ExecBackends,
   type ExecRuntimeHandle,
   type ExecStreamEvent,

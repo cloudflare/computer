@@ -14,8 +14,10 @@ export function createExecutorTool(
   const executor = createExecTool({
     workspace,
     backends: {
-      [backend]:
-        "Callable isolated JavaScript. The command must be a complete ES module with a default async function.",
+      [backend]: {
+        description:
+          "Callable isolated JavaScript. The command must be a complete ES module with a default async function.",
+      },
     },
     maxBytes: 16 * 1024,
     streamMaxBytes: 16 * 1024,

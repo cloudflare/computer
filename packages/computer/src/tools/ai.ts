@@ -22,20 +22,20 @@ export interface CreateAIToolsOptions {
   read?: Omit<ReadToolOptions, "store">;
   write?: Omit<WriteToolOptions, "store">;
   edit?: Omit<EditToolOptions, "store">;
-  // The backends `exec` may run on, each with a note for the model
-  // ("" for none). The first is the default. Omit to offer every
-  // backend the Workspace has. `{}` means no exec tool.
+  // The backends `exec` may run on, keyed by id, each with an optional
+  // description for the model. The first is the default. Omit to offer
+  // every backend the Workspace has; `{}` means no exec tool.
   exec?: ExecBackends;
   /**
-   * @deprecated Use `exec`. `{ backends: { id: { description } },
-   * defaultBackend }` becomes `exec: { id: description }` with the
-   * default listed first. Output limits move to `createExecTool`.
+   * @deprecated Use `exec`. `{ backends, defaultBackend }` becomes
+   * `exec: backends` with the default listed first. Output limits move
+   * to `createExecTool`.
    */
   shell?: LegacyShellOptions;
 }
 
 interface LegacyShellOptions extends Omit<ExecToolOptions, "workspace" | "backends"> {
-  backends: Record<string, { description?: string }>;
+  backends: ExecBackends;
   defaultBackend?: string;
 }
 
@@ -83,9 +83,9 @@ function execOptions(
         : [defaultBackend, ...ids.filter((id) => id !== defaultBackend)];
     return {
       ...limits,
-      backends: Object.fromEntries(ordered.map((id) => [id, backends[id]?.description ?? ""])),
+      backends: Object.fromEntries(ordered.map((id) => [id, backends[id] ?? {}])),
     };
   }
   if (options.exec !== undefined) return { backends: options.exec };
-  return { backends: Object.fromEntries((runtime.backendIds?.() ?? []).map((id) => [id, ""])) };
+  return { backends: Object.fromEntries((runtime.backendIds?.() ?? []).map((id) => [id, {}])) };
 }

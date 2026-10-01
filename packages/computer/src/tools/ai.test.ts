@@ -1369,10 +1369,10 @@ describe("createAITools exec tool", () => {
         new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
-    const listed = createAITools({ workspace, exec: { "worker-javascript": "" } });
+    const listed = createAITools({ workspace, exec: { "worker-javascript": {} } });
     const mapped = createAITools({
       workspace,
-      exec: { "worker-javascript": "Use for data work.", shell: "" },
+      exec: { "worker-javascript": { description: "Use for data work." }, shell: {} },
     });
 
     expect(inputProperties(listed.exec)).not.toContain("backend");
@@ -1565,7 +1565,7 @@ describe("createAITools exec tool", () => {
   });
 
   it("rejects a backend the workspace does not have", () => {
-    expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: "" } })).toThrow(
+    expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: {} } })).toThrow(
       /unknown backend "missing"/,
     );
   });
@@ -1778,7 +1778,7 @@ describe("createAITools callable exec", () => {
         },
       },
     };
-    const tools = createAITools({ workspace, exec: { shell: "" } });
+    const tools = createAITools({ workspace, exec: { shell: {} } });
 
     expect(toolDescription(tools.exec)).toContain("Runs shell commands.");
   });
@@ -1891,7 +1891,10 @@ describe("createAITools exec with one backend", () => {
 
   it("uses the first listed backend as the default, and the deprecated shell default first", async () => {
     const { calls, workspace } = recordingWorkspace(false);
-    const listed = createAITools({ workspace, exec: { container: "Linux.", shell: "Fast." } });
+    const listed = createAITools({
+      workspace,
+      exec: { container: { description: "Linux." }, shell: { description: "Fast." } },
+    });
     const legacy = createAITools({
       workspace,
       shell: {

@@ -75,13 +75,19 @@ export interface ExecWorkspaceLike {
   };
 }
 
+/** Options for one backend the exec tool may run on. */
+export interface ExecBackendOptions {
+  /** Shown to the model before the backend's own description. */
+  readonly description?: string;
+}
+
 /**
- * The backends the exec tool may run on, each with a note for the
- * model: `{ "worker-javascript": "Use for data work." }`. The note comes
- * before the backend's own description; use `""` for none. The first
- * backend is the default.
+ * The backends the exec tool may run on, keyed by backend id:
+ * `{ "worker-javascript": { description: "Use for data work." } }`.
+ * Pass `{}` for a backend that needs nothing beyond its own
+ * description. The first backend is the default.
  */
-export type ExecBackends = Readonly<Record<string, string>>;
+export type ExecBackends = Readonly<Record<string, ExecBackendOptions>>;
 
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
@@ -353,7 +359,10 @@ function selectBackends(
     }
     selected = known.map((id) => ({ id, guidance: undefined }));
   } else {
-    selected = Object.entries(backends).map(([id, note]) => ({ id, guidance: note }));
+    selected = Object.entries(backends).map(([id, backend]) => ({
+      id,
+      guidance: backend.description,
+    }));
   }
   const unknown = known === undefined ? [] : selected.filter((b) => !known.includes(b.id));
   if (unknown.length > 0) {
