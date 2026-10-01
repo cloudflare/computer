@@ -38,7 +38,7 @@ jobs:
       issues: write
       pull-requests: read
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@de534dff93a56527b45db8f46aedac72c8911da0
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@f3aca211a4ee2559f3df05cac12836090127812a
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "triage"
