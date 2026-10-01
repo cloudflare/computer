@@ -148,7 +148,7 @@ new WorkerJavaScriptBackend({
 
 An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
 
-The backend describes its modules for a model in `backend.description`, which `workspace.runtime.describe(id)` returns. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
+The backend describes its modules for a model in `backend.description`, which `workspace.runtime.describe(id)` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
 
 ```text
 `command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
@@ -161,7 +161,7 @@ Modules code can import:
 - `ws:weather`: exports `forecast`.
 ```
 
-A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names.
+A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 

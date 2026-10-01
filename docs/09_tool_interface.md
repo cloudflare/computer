@@ -55,7 +55,16 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-Pass `shell` only when the Workspace has matching backend ids:
+Pass `shell` only when the Workspace has matching backend ids. With one backend, `exec` has no `backend` argument and always runs there:
+
+```ts
+const tools = createAITools({
+  workspace,
+  shell: { backends: { "worker-javascript": {} } },
+});
+```
+
+With more than one, pass `defaultBackend` and the model picks a backend per call:
 
 ```ts
 const tools = createAITools({
@@ -244,7 +253,19 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language.
+`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output.
+
+Each backend's entry in the tool description joins two parts: the `description` you pass, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so `{ "worker-javascript": {} }` is enough and the list stays in step with `modules`. A backend that does not describe itself needs a `description`. Describe capabilities and startup cost in plain language.
+
+The tool offers only the arguments that can work:
+
+| Backends | Arguments |
+| --- | --- |
+| One shell backend | `command`, `cwd`, `env` |
+| One callable backend | `command`, `cwd`, `env`, `input` |
+| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable. `defaultBackend` is required. |
+
+A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 
