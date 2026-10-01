@@ -1,0 +1,137 @@
+packages/computer/package.json
+  s_4f96e4ffcaca65::t_d9820e705b96e5 54-61
+packages/computer/rolldown.config.ts
+  s_4f96e4ffcaca65::t_4b69c65677f4cb 34-36
+packages/computer/src/client.test.ts
+  s_4f96e4ffcaca65::t_5127e575ed5441 18
+packages/computer/src/tools/ai-sdk/index.test.ts
+  s_4f96e4ffcaca65::t_676f3e5fb1c5e3 4-7,17-18
+packages/computer/src/tools/ai-sdk/index.ts
+  s_4f96e4ffcaca65::t_42cc5227059c4c 1,2-45,49-57,59-66
+  s_4f96e4ffcaca65::t_f6e5c2b500fd4a 46-48,58
+packages/computer/src/tools/ai-sdk/output.ts
+  s_4f96e4ffcaca65::t_4b1b6bf1cdf30d 1-35
+packages/computer/src/tools/ai-sdk/tools.ts
+  s_4f96e4ffcaca65::t_e71644290f4fed 1-141
+packages/computer/src/tools/common/exec.ts
+  s_4f96e4ffcaca65::t_1a4c094288389d 2-5,126,132-148,150-155,191,206-207,209,212,320
+  s_4f96e4ffcaca65::t_86bc85083df91e 162,380,392
+packages/computer/src/tools/common/fs/delete.ts
+  s_4f96e4ffcaca65::t_c4b294c957beca 9,17-32
+packages/computer/src/tools/common/fs/edit.ts
+  s_4f96e4ffcaca65::t_b1886e72e46a25 38,47-84,112-122,125-142,144-147,149-154,157-176
+packages/computer/src/tools/common/fs/find.ts
+  s_4f96e4ffcaca65::t_3064a85265e1f4 25,40-94
+packages/computer/src/tools/common/fs/grep.ts
+  s_4f96e4ffcaca65::t_602adf0af5cc5b 39,59-105,108-124
+packages/computer/src/tools/common/fs/list.ts
+  s_4f96e4ffcaca65::t_545779a868a580 28,40-102
+packages/computer/src/tools/common/fs/read.ts
+  s_4f96e4ffcaca65::t_dfdf51c1b914e5 2,30,87,96,306-311,314-330,336-372
+packages/computer/src/tools/common/fs/write.ts
+  s_4f96e4ffcaca65::t_a8aa66e6b2de24 16,21-36
+packages/computer/src/tools/common/model-output.ts
+  s_4f96e4ffcaca65::t_d944f658fd0cba 1-22
+packages/computer/src/tools/common/options.ts
+  s_4f96e4ffcaca65::t_57b31e282f08ea 1-3,5-6,8-9,11,13,18-22,37-50,52-61,63,65-66,68-71,74-75
+packages/computer/src/tools/common/publish.ts
+  s_4f96e4ffcaca65::t_9bdbb6ca820e97 2,15-51,56-67
+packages/computer/src/tools/common/stream.ts
+  s_4f96e4ffcaca65::t_df0c12a87c649b 1-29
+packages/computer/src/tools/index.ts
+  s_4f96e4ffcaca65::t_284058f574c2c4 1-6,8-9,11-35
+packages/computer/src/tools/pi-ai/index.test.ts
+  s_4f96e4ffcaca65::t_ea35f9cbcc537e 1-300
+packages/computer/src/tools/pi-ai/index.ts
+  s_4f96e4ffcaca65::t_88a17df5e450f7 1-10,14-114,116-120,122-126,128-377
+  s_4f96e4ffcaca65::t_68d00a6334767b 11-13,115,121,127
+packages/computer/src/tools/pi-ai/model-output.test.ts
+  s_4f96e4ffcaca65::t_d83a6160e5bf9b 1-32
+packages/computer/src/tools/tanstack-ai/index.test.ts
+  s_4f96e4ffcaca65::t_c0467e7644fbb9 1-399
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_4f96e4ffcaca65::t_bf7ab0556d2519 1-19,23-36,38-45,47-137,139-144,146-151,153-266,267-287
+  s_4f96e4ffcaca65::t_51711123b0f90f 20-22,37,46,138,145,152
+.changeset/pi-ai-tanstack-ai-tools.md
+  s_b2fd9413bbc158::t_5e71ac6f6f1a5e 1-9
+.github/workflows/ci.yml
+  s_4f96e4ffcaca65::t_04a83b26e9f2b8 148-153
+README.md
+  s_4f96e4ffcaca65::t_2059b3dd854ae6 72-76
+docs/09_tool_interface.md
+  s_4f96e4ffcaca65::t_ff8480dd6d06ac 3-11,24-25,37,81-146,171-172
+docs/10_project_layout.md
+  s_4f96e4ffcaca65::t_efe3c7c61d7531 178-188
+docs/README.md
+  s_4f96e4ffcaca65::t_7f56c4a7c2ba4a 25,56-57
+examples/pi-ai/.gitignore
+  s_4f96e4ffcaca65::t_a6e12cec20a06d 1-2
+examples/pi-ai/README.md
+  s_4f96e4ffcaca65::t_8cebea7e0bfea9 1-50
+examples/pi-ai/local-shim.mjs
+  s_4f96e4ffcaca65::t_200e84e55e2bf3 1-16
+examples/pi-ai/package.json
+  s_4f96e4ffcaca65::t_63acaa0a6b963e 1-24
+examples/pi-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_51b2d69fc1c6b4 1-114
+examples/pi-ai/src/index.ts
+  s_4f96e4ffcaca65::t_3fcbc290c12fea 1-108
+examples/pi-ai/src/workers-ai.ts
+  s_4f96e4ffcaca65::t_ac7f9b523a2c26 1-96
+examples/pi-ai/tsconfig.json
+  s_4f96e4ffcaca65::t_6975dc6c9277c8 1-17
+examples/pi-ai/wrangler.jsonc
+  s_4f96e4ffcaca65::t_e72c9d03cea101 1-40
+examples/tanstack-ai/.gitignore
+  s_4f96e4ffcaca65::t_cb61ea6ab8bcc2 1-2
+examples/tanstack-ai/README.md
+  s_4f96e4ffcaca65::t_7c58c72c1b3676 1-51
+examples/tanstack-ai/local-shim.mjs
+  s_4f96e4ffcaca65::t_8f8d3f90342ab4 1-16
+examples/tanstack-ai/package.json
+  s_4f96e4ffcaca65::t_412d943ce6bb64 1-25
+examples/tanstack-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_86a52711385133 1-103
+examples/tanstack-ai/src/index.ts
+  s_4f96e4ffcaca65::t_5e2606fd0afbd5 1-81
+examples/tanstack-ai/tsconfig.json
+  s_4f96e4ffcaca65::t_52d3b54dcb8e37 1-17
+examples/tanstack-ai/wrangler.jsonc
+  s_4f96e4ffcaca65::t_c74dcf4c7bc946 1-40
+package-lock.json
+  s_a3f5a53ce67f56::t_8ede557b0374cf 113-126,152-166,306-319,449-469,521-861,2480-2512,2984-2991,3022-3045,4492-4548,4955-5035,5043-5048,5336-5505,5709-5714,5928-5936,6269-6277,6384-6389,6473-6478,6890-6898,7131-7139,7563-7568,7652-7674,7756-7767,7876-7943,8086-8111,8307-8334,8759-8767,8774-8786,8872-8892,9196-9201,10443-10462,10624-10660,10720-10732,10812-10817,11115-11137,11151-11167,11568-11576,12354-12363,12837-12842,12906-12911,13625-13633
+packages/computer/README.md
+  s_4f96e4ffcaca65::t_17fc03c5c878a8 53-57,304-318,440-441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "64a71313d92eaf7de970f72aa044920a9f96cd81",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_a3f5a53ce67f56": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f330-49b4-70ab-8c0f-40d28884698f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
