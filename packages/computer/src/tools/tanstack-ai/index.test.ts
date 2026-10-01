@@ -1,4 +1,5 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import { isContentPartArray } from "@tanstack/ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript.js";
@@ -246,6 +247,30 @@ describe("createTanStackAITools", () => {
     };
 
     expect(result.error).toContain("missing.txt");
+  });
+
+  it("returns an image read as content parts TanStack attaches", async () => {
+    // chat() passes a tool result through as multimodal content only when
+    // it is a ContentPart array; anything else becomes JSON text.
+    const workspace = makeWorkspace();
+    const tools = createTanStackAITools({ workspace, format: "object" });
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+      0x52,
+    ]);
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await workspace.fs.writeFile("/workspace/pixel.png", png);
+
+    const result = await tools.read.execute({ path: "/workspace/pixel.png" } as never);
+
+    expect(result).toEqual([
+      { type: "text", content: expect.stringContaining("/workspace/pixel.png") },
+      {
+        type: "image",
+        source: { type: "data", value: expect.any(String), mimeType: "image/png" },
+      },
+    ]);
+    expect(isContentPartArray(result)).toBe(true);
   });
 
   it("offers the backends `shell` lists and defaults to one", () => {

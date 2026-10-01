@@ -158,6 +158,7 @@
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
     "@platformatic/vfs": "^0.4.0",
+    "@tanstack/ai": "^0.63.0",
     "ai": "^7.0.0",
     "diff": "^9.0.0",
     "esbuild": "^0.28.1",

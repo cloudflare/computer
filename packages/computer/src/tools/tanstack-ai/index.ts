@@ -265,8 +265,11 @@ function wants(option: string[] | string | undefined, name: string, byTrait: boo
 }
 
 /**
- * TanStack has no typed tool-result part for media, so an image or PDF
- * returns its text alongside the payload for a caller to reattach.
+ * TanStack passes a tool result through as multimodal content only when
+ * it is an array of content parts; anything else is JSON-stringified. So
+ * an image or PDF comes back as a text part plus an `image` or
+ * `document` part, which the adapter attaches rather than sending the
+ * base64 as text.
  */
 function toTanStackOutput(output: ModelOutput): unknown {
   switch (output.type) {
@@ -277,11 +280,12 @@ function toTanStackOutput(output: ModelOutput): unknown {
     case "json":
       return output.value;
     case "media":
-      return {
-        text: output.text,
-        mediaType: output.mediaType,
-        filename: output.filename,
-        data: output.data,
-      };
+      return [
+        { type: "text", content: output.text },
+        {
+          type: output.mediaType.startsWith("image/") ? "image" : "document",
+          source: { type: "data", value: output.data, mimeType: output.mediaType },
+        },
+      ];
   }
 }

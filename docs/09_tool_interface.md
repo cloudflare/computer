@@ -143,6 +143,8 @@ return toServerSentEventsResponse(chat({ adapter, messages, tools, abortControll
 
 `write`, `edit`, `delete`, and `publish` have one fixed result shape, so they also carry an `outputSchema`. It covers failures too, because TanStack validates every return against it, and a success-only schema would replace the real error with a validation complaint. Paged tools such as `ls` have none.
 
+An image or PDF from `read` comes back as a text part plus an `image` or `document` content part, the array shape `chat()` passes to the adapter as multimodal content instead of stringifying it.
+
 Aborting the chat run through its `abortController` kills a running `exec`. A TanStack tool settles on one value, so `exec` returns its final snapshot.
 
 ## Options

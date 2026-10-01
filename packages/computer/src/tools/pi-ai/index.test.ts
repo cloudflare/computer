@@ -261,6 +261,29 @@ describe("createPiAITools execution", () => {
     );
   });
 
+  it("reports a failed publish as an error result", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      assets: {
+        share: async () => {
+          throw new Error("bucket unavailable");
+        },
+      } as never,
+    });
+    const tools = createPiAITools({ workspace });
+
+    const result = await tools.execute({
+      id: "1",
+      name: "publish",
+      arguments: { path: "/workspace/out.png" },
+    });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "bucket unavailable" }],
+      isError: true,
+    });
+  });
+
   it("returns an image read as a base64 image block", async () => {
     const workspace = makeWorkspace();
     const tools = createPiAITools({ workspace });
