@@ -53,7 +53,7 @@ describe("cloneWith option translation", () => {
         http: fakeHttp,
         url: "https://example.test/repo.git",
         dir: "/",
-        depth: 1,
+        depth: undefined,
         singleBranch: true,
         noTags: true,
         noCheckout: true,
@@ -262,5 +262,39 @@ describe("cloneWith subset checkout (real isomorphic-git + memfs)", () => {
     expect(await git.currentBranch({ fs: memfs, dir: DIR })).toBe("main");
     // The working tree is still materialized.
     expect(await memfs.promises.readFile(`${DIR}/README.md`, "utf8")).toBe("readme\n");
+  });
+});
+
+describe("cloneWith history retention", () => {
+  // A shallow clone used to be the default. It made clones fast, but a
+  // caller who then pushed the branch somewhere else sent only the single
+  // commit it had: the push reported success, the tip hash matched, and
+  // every earlier commit was gone. Full history is the safe default, and a
+  // caller who wants the old behavior asks for it with --depth.
+  it("requests full history when no depth is given", async () => {
+    const { git, cloneCalls } = fakeGit();
+
+    await cloneWith({
+      git,
+      http: fakeHttp,
+      fs: fakeFs,
+      url: "https://example.test/repo.git",
+    });
+
+    expect(cloneCalls[0].depth).toBeUndefined();
+  });
+
+  it("still honors an explicit shallow depth", async () => {
+    const { git, cloneCalls } = fakeGit();
+
+    await cloneWith({
+      git,
+      http: fakeHttp,
+      fs: fakeFs,
+      url: "https://example.test/repo.git",
+      depth: 1,
+    });
+
+    expect(cloneCalls[0].depth).toBe(1);
   });
 });

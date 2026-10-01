@@ -114,6 +114,24 @@ describe("catFileWith", () => {
     });
     expect(new TextDecoder().decode(result.bytes)).toBe("hello\n");
   });
+
+  it("resolves <oid>:<path> to a tree when the path is a directory", async () => {
+    await init();
+    await memfs.promises.mkdir(`${DIR}/src`);
+    await memfs.promises.writeFile(`${DIR}/src/a.txt`, "hello\n");
+    await git.add({ fs: memfs, dir: DIR, filepath: "src/a.txt" });
+    await git.commit({ fs: memfs, dir: DIR, message: "init", author: AUTHOR });
+    const head = await git.resolveRef({ fs: memfs, dir: DIR, ref: "HEAD" });
+    const result = await catFileWith({
+      git: isogit,
+      fs: memfs,
+      dir: DIR,
+      oid: head,
+      filepath: "src",
+    });
+    expect(result.type).toBe("tree");
+    expect(result.bytes.byteLength).toBeGreaterThan(0);
+  });
 });
 
 describe("updateRefWith", () => {

@@ -21,7 +21,8 @@
     "format": "biome format --write .",
     "check": "biome check . && biome format . && sherif --fail-on-warnings",
     "check:fix": "biome check . --fix && sherif --fix --select highest",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "gardener:generate": "npx --yes @scuffi/gardener@0.1.8 generate"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
