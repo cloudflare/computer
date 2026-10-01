@@ -1,7 +1,7 @@
 import { writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
-import { buildFuseOptionString } from "./options.js";
+import { buildFuseInitConfig, buildFuseOptionString } from "./options.js";
 import {
   type LocalPassthroughOptions,
   type PassthroughStats,
@@ -50,15 +50,40 @@ type StatusCallback = (errnoOrBytes: number) => void;
 type ResultCallback<T> = (errno: number, result: T) => void;
 type NotImplementedOperation = (...args: unknown[]) => void;
 
+/**
+ * What open/create may hand back under libfuse 3.
+ *
+ * A bare number is still accepted and means "just the handle". The object
+ * form carries the per-open cache decision, and a backing id when the
+ * local-only layer has registered the file for passthrough.
+ */
+export interface FuseFileInfoResult {
+  readonly fd: number;
+  /**
+   * Reuse the kernel page cache for this file. Replaces the auto_cache
+   * mount option, which libfuse applies after this callback returns and
+   * which the kernel refuses alongside passthrough.
+   */
+  readonly keepCache?: boolean;
+  /**
+   * Backing id from the FUSE passthrough registration. When set, the
+   * kernel serves reads and writes for this handle directly from the
+   * backing file and the daemon is out of the data path.
+   */
+  readonly backingId?: number;
+}
+
+export type FuseOpenResult = number | FuseFileInfoResult;
+
 export interface FuseOps {
   init(cb?: StatusCallback): void;
   error: NotImplementedOperation;
   readdir(path: string, cb: ResultCallback<string[]>): void;
   getattr(path: string, cb: ResultCallback<FuseStat | null>): void;
   fgetattr(path: string, fh: number, cb: ResultCallback<FuseStat | null>): void;
-  open(path: string, flags: number, cb: ResultCallback<number>): void;
+  open(path: string, flags: number, cb: ResultCallback<FuseOpenResult>): void;
   opendir(path: string, flags: number, cb: ResultCallback<number>): void;
-  create(path: string, mode: number, cb: ResultCallback<number>): void;
+  create(path: string, mode: number, cb: ResultCallback<FuseOpenResult>): void;
   read(
     path: string,
     fh: number,
@@ -145,10 +170,9 @@ export interface FuseMount {
   getLocalPathStats?: () => PassthroughStats;
 }
 
-interface FuseNativeInstance {
+interface FuseInstance {
   mount(cb: (error: Error | null) => void): void;
   unmount(cb: (error: Error | null) => void): void;
-  _fuseOptions(): string;
 }
 
 export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseOps {
@@ -179,6 +203,39 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   const openFileHandle = (path: string): number => {
     fileOpenCounts.set(path, (fileOpenCounts.get(path) ?? 0) + 1);
     return openHandle(path);
+  };
+
+  /*
+   * Per-open page cache decision, replacing the auto_cache mount option.
+   *
+   * libfuse applies auto_cache *after* the open callback returns and does
+   * not check for passthrough, and the kernel rejects FOPEN_KEEP_CACHE
+   * alongside FOPEN_PASSTHROUGH with EIO. So the rule moves here, where it
+   * can be applied per file and skipped for a passthrough handle.
+   *
+   * The rule is auto_cache's own: keep the cache when neither mtime nor
+   * size has changed since this path was last opened. Anything else -- a
+   * first open, a changed file, a stat we could not take -- invalidates,
+   * which is the safe direction.
+   */
+  const cacheMarks = new Map<string, string>();
+
+  const resolveKeepCache = (path: string): boolean => {
+    let mark: string;
+    try {
+      const stat = vfs.statSync(toVfs(path));
+      mark = `${Number(stat.mtimeMs ?? 0)}:${Number(stat.size ?? 0)}`;
+    } catch {
+      cacheMarks.delete(path);
+      return false;
+    }
+    const previous = cacheMarks.get(path);
+    cacheMarks.set(path, mark);
+    return previous === mark;
+  };
+
+  const forgetCacheMark = (path: string): void => {
+    cacheMarks.delete(path);
   };
 
   const releaseFileHandle = (path: string): void => {
@@ -519,7 +576,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       try {
         const entry = files.get(path);
         if (entry?.pendingCreate === true) {
-          cb(0, openFileHandle(path));
+          // Nothing durable to compare against yet, so never reuse the cache.
+          cb(0, { fd: openFileHandle(path), keepCache: false });
           return;
         }
         const stat = vfs.statSync(toVfs(path));
@@ -530,7 +588,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         if (hasBufferedWrites) {
           directWriteVfs.openWriteBufferSync?.(toVfs(path));
         }
-        cb(0, openFileHandle(path));
+        const keepCache = resolveKeepCache(path);
+        cb(0, { fd: openFileHandle(path), keepCache });
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -556,11 +615,13 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           cb(ERRNO.EEXIST, 0);
           return;
         }
+        // A recreated path must not inherit the previous file's mark.
+        forgetCacheMark(path);
         if (hasDeferredCreate) {
           // Single transaction at release time: defer the inode INSERT
           // and the chunk commit into one round trip.
           directWriteVfs.openWriteBufferForCreateSync?.(toVfs(path), { mode });
-          cb(0, openFileHandle(path));
+          cb(0, { fd: openFileHandle(path), keepCache: false });
           return;
         }
         if (hasDirectWrites) {
@@ -568,7 +629,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           if (hasBufferedWrites) {
             directWriteVfs.openWriteBufferSync?.(toVfs(path));
           }
-          cb(0, openFileHandle(path));
+          cb(0, { fd: openFileHandle(path), keepCache: false });
           return;
         }
         // Defer the VFS inode write until flush/release/fsync. Most create
@@ -588,7 +649,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           mode,
           pendingMtime: new Date(),
         });
-        cb(0, openFileHandle(path));
+        cb(0, { fd: openFileHandle(path), keepCache: false });
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -978,14 +1039,14 @@ export async function mountFuse(options: {
    */
   localPaths?: LocalPassthroughOptions;
 }): Promise<FuseMount> {
-  // biome-ignore lint/suspicious/noExplicitAny: fuse-native ships no types
-  const fuseModule: any = await import("fuse-native");
+  // biome-ignore lint/suspicious/noExplicitAny: the vendored binding is CJS
+  const fuseModule: any = await import("fuse-napi");
   const Fuse = fuseModule.default ?? fuseModule;
   // Optional op tracing. `COMPUTERD_FUSE_TRACE=summary` records per-op call
   // counts and timings; the summary is emitted on SIGUSR2 and on
   // unmount, to stderr by default or to `COMPUTERD_FUSE_TRACE_FILE` when set.
   // Disabled means zero wrapping overhead — the unwrapped ops object
-  // is handed to fuse-native directly.
+  // is handed to the binding directly.
   const traceMode = process.env.COMPUTERD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
@@ -1002,10 +1063,36 @@ export async function mountFuse(options: {
     tracer === undefined
       ? fuseOps
       : wrapFuseOpsWithTracer(fuseOps as unknown as Record<string, unknown>, tracer);
-  const fuse = new Fuse(options.mountPoint, ops, {
+  // buildFuseOptionString reads COMPUTERD_FUSE_* env vars; with none set it
+  // emits the production-safe profile (use_ino, 512 KiB max_read, and
+  // one-second metadata timeouts).
+  const extraOpts = buildFuseOptionString(process.env);
+  // libfuse 3 takes max_write through the init config rather than as a
+  // mount option, and the passthrough capability has to be requested at
+  // init or the backing-file ioctl fails with EPERM.
+  const initConfig = buildFuseInitConfig(process.env);
+  const CAP_PASSTHROUGH: number = Fuse.CAP_PASSTHROUGH ?? 1 << 29;
+  let passthroughNegotiated = false;
+
+  const opsWithInit = {
+    ...ops,
+    initWithConfig(info: { capable: number; want: number }, cb: (errno: number, config?: unknown) => void) {
+      const capable = info.capable >>> 0;
+      passthroughNegotiated = (capable & CAP_PASSTHROUGH) !== 0;
+      const config: Record<string, number> = { maxWrite: initConfig.maxWrite };
+      if (passthroughNegotiated) {
+        config.want = (info.want >>> 0) | CAP_PASSTHROUGH;
+        config.maxBackingStackDepth = initConfig.maxBackingStackDepth;
+      }
+      cb(0, config);
+    },
+  };
+
+  const fuse = new Fuse(options.mountPoint, opsWithInit, {
     autoUnmount: true,
     debug: false,
-  }) as FuseNativeInstance;
+    options: extraOpts.split(","),
+  }) as FuseInstance;
 
   const emitTrace = (reason: string): void => {
     if (tracer === undefined) return;
@@ -1027,20 +1114,6 @@ export async function mountFuse(options: {
   if (tracer !== undefined) {
     process.on("SIGUSR2", () => emitTrace("SIGUSR2"));
   }
-
-  // fuse-native (libfuse 2.9) doesn't expose big_writes/max_write/max_read
-  // through opts, so monkey-patch _fuseOptions() to append them. big_writes
-  // lets the kernel batch up to max_write bytes per FUSE op instead of the
-  // default 4 KiB, cutting per-op round-trips ~32x on large sequential I/O.
-  // buildFuseOptionString reads COMPUTERD_FUSE_* env vars; with none set it
-  // emits the production-safe profile (auto_cache plus one-second
-  // metadata timeouts) backed by the auto_cache contract tests.
-  const origFuseOptions = fuse._fuseOptions.bind(fuse);
-  const extraOpts = buildFuseOptionString(process.env);
-  fuse._fuseOptions = (): string => {
-    const base = origFuseOptions();
-    return base ? `${base},${extraOpts}` : `-o${extraOpts}`;
-  };
 
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("FUSE mount timed out after 5s")), 5_000);
