@@ -1,6 +1,6 @@
 import { type Tool, tool } from "ai";
 import { z } from "zod";
-
+import type { WorkspaceBackendInfo } from "../runtime/runtime.js";
 import { notCallableMessage } from "../runtime/runtime.js";
 import type { WorkspaceRuntimeValue } from "../runtime/types.js";
 import { truncateText, utf8Prefix } from "../text-truncation.js";
@@ -60,18 +60,12 @@ export interface ExecWorkspaceLike {
         input?: WorkspaceRuntimeValue;
       },
     ): Promise<ExecRuntimeHandle>;
-    // Whether a backend accepts a structured `input` value and returns
-    // a structured result. The tool asks this to know which backends
-    // are callable; the runtime derives it from each backend's
-    // `callable` flag. Omit when no backend is callable.
-    isCallable?(id: string): boolean;
-    // What a backend says about itself for a model, such as the
-    // language it runs and the modules that code can import. The tool
-    // shows it after the caller's own text.
-    describe?(id: string): string | undefined;
-    // Every registered backend id. Used when the caller does not pick
-    // backends, and to reject an unknown id up front.
-    backendIds?(): string[];
+    // What each registered backend says about itself: whether it takes
+    // structured `input`, and its description for the model. Used to
+    // build the tool, to offer every backend when the caller picks none,
+    // and to reject an unknown id up front. Without it, every backend
+    // must be named and is treated as a shell.
+    backends?(): readonly WorkspaceBackendInfo[];
   };
 }
 
@@ -143,14 +137,16 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
   const runtime = options.workspace.runtime;
-  const selected = selectBackends(options.backends, runtime);
+  const selected = selectBackends(options.backends, runtime.backends?.());
   const [first] = selected;
   if (first === undefined) throw new Error("createExecTool: no backends to run on");
   const backendIds = selected.map((backend) => backend.id);
   const single = backendIds.length === 1;
+  const known = runtime.backends?.();
   const backends = selected.map(({ id, guidance }) => {
-    const callable = runtime.isCallable?.(id) === true;
-    const own = runtime.describe?.(id);
+    const info = known?.find((backend) => backend.id === id);
+    const callable = info?.callable === true;
+    const own = info?.description;
     const text =
       [guidance, own].filter((part) => part !== undefined && part !== "").join("\n\n") ||
       (callable ? "Runs `command` as module source." : "Runs shell commands.");
@@ -355,9 +351,9 @@ function describeTool(backends: readonly DescribedBackend[]): string {
 // Resolve the caller's choice to a list of backends.
 function selectBackends(
   backends: ExecBackends | undefined,
-  runtime: ExecWorkspaceLike["runtime"],
+  registered: readonly WorkspaceBackendInfo[] | undefined,
 ): Array<{ id: string; guidance: string | undefined }> {
-  const known = runtime.backendIds?.();
+  const known = registered?.map((backend) => backend.id);
   let selected: Array<{ id: string; guidance: string | undefined }>;
   if (backends === undefined) {
     if (known === undefined) {

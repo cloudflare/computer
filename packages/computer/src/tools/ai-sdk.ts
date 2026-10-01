@@ -91,5 +91,5 @@ function execOptions(
     const { backends, defaultBackend: _ignored, ...limits } = options.shell;
     return { ...limits, backends };
   }
-  return { backends: Object.fromEntries((runtime.backendIds?.() ?? []).map((id) => [id, {}])) };
+  return { backends: Object.fromEntries((runtime.backends?.() ?? []).map(({ id }) => [id, {}])) };
 }

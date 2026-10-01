@@ -361,10 +361,11 @@ describe("getWorkspace — backend information", () => {
     it(`answers backend questions on a ${path} client`, async () => {
       const client = await connect(workspaceWithJavaScript());
 
-      expect(client.runtime.backendIds()).toEqual(["worker-javascript"]);
-      expect(client.runtime.isCallable("worker-javascript")).toBe(true);
-      expect(client.runtime.isCallable("missing")).toBe(false);
-      expect(client.runtime.describe("worker-javascript")).toContain("`ws:weather`: exports");
+      const [backend, ...others] = client.runtime.backends();
+
+      expect(others).toEqual([]);
+      expect(backend).toMatchObject({ id: "worker-javascript", callable: true });
+      expect(backend?.description).toContain("`ws:weather`: exports");
     });
 
     it(`builds a callable exec tool from a ${path} client`, async () => {

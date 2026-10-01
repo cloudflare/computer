@@ -53,29 +53,16 @@ export class WorkspaceRuntime {
     return this.#options.backends.get(id)?.callable === true;
   }
 
-  // Every registered backend id, in registration order. The exec tool
-  // uses this when the caller does not pick backends itself.
-  backendIds(): string[] {
-    return [...this.#options.backends.keys()];
-  }
-
-  // What each backend says about itself, in one plain value. A
-  // Workspace client takes this snapshot when it is created, so it can
-  // answer backendIds, isCallable, and describe without a round trip.
+  // What each registered backend says about itself, in registration
+  // order. The exec tool builds itself from this, and a Workspace
+  // client snapshots it when it is created, so the answer is the same
+  // locally and over RPC.
   backends(): WorkspaceBackendInfo[] {
     return [...this.#options.backends].map(([id, backend]) => ({
       id,
       callable: backend.callable === true,
       ...(backend.description === undefined ? {} : { description: backend.description }),
     }));
-  }
-
-  // What the named backend says about itself for a model: its source
-  // language and, for the JavaScript backend, the modules code can
-  // import. The exec tool adds it to the backend's entry so a caller
-  // does not have to repeat it.
-  describe(id: string): string | undefined {
-    return this.#options.backends.get(id)?.description;
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;

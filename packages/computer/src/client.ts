@@ -215,12 +215,8 @@ export interface WorkspaceRuntimeClient {
   ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
-  /** Every registered backend id. */
-  backendIds(): string[];
-  /** Whether the backend takes structured `input` and returns a `result`. */
-  isCallable(id: string): boolean;
-  /** What the backend tells a model about itself. */
-  describe(id: string): string | undefined;
+  /** What each backend says about itself, as of when the client was created. */
+  backends(): readonly WorkspaceBackendInfo[];
 }
 
 // Options accepted by the plain `exec` form, common to both paths.
@@ -277,8 +273,8 @@ function makeRuntimeClient(
   // the local path (already a host handle), rebuild on the remote path.
   rehydrate: RehydrateRuntimeHandle,
   // Backends are fixed when the Workspace is constructed, so one
-  // snapshot answers these questions for the client's lifetime, locally
-  // and over RPC alike.
+  // snapshot serves the client's lifetime. It keeps backends()
+  // synchronous over RPC, where the tools need it at construction.
   backends: readonly WorkspaceBackendInfo[],
 ): WorkspaceRuntimeClient {
   async function exec(
@@ -312,15 +308,12 @@ function makeRuntimeClient(
   const killExec = (id: string, options?: RuntimeKillOptions) => runtime.killExec(id, options);
   const disposeExec = (id: string, options?: { backend?: string }) =>
     runtime.disposeExec(id, options);
-  const backend = (id: string) => backends.find((info) => info.id === id);
   return {
     exec,
     getExec,
     killExec,
     disposeExec,
-    backendIds: () => backends.map((info) => info.id),
-    isCallable: (id: string) => backend(id)?.callable === true,
-    describe: (id: string) => backend(id)?.description,
+    backends: () => backends,
   } as WorkspaceRuntimeClient;
 }
 
