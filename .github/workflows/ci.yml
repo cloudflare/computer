@@ -139,9 +139,9 @@ jobs:
           - name: assets
             workspace: "@example/computer-assets"
             path: examples/assets
-          - name: container
-            workspace: "@example/computer-container"
-            path: examples/container
+          - name: container-legacy
+            workspace: "@example/computer-container-legacy"
+            path: examples/container-legacy
           - name: mcp
             workspace: "@example/computer-mcp"
             path: examples/mcp
