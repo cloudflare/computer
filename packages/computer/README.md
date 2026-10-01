@@ -265,15 +265,15 @@ to a named one — see [Multiple backends](#multiple-backends).
 
 ## Tools for agents
 
-`@cloudflare/computer/tools` ships AI SDK tools that wrap the Workspace
+`@cloudflare/computer/tools/ai-sdk` ships `createAITools()`, AI SDK tools that wrap the Workspace
 surfaces, ready to hand to `generateText`, `streamText`, or an agent
 framework's `getTools()`. The default set is `read`, `ls`, `find`,
-`grep`, `write`, `edit`, and `delete`; `exec` and `publish` are added
-when you configure them. Read-only mode keeps `read`, `ls`, `find`, and
+`grep`, `write`, `edit`, and `delete`, plus `exec` when the Workspace
+has a backend and `publish` when assets are configured. Read-only mode keeps `read`, `ls`, `find`, and
 `grep`.
 
 ```ts
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 
 const tools = createAITools({
   workspace,
@@ -418,6 +418,7 @@ on a computerd instance.
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
+| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |

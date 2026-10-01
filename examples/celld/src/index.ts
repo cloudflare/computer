@@ -5,7 +5,7 @@ import {
   type WorkspaceRuntimeLoader,
   withWorkspace,
 } from "@cloudflare/computer";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { routeAgentRequest } from "agents";
 import { convertToModelMessages, isStepCount, streamText } from "ai";
 import { createWorkersAI } from "workers-ai-provider";

@@ -1,7 +1,7 @@
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { codeMcpServer } from "@cloudflare/codemode/mcp";
 import type { WorkspaceClient } from "@cloudflare/computer";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolSet } from "ai";
 

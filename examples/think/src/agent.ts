@@ -37,7 +37,7 @@ import {
   withWorkspaceContainer,
 } from "@cloudflare/computer/backends/container";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { Think } from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";

@@ -15,6 +15,7 @@ import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./f
 import { createWriteTool, type WriteToolOptions } from "./fs/write.js";
 import { createPublishTool, type PublishWorkspaceLike } from "./publish.js";
 
+/** Options for {@link createAITools}. */
 export interface CreateAIToolsOptions {
   workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
   readonly?: boolean;
@@ -39,6 +40,15 @@ interface LegacyShellOptions extends Omit<ExecToolOptions, "workspace" | "backen
   defaultBackend?: string;
 }
 
+/**
+ * Build the AI SDK tool set for a Workspace: `read`, `ls`, `find`, and
+ * `grep`, plus `write`, `edit`, `delete`, `exec`, and `publish` unless
+ * the set is read-only. `exec` offers every backend the Workspace has
+ * unless `exec` picks them.
+ *
+ * @param options - The Workspace and per-tool options.
+ * @returns An AI SDK `ToolSet` for `generateText`, `streamText`, or an agent's `getTools()`.
+ */
 export function createAITools(options: CreateAIToolsOptions): ToolSet {
   const store = new WorkspaceFileStore(options.workspace);
   const tools: ToolSet = {

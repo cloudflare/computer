@@ -24,7 +24,7 @@ would use, so no bespoke HTTP route or transport is involved.
 
 [think]: https://www.npmjs.com/package/@cloudflare/think
 [workspace]: ../../packages/computer
-[tools]: ../../packages/computer/src/tools
+[tools]: ../../packages/computer/src/tools/ai-sdk.ts
 [aisdk7]: https://vercel.com/blog/ai-sdk-7
 
 ## Shape
@@ -53,9 +53,10 @@ model, a Workspace, and the workspace tools.
 ## Tools
 
 The tools come from `createAITools()` in
-[`@cloudflare/computer/tools`][tools]. This example enables the file
-tools and opts into `exec` by passing a shell backend description; it
-does not configure the assets publisher, so `publish` is not offered.
+[`@cloudflare/computer/tools/ai-sdk`][tools]. This example offers the
+file tools and an `exec` tool over both backends, each of which
+describes itself to the model. It does not configure the assets
+publisher, so `publish` is not offered.
 
 | Tool    | What it does                                              |
 | ------- | --------------------------------------------------------- |

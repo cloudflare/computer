@@ -5,8 +5,8 @@ import { WorkerJavaScriptBackend } from "../backends/worker-javascript/worker-ja
 import { createGitModule } from "../modules/git.js";
 import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
 import { Workspace } from "../workspace.js";
+import { createAITools } from "./ai-sdk.js";
 import {
-  createAITools,
   createDeleteTool,
   createEditTool,
   createFindTool,

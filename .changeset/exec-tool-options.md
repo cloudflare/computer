@@ -7,3 +7,5 @@
 `WorkerShellBackend` and `CloudflareContainerBackend` now describe themselves to the model, as `WorkerJavaScriptBackend` does, so the default needs no descriptions. A backend that says nothing gets a one-line default instead of an error.
 
 `shell` still works and is deprecated. `shell: { backends, defaultBackend }` becomes `exec: backends` with the default first. Output limits stay on `createExecTool`.
+
+`createAITools` moves to its own entry point, `@cloudflare/computer/tools/ai-sdk`. `@cloudflare/computer/tools` keeps the individual `create*Tool` functions and `WorkspaceFileStore`. Change `import { createAITools } from "@cloudflare/computer/tools"` to `from "@cloudflare/computer/tools/ai-sdk"`.

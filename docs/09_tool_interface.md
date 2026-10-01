@@ -1,6 +1,6 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`.
+`@cloudflare/computer/tools/ai-sdk` ships `createAITools()`, a ready-made [AI SDK](https://github.com/vercel/ai) tool set for agents that use a `Workspace`. The individual `create*Tool` functions and `WorkspaceFileStore` come from `@cloudflare/computer/tools`.
 
 The tools wrap three Workspace surfaces:
 
@@ -30,7 +30,7 @@ The tools wrap three Workspace surfaces:
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 
 export class Agent {
   workspace: Workspace;
