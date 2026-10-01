@@ -65,8 +65,6 @@ export interface WorkerJavaScriptBackendOptions {
   maxCapabilityResponseBytes?: number;
   /** Maximum entries returned by one isolated directory read. Defaults to 1024. */
   maxDirectoryEntries?: number;
-  /** Maximum graph loads and Dynamic Workers active at once. Defaults to 1. */
-  maxConcurrentExecutions?: number;
   /** Maximum live replay subscribers per execution. Defaults to 8. */
   maxExecutionSubscribers?: number;
   /** Completed execution retention window. Defaults to five minutes. */
@@ -99,7 +97,6 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "maxCapabilityRequestBytes"
     | "maxCapabilityResponseBytes"
     | "maxDirectoryEntries"
-    | "maxConcurrentExecutions"
     | "maxExecutionSubscribers"
     | "retentionMs"
     | "maxRetainedExecutions"
@@ -146,7 +143,6 @@ interface ExecutionRecord {
   control?: ActiveControl;
   bridge?: WorkspaceRuntimeBridge;
   finalization?: Promise<void>;
-  admitted?: boolean;
   persistenceFailed?: boolean;
   result?: WorkspaceRuntimeValue;
   hasResult?: boolean;
@@ -193,7 +189,6 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       "maxCapabilityResponseBytes",
     );
     assertPositiveInteger(options.maxDirectoryEntries ?? 1024, "maxDirectoryEntries");
-    assertPositiveInteger(options.maxConcurrentExecutions ?? 24, "maxConcurrentExecutions");
     assertPositiveInteger(options.maxExecutionSubscribers ?? 8, "maxExecutionSubscribers");
     assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
     assertPositiveInteger(options.maxRetainedExecutions ?? 100, "maxRetainedExecutions");
@@ -236,7 +231,6 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       maxCapabilityRequestBytes: options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
       maxCapabilityResponseBytes: options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
       maxDirectoryEntries: options.maxDirectoryEntries ?? 1024,
-      maxConcurrentExecutions: options.maxConcurrentExecutions ?? 24,
       maxExecutionSubscribers: options.maxExecutionSubscribers ?? 8,
       retentionMs: options.retentionMs ?? 60 * 60_000,
       maxRetainedExecutions: options.maxRetainedExecutions ?? 100,
@@ -265,7 +259,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
   #closed = false;
-  #activeExecutions = 0;
   readonly #activeStreams = new Map<string, number>();
   #pendingStarts = 0;
   readonly #pendingStartWaiters = new Set<() => void>();
@@ -367,17 +360,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     if (new TextEncoder().encode(input.source).byteLength > this.#options.maxSourceBytes) {
       throw new Error(`Workspace runtime source exceeds ${this.#options.maxSourceBytes} bytes.`);
     }
-    if (this.#activeExecutions >= this.#options.maxConcurrentExecutions) {
-      throw runtimeError(
-        "EEXEC_BUSY",
-        `JavaScript backend already has ${this.#activeExecutions} active execution(s)`,
-      );
-    }
-
-    this.#activeExecutions += 1;
+    // There is no cap on concurrent executions here: the platform limits
+    // concurrent Dynamic Workers itself and reports that limit as the
+    // execution's error.
     this.#pendingStarts += 1;
     this.#pendingIds.add(id);
-    let admittedRecord: ExecutionRecord | undefined;
     try {
       const capability = new WorkspaceRuntimeCapability(
         this.#host.fs,
@@ -403,7 +390,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         events: [],
         subscribers: new Set(),
         status: "running",
-        admitted: true,
       };
       try {
         this.#host.db.run(
@@ -422,7 +408,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         if (durable) throw runtimeError("EEXEC_EXISTS", `execution ${id} already exists`);
         throw error;
       }
-      admittedRecord = record;
       this.#records.set(id, record);
       try {
         const bridge = new WorkspaceRuntimeBridge(capability, {
@@ -476,7 +461,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         for (const resolve of this.#pendingStartWaiters) resolve();
         this.#pendingStartWaiters.clear();
       }
-      if (!admittedRecord) this.#activeExecutions -= 1;
     }
   }
 
@@ -873,10 +857,6 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     for (const subscriber of [...record.subscribers]) this.#pump(record, subscriber);
     record.control = undefined;
     record.bridge = undefined;
-    if (record.admitted) {
-      record.admitted = false;
-      this.#activeExecutions = Math.max(0, this.#activeExecutions - 1);
-    }
     if (record.status !== "running" && !record.persistenceFailed) {
       this.#records.delete(record.id);
     }
