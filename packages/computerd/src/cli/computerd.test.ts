@@ -137,7 +137,7 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
     mountPoint,
     env: {
       FUSE_MOUNT: "fuse",
-      MOUNT_IGNORE: "node_modules\ndist",
+      MOUNT_IGNORE: "/node_modules,/dist",
       MOUNT_IGNORE_PATH: ignoreRoot,
     },
   });
@@ -439,6 +439,30 @@ test("computerd rejects unknown FUSE_MOUNT values", async () => {
   const { code, stderr } = await waitForExit(child);
   expect(code).toBe(1);
   expect(stderr).toMatch(/FUSE_MOUNT must be one of/);
+});
+
+test("computerd refuses MOUNT_IGNORE on the userspace shim", async () => {
+  // The shim copies everything under the mount into the VFS, so it
+  // cannot keep a path local. Starting anyway would report the paths as
+  // local-only while syncing them, which is the failure MOUNT_IGNORE
+  // exists to prevent.
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const child = spawn(cliPath, {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      MOUNT_POINT: mountPoint,
+      PORT: String(port),
+      FUSE_MOUNT: "shim",
+      MOUNT_IGNORE: "/node_modules",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const { code, stderr } = await waitForExit(child);
+  expect(code).toBe(1);
+  expect(stderr).toMatch(/MOUNT_IGNORE is not supported on the userspace shim/);
 });
 
 test.each([

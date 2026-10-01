@@ -641,6 +641,17 @@ async function main(): Promise<void> {
   // node_modules into the Durable Object, which is the failure this
   // feature exists to prevent.
   const ignoreConfig = resolveMountIgnoreConfig(process.env, mountPoint);
+  // The shim copies everything under the mount into the VFS, so it has
+  // no way to keep a path local. Starting anyway would report the paths
+  // as local-only on /__computerd/info while syncing them, and the
+  // host's check would pass. FUSE_MOUNT=auto lands here too when
+  // /dev/fuse is missing, which is exactly when this needs to be loud.
+  if (ignoreConfig.enabled && backend.kind === "shim") {
+    throw new Error(
+      `MOUNT_IGNORE is not supported on the userspace shim (FUSE_MOUNT=${fuseMountMode} ` +
+        `resolved to backend=shim). Run with real FUSE, or unset MOUNT_IGNORE.`,
+    );
+  }
   if (ignoreConfig.enabled) {
     console.log(
       `[info] MOUNT_IGNORE active: ${ignoreConfig.ignore.paths.length} path(s) ` +
