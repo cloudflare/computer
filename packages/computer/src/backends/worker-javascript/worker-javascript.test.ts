@@ -557,7 +557,7 @@ describe("WorkerJavaScriptBackend", () => {
                     attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
                   },
                 ) {
-                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  void host.call("fs.writeFile", ["/workspace/output.txt", "done"]);
                   return evaluateResult(host, 1);
                 },
               };
@@ -792,9 +792,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 async evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  await host.call("host/ws:test.run", JSON.stringify([]));
+                  await host.call("host/ws:test.run", []);
                 },
               };
             },
@@ -843,9 +843,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  void host.call("fs.writeFile", ["/workspace/output.txt", "done"]);
                   return new Promise(() => undefined);
                 },
               };
@@ -1120,7 +1120,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
-    let response = "";
+    let response: unknown;
     const backend = new WorkerJavaScriptBackend({
       modules: { "ws:test": { run: async () => null } },
       loader: {
@@ -1130,9 +1130,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 async evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  response = await host.call("host/ws:test.toString", JSON.stringify([]));
+                  response = await host.call("host/ws:test.toString", []);
                 },
               };
             },
@@ -1151,7 +1151,7 @@ describe("WorkerJavaScriptBackend", () => {
     for await (const _event of execution.events) {
       // Drain the run so the host call settles.
     }
-    expect(JSON.parse(response)).toMatchObject({
+    expect(response).toMatchObject({
       error: { message: expect.stringContaining("Unknown Workspace host module call") },
     });
     await handle.close?.();
