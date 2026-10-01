@@ -2,6 +2,7 @@ import { writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
 import { buildFuseOptionString } from "./options.js";
+import { type LocalPassthroughOptions, withLocalPassthrough } from "./passthrough.js";
 import { createFuseTracer, type FuseTracer, wrapFuseOpsWithTracer } from "./tracer.js";
 import type { NodeVirtualFileSystem } from "./vfs.js";
 
@@ -961,6 +962,14 @@ export async function mountFuse(options: {
   backend?: FUSEBackend;
   mountPoint: string;
   vfs: NodeVirtualFileSystem;
+  /**
+   * Local-only path configuration (#179).
+   *
+   * When present and non-empty, matching paths are served from the
+   * container's disk instead of the VFS and never enter sync. Omitted
+   * or empty leaves the op table exactly as it was.
+   */
+  localPaths?: LocalPassthroughOptions;
 }): Promise<FuseMount> {
   // biome-ignore lint/suspicious/noExplicitAny: fuse-native ships no types
   const fuseModule: any = await import("fuse-native");
@@ -973,7 +982,14 @@ export async function mountFuse(options: {
   const traceMode = process.env.COMPUTERD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
-  const { getBufferStats: _getBufferStats, ...fuseOps } = baseOps;
+  // Local-only paths are routed before tracing, so the trace counts a
+  // passthrough op once, at the layer that actually served it, rather
+  // than attributing it to the VFS driver that never saw it.
+  const routedOps =
+    options.localPaths === undefined
+      ? baseOps
+      : withLocalPassthrough(baseOps, options.localPaths).ops;
+  const { getBufferStats: _getBufferStats, ...fuseOps } = routedOps;
   const ops =
     tracer === undefined
       ? fuseOps

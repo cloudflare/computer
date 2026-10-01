@@ -1,0 +1,758 @@
+// Local-only passthrough for the FUSE op layer.
+//
+// U2 and U3 of the #179 work. `ignore.ts` decides *which* paths are
+// local-only; this decides what happens when one is touched. A matching
+// path is served from a real directory on the container's disk
+// (MOUNT_IGNORE_PATH) instead of the VFS, so it is never recorded,
+// never pushed, and never pulled.
+//
+// Implemented as a decorator over FuseOps rather than as branches
+// inside makeFUSEOps. Three reasons, in order of how much they matter:
+//
+//   - The VFS driver stays unaware of the feature. Every path that is
+//     not local-only reaches exactly the code it reaches today, so the
+//     blast radius of a bug here is bounded by the ignore set.
+//   - Disabling the feature is provably a no-op: with an empty set,
+//     `withLocalPassthrough` returns the source object unchanged.
+//   - It matches how the tracer already composes (`tracer.ts`), so the
+//     mount path gains one more wrap rather than a new shape.
+//
+// WHAT THIS IS NOT. There is no FUSE passthrough (FOPEN_PASSTHROUGH)
+// here, despite the name being the natural one for the concept. The
+// host kernel supports it, but computerd mounts through fuse-native,
+// which binds libfuse 2.9 and compiles well below the API version that
+// can negotiate it. So data still crosses the FUSE boundary into this
+// process; what it skips is the VFS, the SQLite store, the change-pack
+// encoding, and the pull into the Durable Object. That is the win, and
+// it is a large one, but it is not "the daemon leaves the data path".
+// See DESIGN "The fuse-native constraint".
+//
+// Writes go straight to the host filesystem with pwrite rather than
+// through the buffered FileEntry machinery in driver.ts. That buffering
+// exists because the VFS has no ranged-write primitive and a naive
+// implementation is O(N^2) over sequential appends; the kernel does not
+// have that problem, so the indirection would be pure cost here.
+
+import {
+  chmodSync,
+  chownSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readlinkSync,
+  readSync,
+  renameSync,
+  rmdirSync,
+  type Stats,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  unlinkSync,
+  utimesSync,
+  writeSync,
+} from "node:fs";
+import { dirname, join, posix } from "node:path";
+
+import type { FuseOps, FuseStat } from "./driver.js";
+import type { MountIgnoreSet } from "./ignore.js";
+
+// Mirrors driver.ts. Duplicated rather than exported across modules
+// because these are the kernel's numbers, not ours, and a shared
+// mutable table would be a worse coupling than two short lists.
+const ERRNO = {
+  EPERM: -1,
+  ENOENT: -2,
+  EIO: -5,
+  EBADF: -9,
+  EACCES: -13,
+  EEXIST: -17,
+  EXDEV: -18,
+  ENOTDIR: -20,
+  EISDIR: -21,
+  EINVAL: -22,
+  ENOTEMPTY: -39,
+} as const;
+
+const DEFAULT_FILE_MODE = 0o644;
+const DEFAULT_DIR_MODE = 0o755;
+
+export interface LocalPassthroughOptions {
+  /** Resolved MOUNT_IGNORE_PATH: where local-only paths are stored. */
+  readonly root: string;
+  /** The decided ignore set. An empty set disables the feature entirely. */
+  readonly ignore: MountIgnoreSet;
+  /** Mount point, so kernel paths can be made mount-relative. */
+  readonly mountPoint?: string;
+  /** Injected for tests. Defaults to the real node:fs surface. */
+  readonly fs?: PassthroughFs;
+  /** Called once per distinct local-only directory created. Diagnostics. */
+  readonly onMaterialise?: (relativePath: string) => void;
+}
+
+/**
+ * The slice of node:fs this module uses.
+ *
+ * Narrow on purpose: it is the seam the unit tests drive, and keeping
+ * it small is what makes an in-memory double practical.
+ */
+export interface PassthroughFs {
+  openSync: typeof openSync;
+  closeSync: typeof closeSync;
+  readSync: typeof readSync;
+  writeSync: typeof writeSync;
+  fstatSync: typeof fstatSync;
+  statSync: typeof statSync;
+  lstatSync: typeof lstatSync;
+  mkdirSync: typeof mkdirSync;
+  readdirSync: typeof readdirSync;
+  readlinkSync: typeof readlinkSync;
+  renameSync: typeof renameSync;
+  rmdirSync: typeof rmdirSync;
+  symlinkSync: typeof symlinkSync;
+  truncateSync: typeof truncateSync;
+  unlinkSync: typeof unlinkSync;
+  utimesSync: typeof utimesSync;
+  chmodSync: typeof chmodSync;
+  chownSync: typeof chownSync;
+}
+
+const REAL_FS: PassthroughFs = {
+  openSync,
+  closeSync,
+  readSync,
+  writeSync,
+  fstatSync,
+  statSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  renameSync,
+  rmdirSync,
+  symlinkSync,
+  truncateSync,
+  unlinkSync,
+  utimesSync,
+  chmodSync,
+  chownSync,
+};
+
+/** Counters for `/__computerd/info` and for proving the cache works. */
+export interface PassthroughStats {
+  /** Paths served from local disk rather than the VFS. */
+  readonly localOps: number;
+  /** Calls that consulted the ignore set rather than a cached decision. */
+  readonly decisions: number;
+  /** Decisions answered from the per-directory cache. */
+  readonly cacheHits: number;
+  /** Open local file handles. */
+  readonly openHandles: number;
+}
+
+export interface LocalPassthrough {
+  readonly ops: FuseOps;
+  readonly stats: () => PassthroughStats;
+}
+
+/**
+ * Wraps `ops` so local-only paths are served from `root`.
+ *
+ * Returns the source object untouched when the ignore set is empty, so
+ * a deployment that has not configured MOUNT_IGNORE pays nothing — not
+ * a wrapper, not a branch, not an allocation.
+ */
+export function withLocalPassthrough(
+  ops: FuseOps,
+  options: LocalPassthroughOptions,
+): LocalPassthrough {
+  if (options.ignore.isEmpty) {
+    return {
+      ops,
+      stats: () => ({ localOps: 0, decisions: 0, cacheHits: 0, openHandles: 0 }),
+    };
+  }
+
+  const fs = options.fs ?? REAL_FS;
+  const root = options.root.replace(/\/+$/, "");
+  const mountRoot = normaliseMount(options.mountPoint ?? "/");
+
+  let localOps = 0;
+  let decisions = 0;
+  let cacheHits = 0;
+
+  // The decision cache. Keyed by *directory*, not by file: ignored-ness
+  // is inherited, so once a directory is known local-only every path
+  // beneath it is too, with no further consultation of the ignore set.
+  //
+  // This is the whole performance argument. A `node_modules` tree is
+  // tens of thousands of entries under a handful of directories; without
+  // inheritance each one would re-test the entry list on every lookup.
+  const directoryDecisions = new Map<string, boolean>();
+
+  const isLocal = (path: string): boolean => {
+    const relative = toRelative(path, mountRoot);
+    if (relative === "") return false;
+
+    const parent = posix.dirname(relative);
+    if (parent !== "." && parent !== "/") {
+      const inherited = directoryDecisions.get(parent);
+      if (inherited === true) {
+        // Inherited, not matched. No ignore-set consultation at all.
+        cacheHits += 1;
+        return true;
+      }
+    }
+
+    decisions += 1;
+    const decision = options.ignore.ignores(relative);
+    // Only directory decisions are cached. Caching files would grow
+    // without bound across a build, and buys nothing: a file is a leaf,
+    // so nothing inherits from it.
+    if (decision || looksLikeDirectory(relative)) {
+      directoryDecisions.set(relative, decision);
+    }
+    return decision;
+  };
+
+  const localPath = (path: string): string => join(root, toRelative(path, mountRoot));
+
+  // Handles are allocated from a high range so they cannot collide with
+  // the VFS driver's, which counts up from 1. A handle that crossed
+  // layers would read one file and write another.
+  const LOCAL_HANDLE_BASE = 0x4000_0000;
+  let nextHandle = LOCAL_HANDLE_BASE;
+  const handles = new Map<number, { fd: number; path: string }>();
+  const isLocalHandle = (fh: number): boolean => fh >= LOCAL_HANDLE_BASE;
+
+  const ensureParent = (target: string): void => {
+    const parent = dirname(target);
+    try {
+      fs.mkdirSync(parent, { recursive: true, mode: DEFAULT_DIR_MODE });
+      options.onMaterialise?.(parent);
+    } catch (error) {
+      if (errnoOf(error) !== "EEXIST") throw error;
+    }
+  };
+
+  const wrapped: FuseOps = {
+    ...ops,
+
+    readdir(path, cb) {
+      if (!isLocal(path)) {
+        // A VFS directory may still contain local-only children: the
+        // entries live on disk but the parent does not. Merge both
+        // sides so `ls` shows what a command inside the container sees.
+        ops.readdir(path, (code, names) => {
+          if (code !== 0) {
+            cb(code, names);
+            return;
+          }
+          const extra = localChildren(path);
+          if (extra.length === 0) {
+            cb(0, names);
+            return;
+          }
+          const merged = new Set([...(names ?? []), ...extra]);
+          cb(0, [...merged]);
+        });
+        return;
+      }
+      localOps += 1;
+      try {
+        cb(0, fs.readdirSync(localPath(path)));
+      } catch (error) {
+        cb(toErrno(error), []);
+      }
+    },
+
+    getattr(path, cb) {
+      if (!isLocal(path)) {
+        ops.getattr(path, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        cb(0, statToFuse(fs.lstatSync(localPath(path))));
+      } catch (error) {
+        cb(toErrno(error), null);
+      }
+    },
+
+    fgetattr(path, fh, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.fgetattr(path, fh, cb);
+        return;
+      }
+      const handle = handles.get(fh);
+      if (handle === undefined) {
+        cb(ERRNO.EBADF, null);
+        return;
+      }
+      localOps += 1;
+      try {
+        cb(0, statToFuse(fs.fstatSync(handle.fd)));
+      } catch (error) {
+        cb(toErrno(error), null);
+      }
+    },
+
+    open(path, flags, cb) {
+      if (!isLocal(path)) {
+        ops.open(path, flags, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        const target = localPath(path);
+        // O_CREAT is not implied by open(2) here; the kernel sends
+        // create() for that. But a flag set including O_TRUNC still has
+        // to reach the real file, so the flags are passed through as-is.
+        const fd = fs.openSync(target, flags);
+        cb(0, allocateHandle(fd, path));
+      } catch (error) {
+        cb(toErrno(error), 0);
+      }
+    },
+
+    opendir(path, flags, cb) {
+      if (!isLocal(path)) {
+        ops.opendir(path, flags, cb);
+        return;
+      }
+      localOps += 1;
+      // Directory handles carry no fd: readdir re-resolves by path, and
+      // holding an O_PATH fd per open directory would leak under a
+      // recursive walk of a large dependency tree.
+      cb(0, allocateHandle(-1, path));
+    },
+
+    create(path, mode, cb) {
+      if (!isLocal(path)) {
+        ops.create(path, mode, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        const target = localPath(path);
+        ensureParent(target);
+        const fd = fs.openSync(
+          target,
+          fsConstants.O_RDWR | fsConstants.O_CREAT | fsConstants.O_TRUNC,
+          mode === 0 ? DEFAULT_FILE_MODE : mode,
+        );
+        cb(0, allocateHandle(fd, path));
+      } catch (error) {
+        cb(toErrno(error), 0);
+      }
+    },
+
+    read(path, fh, buffer, length, position, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.read(path, fh, buffer, length, position, cb);
+        return;
+      }
+      const handle = handles.get(fh);
+      if (handle === undefined) {
+        cb(ERRNO.EBADF);
+        return;
+      }
+      localOps += 1;
+      try {
+        cb(fs.readSync(handle.fd, buffer, 0, length, position));
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    write(path, fh, buffer, length, position, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.write(path, fh, buffer, length, position, cb);
+        return;
+      }
+      const handle = handles.get(fh);
+      if (handle === undefined) {
+        cb(ERRNO.EBADF);
+        return;
+      }
+      localOps += 1;
+      try {
+        cb(fs.writeSync(handle.fd, buffer, 0, length, position));
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    release(path, fh, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.release(path, fh, cb);
+        return;
+      }
+      const handle = handles.get(fh);
+      handles.delete(fh);
+      if (handle === undefined || handle.fd < 0) {
+        cb(0);
+        return;
+      }
+      try {
+        fs.closeSync(handle.fd);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    releasedir(path, fh, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.releasedir(path, fh, cb);
+        return;
+      }
+      handles.delete(fh);
+      cb(0);
+    },
+
+    flush(path, fh, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.flush(path, fh, cb);
+        return;
+      }
+      // Nothing is buffered on this side; the write already reached the
+      // kernel. Reporting success is honest here in a way it would not
+      // be for the VFS path.
+      cb(0);
+    },
+
+    fsync(path, fh, datasync, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.fsync(path, fh, datasync, cb);
+        return;
+      }
+      cb(0);
+    },
+
+    truncate(path, size, cb) {
+      if (!isLocal(path)) {
+        ops.truncate(path, size, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.truncateSync(localPath(path), size);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    ftruncate(path, fh, size, cb) {
+      if (!isLocalHandle(fh)) {
+        ops.ftruncate(path, fh, size, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.truncateSync(localPath(path), size);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    unlink(path, cb) {
+      if (!isLocal(path)) {
+        ops.unlink(path, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.unlinkSync(localPath(path));
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    mkdir(path, mode, cb) {
+      if (!isLocal(path)) {
+        ops.mkdir(path, mode, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        const target = localPath(path);
+        ensureParent(target);
+        fs.mkdirSync(target, { mode: mode === 0 ? DEFAULT_DIR_MODE : mode });
+        markDirectory(path);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    rmdir(path, cb) {
+      if (!isLocal(path)) {
+        ops.rmdir(path, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.rmdirSync(localPath(path));
+        forgetDirectory(path);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    rename(source, destination, cb) {
+      const sourceLocal = isLocal(source);
+      const destinationLocal = isLocal(destination);
+
+      if (!sourceLocal && !destinationLocal) {
+        ops.rename(source, destination, cb);
+        return;
+      }
+
+      if (sourceLocal !== destinationLocal) {
+        // Cross-layer. EXDEV is the honest answer: the two sides are
+        // different filesystems and the operation cannot be atomic.
+        // Copying here would make a non-atomic operation look atomic,
+        // and a crash mid-copy would leave a half-written file where
+        // the caller was promised all-or-nothing. Every tool already
+        // handles EXDEV by falling back to copy-then-unlink.
+        cb(ERRNO.EXDEV);
+        return;
+      }
+
+      localOps += 1;
+      try {
+        const target = localPath(destination);
+        ensureParent(target);
+        fs.renameSync(localPath(source), target);
+        forgetDirectory(source);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    chmod(path, mode, cb) {
+      if (!isLocal(path)) {
+        ops.chmod(path, mode, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.chmodSync(localPath(path), mode);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    chown(path, uid, gid, cb) {
+      if (!isLocal(path)) {
+        ops.chown(path, uid, gid, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.chownSync(localPath(path), uid, gid);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    utimens(path, atime, mtime, cb) {
+      if (!isLocal(path)) {
+        ops.utimens(path, atime, mtime, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.utimesSync(localPath(path), atime / 1000, mtime / 1000);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    readlink(path, cb) {
+      if (!isLocal(path)) {
+        ops.readlink(path, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        // Stored verbatim. The link target is not interpreted here, and
+        // ignored-ness was already decided on the lookup path before any
+        // resolution, so a symlink cannot move a path between layers.
+        cb(0, fs.readlinkSync(localPath(path)) as string);
+      } catch (error) {
+        cb(toErrno(error), "");
+      }
+    },
+
+    symlink(target, path, cb) {
+      if (!isLocal(path)) {
+        ops.symlink(target, path, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        const destination = localPath(path);
+        ensureParent(destination);
+        fs.symlinkSync(target, destination);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    access(path, mode, cb) {
+      if (!isLocal(path)) {
+        ops.access(path, mode, cb);
+        return;
+      }
+      localOps += 1;
+      try {
+        fs.lstatSync(localPath(path));
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+  };
+
+  function allocateHandle(fd: number, path: string): number {
+    const handle = nextHandle++;
+    handles.set(handle, { fd, path });
+    return handle;
+  }
+
+  function markDirectory(path: string): void {
+    const relative = toRelative(path, mountRoot);
+    if (relative !== "") directoryDecisions.set(relative, true);
+  }
+
+  function forgetDirectory(path: string): void {
+    const relative = toRelative(path, mountRoot);
+    if (relative === "") return;
+    directoryDecisions.delete(relative);
+    // Descendants inherited from this entry, so they go too. Leaving
+    // them would let a recreated path keep a stale decision.
+    const prefix = `${relative}/`;
+    for (const key of directoryDecisions.keys()) {
+      if (key.startsWith(prefix)) directoryDecisions.delete(key);
+    }
+  }
+
+  function localChildren(path: string): string[] {
+    const relative = toRelative(path, mountRoot);
+    const names: string[] = [];
+    for (const entry of options.ignore.paths) {
+      const parent = posix.dirname(entry);
+      const normalisedParent = parent === "." ? "" : parent;
+      if (normalisedParent !== relative) continue;
+      // Only list it if it has actually been created on disk. An
+      // unconfigured-but-unused entry should not appear as a phantom
+      // directory in a listing.
+      try {
+        fs.lstatSync(join(root, entry));
+        names.push(posix.basename(entry));
+      } catch {
+        // Not materialised yet; nothing to show.
+      }
+    }
+    return names;
+  }
+
+  function looksLikeDirectory(relative: string): boolean {
+    try {
+      return fs.lstatSync(join(root, relative)).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  return {
+    ops: wrapped,
+    stats: () => ({
+      localOps,
+      decisions,
+      cacheHits,
+      openHandles: handles.size,
+    }),
+  };
+}
+
+function toRelative(path: string, mountRoot: string): string {
+  let value = path;
+  if (mountRoot !== "/" && (value === mountRoot || value.startsWith(`${mountRoot}/`))) {
+    value = value.slice(mountRoot.length);
+  }
+  while (value.startsWith("/")) value = value.slice(1);
+  while (value.endsWith("/")) value = value.slice(0, -1);
+  return value;
+}
+
+function normaliseMount(mountPoint: string): string {
+  const trimmed = mountPoint.replace(/\/+$/, "");
+  return trimmed === "" ? "/" : trimmed;
+}
+
+function statToFuse(stat: Stats): FuseStat {
+  return {
+    mtime: stat.mtime,
+    atime: stat.atime,
+    ctime: stat.ctime,
+    size: stat.size,
+    mode: stat.mode,
+    uid: stat.uid,
+    gid: stat.gid,
+    nlink: stat.nlink,
+    ino: stat.ino,
+    blksize: stat.blksize,
+    blocks: stat.blocks,
+  };
+}
+
+function errnoOf(error: unknown): string | undefined {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+function toErrno(error: unknown): number {
+  const code = errnoOf(error);
+  switch (code) {
+    case "ENOENT":
+      return ERRNO.ENOENT;
+    case "EEXIST":
+      return ERRNO.EEXIST;
+    case "ENOTDIR":
+      return ERRNO.ENOTDIR;
+    case "EISDIR":
+      return ERRNO.EISDIR;
+    case "ENOTEMPTY":
+      return ERRNO.ENOTEMPTY;
+    case "EACCES":
+      return ERRNO.EACCES;
+    case "EPERM":
+      return ERRNO.EPERM;
+    case "EINVAL":
+      return ERRNO.EINVAL;
+    case "EXDEV":
+      return ERRNO.EXDEV;
+    case "EBADF":
+      return ERRNO.EBADF;
+    default:
+      return ERRNO.EIO;
+  }
+}

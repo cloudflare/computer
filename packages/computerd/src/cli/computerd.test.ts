@@ -99,11 +99,95 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
     mountPoint,
     port,
     store: { kind: "memory" },
+    // Local-only paths are off unless MOUNT_IGNORE is set, but the block
+    // is always reported: a client needs to distinguish "this build has
+    // no such feature" from "the feature is present and configured
+    // empty", and absence cannot express that.
+    ignore: {
+      supported: true,
+      enabled: false,
+      root: `/tmp${mountPoint}`,
+      paths: [],
+      redundant: [],
+      fastPaths: {
+        passthrough: false,
+        passthroughReason: expect.stringContaining("libfuse 2.9"),
+        writebackCache: false,
+      },
+    },
   });
 
   await fs.mkdir(path.join(mountPoint, "dir"));
   await fs.writeFile(path.join(mountPoint, "dir", "hello.txt"), "hello fuse");
   expect(await fs.readFile(path.join(mountPoint, "dir", "hello.txt"), "utf8")).toBe("hello fuse");
+});
+
+test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async (ctx) => {
+  const backend = await resolveFuseBackend("auto");
+  if (backend.kind !== "fuse") {
+    ctx.skip(`requires real FUSE; auto resolved to ${backend.kind}`);
+    return;
+  }
+
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const ignoreRoot = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-local-"));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: {
+      FUSE_MOUNT: "fuse",
+      MOUNT_IGNORE: "node_modules\ndist",
+      MOUNT_IGNORE_PATH: ignoreRoot,
+    },
+  });
+
+  const info = await request(`http://127.0.0.1:${port}/__computerd/info`);
+  expect(JSON.parse(info.body).ignore).toMatchObject({
+    enabled: true,
+    root: ignoreRoot,
+    paths: ["node_modules", "dist"],
+  });
+
+  // Write through the mount into an ignored path.
+  await fs.mkdir(path.join(mountPoint, "node_modules", "pkg"), { recursive: true });
+  await fs.writeFile(path.join(mountPoint, "node_modules", "pkg", "index.js"), "module.exports=1");
+
+  // It reads back through the mount, so a command in the container sees it.
+  expect(await fs.readFile(path.join(mountPoint, "node_modules", "pkg", "index.js"), "utf8")).toBe(
+    "module.exports=1",
+  );
+
+  // And it is on local disk, with the tree structure preserved, rather
+  // than in the VFS. This is the whole point: nothing here can reach
+  // sync, so none of it is pulled into the Durable Object.
+  expect(await fs.readFile(path.join(ignoreRoot, "node_modules/pkg/index.js"), "utf8")).toBe(
+    "module.exports=1",
+  );
+
+  // A non-ignored sibling still goes to the VFS as before.
+  await fs.mkdir(path.join(mountPoint, "src"), { recursive: true });
+  await fs.writeFile(path.join(mountPoint, "src", "main.ts"), "export {}");
+  await expect(fs.stat(path.join(ignoreRoot, "src"))).rejects.toThrow();
+
+  // Both layers appear in one listing.
+  const entries = await fs.readdir(mountPoint);
+  expect(entries).toContain("node_modules");
+  expect(entries).toContain("src");
+
+  // A rename across the boundary is refused rather than silently made
+  // non-atomic. EXDEV is what every tool already falls back from.
+  await expect(
+    fs.rename(path.join(mountPoint, "src"), path.join(mountPoint, "dist")),
+  ).rejects.toMatchObject({ code: "EXDEV" });
+
+  // Within the local layer it is a real, atomic rename.
+  await fs.mkdir(path.join(mountPoint, "node_modules", ".staging"), { recursive: true });
+  await fs.rename(
+    path.join(mountPoint, "node_modules", ".staging"),
+    path.join(mountPoint, "node_modules", "final"),
+  );
+  expect(await fs.readdir(path.join(ignoreRoot, "node_modules"))).toContain("final");
 });
 
 test("/api serves a capnweb WorkspaceRPC session", async (_ctx) => {
