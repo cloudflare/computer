@@ -188,6 +188,10 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
     path.join(mountPoint, "node_modules", "final"),
   );
   expect(await fs.readdir(path.join(ignoreRoot, "node_modules"))).toContain("final");
+
+  // The refused rename is counted where an operator can see it.
+  const stats = await request(`http://127.0.0.1:${port}/__computerd/stats`);
+  expect(JSON.parse(stats.body).localPaths).toMatchObject({ crossLayerRenames: 1 });
 });
 
 test("/api serves a capnweb WorkspaceRPC session", async (_ctx) => {

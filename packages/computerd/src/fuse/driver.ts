@@ -2,7 +2,11 @@ import { writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
 import { buildFuseOptionString } from "./options.js";
-import { type LocalPassthroughOptions, withLocalPassthrough } from "./passthrough.js";
+import {
+  type LocalPassthroughOptions,
+  type PassthroughStats,
+  withLocalPassthrough,
+} from "./passthrough.js";
 import { createFuseTracer, type FuseTracer, wrapFuseOpsWithTracer } from "./tracer.js";
 import type { NodeVirtualFileSystem } from "./vfs.js";
 
@@ -136,6 +140,9 @@ export interface FuseMount {
   // filesystem. Only present when the mount was created via mountFuse;
   // the shim does not expose this.
   getBufferStats?: () => FuseBufferStats;
+  // Counters for the local-only layer. Present only when MOUNT_IGNORE
+  // configured local-only paths on a real FUSE mount.
+  getLocalPathStats?: () => PassthroughStats;
 }
 
 interface FuseNativeInstance {
@@ -985,10 +992,11 @@ export async function mountFuse(options: {
   // Local-only paths are routed before tracing, so the trace counts a
   // passthrough op once, at the layer that actually served it, rather
   // than attributing it to the VFS driver that never saw it.
-  const routedOps =
+  const localPaths =
     options.localPaths === undefined
-      ? baseOps
-      : withLocalPassthrough(baseOps, options.localPaths).ops;
+      ? undefined
+      : withLocalPassthrough(baseOps, options.localPaths);
+  const routedOps = localPaths === undefined ? baseOps : localPaths.ops;
   const { getBufferStats: _getBufferStats, ...fuseOps } = routedOps;
   const ops =
     tracer === undefined
@@ -1062,6 +1070,7 @@ export async function mountFuse(options: {
       });
     },
     getBufferStats: _getBufferStats,
+    ...(localPaths === undefined ? {} : { getLocalPathStats: localPaths.stats }),
   };
 }
 

@@ -241,8 +241,9 @@ ignore: ["/dist", "/.tmp-build"];
 Candidates worth checking are `.next`, `.turbo`, `node_modules/.cache`,
 and any staging directory a bundler creates next to its output.
 computerd logs this guidance on the first crossing rename per mount,
-naming both sides and the entry to add. Later occurrences are counted on
-the passthrough stats but not logged.
+naming both sides and the entry to add. Later occurrences are not
+logged, but `GET /__computerd/stats` counts them all under
+`localPaths.crossLayerRenames`.
 
 ### `MOUNT_IGNORE` versus `fetchChanges({ ignore })`
 

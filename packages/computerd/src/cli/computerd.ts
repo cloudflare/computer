@@ -801,6 +801,7 @@ async function main(): Promise<void> {
       return {
         ...collectDbStats(db),
         ...(fuse?.getBufferStats?.() ?? {}),
+        ...(fuse?.getLocalPathStats === undefined ? {} : { localPaths: fuse.getLocalPathStats() }),
         store_size_bytes: sizeBytes,
         store_freelist_count: freelistCount,
       };
