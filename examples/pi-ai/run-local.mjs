@@ -6,7 +6,7 @@
 //   npm run local
 
 import { Workspace } from "@cloudflare/computer";
-import { createPiAITools } from "@cloudflare/computer/tools/pi-ai";
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import {
   createModels,
@@ -21,7 +21,7 @@ const MAX_TURNS = 10;
 const workspace = new Workspace({ storage: new SQLiteTestStorage() });
 // No backend runs under plain node, so there is no `exec` tool here.
 // The unit tests cover exec's argument handling.
-const { tools, execute } = createPiAITools({ workspace });
+const { tools, execute } = createPiTools({ workspace });
 
 const faux = fauxProvider();
 const models = createModels();

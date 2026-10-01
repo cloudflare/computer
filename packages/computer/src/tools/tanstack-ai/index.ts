@@ -77,7 +77,7 @@ export type TanStackToolsFor<Format extends TanStackToolFormat> = Format extends
   ? TanStackToolSet
   : TanStackToolList;
 
-export interface CreateTanStackAIToolsOptions<Format extends TanStackToolFormat = "array">
+export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = "array">
   extends CreateToolsOptions {
   format?: Format;
   /** Tools that pause for approval. `"mutating"` selects every tool that changes workspace state. */
@@ -88,8 +88,8 @@ export interface CreateTanStackAIToolsOptions<Format extends TanStackToolFormat 
   lazy?: string[] | "all";
 }
 
-export function createTanStackAITools<Format extends TanStackToolFormat = "array">(
-  options: CreateTanStackAIToolsOptions<Format>,
+export function createTanStackTools<Format extends TanStackToolFormat = "array">(
+  options: CreateTanStackToolsOptions<Format>,
 ): TanStackToolsFor<Format> {
   const resolved = resolveToolOptions(options);
   const workspace = resolved.workspace;

@@ -13,7 +13,7 @@ import {
   type WorkspaceStub,
 } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
-import { createTanStackAITools } from "@cloudflare/computer/tools/tanstack-ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
 import { chat, maxIterations, streamToText } from "@tanstack/ai";
 import { cloudflareText } from "@tanstack/ai-cloudflare";
 
@@ -43,7 +43,7 @@ export class TanStackAgent extends DurableObject<Env> {
   }
 
   async run(task: string): Promise<string> {
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace: this.workspace,
       shell: {
         backends: { shell: { description: "A just-bash shell over the workspace files." } },

@@ -311,14 +311,14 @@ libraries. Each entry point loads only `zod` and its own code, so
 importing one never pulls in another library.
 
 ```ts
-import { createPiAITools } from "@cloudflare/computer/tools/pi-ai";
-import { createTanStackAITools } from "@cloudflare/computer/tools/tanstack-ai";
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
 
 // pi: declarations for the model, and a function your loop calls per tool call.
-const { tools, execute } = createPiAITools({ workspace });
+const { tools, execute } = createPiTools({ workspace });
 
 // TanStack AI: a list for chat({ tools }). This one asks before changing files.
-const tanstackTools = createTanStackAITools({ workspace, approve: "mutating" });
+const tanstackTools = createTanStackTools({ workspace, approve: "mutating" });
 ```
 
 ## Git
@@ -438,8 +438,8 @@ on a computerd instance.
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
-| `@cloudflare/computer/tools/pi-ai` | `createPiAITools()`: the same tool set for pi (`@earendil-works/pi-ai`). |
-| `@cloudflare/computer/tools/tanstack-ai` | `createTanStackAITools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
+| `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`). |
+| `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |

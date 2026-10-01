@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript.js";
 import { Workspace } from "../../workspace.js";
-import { createTanStackAITools } from "./index.js";
+import { createTanStackTools } from "./index.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
@@ -98,9 +98,9 @@ function quietCommandBackend(): {
   return { backend, killed, release: () => finish?.() };
 }
 
-describe("createTanStackAITools", () => {
+describe("createTanStackTools", () => {
   it("returns a list, the shape every TanStack entry point takes", () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace() });
+    const tools = createTanStackTools({ workspace: makeWorkspace() });
 
     // chat(), mergeAgentTools and createToolRegistry all call array
     // methods on what they are given, so an array is the contract.
@@ -120,8 +120,8 @@ describe("createTanStackAITools", () => {
   });
 
   it("keys the tools by name when asked", () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace() });
-    const set = createTanStackAITools({ workspace: makeWorkspace(), format: "object" });
+    const tools = createTanStackTools({ workspace: makeWorkspace() });
+    const set = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     expect(Array.isArray(set)).toBe(false);
     expect(Object.keys(set).sort()).toEqual(tools.map((tool) => tool.name).sort());
@@ -131,13 +131,13 @@ describe("createTanStackAITools", () => {
   });
 
   it("omits mutating tools when readonly", () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace(), readonly: true });
+    const tools = createTanStackTools({ workspace: makeWorkspace(), readonly: true });
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
   it("passes the Zod schema through untouched for standard-schema validation", () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace(), format: "object" });
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const schema = tools.write.inputSchema as unknown as {
       "~standard": { version: number };
@@ -149,7 +149,7 @@ describe("createTanStackAITools", () => {
   });
 
   it("flags only the requested tools as needing approval", () => {
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace: makeWorkspace(),
       approve: ["delete"],
       format: "object",
@@ -160,7 +160,7 @@ describe("createTanStackAITools", () => {
   });
 
   it("gates every mutating tool from one keyword", () => {
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace: makeWorkspace(),
       approve: "mutating",
       format: "object",
@@ -176,7 +176,7 @@ describe("createTanStackAITools", () => {
   });
 
   it("describes output shapes including the error branch", () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace(), format: "object" });
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const schema = tools.write.outputSchema as unknown as {
       safeParse: (v: unknown) => { success: boolean };
@@ -194,7 +194,7 @@ describe("createTanStackAITools", () => {
     workspace.fs.writeFile = async () => {
       throw new Error("read-only filesystem");
     };
-    const tools = createTanStackAITools({ workspace, format: "object" });
+    const tools = createTanStackTools({ workspace, format: "object" });
 
     const result = (await tools.write.execute({
       path: "/workspace/a.txt",
@@ -209,7 +209,7 @@ describe("createTanStackAITools", () => {
   });
 
   it("marks tools lazy so they stay out of the prompt until discovered", () => {
-    const all = createTanStackAITools({
+    const all = createTanStackTools({
       workspace: makeWorkspace(),
       lazy: "all",
       format: "object",
@@ -217,7 +217,7 @@ describe("createTanStackAITools", () => {
     expect(all.read.lazy).toBe(true);
     expect(all.write.lazy).toBe(true);
 
-    const some = createTanStackAITools({
+    const some = createTanStackTools({
       workspace: makeWorkspace(),
       lazy: ["grep"],
       format: "object",
@@ -228,7 +228,7 @@ describe("createTanStackAITools", () => {
 
   it("returns plain text for a complete read and objects for structured results", async () => {
     const workspace = makeWorkspace();
-    const tools = createTanStackAITools({ workspace, format: "object" });
+    const tools = createTanStackTools({ workspace, format: "object" });
 
     await tools.write.execute({ path: "/w/a.txt", content: "hi\n" } as never);
 
@@ -240,7 +240,7 @@ describe("createTanStackAITools", () => {
   });
 
   it("returns an error object for a failed call", async () => {
-    const tools = createTanStackAITools({ workspace: makeWorkspace(), format: "object" });
+    const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 
     const result = (await tools.read.execute({ path: "/w/missing.txt" } as never)) as {
       error: string;
@@ -253,7 +253,7 @@ describe("createTanStackAITools", () => {
     // chat() passes a tool result through as multimodal content only when
     // it is a ContentPart array; anything else becomes JSON text.
     const workspace = makeWorkspace();
-    const tools = createTanStackAITools({ workspace, format: "object" });
+    const tools = createTanStackTools({ workspace, format: "object" });
     const png = new Uint8Array([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
       0x52,
@@ -288,7 +288,7 @@ describe("createTanStackAITools", () => {
       },
       defaultBackend: "shell",
     };
-    const tools = createTanStackAITools({ workspace, shell, format: "object" });
+    const tools = createTanStackTools({ workspace, shell, format: "object" });
     const schema = z.toJSONSchema(tools.exec.inputSchema) as {
       properties: Record<string, { enum?: string[] }>;
       required?: string[];
@@ -297,7 +297,7 @@ describe("createTanStackAITools", () => {
     expect(schema.properties.backend?.enum).toEqual(["shell", "worker-javascript"]);
     expect(schema.required ?? []).not.toContain("backend");
     expect(schema.properties).toHaveProperty("input");
-    expect(createTanStackAITools({ workspace }).map((t) => t.name)).not.toContain("exec");
+    expect(createTanStackTools({ workspace }).map((t) => t.name)).not.toContain("exec");
   });
 
   it("settles a streaming exec tool on its terminal snapshot", async () => {
@@ -312,7 +312,7 @@ describe("createTanStackAITools", () => {
         ]) as never,
       ],
     });
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace,
       shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
       format: "object",
@@ -342,7 +342,7 @@ describe("createTanStackAITools", () => {
         ]) as never,
       ],
     });
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace,
       shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
       streamEventName: "exec-progress",
@@ -366,7 +366,7 @@ describe("createTanStackAITools", () => {
       storage: new SQLiteTestStorage(),
       backends: [quiet.backend as never],
     });
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace,
       shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
       streamEventName: "exec-progress",
@@ -406,7 +406,7 @@ describe("createTanStackAITools", () => {
       storage: new SQLiteTestStorage(),
       backends: [quiet.backend as never],
     });
-    const tools = createTanStackAITools({
+    const tools = createTanStackTools({
       workspace,
       shell: { backends: { shell: { description: "fast shell" } }, defaultBackend: "shell" },
       format: "object",

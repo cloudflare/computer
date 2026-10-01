@@ -36,7 +36,7 @@ then says what it did. Ask it to `grep` or run a shell command and it will
 reach for those tools instead.
 
 To make it ask before changing anything, pass `approve: "mutating"` to
-`createTanStackAITools`. Tools marked that way pause for confirmation instead of
+`createTanStackTools`. Tools marked that way pause for confirmation instead of
 running straight away.
 
 To check the agent loop without a Cloudflare account, `npm run local --workspace @example/computer-tanstack-ai`

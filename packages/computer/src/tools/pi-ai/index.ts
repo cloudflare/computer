@@ -75,21 +75,20 @@ export interface PiToolResult {
   isError: boolean;
 }
 
-export interface CreatePiAIToolsResult {
+export interface CreatePiToolsResult {
   tools: PiTool[];
   execute: (call: PiToolCall, context?: ToolCallContext) => Promise<PiToolResult>;
 }
 
-export function createPiAITools(options: CreatePiAIToolsOptions): CreatePiAIToolsResult {
+export function createPiTools(options: CreatePiToolsOptions): CreatePiToolsResult {
   const entries = piToolEntries(options);
-  const nullable = new Map<string, ReadonlySet<string>>();
   return {
-    tools: declarations(entries, options, nullable),
-    execute: dispatcher(entries, nullable),
+    tools: declarations(entries, options),
+    execute: dispatcher(entries),
   };
 }
 
-export interface CreatePiAIToolsOptions extends CreateToolsOptions, PiDeclarationOptions {}
+export interface CreatePiToolsOptions extends CreateToolsOptions, PiDeclarationOptions {}
 
 function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
   const resolved = resolveToolOptions(options);
@@ -178,24 +177,18 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
   return entries;
 }
 
-function declarations(
-  entries: readonly PiToolEntry[],
-  options: PiDeclarationOptions,
-  nullable: Map<string, ReadonlySet<string>>,
-): PiTool[] {
+// The schemas stay open. pi closes a schema itself when it sends a
+// `constrainedSampling` tool in strict mode, and keeps the open one for
+// a provider that falls back to ordinary tool calling.
+function declarations(entries: readonly PiToolEntry[], options: PiDeclarationOptions): PiTool[] {
   const strict = options.constrainedSampling ?? "prefer";
   return entries.map((entry) => {
-    // Strict schemas must close the object: a provider enforcing the
-    // schema has to know no other properties are allowed.
-    const wantsStrict = strict !== false && entry.strictArguments === true;
-    const converted = toPiParameters(entry.inputSchema, wantsStrict);
-    nullable.set(entry.name, converted.nullable);
     const tool: PiTool = {
       name: entry.name,
       description: entry.description,
-      parameters: converted.parameters,
+      parameters: toPiParameters(entry.inputSchema),
     };
-    if (wantsStrict) {
+    if (strict !== false && entry.strictArguments === true) {
       tool.constrainedSampling = { type: "json_schema", strict };
     }
     return tool;
@@ -218,9 +211,9 @@ export interface PiDeclarationOptions {
  */
 function dispatcher(
   entries: readonly PiToolEntry[],
-  nullable: ReadonlyMap<string, ReadonlySet<string>>,
 ): (call: PiToolCall, context?: ToolCallContext) => Promise<PiToolResult> {
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
+  const nullable = new Map(entries.map((entry) => [entry.name, absentWhenNull(entry.inputSchema)]));
   return async (call, context = {}) => {
     const entry = byName.get(call.name);
     if (!entry) {
@@ -293,13 +286,9 @@ function toPiResult(output: ModelOutput): PiToolResult {
 
 /**
  * `io: "input"` keeps a field with a Zod `.default()` optional: the
- * default is emitted as a JSON Schema `default` for TypeBox to apply.
- * The output view would instead mark those fields required.
+ * default is emitted as a JSON Schema `default`.
  */
-function toPiParameters(
-  schema: z.ZodType,
-  strict = false,
-): { parameters: PiJSONSchema; nullable: Set<string> } {
+function toPiParameters(schema: z.ZodType): PiJSONSchema {
   const json = z.toJSONSchema(schema, {
     target: "draft-7",
     io: "input",
@@ -311,35 +300,27 @@ function toPiParameters(
   if (json.type !== "object") {
     throw new Error(`pi tool parameters must be an object schema, got ${String(json.type)}`);
   }
-  // A provider enforcing the schema needs the object closed, and
-  // OpenAI further requires every property in `required`, so an
-  // optional field becomes required-but-nullable instead.
-  const nullable = new Set<string>();
-  if (strict) {
-    json.additionalProperties = false;
-    const properties = (json.properties ?? {}) as Record<string, Record<string, unknown>>;
-    const names = Object.keys(properties);
-    const required = new Set((json.required as string[] | undefined) ?? []);
-    for (const name of names) {
-      if (required.has(name)) continue;
-      const property = properties[name];
-      const type = property.type;
-      // Recorded so the dispatcher can tell this null, which means
-      // "absent", from one the tool genuinely accepts.
-      if (typeof type === "string" && type !== "null") {
-        property.type = [type, "null"];
-        nullable.add(name);
-      }
-    }
-    json.required = names;
-  }
-  return { parameters: json as PiJSONSchema, nullable };
+  return json as PiJSONSchema;
 }
 
 /**
- * Strips only the nulls that {@link toPiParameters} introduced, named
- * by `nullable`. A null on any other field is a value the tool accepts
- * — `exec`'s structured `input` is any JSON — and must survive.
+ * The optional fields that do not accept null. Under strict sampling pi
+ * makes every field required and lets the optional ones be null, so a
+ * null there means the model left the field out.
+ */
+function absentWhenNull(schema: z.ZodType): ReadonlySet<string> {
+  if (!(schema instanceof z.ZodObject)) return EMPTY;
+  const names = new Set<string>();
+  for (const [name, field] of Object.entries(schema.shape as Record<string, z.ZodType>)) {
+    if (field.safeParse(undefined).success && !field.safeParse(null).success) names.add(name);
+  }
+  return names;
+}
+
+/**
+ * Drops the nulls that stand for an absent field. A null on any other
+ * field is a value the tool accepts (`exec`'s structured `input` is any
+ * JSON) and survives.
  */
 function dropPlaceholderNulls(args: unknown, nullable: ReadonlySet<string>): unknown {
   if (typeof args !== "object" || args === null || Array.isArray(args)) return args;

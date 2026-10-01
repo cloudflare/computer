@@ -6,12 +6,12 @@
 //   npm run local
 
 import { Workspace } from "@cloudflare/computer";
-import { createTanStackAITools } from "@cloudflare/computer/tools/tanstack-ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { chat, maxIterations } from "@tanstack/ai";
 
 const workspace = new Workspace({ storage: new SQLiteTestStorage() });
-const tools = createTanStackAITools({ workspace });
+const tools = createTanStackTools({ workspace });
 
 // One scripted turn per agent-loop iteration.
 const script = [

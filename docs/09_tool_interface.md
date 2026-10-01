@@ -5,8 +5,8 @@ Computer ships a ready-made tool set for agents that use a `Workspace`, once for
 | Library | Entry point | Factory |
 | --- | --- | --- |
 | [AI SDK](https://github.com/vercel/ai) (`ai`) | `@cloudflare/computer/tools` | `createAITools` |
-| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`) | `@cloudflare/computer/tools/pi-ai` | `createPiAITools` |
-| [TanStack AI](https://tanstack.com/ai) (`@tanstack/ai`) | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackAITools` |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`) | `@cloudflare/computer/tools/pi-ai` | `createPiTools` |
+| [TanStack AI](https://tanstack.com/ai) (`@tanstack/ai`) | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools` |
 
 All three take the same options and build the same tools, with the same names, descriptions, schemas, and limits. Only the shape they return differs. Each entry point imports only `zod` and its own library's types, so a pi agent never loads `ai` and an AI SDK agent never loads pi. The individual AI SDK `create*Tool` functions and `WorkspaceFileStore` also come from `@cloudflare/computer/tools`.
 
@@ -21,8 +21,8 @@ The tools wrap three Workspace surfaces:
 | Export | Purpose |
 | --- | --- |
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
-| `createPiAITools` | Create pi tool declarations and the function that runs a pi tool call. |
-| `createTanStackAITools` | Create the TanStack AI tool list for a Workspace. |
+| `createPiTools` | Create pi tool declarations and the function that runs a pi tool call. |
+| `createTanStackTools` | Create the TanStack AI tool list for a Workspace. |
 | `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
 | `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
@@ -80,16 +80,16 @@ const tools = createAITools({
 });
 ```
 
-`createPiAITools` and `createTanStackAITools` take `shell` the same way.
+`createPiTools` and `createTanStackTools` take `shell` the same way.
 
 ## pi
 
-pi keeps tool declarations apart from the code that runs them. `Context.tools` carries declarations with JSON Schema `parameters`, and the caller's own loop runs each call. `createPiAITools` returns both, so they cannot drift apart.
+pi keeps tool declarations apart from the code that runs them. `Context.tools` carries declarations with JSON Schema `parameters`, and the caller's own loop runs each call. `createPiTools` returns both, so they cannot drift apart.
 
 ```ts
-import { createPiAITools } from "@cloudflare/computer/tools/pi-ai";
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 
-const { tools, execute } = createPiAITools({ workspace });
+const { tools, execute } = createPiTools({ workspace });
 
 const message = await models.complete(model, { systemPrompt, messages, tools });
 messages.push(message);
@@ -108,14 +108,14 @@ for (const block of message.content) {
 }
 ```
 
-`execute` checks the call's arguments against the tool's schema and returns pi `toolResult` content. A bad call or a failed tool comes back as `isError: true`, so the model can retry and the loop does not throw. The Zod schemas become plain JSON Schema, and a field with a default stays optional for the model.
+`execute` checks the call's arguments against the tool's schema and returns pi `toolResult` content. A bad call or a failed tool comes back as `isError: true`, so the model can retry and the loop does not throw. pi describes tool parameters with TypeBox, which also accepts plain JSON Schema, so the Zod schemas are converted to JSON Schema and pi needs nothing else. A field with a default stays optional for the model.
 
-`read`, `write`, and `edit` carry byte offsets and long verbatim strings, so they ask for pi's `constrainedSampling`. A provider that supports it enforces the schema while sampling, and a malformed `edit` never reaches the tool. Those schemas are closed (`additionalProperties: false`) with every property required, and each optional field becomes nullable. `execute` drops those placeholder nulls before validation and keeps any null the tool accepts, such as `exec`'s `input`.
+`read`, `write`, and `edit` carry byte offsets and long verbatim strings, so they ask for pi's `constrainedSampling`. A provider that supports it enforces the schema while sampling, and a malformed `edit` never reaches the tool. The declarations stay open. pi closes a schema itself when the provider supports strict mode, making every field required and the optional ones nullable. `execute` drops a null on an optional field that does not accept one, and keeps a null the tool accepts, such as `exec`'s `input`.
 
 The default is `"prefer"`, which falls back to ordinary tool calling on a provider that cannot enforce a schema. `"require"` fails the request instead, for a pinned model known to support it. `false` turns it off and keeps the schemas open:
 
 ```ts
-createPiAITools({ workspace, constrainedSampling: "require" });
+createPiTools({ workspace, constrainedSampling: "require" });
 ```
 
 pi tool results carry text and images. An image from `read` comes back as an `image` block; a PDF comes back as text saying it cannot be attached. `exec` returns its final snapshot.
@@ -126,10 +126,10 @@ A TanStack tool's `inputSchema` is a Standard Schema, which Zod implements, so t
 
 ```ts
 import { chat, toServerSentEventsResponse } from "@tanstack/ai";
-import { createTanStackAITools } from "@cloudflare/computer/tools/tanstack-ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
 
 const abortController = new AbortController();
-const tools = createTanStackAITools({ workspace, approve: "mutating" });
+const tools = createTanStackTools({ workspace, approve: "mutating" });
 
 return toServerSentEventsResponse(chat({ adapter, messages, tools, abortController }));
 ```
@@ -171,7 +171,7 @@ createAITools({
 | `edit` | default caps | Options passed to `createEditTool`. |
 | `shell` | omitted | Options passed to `createExecTool`. |
 
-`createPiAITools` and `createTanStackAITools` take the same options, plus their own listed above.
+`createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
 
 ## `read`
 

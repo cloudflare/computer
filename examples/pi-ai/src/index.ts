@@ -14,7 +14,7 @@ import {
   type WorkspaceStub,
 } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
-import { createPiAITools } from "@cloudflare/computer/tools/pi-ai";
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { createModels, type Message } from "@earendil-works/pi-ai";
 
 import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai.js";
@@ -54,7 +54,7 @@ export class PiAgent extends DurableObject<Env> {
   }
 
   async run(task: string): Promise<string> {
-    const { tools, execute } = createPiAITools({ workspace: this.workspace, shell: SHELL });
+    const { tools, execute } = createPiTools({ workspace: this.workspace, shell: SHELL });
 
     const models = createModels();
     models.setProvider(workersAI(this.env.AI, MODEL));

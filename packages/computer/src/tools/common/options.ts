@@ -5,7 +5,7 @@ import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./f
 import type { WriteToolOptions } from "./fs/write.js";
 import type { PublishWorkspaceLike } from "./publish.js";
 
-/** Options every tool set takes: `createAITools`, `createPiAITools`, and `createTanStackAITools`. */
+/** Options every tool set takes: `createAITools`, `createPiTools`, and `createTanStackTools`. */
 export interface CreateToolsOptions {
   workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
   /** Omit `write`, `edit`, `delete`, `exec`, and `publish`. */

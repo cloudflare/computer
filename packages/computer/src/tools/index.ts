@@ -1,8 +1,8 @@
 // The AI SDK tool set, its individual tools, and the file store under
 // them. Tool sets for other agent libraries have their own entry points,
 // so importing one never pulls in the AI SDK:
-//   @cloudflare/computer/tools/pi-ai        createPiAITools
-//   @cloudflare/computer/tools/tanstack-ai  createTanStackAITools
+//   @cloudflare/computer/tools/pi-ai        createPiTools
+//   @cloudflare/computer/tools/tanstack-ai  createTanStackTools
 export { type CreateAIToolsOptions, createAITools } from "./ai-sdk/index.js";
 export {
   createDeleteTool,

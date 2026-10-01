@@ -1,21 +1,23 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import { validateToolCall } from "@earendil-works/pi-ai";
+import { makeStrictJsonSchema } from "@earendil-works/pi-ai/api/constrained-sampling";
 import { describe, expect, it } from "vitest";
 import { Workspace } from "../../workspace.js";
-import { createPiAITools } from "./index.js";
+import { createPiTools, type PiJSONSchema } from "./index.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
 }
 
-function declaration(tools: ReturnType<typeof createPiAITools>, name: string) {
+function declaration(tools: ReturnType<typeof createPiTools>, name: string) {
   const tool = tools.tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`no ${name} tool`);
   return tool;
 }
 
-describe("createPiAITools declarations", () => {
+describe("createPiTools declarations", () => {
   it("declares the default tool set with object parameter schemas", () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
       "delete",
@@ -33,13 +35,13 @@ describe("createPiAITools declarations", () => {
   });
 
   it("omits mutating tools when readonly", () => {
-    const tools = createPiAITools({ workspace: makeWorkspace(), readonly: true });
+    const tools = createPiTools({ workspace: makeWorkspace(), readonly: true });
 
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
   it("offers the backends `shell` lists, with the default named", () => {
-    const tools = createPiAITools({
+    const tools = createPiTools({
       workspace: makeWorkspace(),
       shell: {
         backends: {
@@ -66,14 +68,14 @@ describe("createPiAITools declarations", () => {
       defaultBackend: "worker-shell",
     };
 
-    expect(createPiAITools({ workspace }).tools.map((t) => t.name)).not.toContain("exec");
+    expect(createPiTools({ workspace }).tools.map((t) => t.name)).not.toContain("exec");
     expect(
-      createPiAITools({ workspace, shell, readonly: true }).tools.map((t) => t.name),
+      createPiTools({ workspace, shell, readonly: true }).tools.map((t) => t.name),
     ).not.toContain("exec");
   });
 
   it("emits required fields without a $schema key and keeps defaults optional", () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     const write = declaration(tools, "write");
     expect(write.parameters.$schema).toBeUndefined();
@@ -87,9 +89,9 @@ describe("createPiAITools declarations", () => {
   });
 });
 
-describe("createPiAITools constrained sampling", () => {
+describe("createPiTools constrained sampling", () => {
   it("requests provider-side strict schemas for the fussy tools only", () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     // `edit` and `write` carry long verbatim strings a model can mangle.
     expect(declaration(tools, "edit").constrainedSampling).toEqual({
@@ -104,21 +106,31 @@ describe("createPiAITools constrained sampling", () => {
     expect(declaration(tools, "ls").constrainedSampling).toBeUndefined();
   });
 
-  it("closes a strict schema and makes optional fields nullable", () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
-
+  it("sends open schemas that pi validates and makes strict itself", () => {
+    const tools = createPiTools({ workspace: makeWorkspace() });
     const read = declaration(tools, "read");
-    expect(read.parameters.additionalProperties).toBe(false);
-    // Strict mode requires every property; optional ones accept null.
-    expect(read.parameters.required?.sort()).toEqual(["byteOffset", "limit", "offset", "path"]);
-    const offset = read.parameters.properties?.offset as { type?: unknown };
-    expect(offset.type).toEqual(["integer", "null"]);
-    const path = read.parameters.properties?.path as { type?: unknown };
-    expect(path.type).toBe("string");
+    const call = (args: Record<string, unknown>) => ({
+      type: "toolCall" as const,
+      id: "1",
+      name: "read",
+      arguments: args,
+    });
+
+    // A provider that falls back to ordinary tool calling may leave the
+    // optional fields out; pi's own validator must accept that.
+    expect(read.parameters.required).toEqual(["path"]);
+    expect(validateToolCall(tools.tools as never, call({ path: "/w/a.txt" }))).toEqual({
+      path: "/w/a.txt",
+    });
+    // Under strict sampling pi closes the schema and lets the optional
+    // fields be null.
+    const strict = makeStrictJsonSchema(read.parameters as never) as PiJSONSchema;
+    expect(strict.additionalProperties).toBe(false);
+    expect(strict.required?.sort()).toEqual(["byteOffset", "limit", "offset", "path"]);
   });
 
   it("escalates to require or opts out when asked", () => {
-    const required = createPiAITools({
+    const required = createPiTools({
       workspace: makeWorkspace(),
       constrainedSampling: "require",
     });
@@ -127,16 +139,14 @@ describe("createPiAITools constrained sampling", () => {
       strict: "require",
     });
 
-    const off = createPiAITools({ workspace: makeWorkspace(), constrainedSampling: false });
+    const off = createPiTools({ workspace: makeWorkspace(), constrainedSampling: false });
     expect(declaration(off, "edit").constrainedSampling).toBeUndefined();
-    // Opting out also restores the open, minimally-required schema.
-    expect(declaration(off, "edit").parameters.additionalProperties).toBeUndefined();
     expect(declaration(off, "read").parameters.required).toEqual(["path"]);
   });
 
   it("accepts a strict-mode call that fills optional fields with null", async () => {
     const workspace = makeWorkspace();
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
 
     await tools.execute({
       id: "1",
@@ -155,10 +165,10 @@ describe("createPiAITools constrained sampling", () => {
   });
 });
 
-describe("createPiAITools execution", () => {
+describe("createPiTools execution", () => {
   it("runs a tool call and returns text content for a complete read", async () => {
     const workspace = makeWorkspace();
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
 
     await tools.execute({
       id: "1",
@@ -173,7 +183,7 @@ describe("createPiAITools execution", () => {
 
   it("returns structured results as JSON text", async () => {
     const workspace = makeWorkspace();
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
 
     await tools.execute({ id: "1", name: "write", arguments: { path: "/w/a.txt", content: "x" } });
     const result = await tools.execute({ id: "2", name: "ls", arguments: { path: "/w" } });
@@ -185,7 +195,7 @@ describe("createPiAITools execution", () => {
   });
 
   it("marks a missing file as an error result", async () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     const result = await tools.execute({
       id: "1",
@@ -198,7 +208,7 @@ describe("createPiAITools execution", () => {
   });
 
   it("rejects invalid arguments as a retryable error rather than throwing", async () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     const result = await tools.execute({ id: "1", name: "read", arguments: { path: 42 } });
 
@@ -207,7 +217,7 @@ describe("createPiAITools execution", () => {
   });
 
   it("reports an unknown tool name with the available names", async () => {
-    const tools = createPiAITools({ workspace: makeWorkspace() });
+    const tools = createPiTools({ workspace: makeWorkspace() });
 
     const result = await tools.execute({ id: "1", name: "nope", arguments: {} });
 
@@ -227,7 +237,7 @@ describe("createPiAITools execution", () => {
       return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
     };
     (workspace.runtime as unknown as Record<string, unknown>).isCallable = () => true;
-    const tools = createPiAITools({
+    const tools = createPiTools({
       workspace,
       shell: { backends: { js: { description: "callable" } }, defaultBackend: "js" },
     });
@@ -241,7 +251,7 @@ describe("createPiAITools execution", () => {
 
   it("applies a schema default when the model omits the field", async () => {
     const workspace = makeWorkspace();
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
 
     await tools.execute({
       id: "1",
@@ -270,7 +280,7 @@ describe("createPiAITools execution", () => {
         },
       } as never,
     });
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
 
     const result = await tools.execute({
       id: "1",
@@ -286,7 +296,7 @@ describe("createPiAITools execution", () => {
 
   it("returns an image read as a base64 image block", async () => {
     const workspace = makeWorkspace();
-    const tools = createPiAITools({ workspace });
+    const tools = createPiTools({ workspace });
     // A one-pixel PNG, written through the filesystem so the read tool
     // classifies it by extension and captures its bytes.
     const png = new Uint8Array([

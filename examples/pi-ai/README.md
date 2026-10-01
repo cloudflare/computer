@@ -6,7 +6,7 @@ task, it works in a durable Workspace, and it replies when it is done.
 The whole agent loop is the `run` method in [`src/index.ts`](src/index.ts): ask
 the model, run whatever tools it asked for, repeat until it stops asking. pi
 keeps the list of tools separate from the code that runs them, so
-`createPiAITools` hands back both — `tools` to show the model, and `execute` to
+`createPiTools` hands back both — `tools` to show the model, and `execute` to
 run one of its requests.
 
 The workspace tools come from
