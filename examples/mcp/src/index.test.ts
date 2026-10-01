@@ -85,8 +85,11 @@ describe("Computer Code Mode MCP", () => {
           });
           const file = await codemode.read({ path: "/workspace/message.txt" });
           const listing = await codemode.ls({ path: "/workspace" });
-          const shell = await codemode.exec({ command: "pwd" });
-          const git = await codemode.exec({ command: "git init && git status --short" });
+          const shell = await codemode.exec({ command: "pwd", backend: "worker-shell" });
+          const git = await codemode.exec({
+            command: "git init && git status --short",
+            backend: "worker-shell",
+          });
           return {
             content: file.content,
             listed: listing.entries.some((entry) => entry.name === "message.txt"),
