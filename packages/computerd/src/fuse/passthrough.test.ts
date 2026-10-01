@@ -8,13 +8,10 @@ import type { FuseOps } from "./driver.js";
 import { resolveMountIgnore } from "./ignore.js";
 import { withLocalPassthrough } from "./passthrough.js";
 
-// U2 (decision layer) and U3 (local I/O) for #179.
-//
-// These drive the real node:fs against a temp directory rather than a
-// double. The module's whole purpose is to put bytes on a real
-// filesystem, so a mock would be asserting the shape of the calls
-// rather than the behaviour, and the interesting failures here -- EXDEV,
-// ENOTEMPTY, parent creation -- are the filesystem's, not ours.
+// Drives the real node:fs against a temp directory rather than a double.
+// The interesting failures here -- EXDEV, ENOTEMPTY, parent creation --
+// are the filesystem's, so a mock would assert the shape of the calls
+// rather than the behaviour.
 
 const MOUNT = "/workspace";
 

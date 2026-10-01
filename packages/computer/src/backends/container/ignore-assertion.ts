@@ -1,28 +1,13 @@
-// Client-side assertion over the container's local-only path set.
+// Client-side assertion over the container's local-only path set. The
+// set is owned by the image; a client can only state what it expects
+// and refuse to connect on disagreement. See docs/20_local_only_paths.md.
 //
-// The ignore set is owned by the *image*, not the client: computerd
-// reads MOUNT_IGNORE at startup, normalises it, and reports the result
-// on /__computerd/info. A client cannot change it. What a client can do
-// is state what it believes the image is configured for and refuse to
-// connect when the image disagrees.
-//
-// That inversion is deliberate. The mount is per-container and compiled
-// once, so two sessions sharing an image cannot hold different views of
-// which paths are durable. Making `ignore` a setting would promise a
-// per-session knob the architecture cannot honour.
-//
-// Why fail the connection rather than warn. The failure mode this
-// guards is silent and expensive: an image built without MOUNT_IGNORE,
-// or with a stale set, looks identical to a correct one until a command
-// writes a large dependency tree and the whole thing is pulled into the
-// Durable Object. That is the exact symptom #179 reports -- a timeout,
-// then a storage-timeout cascade the workspace does not recover from.
-// A mismatch here is a deployment error, and a loud one is cheaper than
-// a slow one.
-//
-// This module is pure. The fetch and the connect-time wiring live in
-// cloudflare-container.ts; everything here is a function of two values,
-// so the comparison and its message can be tested without a container.
+// Fails the connection rather than warning, because the failure it
+// guards is silent and expensive: an image built without MOUNT_IGNORE
+// looks identical to a correct one until a command writes a large
+// dependency tree and the whole thing is pulled into the Durable
+// Object -- the #179 symptom. A mismatch is a deployment error, and a
+// loud one is cheaper than a slow one.
 
 /** The `ignore` block computerd reports on /__computerd/info. */
 export interface ComputerdIgnoreReport {
@@ -36,22 +21,11 @@ export interface ComputerdIgnoreReport {
 
 /** What the backend exposes back to the host after a successful connect. */
 export interface ResolvedIgnore {
-  /**
-   * Paths the mount treats as local-only, normalised by computerd.
-   *
-   * Empty when the feature is off, which is indistinguishable from
-   * "configured with no entries" -- correctly so, since they behave
-   * identically.
-   */
+  /** Empty when the feature is off, indistinguishable from "no entries". */
   readonly paths: readonly string[];
   /** Resolved MOUNT_IGNORE_PATH, or undefined when unsupported. */
   readonly root: string | undefined;
-  /**
-   * False on a computerd predating the feature.
-   *
-   * Lets a host degrade deliberately rather than discovering the gap
-   * through a three-minute pull.
-   */
+  /** False on a computerd predating the feature, so a host can degrade. */
   readonly supported: boolean;
 }
 
@@ -99,15 +73,9 @@ export function readIgnoreReport(info: unknown): ResolvedIgnore {
 }
 
 /**
- * Compares a declared set against what the image actually applies.
- *
- * Order-insensitive: computerd reports entries in declaration order
- * after dropping redundant ones, and a host that lists the same paths
- * in a different order means the same thing. Duplicates in the
- * declaration are collapsed for the same reason -- computerd would have
- * collapsed them too.
- *
- * Returns null when they agree.
+ * Compares a declared set against what the image applies; null when they
+ * agree. Order-insensitive and duplicate-collapsing, because computerd
+ * normalises the same way and the two spellings mean the same thing.
  */
 export function diffIgnore(
   declared: readonly string[],
@@ -124,12 +92,9 @@ export function diffIgnore(
 }
 
 /**
- * Throws when the image disagrees with what the caller declared.
- *
- * `declared === undefined` skips the check entirely and accepts
- * whatever the image provides. That is the default, so adopting this
- * option is opt-in and an existing deployment cannot start failing
- * because a new field appeared.
+ * Throws when the image disagrees. `declared === undefined` skips the
+ * check, so an existing deployment cannot start failing because a new
+ * field appeared.
  */
 export function assertIgnoreMatches(
   declared: readonly string[] | undefined,

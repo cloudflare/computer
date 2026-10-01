@@ -1,14 +1,9 @@
-// Startup resolution of the local-only path configuration.
+// Startup resolution of the local-only path configuration. Kept apart
+// from ignore.ts so the matcher stays a pure function of its inputs.
 //
-// Reads MOUNT_IGNORE and MOUNT_IGNORE_PATH, validates them against the
-// mount point, and produces the value the driver and /__computerd/info
-// both consume. Kept apart from ignore.ts so the matcher stays a pure
-// function of its inputs with no env or filesystem opinions.
-//
-// Everything here fails closed. A misconfiguration that silently
-// disabled the feature would send a full node_modules into the Durable
-// Object, which is the exact failure #179 is about, so the daemon
-// refuses to mount instead.
+// Fails closed: a misconfiguration that silently disabled the feature
+// would send a full node_modules into the Durable Object, the exact
+// failure #179 is about, so the daemon refuses to mount instead.
 
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -29,13 +24,9 @@ export interface MountIgnoreEnv {
 }
 
 /**
- * Default root: /tmp + the mount point.
- *
- * Under /tmp rather than a tmpfs or an anonymous volume so a container
- * snapshot captures it. That is the only durability local-only content
- * has -- it is deliberately absent from sync -- so putting it somewhere
- * a snapshot misses would make container replacement silently lose the
- * tree this feature exists to keep.
+ * Default root: /tmp + the mount point. Under /tmp rather than a tmpfs
+ * so a container snapshot captures it -- that is the only durability
+ * local-only content has, being deliberately absent from sync.
  */
 export function defaultIgnoreRoot(mountPoint: string): string {
   return join("/tmp", mountPoint);
@@ -61,10 +52,9 @@ export function resolveMountIgnoreConfig(
   const normalisedRoot = resolve(root).replace(/\/+$/, "") || "/";
   const normalisedMount = resolve(mountPoint).replace(/\/+$/, "") || "/";
 
-  // The store must not live inside the thing it shadows. A root under
-  // the mount would make the passthrough layer resolve into itself:
-  // every write to an ignored path would land at a location that is
-  // also an ignored path, one level deeper, forever.
+  // A root under the mount would make the passthrough layer resolve into
+  // itself: every write to an ignored path would land at a location that
+  // is also an ignored path, one level deeper, forever.
   if (normalisedRoot === normalisedMount || normalisedRoot.startsWith(`${normalisedMount}/`)) {
     throw new Error(
       `MOUNT_IGNORE_PATH (${normalisedRoot}) must not be inside MOUNT_POINT ` +
@@ -88,13 +78,9 @@ export interface MountIgnoreInfo {
   readonly redundant: readonly string[];
   readonly fastPaths: {
     /**
-     * FUSE passthrough (FOPEN_PASSTHROUGH).
-     *
-     * Always false on this build, and reported rather than omitted so
-     * the reason is visible without reading the source. computerd mounts
-     * through fuse-native, which binds libfuse 2.9; passthrough needs
-     * the libfuse 3.17 API. The host kernel supports it, so this flips
-     * on a binding change rather than an infrastructure change.
+     * Always false: fuse-native binds libfuse 2.9, passthrough needs the
+     * libfuse 3.17 API. Reported rather than omitted so the reason is
+     * visible without reading the source.
      */
     readonly passthrough: false;
     readonly passthroughReason: string;

@@ -1,6 +1,3 @@
-// Local-only paths (#179). The ignore set belongs to the image; the
-// backend reads it back on connect() and refuses a disagreement.
-//
 // connect()'s happy path constructs a WebSocketPair, a workerd global
 // the node runner does not provide, so the full dial cannot complete
 // here. These exercise the wire format the backend depends on, against

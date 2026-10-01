@@ -2,13 +2,9 @@ import { describe, expect, test } from "vitest";
 
 import { MountIgnorePathError, parseMountIgnore, resolveMountIgnore } from "./ignore.js";
 
-// Local-only subpaths for #179. Entries are plain paths relative to
-// the mount root: no globs, no negation, no depth matching.
-//
-// The case worth writing first is the segment boundary. A naive
-// `startsWith` passes every other test in this file and fails
-// "does not treat node_modules_extra as node_modules", so that test
-// is what actually pins the matcher.
+// A naive `startsWith` passes every other test in this file and fails
+// "does not treat node_modules_extra as node_modules", so that test is
+// what actually pins the matcher.
 
 describe("parseMountIgnore", () => {
   test("splits MOUNT_IGNORE on newlines", () => {

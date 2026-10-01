@@ -1,31 +1,16 @@
-// Local-only passthrough for the FUSE op layer.
+// Local-only passthrough for the FUSE op layer. See
+// docs/20_local_only_paths.md.
 //
-// U2 and U3 of the #179 work. `ignore.ts` decides *which* paths are
-// local-only; this decides what happens when one is touched. A matching
-// path is served from a real directory on the container's disk
-// (MOUNT_IGNORE_PATH) instead of the VFS, so it is never recorded,
-// never pushed, and never pulled.
+// A decorator over FuseOps rather than branches inside makeFUSEOps, so
+// the VFS driver stays unaware of the feature and an empty ignore set
+// is provably a no-op: `withLocalPassthrough` returns the source object
+// unchanged.
 //
-// Implemented as a decorator over FuseOps rather than as branches
-// inside makeFUSEOps. Three reasons, in order of how much they matter:
-//
-//   - The VFS driver stays unaware of the feature. Every path that is
-//     not local-only reaches exactly the code it reaches today, so the
-//     blast radius of a bug here is bounded by the ignore set.
-//   - Disabling the feature is provably a no-op: with an empty set,
-//     `withLocalPassthrough` returns the source object unchanged.
-//   - It matches how the tracer already composes (`tracer.ts`), so the
-//     mount path gains one more wrap rather than a new shape.
-//
-// WHAT THIS IS NOT. There is no FUSE passthrough (FOPEN_PASSTHROUGH)
-// here, despite the name being the natural one for the concept. The
-// host kernel supports it, but computerd mounts through fuse-native,
-// which binds libfuse 2.9 and compiles well below the API version that
-// can negotiate it. So data still crosses the FUSE boundary into this
-// process; what it skips is the VFS, the SQLite store, the change-pack
-// encoding, and the pull into the Durable Object. That is the win, and
-// it is a large one, but it is not "the daemon leaves the data path".
-// See DESIGN "The fuse-native constraint".
+// Despite the name there is no FUSE passthrough (FOPEN_PASSTHROUGH)
+// here; fuse-native binds libfuse 2.9, below the API version that can
+// negotiate it. Data still crosses the FUSE boundary into this process.
+// What it skips is the VFS, the SQLite store, the change-pack encoding,
+// and the pull into the Durable Object.
 //
 // Writes go straight to the host filesystem with pwrite rather than
 // through the buffered FileEntry machinery in driver.ts. That buffering

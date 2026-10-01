@@ -8,10 +8,7 @@ import {
   readIgnoreReport,
 } from "./ignore-assertion.js";
 
-// U5 client half for #179. The ignore set belongs to the image; this is
-// the check that stops a client silently disagreeing with it.
-//
-// The failure being guarded is slow rather than loud: a stale or absent
+// The failure guarded here is slow rather than loud: a stale or absent
 // MOUNT_IGNORE looks exactly like a correct one until a dependency tree
 // is written and pulled into the DO. So most of these tests are about
 // the check firing, not about it passing.
