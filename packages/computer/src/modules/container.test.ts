@@ -33,9 +33,9 @@ function fakeRuntime(output: {
   const runs: Run[] = [];
   const runtime = {
     backends: () => [
-      { id: "container-shell", callable: false },
-      { id: "linux", callable: false },
-      { id: "worker-javascript", callable: true },
+      { id: "container-shell", protocol: "command" as const, callable: false },
+      { id: "linux", protocol: "command" as const, callable: true },
+      { id: "worker-javascript", protocol: "module" as const, callable: true },
     ],
     async exec(command: string, options: ExecOptions) {
       const run: Run = { command, options, killed: false };
@@ -210,6 +210,18 @@ describe("createContainerModule", () => {
   it("fails when it connects to a Workspace without the backend", () => {
     const { runtime } = fakeRuntime({});
     expect(() => build(runtime, { backend: "missing" })).toThrow(/no backend "missing"/);
+  });
+
+  it("accepts a callable shell backend", () => {
+    const { runtime } = fakeRuntime({});
+    expect(() => build(runtime, { backend: "linux" })).not.toThrow();
+  });
+
+  it("refuses a backend that runs module source", () => {
+    const { runtime } = fakeRuntime({});
+    expect(() => build(runtime, { backend: "worker-javascript" })).toThrow(
+      /runs module source, not shell commands/,
+    );
   });
 
   it("describes itself for a model", () => {

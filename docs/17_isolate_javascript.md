@@ -285,7 +285,7 @@ export default async function () {
 }
 ```
 
-`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, or runs module source rather than shell commands, the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
 
 A few limits follow from `exec` being a host call:
 
