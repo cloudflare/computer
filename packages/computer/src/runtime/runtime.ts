@@ -1,21 +1,23 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding } from "../shell.js";
-import type {
-  ModuleExecutionEnvelope,
-  WorkspaceModuleBackendHandle,
-  WorkspaceRuntimeDisposeOptions,
-  WorkspaceRuntimeEvent,
-  WorkspaceRuntimeExecHandle,
-  WorkspaceRuntimeExecOptions,
-  WorkspaceRuntimeGetOptions,
-  WorkspaceRuntimeKillOptions,
-  WorkspaceRuntimeResult,
+import {
+  isModuleBackend,
+  type ModuleExecutionEnvelope,
+  type WorkspaceModuleBackendHandle,
+  type WorkspaceRegisteredBackend,
+  type WorkspaceRuntimeDisposeOptions,
+  type WorkspaceRuntimeEvent,
+  type WorkspaceRuntimeExecHandle,
+  type WorkspaceRuntimeExecOptions,
+  type WorkspaceRuntimeGetOptions,
+  type WorkspaceRuntimeKillOptions,
+  type WorkspaceRuntimeResult,
 } from "./types.js";
 
 interface WorkspaceRuntimeRouterOptions {
   // What each registered backend says about itself.
-  backends: ReadonlyMap<string, { readonly callable?: boolean; readonly description?: string }>;
+  backends: ReadonlyMap<string, WorkspaceRegisteredBackend>;
   backendHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
 }
@@ -32,6 +34,11 @@ export function notCallableMessage(backend: string): string {
 export interface WorkspaceBackendInfo {
   /** The id the backend is registered under. */
   readonly id: string;
+  /**
+   * What `exec` source means on this backend: a shell command
+   * (`"command"`) or module source (`"module"`).
+   */
+  readonly protocol: "command" | "module";
   /** Whether the backend takes structured `input` and returns a `result`. */
   readonly callable: boolean;
   /** What the backend tells a model about itself. */
@@ -60,6 +67,7 @@ export class WorkspaceRuntime {
   backends(): WorkspaceBackendInfo[] {
     return [...this.#options.backends].map(([id, backend]) => ({
       id,
+      protocol: isModuleBackend(backend) ? ("module" as const) : ("command" as const),
       callable: backend.callable === true,
       ...(backend.description === undefined ? {} : { description: backend.description }),
     }));

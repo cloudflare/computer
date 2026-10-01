@@ -58,7 +58,8 @@ export interface ContainerModuleOptions {
  *   `description` tells the model how to use it.
  * @throws When `maxOutputBytes` is not a positive integer. The module
  *   also throws when the backend connects if the Workspace has no
- *   such backend.
+ *   such backend, or that backend runs module source rather than shell
+ *   commands. A callable shell backend is fine.
  */
 export function createContainerModule(
   options: ContainerModuleOptions = {},
@@ -71,11 +72,19 @@ export function createContainerModule(
 
   const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => {
     // The factory runs when the JavaScript backend connects, so a
-    // missing container backend fails there, before any code runs,
-    // rather than on the first exec.
-    if (!host.runtime.backends().some((info) => info.id === backend)) {
+    // missing or wrong container backend fails there, before any code
+    // runs, rather than on the first exec.
+    const target = host.runtime.backends().find((info) => info.id === backend);
+    if (target === undefined) {
       throw new Error(
         `ws:container: the Workspace has no backend ${JSON.stringify(backend)}. Register a ContainerBackend, or pass createContainerModule({ backend }).`,
+      );
+    }
+    // A module backend reads `exec` source as code, so a shell command
+    // sent there would run as JavaScript, or start a nested run.
+    if (target.protocol !== "command") {
+      throw new Error(
+        `ws:container: backend ${JSON.stringify(backend)} runs module source, not shell commands.`,
       );
     }
     return { exec: execOn(host) };
