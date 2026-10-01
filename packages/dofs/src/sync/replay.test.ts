@@ -4,8 +4,9 @@ import { readFile } from "../fs/readFile.js";
 import { resolveInode } from "../fs/resolve.js";
 import { withDB } from "../fs/with-db.js";
 import { writeFile } from "../fs/writeFile.js";
-import { applyChanges } from "./apply.js";
+import { applyChanges, applyChangesSync } from "./apply.js";
 import type { ChangeEntry } from "./changes.js";
+import { currentRev, writeWatermark } from "./watermarks.js";
 
 // The unified sync plan asserts that replaying an unacknowledged block
 // is safe because "revision and cursor semantics already make replay
@@ -67,6 +68,7 @@ describe("block replay idempotency", () => {
     it("applies a tombstone twice without error when the path stays gone", async () => {
       await withDB(async (db) => {
         await writeFile(db, "/gone.txt", "bye", {}, () => 1);
+        writeWatermark(db, "pushRev", currentRev(db));
         const entry: ChangeEntry = { kind: "delete", rev: 5, path: "/gone.txt" };
 
         await applyChanges(db, [entry], new Map(), { source: "upstream" });
@@ -77,32 +79,25 @@ describe("block replay idempotency", () => {
       });
     });
 
-    // The plan's idempotency claim breaks here. The tombstone was
-    // produced at rev 5 and describes the file as it was then. If the
-    // block carrying it is interrupted before acknowledgment and the
-    // path is recreated locally in the meantime, replaying the
-    // tombstone deletes content it never described.
-    it("does not delete a path recreated at a newer revision than the tombstone", async () => {
+    it("does not delete an unpushed recreation on replay", async () => {
       await withDB(async (db) => {
         await writeFile(db, "/data.txt", "original", {}, () => 1);
-        // The tombstone's rev is whatever the source stamped it with.
-        // What matters is that the local recreation lands above it.
-        const tombstone: ChangeEntry = { kind: "delete", rev: 2, path: "/data.txt" };
+        writeWatermark(db, "pushRev", currentRev(db));
+        const tombstone: ChangeEntry = { kind: "delete", rev: 9_999, path: "/data.txt" };
 
         // The block applied the tombstone but died before it could
         // acknowledge its cursor.
         await applyChanges(db, [tombstone], new Map(), { source: "upstream" });
         expect(resolveInode(db, "/data.txt", { followSymlinks: false })).toBeNull();
 
-        // A local write recreates the path at a revision above the
-        // tombstone's.
+        // A local write recreates the path above the local push watermark.
         await writeFile(db, "/data.txt", "recreated", {}, () => 2);
         const liveRev =
           db.one<{ rev: number }>(
             "SELECT rev FROM vfs_nodes WHERE inode = ?",
             resolveInode(db, "/data.txt", { followSymlinks: false })?.inode ?? 0,
           )?.rev ?? 0;
-        expect(liveRev).toBeGreaterThan(tombstone.rev);
+        expect(liveRev).toBeGreaterThan(1);
 
         // The interrupted block is replayed from the durable cursor.
         const replay = await applyChanges(db, [tombstone], new Map(), { source: "upstream" });
@@ -113,12 +108,12 @@ describe("block replay idempotency", () => {
       });
     });
 
-    it("still deletes a path whose live revision predates the tombstone", async () => {
+    it("deletes a pushed path even when the peer revision is smaller", async () => {
       await withDB(async (db) => {
         await writeFile(db, "/stale.txt", "stale", {}, () => 1);
-        // A tombstone from far above the live rev is a genuine delete
-        // the receiver has not seen yet.
-        const tombstone: ChangeEntry = { kind: "delete", rev: 9_999, path: "/stale.txt" };
+        await writeFile(db, "/stale.txt", "newer", {}, () => 2);
+        writeWatermark(db, "pushRev", currentRev(db));
+        const tombstone: ChangeEntry = { kind: "delete", rev: 1, path: "/stale.txt" };
 
         const result = await applyChanges(db, [tombstone], new Map(), { source: "upstream" });
 
@@ -126,6 +121,73 @@ describe("block replay idempotency", () => {
         expect(resolveInode(db, "/stale.txt", { followSymlinks: false })).toBeNull();
       });
     });
+
+    for (const [name, apply] of [
+      ["async", applyChanges],
+      ["sync", applyChangesSync],
+    ] as const) {
+      it(`${name}: uses only the selected backend's push watermark`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db), "other");
+          const entry: ChangeEntry = { kind: "delete", rev: 9_999, path: "/x" };
+          expect(
+            (await apply(db, [entry], new Map(), { source: "upstream", backend: "linux" })).applied,
+          ).toBe(0);
+          writeWatermark(db, "pushRev", currentRev(db), "linux");
+          expect(
+            (
+              await apply(db, [{ ...entry, rev: 1 }], new Map(), {
+                source: "upstream",
+                backend: "linux",
+              })
+            ).applied,
+          ).toBe(1);
+        });
+      });
+
+      it(`${name}: protects unpushed edits after a watermark reset`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          writeWatermark(db, "pushRev", 0);
+          const result = await apply(db, [{ kind: "delete", rev: 9_999, path: "/x" }], new Map(), {
+            source: "upstream",
+          });
+          expect(result.applied).toBe(0);
+          expect(await readFile(db, "/x", "utf8")).toBe("content");
+        });
+      });
+
+      it(`${name}: accepts new pushes but protects recreations from committed replays`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "original", {}, () => 1);
+          await writeFile(db, "/x", "updated", {}, () => 2);
+          const entry: ChangeEntry = { kind: "delete", rev: 1, path: "/x" };
+          const first = await apply(db, [entry], new Map(), {
+            source: "upstream",
+            receivedCursor: { rev: 0, path: null },
+          });
+          expect(first.applied).toBe(1);
+          await writeFile(db, "/x", "recreated", {}, () => 3);
+          const replay = await apply(db, [entry], new Map(), {
+            source: "upstream",
+            receivedCursor: { rev: 1, path: "/x" },
+          });
+          expect(replay.applied).toBe(0);
+          expect(await readFile(db, "/x", "utf8")).toBe("recreated");
+          // A later path within the same sender rev is not a replay.
+          expect(
+            (
+              await apply(db, [{ ...entry, path: "/z" }], new Map(), {
+                source: "upstream",
+                receivedCursor: { rev: 1, path: "/x" },
+              })
+            ).applied,
+          ).toBe(1);
+        });
+      });
+    }
 
     // A locally-authored delete is not a replay of remote state, so
     // the revision guard must not apply to it.

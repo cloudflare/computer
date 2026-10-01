@@ -13,6 +13,7 @@ import { stageBlob } from "./blobs.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
 import { pathOf } from "./paths.js";
+import { type ChangeCursor, compareChangeCursors, readWatermark } from "./watermarks.js";
 
 // One container-side change that landed under a read-only mount and
 // was therefore skipped rather than applied. Callers (the workspace
@@ -70,6 +71,12 @@ export interface ApplyOptions {
   // which is fine for the container backend the package shipped
   // with first.
   backend?: string;
+  // Push receivers checkpoint the sender's cursor when committing a
+  // batch. Supplying that cursor protects local recreations from an
+  // already-committed delete replay; new pushes remain authoritative,
+  // just like incoming writes. Pulls instead protect unpushed local
+  // changes using this backend's local pushRev.
+  receivedCursor?: ChangeCursor;
 }
 
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
@@ -291,9 +298,12 @@ export async function applyChanges(
     if (options.source === "upstream" && entry.kind !== "delete") {
       if (alreadyApplied(db, entry)) continue;
     }
-    // A replayed tombstone must not delete a path that was recreated
-    // above the tombstone's revision.
-    if (options.source === "upstream" && entry.kind === "delete" && tombstoneIsStale(db, entry)) {
+    // Protect local changes without comparing independent peer rev spaces.
+    if (
+      options.source === "upstream" &&
+      entry.kind === "delete" &&
+      tombstoneIsStale(db, entry, options)
+    ) {
       continue;
     }
     // Read-only mount guard. Entries under a registered read-only
@@ -423,7 +433,11 @@ export function applyChangesSync(
     }
     // See tombstoneIsStale: a replayed delete must not clobber a
     // newer local recreation.
-    if (options.source === "upstream" && entry.kind === "delete" && tombstoneIsStale(db, entry)) {
+    if (
+      options.source === "upstream" &&
+      entry.kind === "delete" &&
+      tombstoneIsStale(db, entry, options)
+    ) {
       continue;
     }
     const blockingRoot = readOnlyRootFor(db, entry.path);
@@ -567,27 +581,25 @@ function assertChunkSize(actual: number, declared: number, hash: Uint8Array, pat
   );
 }
 
-// Decide whether an upstream tombstone may delete the live path.
-//
-// A tombstone describes the path as of the revision it was stamped
-// with. Because the sync cursor only advances after a block applies,
-// any block interrupted before its acknowledgment is replayed — and a
-// replayed tombstone whose path was recreated locally in the meantime
-// would destroy content the tombstone never described.
-//
-// The guard is a revision comparison: apply the delete only when the
-// live path is no newer than the tombstone. A path recreated above the
-// tombstone's rev is newer information than the delete, so the delete
-// is stale and dropped. It is not lost work — the recreation is itself
-// a change that the next push ships upstream.
-//
-// Local deletes are exempt. They are authored here, not replayed, so
-// there is no earlier revision to compare against.
-function tombstoneIsStale(db: Database, entry: ChangeEntry & { kind: "delete" }): boolean {
+// Peer entry.rev and local node.rev are independent counters. On pull,
+// only a local version already pushed to this backend may yield to a
+// delete. An unpushed edit/recreation survives until the next push;
+// a reset watermark conservatively protects all local versions.
+// On push, the receiver's committed sender cursor identifies replays
+// in the sender's own rev space. New pushes are authoritative, while a
+// replay must not remove a path recreated after the original commit.
+function tombstoneIsStale(
+  db: Database,
+  entry: ChangeEntry & { kind: "delete" },
+  options: ApplyOptions,
+): boolean {
   const live = resolveInode(db, entry.path, { followSymlinks: false });
   if (live === null) return false;
+  if (options.receivedCursor !== undefined) {
+    return compareChangeCursors({ rev: entry.rev, path: entry.path }, options.receivedCursor) <= 0;
+  }
   const row = db.one<{ rev: number }>("SELECT rev FROM vfs_nodes WHERE inode = ?", live.inode);
-  return row !== undefined && row.rev > entry.rev;
+  return row !== undefined && row.rev > readWatermark(db, "pushRev", options.backend);
 }
 
 // Compare an entry against the local node graph. Returns true when

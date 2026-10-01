@@ -215,6 +215,8 @@ describe("pack mode pull", () => {
     try {
       seed(remote.db, 6);
       await drain(pullBlocks(local.db, remote.rpc, PACK_OPTIONS));
+      // Complete the echo push so the peer has seen our local versions.
+      await drain(pushBlocks(local.db, remote.rpc, PACK_OPTIONS));
 
       const provider = new SQLiteWorkspaceProvider(remote.db);
       provider.unlinkSync("/f000.txt");
@@ -419,4 +421,85 @@ describe("pack mode push", () => {
       storage.close();
     }
   });
+});
+
+describe("deletes across independent peer revision spaces", () => {
+  for (const mode of ["entries", "pack"] as const) {
+    const options = {
+      thresholdEntries: mode === "pack" ? 1 : 1_000,
+      thresholdBytes: 1024 * 1024 * 1024,
+    };
+
+    it(`${mode}: pulls container deletes after pushing a higher local revision`, async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        const host = new SQLiteWorkspaceProvider(local.db);
+        const container = new SQLiteWorkspaceProvider(remote.db);
+        for (let i = 0; i < 20; i++) host.writeFileSync("/x", `version ${i}`);
+        host.writeFileSync("/y", "content");
+        await drain(pushBlocks(local.db, remote.rpc, { ...options, backend: "linux" }));
+        container.unlinkSync("/x");
+        container.unlinkSync("/y");
+        const seen = await drain(
+          pullBlocks(local.db, remote.rpc, { ...options, backend: "linux" }),
+        );
+        expect(seen[0].mode).toBe(mode);
+        expect(names(local.db)).toEqual([]);
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
+    it(`${mode}: a committed delete replay preserves a receiver recreation`, async () => {
+      const sender = makePeer();
+      const receiver = makePeer();
+      try {
+        const source = new SQLiteWorkspaceProvider(sender.db);
+        const target = new SQLiteWorkspaceProvider(receiver.db);
+        source.writeFileSync("/x", "original");
+        source.writeFileSync("/y", "original");
+        await drain(pushBlocks(sender.db, receiver.rpc, options));
+        source.unlinkSync("/x");
+        source.unlinkSync("/y");
+        const failing = createSyncServer(receiver.db, {
+          afterApply: () => {
+            throw new Error("settle failed after commit");
+          },
+        });
+        await expect(drain(pushBlocks(sender.db, failing, options))).rejects.toThrow(
+          "settle failed",
+        );
+        expect(names(receiver.db)).toEqual([]);
+        target.writeFileSync("/x", "recreated");
+        await drain(pushBlocks(sender.db, receiver.rpc, options));
+        expect(target.readFileSync("/x", "utf8")).toBe("recreated");
+      } finally {
+        sender.close();
+        receiver.close();
+      }
+    });
+
+    it(`${mode}: pushes deletes to a receiver whose local revision is higher`, async () => {
+      const sender = makePeer();
+      const receiver = makePeer();
+      try {
+        const source = new SQLiteWorkspaceProvider(sender.db);
+        const target = new SQLiteWorkspaceProvider(receiver.db);
+        for (let i = 0; i < 20; i++) target.writeFileSync("/unrelated", `version ${i}`);
+        source.writeFileSync("/x", "content");
+        source.writeFileSync("/y", "content");
+        await drain(pushBlocks(sender.db, receiver.rpc, options));
+        source.unlinkSync("/x");
+        source.unlinkSync("/y");
+        const seen = await drain(pushBlocks(sender.db, receiver.rpc, options));
+        expect(seen[0].mode).toBe(mode);
+        expect(names(receiver.db)).toEqual(["unrelated"]);
+      } finally {
+        sender.close();
+        receiver.close();
+      }
+    });
+  }
 });
