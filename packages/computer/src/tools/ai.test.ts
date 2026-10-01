@@ -1,5 +1,8 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { WorkerJavaScriptBackend } from "../backends/worker-javascript/worker-javascript.js";
+import { createGitModule } from "../modules/git.js";
 import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
 import { Workspace } from "../workspace.js";
 import {
@@ -83,6 +86,17 @@ function toolDescription(tool: unknown): string {
   const description = (tool as { description?: unknown }).description;
   if (typeof description !== "string") throw new Error("tool has no description");
   return description;
+}
+
+function inputSchema(tool: unknown): z.ZodType {
+  const schema = (tool as { inputSchema?: unknown }).inputSchema;
+  if (!(schema instanceof z.ZodType)) throw new Error("tool has no zod input schema");
+  return schema;
+}
+
+function inputProperties(tool: unknown): string[] {
+  const json = z.toJSONSchema(inputSchema(tool)) as { properties?: Record<string, unknown> };
+  return Object.keys(json.properties ?? {}).sort();
 }
 
 function makeWorkspace(): Workspace {
@@ -1697,7 +1711,165 @@ describe("createAITools callable exec", () => {
       },
     });
 
-    expect(toolDescription(tools.exec)).toContain("callable");
+    expect(toolDescription(tools.exec)).toContain("Run code in the workspace");
+    expect(toolDescription(tools.exec)).toContain("`result` field");
+    expect(toolDescription(tools.exec)).toContain("JavaScript module runtime");
+  });
+
+  it("adds what the backend says about itself after the caller's description", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+        isCallable: () => true,
+        describe: (id: string) =>
+          id === "js" ? "Modules: `ws:weather` exports `forecast`." : undefined,
+      },
+    };
+    const withBoth = createAITools({
+      workspace,
+      shell: { backends: { js: { description: "Use for data work." } } },
+    });
+    const withBackendOnly = createAITools({ workspace, shell: { backends: { js: {} } } });
+
+    expect(toolDescription(withBoth.exec)).toContain(
+      "Use for data work.\n\nModules: `ws:weather` exports `forecast`.",
+    );
+    expect(toolDescription(withBackendOnly.exec)).toContain("`ws:weather` exports `forecast`");
+  });
+
+  it("requires a description for a backend that does not describe itself", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+
+    expect(() => createAITools({ workspace, shell: { backends: { shell: {} } } })).toThrow(
+      /does not describe itself/,
+    );
+  });
+});
+
+describe("createAITools exec against a real JavaScript backend", () => {
+  it("lists the backend's modules in the tool description", () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: { load: () => ({ getEntrypoint: () => ({}) }) },
+          modules: {
+            "tar-stream": "export default {};",
+            "ws:weather": { forecast: ([city]) => ({ city, sky: "clear" }) },
+            "ws:git": createGitModule(),
+          },
+        }),
+      ],
+    });
+    const tools = createAITools({
+      workspace,
+      shell: { backends: { "worker-javascript": {} } },
+    });
+    const description = toolDescription(tools.exec);
+
+    expect(description).toContain("`node:fs/promises`");
+    expect(description).toContain("- `tar-stream`: a bundled library.");
+    expect(description).toContain("- `ws:weather`: exports `forecast`.");
+    expect(description).toContain("- `ws:git`: The workspace's Git repository tools");
+    expect(description).toContain("no direct network access");
+    expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
+  });
+});
+
+describe("createAITools exec with one backend", () => {
+  function recordingWorkspace(callable: boolean) {
+    const calls: Array<{ command: string; backend: string | undefined; input: unknown }> = [];
+    const workspace = {
+      runtime: {
+        async exec(
+          command: string,
+          options: { encoding: "utf8"; backend?: string; input?: unknown },
+        ) {
+          calls.push({ command, backend: options.backend, input: options.input });
+          return { result: async () => ({ exitCode: 0, stdout: "", stderr: "", value: 1 }) };
+        },
+        isCallable: (id: string) => callable && id === "worker-javascript",
+      },
+    };
+    return { calls, workspace };
+  }
+
+  it("has no backend argument and runs on the only backend without defaultBackend", async () => {
+    const { calls, workspace } = recordingWorkspace(true);
+    const tools = createAITools({
+      workspace,
+      shell: { backends: { "worker-javascript": { description: "Isolated JavaScript." } } },
+    });
+
+    expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
+    const parsed = inputSchema(tools.exec).parse({
+      command: "export default () => 1",
+      backend: "container",
+    });
+    expect(parsed).toEqual({ command: "export default () => 1" });
+    await executeTool(tools.exec, parsed);
+    expect(calls).toEqual([
+      { command: "export default () => 1", backend: "worker-javascript", input: undefined },
+    ]);
+  });
+
+  it("does not mention backends in the description", () => {
+    const { workspace } = recordingWorkspace(true);
+    const tools = createAITools({
+      workspace,
+      shell: { backends: { "worker-javascript": { description: "Isolated JavaScript." } } },
+    });
+
+    expect(toolDescription(tools.exec)).not.toMatch(/backend/i);
+  });
+
+  it("drops input for a single shell backend", () => {
+    const { workspace } = recordingWorkspace(false);
+    const tools = createAITools({
+      workspace,
+      shell: { backends: { shell: { description: "Fast shell." } } },
+    });
+
+    expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env"]);
+    expect(toolDescription(tools.exec)).toContain("Run a shell command");
+    expect(toolDescription(tools.exec)).not.toMatch(/backend/i);
+  });
+
+  it("keeps the backend argument when more than one backend is configured", () => {
+    const { workspace } = recordingWorkspace(true);
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "worker-javascript",
+        backends: {
+          "worker-javascript": { description: "Isolated JavaScript." },
+          container: { description: "Full Linux." },
+        },
+      },
+    });
+
+    expect(inputProperties(tools.exec)).toEqual(["backend", "command", "cwd", "env", "input"]);
+  });
+
+  it("requires defaultBackend when more than one backend is configured", () => {
+    const { workspace } = recordingWorkspace(false);
+
+    expect(() =>
+      createAITools({
+        workspace,
+        shell: {
+          backends: { shell: { description: "Fast shell." }, container: { description: "Linux." } },
+        },
+      }),
+    ).toThrow(/defaultBackend/);
   });
 });
 
