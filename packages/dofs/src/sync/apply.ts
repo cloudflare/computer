@@ -13,7 +13,15 @@ import { stageBlob } from "./blobs.js";
 import type { ChangeEntry } from "./changes.js";
 import { computeManifestHash } from "./manifests.js";
 import { pathOf } from "./paths.js";
-import { type ChangeCursor, compareChangeCursors, readWatermark } from "./watermarks.js";
+import {
+  type ChangeCursor,
+  compareChangeCursors,
+  currentRev,
+  DEFAULT_BACKEND_ID,
+  readPushCursor,
+  readWatermark,
+  recordUpstreamRevs,
+} from "./watermarks.js";
 
 // One container-side change that landed under a read-only mount and
 // was therefore skipped rather than applied. Callers (the workspace
@@ -290,97 +298,102 @@ export async function applyChanges(
   };
 
   for await (const entry of entries) {
-    // Idempotent skip: if the entry already matches the local
-    // state, drop it on the floor. The check is what stops a
-    // pull from bumping vfs_meta.rev for entries that are
-    // already in place, which in turn stops the next push from
-    // re-shipping them.
-    if (options.source === "upstream" && entry.kind !== "delete") {
-      if (alreadyApplied(db, entry)) continue;
-    }
-    // Protect local changes without comparing independent peer rev spaces.
-    if (
-      options.source === "upstream" &&
-      entry.kind === "delete" &&
-      tombstoneIsStale(db, entry, options)
-    ) {
-      continue;
-    }
-    // Read-only mount guard. Entries under a registered read-only
-    // mount root are surfaced via the return value and not applied.
-    // The owning workspace's surface (Workspace.pull, exec()) folds
-    // these into its own return so callers see what stayed
-    // authoritative on the mount.
-    const blockingRoot = readOnlyRootFor(db, entry.path);
-    if (blockingRoot !== undefined) {
-      skipped.push({
-        path: entry.path,
-        mountRoot: blockingRoot,
-        op: entry.kind === "delete" ? "delete" : "write",
-        reason: "read-only",
-      });
-      continue;
-    }
-    if (entry.kind === "delete") {
-      try {
-        rm(db, entry.path, { recursive: true, force: true });
-      } catch {
-        // Already gone is fine — idempotent apply.
+    const revBefore = currentRev(db);
+    try {
+      // Idempotent skip: if the entry already matches the local
+      // state, drop it on the floor. The check is what stops a
+      // pull from bumping vfs_meta.rev for entries that are
+      // already in place, which in turn stops the next push from
+      // re-shipping them.
+      if (options.source === "upstream" && entry.kind !== "delete") {
+        if (alreadyApplied(db, entry)) continue;
       }
-      applied++;
-      pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
-    }
-    if (entry.kind === "dir") {
-      const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-      if (parentResult.blockingRoot !== undefined) {
+      // Protect local changes without comparing independent peer rev spaces.
+      if (
+        options.source === "upstream" &&
+        entry.kind === "delete" &&
+        tombstoneIsStale(db, entry, options)
+      ) {
+        continue;
+      }
+      // Read-only mount guard. Entries under a registered read-only
+      // mount root are surfaced via the return value and not applied.
+      // The owning workspace's surface (Workspace.pull, exec()) folds
+      // these into its own return so callers see what stayed
+      // authoritative on the mount.
+      const blockingRoot = readOnlyRootFor(db, entry.path);
+      if (blockingRoot !== undefined) {
         skipped.push({
           path: entry.path,
-          mountRoot: parentResult.blockingRoot,
+          mountRoot: blockingRoot,
+          op: entry.kind === "delete" ? "delete" : "write",
+          reason: "read-only",
+        });
+        continue;
+      }
+      if (entry.kind === "delete") {
+        try {
+          rm(db, entry.path, { recursive: true, force: true });
+        } catch {
+          // Already gone is fine — idempotent apply.
+        }
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      if (entry.kind === "dir") {
+        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
+        if (parentResult.blockingRoot !== undefined) {
+          skipped.push({
+            path: entry.path,
+            mountRoot: parentResult.blockingRoot,
+            op: "write",
+            reason: "read-only",
+          });
+          continue;
+        }
+        applyDirectoryEntry(db, { ...entry, path: parentResult.path });
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      if (entry.kind === "symlink") {
+        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
+        if (parentResult.blockingRoot !== undefined) {
+          skipped.push({
+            path: entry.path,
+            mountRoot: parentResult.blockingRoot,
+            op: "write",
+            reason: "read-only",
+          });
+          continue;
+        }
+        removeReplaceableFinalEntry(db, parentResult.path, "symlink");
+        symlink(db, entry.target, parentResult.path, () => entry.mtime);
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      const fileResult = applyFileEntry(db, entry, objects);
+      if (fileResult.blockingRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: fileResult.blockingRoot,
           op: "write",
           reason: "read-only",
         });
         continue;
       }
-      applyDirectoryEntry(db, { ...entry, path: parentResult.path });
       applied++;
+      bytesInBatch += fileResult.total;
       pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
+      if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
+    } finally {
+      recordPulledRevs(db, options, revBefore);
     }
-    if (entry.kind === "symlink") {
-      const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-      if (parentResult.blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: parentResult.blockingRoot,
-          op: "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      removeReplaceableFinalEntry(db, parentResult.path, "symlink");
-      symlink(db, entry.target, parentResult.path, () => entry.mtime);
-      applied++;
-      pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
-    }
-    const fileResult = applyFileEntry(db, entry, objects);
-    if (fileResult.blockingRoot !== undefined) {
-      skipped.push({
-        path: entry.path,
-        mountRoot: fileResult.blockingRoot,
-        op: "write",
-        reason: "read-only",
-      });
-      continue;
-    }
-    applied++;
-    bytesInBatch += fileResult.total;
-    pathsInBatch++;
-    if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
 
   // Loopback suppression used to advance pushRev locally after an
@@ -428,88 +441,93 @@ export function applyChangesSync(
   };
 
   for (const entry of entries) {
-    if (options.source === "upstream" && entry.kind !== "delete") {
-      if (alreadyApplied(db, entry)) continue;
-    }
-    // See tombstoneIsStale: a replayed delete must not clobber a
-    // newer local recreation.
-    if (
-      options.source === "upstream" &&
-      entry.kind === "delete" &&
-      tombstoneIsStale(db, entry, options)
-    ) {
-      continue;
-    }
-    const blockingRoot = readOnlyRootFor(db, entry.path);
-    if (blockingRoot !== undefined) {
-      skipped.push({
-        path: entry.path,
-        mountRoot: blockingRoot,
-        op: entry.kind === "delete" ? "delete" : "write",
-        reason: "read-only",
-      });
-      continue;
-    }
-    if (entry.kind === "delete") {
-      try {
-        rm(db, entry.path, { recursive: true, force: true });
-      } catch {
-        // Already gone is fine — idempotent apply.
+    const revBefore = currentRev(db);
+    try {
+      if (options.source === "upstream" && entry.kind !== "delete") {
+        if (alreadyApplied(db, entry)) continue;
       }
-      applied++;
-      pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
-    }
-    if (entry.kind === "dir") {
-      const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-      if (parentResult.blockingRoot !== undefined) {
+      // See tombstoneIsStale: a replayed delete must not clobber a
+      // newer local recreation.
+      if (
+        options.source === "upstream" &&
+        entry.kind === "delete" &&
+        tombstoneIsStale(db, entry, options)
+      ) {
+        continue;
+      }
+      const blockingRoot = readOnlyRootFor(db, entry.path);
+      if (blockingRoot !== undefined) {
         skipped.push({
           path: entry.path,
-          mountRoot: parentResult.blockingRoot,
+          mountRoot: blockingRoot,
+          op: entry.kind === "delete" ? "delete" : "write",
+          reason: "read-only",
+        });
+        continue;
+      }
+      if (entry.kind === "delete") {
+        try {
+          rm(db, entry.path, { recursive: true, force: true });
+        } catch {
+          // Already gone is fine — idempotent apply.
+        }
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      if (entry.kind === "dir") {
+        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
+        if (parentResult.blockingRoot !== undefined) {
+          skipped.push({
+            path: entry.path,
+            mountRoot: parentResult.blockingRoot,
+            op: "write",
+            reason: "read-only",
+          });
+          continue;
+        }
+        applyDirectoryEntry(db, { ...entry, path: parentResult.path });
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      if (entry.kind === "symlink") {
+        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
+        if (parentResult.blockingRoot !== undefined) {
+          skipped.push({
+            path: entry.path,
+            mountRoot: parentResult.blockingRoot,
+            op: "write",
+            reason: "read-only",
+          });
+          continue;
+        }
+        removeReplaceableFinalEntry(db, parentResult.path, "symlink");
+        symlink(db, entry.target, parentResult.path, () => entry.mtime);
+        applied++;
+        pathsInBatch++;
+        if (pathsInBatch >= maxPaths) flush();
+        continue;
+      }
+      const fileResult = applyFileEntry(db, entry, objects);
+      if (fileResult.blockingRoot !== undefined) {
+        skipped.push({
+          path: entry.path,
+          mountRoot: fileResult.blockingRoot,
           op: "write",
           reason: "read-only",
         });
         continue;
       }
-      applyDirectoryEntry(db, { ...entry, path: parentResult.path });
       applied++;
+      bytesInBatch += fileResult.total;
       pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
+      if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
+    } finally {
+      recordPulledRevs(db, options, revBefore);
     }
-    if (entry.kind === "symlink") {
-      const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-      if (parentResult.blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: parentResult.blockingRoot,
-          op: "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      removeReplaceableFinalEntry(db, parentResult.path, "symlink");
-      symlink(db, entry.target, parentResult.path, () => entry.mtime);
-      applied++;
-      pathsInBatch++;
-      if (pathsInBatch >= maxPaths) flush();
-      continue;
-    }
-    const fileResult = applyFileEntry(db, entry, objects);
-    if (fileResult.blockingRoot !== undefined) {
-      skipped.push({
-        path: entry.path,
-        mountRoot: fileResult.blockingRoot,
-        op: "write",
-        reason: "read-only",
-      });
-      continue;
-    }
-    applied++;
-    bytesInBatch += fileResult.total;
-    pathsInBatch++;
-    if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
   }
 
   // See applyChanges() for why pushRev no longer advances locally
@@ -581,10 +599,17 @@ function assertChunkSize(actual: number, declared: number, hash: Uint8Array, pat
   );
 }
 
-// Peer entry.rev and local node.rev are independent counters. On pull,
-// only a local version already pushed to this backend may yield to a
-// delete. An unpushed edit/recreation survives until the next push;
-// a reset watermark conservatively protects all local versions.
+// Peer entry.rev and local node.rev are independent counters.
+//
+// On pull, a delete yields only to local versions this backend has not
+// seen: any node in the doomed subtree (a directory delete removes its
+// descendants too) that sits beyond the push cursor and was not minted
+// by an earlier pull from the same backend. The cursor's path matters,
+// since a bounded push can ship one rev only in part. A pulled version
+// awaiting its echo push still holds what the remote sent, so the
+// remote's later delete wins. A reset watermark conservatively protects
+// every locally authored version.
+//
 // On push, the receiver's committed sender cursor identifies replays
 // in the sender's own rev space. New pushes are authoritative, while a
 // replay must not remove a path recreated after the original commit.
@@ -598,8 +623,45 @@ function tombstoneIsStale(
   if (options.receivedCursor !== undefined) {
     return compareChangeCursors({ rev: entry.rev, path: entry.path }, options.receivedCursor) <= 0;
   }
-  const row = db.one<{ rev: number }>("SELECT rev FROM vfs_nodes WHERE inode = ?", live.inode);
-  return row !== undefined && row.rev > readWatermark(db, "pushRev", options.backend);
+  const backend = options.backend ?? DEFAULT_BACKEND_ID;
+  const pushed = shippedCursor(db, backend);
+  const candidates = db.all<{ path: string; rev: number }>(
+    `WITH RECURSIVE tree(inode, path) AS (
+       SELECT ?, ?
+       UNION ALL
+       SELECT d.child_inode,
+              CASE WHEN tree.path = '/' THEN '/' || d.name ELSE tree.path || '/' || d.name END
+         FROM vfs_dirents d JOIN tree ON d.parent_inode = tree.inode
+     )
+     SELECT tree.path AS path, n.rev AS rev
+       FROM tree JOIN vfs_nodes n ON n.inode = tree.inode
+      WHERE n.rev >= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM _vfs_upstream_revs u WHERE u.backend = ? AND u.rev = n.rev
+        )`,
+    live.inode,
+    entry.path,
+    pushed.rev,
+    backend,
+  );
+  return candidates.some((node) => compareChangeCursors(node, pushed) > 0);
+}
+
+// The push cursor, capped by the pushRev watermark so a watermark
+// reset protects local versions even if the cursor row was left behind.
+function shippedCursor(db: Database, backend: string): ChangeCursor {
+  const watermark = readWatermark(db, "pushRev", backend);
+  const cursor = readPushCursor(db, backend);
+  return cursor.rev > watermark ? { rev: watermark, path: null } : cursor;
+}
+
+// Remember revs minted while applying a pull, so a later delete from
+// the same backend can tell them from local edits. Push receivers
+// (receivedCursor set) guard replays by cursor instead and never prune,
+// so they record nothing.
+function recordPulledRevs(db: Database, options: ApplyOptions, revBefore: number): void {
+  if (options.source !== "upstream" || options.receivedCursor !== undefined) return;
+  recordUpstreamRevs(db, revBefore, currentRev(db), options.backend);
 }
 
 // Compare an entry against the local node graph. Returns true when

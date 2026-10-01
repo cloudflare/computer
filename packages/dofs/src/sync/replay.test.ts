@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
+import { mkdir } from "../fs/mkdir.js";
 import { readFile } from "../fs/readFile.js";
+import { rename } from "../fs/rename.js";
 import { resolveInode } from "../fs/resolve.js";
 import { withDB } from "../fs/with-db.js";
 import { writeFile } from "../fs/writeFile.js";
 import { applyChanges, applyChangesSync } from "./apply.js";
 import type { ChangeEntry } from "./changes.js";
-import { currentRev, writeWatermark } from "./watermarks.js";
+import { currentRev, writePushCursor, writeWatermark } from "./watermarks.js";
 
 // The unified sync plan asserts that replaying an unacknowledged block
 // is safe because "revision and cursor semantics already make replay
@@ -185,6 +187,132 @@ describe("block replay idempotency", () => {
               })
             ).applied,
           ).toBe(1);
+        });
+      });
+    }
+
+    for (const [name, apply] of [
+      ["async", applyChanges],
+      ["sync", applyChangesSync],
+    ] as const) {
+      it(`${name}: lets a remote delete win over an unechoed pulled file`, async () => {
+        await withDB(async (db) => {
+          writeWatermark(db, "pushRev", currentRev(db));
+          const file: ChangeEntry = {
+            kind: "file",
+            rev: 1,
+            path: "/pulled/x",
+            mode: 0o644,
+            mtime: 1,
+            size: 0,
+            chunks: [],
+          };
+          expect((await apply(db, [file], new Map(), { source: "upstream" })).applied).toBe(1);
+          // No echo push yet: the pulled versions sit above pushRev.
+          const result = await apply(
+            db,
+            [{ kind: "delete", rev: 2, path: "/pulled/x" }],
+            new Map(),
+            {
+              source: "upstream",
+            },
+          );
+          expect(result.applied).toBe(1);
+          expect(resolveInode(db, "/pulled/x", { followSymlinks: false })).toBeNull();
+          // Pulled parents carry upstream provenance too.
+          expect(
+            (
+              await apply(db, [{ kind: "delete", rev: 3, path: "/pulled" }], new Map(), {
+                source: "upstream",
+              })
+            ).applied,
+          ).toBe(1);
+        });
+      });
+
+      it(`${name}: protects a local edit made after a pull`, async () => {
+        await withDB(async (db) => {
+          writeWatermark(db, "pushRev", currentRev(db));
+          const file: ChangeEntry = {
+            kind: "file",
+            rev: 1,
+            path: "/x",
+            mode: 0o644,
+            mtime: 1,
+            size: 0,
+            chunks: [],
+          };
+          await apply(db, [file], new Map(), { source: "upstream" });
+          await writeFile(db, "/x", "local edit", {}, () => 2);
+          const result = await apply(db, [{ kind: "delete", rev: 2, path: "/x" }], new Map(), {
+            source: "upstream",
+          });
+          expect(result.applied).toBe(0);
+          expect(await readFile(db, "/x", "utf8")).toBe("local edit");
+        });
+      });
+
+      it(`${name}: protects unpushed descendants from a directory delete`, async () => {
+        await withDB(async (db) => {
+          mkdir(db, "/project", {}, () => 1);
+          await writeFile(db, "/project/draft", "pushed", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          await writeFile(db, "/project/draft", "unpushed", {}, () => 2);
+          const result = await apply(
+            db,
+            [{ kind: "delete", rev: 1, path: "/project" }],
+            new Map(),
+            {
+              source: "upstream",
+            },
+          );
+          expect(result.applied).toBe(0);
+          expect(await readFile(db, "/project/draft", "utf8")).toBe("unpushed");
+        });
+      });
+
+      it(`${name}: still deletes a clean directory tree`, async () => {
+        await withDB(async (db) => {
+          mkdir(db, "/project", {}, () => 1);
+          await writeFile(db, "/project/done", "pushed", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          const result = await apply(
+            db,
+            [{ kind: "delete", rev: 1, path: "/project" }],
+            new Map(),
+            {
+              source: "upstream",
+            },
+          );
+          expect(result.applied).toBe(1);
+          expect(resolveInode(db, "/project", { followSymlinks: false })).toBeNull();
+        });
+      });
+
+      it(`${name}: protects same-rev paths beyond a partial push cursor`, async () => {
+        await withDB(async (db) => {
+          mkdir(db, "/old", {}, () => 1);
+          await writeFile(db, "/old/a", "a", {}, () => 1);
+          await writeFile(db, "/old/b", "b", {}, () => 1);
+          rename(db, "/old", "/new");
+          const renameRev = currentRev(db);
+          // A bounded push shipped /new and /new/a, but not /new/b.
+          writePushCursor(db, { rev: renameRev, path: "/new/a" });
+          const unshipped = await apply(
+            db,
+            [{ kind: "delete", rev: 1, path: "/new/b" }],
+            new Map(),
+            {
+              source: "upstream",
+            },
+          );
+          expect(unshipped.applied).toBe(0);
+          expect(await readFile(db, "/new/b", "utf8")).toBe("b");
+          const shipped = await apply(db, [{ kind: "delete", rev: 1, path: "/new/a" }], new Map(), {
+            source: "upstream",
+          });
+          expect(shipped.applied).toBe(1);
+          expect(resolveInode(db, "/new/a", { followSymlinks: false })).toBeNull();
         });
       });
     }

@@ -452,6 +452,27 @@ describe("deletes across independent peer revision spaces", () => {
       }
     });
 
+    it(`${mode}: a container delete wins over a pulled file awaiting its echo push`, async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        const container = new SQLiteWorkspaceProvider(remote.db);
+        container.writeFileSync("/x", "content");
+        container.writeFileSync("/y", "content");
+        await drain(pullBlocks(local.db, remote.rpc, { ...options, backend: "linux" }));
+        expect(names(local.db)).toEqual(["x", "y"]);
+        container.unlinkSync("/x");
+        container.unlinkSync("/y");
+        await drain(pullBlocks(local.db, remote.rpc, { ...options, backend: "linux" }));
+        expect(names(local.db)).toEqual([]);
+        await drain(pushBlocks(local.db, remote.rpc, { ...options, backend: "linux" }));
+        expect(names(remote.db)).toEqual([]);
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
     it(`${mode}: a committed delete replay preserves a receiver recreation`, async () => {
       const sender = makePeer();
       const receiver = makePeer();
