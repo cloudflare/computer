@@ -255,6 +255,10 @@ describe("withLocalPassthrough: rename", () => {
       root,
       ignore: resolveMountIgnore(paths, MOUNT),
       mountPoint: MOUNT,
+      // Swallowed rather than left on console.warn: the crossing-rename
+      // guidance is asserted in its own test above, and a suite that
+      // prints it on every run trains people to ignore the output.
+      warn: () => {},
     });
     return { ops, calls: source.calls };
   };
@@ -274,6 +278,72 @@ describe("withLocalPassthrough: rename", () => {
     const { ops, calls } = build(["node_modules"]);
     ops.rename("/src/a.ts", "/src/b.ts", () => {});
     expect(calls).toEqual(["rename"]);
+  });
+
+  test("logs the fix once on the first crossing rename", () => {
+    // The errno is all the kernel can carry, and "cross-device link" on
+    // a path that is not a device is where an operator loses an
+    // afternoon. The guidance has to reach them somewhere, so it goes
+    // to the log -- and only once, because a build that does this does
+    // it in a loop.
+    const warnings: string[] = [];
+    const source = recordingOps();
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["dist"], MOUNT),
+      mountPoint: MOUNT,
+      warn: (message) => warnings.push(message),
+    });
+
+    ops.rename("/.tmp-build", "/dist", () => {});
+    expect(warnings).toHaveLength(1);
+
+    const [message] = warnings;
+    expect(message).toMatch(/EXDEV/);
+    // Which side is which, so the reader does not have to work it out.
+    expect(message).toMatch(/\/dist is container-local/);
+    expect(message).toMatch(/\/\.tmp-build is synced/);
+    // Why it is not just done anyway.
+    expect(message).toMatch(/cannot be atomic/);
+    // And the actual fix: ignore the staging directory too.
+    expect(message).toMatch(/add "\.tmp-build" to MOUNT_IGNORE/);
+
+    // Repeats stay silent.
+    ops.rename("/.tmp-build", "/dist", () => {});
+    ops.rename("/dist/x", "/y", () => {});
+    expect(warnings).toHaveLength(1);
+  });
+
+  test("counts every crossing rename even though it logs once", () => {
+    const warnings: string[] = [];
+    const source = recordingOps();
+    const { ops, stats } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["dist"], MOUNT),
+      mountPoint: MOUNT,
+      warn: (message) => warnings.push(message),
+    });
+
+    ops.rename("/.tmp-build", "/dist", () => {});
+    ops.rename("/.tmp-two", "/dist", () => {});
+    expect(stats().crossLayerRenames).toBe(2);
+    expect(warnings).toHaveLength(1);
+  });
+
+  test("does not log for a rename that stays within one layer", () => {
+    const warnings: string[] = [];
+    const source = recordingOps();
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["dist"], MOUNT),
+      mountPoint: MOUNT,
+      warn: (message) => warnings.push(message),
+    });
+
+    ops.create("/dist/a", 0o644, () => {});
+    ops.rename("/dist/a", "/dist/b", () => {});
+    ops.rename("/src/a.ts", "/src/b.ts", () => {});
+    expect(warnings).toEqual([]);
   });
 
   test("returns EXDEV when a rename crosses the boundary", () => {

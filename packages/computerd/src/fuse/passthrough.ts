@@ -91,6 +91,8 @@ export interface LocalPassthroughOptions {
   readonly fs?: PassthroughFs;
   /** Called once per distinct local-only directory created. Diagnostics. */
   readonly onMaterialise?: (relativePath: string) => void;
+  /** Operator-facing warnings. Defaults to console.warn; injected for tests. */
+  readonly warn?: (message: string) => void;
 }
 
 /**
@@ -151,6 +153,8 @@ export interface PassthroughStats {
   readonly cacheHits: number;
   /** Open local file handles. */
   readonly openHandles: number;
+  /** Renames refused with EXDEV for crossing the boundary. */
+  readonly crossLayerRenames: number;
 }
 
 export interface LocalPassthrough {
@@ -172,7 +176,13 @@ export function withLocalPassthrough(
   if (options.ignore.isEmpty) {
     return {
       ops,
-      stats: () => ({ localOps: 0, decisions: 0, cacheHits: 0, openHandles: 0 }),
+      stats: () => ({
+        localOps: 0,
+        decisions: 0,
+        cacheHits: 0,
+        openHandles: 0,
+        crossLayerRenames: 0,
+      }),
     };
   }
 
@@ -183,6 +193,8 @@ export function withLocalPassthrough(
   let localOps = 0;
   let decisions = 0;
   let cacheHits = 0;
+  let crossLayerRenames = 0;
+  const warn = options.warn ?? ((message: string) => console.warn(message));
 
   // The decision cache. Keyed by *directory*, not by file: ignored-ness
   // is inherited, so once a directory is known local-only every path
@@ -523,6 +535,14 @@ export function withLocalPassthrough(
         // and a crash mid-copy would leave a half-written file where
         // the caller was promised all-or-nothing. Every tool already
         // handles EXDEV by falling back to copy-then-unlink.
+        //
+        // The errno is all the kernel can carry, and "cross-device
+        // link" on a path that is plainly not a device is the kind of
+        // message an operator loses an afternoon to. So the guidance
+        // goes to the log instead -- once per mount, because a build
+        // that does this does it in a loop and a per-rename line would
+        // bury everything else.
+        reportCrossLayerRename(source, destination, sourceLocal);
         cb(ERRNO.EXDEV);
         return;
       }
@@ -634,6 +654,31 @@ export function withLocalPassthrough(
     return handle;
   }
 
+  function reportCrossLayerRename(
+    source: string,
+    destination: string,
+    sourceIsLocal: boolean,
+  ): void {
+    crossLayerRenames += 1;
+    if (crossLayerRenames > 1) return;
+    const localSide = sourceIsLocal ? source : destination;
+    const syncedSide = sourceIsLocal ? destination : source;
+    // Name the entry to add, not just the paths. The fix is almost
+    // always "ignore the staging directory too": build tools write into
+    // a sibling and rename into place, so a destination that is
+    // local-only while its staging path is not produces exactly this.
+    const suggestion = toRelative(syncedSide, mountRoot) || syncedSide;
+    warn(
+      `computerd: rename ${source} -> ${destination} crossed the local-only ` +
+        `boundary and returned EXDEV. ${localSide} is container-local ` +
+        `(MOUNT_IGNORE), ${syncedSide} is synced to the workspace; a rename ` +
+        `between them cannot be atomic, so it is refused rather than ` +
+        `silently copied. Most callers fall back to copy-then-unlink. To ` +
+        `keep the rename atomic, add "${suggestion}" to MOUNT_IGNORE as ` +
+        `well. Further occurrences are not logged.`,
+    );
+  }
+
   function markDirectory(path: string): void {
     const relative = toRelative(path, mountRoot);
     if (relative !== "") directoryDecisions.set(relative, true);
@@ -686,6 +731,7 @@ export function withLocalPassthrough(
       decisions,
       cacheHits,
       openHandles: handles.size,
+      crossLayerRenames,
     }),
   };
 }
