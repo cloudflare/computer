@@ -15,8 +15,8 @@
  *     store, agentic loop, and chat protocol.
  *   - We own a `@cloudflare/computer.Workspace` with two backends:
  *     a WorkerShellBackend (`"shell"`) for fast just-bash text tooling and
- *     a LegacyContainerBackend (`"container"`) for full Linux
- *     userland through computerd. This mirrors examples/container-legacy while
+ *     a ContainerBackend (`"container"`) for full Linux
+ *     userland through computerd. This mirrors examples/container while
  *     keeping the chat surface unchanged.
  *   - `useThink: true` adds the string-based compatibility surface
  *     Think expects; the cast promotes it from optional to present.
@@ -32,10 +32,7 @@ import {
   WorkspaceServiceProxy,
   type WorkspaceStub,
 } from "@cloudflare/computer";
-import {
-  LegacyContainerBackend,
-  withLegacyWorkspaceContainer,
-} from "@cloudflare/computer/backends/container-legacy";
+import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { Think } from "@cloudflare/think";
@@ -58,11 +55,11 @@ function workspaceRef(ctx: DurableObjectState) {
   return { binding: "Assistant", id: ctx.id.toString() };
 }
 
-// Anchor Think's generic before the mixin so withLegacyWorkspaceContainer
+// Anchor Think's generic before the mixin so withWorkspaceContainer
 // sees a concrete constructor.
 class AssistantBase extends Think<Env> {}
 
-export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
+export class Assistant extends withWorkspaceContainer(AssistantBase) {
   /** We have a dedicated `exec` tool; skip Think's built-in bash. */
   override workspaceBash = false;
 
@@ -72,15 +69,18 @@ export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
   /**
    * Container backend used when `exec` needs a real Linux userland.
    * The DO itself owns the container binding through the
-   * withLegacyWorkspaceContainer mixin; LegacyContainerBackend handles
+   * withWorkspaceContainer mixin; ContainerBackend handles
    * startup, outbound egress interception, the /api upgrade, and the
    * capnweb session.
    */
-  readonly #containerBackend = new LegacyContainerBackend({
+  readonly #containerBackend = new ContainerBackend({
     id: "container",
     container: () => this,
     workspace: workspaceRef(this.ctx),
     egress: { mode: "direct" },
+    // The durable object schedules this container, so it asks for its
+    // size at launch; wrangler.jsonc names the image under `images.app`.
+    instance: "standard-2",
   });
 
   /**

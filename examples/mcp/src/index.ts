@@ -7,10 +7,7 @@ import {
   WorkspaceServiceProxy,
   withWorkspace,
 } from "@cloudflare/computer";
-import {
-  LegacyContainerBackend,
-  withLegacyWorkspaceContainer,
-} from "@cloudflare/computer/backends/container-legacy";
+import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createGitClient } from "@cloudflare/computer/git";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -29,7 +26,7 @@ const TOKEN_ENCODER = new TextEncoder();
 
 class ComputerMCPDurableObject extends DurableObject<Env> {}
 
-class ComputerMCPBase extends withLegacyWorkspaceContainer(ComputerMCPDurableObject) {
+class ComputerMCPBase extends withWorkspaceContainer(ComputerMCPDurableObject) {
   readonly workerShell = new WorkerShellBackend({
     loader: this.env.LOADER,
     workspace: { binding: "COMPUTER_MCP", id: this.ctx.id.toString() },
@@ -37,10 +34,13 @@ class ComputerMCPBase extends withLegacyWorkspaceContainer(ComputerMCPDurableObj
     egress: { mode: "none" },
   });
 
-  readonly containerShell = new LegacyContainerBackend({
+  readonly containerShell = new ContainerBackend({
     container: () => this,
     workspace: { binding: "COMPUTER_MCP", id: this.ctx.id.toString() },
     egress: { mode: "direct" },
+    // The durable object schedules this container, so it asks for its
+    // size at launch; wrangler.jsonc names the image under `images.app`.
+    instance: "standard-2",
   });
 }
 

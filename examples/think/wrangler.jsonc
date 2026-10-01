@@ -15,14 +15,15 @@
   "containers": [
     {
       "class_name": "Assistant",
-      // Built from the local Dockerfile, which copies computerd into a
-      // small Debian image with Node/npm/git for real build and test
-      // workflows.
-      "image": "./Dockerfile",
-      "instance_type": "standard-2",
-      "max_instances": 5,
-      "rollout_active_grace_period": 0,
-      "rollout_step_percentage": [100]
+      // The durable object schedules this container and asks for its
+      // size at launch, so the block names images instead of
+      // instance_type and max_instances. The image is built from the
+      // local Dockerfile, which copies computerd into a small Debian
+      // image with Node/npm/git for real build and test workflows.
+      "scheduling_policy": "durable_object",
+      "images": {
+        "app": { "dockerfile": "./Dockerfile" }
+      }
     }
   ],
 
