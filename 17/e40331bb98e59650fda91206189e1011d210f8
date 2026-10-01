@@ -1,0 +1,23 @@
+examples/pi-ai/package.json
+  s_4f96e4ffcaca65::t_46480490a064ae 22
+examples/tanstack-ai/package.json
+  s_4f96e4ffcaca65::t_7cb1a3a644a901 23
+package-lock.json
+  s_4f96e4ffcaca65::t_d99be3e4d793fb 5952-7513,7516-7653,7657-7658,7662,7667,7683-7686,7700-7703,7717-7720,7734-7737,7751-7754,7768,7779,7802,7825,7845,7862,7879,7899,7919,7939,7959,7979,7999,8019,8039,8065,8091,8117,8143,8169,8195,8221,8247,8264,8284,8304,8324,8344-8347,8353-8354,8362,8369,8419-8432,8443-8447,8450-8453,8461,8464,8478,8486,14806-14808
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "17e40331bb98e59650fda91206189e1011d210f8",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
