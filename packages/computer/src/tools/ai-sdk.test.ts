@@ -1565,6 +1565,24 @@ describe("createAITools exec tool", () => {
     });
   });
 
+  it("lets exec win over the deprecated shell option", () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          throw new Error("not used");
+        },
+      },
+    };
+
+    expect(
+      createAITools({
+        workspace,
+        exec: {},
+        shell: { backends: { shell: { description: "Commands." } } },
+      }).exec,
+    ).toBeUndefined();
+  });
+
   it("rejects a backend the workspace does not have", () => {
     expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: {} } })).toThrow(
       /unknown backend "missing"/,
@@ -1607,7 +1625,7 @@ describe("createAITools callable exec", () => {
             }),
           };
         },
-        isCallable: (id: string) => id === "js",
+        backends: () => [{ id: "js", callable: true }],
       },
     };
     const tools = createAITools({
@@ -1653,7 +1671,7 @@ describe("createAITools callable exec", () => {
             result: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
           };
         },
-        isCallable: (id: string) => id === "js",
+        backends: () => [{ id: "js", callable: true }],
       },
     };
     const tools = createAITools({
@@ -1677,7 +1695,10 @@ describe("createAITools callable exec", () => {
           called = true;
           return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
         },
-        isCallable: (id: string) => id === "js",
+        backends: () => [
+          { id: "shell", callable: false },
+          { id: "js", callable: true },
+        ],
       },
     };
     const tools = createAITools({
@@ -1732,7 +1753,7 @@ describe("createAITools callable exec", () => {
         async exec() {
           throw new Error("not used");
         },
-        isCallable: (id: string) => id === "js",
+        backends: () => [{ id: "js", callable: true }],
       },
     };
     const tools = createAITools({
@@ -1754,9 +1775,9 @@ describe("createAITools callable exec", () => {
         async exec() {
           throw new Error("not used");
         },
-        isCallable: () => true,
-        describe: (id: string) =>
-          id === "js" ? "Modules: `ws:weather` exports `forecast`." : undefined,
+        backends: () => [
+          { id: "js", callable: true, description: "Modules: `ws:weather` exports `forecast`." },
+        ],
       },
     };
     const withBoth = createAITools({
@@ -1827,7 +1848,11 @@ describe("createAITools exec with one backend", () => {
           calls.push({ command, backend: options.backend, input: options.input });
           return { result: async () => ({ exitCode: 0, stdout: "", stderr: "", value: 1 }) };
         },
-        isCallable: (id: string) => callable && id === "worker-javascript",
+        backends: () => [
+          { id: "worker-javascript", callable },
+          { id: "shell", callable: false },
+          { id: "container", callable: false },
+        ],
       },
     };
     return { calls, workspace };
@@ -1999,7 +2024,7 @@ describe("createAITools exec streaming", () => {
             { name: "exit", code: 0, result: { ok: true } },
           ]);
         },
-        isCallable: (id: string) => id === "js",
+        backends: () => [{ id: "js", callable: true }],
       },
     };
     const tools = createAITools({

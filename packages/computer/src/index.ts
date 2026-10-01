@@ -70,6 +70,7 @@ export {
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
 export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
+export type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,

@@ -245,7 +245,7 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 `exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, streamMaxBytes? })` takes the same `backends` as the `exec` option, plus output limits.
 
-Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `CloudflareContainerBackend` describe their command sets and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
+Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `CloudflareContainerBackend` describe their command sets and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
 The tool offers only the arguments that can work:
 

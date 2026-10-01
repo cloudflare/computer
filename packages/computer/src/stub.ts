@@ -68,6 +68,7 @@ import type {
 import type { ShareOptions } from "./assets/index.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
+import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -405,6 +406,11 @@ export class WorkspaceRuntimeStub extends RpcTarget {
 
   [Symbol.dispose](): void {
     untrackStub(this);
+  }
+
+  /** What each backend says about itself. A client snapshots this when it is created. */
+  backends(): WorkspaceBackendInfo[] {
+    return this.#ws.runtime.backends();
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
