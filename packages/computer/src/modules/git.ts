@@ -72,13 +72,15 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceModule
       requireWrite(context, "Git CLI");
       // SAFETY: As for clone.
       const input = (value ?? {}) as unknown as Parameters<GitClient["cli"]>[0];
-      assertSafeCliArguments(input.argv);
-      if (input.argv?.some((argument) => NETWORK_COMMANDS.has(argument.toLowerCase()))) {
+      const { argv, cwd } = leadingDirectory(input.argv ?? [], input.cwd ?? ".");
+      assertSafeCliArguments(argv);
+      if (argv.some((argument) => NETWORK_COMMANDS.has(argument.toLowerCase()))) {
         requireNetwork("Git CLI network command");
       }
       return host.git.cli({
         ...input,
-        cwd: await context.resolvePath(input.cwd ?? ".", { allowMissing: true }),
+        argv,
+        cwd: await context.resolvePath(cwd, { allowMissing: true }),
       });
     },
   });
@@ -107,7 +109,23 @@ async function withDir(
   };
 }
 
-// Git path overrides would let a command escape the confined directory.
+// Agents often run `git -C <path> <subcommand>`. A leading `-C` becomes
+// the working directory, so it goes through the same confinement as
+// `cwd` instead of reaching the Git client as a path override.
+function leadingDirectory(argv: string[], cwd: string): { argv: string[]; cwd: string } {
+  if (argv[0] !== "-C") return { argv, cwd };
+  const directory = argv[1];
+  if (directory === undefined || directory === "") {
+    throw new Error("Git CLI option '-C' requires a value.");
+  }
+  return {
+    argv: argv.slice(2),
+    cwd: directory.startsWith("/") ? directory : `${cwd.replace(/\/+$/, "")}/${directory}`,
+  };
+}
+
+// Any other path override would let a command escape the confined
+// directory.
 function assertSafeCliArguments(argv: string[] | undefined) {
   if (
     argv?.some(

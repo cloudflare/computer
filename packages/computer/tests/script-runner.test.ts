@@ -414,11 +414,48 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("rejects Git CLI path overrides that bypass the runtime root", async () => {
+  it("confines a leading Git CLI -C to the runtime root", async () => {
     const response = await runtime({
       source: `
         import { cli } from "ws:git";
         export default () => cli({ cwd: "/workspace", argv: ["-C", "/outside", "status"] });
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "failed",
+        stderr: expect.stringContaining("must stay under /workspace"),
+      },
+    });
+  });
+
+  it("runs a Git CLI command in a leading -C directory", async () => {
+    const response = await runtime({
+      source: `
+        import { cli } from "ws:git";
+        export default async () => {
+          await cli({ cwd: "/workspace", argv: ["init", "c-repo"] });
+          return cli({ cwd: "/workspace", argv: ["-C", "c-repo", "rev-parse", "--show-toplevel"] });
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: { exitCode: 0, stdout: expect.stringContaining("/workspace/c-repo") },
+    });
+  });
+
+  it("rejects Git CLI path overrides after the subcommand", async () => {
+    const response = await runtime({
+      source: `
+        import { cli } from "ws:git";
+        export default () => cli({ cwd: "/workspace", argv: ["status", "--git-dir=/outside"] });
       `,
       cwd: "/workspace",
     });
