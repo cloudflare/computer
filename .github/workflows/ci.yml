@@ -148,6 +148,12 @@ jobs:
           - name: mcp
             workspace: "@example/computer-mcp"
             path: examples/mcp
+          - name: pi-ai
+            workspace: "@example/computer-pi-ai"
+            path: examples/pi-ai
+          - name: tanstack-ai
+            workspace: "@example/computer-tanstack-ai"
+            path: examples/tanstack-ai
           - name: think
             workspace: "@cloudflare/example-think"
             path: examples/think
