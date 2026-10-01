@@ -1,0 +1,39 @@
+.changeset/exec-tool-options.md
+  s_b2fd9413bbc158::t_af83a7e15246f6 5,9
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_4bf7bd9a2068ea 58,62-66,69,93-94
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_40ba9aee5cfdf9 268
+examples/celld/src/index.ts
+  s_b2fd9413bbc158::t_c67995abdea936 53-67
+examples/mcp/src/server.ts
+  s_b2fd9413bbc158::t_4c754396178c6d 15-33
+examples/rlm/worker/executor-tool.ts
+  s_b2fd9413bbc158::t_a71b0596e6f5ba 17-20
+packages/computer/README.md
+  s_b2fd9413bbc158::t_98b47b926b21b9 281-282
+packages/computer/src/tools/ai.test.ts
+  s_b2fd9413bbc158::t_fa5e2f3cadda80 1372,1375,1568,1781,1894-1897
+packages/computer/src/tools/ai.ts
+  s_b2fd9413bbc158::t_68593b8e493a66 25-27,30-32,38,86,90
+packages/computer/src/tools/exec.ts
+  s_b2fd9413bbc158::t_52d9ab85421a1e 78-83,85-88,90,362-365
+packages/computer/src/tools/index.ts
+  s_b2fd9413bbc158::t_cb30bdd77e4d25 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ddcedde9131b13c6672acf8be1a1c50d1450a161",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
