@@ -16,6 +16,7 @@
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFactory,
+  WorkspaceModuleFunction,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
@@ -48,15 +49,16 @@ export interface ContainerModuleOptions {
  * non-zero exit code is a normal result, not an error. Cancelling the
  * execution kills the command.
  *
- * A container command can write to the Workspace and reach the network,
- * so `exec` refuses to run on a read-only backend. Egress settings on
- * the JavaScript backend do not apply to the container.
+ * A container command can write to the Workspace, so `exec` refuses to
+ * run on a read-only backend. Network access follows the container
+ * backend's own egress setting; the JavaScript backend's does not apply.
  *
  * @param options - Which backend to use and how much output to return.
  * @returns The module to pass as `modules["ws:container"]`. Its
  *   `description` tells the model how to use it.
- * @throws When `maxOutputBytes` is not a positive integer. The host
- *   configured the module wrongly.
+ * @throws When `maxOutputBytes` is not a positive integer. The module
+ *   also throws when the backend connects if the Workspace has no
+ *   such backend, or it runs modules rather than shell commands.
  */
 export function createContainerModule(
   options: ContainerModuleOptions = {},
@@ -67,8 +69,26 @@ export function createContainerModule(
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
   }
 
-  const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => ({
-    async exec(args, context) {
+  const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => {
+    // The factory runs when the JavaScript backend connects, so a
+    // missing or mismatched container backend fails there, before any
+    // code runs, rather than on the first exec.
+    const target = host.runtime.backends().find((info) => info.id === backend);
+    if (target === undefined) {
+      throw new Error(
+        `ws:container: the Workspace has no backend ${JSON.stringify(backend)}. Register a ContainerBackend, or pass createContainerModule({ backend }).`,
+      );
+    }
+    if (target.callable) {
+      throw new Error(
+        `ws:container: backend ${JSON.stringify(backend)} runs modules, not shell commands.`,
+      );
+    }
+    return { exec: execOn(host) };
+  };
+  const execOn =
+    (host: WorkspaceModuleHost): WorkspaceModuleFunction =>
+    async (args, context) => {
       if (context.access !== "read-write") {
         throw new Error("ws:container exec requires Workspace write access.");
       }
@@ -99,14 +119,13 @@ export function createContainerModule(
       } finally {
         context.signal.removeEventListener("abort", kill);
       }
-    },
-  });
+    };
   return Object.assign(create, { description: DESCRIPTION });
 }
 
 const DESCRIPTION = [
   "Runs shell commands in a full Linux container that shares this workspace's files.",
-  "Use it for npm, node, python, package managers, native binaries, and network access. The container can take a while to start on first use.",
+  "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
   'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
   "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
 ].join(" ");
