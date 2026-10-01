@@ -36,18 +36,15 @@ export interface MountIgnoreSet {
 }
 
 /**
- * Newline-delimited rather than comma- or space-separated because a
- * path may legally contain a comma or a space.
+ * Comma-separated, so the set can be passed as a single start-time
+ * environment variable. A path containing a comma cannot be expressed.
  */
 export function parseMountIgnore(raw: string | undefined): string[] {
   if (raw === undefined) return [];
   const entries: string[] = [];
-  for (const line of raw.split("\n")) {
-    // Trailing whitespace is insignificant unless escaped, which is the
-    // only way to name a path ending in a space.
-    const trimmed = line.endsWith("\\ ") ? line.trimStart() : line.trim();
+  for (const field of raw.split(",")) {
+    const trimmed = field.trim();
     if (trimmed === "") continue;
-    if (trimmed.startsWith("#")) continue;
     entries.push(trimmed);
   }
   return entries;
@@ -65,16 +62,11 @@ export function resolveMountIgnore(entries: readonly string[], mountPoint = "/")
   for (const [index, original] of entries.entries()) {
     let value = original.trim();
 
-    if (value.startsWith("/")) {
-      if (root !== "/" && (value === root || value.startsWith(`${root}/`))) {
+    // A leading slash anchors the entry at the mount root, not at the
+    // filesystem root: "/node_modules" means "$MOUNT_POINT/node_modules".
+    if (value.startsWith("/") && root !== "/") {
+      if (value === root || value.startsWith(`${root}/`)) {
         value = value.slice(root.length);
-      } else if (root !== "/") {
-        throw new MountIgnorePathError(
-          `Entry ${JSON.stringify(original)} is an absolute path outside the ` +
-            `mount point ${JSON.stringify(root)}. Entries name paths within the mount.`,
-          original,
-          index,
-        );
       }
     }
 

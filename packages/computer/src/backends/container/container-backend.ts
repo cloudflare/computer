@@ -112,15 +112,13 @@ export interface ContainerBackendOptions {
   heartbeatIntervalMs?: number;
 
   // Paths the container keeps on its local disk instead of the
-  // workspace (#179). Declared, not configured: the set belongs to the
-  // image, which reads MOUNT_IGNORE at startup. This states what the
-  // image is expected to apply, and connect() refuses the connection
-  // when it disagrees.
+  // workspace (#179). Written as mount-relative absolute paths
+  // ("/node_modules"), and passed to the container at start time as
+  // MOUNT_IGNORE.
   //
-  // Omit to accept whatever the image provides. Supplying it is how a
-  // deployment catches an image rebuilt with a changed or missing
-  // MOUNT_IGNORE, which otherwise surfaces only as a large unexpected
-  // pull into the Durable Object.
+  // connect() reads the resolved set back off /__computerd/info and
+  // refuses the connection if it disagrees, which catches an image
+  // whose computerd is too old to honour the variable.
   ignore?: readonly string[];
 
   // Number of forced restart attempts after startup readiness
@@ -301,6 +299,9 @@ export class ContainerBackend implements WorkspaceBackend {
     const env = {
       PORT: String(this.#options.containerPort),
       MOUNT_POINT: "/workspace",
+      ...(this.#options.ignore !== undefined
+        ? { MOUNT_IGNORE: this.#options.ignore.join(",") }
+        : {}),
       ...this.#options.containerEnv,
     };
     let runtimeId: string;
@@ -642,10 +643,10 @@ export class ContainerBackend implements WorkspaceBackend {
         "http://container/__computerd/info",
         { signal: AbortSignal.timeout(this.#options.healthProbeTimeoutMs) },
       );
-      if (!res.ok) return { paths: [], root: undefined, supported: false };
+      if (!res.ok) return { paths: [], root: undefined, mountPoint: undefined, supported: false };
       return readIgnoreReport(await res.json());
     } catch {
-      return { paths: [], root: undefined, supported: false };
+      return { paths: [], root: undefined, mountPoint: undefined, supported: false };
     }
   }
 

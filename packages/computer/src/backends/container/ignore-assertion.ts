@@ -21,12 +21,29 @@ export interface ComputerdIgnoreReport {
 
 /** What the backend exposes back to the host after a successful connect. */
 export interface ResolvedIgnore {
-  /** Empty when the feature is off, indistinguishable from "no entries". */
+  /**
+   * Absolute paths as they exist inside the container, under MOUNT_POINT.
+   * `node_modules` with a mount of /workspace reports /workspace/node_modules,
+   * so the value can be used directly against a container path without the
+   * caller re-deriving the mount. Empty when the feature is off.
+   */
   readonly paths: readonly string[];
-  /** Resolved MOUNT_IGNORE_PATH, or undefined when unsupported. */
+  /**
+   * Where local-only content is stored on the container's disk
+   * (MOUNT_IGNORE_PATH). Undefined when unsupported.
+   */
   readonly root: string | undefined;
+  /** The mount point the paths are rooted at. Undefined when unsupported. */
+  readonly mountPoint: string | undefined;
   /** False on a computerd predating the feature, so a host can degrade. */
   readonly supported: boolean;
+}
+
+/** Joins a mount-relative entry onto the mount point. */
+function toContainerPath(entry: string, mountPoint: string): string {
+  const base = mountPoint.replace(/\/+$/, "");
+  const rel = entry.replace(/^\/+/, "");
+  return `${base}/${rel}`;
 }
 
 export class ContainerIgnoreMismatchError extends Error {
@@ -55,19 +72,25 @@ export class ContainerIgnoreMismatchError extends Error {
  */
 export function readIgnoreReport(info: unknown): ResolvedIgnore {
   if (typeof info !== "object" || info === null || !("ignore" in info)) {
-    return { paths: [], root: undefined, supported: false };
+    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
   }
   const report = (info as { ignore?: unknown }).ignore;
   if (typeof report !== "object" || report === null) {
-    return { paths: [], root: undefined, supported: false };
+    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
   }
   const typed = report as ComputerdIgnoreReport;
   if (typed.supported !== true) {
-    return { paths: [], root: undefined, supported: false };
+    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
   }
+  // computerd reports entries mount-relative; the host wants paths it can
+  // use against the container directly, so they are joined onto the mount
+  // point from the same payload.
+  const mountPoint = (info as { mountPoint?: unknown }).mountPoint;
+  const base = typeof mountPoint === "string" && mountPoint !== "" ? mountPoint : "/workspace";
   return {
-    paths: Array.isArray(typed.paths) ? [...typed.paths] : [],
+    paths: Array.isArray(typed.paths) ? typed.paths.map((e) => toContainerPath(e, base)) : [],
     root: typeof typed.root === "string" ? typed.root : undefined,
+    mountPoint: base,
     supported: true,
   };
 }
@@ -113,7 +136,10 @@ export function assertIgnoreMatches(
     );
   }
 
-  const difference = diffIgnore(declared, resolved.paths);
+  // resolved.paths are absolute container paths; the declaration is written
+  // mount-relative ("/node_modules"), so compare on the mount-relative form.
+  const actualRelative = resolved.paths.map((path) => stripMount(path, resolved.mountPoint));
+  const difference = diffIgnore(declared, actualRelative);
   if (difference === null) return;
 
   const parts: string[] = [];
@@ -137,6 +163,17 @@ export function assertIgnoreMatches(
       `Rebuild the image or update the declaration so the two agree.`,
     { declared: [...declared], actual: [...resolved.paths], supported: true },
   );
+}
+
+/**
+ * Reduces an absolute container path to its mount-relative form, so a
+ * declaration and a report can be compared on the same footing.
+ */
+function stripMount(path: string, mountPoint: string | undefined): string {
+  if (mountPoint === undefined) return path;
+  const base = mountPoint.replace(/\/+$/, "");
+  if (base !== "" && path.startsWith(`${base}/`)) return path.slice(base.length + 1);
+  return path;
 }
 
 function normalise(entry: string): string {

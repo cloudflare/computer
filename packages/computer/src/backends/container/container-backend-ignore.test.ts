@@ -6,6 +6,7 @@
 // covered in computerd's cli tests against a real FUSE mount.
 import { describe, expect, test } from "vitest";
 
+import { ContainerBackend } from "./container-backend.js";
 import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host.js";
 import type { ContainerLaunchSpec } from "./container-launch-record.js";
 import { readIgnoreReport } from "./ignore-assertion.js";
@@ -81,8 +82,9 @@ describe("ContainerBackend local-only paths", () => {
       },
     });
     expect(await readInfo(host)).toEqual({
-      paths: ["node_modules", "dist"],
+      paths: ["/workspace/node_modules", "/workspace/dist"],
       root: "/tmp/workspace",
+      mountPoint: "/workspace",
       supported: true,
     });
   });
@@ -95,6 +97,7 @@ describe("ContainerBackend local-only paths", () => {
     expect(await readInfo(host)).toEqual({
       paths: [],
       root: undefined,
+      mountPoint: undefined,
       supported: false,
     });
   });
@@ -107,5 +110,41 @@ describe("ContainerBackend local-only paths", () => {
     });
     await host.fetchPort(8080, "http://container/__computerd/info");
     expect(fetches).toContainEqual({ port: 8080, path: "/__computerd/info" });
+  });
+
+  const backendWith = (host: IWorkspaceContainerAPI, ignore?: readonly string[]) =>
+    new ContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => host }),
+      workspace: { binding: "SESSIONS", id: "session-1" },
+      restartAttempts: 0,
+      connectTimeoutMs: 400,
+      healthProbeTimeoutMs: 50,
+      healthRetryInitialDelayMs: 10,
+      healthRetryMaxDelayMs: 20,
+      heartbeatIntervalMs: 0,
+      ...(ignore === undefined ? {} : { ignore }),
+    });
+
+  test("passes `ignore` to the container as MOUNT_IGNORE at start time", async () => {
+    // The set is deployment config, not image config: it has to arrive
+    // in the start environment or the image would have to be rebuilt to
+    // change it.
+    const { host, starts } = fakeHost();
+    await backendWith(host, ["/node_modules", "/.venv", "/dist"])
+      .connect()
+      .catch(() => undefined);
+
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.env?.MOUNT_IGNORE).toBe("/node_modules,/.venv,/dist");
+  });
+
+  test("sends no MOUNT_IGNORE when `ignore` is omitted", async () => {
+    const { host, starts } = fakeHost();
+    await backendWith(host)
+      .connect()
+      .catch(() => undefined);
+
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.env?.MOUNT_IGNORE).toBeUndefined();
   });
 });

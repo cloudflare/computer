@@ -35,29 +35,37 @@ rebuild. It is the wrong trade for anything a user typed.
 
 ## Configuration
 
-The set belongs to the **image**, not the client.
+Set it on the backend. The paths are passed to the container as
+`MOUNT_IGNORE` in its **start environment**, so changing the set is a
+deployment change rather than an image rebuild.
 
-```dockerfile
-ENV MOUNT_POINT=/workspace
-ENV MOUNT_IGNORE_PATH=/tmp/workspace    # default: /tmp + $MOUNT_POINT
-ENV MOUNT_IGNORE="node_modules
-.venv
-target
-dist"
+```ts
+new CloudflareContainerBackend({
+  container: env.CONTAINER,
+  workspace: { binding: "SESSIONS", id: sessionId },
+  ignore: ["/node_modules", "/.venv", "/dist"],
+});
 ```
 
-`MOUNT_IGNORE` is newline-delimited, because a path may legally contain
-a comma or a space. Blank lines and `#` comments are skipped.
+That becomes `MOUNT_IGNORE=/node_modules,/.venv,/dist` in the container.
+Setting the variable directly — in `containerEnv`, or in a Dockerfile —
+works too and takes precedence.
 
-Entries are **plain paths relative to the mount root**. There is no glob
-syntax and no negation: an entry names one location, and a path is
+`MOUNT_IGNORE` is a **comma-separated list of paths anchored at the
+mount root**. A leading `/` means the mount root, not the filesystem
+root, so `/node_modules` is `$MOUNT_POINT/node_modules`. There is no
+glob syntax and no negation: an entry names one location, and a path is
 local-only if it equals that entry or sits beneath it.
 
 | Entry | Means |
 | --- | --- |
-| `node_modules` | `$MOUNT_POINT/node_modules` and everything under it |
-| `app/node_modules` | that one path, not `node_modules` elsewhere |
-| `/dist` | the same as `dist`; a leading slash is accepted and stripped |
+| `/node_modules` | `$MOUNT_POINT/node_modules` and everything under it |
+| `/app/node_modules` | that one path, not `node_modules` elsewhere |
+| `/workspace/dist` | the fully-qualified form of `/dist`, when the mount is `/workspace` |
+
+A path containing a comma cannot be expressed. `MOUNT_IGNORE_PATH` still
+sets where local-only content is stored, defaulting to `/tmp` +
+`$MOUNT_POINT`.
 
 Note the second row. An entry does **not** match at every depth, so a
 monorepo that clones packages into `app/`, `web/` and `api/` lists each
@@ -65,36 +73,36 @@ monorepo that clones packages into `app/`, `web/` and `api/` lists each
 and in exchange the set of paths that lose durability is a list you can
 read rather than a pattern language whose matches you have to work out.
 
-### Why it is per-image
+### It is still per-container
 
-The mount is per-container and compiled once at startup, so two sessions
-sharing an image cannot hold different views of which paths are durable.
-A per-session option would promise a knob the architecture cannot
-honour.
+The mount is compiled once at container startup, so the set cannot change
+under a running container and two sessions sharing one container cannot
+hold different views of which paths are durable. Passing `ignore` at
+start time is what makes it a per-deployment value rather than a per-image
+one; it is not a per-session knob.
 
-Clients may still *declare* what they expect, and
-`CloudflareContainerBackend` will refuse to connect if the image
-disagrees:
+`connect()` reads the resolved set back off `/__computerd/info` and
+refuses the connection if it disagrees with what was declared. That is
+what catches a computerd too old to honour `MOUNT_IGNORE`, which would
+otherwise surface only as a large, slow, unexplained pull.
 
-```ts
-new CloudflareContainerBackend({
-  container: env.CONTAINER,
-  workspace: { binding: "SESSIONS", id: sessionId },
-  ignore: ["node_modules", ".venv", "target", "dist"],
-});
-```
-
-This is an assertion, not a setting. Omit it to accept whatever the
-image provides. Supplying it is how a deployment notices an image
-rebuilt with a changed or missing `MOUNT_IGNORE` — which otherwise
-surfaces only as a large, slow, unexplained pull.
-
-The resolved set is readable back off the handle:
+The resolved set is readable back off the handle, as **absolute paths
+inside the container**:
 
 ```ts
 const handle = await backend.connect();
-handle.ignore; // { paths, root, supported }
+handle.ignore;
+// {
+//   paths: ["/workspace/node_modules", "/workspace/.venv", "/workspace/dist"],
+//   root: "/tmp/workspace",
+//   mountPoint: "/workspace",
+//   supported: true,
+// }
 ```
+
+`paths` is `MOUNT_POINT` joined with each entry, so it can be used
+against a container path without re-deriving the mount. `root` is where
+that content actually lives on the container's disk.
 
 `supported: false` means the container predates the feature, so every
 path is synced regardless of configuration. Worth logging.
@@ -177,12 +185,11 @@ This case is common because it is how build tools work: write into a
 temporary sibling, then rename into place atomically. If the destination
 is local-only and the staging directory is not, every build hits this.
 
-```dockerfile
-ENV MOUNT_IGNORE="dist
-.tmp-build"
+```ts
+ignore: ["/dist", "/.tmp-build"];
 ```
 
-Candidates worth checking in your own image: `.next` (Next.js writes
+Candidates worth checking in your own deployment: `.next` (Next.js writes
 through `.next/cache`), `.turbo`, `node_modules/.cache`, and any
 `*.tmp` staging directory a bundler creates next to its output.
 

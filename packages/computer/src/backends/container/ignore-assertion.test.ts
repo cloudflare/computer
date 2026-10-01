@@ -16,13 +16,17 @@ import {
 const supported = (paths: string[]): ResolvedIgnore => ({
   paths,
   root: "/tmp/workspace",
+  mountPoint: "/workspace",
   supported: true,
 });
 
 describe("readIgnoreReport", () => {
-  test("reads the block computerd reports", () => {
+  test("reports paths as absolute container paths under the mount", () => {
+    // computerd reports mount-relative; the host wants something it can
+    // use against a container path without re-deriving the mount point.
     const resolved = readIgnoreReport({
       backend: { kind: "fuse" },
+      mountPoint: "/workspace",
       ignore: {
         supported: true,
         enabled: true,
@@ -32,8 +36,9 @@ describe("readIgnoreReport", () => {
       },
     });
     expect(resolved).toEqual({
-      paths: ["node_modules", "dist"],
+      paths: ["/workspace/node_modules", "/workspace/dist"],
       root: "/tmp/workspace",
+      mountPoint: "/workspace",
       supported: true,
     });
   });
@@ -42,7 +47,12 @@ describe("readIgnoreReport", () => {
     // The old-image case, and the one most likely to occur in practice.
     // Not a parse error: absence is a meaningful answer.
     const resolved = readIgnoreReport({ backend: { kind: "fuse" }, mountPoint: "/workspace" });
-    expect(resolved).toEqual({ paths: [], root: undefined, supported: false });
+    expect(resolved).toEqual({
+      paths: [],
+      root: undefined,
+      mountPoint: undefined,
+      supported: false,
+    });
   });
 
   test("treats a malformed block as unsupported rather than throwing", () => {
@@ -54,8 +64,16 @@ describe("readIgnoreReport", () => {
   });
 
   test("defaults paths to empty when the block omits them", () => {
-    const resolved = readIgnoreReport({ ignore: { supported: true, root: "/tmp/x" } });
-    expect(resolved).toEqual({ paths: [], root: "/tmp/x", supported: true });
+    const resolved = readIgnoreReport({
+      mountPoint: "/workspace",
+      ignore: { supported: true, root: "/tmp/x" },
+    });
+    expect(resolved).toEqual({
+      paths: [],
+      root: "/tmp/x",
+      mountPoint: "/workspace",
+      supported: true,
+    });
   });
 });
 
@@ -115,7 +133,12 @@ describe("assertIgnoreMatches", () => {
     // deployment cannot start failing because a new field appeared.
     expect(() => assertIgnoreMatches(undefined, supported(["node_modules"]))).not.toThrow();
     expect(() =>
-      assertIgnoreMatches(undefined, { paths: [], root: undefined, supported: false }),
+      assertIgnoreMatches(undefined, {
+        paths: [],
+        root: undefined,
+        mountPoint: undefined,
+        supported: false,
+      }),
     ).not.toThrow();
   });
 
@@ -130,10 +153,20 @@ describe("assertIgnoreMatches", () => {
     // old image would otherwise look like it is working while quietly
     // syncing a full node_modules.
     expect(() =>
-      assertIgnoreMatches(["node_modules"], { paths: [], root: undefined, supported: false }),
+      assertIgnoreMatches(["node_modules"], {
+        paths: [],
+        root: undefined,
+        mountPoint: undefined,
+        supported: false,
+      }),
     ).toThrow(ContainerIgnoreMismatchError);
     expect(() =>
-      assertIgnoreMatches(["node_modules"], { paths: [], root: undefined, supported: false }),
+      assertIgnoreMatches(["node_modules"], {
+        paths: [],
+        root: undefined,
+        mountPoint: undefined,
+        supported: false,
+      }),
     ).toThrow(/does not support local-only paths/);
   });
 
@@ -141,7 +174,12 @@ describe("assertIgnoreMatches", () => {
     // Not just "mismatch". The operator needs to know the paths will be
     // pulled into the DO, which is the expensive part.
     try {
-      assertIgnoreMatches(["node_modules"], { paths: [], root: undefined, supported: false });
+      assertIgnoreMatches(["node_modules"], {
+        paths: [],
+        root: undefined,
+        mountPoint: undefined,
+        supported: false,
+      });
       expect.unreachable("should have thrown");
     } catch (error) {
       expect((error as Error).message).toMatch(/pulled into the Durable Object/);

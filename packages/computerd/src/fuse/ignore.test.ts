@@ -7,35 +7,30 @@ import { MountIgnorePathError, parseMountIgnore, resolveMountIgnore } from "./ig
 // what actually pins the matcher.
 
 describe("parseMountIgnore", () => {
-  test("splits MOUNT_IGNORE on newlines", () => {
-    expect(parseMountIgnore("node_modules\n.venv\ntarget")).toEqual([
-      "node_modules",
-      ".venv",
-      "target",
+  test("splits MOUNT_IGNORE on commas", () => {
+    expect(parseMountIgnore("/node_modules,/.venv,/dist")).toEqual([
+      "/node_modules",
+      "/.venv",
+      "/dist",
     ]);
   });
 
-  test("skips blank lines and comments the way .gitignore does", () => {
-    const parsed = parseMountIgnore(
-      ["# build output", "", "dist", "   ", "# deps", "node_modules", ""].join("\n"),
-    );
-    expect(parsed).toEqual(["dist", "node_modules"]);
+  test("tolerates whitespace around entries", () => {
+    expect(parseMountIgnore("/node_modules , /dist")).toEqual(["/node_modules", "/dist"]);
   });
 
-  test("keeps entries containing commas and spaces intact", () => {
-    // Why the env var is newline-delimited rather than comma- or
-    // space-separated: a path may legally contain either.
-    expect(parseMountIgnore("my dir\na,b.log")).toEqual(["my dir", "a,b.log"]);
+  test("skips empty fields from a trailing or doubled comma", () => {
+    expect(parseMountIgnore("/dist,,/node_modules,")).toEqual(["/dist", "/node_modules"]);
   });
 
-  test("trims trailing whitespace but preserves an escaped trailing space", () => {
-    expect(parseMountIgnore("dist   \nkeep\\ ")).toEqual(["dist", "keep\\ "]);
+  test("keeps entries containing spaces intact", () => {
+    expect(parseMountIgnore("/my dir,/dist")).toEqual(["/my dir", "/dist"]);
   });
 
   test("treats an absent or empty value as the feature being off", () => {
     expect(parseMountIgnore(undefined)).toEqual([]);
     expect(parseMountIgnore("")).toEqual([]);
-    expect(parseMountIgnore("\n\n   \n")).toEqual([]);
+    expect(parseMountIgnore(" , ,  ")).toEqual([]);
   });
 });
 
@@ -122,9 +117,18 @@ describe("resolveMountIgnore: normalisation", () => {
     expect(set.ignores("dist/app.js")).toBe(true);
   });
 
-  test("rejects an absolute path outside the mount point", () => {
-    expect(() => resolveMountIgnore(["/etc/passwd"], "/workspace")).toThrow(MountIgnorePathError);
-    expect(() => resolveMountIgnore(["/etc/passwd"], "/workspace")).toThrow(/outside the mount/);
+  test("anchors a leading slash at the mount root, not the filesystem root", () => {
+    // "/node_modules" means $MOUNT_POINT/node_modules. A path that looks
+    // like it names somewhere else on disk is still mount-relative, so
+    // the entry set can never reach outside the mount.
+    const set = resolveMountIgnore(["/etc/passwd"], "/workspace");
+    expect(set.paths).toEqual(["etc/passwd"]);
+    expect(set.ignores("etc/passwd")).toBe(true);
+  });
+
+  test("accepts the fully-qualified form of the same path", () => {
+    const set = resolveMountIgnore(["/workspace/dist", "/dist"], "/workspace");
+    expect(set.paths).toEqual(["dist"]);
   });
 
   test("rejects a .. segment rather than resolving it", () => {

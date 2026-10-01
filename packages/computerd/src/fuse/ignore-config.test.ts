@@ -83,14 +83,14 @@ describe("resolveMountIgnoreConfig: the set", () => {
     expect(config.ignore.isEmpty).toBe(true);
   });
 
-  test("is disabled when MOUNT_IGNORE is only comments and blanks", () => {
-    const config = resolveMountIgnoreConfig({ MOUNT_IGNORE: "# nothing\n\n  \n" }, "/workspace");
+  test("is disabled when MOUNT_IGNORE is only separators and blanks", () => {
+    const config = resolveMountIgnoreConfig({ MOUNT_IGNORE: " , ,  " }, "/workspace");
     expect(config.enabled).toBe(false);
   });
 
   test("resolves entries relative to the mount point", () => {
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "node_modules\n/workspace/dist\n" },
+      { MOUNT_IGNORE: "/node_modules,/workspace/dist" },
       "/workspace",
     );
     expect(config.enabled).toBe(true);
@@ -100,19 +100,19 @@ describe("resolveMountIgnoreConfig: the set", () => {
   test("propagates a bad entry as a startup failure", () => {
     // Failing closed matters: a silently dropped entry sends a full
     // node_modules into the DO, which is the failure #179 is about.
-    expect(() => resolveMountIgnoreConfig({ MOUNT_IGNORE: "../escape" }, "/workspace")).toThrow();
+    expect(() => resolveMountIgnoreConfig({ MOUNT_IGNORE: "/../escape" }, "/workspace")).toThrow();
   });
 });
 
 describe("describeMountIgnore", () => {
   test("reports the normalised set and the redundant entries", () => {
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "node_modules\nnode_modules/.cache\ndist" },
+      { MOUNT_IGNORE: "/node_modules,/node_modules/.cache,/dist" },
       "/workspace",
     );
     const info = describeMountIgnore(config);
     expect(info.paths).toEqual(["node_modules", "dist"]);
-    expect(info.redundant).toEqual(["node_modules/.cache"]);
+    expect(info.redundant).toEqual(["/node_modules/.cache"]);
     expect(info.enabled).toBe(true);
     expect(info.root).toBe("/tmp/workspace");
   });
