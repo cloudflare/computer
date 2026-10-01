@@ -219,8 +219,7 @@ export class Workspace {
   readonly #backends: WorkspaceBackend[];
   readonly #backendsById: Map<string, WorkspaceBackend>;
   readonly #moduleBackendsById: Map<string, WorkspaceModuleBackend>;
-  readonly #registeredBackendIds: Set<string>;
-  readonly #callableBackendIds: Set<string>;
+  readonly #registeredBackends: Map<string, WorkspaceRegisteredBackend>;
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #syncLogger: SyncLogger;
@@ -305,19 +304,16 @@ export class Workspace {
     this.#moduleBackendsById = new Map(
       registered.filter(isModuleBackend).map((backend) => [backend.id, backend]),
     );
-    this.#registeredBackendIds = new Set();
-    this.#callableBackendIds = new Set(
-      registered.filter((backend) => backend.callable === true).map((backend) => backend.id),
-    );
+    this.#registeredBackends = new Map();
     for (const backend of registered) {
-      if (this.#registeredBackendIds.has(backend.id)) {
+      if (this.#registeredBackends.has(backend.id)) {
         throw new Error(
           `Workspace: duplicate backend id ${JSON.stringify(backend.id)}. ` +
             "Pass an explicit `id` on each backend's constructor options to " +
             "distinguish them.",
         );
       }
-      this.#registeredBackendIds.add(backend.id);
+      this.#registeredBackends.set(backend.id, backend);
     }
     this.#defaultBackendId = registered[0]?.id;
     this.#observer = options.observer ?? noopObserver;
@@ -429,7 +425,7 @@ export class Workspace {
   get runtime(): WorkspaceRuntime {
     if (!this.#runtime) {
       this.#runtime = new WorkspaceRuntime({
-        callableBackendIds: this.#callableBackendIds,
+        backends: this.#registeredBackends,
         backendHandle: (id) => this.#backendHandleFor(id),
         resolveBackendId: (id) => this.#resolveBackendId(id) ?? "",
       });
@@ -861,13 +857,13 @@ export class Workspace {
   // workspace; throws on an unknown id. Omitted ids fall through
   // to the first backend in the list (the default).
   #resolveBackendId(id: string | undefined): string | undefined {
-    if (this.#registeredBackendIds.size === 0) return undefined;
+    if (this.#registeredBackends.size === 0) return undefined;
     const target = id ?? this.#defaultBackendId;
     if (target === undefined) return undefined;
-    if (!this.#registeredBackendIds.has(target)) {
+    if (!this.#registeredBackends.has(target)) {
       throw new Error(
         `Workspace: no backend with id ${JSON.stringify(target)}. ` +
-          `Configured backends: ${[...this.#registeredBackendIds].map((key) => JSON.stringify(key)).join(", ") || "<none>"}.`,
+          `Configured backends: ${[...this.#registeredBackends.keys()].map((key) => JSON.stringify(key)).join(", ") || "<none>"}.`,
       );
     }
     return target;
@@ -998,6 +994,7 @@ export class Workspace {
           fs: this.#fs,
           git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
           artifacts: this.#artifacts,
+          runtime: this.runtime,
         }),
     )
       .then(async (handle) => {

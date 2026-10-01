@@ -49,14 +49,14 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("executes an ES module with configured and trusted modules", async () => {
+  it("executes an ES module with source and host modules", async () => {
     const response = await runtime({
       source: `
         import { double } from "math-kit";
         import fs from "node:fs/promises";
         import { promises as nodeFs } from "node:fs";
         import * as git from "ws:git";
-        import { call } from "ws:test-host";
+        import { echo, sum, delete as remove } from "ws:test-host";
         export default async function main(input) {
           const value = double(input.value);
           await fs.writeFile("/workspace/runtime-result.txt", String(value));
@@ -65,7 +65,9 @@ describe("WorkspaceRuntime", () => {
             value,
             persisted: await fs.readFile("/workspace/runtime-result.txt", "utf8"),
             gitExitCode: initialized.exitCode,
-            trusted: await call("echo", input.value),
+            trusted: await echo(input.value, "second"),
+            summed: await sum(1, 2, 3),
+            removed: await remove("/workspace/gone.txt"),
             nodeFs: {
               isFile: (await nodeFs.stat("/workspace/runtime-result.txt")).isFile(),
               entries: await nodeFs.readdir("/workspace"),
@@ -86,7 +88,9 @@ describe("WorkspaceRuntime", () => {
           value: 42,
           persisted: "42",
           gitExitCode: 0,
-          trusted: { method: "echo", args: [21] },
+          trusted: { args: [21, "second"] },
+          summed: 6,
+          removed: { deleted: "/workspace/gone.txt" },
           nodeFs: {
             isFile: true,
             entries: expect.arrayContaining(["runtime-result.txt"]),
@@ -100,14 +104,14 @@ describe("WorkspaceRuntime", () => {
     const response = await runtime({
       source: `
         import fs from "node:fs/promises";
-        import { call } from "ws:test-host";
+        import { marker } from "ws:test-host";
         export default async () => {
           await fs.writeFile("/workspace/bytes.bin", new Uint8Array([0, 127, 255]));
           const value = await fs.readFile("/workspace/bytes.bin");
           return {
             isBytes: value instanceof Uint8Array,
             bytes: Array.from(value),
-            marker: await call("marker"),
+            marker: await marker(),
           };
         };
       `,
@@ -230,11 +234,11 @@ describe("WorkspaceRuntime", () => {
     expect(payload.result.stdout).toContain("stdio truncated");
   });
 
-  it("bounds oversized trusted-module error responses", async () => {
+  it("bounds oversized host module error responses", async () => {
     const response = await runtime({
       source: `
-        import { call } from "ws:test-host";
-        export default () => call("large-error");
+        import { largeError } from "ws:test-host";
+        export default () => largeError();
       `,
       cwd: "/workspace",
     });
@@ -261,9 +265,9 @@ describe("WorkspaceRuntime", () => {
   it("bounds concurrent host capability calls", async () => {
     const response = await runtime({
       source: `
-        import { call } from "ws:test-host";
+        import { slow } from "ws:test-host";
         export default async () => {
-          const settled = await Promise.allSettled([call("slow"), call("slow"), call("slow")]);
+          const settled = await Promise.allSettled([slow(), slow(), slow()]);
           return settled.map((item) => item.status);
         };
       `,
@@ -274,11 +278,11 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value).toEqual(["fulfilled", "fulfilled", "rejected"]);
   });
 
-  it("rejects non-plain results from host trusted modules", async () => {
+  it("rejects non-plain results from host modules", async () => {
     const response = await runtime({
       source: `
-        import { call } from "ws:test-host";
-        export default () => call("invalid-result");
+        import { invalidResult } from "ws:test-host";
+        export default () => invalidResult();
       `,
       cwd: "/workspace",
     });
@@ -289,6 +293,42 @@ describe("WorkspaceRuntime", () => {
         status: "failed",
         stderr: expect.stringContaining("plain objects"),
       },
+    });
+  });
+
+  it("exposes only the functions a host module declares", async () => {
+    const response = await runtime({
+      source: `
+        import * as host from "ws:test-host";
+        export default () => Object.keys(host).sort();
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value).toEqual([
+      "delete",
+      "echo",
+      "invalidResult",
+      "largeError",
+      "marker",
+      "slow",
+      "sum",
+    ]);
+  });
+
+  it("fails to link an import the host module does not export", async () => {
+    const response = await runtime({
+      source: `
+        import { call } from "ws:test-host";
+        export default () => call("echo");
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: { status: "failed", stderr: expect.stringContaining("does not provide an export") },
     });
   });
 
@@ -356,7 +396,7 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("confines trusted Git operations to the backend root", async () => {
+  it("confines ws:git operations to the backend root", async () => {
     const response = await runtime({
       source: `
         import { status } from "ws:git";
@@ -405,7 +445,7 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text), text).toMatchObject({
       result: {
         status: "failed",
-        stderr: expect.stringContaining("allowArtifac"),
+        stderr: expect.stringContaining("createArtifactsModule"),
       },
     });
   });
@@ -423,12 +463,12 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text), text).toMatchObject({
       result: {
         status: "failed",
-        stderr: expect.stringContaining("allowGitNetwork"),
+        stderr: expect.stringContaining("createGitModule"),
       },
     });
   });
 
-  it("rejects trusted Git paths that traverse a symlink", async () => {
+  it("rejects ws:git paths that traverse a symlink", async () => {
     await write("/outside/repository/README.md", "outside");
     await symlink("/outside/repository", "/workspace/linked-repository");
     const response = await runtime({

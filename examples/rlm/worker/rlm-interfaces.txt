@@ -1,7 +1,7 @@
 Module interface:
 import fs from "node:fs/promises";
-import { call as callModel } from "ws:model";
+import { batch } from "ws:model";
 export default async function () {
   // Put every file read, batch call, reduction, and return statement inside this function.
 }
-No asynchronous operation or return statement may appear at module scope. Call recursive inference exactly once as callModel("batch", requests).
+No asynchronous operation or return statement may appear at module scope. Call recursive inference exactly once as batch(requests).
