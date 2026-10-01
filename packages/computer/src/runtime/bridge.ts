@@ -1,5 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
 
+import { utf8Prefix } from "../text-truncation.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
 import type { WorkspaceModuleCallContext, WorkspaceModuleFunctions } from "./types.js";
 
@@ -14,7 +15,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxTotalResponseBytes: number;
   readonly #maxResultBytes: number;
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
-  readonly #inFlight = new Set<Promise<string>>();
+  readonly #inFlight = new Set<Promise<MeasuredResponse>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
   #callTimedOut = false;
@@ -71,13 +72,22 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
   }
 
-  call(name: string, argsJson: string): Promise<string> {
-    const requestBytes = new TextEncoder().encode(argsJson).byteLength;
+  // The one entry point for isolate code. Arguments and results cross
+  // as real values through Workers RPC; this method is the proxy that
+  // keeps the limits on them, so untrusted code cannot overload the
+  // Durable Object with calls, concurrency, time, or bytes.
+  call(name: string, args: unknown[]): Promise<BridgeResponse> {
     const reject = (message: string) =>
-      Promise.resolve(encodeBoundedError(new Error(message), this.#maxPayloadBytes));
+      Promise.resolve(boundedError(new Error(message), this.#maxPayloadBytes));
     if (this.#cancelled) return reject("Workspace execution is being cancelled.");
-    if (requestBytes > this.#maxPayloadBytes) {
-      return reject(`Workspace capability request exceeds ${this.#maxPayloadBytes} bytes.`);
+    if (typeof name !== "string" || !Array.isArray(args)) {
+      return reject("Workspace capability calls take a name and an argument list.");
+    }
+    let requestBytes: number;
+    try {
+      requestBytes = measureValue(args, this.#maxPayloadBytes, "request");
+    } catch (error) {
+      return Promise.resolve(boundedError(error, this.#maxPayloadBytes));
     }
     if (this.#inFlight.size >= this.#maxConcurrentCalls) {
       return reject(
@@ -97,9 +107,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
-    const operation = encodeCall(async () => {
-      const encodedArgs = JSON.parse(argsJson) as unknown[];
-      const args = encodedArgs.map(decodeBridgeValue);
+    const operation = respond(async () => {
       if (name.startsWith("host/")) {
         return this.#callHostModule(name, args, {
           signal: abort.signal,
@@ -186,9 +194,10 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#abortControllers.delete(abort);
     });
     return call.then((response) => {
-      const bytes = new TextEncoder().encode(response).byteLength;
+      if (!("result" in response)) return response;
+      const bytes = response.bytes;
       if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
-        return encodeBoundedError(
+        return boundedError(
           new Error(
             `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
           ),
@@ -196,7 +205,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         );
       }
       this.#responseBytes += bytes;
-      return response;
+      return { result: response.result };
     });
   }
 
@@ -256,7 +265,7 @@ function assertBridgeValues(
       if (prototype !== Object.prototype && prototype !== null) {
         throw new Error("Host module values must contain only plain objects.");
       }
-      // An undefined field is absent, as in JSON. encodeBridgeValue drops it.
+      // An undefined field is allowed, as in JSON, and arrives as undefined.
       for (const item of Object.values(value as Record<string, unknown>)) {
         if (item !== undefined) visit(item);
       }
@@ -270,70 +279,93 @@ function decodeBytes(value: unknown): string | Uint8Array {
   return value instanceof Uint8Array ? value : String(value);
 }
 
-function encodeBridgeValue(value: unknown): unknown {
-  const wrap = (type: string, fields: Record<string, unknown>) => ({
-    __workspace_codec__: { version: 1, type, ...fields },
-  });
-  if (value instanceof Uint8Array) return wrap("bytes", { data: Array.from(value) });
-  if (Array.isArray(value)) return wrap("array", { items: value.map(encodeBridgeValue) });
-  if (value && typeof value === "object") {
-    return wrap("object", {
-      entries: Object.entries(value)
-        .filter(([, child]) => child !== undefined)
-        .map(([key, child]) => [key, encodeBridgeValue(child)]),
-    });
-  }
-  return value;
-}
+/** What the bridge sends back for one call: a value, or a bounded error. */
+export type BridgeResponse =
+  | { readonly result: unknown }
+  | {
+      readonly error: { readonly message: string; readonly code?: string; readonly path?: string };
+    };
 
-function decodeBridgeValue(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 1 || !("__workspace_codec__" in record)) {
-    throw new Error("Invalid Workspace codec envelope.");
-  }
-  const codec = record.__workspace_codec__ as Record<string, unknown> | null;
-  if (codec?.version !== 1) throw new Error("Invalid Workspace codec envelope.");
-  if (codec.type === "bytes") {
-    if (!isByteArray(codec.data)) throw new Error("Invalid Workspace byte value.");
-    return new Uint8Array(codec.data);
-  }
-  if (codec.type === "array" && Array.isArray(codec.items)) {
-    return codec.items.map(decodeBridgeValue);
-  }
-  if (codec.type === "object" && Array.isArray(codec.entries)) {
-    return Object.fromEntries(
-      codec.entries.map((entry) => {
-        if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
-          throw new Error("Invalid Workspace object entry.");
-        }
-        return [entry[0], decodeBridgeValue(entry[1])];
-      }),
-    );
-  }
-  throw new Error("Invalid Workspace codec envelope.");
-}
+// A response before the per-execution budget check, carrying its size.
+type MeasuredResponse =
+  | { result: unknown; bytes: number }
+  | Extract<BridgeResponse, { error: unknown }>;
 
-function isByteArray(value: unknown): value is number[] {
-  return (
-    Array.isArray(value) &&
-    value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
-  );
+const encoder = new TextEncoder();
+const MAX_RESPONSE_VALUES = 4096;
+
+// Measure plain data the way it costs the Durable Object: UTF-8 bytes
+// of strings and keys, raw bytes of byte arrays, and a small fixed cost
+// per scalar. Anything that is not plain data is rejected, including
+// functions and RPC stubs, which Workers RPC would otherwise carry into
+// the host as live callbacks, and cycles.
+function measureValue(value: unknown, maxBytes: number, kind: "request" | "response"): number {
+  let bytes = 0;
+  let values = 0;
+  const seen = new Set<object>();
+  const add = (count: number) => {
+    bytes += count;
+    if (bytes > maxBytes) {
+      throw new Error(`Workspace capability ${kind} exceeds ${maxBytes} bytes.`);
+    }
+  };
+  const visit = (item: unknown): void => {
+    values += 1;
+    if (kind === "response" && values > MAX_RESPONSE_VALUES) {
+      throw new Error("Workspace capability response has too many values.");
+    }
+    if (
+      item === null ||
+      item === undefined ||
+      typeof item === "boolean" ||
+      typeof item === "number"
+    ) {
+      add(8);
+      return;
+    }
+    if (typeof item === "string") {
+      add(encoder.encode(item).byteLength);
+      return;
+    }
+    if (item instanceof Uint8Array) {
+      add(item.byteLength);
+      return;
+    }
+    if (typeof item !== "object") {
+      throw new Error(`Workspace capability ${kind} values must be plain data.`);
+    }
+    if (seen.has(item)) throw new Error(`Workspace capability ${kind} values must be acyclic.`);
+    seen.add(item);
+    if (Array.isArray(item)) {
+      add(8);
+      for (const child of item) visit(child);
+    } else {
+      const prototype = Object.getPrototypeOf(item);
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error(`Workspace capability ${kind} values must be plain data.`);
+      }
+      for (const [key, child] of Object.entries(item)) {
+        add(encoder.encode(key).byteLength);
+        visit(child);
+      }
+    }
+    seen.delete(item);
+  };
+  visit(value);
+  return bytes;
 }
 
 function withDeadline(
-  call: Promise<string>,
+  call: Promise<MeasuredResponse>,
   timeoutMs: number,
   maxPayloadBytes: number,
   onTimeout: () => void,
-): Promise<string> {
+): Promise<MeasuredResponse> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<string>((resolve) => {
+  const timeout = new Promise<MeasuredResponse>((resolve) => {
     timer = setTimeout(() => {
       onTimeout();
-      resolve(
-        encodeBoundedError(new Error("Workspace capability call timed out."), maxPayloadBytes),
-      );
+      resolve(boundedError(new Error("Workspace capability call timed out."), maxPayloadBytes));
     }, timeoutMs);
   });
   return Promise.race([call, timeout]).finally(() => {
@@ -341,75 +373,32 @@ function withDeadline(
   });
 }
 
-async function encodeCall(run: () => Promise<unknown>, maxPayloadBytes: number) {
+async function respond(
+  run: () => Promise<unknown>,
+  maxPayloadBytes: number,
+): Promise<MeasuredResponse> {
   try {
     const result = await run();
-    assertResponseWithin(result, maxPayloadBytes);
-    const encoded = JSON.stringify({ result: encodeBridgeValue(result) });
-    if (new TextEncoder().encode(encoded).byteLength > maxPayloadBytes) {
-      throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
-    }
-    return encoded;
+    return { result, bytes: measureValue(result, maxPayloadBytes, "response") };
   } catch (error) {
-    return encodeBoundedError(error, maxPayloadBytes);
+    return boundedError(error, maxPayloadBytes);
   }
 }
 
-function assertResponseWithin(value: unknown, maxBytes: number) {
-  let bytes = 0;
-  let nodes = 0;
-  const visit = (item: unknown): void => {
-    nodes += 1;
-    if (nodes > 4096) throw new Error("Workspace capability response has too many values.");
-    if (typeof item === "string") bytes += item.length * 3;
-    else if (item instanceof Uint8Array) bytes += item.byteLength * 4;
-    else if (typeof item === "number" || typeof item === "boolean" || item === null) bytes += 16;
-    else if (Array.isArray(item)) for (const child of item) visit(child);
-    else if (item && typeof item === "object") {
-      for (const [key, child] of Object.entries(item)) {
-        bytes += key.length * 3;
-        visit(child);
-      }
-    }
-    if (bytes > maxBytes) {
-      throw new Error(`Workspace capability response exceeds ${maxBytes} bytes.`);
-    }
-  };
-  visit(value);
-}
-
-function encodeBoundedError(error: unknown, maxPayloadBytes: number) {
+// An error the isolate can rebuild, with its message cut to fit the
+// payload limit. `code` and `path` carry node:fs error details.
+function boundedError(error: unknown, maxPayloadBytes: number) {
   const value = error as { code?: unknown; path?: unknown };
   const message = error instanceof Error ? error.message : String(error);
-  const detailed = JSON.stringify({
+  return {
     error: {
-      message,
+      message: truncateText(message, Math.max(0, maxPayloadBytes - 64)),
       ...(typeof value?.code === "string" ? { code: value.code } : {}),
       ...(typeof value?.path === "string" ? { path: value.path } : {}),
     },
-  });
-  const encoder = new TextEncoder();
-  if (encoder.encode(detailed).byteLength <= maxPayloadBytes) return detailed;
-
-  let budget = Math.max(0, maxPayloadBytes - 40);
-  while (budget >= 0) {
-    const bounded = JSON.stringify({ error: { message: truncateUtf8(message, budget) } });
-    if (encoder.encode(bounded).byteLength <= maxPayloadBytes) return bounded;
-    budget -= 1;
-  }
-  return JSON.stringify({ error: { message: "Capability call failed" } });
+  };
 }
 
-function truncateUtf8(value: string, maxBytes: number) {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.byteLength <= maxBytes) return value;
-  let prefix = bytes.slice(0, maxBytes);
-  while (prefix.byteLength > 0) {
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(prefix);
-    } catch {
-      prefix = prefix.slice(0, -1);
-    }
-  }
-  return "";
+function truncateText(value: string, maxBytes: number) {
+  return utf8Prefix(value, maxBytes).text;
 }
