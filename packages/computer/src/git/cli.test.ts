@@ -2403,6 +2403,23 @@ describe("runGitCli â help for one command", () => {
     expect(res.exitCode).toBe(1);
     expect(res.stderr).toMatch(/no help available for 'rebase'/);
   });
+
+  it("does not treat Object prototype names as commands", async () => {
+    const { client } = fakeClient();
+    for (const topic of ["constructor", "toString", "__proto__"]) {
+      const res = await runGitCli(client, { argv: ["help", topic] });
+      expect(res.exitCode, topic).toBe(1);
+      expect(res.stderr).toMatch(/no help available/);
+    }
+  });
+
+  it("advertises only the stash and symbolic-ref forms that run", async () => {
+    const { client } = fakeClient();
+    const stash = await runGitCli(client, { argv: ["help", "stash"] });
+    expect(stash.stdout).not.toMatch(/apply|drop/);
+    const symref = await runGitCli(client, { argv: ["help", "symbolic-ref"] });
+    expect(symref.stdout).not.toMatch(/<ref>/);
+  });
 });
 
 describe("runGitCli — log --format", () => {

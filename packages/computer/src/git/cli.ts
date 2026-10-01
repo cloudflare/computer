@@ -184,10 +184,10 @@ const COMMAND_USAGE: Record<string, string> = {
   "rev-parse": "git rev-parse [--abbrev-ref] [--show-toplevel] <rev>",
   rm: "git rm [--cached] <path>...",
   show: "git show [<ref>]",
-  stash: "git stash [push|pop|apply|list|drop]",
+  stash: "git stash [push [-m|--message <message>] | pop | list]",
   status: "git status [-s|--short] [--porcelain[=<version>]]",
   switch: "git switch [-c] <ref>",
-  "symbolic-ref": "git symbolic-ref [--short] [-q|--quiet] <name> [<ref>]",
+  "symbolic-ref": "git symbolic-ref [--short] [-q|--quiet] [HEAD]",
   tag: "git tag [-d|--delete] [-f|--force] [<name> [<ref>]]",
   "update-ref": "git update-ref [--force] <ref> <oid>",
   help: "git help [<command>]",
@@ -199,7 +199,9 @@ function printHelp(topic?: string): GitCliResult {
   // full list, which left no way to discover a command's flags short of
   // guessing and reading the exit code.
   if (topic !== undefined) {
-    const usage = COMMAND_USAGE[topic];
+    // Own-property check: a bare index would resolve `constructor`
+    // and friends from Object.prototype.
+    const usage = Object.hasOwn(COMMAND_USAGE, topic) ? COMMAND_USAGE[topic] : undefined;
     if (usage === undefined) {
       return {
         stdout: "",

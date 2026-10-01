@@ -26,6 +26,7 @@ export interface IsomorphicGitPlumbingClient {
     fs: object;
     dir: string;
     oid: string;
+    filepath?: string;
     format?: "content" | "parsed" | "deflated" | "wrapped";
     cache?: object;
   }): Promise<
@@ -131,21 +132,14 @@ export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult>
     // resolves to a blob; for tree / commit oids it errors out.
     // We try readBlob first (fast path); fall back to readObject
     // when the caller doesn't know the type up front.
-    if (opts.filepath !== undefined) {
-      const { oid, blob } = await opts.git.readBlob({
-        fs: opts.fs,
-        dir,
-        oid: opts.oid,
-        filepath: opts.filepath,
-        cache: opts.cache,
-      });
-      return { oid, bytes: blob, type: "blob" };
-    }
+    // The same applies to `<oid>:<path>`: a directory path names a
+    // tree, which readBlob rejects, so it also falls through.
     try {
       const { oid, blob } = await opts.git.readBlob({
         fs: opts.fs,
         dir,
         oid: opts.oid,
+        filepath: opts.filepath,
         cache: opts.cache,
       });
       return { oid, bytes: blob, type: "blob" };
@@ -156,6 +150,7 @@ export async function catFileWith(opts: CatFileWithDeps): Promise<CatFileResult>
       fs: opts.fs,
       dir,
       oid: opts.oid,
+      filepath: opts.filepath,
       format: "content",
       cache: opts.cache,
     });
