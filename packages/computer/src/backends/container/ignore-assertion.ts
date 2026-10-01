@@ -136,10 +136,13 @@ export function assertIgnoreMatches(
     );
   }
 
-  // resolved.paths are absolute container paths; the declaration is written
-  // mount-relative ("/node_modules"), so compare on the mount-relative form.
+  // resolved.paths are absolute container paths. A declaration may be
+  // written mount-relative ("/node_modules") or with the mount point
+  // ("/workspace/node_modules"), and computerd accepts both. Compare
+  // both sides on the mount-relative form.
+  const declaredRelative = declared.map((path) => stripMount(path, resolved.mountPoint));
   const actualRelative = resolved.paths.map((path) => stripMount(path, resolved.mountPoint));
-  const difference = diffIgnore(declared, actualRelative);
+  const difference = diffIgnore(declaredRelative, actualRelative);
   if (difference === null) return;
 
   const parts: string[] = [];
@@ -158,9 +161,10 @@ export function assertIgnoreMatches(
 
   throw new ContainerIgnoreMismatchError(
     `Container ignore set does not match \`ignore\`: ${parts.join("; ")}. ` +
-      `The set is a property of the image (MOUNT_IGNORE), not of this ` +
-      `client; \`ignore\` only asserts what the image is expected to apply. ` +
-      `Rebuild the image or update the declaration so the two agree.`,
+      `\`ignore\` is passed to the container as MOUNT_IGNORE, so a ` +
+      `MOUNT_IGNORE in \`containerEnv\` overrides it. Remove one of them, ` +
+      `or check that the computerd image reads MOUNT_IGNORE as a ` +
+      `comma-separated list.`,
     { declared: [...declared], actual: [...resolved.paths], supported: true },
   );
 }
@@ -172,8 +176,11 @@ export function assertIgnoreMatches(
 function stripMount(path: string, mountPoint: string | undefined): string {
   if (mountPoint === undefined) return path;
   const base = mountPoint.replace(/\/+$/, "");
-  if (base !== "" && path.startsWith(`${base}/`)) return path.slice(base.length + 1);
-  return path;
+  const trimmed = path.trim();
+  if (base !== "" && (trimmed === base || trimmed.startsWith(`${base}/`))) {
+    return trimmed.slice(base.length + 1);
+  }
+  return trimmed;
 }
 
 function normalise(entry: string): string {

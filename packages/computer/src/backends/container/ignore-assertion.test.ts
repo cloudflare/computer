@@ -211,15 +211,35 @@ describe("assertIgnoreMatches", () => {
     }
   });
 
-  test("explains that the image owns the set", () => {
-    // Without this the natural reaction is to change the client option,
-    // which cannot fix anything.
+  test("points at the setting that overrides `ignore`", () => {
+    // `ignore` is passed to the container as MOUNT_IGNORE, so a
+    // disagreement means something else set the variable after it.
     try {
       assertIgnoreMatches(["a"], supported(["b"]));
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect((error as Error).message).toMatch(/property of the image \(MOUNT_IGNORE\)/);
+      expect((error as Error).message).toMatch(/MOUNT_IGNORE in `containerEnv`/);
     }
+  });
+
+  test("accepts declarations spelled with the mount point", () => {
+    // computerd strips the mount prefix, so "/workspace/dist" and "/dist"
+    // configure the same path. Comparing them raw rejects a container
+    // that is doing exactly what was asked.
+    expect(() =>
+      assertIgnoreMatches(
+        ["/workspace/dist", "/workspace/node_modules/"],
+        supported(["/workspace/dist", "/workspace/node_modules"]),
+      ),
+    ).not.toThrow();
+  });
+
+  test("does not strip a prefix that only looks like the mount point", () => {
+    // "/workspacefoo" is not under "/workspace", so it names
+    // "/workspace/workspacefoo", not "/workspace/foo".
+    expect(() => assertIgnoreMatches(["/workspacefoo"], supported(["/workspace/foo"]))).toThrow(
+      ContainerIgnoreMismatchError,
+    );
   });
 
   test("carries the declared and actual sets on the error", () => {

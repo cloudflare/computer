@@ -405,7 +405,7 @@ export class ContainerBackend implements WorkspaceBackend {
     // would let the first exec write into a path the caller believes is
     // local-only, which is precisely the state that is expensive to
     // discover later.
-    const resolvedIgnore = await this.#resolveIgnore(host);
+    const resolvedIgnore = await this.#resolveIgnore(host, clientSecret);
     try {
       assertIgnoreMatches(this.#options.ignore, resolvedIgnore);
     } catch (error) {
@@ -636,12 +636,23 @@ export class ContainerBackend implements WorkspaceBackend {
   // because a diagnostic request failed. A client that *did* declare
   // one still fails, via assertIgnoreMatches -- which is the right
   // split: silence is only acceptable when nobody asked.
-  async #resolveIgnore(host: IWorkspaceContainerAPI): Promise<ResolvedIgnore> {
+  //
+  // The endpoint sits behind the client secret like every route except
+  // /health. Without the token an enforcing container answers 401, which
+  // would read as "unsupported" and fail every connect that declared
+  // `ignore`.
+  async #resolveIgnore(
+    host: IWorkspaceContainerAPI,
+    clientSecret: string,
+  ): Promise<ResolvedIgnore> {
     try {
       const res = await host.fetchPort(
         this.#options.containerPort,
         "http://container/__computerd/info",
-        { signal: AbortSignal.timeout(this.#options.healthProbeTimeoutMs) },
+        {
+          headers: { authorization: `Bearer ${clientSecret}` },
+          signal: AbortSignal.timeout(this.#options.healthProbeTimeoutMs),
+        },
       );
       if (!res.ok) return { paths: [], root: undefined, mountPoint: undefined, supported: false };
       return readIgnoreReport(await res.json());
