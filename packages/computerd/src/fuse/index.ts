@@ -2,6 +2,8 @@ export type { FUSEBackend, FuseMountMode, ResolveFuseBackendOptions } from "./ba
 export { parseFuseMountMode, resolveFuseBackend } from "./backend.js";
 export type { FuseMount, FuseOps, FuseStat } from "./driver.js";
 export { makeFUSEOps, mountFuse } from "./driver.js";
+export type { MountIgnoreSet } from "./ignore.js";
+export { MountIgnorePathError, parseMountIgnore, resolveMountIgnore } from "./ignore.js";
 export type { ResolvedStore, StoreMode } from "./store.js";
 export { parseStoreMode, resolveStore } from "./store.js";
 export type { CreateNodeVFSOptions, NodeVFSHandle, NodeVirtualFileSystem } from "./vfs.js";
