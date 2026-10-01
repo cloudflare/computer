@@ -46,7 +46,6 @@ export class ExecutorAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
       root: WORKSPACE_ROOT,
       access: "read",
       egress: { mode: "none" },
-      maxConcurrentExecutions: 1,
       maxConcurrentCapabilityCalls: 4,
       maxCapabilityCalls: 24,
       maxCapabilityBytes: 4 * 1024 * 1024,
