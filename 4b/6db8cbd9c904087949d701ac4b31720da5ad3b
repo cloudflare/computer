@@ -1,0 +1,29 @@
+.changeset/exec-tool-single-backend.md
+  s_b2fd9413bbc158::t_69bf7aafee77ad 1-7
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_f41535e26eb339 58-67,256-268
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_a6e28eda08b001 151,164
+packages/computer/src/text-truncation.ts
+  s_b2fd9413bbc158::t_26361c49134a4e 1-37
+packages/computer/src/tools/ai.test.ts
+  s_b2fd9413bbc158::t_f10ec43945822f 3-5,91-101,1714-1872
+packages/computer/src/tools/exec.ts
+  s_b2fd9413bbc158::t_4c28a06a924fc6 6,68-71,76-79,84-86,88-90,126-134,142-144,146,150-195,199,201,292-293,304-359,392-394,401-402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4b6db8cbd9c904087949d701ac4b31720da5ad3b",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
