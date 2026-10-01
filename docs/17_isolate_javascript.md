@@ -80,7 +80,7 @@ Workspace parses the graph before loading the Worker, confines every durable pat
 
 ## Execution limits and retention
 
-The backend admits up to twenty-four executions at a time by default. A concurrent start past that ceiling fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Adjust `maxConcurrentExecutions` after measuring the Durable Object and Worker Loader limits for the deployment.
+The backend does not cap concurrent executions itself. The platform limits how many Dynamic Workers run at once, and an execution started past that limit fails with the platform's error.
 
 Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host. Every capability call goes through one host bridge that enforces these limits. Values cross as real Workers RPC values, measured as UTF-8 bytes for strings and raw bytes for byte arrays, and anything that is not plain data, such as a function, an RPC stub, or a cycle, is rejected before the host acts on it.
 
