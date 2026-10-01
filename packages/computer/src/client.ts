@@ -31,7 +31,7 @@
 // over RPC.
 
 import type { WorkspaceFilesystem } from "@cloudflare/dofs";
-
+import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -216,6 +216,8 @@ export interface WorkspaceRuntimeClient {
   ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
+  /** What each backend says about itself, as of when the client was created. */
+  backends(): readonly WorkspaceBackendInfo[];
 }
 
 // Options accepted by the plain `exec` form, common to both paths.
@@ -275,6 +277,10 @@ function makeRuntimeClient(
   // Adapts the handle the underlying `exec` resolves to: identity on
   // the local path (already a host handle), rebuild on the remote path.
   rehydrate: RehydrateRuntimeHandle,
+  // Backends are fixed when the Workspace is constructed, so one
+  // snapshot serves the client's lifetime. It keeps backends()
+  // synchronous over RPC, where the tools need it at construction.
+  backends: readonly WorkspaceBackendInfo[],
 ): WorkspaceRuntimeClient {
   async function exec(
     commandOrStrings: string | TemplateStringsArray,
@@ -307,7 +313,18 @@ function makeRuntimeClient(
   const killExec = (id: string, options?: RuntimeKillOptions) => runtime.killExec(id, options);
   const disposeExec = (id: string, options?: { backend?: string }) =>
     runtime.disposeExec(id, options);
-  return { exec, getExec, killExec, disposeExec } as WorkspaceRuntimeClient;
+  // Frozen so a caller that edits the list cannot change what later
+  // tool sets see.
+  const snapshot: readonly WorkspaceBackendInfo[] = Object.freeze(
+    backends.map((info) => Object.freeze({ ...info })),
+  );
+  return {
+    exec,
+    getExec,
+    killExec,
+    disposeExec,
+    backends: () => snapshot,
+  } as WorkspaceRuntimeClient;
 }
 
 function withExecutionId(
@@ -338,10 +355,12 @@ function makeClient(
   rehydrate: (handle: unknown, metadata?: RuntimeHandleMetadata) => unknown,
   dispose: () => void,
   useThink: boolean,
+  backends: readonly WorkspaceBackendInfo[],
 ): WorkspaceClient {
   const runtime = makeRuntimeClient(
     surface.runtime as UnderlyingRuntime,
     rehydrate as RehydrateRuntimeHandle,
+    backends,
   );
   const client: WorkspaceClient = {
     get fs() {
@@ -389,6 +408,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       (h) => h,
       () => {},
       local.useThink,
+      local.runtime.backends(),
     );
   }
   // Remote path: fetch the stub over RPC and delegate to it. Handle
@@ -403,6 +423,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },
       await stub.useThink,
+      await stub.runtime.backends(),
     );
   } catch (error) {
     (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();

@@ -83,7 +83,7 @@ Once connected, ask your MCP client to work in the Computer workspace. For examp
 Create /workspace/hello.txt, read it back, and list the workspace files.
 ```
 
-Commands use `worker-shell` by default. Select the container when the task needs a full Linux environment:
+Every command names its backend: `worker-shell` for quick shell work, or `container-shell` when the task needs a full Linux environment:
 
 ```text
 Use container-shell to create a small Node.js project in /workspace, install its dependencies, and run its tests.
@@ -118,7 +118,7 @@ You do not need to call the underlying Computer tools individually. The `code` t
 | `codemode.write({ path, content })` | Create or replace a file. |
 | `codemode.edit({ path, edits })` | Apply exact text replacements to a file. |
 | `codemode.delete_({ path, recursive? })` | Delete a file or directory. |
-| `codemode.exec({ command, cwd?, backend?, env? })` | Run a command, using `worker-shell` unless another backend is selected. |
+| `codemode.exec({ command, backend, cwd?, env? })` | Run a command on `worker-shell` or `container-shell`. |
 
 ## How it works
 
@@ -126,7 +126,7 @@ You do not need to call the underlying Computer tools individually. The `code` t
 
 | Backend | Use it for |
 | --- | --- |
-| `worker-shell` | The fast default for common commands. It has no ambient network access; its built-in Git command supports HTTPS remotes. |
+| `worker-shell` | Fast, and the one to try first for common commands. It has no ambient network access; its built-in Git command supports HTTPS remotes. |
 | `container-shell` | Full Debian Linux with Node.js, npm, git, native binaries, and outbound networking. |
 
 The model can select a backend in `codemode.exec()`. The example does not retry automatically, so backend choice, cost, and failures remain visible.
