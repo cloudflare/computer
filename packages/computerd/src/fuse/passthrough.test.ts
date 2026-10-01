@@ -1,4 +1,15 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
+import {
+  constants,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,7 +17,11 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import type { FuseOps } from "./driver.js";
 import { resolveMountIgnore } from "./ignore.js";
-import { withLocalPassthrough } from "./passthrough.js";
+import { type PassthroughFs, withLocalPassthrough } from "./passthrough.js";
+
+// The real filesystem, as the slice withLocalPassthrough takes. Tests
+// override single calls on top of it.
+const realFs = (): PassthroughFs => ({ ...nodeFs }) as PassthroughFs;
 
 // Drives the real node:fs against a temp directory rather than a double.
 // The interesting failures here -- EXDEV, ENOTEMPTY, parent creation --
@@ -534,5 +549,158 @@ describe("withLocalPassthrough: errors", () => {
       code = result as number;
     });
     expect(code).toBe(-20);
+  });
+});
+
+describe("withLocalPassthrough: descriptor and metadata operations", () => {
+  let root: string;
+  let outside: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "computerd-passthrough-"));
+    outside = mkdtempSync(join(tmpdir(), "computerd-outside-"));
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  const build = (fs?: Partial<PassthroughFs>) => {
+    const source = recordingOps();
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      mountPoint: MOUNT,
+      ...(fs === undefined ? {} : { fs: { ...realFs(), ...fs } }),
+    });
+    return { ops, calls: source.calls };
+  };
+
+  const open = (ops: FuseOps, path: string): number => {
+    let fh = 0;
+    ops.open(path, constants.O_RDWR, (code, handle) => {
+      expect(code).toBe(0);
+      fh = handle as number;
+    });
+    return fh;
+  };
+
+  const status = (run: (cb: (code: number) => void) => void): number => {
+    let result = 1;
+    run((code) => {
+      result = code;
+    });
+    return result;
+  };
+
+  test("ftruncate truncates the open file, not whatever now has its name", () => {
+    // Open a, rename it to b, create a new a, then truncate the old
+    // handle. The handle still refers to the file now called b.
+    const { ops } = build();
+    writeFileSync(join(root, "node_modules/a"), "original");
+    const fh = open(ops, "/node_modules/a");
+    ops.rename("/node_modules/a", "/node_modules/b", (code) => expect(code).toBe(0));
+    writeFileSync(join(root, "node_modules/a"), "replacement");
+
+    expect(status((cb) => ops.ftruncate("/node_modules/a", fh, 2, cb))).toBe(0);
+
+    expect(readFileSync(join(root, "node_modules/b"), "utf8")).toBe("or");
+    expect(readFileSync(join(root, "node_modules/a"), "utf8")).toBe("replacement");
+  });
+
+  test("fsync flushes the descriptor", () => {
+    // A program that fsyncs a file is relying on it reaching disk.
+    const synced: string[] = [];
+    const { ops } = build({
+      fsyncSync: () => {
+        synced.push("fsync");
+      },
+      fdatasyncSync: () => {
+        synced.push("fdatasync");
+      },
+    });
+    writeFileSync(join(root, "node_modules/a"), "x");
+    const fh = open(ops, "/node_modules/a");
+
+    expect(status((cb) => ops.fsync("/node_modules/a", fh, 0, cb))).toBe(0);
+    expect(status((cb) => ops.fsync("/node_modules/a", fh, 1, cb))).toBe(0);
+    expect(synced).toEqual(["fsync", "fdatasync"]);
+  });
+
+  test("hardlinks within the local layer", () => {
+    const { ops, calls } = build();
+    writeFileSync(join(root, "node_modules/a"), "shared");
+
+    expect(status((cb) => ops.link("/node_modules/a", "/node_modules/b", cb))).toBe(0);
+
+    expect(statSync(join(root, "node_modules/b")).nlink).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  test("refuses a hardlink across the boundary with EXDEV", () => {
+    const { ops, calls } = build();
+    writeFileSync(join(root, "node_modules/a"), "x");
+
+    expect(status((cb) => ops.link("/node_modules/a", "/src/a", cb))).toBe(-18);
+    expect(status((cb) => ops.link("/src/a", "/node_modules/b", cb))).toBe(-18);
+    expect(calls).toEqual([]);
+  });
+
+  test("delegates a hardlink entirely within the VFS", () => {
+    const { ops, calls } = build();
+    ops.link("/src/a", "/src/b", () => {});
+    expect(calls).toEqual(["link"]);
+  });
+
+  test("opendir reports a missing path or a file up front", () => {
+    const { ops } = build();
+    writeFileSync(join(root, "node_modules/file.js"), "x");
+
+    expect(status((cb) => ops.opendir("/node_modules/missing", 0, cb))).toBe(-2);
+    expect(status((cb) => ops.opendir("/node_modules/file.js", 0, cb))).toBe(-20);
+    expect(status((cb) => ops.opendir("/node_modules", 0, cb))).toBe(0);
+  });
+
+  test("access checks the requested mode", () => {
+    const { ops } = build();
+    writeFileSync(join(root, "node_modules/data.json"), "{}", { mode: 0o644 });
+
+    expect(status((cb) => ops.access("/node_modules/data.json", constants.R_OK, cb))).toBe(0);
+    // No execute bit for anyone, so this fails even for root.
+    expect(status((cb) => ops.access("/node_modules/data.json", constants.X_OK, cb))).toBe(-13);
+  });
+
+  test("utimens on a symlink changes the link, not its target", () => {
+    // The kernel resolves links before calling the daemon unless the
+    // caller asked for the link itself (touch -h). Following it here
+    // would reach a file outside the local root.
+    const { ops } = build();
+    const target = join(outside, "target");
+    writeFileSync(target, "x");
+    const before = statSync(target).mtimeMs;
+    symlinkSync(target, join(root, "node_modules/link"));
+
+    expect(status((cb) => ops.utimens("/node_modules/link", 1_000, 1_000, cb))).toBe(0);
+
+    expect(statSync(target).mtimeMs).toBe(before);
+    expect(lstatSync(join(root, "node_modules/link")).mtimeMs).toBe(1_000);
+  });
+
+  test("chown on a symlink changes the link, not its target", () => {
+    // Changing ownership needs root, so this checks which call is made.
+    const changed: string[] = [];
+    const { ops } = build({
+      chownSync: () => {
+        changed.push("chown");
+      },
+      lchownSync: () => {
+        changed.push("lchown");
+      },
+    });
+    symlinkSync(join(outside, "target"), join(root, "node_modules/link"));
+
+    expect(status((cb) => ops.chown("/node_modules/link", 0, 0, cb))).toBe(0);
+    expect(changed).toEqual(["lchown"]);
   });
 });

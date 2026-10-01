@@ -19,12 +19,19 @@
 // have that problem, so the indirection would be pure cost here.
 
 import {
+  accessSync,
   chmodSync,
   chownSync,
   closeSync,
+  fdatasyncSync,
   constants as fsConstants,
   fstatSync,
+  fsyncSync,
+  ftruncateSync,
+  lchownSync,
+  linkSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -37,7 +44,6 @@ import {
   symlinkSync,
   truncateSync,
   unlinkSync,
-  utimesSync,
   writeSync,
 } from "node:fs";
 import { dirname, join, posix } from "node:path";
@@ -101,10 +107,19 @@ export interface PassthroughFs {
   rmdirSync: typeof rmdirSync;
   symlinkSync: typeof symlinkSync;
   truncateSync: typeof truncateSync;
+  ftruncateSync: typeof ftruncateSync;
+  fsyncSync: typeof fsyncSync;
+  fdatasyncSync: typeof fdatasyncSync;
+  linkSync: typeof linkSync;
   unlinkSync: typeof unlinkSync;
-  utimesSync: typeof utimesSync;
+  accessSync: typeof accessSync;
+  // The l-variants: an operation that reaches the daemon on a symlink's
+  // own path is about the link. Following it would act on whatever the
+  // link points at, which can be outside the local root.
+  lutimesSync: typeof lutimesSync;
   chmodSync: typeof chmodSync;
   chownSync: typeof chownSync;
+  lchownSync: typeof lchownSync;
 }
 
 const REAL_FS: PassthroughFs = {
@@ -122,10 +137,16 @@ const REAL_FS: PassthroughFs = {
   rmdirSync,
   symlinkSync,
   truncateSync,
+  ftruncateSync,
+  fsyncSync,
+  fdatasyncSync,
+  linkSync,
   unlinkSync,
-  utimesSync,
+  accessSync,
+  lutimesSync,
   chmodSync,
   chownSync,
+  lchownSync,
 };
 
 /** Counters for `/__computerd/info` and for proving the cache works. */
@@ -323,7 +344,18 @@ export function withLocalPassthrough(
       localOps += 1;
       // Directory handles carry no fd: readdir re-resolves by path, and
       // holding an O_PATH fd per open directory would leak under a
-      // recursive walk of a large dependency tree.
+      // recursive walk of a large dependency tree. The path is still
+      // checked now, so a missing directory fails at opendir(3) the way
+      // it would on any other filesystem.
+      try {
+        if (!fs.statSync(localPath(path)).isDirectory()) {
+          cb(ERRNO.ENOTDIR, 0);
+          return;
+        }
+      } catch (error) {
+        cb(toErrno(error), 0);
+        return;
+      }
       cb(0, allocateHandle(-1, path));
     },
 
@@ -427,7 +459,19 @@ export function withLocalPassthrough(
         ops.fsync(path, fh, datasync, cb);
         return;
       }
-      cb(0);
+      const handle = handles.get(fh);
+      if (handle === undefined || handle.fd < 0) {
+        cb(ERRNO.EBADF);
+        return;
+      }
+      localOps += 1;
+      try {
+        if (datasync !== 0) fs.fdatasyncSync(handle.fd);
+        else fs.fsyncSync(handle.fd);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
     },
 
     truncate(path, size, cb) {
@@ -449,9 +493,16 @@ export function withLocalPassthrough(
         ops.ftruncate(path, fh, size, cb);
         return;
       }
+      // By descriptor, not by path: the file may have been renamed or
+      // replaced since it was opened.
+      const handle = handles.get(fh);
+      if (handle === undefined || handle.fd < 0) {
+        cb(ERRNO.EBADF);
+        return;
+      }
       localOps += 1;
       try {
-        fs.truncateSync(localPath(path), size);
+        fs.ftruncateSync(handle.fd, size);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -565,7 +616,7 @@ export function withLocalPassthrough(
       }
       localOps += 1;
       try {
-        fs.chownSync(localPath(path), uid, gid);
+        fs.lchownSync(localPath(path), uid, gid);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -579,7 +630,7 @@ export function withLocalPassthrough(
       }
       localOps += 1;
       try {
-        fs.utimesSync(localPath(path), atime / 1000, mtime / 1000);
+        fs.lutimesSync(localPath(path), atime / 1000, mtime / 1000);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -625,7 +676,35 @@ export function withLocalPassthrough(
       }
       localOps += 1;
       try {
-        fs.lstatSync(localPath(path));
+        fs.accessSync(localPath(path), mode);
+        cb(0);
+      } catch (error) {
+        cb(toErrno(error));
+      }
+    },
+
+    link(source, destination, cb) {
+      const sourceLocal = isLocal(source);
+      const destinationLocal = isLocal(destination);
+
+      if (!sourceLocal && !destinationLocal) {
+        ops.link(source, destination, cb);
+        return;
+      }
+
+      // A hardlink is one file under two names, so both names have to be
+      // on the same filesystem. Across the boundary that is impossible,
+      // and EXDEV is what link(2) returns for it anywhere else.
+      if (sourceLocal !== destinationLocal) {
+        cb(ERRNO.EXDEV);
+        return;
+      }
+
+      localOps += 1;
+      try {
+        const target = localPath(destination);
+        ensureParent(target);
+        fs.linkSync(localPath(source), target);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
