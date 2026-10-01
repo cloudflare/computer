@@ -149,14 +149,10 @@ const REAL_FS: PassthroughFs = {
   lchownSync,
 };
 
-/** Counters for `/__computerd/info` and for proving the cache works. */
+/** Counters reported on `/__computerd/stats`. */
 export interface PassthroughStats {
   /** Paths served from local disk rather than the VFS. */
   readonly localOps: number;
-  /** Calls that consulted the ignore set rather than a cached decision. */
-  readonly decisions: number;
-  /** Decisions answered from the per-directory cache. */
-  readonly cacheHits: number;
   /** Open local file handles. */
   readonly openHandles: number;
   /** Renames refused with EXDEV for crossing the boundary. */
@@ -184,8 +180,6 @@ export function withLocalPassthrough(
       ops,
       stats: () => ({
         localOps: 0,
-        decisions: 0,
-        cacheHits: 0,
         openHandles: 0,
         crossLayerRenames: 0,
       }),
@@ -197,43 +191,17 @@ export function withLocalPassthrough(
   const mountRoot = normaliseMount(options.mountPoint ?? "/");
 
   let localOps = 0;
-  let decisions = 0;
-  let cacheHits = 0;
   let crossLayerRenames = 0;
   const warn = options.warn ?? ((message: string) => console.warn(message));
 
-  // The decision cache. Keyed by *directory*, not by file: ignored-ness
-  // is inherited, so once a directory is known local-only every path
-  // beneath it is too, with no further consultation of the ignore set.
-  //
-  // This is the whole performance argument. A `node_modules` tree is
-  // tens of thousands of entries under a handful of directories; without
-  // inheritance each one would re-test the entry list on every lookup.
-  const directoryDecisions = new Map<string, boolean>();
-
+  // No cache. The ignore set is a handful of entries and the test is a
+  // prefix comparison against each, which costs about what a cache
+  // lookup would. A per-path cache grows with the dependency tree and
+  // has to be invalidated on every rename and rmdir to stay correct.
   const isLocal = (path: string): boolean => {
     const relative = toRelative(path, mountRoot);
     if (relative === "") return false;
-
-    const parent = posix.dirname(relative);
-    if (parent !== "." && parent !== "/") {
-      const inherited = directoryDecisions.get(parent);
-      if (inherited === true) {
-        // Inherited, not matched. No ignore-set consultation at all.
-        cacheHits += 1;
-        return true;
-      }
-    }
-
-    decisions += 1;
-    const decision = options.ignore.ignores(relative);
-    // Only directory decisions are cached. Caching files would grow
-    // without bound across a build, and buys nothing: a file is a leaf,
-    // so nothing inherits from it.
-    if (decision || looksLikeDirectory(relative)) {
-      directoryDecisions.set(relative, decision);
-    }
-    return decision;
+    return options.ignore.ignores(relative);
   };
 
   const localPath = (path: string): string => join(root, toRelative(path, mountRoot));
@@ -533,7 +501,6 @@ export function withLocalPassthrough(
         const target = localPath(path);
         ensureParent(target);
         fs.mkdirSync(target, { mode: mode === 0 ? DEFAULT_DIR_MODE : mode });
-        markDirectory(path);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -548,7 +515,6 @@ export function withLocalPassthrough(
       localOps += 1;
       try {
         fs.rmdirSync(localPath(path));
-        forgetDirectory(path);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -588,7 +554,6 @@ export function withLocalPassthrough(
         const target = localPath(destination);
         ensureParent(target);
         fs.renameSync(localPath(source), target);
-        forgetDirectory(source);
         cb(0);
       } catch (error) {
         cb(toErrno(error));
@@ -743,23 +708,6 @@ export function withLocalPassthrough(
     );
   }
 
-  function markDirectory(path: string): void {
-    const relative = toRelative(path, mountRoot);
-    if (relative !== "") directoryDecisions.set(relative, true);
-  }
-
-  function forgetDirectory(path: string): void {
-    const relative = toRelative(path, mountRoot);
-    if (relative === "") return;
-    directoryDecisions.delete(relative);
-    // Descendants inherited from this entry, so they go too. Leaving
-    // them would let a recreated path keep a stale decision.
-    const prefix = `${relative}/`;
-    for (const key of directoryDecisions.keys()) {
-      if (key.startsWith(prefix)) directoryDecisions.delete(key);
-    }
-  }
-
   function localChildren(path: string): string[] {
     const relative = toRelative(path, mountRoot);
     const names: string[] = [];
@@ -780,20 +728,10 @@ export function withLocalPassthrough(
     return names;
   }
 
-  function looksLikeDirectory(relative: string): boolean {
-    try {
-      return fs.lstatSync(join(root, relative)).isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
   return {
     ops: wrapped,
     stats: () => ({
       localOps,
-      decisions,
-      cacheHits,
       openHandles: handles.size,
       crossLayerRenames,
     }),

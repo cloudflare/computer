@@ -165,7 +165,7 @@ describe("withLocalPassthrough: routing", () => {
   });
 });
 
-describe("withLocalPassthrough: the decision cache", () => {
+describe("withLocalPassthrough: deciding paths", () => {
   let root: string;
 
   beforeEach(() => {
@@ -175,79 +175,55 @@ describe("withLocalPassthrough: the decision cache", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test("inherits the decision rather than re-consulting the ignore set", () => {
-    // The performance argument for the whole feature. A deep tree must
-    // cost one decision at the top, not one per entry.
+  test("routes a path many levels under an entry", () => {
     const source = recordingOps();
-    const { ops, stats } = withLocalPassthrough(source.ops, {
+    const { ops } = withLocalPassthrough(source.ops, {
       root,
       ignore: resolveMountIgnore(["node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
-
-    mkdirSync(join(root, "node_modules"), { recursive: true });
-    ops.getattr("/node_modules", () => {});
-    const afterRoot = stats().decisions;
-
-    for (const path of [
-      "/node_modules/a.js",
-      "/node_modules/b.js",
-      "/node_modules/c.js",
-      "/node_modules/d.js",
-    ]) {
-      ops.getattr(path, () => {});
-    }
-
-    // Every child was answered from the parent's cached decision.
-    expect(stats().decisions).toBe(afterRoot);
-    expect(stats().cacheHits).toBe(4);
+    ops.create("/node_modules/a/b/c/d/e/f.js", 0o644, (code) => expect(code).toBe(0));
+    expect(readFileSync(join(root, "node_modules/a/b/c/d/e/f.js"), "utf8")).toBe("");
+    expect(source.calls).toEqual([]);
   });
 
-  test("a file six levels deep costs one decision per new directory, not per file", () => {
+  test("a recreated directory is decided by its path, not by history", () => {
+    // Removing and recreating a directory, or renaming one into place,
+    // must not leave a path in the layer it used to belong to.
     const source = recordingOps();
-    const { ops, stats } = withLocalPassthrough(source.ops, {
+    const { ops } = withLocalPassthrough(source.ops, {
       root,
       ignore: resolveMountIgnore(["node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
-
-    // Materialise the chain the way a real install would.
-    for (const dir of ["", "/a", "/a/b", "/a/b/c", "/a/b/c/d", "/a/b/c/d/e"]) {
-      ops.mkdir(`/node_modules${dir}`, 0o755, () => {});
-    }
-    const afterTree = stats().decisions;
-    const hitsAfterTree = stats().cacheHits;
-
-    // Ten files in the deepest directory: all inherited.
-    for (let index = 0; index < 10; index += 1) {
-      ops.getattr(`/node_modules/a/b/c/d/e/file-${index}.js`, () => {});
-    }
-
-    expect(stats().decisions).toBe(afterTree);
-    expect(stats().cacheHits - hitsAfterTree).toBe(10);
-  });
-
-  test("forgets a directory decision when the directory is removed", () => {
-    // A stale cached decision would survive a delete and recreate,
-    // which is how a path silently ends up in the wrong layer.
-    const source = recordingOps();
-    const { ops, stats } = withLocalPassthrough(source.ops, {
-      root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
-      mountPoint: MOUNT,
-    });
-
     ops.mkdir("/node_modules", 0o755, () => {});
     ops.mkdir("/node_modules/pkg", 0o755, () => {});
-    const hitsBefore = stats().cacheHits;
-    ops.getattr("/node_modules/pkg/x.js", () => {});
-    expect(stats().cacheHits - hitsBefore).toBe(1);
+    ops.rename("/node_modules/pkg", "/node_modules/moved", (code) => expect(code).toBe(0));
+    ops.rmdir("/node_modules/moved", (code) => expect(code).toBe(0));
 
-    ops.rmdir("/node_modules/pkg", () => {});
-    const before = stats().decisions;
-    ops.getattr("/node_modules/pkg/x.js", () => {});
-    // Re-decided rather than inherited from the removed entry.
-    expect(stats().decisions).toBe(before + 1);
+    ops.getattr("/src/pkg/x.js", () => {});
+    expect(source.calls).toEqual(["getattr"]);
+  });
+
+  test("does not touch local disk to decide a synced path", () => {
+    // Every VFS lookup goes through the decision, so a syscall here is
+    // paid on every getattr in the synced tree.
+    const source = recordingOps();
+    let localCalls = 0;
+    const counting = new Proxy(realFs(), {
+      get(target, property: keyof PassthroughFs) {
+        localCalls += 1;
+        return target[property];
+      },
+    });
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      mountPoint: MOUNT,
+      fs: counting,
+    });
+    for (let index = 0; index < 10; index += 1) ops.getattr(`/src/file-${index}.ts`, () => {});
+    expect(localCalls).toBe(0);
   });
 });
 
