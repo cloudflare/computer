@@ -90,6 +90,19 @@ export interface BackendHandle {
   //              Durable Object). push/pull are no-ops, and the
   //              reconcile-watermarks pass on connect is skipped.
   sync?: "remote" | "none";
+  // Local-only paths this backend's container keeps on its own disk,
+  // as the container reports them (#179). Absent on backends with no
+  // such concept.
+  //
+  // `supported: false` means the container predates the feature, so
+  // every path is synced regardless of what the host asked for. Worth
+  // logging: it is the difference between a configuration that works
+  // and one that silently does nothing.
+  ignore?: {
+    readonly paths: readonly string[];
+    readonly root: string | undefined;
+    readonly supported: boolean;
+  };
   // Resolves when the underlying transport closes for any reason
   // (clean close, peer crash, network drop). The Workspace listens
   // for this and drops its cached handle so the next ready() call
