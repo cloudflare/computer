@@ -100,7 +100,30 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("round-trips bytes and marker-shaped plain objects without codec collisions", async () => {
+  it("moves bytes through node:fs without inflating them", async () => {
+    // 900 bytes fits under this fixture's 1024-byte capability limit as
+    // raw bytes. Encoded as JSON numbers it would be about four times
+    // larger and rejected.
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        export default async () => {
+          await fs.writeFile("/workspace/blob.bin", new Uint8Array(900).fill(255));
+          const back = await fs.readFile("/workspace/blob.bin");
+          return { isBytes: back instanceof Uint8Array, length: back.byteLength, last: back[899] };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: { isBytes: true, length: 900, last: 255 },
+    });
+  });
+
+  it("round-trips bytes, and plain objects shaped like the old codec, unchanged", async () => {
     const response = await runtime({
       source: `
         import fs from "node:fs/promises";
