@@ -299,6 +299,7 @@ export async function applyChanges(
 
   for await (const entry of entries) {
     const revBefore = currentRev(db);
+    const keepsLocalLink = rewritesUnpushedHardlink(db, entry, options);
     try {
       // Idempotent skip: if the entry already matches the local
       // state, drop it on the floor. The check is what stops a
@@ -392,7 +393,7 @@ export async function applyChanges(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      recordPulledRevs(db, options, revBefore);
+      if (!keepsLocalLink) recordPulledRevs(db, options, revBefore);
     }
   }
 
@@ -442,6 +443,7 @@ export function applyChangesSync(
 
   for (const entry of entries) {
     const revBefore = currentRev(db);
+    const keepsLocalLink = rewritesUnpushedHardlink(db, entry, options);
     try {
       if (options.source === "upstream" && entry.kind !== "delete") {
         if (alreadyApplied(db, entry)) continue;
@@ -526,7 +528,7 @@ export function applyChangesSync(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      recordPulledRevs(db, options, revBefore);
+      if (!keepsLocalLink) recordPulledRevs(db, options, revBefore);
     }
   }
 
@@ -662,6 +664,40 @@ function shippedCursor(db: Database, backend: string): ChangeCursor {
 function recordPulledRevs(db: Database, options: ApplyOptions, revBefore: number): void {
   if (options.source !== "upstream" || options.receivedCursor !== undefined) return;
   recordUpstreamRevs(db, revBefore, currentRev(db), options.backend);
+}
+
+// A pulled write to one name of a hardlinked file restamps the inode
+// every name shares. When that inode holds an unpushed local version,
+// such as a fresh link, the new rev must stay local: recording it as
+// upstream would let a later delete of another name discard that link.
+function rewritesUnpushedHardlink(
+  db: Database,
+  entry: ChangeEntry,
+  options: ApplyOptions,
+): boolean {
+  if (entry.kind !== "file" || options.source !== "upstream") return false;
+  if (options.receivedCursor !== undefined) return false;
+  const live = resolveInode(db, entry.path, { followSymlinks: false });
+  if (live === null || live.type !== "file") return false;
+  const node = db.one<{ rev: number; links: number }>(
+    `SELECT n.rev AS rev,
+            (SELECT count(*) FROM vfs_dirents d WHERE d.child_inode = n.inode) AS links
+       FROM vfs_nodes n WHERE n.inode = ?`,
+    live.inode,
+  );
+  if (node === undefined || node.links < 2) return false;
+  const backend = options.backend ?? DEFAULT_BACKEND_ID;
+  const pushed = shippedCursor(db, backend);
+  // The names do not share a path, so a partially shipped rev counts
+  // as unpushed.
+  if (node.rev < pushed.rev || (node.rev === pushed.rev && pushed.path === null)) return false;
+  return (
+    db.one(
+      "SELECT 1 AS hit FROM _vfs_upstream_revs WHERE backend = ? AND rev = ?",
+      backend,
+      node.rev,
+    ) === undefined
+  );
 }
 
 // Compare an entry against the local node graph. Returns true when

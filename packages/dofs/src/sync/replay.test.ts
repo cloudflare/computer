@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { link } from "../fs/link.js";
 import { mkdir } from "../fs/mkdir.js";
 import { readFile } from "../fs/readFile.js";
 import { rename } from "../fs/rename.js";
@@ -313,6 +314,57 @@ describe("block replay idempotency", () => {
           });
           expect(shipped.applied).toBe(1);
           expect(resolveInode(db, "/new/a", { followSymlinks: false })).toBeNull();
+        });
+      });
+      it(`${name}: keeps an unpushed hardlink when a pull rewrites its inode`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          link(db, "/x", "/y");
+          // The pull rewrites /x, which shares its inode with the
+          // unpushed /y, then deletes /y.
+          const update: ChangeEntry = {
+            kind: "file",
+            rev: 7,
+            path: "/x",
+            mode: 0o644,
+            mtime: 2,
+            size: 0,
+            chunks: [],
+          };
+          const result = await apply(
+            db,
+            [update, { kind: "delete", rev: 8, path: "/y" }],
+            new Map(),
+            { source: "upstream" },
+          );
+          expect(result.applied).toBe(1);
+          expect(resolveInode(db, "/y", { followSymlinks: false })).not.toBeNull();
+        });
+      });
+
+      it(`${name}: still deletes a pushed hardlink after a pull rewrites its inode`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          link(db, "/x", "/y");
+          writeWatermark(db, "pushRev", currentRev(db));
+          const update: ChangeEntry = {
+            kind: "file",
+            rev: 7,
+            path: "/x",
+            mode: 0o644,
+            mtime: 2,
+            size: 0,
+            chunks: [],
+          };
+          const result = await apply(
+            db,
+            [update, { kind: "delete", rev: 8, path: "/y" }],
+            new Map(),
+            { source: "upstream" },
+          );
+          expect(result.applied).toBe(2);
+          expect(resolveInode(db, "/y", { followSymlinks: false })).toBeNull();
         });
       });
     }
