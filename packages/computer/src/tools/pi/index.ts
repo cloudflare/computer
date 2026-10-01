@@ -252,23 +252,21 @@ function dispatcher(
       return errorResult(`Invalid arguments for ${call.name}: ${formatZodError(parsed.error)}`);
     }
 
-    let output: unknown;
-    try {
-      const run = entry.execute as (
-        i: unknown,
-        c: ToolCallContext,
-      ) => Promise<unknown> | AsyncIterable<unknown>;
-      output = await settle(run(parsed.data, context));
-    } catch (err) {
-      return errorResult(err instanceof Error ? err.message : String(err));
-    }
-
+    const run = entry.execute as (
+      i: unknown,
+      c: ToolCallContext,
+    ) => Promise<unknown> | AsyncIterable<unknown>;
     const toOutput = entry.toModelOutput as
       | ((args: { input: unknown; output: unknown }) => ModelOutput)
       | undefined;
-    return toPiResult(
-      toOutput ? toOutput({ input: parsed.data, output }) : defaultModelOutput(output),
-    );
+    try {
+      const output = await settle(run(parsed.data, context));
+      return toPiResult(
+        toOutput ? toOutput({ input: parsed.data, output }) : defaultModelOutput(output),
+      );
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
   };
 }
 
