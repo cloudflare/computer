@@ -118,7 +118,7 @@ export interface ContainerBackendOptions {
   //
   // connect() reads the resolved set back off /__computerd/info and
   // refuses the connection if it disagrees, which catches an image
-  // whose computerd is too old to honour the variable.
+  // whose computerd is too old to honor the variable.
   ignore?: readonly string[];
 
   // Number of forced restart attempts after startup readiness

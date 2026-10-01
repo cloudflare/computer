@@ -176,7 +176,8 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   expect(entries).toContain("src");
 
   // A rename across the boundary is refused rather than silently made
-  // non-atomic. EXDEV is what every tool already falls back from.
+  // non-atomic. EXDEV is what rename(2) returns between any two
+  // filesystems.
   await expect(
     fs.rename(path.join(mountPoint, "src"), path.join(mountPoint, "dist")),
   ).rejects.toMatchObject({ code: "EXDEV" });

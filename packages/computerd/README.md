@@ -172,7 +172,7 @@ The set is compiled once at startup, so it cannot change under a running
 container, and two sessions sharing one container see the same
 durability boundary. `connect()` reads the resolved set back off
 `/__computerd/info` and refuses the connection if it disagrees with what
-was declared, which catches a computerd too old to honour the variable.
+was declared, which catches a computerd too old to honor the variable.
 The handle exposes it as absolute container paths:
 
 ```ts
@@ -199,7 +199,7 @@ feature, because a dropped entry means a full `node_modules` goes into
 the Durable Object. Duplicates and entries nested inside another entry
 are dropped as redundant and reported.
 
-`/__computerd/info` reports the normalised configuration:
+`/__computerd/info` reports the normalized configuration:
 
 ```jsonc
 {
@@ -228,8 +228,11 @@ A rename whose source and destination sit on opposite sides of the
 boundary returns `EXDEV` (`Invalid cross-device link`). The two sides are
 different filesystems, so the rename cannot be atomic, and copying then
 unlinking would fake the atomicity `rename(2)` promises. `mv` and
-Python's `shutil.move` already fall back to copy-then-unlink on `EXDEV`.
-Renames within one side are ordinary atomic renames.
+Python's `shutil.move` copy instead when they see `EXDEV`, but a program
+that calls `rename` directly, such as Node's `fs.rename` or Go's
+`os.Rename`, gets the error. Renames within one side are ordinary atomic
+renames. Hardlinks across the boundary return `EXDEV` for the same
+reason.
 
 The usual cause is a build tool that stages into a sibling directory and
 renames into place. The fix is to ignore the staging path too:
@@ -251,7 +254,7 @@ logged, but `GET /__computerd/stats` counts them all under
 `fetchChanges({ ignore })` works at the sync RPC: the path is skipped in
 one transfer but still occupies the container's store. A wrapper that
 injects `ignore` into `fetchChanges` to keep a dependency tree out of the
-Durable Object should be deleted in favour of `MOUNT_IGNORE`.
+Durable Object should be deleted in favor of `MOUNT_IGNORE`.
 
 ## FUSE prerequisites
 

@@ -8,7 +8,7 @@
 //
 // The set is resolved once at startup and never re-read: entries that
 // changed under a running command would mean migrating
-// already-materialised paths between layers mid-write.
+// already-materialized paths between layers mid-write.
 
 /** An entry that cannot be used, carrying enough context to fix it. */
 export class MountIgnorePathError extends Error {
@@ -28,7 +28,7 @@ export interface MountIgnoreSet {
   readonly ignores: (relativePath: string) => boolean;
   /** The entry covering a path, or undefined when not local-only. */
   readonly entryFor: (relativePath: string) => string | undefined;
-  /** Normalised entries, in declaration order, as the mount applies them. */
+  /** Normalized entries, in declaration order, as the mount applies them. */
   readonly paths: readonly string[];
   /** Entries dropped as duplicates or as nested inside another entry. */
   readonly redundant: readonly string[];
@@ -51,11 +51,11 @@ export function parseMountIgnore(raw: string | undefined): string[] {
 }
 
 /**
- * Normalises entries and builds the matcher. An absolute path outside
+ * Normalizes entries and builds the matcher. An absolute path outside
  * the mount is rejected rather than reinterpreted.
  */
 export function resolveMountIgnore(entries: readonly string[], mountPoint = "/"): MountIgnoreSet {
-  const root = normaliseMount(mountPoint);
+  const root = normalizeMount(mountPoint);
   const paths: string[] = [];
   const redundant: string[] = [];
 
@@ -149,7 +149,7 @@ function stripSlashes(value: string): string {
   return out;
 }
 
-function normaliseMount(mountPoint: string): string {
+function normalizeMount(mountPoint: string): string {
   const trimmed = mountPoint.replace(/\/+$/, "");
   return trimmed === "" ? "/" : trimmed;
 }

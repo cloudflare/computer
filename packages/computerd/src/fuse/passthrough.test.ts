@@ -26,7 +26,7 @@ const realFs = (): PassthroughFs => ({ ...nodeFs }) as PassthroughFs;
 // Drives the real node:fs against a temp directory rather than a double.
 // The interesting failures here -- EXDEV, ENOTEMPTY, parent creation --
 // are the filesystem's, so a mock would assert the shape of the calls
-// rather than the behaviour.
+// rather than the behavior.
 
 const MOUNT = "/workspace";
 
@@ -338,7 +338,8 @@ describe("withLocalPassthrough: rename", () => {
     // Not a copy. The two sides are different filesystems, so the
     // operation cannot be atomic, and faking it would turn a crash
     // mid-copy into a half-written file where the caller was promised
-    // all-or-nothing. Tools fall back to copy-then-unlink on EXDEV.
+    // all-or-nothing. EXDEV is what rename(2) returns between any two
+    // filesystems.
     const { ops, calls } = build(["dist"]);
 
     let intoLocal = 0;
@@ -391,7 +392,7 @@ describe("withLocalPassthrough: directory listing", () => {
     expect(names).toContain("node_modules");
   });
 
-  test("does not show an entry that has not been materialised", () => {
+  test("does not show an entry that has not been materialized", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,

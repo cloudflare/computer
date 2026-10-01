@@ -2,7 +2,7 @@
 // the node runner does not provide, so the full dial cannot complete
 // here. These exercise the wire format the backend depends on, against
 // a fake host. The comparison logic and the error text have their own
-// suite in ignore-assertion.test.ts, and the end-to-end behaviour is
+// suite in ignore-assertion.test.ts, and the end-to-end behavior is
 // covered in computerd's cli tests against a real FUSE mount.
 import { afterEach, describe, expect, test, vi } from "vitest";
 

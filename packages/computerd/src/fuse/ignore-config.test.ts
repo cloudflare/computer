@@ -15,7 +15,7 @@ describe("resolveMountIgnoreConfig: the root", () => {
     expect(config.root).toBe("/tmp/workspace");
   });
 
-  test("honours an explicit MOUNT_IGNORE_PATH", () => {
+  test("honors an explicit MOUNT_IGNORE_PATH", () => {
     const config = resolveMountIgnoreConfig(
       { MOUNT_IGNORE: "node_modules", MOUNT_IGNORE_PATH: "/var/local-only" },
       "/workspace",
@@ -105,7 +105,7 @@ describe("resolveMountIgnoreConfig: the set", () => {
 });
 
 describe("describeMountIgnore", () => {
-  test("reports the normalised set and the redundant entries", () => {
+  test("reports the normalized set and the redundant entries", () => {
     const config = resolveMountIgnoreConfig(
       { MOUNT_IGNORE: "/node_modules,/node_modules/.cache,/dist" },
       "/workspace",

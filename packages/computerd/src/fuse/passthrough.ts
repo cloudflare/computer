@@ -81,7 +81,7 @@ export interface LocalPassthroughOptions {
   /** Injected for tests. Defaults to the real node:fs surface. */
   readonly fs?: PassthroughFs;
   /** Called once per distinct local-only directory created. Diagnostics. */
-  readonly onMaterialise?: (relativePath: string) => void;
+  readonly onMaterialize?: (relativePath: string) => void;
   /** Operator-facing warnings. Defaults to console.warn; injected for tests. */
   readonly warn?: (message: string) => void;
 }
@@ -188,7 +188,7 @@ export function withLocalPassthrough(
 
   const fs = options.fs ?? REAL_FS;
   const root = options.root.replace(/\/+$/, "");
-  const mountRoot = normaliseMount(options.mountPoint ?? "/");
+  const mountRoot = normalizeMount(options.mountPoint ?? "/");
 
   let localOps = 0;
   let crossLayerRenames = 0;
@@ -218,7 +218,7 @@ export function withLocalPassthrough(
     const parent = dirname(target);
     try {
       fs.mkdirSync(parent, { recursive: true, mode: DEFAULT_DIR_MODE });
-      options.onMaterialise?.(parent);
+      options.onMaterialize?.(parent);
     } catch (error) {
       if (errnoOf(error) !== "EEXIST") throw error;
     }
@@ -535,8 +535,9 @@ export function withLocalPassthrough(
         // different filesystems and the operation cannot be atomic.
         // Copying here would make a non-atomic operation look atomic,
         // and a crash mid-copy would leave a half-written file where
-        // the caller was promised all-or-nothing. Every tool already
-        // handles EXDEV by falling back to copy-then-unlink.
+        // the caller was promised all-or-nothing. EXDEV is what rename(2)
+        // returns between any two filesystems, so tools such as mv
+        // already know to copy instead.
         //
         // The errno is all the kernel can carry, and "cross-device
         // link" on a path that is plainly not a device is the kind of
@@ -702,7 +703,9 @@ export function withLocalPassthrough(
         `boundary and returned EXDEV. ${localSide} is container-local ` +
         `(MOUNT_IGNORE), ${syncedSide} is synced to the workspace; a rename ` +
         `between them cannot be atomic, so it is refused rather than ` +
-        `silently copied. Most callers fall back to copy-then-unlink. To ` +
+        `silently copied. Tools such as mv copy instead, but a program ` +
+        `calling rename directly (Node's fs.rename, Go's os.Rename) sees ` +
+        `the error. To ` +
         `keep the rename atomic, add "${suggestion}" to MOUNT_IGNORE as ` +
         `well. Further occurrences are not logged.`,
     );
@@ -713,8 +716,8 @@ export function withLocalPassthrough(
     const names: string[] = [];
     for (const entry of options.ignore.paths) {
       const parent = posix.dirname(entry);
-      const normalisedParent = parent === "." ? "" : parent;
-      if (normalisedParent !== relative) continue;
+      const normalizedParent = parent === "." ? "" : parent;
+      if (normalizedParent !== relative) continue;
       // Only list it if it has actually been created on disk. An
       // unconfigured-but-unused entry should not appear as a phantom
       // directory in a listing.
@@ -722,7 +725,7 @@ export function withLocalPassthrough(
         fs.lstatSync(join(root, entry));
         names.push(posix.basename(entry));
       } catch {
-        // Not materialised yet; nothing to show.
+        // Not materialized yet; nothing to show.
       }
     }
     return names;
@@ -748,7 +751,7 @@ function toRelative(path: string, mountRoot: string): string {
   return value;
 }
 
-function normaliseMount(mountPoint: string): string {
+function normalizeMount(mountPoint: string): string {
   const trimmed = mountPoint.replace(/\/+$/, "");
   return trimmed === "" ? "/" : trimmed;
 }

@@ -98,14 +98,14 @@ export function readIgnoreReport(info: unknown): ResolvedIgnore {
 /**
  * Compares a declared set against what the image applies; null when they
  * agree. Order-insensitive and duplicate-collapsing, because computerd
- * normalises the same way and the two spellings mean the same thing.
+ * normalizes the same way and the two spellings mean the same thing.
  */
 export function diffIgnore(
   declared: readonly string[],
   actual: readonly string[],
 ): { missing: string[]; unexpected: string[] } | null {
-  const declaredSet = new Set(declared.map(normalise));
-  const actualSet = new Set(actual.map(normalise));
+  const declaredSet = new Set(declared.map(normalize));
+  const actualSet = new Set(actual.map(normalize));
 
   const missing = [...declaredSet].filter((entry) => !actualSet.has(entry)).sort();
   const unexpected = [...actualSet].filter((entry) => !declaredSet.has(entry)).sort();
@@ -131,7 +131,7 @@ export function assertIgnoreMatches(
         `\`ignore\` declared ${formatList(declared)}. Those paths would be ` +
         `recorded in the workspace and pulled into the Durable Object. ` +
         `Upgrade the computerd image, or remove \`ignore\` to accept the ` +
-        `container's behaviour.`,
+        `container's behavior.`,
       { declared: [...declared], actual: [], supported: false },
     );
   }
@@ -183,7 +183,7 @@ function stripMount(path: string, mountPoint: string | undefined): string {
   return trimmed;
 }
 
-function normalise(entry: string): string {
+function normalize(entry: string): string {
   let value = entry.trim();
   while (value.startsWith("/")) value = value.slice(1);
   while (value.endsWith("/")) value = value.slice(0, -1);

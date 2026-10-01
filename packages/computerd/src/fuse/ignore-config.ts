@@ -49,24 +49,24 @@ export function resolveMountIgnoreConfig(
     throw new Error(`MOUNT_IGNORE_PATH must be an absolute path, got ${JSON.stringify(root)}`);
   }
 
-  const normalisedRoot = resolve(root).replace(/\/+$/, "") || "/";
-  const normalisedMount = resolve(mountPoint).replace(/\/+$/, "") || "/";
+  const normalizedRoot = resolve(root).replace(/\/+$/, "") || "/";
+  const normalizedMount = resolve(mountPoint).replace(/\/+$/, "") || "/";
 
   // A root under the mount would make the passthrough layer resolve into
   // itself: every write to an ignored path would land at a location that
   // is also an ignored path, one level deeper, forever.
-  if (normalisedRoot === normalisedMount || normalisedRoot.startsWith(`${normalisedMount}/`)) {
+  if (normalizedRoot === normalizedMount || normalizedRoot.startsWith(`${normalizedMount}/`)) {
     throw new Error(
-      `MOUNT_IGNORE_PATH (${normalisedRoot}) must not be inside MOUNT_POINT ` +
-        `(${normalisedMount}); local-only paths are stored outside the mount.`,
+      `MOUNT_IGNORE_PATH (${normalizedRoot}) must not be inside MOUNT_POINT ` +
+        `(${normalizedMount}); local-only paths are stored outside the mount.`,
     );
   }
 
-  if (normalisedRoot === "/") {
+  if (normalizedRoot === "/") {
     throw new Error("MOUNT_IGNORE_PATH must not be the filesystem root");
   }
 
-  return { root: normalisedRoot, ignore, enabled: !ignore.isEmpty };
+  return { root: normalizedRoot, ignore, enabled: !ignore.isEmpty };
 }
 
 /** The `ignore` block reported on /__computerd/info. */

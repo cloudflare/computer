@@ -104,7 +104,7 @@ describe("resolveMountIgnore: matching", () => {
   });
 });
 
-describe("resolveMountIgnore: normalisation", () => {
+describe("resolveMountIgnore: normalization", () => {
   test("strips leading and trailing slashes from entries", () => {
     const set = resolveMountIgnore(["/dist/", "node_modules/"]);
     expect(set.paths).toEqual(["dist", "node_modules"]);
@@ -197,7 +197,7 @@ describe("resolveMountIgnore: redundancy", () => {
     expect(set.redundant).toEqual([]);
   });
 
-  test("normalises before deduplicating", () => {
+  test("normalizes before deduplicating", () => {
     const set = resolveMountIgnore(["/dist/", "dist"]);
     expect(set.paths).toEqual(["dist"]);
     expect(set.redundant).toEqual(["dist"]);
