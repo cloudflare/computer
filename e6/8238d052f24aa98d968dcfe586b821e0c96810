@@ -1,0 +1,29 @@
+docs/09_tool_interface.md
+  s_4f96e4ffcaca65::t_35aee31ef50d3f 144-145
+package-lock.json
+  s_4f96e4ffcaca65::t_ca76296e43bb95 24936
+packages/computer/package.json
+  s_4f96e4ffcaca65::t_476076c93d41ff 177
+packages/computer/src/tools/pi-ai/index.test.ts
+  s_4f96e4ffcaca65::t_db66df96449ccd 278-300
+packages/computer/src/tools/tanstack-ai/index.test.ts
+  s_4f96e4ffcaca65::t_dbdd6252abf3d2 2,252-275
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_4f96e4ffcaca65::t_0e3a190b04fede 268-272,283-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e68238d052f24aa98d968dcfe586b821e0c96810",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
