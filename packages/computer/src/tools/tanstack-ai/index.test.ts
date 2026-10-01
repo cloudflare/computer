@@ -306,6 +306,46 @@ describe("createTanStackTools", () => {
     await workspace.close();
   });
 
+  it("emits a running snapshot before the command produces more output", async () => {
+    const quiet = quietCommandBackend();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [quiet.backend as never],
+    });
+    const tools = createTanStackTools({
+      workspace,
+      shell: { defaultBackend: "shell", backends: { shell: { description: "fast shell" } } },
+      streamEventName: "exec-progress",
+      format: "object",
+    });
+    let firstEvent: () => void = () => {};
+    const emitted = new Promise<void>((resolve) => {
+      firstEvent = resolve;
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const pending = tools.exec.execute({ command: "build" } as never, {
+      toolCallId: "call-1",
+      emitCustomEvent: (_name, value) => {
+        events.push(value);
+        firstEvent();
+      },
+    });
+    await emitted;
+
+    expect(events[0]).toMatchObject({
+      toolCallId: "call-1",
+      snapshot: { exitCode: null, stdout: "starting\n" },
+    });
+    quiet.release();
+    expect(await pending).toMatchObject({ exitCode: 0 });
+    // The terminal snapshot is returned, not emitted.
+    expect(
+      events.every((event) => (event.snapshot as { exitCode: unknown }).exitCode === null),
+    ).toBe(true);
+    await workspace.close();
+  });
+
   it("kills exec when the chat run's abort signal fires", async () => {
     const quiet = quietCommandBackend();
     const workspace = new Workspace({

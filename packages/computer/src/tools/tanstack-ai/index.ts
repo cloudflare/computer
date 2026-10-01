@@ -243,7 +243,9 @@ function plain(output: unknown): unknown {
 }
 
 /**
- * The terminal snapshot is returned rather than emitted, so a consumer
+ * Running snapshots are emitted as they arrive, so a command that
+ * prints once and goes quiet shows that output straight away. The
+ * terminal snapshot is returned rather than emitted, so a consumer
  * ignoring custom events still sees the complete outcome.
  */
 async function settleWithEvents<Output>(
@@ -257,14 +259,20 @@ async function settleWithEvents<Output>(
   let last: Output | undefined;
   let seen = false;
   for await (const chunk of returned) {
-    if (seen) {
-      emit(eventName, { toolCallId: context?.toolCallId, snapshot: last as never });
+    if (isRunning(chunk)) {
+      emit(eventName, { toolCallId: context?.toolCallId, snapshot: chunk as never });
     }
     last = chunk;
     seen = true;
   }
   if (!seen) throw new Error("tool executor yielded no result");
   return last as Output;
+}
+
+/** An exec snapshot is running until it carries an exit code or an error. */
+function isRunning(snapshot: unknown): boolean {
+  const s = snapshot as { exitCode?: unknown; error?: unknown };
+  return s.exitCode === null && s.error === undefined;
 }
 
 function wants(option: string[] | string | undefined, name: string, byTrait: boolean): boolean {
