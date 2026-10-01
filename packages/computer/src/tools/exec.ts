@@ -69,8 +69,8 @@ export interface ExecWorkspaceLike {
     // language it runs and the modules that code can import. The tool
     // shows it after the caller's own text.
     describe?(id: string): string | undefined;
-    // Every registered backend id, default first. Used when the caller
-    // does not pick backends, and to reject an unknown id up front.
+    // Every registered backend id. Used when the caller does not pick
+    // backends, and to reject an unknown id up front.
     backendIds?(): string[];
   };
 }
@@ -85,14 +85,15 @@ export interface ExecBackendOptions {
  * The backends the exec tool may run on, keyed by backend id:
  * `{ "worker-javascript": { description: "Use for data work." } }`.
  * Pass `{}` for a backend that needs nothing beyond its own
- * description. The first backend is the default.
+ * description.
  */
 export type ExecBackends = Readonly<Record<string, ExecBackendOptions>>;
 
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
-  // Omit to offer every backend the Workspace has, its default first.
-  // With exactly one backend the tool has no `backend` argument.
+  // Omit to offer every backend the Workspace has. With one backend
+  // the tool has no `backend` argument; with several the model must
+  // name one on every call.
   backends?: ExecBackends;
   // Per-snapshot display cap for each of stdout and stderr, in bytes.
   // Output past it is shown as a truncation marker. Defaults to 64 KiB.
@@ -145,7 +146,6 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
   const selected = selectBackends(options.backends, runtime);
   const [first] = selected;
   if (first === undefined) throw new Error("createExecTool: no backends to run on");
-  const defaultBackend = first.id;
   const backendIds = selected.map((backend) => backend.id);
   const single = backendIds.length === 1;
   const backends = selected.map(({ id, guidance }) => {
@@ -157,7 +157,7 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
     return { id, text, callable };
   });
   const callableBackendIds = new Set(backends.filter((b) => b.callable).map((b) => b.id));
-  const description = describeTool(backends, defaultBackend);
+  const description = describeTool(backends);
   // Offer only the fields that can work: `backend` when there is a
   // choice, `input` when some backend accepts it.
   const shape: Record<string, z.ZodType> = {
@@ -174,9 +174,8 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
     shape.backend = z
       // SAFETY: createExecTool checked that backendIds has at least one entry.
       .enum(backendIds as [string, ...string[]])
-      .optional()
       .describe(
-        `Which backend to run on. Omit to use the default (${JSON.stringify(defaultBackend)}). If a command fails because the backend lacks that tool, retry on a backend whose description covers it.`,
+        "Which backend to run on. If a command fails because the backend lacks that tool, retry on a backend whose description covers it.",
       );
   }
   if (callableBackendIds.size > 0) {
@@ -195,7 +194,14 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
     description,
     inputSchema,
     execute: async function* ({ command, cwd, backend, env, input }, { abortSignal }) {
-      const selectedBackend = backend ?? defaultBackend;
+      // With one backend there is nothing to choose. With several the
+      // schema requires `backend`; a caller that skips the schema gets
+      // the same answer as an error.
+      const selectedBackend = single ? first.id : backend;
+      if (selectedBackend === undefined) {
+        yield { command, cwd: cwd ?? null, backend: "", error: "Name a backend to run on." };
+        return;
+      }
       const base = { command, cwd: cwd ?? null, backend: selectedBackend };
       if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
         yield { ...base, error: notCallableMessage(selectedBackend) };
@@ -312,7 +318,7 @@ interface DescribedBackend {
 
 // With one backend the description is about what it does. With several
 // it lists them and explains how to choose.
-function describeTool(backends: readonly DescribedBackend[], defaultBackend: string): string {
+function describeTool(backends: readonly DescribedBackend[]): string {
   const [only, ...others] = backends;
   if (only !== undefined && others.length === 0) {
     return only.callable
@@ -335,7 +341,7 @@ function describeTool(backends: readonly DescribedBackend[], defaultBackend: str
       (b) => `- ${JSON.stringify(b.id)}${b.callable ? " (callable)" : ""}: ${b.text}`,
     ),
     "",
-    `Default backend: ${JSON.stringify(defaultBackend)}. Try this first for any command you're not sure about; if it fails with a "command not found" or a similar capability error, retry on a backend whose description covers the missing tool.`,
+    'Name a backend on every call. If a command fails with a "command not found" or a similar capability error, retry on a backend whose description covers the missing tool.',
     `${SHELL_HINT} ${FILE_TOOLS_HINT}`,
     ...(callable.length === 0
       ? []
@@ -346,7 +352,7 @@ function describeTool(backends: readonly DescribedBackend[], defaultBackend: str
   ].join("\n");
 }
 
-// Resolve the caller's choice to an ordered list, default first.
+// Resolve the caller's choice to a list of backends.
 function selectBackends(
   backends: ExecBackends | undefined,
   runtime: ExecWorkspaceLike["runtime"],

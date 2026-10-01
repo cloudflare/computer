@@ -1342,7 +1342,7 @@ describe("createAITools exec tool", () => {
     expect(createAITools({ workspace: withBackend, readonly: true }).exec).toBeUndefined();
   });
 
-  it("offers every workspace backend by default, the workspace default first", () => {
+  it("offers every workspace backend by default", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
@@ -1353,10 +1353,12 @@ describe("createAITools exec tool", () => {
     const tools = createAITools({ workspace });
     const schema = z.toJSONSchema(inputSchema(tools.exec)) as {
       properties: { backend?: { enum?: string[] } };
+      required?: string[];
     };
 
     expect(schema.properties.backend?.enum).toEqual(["shell", "worker-javascript"]);
-    expect(toolDescription(tools.exec)).toContain('Default backend: "shell"');
+    expect(schema.required).toContain("backend");
+    expect(toolDescription(tools.exec)).not.toMatch(/default backend/i);
     expect(toolDescription(tools.exec)).toContain('- "shell": Runs shell commands.');
     expect(toolDescription(tools.exec)).toContain("ECMAScript module source");
   });
@@ -1377,7 +1379,6 @@ describe("createAITools exec tool", () => {
 
     expect(inputProperties(listed.exec)).not.toContain("backend");
     expect(toolDescription(listed.exec)).not.toContain('"shell"');
-    expect(toolDescription(mapped.exec)).toContain('Default backend: "worker-javascript"');
     expect(toolDescription(mapped.exec)).toContain("Use for data work.\n\n`command` is ECMAScript");
   });
 
@@ -1889,23 +1890,19 @@ describe("createAITools exec with one backend", () => {
     expect(inputProperties(tools.exec)).toEqual(["backend", "command", "cwd", "env", "input"]);
   });
 
-  it("uses the first listed backend as the default, and the deprecated shell default first", async () => {
+  it("requires the model to name a backend when there is a choice", async () => {
     const { calls, workspace } = recordingWorkspace(false);
-    const listed = createAITools({
+    const tools = createAITools({
       workspace,
       exec: { container: { description: "Linux." }, shell: { description: "Fast." } },
     });
-    const legacy = createAITools({
-      workspace,
-      shell: {
-        defaultBackend: "shell",
-        backends: { container: { description: "Linux." }, shell: { description: "Fast." } },
-      },
-    });
 
-    await executeTool(listed.exec, { command: "ls" });
-    await executeTool(legacy.exec, { command: "ls" });
-    expect(calls.map((call) => call.backend)).toEqual(["container", "shell"]);
+    expect(() => inputSchema(tools.exec).parse({ command: "ls" })).toThrow();
+    await expect(executeTool(tools.exec, { command: "ls" })).resolves.toMatchObject({
+      error: "Name a backend to run on.",
+    });
+    await executeTool(tools.exec, { command: "ls", backend: "shell" });
+    expect(calls.map((call) => call.backend)).toEqual(["shell"]);
   });
 });
 

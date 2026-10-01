@@ -66,7 +66,7 @@ createAITools({
 });
 ```
 
-Each backend describes itself, and a `description` you pass comes first. The first backend is the default, and `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there.
+Each backend describes itself, and a `description` you pass comes first. `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there. With several, the model must name a backend on every call; there is no default.
 
 ## `createAITools`
 
@@ -90,8 +90,8 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `exec` | every backend | Backend id to `{ description? }`. The first is the default. `{}` omits `exec`. |
-| `shell` | omitted | Deprecated. `{ backends, defaultBackend }` becomes `exec: backends` with the default first. |
+| `exec` | every backend | Backend id to `{ description? }`. `{}` omits `exec`. |
+| `shell` | omitted | Deprecated. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
 
 ## `read`
 
@@ -253,7 +253,7 @@ The tool offers only the arguments that can work:
 | --- | --- |
 | One shell backend | `command`, `cwd`, `env` |
 | One callable backend | `command`, `cwd`, `env`, `input` |
-| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable |
+| More than one | `command`, `cwd`, `backend` (required), `env`, plus `input` when any is callable |
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 

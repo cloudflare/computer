@@ -24,13 +24,13 @@ export interface CreateAIToolsOptions {
   write?: Omit<WriteToolOptions, "store">;
   edit?: Omit<EditToolOptions, "store">;
   // The backends `exec` may run on, keyed by id, each with an optional
-  // description for the model. The first is the default. Omit to offer
+  // description for the model. Omit to offer
   // every backend the Workspace has; `{}` means no exec tool.
   exec?: ExecBackends;
   /**
-   * @deprecated Use `exec`. `{ backends, defaultBackend }` becomes
-   * `exec: backends` with the default listed first. Output limits move
-   * to `createExecTool`.
+   * @deprecated Use `exec`. `{ backends }` becomes `exec: backends`;
+   * `defaultBackend` is ignored, because the model names a backend
+   * whenever there is a choice. Output limits move to `createExecTool`.
    */
   shell?: LegacyShellOptions;
 }
@@ -85,16 +85,8 @@ function execOptions(
   runtime: ExecWorkspaceLike["runtime"],
 ): Omit<ExecToolOptions, "workspace"> & { backends: ExecBackends } {
   if (options.shell !== undefined) {
-    const { backends, defaultBackend, ...limits } = options.shell;
-    const ids = Object.keys(backends);
-    const ordered =
-      defaultBackend === undefined
-        ? ids
-        : [defaultBackend, ...ids.filter((id) => id !== defaultBackend)];
-    return {
-      ...limits,
-      backends: Object.fromEntries(ordered.map((id) => [id, backends[id] ?? {}])),
-    };
+    const { backends, defaultBackend: _ignored, ...limits } = options.shell;
+    return { ...limits, backends };
   }
   if (options.exec !== undefined) return { backends: options.exec };
   return { backends: Object.fromEntries((runtime.backendIds?.() ?? []).map((id) => [id, {}])) };
