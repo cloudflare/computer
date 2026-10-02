@@ -60,6 +60,11 @@ export interface WorkspaceBackend {
   // too. Defaults to false when omitted.
   readonly callable?: boolean;
 
+  // What the backend tells a model about itself, such as the language
+  // it runs and what that code can use. The exec tool shows it next to
+  // the caller's own description. Omit when there is nothing to add.
+  readonly description?: string;
+
   // Materialise a connection. Called lazily on first use, once
   // per backend per workspace lifetime. The Workspace caches the
   // resulting handle by `id`; subsequent exec / push / pull

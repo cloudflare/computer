@@ -14,7 +14,8 @@ import type {
 } from "./types.js";
 
 interface WorkspaceRuntimeRouterOptions {
-  callableBackendIds: ReadonlySet<string>;
+  // What each registered backend says about itself.
+  backends: ReadonlyMap<string, { readonly callable?: boolean; readonly description?: string }>;
   backendHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
 }
@@ -39,7 +40,15 @@ export class WorkspaceRuntime {
   // this to know whether a backend is callable without the caller
   // having to declare it a second time.
   isCallable(id: string): boolean {
-    return this.#options.callableBackendIds.has(id);
+    return this.#options.backends.get(id)?.callable === true;
+  }
+
+  // What the named backend says about itself for a model: its source
+  // language and, for the JavaScript backend, the modules code can
+  // import. The exec tool adds it to the backend's entry so a caller
+  // does not have to repeat it.
+  describe(id: string): string | undefined {
+    return this.#options.backends.get(id)?.description;
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;

@@ -52,7 +52,7 @@ function replayBackend(events: WorkspaceRuntimeEvent[]): WorkspaceModuleBackendH
 
 function runtimeFor(handle: WorkspaceModuleBackendHandle): WorkspaceRuntime {
   return new WorkspaceRuntime({
-    callableBackendIds: new Set(),
+    backends: new Map(),
     backendHandle: async () => handle,
     resolveBackendId: () => "backend",
   });
@@ -181,7 +181,7 @@ describe("WorkspaceRuntime utf8 encoding", () => {
 describe("WorkspaceRuntime callable gate", () => {
   it("rejects structured input for a non-callable backend", async () => {
     const runtime = new WorkspaceRuntime({
-      callableBackendIds: new Set(),
+      backends: new Map(),
       backendHandle: async () => moduleHandleStub(),
       resolveBackendId: () => "worker-shell",
     });
@@ -194,7 +194,7 @@ describe("WorkspaceRuntime callable gate", () => {
   it("accepts structured input for a callable module backend", async () => {
     const handle = moduleHandleStub();
     const runtime = new WorkspaceRuntime({
-      callableBackendIds: new Set(["worker-javascript"]),
+      backends: new Map([["worker-javascript", { callable: true }]]),
       backendHandle: async () => handle,
       resolveBackendId: () => "worker-javascript",
     });

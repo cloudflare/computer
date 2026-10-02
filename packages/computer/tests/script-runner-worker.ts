@@ -7,6 +7,8 @@ import type {
   WorkspaceStub,
 } from "../src/index.js";
 import { Workspace } from "../src/index.js";
+import { createArtifactsModule } from "../src/modules/artifacts.js";
+import { createGitModule } from "../src/modules/git.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
@@ -30,23 +32,37 @@ export class HostDO extends DurableObject<Env> {
           maxConcurrentCapabilityCalls: 2,
           modules: {
             "math-kit": "export const double = (value) => value * 2;",
-          },
-          trustedModules: {
+            "ws:git": createGitModule(),
+            "ws:artifacts": createArtifactsModule(),
             "ws:test-host": {
-              async call(method, args) {
-                if (method === "invalid-result") return new Date() as never;
-                if (method === "large-error") throw new Error("x".repeat(5000));
-                if (method === "slow") {
-                  await new Promise((resolve) => setTimeout(resolve, 20));
-                  return null;
-                }
-                if (method === "marker") {
-                  return {
-                    __workspace_codec__: { version: 1, type: "bytes", data: [1] },
-                    keep: true,
-                  };
-                }
-                return { method, args };
+              async echo(args) {
+                return { args: [...args] };
+              },
+              async sum(args) {
+                return args.reduce<number>(
+                  (total, value) => total + (typeof value === "number" ? value : 0),
+                  0,
+                );
+              },
+              async delete(args) {
+                return { deleted: args[0] ?? null };
+              },
+              async invalidResult() {
+                // SAFETY: The test hands the bridge a non-JSON value on purpose to check that it rejects it.
+                return new Date() as never;
+              },
+              async largeError() {
+                throw new Error("x".repeat(5000));
+              },
+              async slow() {
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                return null;
+              },
+              async marker() {
+                return {
+                  __workspace_codec__: { version: 1, type: "bytes", data: [1] },
+                  keep: true,
+                };
               },
             },
           },
