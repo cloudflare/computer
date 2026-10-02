@@ -195,6 +195,75 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   expect(JSON.parse(stats.body).localPaths).toMatchObject({ crossLayerRenames: 1 });
 });
 
+test("MOUNT_IGNORE patterns route node_modules at any depth, with exclusions", async (ctx) => {
+  const backend = await resolveFuseBackend("auto");
+  if (backend.kind !== "fuse") {
+    ctx.skip(`requires real FUSE; auto resolved to ${backend.kind}`);
+    return;
+  }
+
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  const ignoreRoot = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-local-"));
+  await startComputerd({
+    port,
+    mountPoint,
+    env: {
+      FUSE_MOUNT: "fuse",
+      MOUNT_IGNORE: "**/node_modules,!/vendor/node_modules,!**/node_modules/.bin",
+      MOUNT_IGNORE_PATH: ignoreRoot,
+    },
+  });
+
+  const info = await request(`http://127.0.0.1:${port}/__computerd/info`);
+  expect(JSON.parse(info.body).ignore).toMatchObject({
+    patterns: ["**/node_modules", "!/vendor/node_modules", "!**/node_modules/.bin"],
+    ineffectiveExclusions: ["!**/node_modules/.bin"],
+  });
+
+  const write = async (relative: string, contents: string) => {
+    await fs.mkdir(path.dirname(path.join(mountPoint, relative)), { recursive: true });
+    await fs.writeFile(path.join(mountPoint, relative), contents);
+  };
+  const onLocalDisk = (relative: string) =>
+    fs.readFile(path.join(ignoreRoot, relative), "utf8").then(
+      () => true,
+      () => false,
+    );
+
+  await write("packages/app/node_modules/pkg/index.js", "nested");
+  await write("vendor/node_modules/pinned/index.js", "vendored");
+  await write("packages/app/node_modules/.bin/tool", "bin");
+  await write("packages/app/src/main.ts", "source");
+
+  // A nested node_modules is local-only, as is .bin under it: the
+  // exclusion can't put it back once its parent is on local disk.
+  expect(await onLocalDisk("packages/app/node_modules/pkg/index.js")).toBe(true);
+  expect(await onLocalDisk("packages/app/node_modules/.bin/tool")).toBe(true);
+  // The excluded node_modules and ordinary source stay in the VFS.
+  expect(await onLocalDisk("vendor/node_modules/pinned/index.js")).toBe(false);
+  expect(await onLocalDisk("packages/app/src/main.ts")).toBe(false);
+
+  // A synced directory lists its local-only child.
+  expect((await fs.readdir(path.join(mountPoint, "packages/app"))).sort()).toEqual([
+    "node_modules",
+    "src",
+  ]);
+
+  // Renaming the synced package moves its node_modules with it.
+  await fs.rename(path.join(mountPoint, "packages/app"), path.join(mountPoint, "packages/web"));
+  expect(
+    await fs.readFile(path.join(mountPoint, "packages/web/node_modules/pkg/index.js"), "utf8"),
+  ).toBe("nested");
+  expect(await onLocalDisk("packages/web/node_modules/pkg/index.js")).toBe(true);
+  await expect(fs.stat(path.join(ignoreRoot, "packages/app"))).rejects.toThrow();
+
+  // rm -rf through the mount removes both sides.
+  await fs.rm(path.join(mountPoint, "packages/web"), { recursive: true });
+  await expect(fs.stat(path.join(mountPoint, "packages/web"))).rejects.toThrow();
+  await expect(fs.stat(path.join(ignoreRoot, "packages/web"))).rejects.toThrow();
+});
+
 test("/api serves a capnweb WorkspaceRPC session", async (_ctx) => {
   const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
   const port = await getAvailablePort();
