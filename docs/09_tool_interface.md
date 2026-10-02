@@ -1,11 +1,11 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`.
+`@cloudflare/computer/tools/ai-sdk` ships `createAITools()`, a ready-made [AI SDK](https://github.com/vercel/ai) tool set for agents that use a `Workspace`. The individual `create*Tool` functions and `WorkspaceFileStore` come from `@cloudflare/computer/tools`.
 
 The tools wrap three Workspace surfaces:
 
 - `workspace.fs` for file reads, writes, edits, searches, listings, and deletion;
-- `workspace.runtime.exec` for command execution when the caller opts in;
+- `workspace.runtime.exec` for running commands and code on the Workspace's backends;
 - `workspace.assets` for publishing generated files when an assets publisher is configured.
 
 ## What ships
@@ -24,13 +24,13 @@ The tools wrap three Workspace surfaces:
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: {}`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 
 export class Agent {
   workspace: Workspace;
@@ -55,29 +55,18 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-Pass `shell` only when the Workspace has matching backend ids. With one backend, `exec` has no `backend` argument and always runs there:
+`exec` lists the backends the model can use, keyed by backend id. Leave it out to use every backend.
 
 ```ts
-const tools = createAITools({
+createAITools({ workspace });                                                       // every backend
+createAITools({ workspace, exec: { "worker-javascript": {} } });                     // just this one
+createAITools({
   workspace,
-  shell: { backends: { "worker-javascript": {} } },
+  exec: { "worker-javascript": { description: "Use for data work." } },             // with your own text
 });
 ```
 
-With more than one, pass `defaultBackend` and the model picks a backend per call:
-
-```ts
-const tools = createAITools({
-  workspace,
-  shell: {
-    defaultBackend: "shell",
-    backends: {
-      shell: { description: "Fast Worker shell with built-in text commands." },
-      container: { description: "Full Linux userland in a Cloudflare Container." },
-    },
-  },
-});
-```
+Each backend describes itself, and a `description` you pass comes first. `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there. With several, the model must name a backend on every call; there is no default.
 
 ## `createAITools`
 
@@ -89,7 +78,7 @@ createAITools({
   read?,
   write?,
   edit?,
-  shell?,
+  exec?,
 });
 ```
 
@@ -101,7 +90,8 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `shell` | omitted | Options passed to `createExecTool`. |
+| `exec` | every backend | Backend id to `{ description? }`. `{}` omits `exec`. |
+| `shell` | omitted | Deprecated. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
 
 ## `read`
 
@@ -253,9 +243,9 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output.
+`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, streamMaxBytes? })` takes the same `backends` as the `exec` option, plus output limits.
 
-Each backend's entry in the tool description joins two parts: the `description` you pass, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so `{ "worker-javascript": {} }` is enough and the list stays in step with `modules`. A backend that does not describe itself needs a `description`. Describe capabilities and startup cost in plain language.
+Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `ContainerBackend` describe their command sets, network access, and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
 The tool offers only the arguments that can work:
 
@@ -263,11 +253,11 @@ The tool offers only the arguments that can work:
 | --- | --- |
 | One shell backend | `command`, `cwd`, `env` |
 | One callable backend | `command`, `cwd`, `env`, `input` |
-| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable. `defaultBackend` is required. |
+| More than one | `command`, `cwd`, `backend` (required), `env`, plus `input` when any is callable |
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: {}` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 
 ## `publish`
 

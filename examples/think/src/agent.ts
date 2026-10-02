@@ -15,8 +15,8 @@
  *     store, agentic loop, and chat protocol.
  *   - We own a `@cloudflare/computer.Workspace` with two backends:
  *     a WorkerShellBackend (`"shell"`) for fast just-bash text tooling and
- *     a LegacyContainerBackend (`"container"`) for full Linux
- *     userland through computerd. This mirrors examples/container-legacy while
+ *     a ContainerBackend (`"container"`) for full Linux
+ *     userland through computerd. This mirrors examples/container while
  *     keeping the chat surface unchanged.
  *   - `useThink: true` adds the string-based compatibility surface
  *     Think expects; the cast promotes it from optional to present.
@@ -32,12 +32,9 @@ import {
   WorkspaceServiceProxy,
   type WorkspaceStub,
 } from "@cloudflare/computer";
-import {
-  LegacyContainerBackend,
-  withLegacyWorkspaceContainer,
-} from "@cloudflare/computer/backends/container-legacy";
+import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
-import { createAITools } from "@cloudflare/computer/tools";
+import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { Think } from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
@@ -58,11 +55,11 @@ function workspaceRef(ctx: DurableObjectState) {
   return { binding: "Assistant", id: ctx.id.toString() };
 }
 
-// Anchor Think's generic before the mixin so withLegacyWorkspaceContainer
+// Anchor Think's generic before the mixin so withWorkspaceContainer
 // sees a concrete constructor.
 class AssistantBase extends Think<Env> {}
 
-export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
+export class Assistant extends withWorkspaceContainer(AssistantBase) {
   /** We have a dedicated `exec` tool; skip Think's built-in bash. */
   override workspaceBash = false;
 
@@ -72,15 +69,18 @@ export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
   /**
    * Container backend used when `exec` needs a real Linux userland.
    * The DO itself owns the container binding through the
-   * withLegacyWorkspaceContainer mixin; LegacyContainerBackend handles
+   * withWorkspaceContainer mixin; ContainerBackend handles
    * startup, outbound egress interception, the /api upgrade, and the
    * capnweb session.
    */
-  readonly #containerBackend = new LegacyContainerBackend({
+  readonly #containerBackend = new ContainerBackend({
     id: "container",
     container: () => this,
     workspace: workspaceRef(this.ctx),
     egress: { mode: "direct" },
+    // The durable object schedules this container, so it asks for its
+    // size at launch; wrangler.jsonc names the image under `images.app`.
+    instance: "standard-2",
   });
 
   /**
@@ -137,8 +137,8 @@ export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
       "                 `exec cat` / `exec ls`.",
       "  - write, edit: create and modify files. Prefer these over",
       "                 `exec sed` / shell heredocs.",
-      "  - exec:        run shell commands. Use the default `shell`",
-      "                 backend first: it is just-bash in a Dynamic",
+      "  - exec:        run shell commands. Name a backend on every call.",
+      "                 Try backend `shell` first: it is just-bash in a Dynamic",
       "                 Worker, cold-starts quickly, and includes `git`",
       "                 (clone / status / diff / log) via the host",
       "                 workspace. Only https:// git URLs are supported.",
@@ -154,35 +154,8 @@ export class Assistant extends withLegacyWorkspaceContainer(AssistantBase) {
   }
 
   override getTools(): ToolSet {
-    return createAITools({
-      workspace: this.workspace,
-      shell: {
-        defaultBackend: "shell",
-        backends: {
-          shell: {
-            description:
-              "just-bash in a Dynamic Worker. Cold-start fast, no " +
-              "container, no public network. Good for cat / grep / sed / " +
-              "awk / jq / head / tail / sort / find, quick file " +
-              "inspection, text transformations, and `git` (clone / " +
-              "status / diff / log) — the shell registers a built-in " +
-              "`git` command that forwards to the host workspace, so " +
-              "network-bound subcommands like `git clone` work even " +
-              "though the isolate itself has no public network. Only " +
-              "https:// URLs are supported. Cannot run npm, node, python, " +
-              "or any binary outside just-bash's built-in command set.",
-          },
-          container: {
-            description:
-              "Cloudflare Container running computerd over capnweb. Full Linux " +
-              "userland: npm, node, python, package managers, test " +
-              "runners, real binaries on $PATH, and public network. Cold " +
-              "start is much slower because the container must boot; " +
-              "reach for it when the shell backend can't run the command. " +
-              "For git itself, prefer the shell backend.",
-          },
-        },
-      },
-    });
+    // Every backend the Workspace has, "shell" first. Both describe
+    // themselves to the model.
+    return createAITools({ workspace: this.workspace });
   }
 }

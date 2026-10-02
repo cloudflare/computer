@@ -31,6 +31,10 @@
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
     },
+    "./modules/container": {
+      "types": "./dist/modules/container.d.ts",
+      "import": "./dist/modules/container.js"
+    },
     "./modules/git": {
       "types": "./dist/modules/git.d.ts",
       "import": "./dist/modules/git.js"
@@ -46,6 +50,10 @@
     "./backends/container-legacy": {
       "types": "./dist/backends/container-legacy/index.d.ts",
       "import": "./dist/backends/container-legacy/index.js"
+    },
+    "./tools/ai-sdk": {
+      "types": "./dist/tools/ai-sdk.d.ts",
+      "import": "./dist/tools/ai-sdk.js"
     },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",

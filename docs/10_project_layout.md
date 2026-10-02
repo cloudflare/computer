@@ -175,9 +175,10 @@ produces the Node SEA single-file binary at
 
 ## Tools
 
-AI SDK tools (`read`, `write`, `edit`, `ls`, optional `exec`, and
-optional `publish`) ship from the `@cloudflare/computer/tools` subpath
-rather than a separate package, under
+AI SDK tools (`read`, `write`, `edit`, `ls`, `exec`, and optional
+`publish`) ship from the package rather than a separate one:
+`createAITools()` from `@cloudflare/computer/tools/ai-sdk`, and the
+individual `create*Tool` functions from `@cloudflare/computer/tools`. They live under
 [`packages/computer/src/tools/`](../packages/computer/src/tools/). See
 [09. Tool Interface (Agents)](./09_tool_interface.md).
 
