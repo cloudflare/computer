@@ -1,5 +1,21 @@
 # @cloudflare/computer
 
+## 0.4.0
+
+### Minor Changes
+
+- [#161](https://github.com/cloudflare/computer/pull/161) Rename the platform-scheduled container backend to `LegacyContainerBackend`; see [container backend documentation](https://github.com/cloudflare/computer/blob/main/docs/07_injected_service.md#cloudflare-containers-specifics). ([`736fcdd`](https://github.com/cloudflare/computer/commit/736fcdd9367dfabff8bfbec6ee51e47b108e0e1e)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#191](https://github.com/cloudflare/computer/pull/191) Add Workspace tool sets for pi (`createPiTools` from `@cloudflare/computer/tools/pi-ai`) and TanStack AI (`createTanStackTools` from `@cloudflare/computer/tools/tanstack-ai`); see [the tool interface docs](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md). ([`960d85b`](https://github.com/cloudflare/computer/commit/960d85bc94b28c64c001b1266a5388ff8e66dd44)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+### Patch Changes
+
+- [#187](https://github.com/cloudflare/computer/pull/187) Keep configured paths local to the container instead of syncing them with the Durable Object using `ContainerBackend.ignore`; see [local-only path documentation](https://github.com/cloudflare/computer/blob/main/docs/19_performance.md#local-only-paths-mount_ignore). ([`f15437c`](https://github.com/cloudflare/computer/commit/f15437c9b7ce0fecfd39c32951e58232db4c55b4)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#162](https://github.com/cloudflare/computer/pull/162) Add `ContainerBackend` for durable-object-scheduled containers; see [container backend documentation](https://github.com/cloudflare/computer/blob/main/docs/07_injected_service.md#cloudflare-containers-specifics). ([`390fd7b`](https://github.com/cloudflare/computer/commit/390fd7bfd788c69b8b8625c3939b8ef348682691)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#141](https://github.com/cloudflare/computer/pull/141) Expand `ws:git` with full-history clones by default and additional `cat-file`, `log`, and command-specific `help` options; see [Git interface documentation](https://github.com/cloudflare/computer/blob/main/docs/13_git_interface.md). ([`4bc1028`](https://github.com/cloudflare/computer/commit/4bc102804c7dd39ba8b3dc580438755767beddcf)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.3.2
 
 ### Patch Changes
