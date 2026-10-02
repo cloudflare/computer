@@ -473,6 +473,50 @@ describe("WorkspaceRuntime", () => {
     expect(await read("/workspace/module-result.txt")).toBe("7");
   });
 
+  it("shares one configured module instance across importing directories", async () => {
+    await write(
+      "/workspace/shared/a/one.js",
+      `import { token } from "large"; export { token }; export { default as two } from "./b/two.js";`,
+    );
+    await write(
+      "/workspace/shared/a/b/two.js",
+      `import { token } from "large"; export default token;`,
+    );
+    const response = await runtime({
+      backend: "configured-modules",
+      cwd: "/workspace/shared",
+      source: `
+        import large, { token } from "large";
+        import { token as one, two } from "./a/one.js";
+        export default () => ({ large, shared: token === one && one === two });
+      `,
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: { status: "completed", value: { large: "large", shared: true } },
+    });
+  });
+
+  it("re-exports named-only and dependent configured modules from nested directories", async () => {
+    await write(
+      "/workspace/kits/nested/use.js",
+      `import { double } from "named-only"; import facade from "facade";
+       import relativeFacade from "relative-facade";
+       export default () => [double(2), facade(3), relativeFacade(4)];`,
+    );
+    const response = await runtime({
+      backend: "configured-modules",
+      cwd: "/workspace/kits",
+      source: `import use from "./nested/use.js"; export default use;`,
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: { status: "completed", value: [4, 6, 8] },
+    });
+  });
+
   it("bounds thrown errors before transport and persistence", async () => {
     const response = await runtime({
       source: `export default () => { throw new Error("🙂".repeat(1024)); };`,

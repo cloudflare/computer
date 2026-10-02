@@ -1056,4 +1056,154 @@ describe("WorkerJavaScriptBackend", () => {
     ).rejects.toThrow(/reserved module name/);
     expect(load).not.toHaveBeenCalled();
   });
+  describe("configured modules", () => {
+    function completingLoader() {
+      return vi.fn(() => ({
+        getEntrypoint() {
+          return {
+            evaluate: (
+              _input: unknown,
+              host: {
+                assertResult(value: unknown): Promise<void>;
+                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+              },
+            ) => evaluateResult(host, null),
+          };
+        },
+      }));
+    }
+
+    it("installs one copy shared by every importing directory", async () => {
+      const load = completingLoader();
+      const source = `export default ${JSON.stringify("x".repeat(1000))};`;
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load }, modules: { large: source } })],
+      });
+      await workspace.fs.mkdir("/workspace/a/b", { recursive: true });
+      await workspace.fs.writeFile("/workspace/a/one.js", `import "large"; import "./b/two.js";`);
+      await workspace.fs.writeFile("/workspace/a/b/two.js", `import "large";`);
+
+      const execution = await workspace.runtime.exec(`import "large"; import "./a/one.js";`);
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const sources = Object.values(load.mock.calls[0]?.[0].modules ?? {}).map((module) =>
+        typeof module === "string" ? module : module.js,
+      );
+      expect(sources.filter((module) => module === source)).toHaveLength(1);
+    });
+
+    it("keeps room in the Loader graph for many configured modules", async () => {
+      const load = completingLoader();
+      const modules = Object.fromEntries(
+        Array.from({ length: 126 }, (_, index) => [`module-${index}`, "export default null;"]),
+      );
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load }, modules })],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec("export default null;");
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+    });
+
+    it("names a configured module that is not valid JavaScript", async () => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { broken: "export default {" },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      await expect(workspace.runtime.exec("export default 1;")).rejects.toThrow(
+        /Configured module "broken" is not valid JavaScript/,
+      );
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it("rejects configured modules that import Workspace files", async () => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { lib: `import { value } from "./helper.js"; export default value;` },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      await workspace.fs.writeFile("/workspace/helper.js", "export const value = 1;");
+
+      await expect(
+        workspace.runtime.exec(`import "./helper.js"; import "lib"; export default 1;`),
+      ).rejects.toThrow(
+        /Configured module "lib" imports "\.\/helper\.js", which is not a configured module/,
+      );
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it("lets configured modules import each other and use computed imports", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: {
+              base: "export const value = 1;",
+              relative: `export { value } from "./base";`,
+              computed: "export const load = (specifier) => import(specifier);",
+            },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(
+        `import "relative"; import "computed"; export default 1;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+    });
+
+    it("reserves the directory that stores configured modules", async () => {
+      const load = vi.fn();
+      const named = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { "workspace-configured-modules": "export default 1;" },
+          }),
+        ],
+      });
+      await named.fs.mkdir("/workspace", { recursive: true });
+      await expect(named.runtime.exec("export default 1;")).rejects.toThrow(/reserved module name/);
+
+      const imported = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            root: "/",
+            modules: { lib: "export default 1;" },
+          }),
+        ],
+      });
+      await imported.fs.mkdir("/workspace-configured-modules", { recursive: true });
+      await imported.fs.writeFile("/workspace-configured-modules/lib", "export default 2;");
+      await expect(
+        imported.runtime.exec(`import "./workspace-configured-modules/lib"; export default 1;`, {
+          cwd: "/",
+        }),
+      ).rejects.toThrow(/reserved for Workspace internals/);
+      expect(load).not.toHaveBeenCalled();
+    });
+  });
 });
