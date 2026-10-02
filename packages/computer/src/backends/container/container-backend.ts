@@ -58,7 +58,12 @@ import { WorkspaceTransportError } from "../../transport-failure.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record.js";
 import { probeComputerdHealth } from "./health-probe.js";
-import { assertIgnoreMatches, type ResolvedIgnore, readIgnoreReport } from "./ignore-assertion.js";
+import {
+  assertIgnoreMatches,
+  checkIgnorePatterns,
+  type ResolvedIgnore,
+  readIgnoreReport,
+} from "./ignore-assertion.js";
 
 // What the backend's `container` factory returns: anything with
 // a getWorkspaceContainer() method — the shape withWorkspaceContainer
@@ -112,13 +117,17 @@ export interface ContainerBackendOptions {
   heartbeatIntervalMs?: number;
 
   // Paths the container keeps on its local disk instead of the
-  // workspace (#179). Written as mount-relative absolute paths
-  // ("/node_modules"), and passed to the container at start time as
-  // MOUNT_IGNORE.
+  // workspace (#179), as glob patterns passed to the container at start
+  // time as MOUNT_IGNORE. Each starts with "/" (from the mount root) or
+  // "**/" (at any depth); "*" matches within a path segment, and a
+  // leading "!" excludes. The last matching pattern wins.
   //
-  // connect() reads the resolved set back off /__computerd/info and
-  // refuses the connection if it disagrees, which catches an image
-  // whose computerd is too old to honor the variable.
+  //   ignore: ["**/node_modules", "!/vendor/node_modules", "/dist"]
+  //
+  // The constructor throws on a pattern computerd would refuse. connect()
+  // reads the applied patterns back off /__computerd/info and refuses the
+  // connection if they disagree, which catches an image whose computerd
+  // is too old to read them.
   ignore?: readonly string[];
 
   // Number of forced restart attempts after startup readiness
@@ -261,6 +270,7 @@ export class ContainerBackend implements WorkspaceBackend {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
+    if (options.ignore !== undefined) checkIgnorePatterns(options.ignore);
     this.#options = {
       container: options.container,
       workspace: options.workspace,
@@ -654,10 +664,11 @@ export class ContainerBackend implements WorkspaceBackend {
           signal: AbortSignal.timeout(this.#options.healthProbeTimeoutMs),
         },
       );
-      if (!res.ok) return { paths: [], root: undefined, mountPoint: undefined, supported: false };
+      if (!res.ok)
+        return { patterns: [], root: undefined, mountPoint: undefined, supported: false };
       return readIgnoreReport(await res.json());
     } catch {
-      return { paths: [], root: undefined, mountPoint: undefined, supported: false };
+      return { patterns: [], root: undefined, mountPoint: undefined, supported: false };
     }
   }
 

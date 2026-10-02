@@ -1,15 +1,16 @@
-// connect()'s happy path constructs a WebSocketPair, a workerd global
-// the node runner does not provide, so the full dial cannot complete
-// here. These exercise the wire format the backend depends on, against
-// a fake host. The comparison logic and the error text have their own
-// suite in ignore-assertion.test.ts, and the end-to-end behavior is
-// covered in computerd's cli tests against a real FUSE mount.
+// How ContainerBackend configures and checks MOUNT_IGNORE. The first
+// suite stops before the upgrade; the second stubs WebSocketPair, a
+// workerd global the node runner does not provide, to run connect()
+// through to the check. The comparison logic and the error text have
+// their own suite in ignore-assertion.test.ts, and the end-to-end
+// behavior is covered in computerd's cli tests against a real FUSE
+// mount.
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { ContainerBackend } from "./container-backend.js";
 import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host.js";
 import type { ContainerLaunchSpec } from "./container-launch-record.js";
-import { ContainerIgnoreMismatchError, readIgnoreReport } from "./ignore-assertion.js";
+import { ContainerIgnoreMismatchError } from "./ignore-assertion.js";
 
 interface FakeHostOptions {
   // The `ignore` block /__computerd/info reports. Omitted models a
@@ -36,7 +37,7 @@ function fakeHost(opts: FakeHostOptions = {}) {
     async interceptOutboundHttp() {},
     async interceptAllOutboundHttp() {},
     async fetchPort(port, url) {
-      const path = new URL(url).pathname;
+      const path = new URL(url instanceof Request ? url.url : url).pathname;
       fetches.push({ port, path });
       if (path === "/__computerd/info") {
         return new Response(
@@ -66,50 +67,13 @@ function fakeHost(opts: FakeHostOptions = {}) {
 }
 
 describe("ContainerBackend local-only paths", () => {
-  const readInfo = async (host: IWorkspaceContainerAPI) => {
-    const res = await host.fetchPort(8080, "http://container/__computerd/info");
-    return readIgnoreReport(await res.json());
-  };
-
-  test("reads the ignore block a current container reports", async () => {
-    const { host } = fakeHost({
-      info: {
-        supported: true,
-        enabled: true,
-        root: "/tmp/workspace",
-        paths: ["node_modules", "dist"],
-        redundant: [],
-      },
-    });
-    expect(await readInfo(host)).toEqual({
-      paths: ["/workspace/node_modules", "/workspace/dist"],
-      root: "/tmp/workspace",
-      mountPoint: "/workspace",
-      supported: true,
-    });
-  });
-
-  test("treats a container with no ignore block as unsupported", async () => {
-    // The version-skew case the README warns about: the computerd image
-    // can lag the pinned client. Without this the old image looks like
-    // it is working while quietly syncing everything.
-    const { host } = fakeHost({});
-    expect(await readInfo(host)).toEqual({
-      paths: [],
-      root: undefined,
-      mountPoint: undefined,
-      supported: false,
-    });
-  });
-
-  test("the backend requests /__computerd/info on the container port", async () => {
-    // Pins the path and port, so a rename upstream fails here rather
-    // than silently degrading every deployment to "unsupported".
-    const { host, fetches } = fakeHost({
-      info: { supported: true, paths: [], root: "/tmp/workspace" },
-    });
-    await host.fetchPort(8080, "http://container/__computerd/info");
-    expect(fetches).toContainEqual({ port: 8080, path: "/__computerd/info" });
+  test("throws on a pattern computerd would refuse, before any container starts", () => {
+    // Otherwise the typo surfaces as a daemon that exits during startup.
+    const { host, starts } = fakeHost();
+    expect(() => backendWith(host, ["**/node_modules", "node_modules"])).toThrow(
+      /"\/node_modules" or "\*\*\/node_modules"/,
+    );
+    expect(starts).toHaveLength(0);
   });
 
   const backendWith = (host: IWorkspaceContainerAPI, ignore?: readonly string[]) =>
@@ -130,12 +94,12 @@ describe("ContainerBackend local-only paths", () => {
     // in the start environment or the image would have to be rebuilt to
     // change it.
     const { host, starts } = fakeHost();
-    await backendWith(host, ["/node_modules", "/.venv", "/dist"])
+    await backendWith(host, ["**/node_modules", "!/vendor/node_modules", "/dist"])
       .connect()
       .catch(() => undefined);
 
     expect(starts).toHaveLength(1);
-    expect(starts[0]?.env?.MOUNT_IGNORE).toBe("/node_modules,/.venv,/dist");
+    expect(starts[0]?.env?.MOUNT_IGNORE).toBe("**/node_modules,!/vendor/node_modules,/dist");
   });
 
   test("sends no MOUNT_IGNORE when `ignore` is omitted", async () => {
@@ -185,7 +149,7 @@ describe("ContainerBackend ignore check on a full connect", () => {
       async interceptOutboundHttp() {},
       async interceptAllOutboundHttp() {},
       async fetchPort(_port, url, init) {
-        const path = new URL(url).pathname;
+        const path = new URL(url instanceof Request ? url.url : url).pathname;
         const auth = new Headers(init?.headers).get("authorization");
         if (path === "/health") return new Response("ok");
         if (path === "/__computerd/info") infoAuth.push(auth);
@@ -249,12 +213,16 @@ describe("ContainerBackend ignore check on a full connect", () => {
   }
 
   test("reads /__computerd/info with the client secret", async () => {
-    const fake = connectingHost({ supported: true, root: "/tmp/workspace", paths: ["dist"] });
-    const handle = await backendFor(fake, ["/dist"]).connect();
+    const fake = connectingHost({
+      supported: true,
+      root: "/tmp/workspace",
+      patterns: ["**/node_modules", "/dist"],
+    });
+    const handle = await backendFor(fake, ["**/node_modules", "/dist"]).connect();
 
     expect(fake.infoAuth).toEqual([`Bearer ${SECRET}`]);
     expect(handle.ignore).toEqual({
-      paths: ["/workspace/dist"],
+      patterns: ["**/node_modules", "/dist"],
       root: "/tmp/workspace",
       mountPoint: "/workspace",
       supported: true,
@@ -264,16 +232,25 @@ describe("ContainerBackend ignore check on a full connect", () => {
 
   test("accepts a declaration spelled with the mount point", async () => {
     // computerd strips the mount prefix from "/workspace/dist" and
-    // applies "dist". The declaration means the same thing.
-    const fake = connectingHost({ supported: true, root: "/tmp/workspace", paths: ["dist"] });
+    // applies "/dist". The declaration means the same thing.
+    const fake = connectingHost({ supported: true, root: "/tmp/workspace", patterns: ["/dist"] });
     const handle = await backendFor(fake, ["/workspace/dist"]).connect();
     await handle.close();
   });
 
   test("still rejects a real mismatch", async () => {
-    const fake = connectingHost({ supported: true, root: "/tmp/workspace", paths: ["dist"] });
+    const fake = connectingHost({ supported: true, root: "/tmp/workspace", patterns: ["/dist"] });
     await expect(backendFor(fake, ["/node_modules"]).connect()).rejects.toBeInstanceOf(
       ContainerIgnoreMismatchError,
+    );
+  });
+
+  test("rejects a computerd that reports paths instead of patterns", async () => {
+    // A computerd from before patterns would have refused or misread
+    // "**/node_modules", so it must not pass for one that applied it.
+    const fake = connectingHost({ supported: true, root: "/tmp/workspace", paths: ["dist"] });
+    await expect(backendFor(fake, ["/dist"]).connect()).rejects.toThrow(
+      /does not support MOUNT_IGNORE patterns/,
     );
   });
 });

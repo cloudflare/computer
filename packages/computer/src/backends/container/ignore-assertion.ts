@@ -16,37 +16,36 @@ export interface ComputerdIgnoreReport {
   readonly supported?: boolean;
   readonly enabled?: boolean;
   readonly root?: string;
-  readonly paths?: readonly string[];
-  readonly redundant?: readonly string[];
+  readonly patterns?: readonly string[];
+  readonly ineffectiveExclusions?: readonly string[];
   readonly fastPaths?: Readonly<Record<string, unknown>>;
 }
 
 /** What the backend exposes back to the host after a successful connect. */
 export interface ResolvedIgnore {
   /**
-   * Absolute paths as they exist inside the container, under MOUNT_POINT.
-   * `node_modules` with a mount of /workspace reports /workspace/node_modules,
-   * so the value can be used directly against a container path without the
-   * caller re-deriving the mount. Empty when the feature is off.
+   * The MOUNT_IGNORE patterns computerd applied, normalized and in the
+   * order written, for example `["/dist", "!/vendor/node_modules"]`.
+   * Empty when the feature is off or unsupported.
    */
-  readonly paths: readonly string[];
+  readonly patterns: readonly string[];
   /**
    * Where local-only content is stored on the container's disk
    * (MOUNT_IGNORE_PATH). Undefined when unsupported.
    */
   readonly root: string | undefined;
-  /** The mount point the paths are rooted at. Undefined when unsupported. */
+  /** The mount point the patterns are anchored at. Undefined when unsupported. */
   readonly mountPoint: string | undefined;
-  /** False on a computerd predating the feature, so a host can degrade. */
+  /** False on a computerd predating patterns, so a host can degrade. */
   readonly supported: boolean;
 }
 
-/** Joins a mount-relative entry onto the mount point. */
-function toContainerPath(entry: string, mountPoint: string): string {
-  const base = mountPoint.replace(/\/+$/, "");
-  const rel = entry.replace(/^\/+/, "");
-  return `${base}/${rel}`;
-}
+const UNSUPPORTED_REPORT: ResolvedIgnore = {
+  patterns: [],
+  root: undefined,
+  mountPoint: undefined,
+  supported: false,
+};
 
 export class ContainerIgnoreMismatchError extends Error {
   readonly declared: readonly string[];
@@ -68,57 +67,82 @@ export class ContainerIgnoreMismatchError extends Error {
 /**
  * Reads the `ignore` block out of a /__computerd/info body.
  *
- * Tolerant by design: an older computerd has no such block, and that is
- * a supported answer (`supported: false`) rather than a parse error.
- * The caller decides whether it is acceptable.
+ * Tolerant by design: an older computerd has no such block, or reports
+ * plain `paths` from before patterns, and both are a supported answer
+ * (`supported: false`) rather than a parse error. The caller decides
+ * whether that is acceptable.
  */
 export function readIgnoreReport(info: unknown): ResolvedIgnore {
   if (typeof info !== "object" || info === null || !("ignore" in info)) {
-    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
+    return UNSUPPORTED_REPORT;
   }
   const report = (info as { ignore?: unknown }).ignore;
-  if (typeof report !== "object" || report === null) {
-    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
-  }
+  if (typeof report !== "object" || report === null) return UNSUPPORTED_REPORT;
   const typed = report as ComputerdIgnoreReport;
-  if (typed.supported !== true) {
-    return { paths: [], root: undefined, mountPoint: undefined, supported: false };
+  if (typed.supported !== true) return UNSUPPORTED_REPORT;
+  const patterns: unknown = typed.patterns;
+  if (!Array.isArray(patterns) || !patterns.every((entry) => typeof entry === "string")) {
+    return UNSUPPORTED_REPORT;
   }
-  // computerd reports entries mount-relative; the host wants paths it can
-  // use against the container directly, so they are joined onto the mount
-  // point from the same payload.
   const mountPoint = (info as { mountPoint?: unknown }).mountPoint;
-  const base = typeof mountPoint === "string" && mountPoint !== "" ? mountPoint : "/workspace";
   return {
-    paths: Array.isArray(typed.paths) ? typed.paths.map((e) => toContainerPath(e, base)) : [],
+    patterns,
     root: typeof typed.root === "string" ? typed.root : undefined,
-    mountPoint: base,
+    mountPoint: typeof mountPoint === "string" && mountPoint !== "" ? mountPoint : "/workspace",
     supported: true,
   };
 }
 
-/**
- * Compares a declared set against what the container applies; null when
- * they agree. Order-insensitive and duplicate-collapsing, because
- * computerd normalizes the same way and the two spellings mean the same
- * thing.
- */
-export function diffIgnore(
-  declared: readonly string[],
-  actual: readonly string[],
-): { missing: string[]; unexpected: string[] } | null {
-  const declaredSet = new Set(declared.map(normalize));
-  const actualSet = new Set(actual.map(normalize));
+// The same rules computerd applies at startup (computerd's
+// src/fuse/ignore.ts). Duplicated rather than shared because this
+// package does not depend on computerd; the two test suites pin the
+// same cases. Checked in the backend constructor, so a typo fails before
+// a container starts rather than as a daemon that exits during startup.
+const MAX_PATTERN_LENGTH = 4096;
+const UNSUPPORTED_SYNTAX = /[{}[\]?\\]/;
 
-  const missing = [...declaredSet].filter((entry) => !actualSet.has(entry)).sort();
-  const unexpected = [...actualSet].filter((entry) => !declaredSet.has(entry)).sort();
-
-  if (missing.length === 0 && unexpected.length === 0) return null;
-  return { missing, unexpected };
+/** Throws on the first pattern computerd would refuse. */
+export function checkIgnorePatterns(patterns: readonly string[]): void {
+  for (const raw of patterns) {
+    const pattern = raw.trim();
+    const fail = (reason: string): never => {
+      throw new Error(`\`ignore\` pattern ${JSON.stringify(raw)} ${reason}`);
+    };
+    if (pattern.length > MAX_PATTERN_LENGTH) {
+      fail(`is longer than ${MAX_PATTERN_LENGTH} characters.`);
+    }
+    const body = pattern.startsWith("!") ? pattern.slice(1) : pattern;
+    if (!body.startsWith("/") && !body.startsWith("**/") && body !== "**") {
+      const bare = stripSlashes(body.replace(/^\*\*(?=[^/])/, "")) || "path";
+      fail(
+        `must start with "/" (from the mount root) or "**/" (at any depth), ` +
+          `for example "/${bare}" or "**/${bare}".`,
+      );
+    }
+    if (UNSUPPORTED_SYNTAX.test(body)) {
+      fail(`uses syntax that is not supported. Only "*", "**", and a leading "!" are.`);
+    }
+    if (body.includes(",")) {
+      fail("contains a comma, which separates patterns in MOUNT_IGNORE.");
+    }
+    const trimmed = stripSlashes(body);
+    const parts = trimmed === "" ? [] : trimmed.split("/");
+    if (parts.some((part) => part === "")) fail("contains an empty path segment.");
+    if (parts.some((part) => part === "." || part === "..")) {
+      fail(`contains a "." or ".." segment.`);
+    }
+    if (parts.some((part) => part !== "**" && part.includes("**"))) {
+      fail(`uses "**" inside a segment. "**" must be a whole path segment.`);
+    }
+    if (parts.every((part) => part === "**")) {
+      fail("would make the whole mount local-only, so nothing would be synced.");
+    }
+  }
 }
 
 /**
- * Throws when the container disagrees. `declared === undefined` skips the
+ * Throws when the container is not applying exactly the declared
+ * patterns, in the declared order. `declared === undefined` skips the
  * check, so an existing deployment cannot start failing because a new
  * field appeared.
  */
@@ -130,7 +154,7 @@ export function assertIgnoreMatches(
 
   if (!resolved.supported) {
     throw new ContainerIgnoreMismatchError(
-      `This container's computerd does not support local-only paths, but ` +
+      `This container's computerd does not support MOUNT_IGNORE patterns, but ` +
         `\`ignore\` declared ${formatList(declared)}. Those paths would be ` +
         `recorded in the workspace and pulled into the Durable Object. ` +
         `Upgrade the computerd image, or remove \`ignore\` to accept the ` +
@@ -139,58 +163,64 @@ export function assertIgnoreMatches(
     );
   }
 
-  // resolved.paths are absolute container paths. A declaration may be
-  // written mount-relative ("/node_modules") or with the mount point
-  // ("/workspace/node_modules"), and computerd accepts both. Compare
-  // both sides on the mount-relative form.
-  const declaredRelative = declared.map((path) => stripMount(path, resolved.mountPoint));
-  const actualRelative = resolved.paths.map((path) => stripMount(path, resolved.mountPoint));
-  const difference = diffIgnore(declaredRelative, actualRelative);
-  if (difference === null) return;
-
-  const parts: string[] = [];
-  if (difference.missing.length > 0) {
-    parts.push(
-      `declared but not applied by the container: ${formatList(difference.missing)} ` +
-        `(these paths WILL be synced)`,
-    );
+  // computerd reports patterns in a normalized spelling. Normalize the
+  // declaration the same way, then compare in order: with exclusions,
+  // the same patterns in a different order mean something different.
+  const expected = declared.map((pattern) => normalizePattern(pattern, resolved.mountPoint));
+  const actual = resolved.patterns.map((pattern) => normalizePattern(pattern, undefined));
+  if (expected.length === actual.length && expected.every((value, i) => value === actual[i])) {
+    return;
   }
-  if (difference.unexpected.length > 0) {
+
+  const actualSet = new Set(actual);
+  const expectedSet = new Set(expected);
+  const missing = expected.filter((value) => !actualSet.has(value));
+  const unexpected = actual.filter((value) => !expectedSet.has(value));
+  const parts: string[] = [];
+  if (missing.length > 0) {
+    parts.push(`declared but not applied by the container: ${formatList(missing)}`);
+  }
+  if (unexpected.length > 0) {
+    parts.push(`applied by the container but not declared: ${formatList(unexpected)}`);
+  }
+  if (parts.length === 0) {
     parts.push(
-      `applied by the container but not declared: ${formatList(difference.unexpected)} ` +
-        `(these paths will NOT be synced)`,
+      `the container applies the same patterns in a different order ` +
+        `(${formatList(actual)}), and the last matching pattern wins`,
     );
   }
 
   throw new ContainerIgnoreMismatchError(
-    `Container ignore set does not match \`ignore\`: ${parts.join("; ")}. ` +
+    `Container MOUNT_IGNORE does not match \`ignore\`: ${parts.join("; ")}. ` +
       `\`ignore\` is passed to the container as MOUNT_IGNORE, so a ` +
       `MOUNT_IGNORE in \`containerEnv\` overrides it. Remove one of them, ` +
-      `or check that the computerd image reads MOUNT_IGNORE as a ` +
-      `comma-separated list.`,
-    { declared: [...declared], actual: [...resolved.paths], supported: true },
+      `or check that the computerd image supports MOUNT_IGNORE patterns.`,
+    { declared: [...declared], actual: [...resolved.patterns], supported: true },
   );
 }
 
 /**
- * Reduces an absolute container path to its mount-relative form, so a
- * declaration and a report can be compared on the same footing.
+ * computerd's spelling of a pattern: mount point and trailing slashes
+ * stripped, a leading "/**" written as "**".
  */
-function stripMount(path: string, mountPoint: string | undefined): string {
-  if (mountPoint === undefined) return path;
-  const base = mountPoint.replace(/\/+$/, "");
-  const trimmed = path.trim();
-  if (base !== "" && (trimmed === base || trimmed.startsWith(`${base}/`))) {
-    return trimmed.slice(base.length + 1);
+function normalizePattern(raw: string, mountPoint: string | undefined): string {
+  const pattern = raw.trim();
+  const exclude = pattern.startsWith("!");
+  let body = exclude ? pattern.slice(1) : pattern;
+  const base = mountPoint?.replace(/\/+$/, "") ?? "";
+  if (base !== "" && (body === base || body.startsWith(`${base}/`))) {
+    body = body.slice(base.length) || "/";
   }
-  return trimmed;
+  const parts = stripSlashes(body).split("/");
+  const canonical = parts[0] === "**" ? parts.join("/") : `/${parts.join("/")}`;
+  return `${exclude ? "!" : ""}${canonical}`;
 }
 
-function normalize(entry: string): string {
-  let value = entry.trim();
-  while (value.startsWith("/")) value = value.slice(1);
-  while (value.endsWith("/")) value = value.slice(0, -1);
-  return value;
+function stripSlashes(value: string): string {
+  let out = value;
+  while (out.startsWith("/")) out = out.slice(1);
+  while (out.endsWith("/")) out = out.slice(0, -1);
+  return out;
 }
 
 function formatList(entries: readonly string[]): string {

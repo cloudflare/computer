@@ -3,27 +3,34 @@ import { describe, expect, test } from "vitest";
 import {
   assertIgnoreMatches,
   ContainerIgnoreMismatchError,
-  diffIgnore,
+  checkIgnorePatterns,
   type ResolvedIgnore,
   readIgnoreReport,
 } from "./ignore-assertion.js";
 
-// The failure guarded here is slow rather than loud: a stale or absent
-// MOUNT_IGNORE looks exactly like a correct one until a dependency tree
-// is written and pulled into the DO. So most of these tests are about
-// the check firing, not about it passing.
+// The failure guarded here is slow rather than loud: a container that
+// isn't applying the patterns looks exactly like one that is until a
+// dependency tree is written and pulled into the Durable Object. So most
+// of these tests are about the check firing, not about it passing.
 
-const supported = (paths: string[]): ResolvedIgnore => ({
-  paths,
+const supported = (patterns: string[]): ResolvedIgnore => ({
+  patterns,
   root: "/tmp/workspace",
   mountPoint: "/workspace",
   supported: true,
 });
 
+const unsupported: ResolvedIgnore = {
+  patterns: [],
+  root: undefined,
+  mountPoint: undefined,
+  supported: false,
+};
+
 describe("readIgnoreReport", () => {
-  test("reports paths as absolute container paths under the mount", () => {
-    // computerd reports mount-relative; the host wants something it can
-    // use against a container path without re-deriving the mount point.
+  test("reports patterns as computerd wrote them", () => {
+    // Patterns, not paths: "**/node_modules" can't be joined onto the
+    // mount point, so they're passed through untouched.
     const resolved = readIgnoreReport({
       backend: { kind: "fuse" },
       mountPoint: "/workspace",
@@ -31,12 +38,12 @@ describe("readIgnoreReport", () => {
         supported: true,
         enabled: true,
         root: "/tmp/workspace",
-        paths: ["node_modules", "dist"],
-        redundant: [],
+        patterns: ["**/node_modules", "!/vendor/node_modules", "/dist"],
+        ineffectiveExclusions: [],
       },
     });
     expect(resolved).toEqual({
-      paths: ["/workspace/node_modules", "/workspace/dist"],
+      patterns: ["**/node_modules", "!/vendor/node_modules", "/dist"],
       root: "/tmp/workspace",
       mountPoint: "/workspace",
       supported: true,
@@ -46,84 +53,90 @@ describe("readIgnoreReport", () => {
   test("treats a computerd with no ignore block as unsupported", () => {
     // The old-image case, and the one most likely to occur in practice.
     // Not a parse error: absence is a meaningful answer.
-    const resolved = readIgnoreReport({ backend: { kind: "fuse" }, mountPoint: "/workspace" });
-    expect(resolved).toEqual({
-      paths: [],
-      root: undefined,
-      mountPoint: undefined,
-      supported: false,
-    });
+    expect(readIgnoreReport({ backend: { kind: "fuse" }, mountPoint: "/workspace" })).toEqual(
+      unsupported,
+    );
+  });
+
+  test("treats a computerd that reports paths instead of patterns as unsupported", () => {
+    // A computerd from before patterns reports plain `paths` and would
+    // reject or misread "**/node_modules".
+    expect(
+      readIgnoreReport({
+        mountPoint: "/workspace",
+        ignore: { supported: true, root: "/tmp/workspace", paths: ["node_modules"] },
+      }),
+    ).toEqual(unsupported);
   });
 
   test("treats a malformed block as unsupported rather than throwing", () => {
     expect(readIgnoreReport({ ignore: null }).supported).toBe(false);
     expect(readIgnoreReport({ ignore: "yes" }).supported).toBe(false);
     expect(readIgnoreReport({ ignore: { supported: false } }).supported).toBe(false);
+    expect(readIgnoreReport({ ignore: { supported: true, patterns: [1] } }).supported).toBe(false);
     expect(readIgnoreReport(null).supported).toBe(false);
     expect(readIgnoreReport(undefined).supported).toBe(false);
   });
-
-  test("defaults paths to empty when the block omits them", () => {
-    const resolved = readIgnoreReport({
-      mountPoint: "/workspace",
-      ignore: { supported: true, root: "/tmp/x" },
-    });
-    expect(resolved).toEqual({
-      paths: [],
-      root: "/tmp/x",
-      mountPoint: "/workspace",
-      supported: true,
-    });
-  });
 });
 
-describe("diffIgnore", () => {
-  test("agrees when the sets match", () => {
-    expect(diffIgnore(["node_modules", "dist"], ["node_modules", "dist"])).toBeNull();
+describe("checkIgnorePatterns", () => {
+  // The same cases computerd rejects, so a typo fails before a container
+  // starts rather than as a daemon that exits during startup.
+  const rejects = (pattern: string, message: RegExp) => {
+    expect(() => checkIgnorePatterns([pattern])).toThrow(message);
+  };
+
+  test("accepts anchored patterns and exclusions", () => {
+    expect(() =>
+      checkIgnorePatterns([
+        "/dist",
+        "/workspace/dist",
+        "**/node_modules",
+        "/packages/*/dist",
+        "/app/**/node_modules",
+        "**/*.tsbuildinfo",
+        "!/vendor/node_modules",
+        "/dist/",
+      ]),
+    ).not.toThrow();
   });
 
-  test("ignores declaration order", () => {
-    // computerd reports in declaration order after dropping redundant
-    // entries; a host listing the same paths differently means the same.
-    expect(diffIgnore(["dist", "node_modules"], ["node_modules", "dist"])).toBeNull();
+  test("requires every pattern to start with / or **/", () => {
+    rejects("node_modules", /"\/node_modules" or "\*\*\/node_modules"/);
+    rejects("*/dist", /must start with/);
+    rejects("!vendor/node_modules", /must start with/);
+    rejects("!", /must start with/);
+    rejects("**node_modules", /must start with/);
   });
 
-  test("ignores slash decoration on either side", () => {
-    expect(diffIgnore(["/dist/", "node_modules"], ["dist", "node_modules"])).toBeNull();
+  test("requires ** to be a whole segment", () => {
+    rejects("/a**/b", /whole path segment/);
   });
 
-  test("collapses duplicates in the declaration", () => {
-    // computerd would have collapsed them, so the client must too or
-    // every duplicated entry becomes a spurious mismatch.
-    expect(diffIgnore(["dist", "dist"], ["dist"])).toBeNull();
+  test("rejects patterns that would make the whole mount local-only", () => {
+    for (const pattern of ["/", "**", "/**", "**/**", "!/**"]) {
+      rejects(pattern, /whole mount/);
+    }
   });
 
-  test("reports a path the container does not apply", () => {
-    expect(diffIgnore(["node_modules", "dist"], ["node_modules"])).toEqual({
-      missing: ["dist"],
-      unexpected: [],
-    });
+  test("rejects . and .. segments, and empty segments", () => {
+    rejects("/a/../b", /"\." or "\.\." segment/);
+    rejects("/./a", /"\." or "\.\." segment/);
+    rejects("/a//b", /empty path segment/);
   });
 
-  test("reports a path the container applies but the caller did not declare", () => {
-    expect(diffIgnore(["node_modules"], ["node_modules", "target"])).toEqual({
-      missing: [],
-      unexpected: ["target"],
-    });
+  test("rejects unsupported syntax", () => {
+    for (const pattern of ["/*.{js,ts}", "/[ab]", "/a?", "/a\\*"]) {
+      rejects(pattern, /not supported/);
+    }
   });
 
-  test("reports both directions at once", () => {
-    expect(diffIgnore(["a", "b"], ["b", "c"])).toEqual({ missing: ["a"], unexpected: ["c"] });
+  test("rejects a comma, which would split into two patterns", () => {
+    rejects("/a,/b", /comma/);
   });
 
-  test("an empty declaration against a configured container is a mismatch", () => {
-    // Distinct from omitting `ignore` entirely, which skips the check.
-    // Declaring "nothing is local-only" against a container that makes
-    // node_modules local-only is a real disagreement.
-    expect(diffIgnore([], ["node_modules"])).toEqual({
-      missing: [],
-      unexpected: ["node_modules"],
-    });
+  test("bounds pattern length", () => {
+    rejects(`/${"a".repeat(5000)}`, /longer than 4096/);
   });
 });
 
@@ -131,126 +144,109 @@ describe("assertIgnoreMatches", () => {
   test("omitting the declaration skips the check", () => {
     // The default. Adopting this option is opt-in, so an existing
     // deployment cannot start failing because a new field appeared.
-    expect(() => assertIgnoreMatches(undefined, supported(["node_modules"]))).not.toThrow();
-    expect(() =>
-      assertIgnoreMatches(undefined, {
-        paths: [],
-        root: undefined,
-        mountPoint: undefined,
-        supported: false,
-      }),
-    ).not.toThrow();
+    expect(() => assertIgnoreMatches(undefined, supported(["/node_modules"]))).not.toThrow();
+    expect(() => assertIgnoreMatches(undefined, unsupported)).not.toThrow();
   });
 
   test("passes when the declaration matches", () => {
     expect(() =>
-      assertIgnoreMatches(["node_modules", "dist"], supported(["node_modules", "dist"])),
+      assertIgnoreMatches(
+        ["**/node_modules", "!/vendor/node_modules"],
+        supported(["**/node_modules", "!/vendor/node_modules"]),
+      ),
     ).not.toThrow();
   });
 
-  test("rejects a computerd that does not support the feature", () => {
-    // README warns the computerd image can lag the pinned client. An
-    // old image would otherwise look like it is working while quietly
+  test("compares declarations in computerd's normalized spelling", () => {
+    // computerd strips the mount point and trailing slashes and writes a
+    // leading /** as **, so these all configure what it reports.
+    expect(() =>
+      assertIgnoreMatches(
+        ["/workspace/dist/", "!/workspace/vendor/node_modules", "/**/node_modules"],
+        supported(["/dist", "!/vendor/node_modules", "**/node_modules"]),
+      ),
+    ).not.toThrow();
+  });
+
+  test("does not strip a prefix that only looks like the mount point", () => {
+    expect(() => assertIgnoreMatches(["/workspacefoo"], supported(["/foo"]))).toThrow(
+      ContainerIgnoreMismatchError,
+    );
+  });
+
+  test("a reordered list is a mismatch", () => {
+    // With exclusions, order changes the meaning: this pair keeps
+    // vendor/node_modules synced one way round and local-only the other.
+    expect(() =>
+      assertIgnoreMatches(
+        ["**/node_modules", "!/vendor/node_modules"],
+        supported(["!/vendor/node_modules", "**/node_modules"]),
+      ),
+    ).toThrow(/same patterns in a different order/);
+  });
+
+  test("rejects a computerd that does not support patterns", () => {
+    // An old image would otherwise look like it is working while quietly
     // syncing a full node_modules.
-    expect(() =>
-      assertIgnoreMatches(["node_modules"], {
-        paths: [],
-        root: undefined,
-        mountPoint: undefined,
-        supported: false,
-      }),
-    ).toThrow(ContainerIgnoreMismatchError);
-    expect(() =>
-      assertIgnoreMatches(["node_modules"], {
-        paths: [],
-        root: undefined,
-        mountPoint: undefined,
-        supported: false,
-      }),
-    ).toThrow(/does not support local-only paths/);
-  });
-
-  test("the unsupported message says what the consequence is", () => {
-    // Not just "mismatch". The operator needs to know the paths will be
-    // pulled into the DO, which is the expensive part.
     try {
-      assertIgnoreMatches(["node_modules"], {
-        paths: [],
-        root: undefined,
-        mountPoint: undefined,
-        supported: false,
-      });
+      assertIgnoreMatches(["**/node_modules"], unsupported);
       expect.unreachable("should have thrown");
     } catch (error) {
-      expect((error as Error).message).toMatch(/pulled into the Durable Object/);
-      expect((error as Error).message).toMatch(/Upgrade the computerd image/);
+      expect(error).toBeInstanceOf(ContainerIgnoreMismatchError);
+      const message = (error as Error).message;
+      expect(message).toMatch(/does not support MOUNT_IGNORE patterns/);
+      expect(message).toMatch(/pulled into the Durable Object/);
+      expect(message).toMatch(/Upgrade the computerd image/);
     }
   });
 
-  test("names which paths will be synced when the container is missing one", () => {
+  test("names patterns the container is not applying", () => {
     try {
-      assertIgnoreMatches(["node_modules", "dist"], supported(["node_modules"]));
+      assertIgnoreMatches(["**/node_modules", "/dist"], supported(["**/node_modules"]));
       expect.unreachable("should have thrown");
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toMatch(/"dist"/);
-      expect(message).toMatch(/WILL be synced/);
+      expect(message).toMatch(/"\/dist"/);
+      expect(message).toMatch(/declared but not applied/);
     }
   });
 
-  test("names which paths will not be synced when the container adds one", () => {
-    // The opposite direction is just as dangerous: the caller believes
-    // `target` is durable and it is not.
+  test("names patterns the container applies that were not declared", () => {
     try {
-      assertIgnoreMatches(["node_modules"], supported(["node_modules", "target"]));
+      assertIgnoreMatches(["**/node_modules"], supported(["**/node_modules", "/target"]));
       expect.unreachable("should have thrown");
     } catch (error) {
       const message = (error as Error).message;
-      expect(message).toMatch(/"target"/);
-      expect(message).toMatch(/will NOT be synced/);
+      expect(message).toMatch(/"\/target"/);
+      expect(message).toMatch(/applied by the container but not declared/);
     }
+  });
+
+  test("an empty declaration against a configured container is a mismatch", () => {
+    // Distinct from omitting `ignore`, which skips the check.
+    expect(() => assertIgnoreMatches([], supported(["**/node_modules"]))).toThrow(
+      ContainerIgnoreMismatchError,
+    );
   });
 
   test("points at the setting that overrides `ignore`", () => {
-    // `ignore` is passed to the container as MOUNT_IGNORE, so a
-    // disagreement means something else set the variable after it.
     try {
-      assertIgnoreMatches(["a"], supported(["b"]));
+      assertIgnoreMatches(["/a"], supported(["/b"]));
       expect.unreachable("should have thrown");
     } catch (error) {
       expect((error as Error).message).toMatch(/MOUNT_IGNORE in `containerEnv`/);
     }
   });
 
-  test("accepts declarations spelled with the mount point", () => {
-    // computerd strips the mount prefix, so "/workspace/dist" and "/dist"
-    // configure the same path. Comparing them raw rejects a container
-    // that is doing exactly what was asked.
-    expect(() =>
-      assertIgnoreMatches(
-        ["/workspace/dist", "/workspace/node_modules/"],
-        supported(["/workspace/dist", "/workspace/node_modules"]),
-      ),
-    ).not.toThrow();
-  });
-
-  test("does not strip a prefix that only looks like the mount point", () => {
-    // "/workspacefoo" is not under "/workspace", so it names
-    // "/workspace/workspacefoo", not "/workspace/foo".
-    expect(() => assertIgnoreMatches(["/workspacefoo"], supported(["/workspace/foo"]))).toThrow(
-      ContainerIgnoreMismatchError,
-    );
-  });
-
-  test("carries the declared and actual sets on the error", () => {
+  test("carries the declared and actual lists on the error", () => {
     // So a host can log or reconcile them without parsing the message.
     try {
-      assertIgnoreMatches(["a"], supported(["b"]));
+      assertIgnoreMatches(["/a"], supported(["/b"]));
       expect.unreachable("should have thrown");
     } catch (error) {
       const mismatch = error as ContainerIgnoreMismatchError;
-      expect(mismatch.declared).toEqual(["a"]);
-      expect(mismatch.actual).toEqual(["b"]);
+      expect(mismatch.declared).toEqual(["/a"]);
+      expect(mismatch.actual).toEqual(["/b"]);
       expect(mismatch.supported).toBe(true);
     }
   });
