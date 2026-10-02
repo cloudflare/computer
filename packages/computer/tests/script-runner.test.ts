@@ -398,6 +398,42 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value).toContain('unknown option "shell"');
   });
 
+  it("rejects a cyclic argument with a clear error", async () => {
+    const response = await runtime({
+      source: `
+        import { echo } from "ws:test-host";
+        export default async () => {
+          const value = {};
+          value.self = value;
+          try {
+            await echo(value);
+            return "sent";
+          } catch (error) {
+            return error.message;
+          }
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value, text).toContain("acyclic");
+  });
+
+  it("drops undefined fields from a run result, as JSON does", async () => {
+    const response = await runtime({
+      source: `export default () => ({ kept: 1, dropped: undefined, nested: { also: undefined } });`,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: { kept: 1, nested: {} },
+    });
+    expect(JSON.parse(text).result.value).not.toHaveProperty("dropped");
+  });
+
   it("does not expose unrestricted host operations through the node:fs dispatcher", async () => {
     const response = await runtime({
       source: `
