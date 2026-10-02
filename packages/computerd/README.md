@@ -273,8 +273,9 @@ stays synced. computerd keeps the two sides in step:
   directory out from under `/app/**/node_modules`, leaves contents on
   local disk that are no longer local-only and so aren't reachable;
   prefer `**/` patterns for trees that get moved.
-- Removing a synced directory returns `ENOTEMPTY` while it still holds
-  local-only contents, which the synced side can't see. `rm -rf` removes
+- Removing a synced directory, or renaming another directory onto it,
+  returns `ENOTEMPTY` while it still holds local-only contents, which
+  the synced side can't see. `rm -rf` removes
   the contents first, so it works as usual.
 
 ### Renames across the boundary

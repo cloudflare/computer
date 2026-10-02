@@ -762,14 +762,52 @@ describe("withLocalPassthrough: synced directories that hold local-only paths", 
   });
 
   test("a synced rename succeeds even if the local move fails, and says so", () => {
-    const { ops, warnings } = build();
+    const source = recordingOps();
+    const warnings: string[] = [];
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["**/node_modules"], MOUNT),
+      mountPoint: MOUNT,
+      warn: (message) => warnings.push(message),
+      fs: {
+        ...realFs(),
+        renameSync: () => {
+          throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+        },
+      },
+    });
     mkdirSync(join(root, "packages/foo/node_modules"), { recursive: true });
-    // A non-empty directory already at the destination makes the local
-    // rename fail with ENOTEMPTY.
-    mkdirSync(join(root, "packages/bar/node_modules/other"), { recursive: true });
 
     expect(status((cb) => ops.rename("/packages/foo", "/packages/bar", cb))).toBe(0);
     expect(warnings.join("\n")).toMatch(/packages\/foo.*packages\/bar/);
+  });
+
+  test("renaming onto a synced directory that holds local-only contents is ENOTEMPTY", () => {
+    // The synced side can't see b/node_modules, so it would let the
+    // rename replace b, and the local move onto the occupied b would
+    // then fail, stranding a/node_modules at a path the mount no
+    // longer shows. In the merged view b isn't empty, so refuse.
+    const { ops, calls } = build();
+    mkdirSync(join(root, "a/node_modules/pkg"), { recursive: true });
+    mkdirSync(join(root, "b/node_modules/other"), { recursive: true });
+
+    expect(status((cb) => ops.rename("/a", "/b", cb))).toBe(-39);
+
+    expect(calls).toEqual([]);
+    expect(nodeFs.existsSync(join(root, "a/node_modules/pkg"))).toBe(true);
+    expect(nodeFs.existsSync(join(root, "b/node_modules/other"))).toBe(true);
+  });
+
+  test("renaming onto a synced directory with only empty scaffolding moves the contents", () => {
+    const { ops, calls } = build();
+    mkdirSync(join(root, "a/node_modules/pkg"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+
+    expect(status((cb) => ops.rename("/a", "/b", cb))).toBe(0);
+
+    expect(calls).toEqual(["rename"]);
+    expect(nodeFs.existsSync(join(root, "b/node_modules/pkg"))).toBe(true);
+    expect(nodeFs.existsSync(join(root, "a"))).toBe(false);
   });
 
   test("rmdir of a synced directory also removes its empty scaffolding", () => {

@@ -514,13 +514,9 @@ export function withLocalPassthrough(
         // disk. Check the local side first, and clean up its scaffolding
         // once the synced directory is gone.
         const scaffolding = localPath(path);
-        try {
-          if (fs.readdirSync(scaffolding).length > 0) {
-            cb(ERRNO.ENOTEMPTY);
-            return;
-          }
-        } catch {
-          // No local side; nothing to check.
+        if (hasLocalContents(path)) {
+          cb(ERRNO.ENOTEMPTY);
+          return;
         }
         ops.rmdir(path, (code) => {
           if (code === 0) {
@@ -549,6 +545,15 @@ export function withLocalPassthrough(
       const destinationLocal = isLocal(destination);
 
       if (!sourceLocal && !destinationLocal) {
+        // The synced side can't see the destination's local-only
+        // children, so it would let this replace a directory that still
+        // holds node_modules on disk. The local move onto it would then
+        // fail and strand the source's contents. In the merged view the
+        // destination isn't empty, which is ENOTEMPTY for rename(2).
+        if (hasLocalContents(destination)) {
+          cb(ERRNO.ENOTEMPTY);
+          return;
+        }
         ops.rename(source, destination, (code) => {
           if (code === 0) moveLocalContents(source, destination);
           cb(code);
@@ -751,6 +756,14 @@ export function withLocalPassthrough(
     }
     const parent = toRelative(path, mountRoot);
     return names.filter((name) => isLocal(parent === "" ? name : `${parent}/${name}`));
+  }
+
+  function hasLocalContents(path: string): boolean {
+    try {
+      return fs.readdirSync(localPath(path)).length > 0;
+    } catch {
+      return false;
+    }
   }
 
   // After a synced directory is renamed, move whatever it held on local
