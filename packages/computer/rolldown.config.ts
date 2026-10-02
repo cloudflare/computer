@@ -31,6 +31,8 @@ export default defineConfig({
     "artifacts/index": "src/artifacts/index.ts",
     "assets/index": "src/assets/index.ts",
     "tools/index": "src/tools/index.ts",
+    "tools/pi-ai": "src/tools/pi-ai/index.ts",
+    "tools/tanstack-ai": "src/tools/tanstack-ai/index.ts",
     "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",

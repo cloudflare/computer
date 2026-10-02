@@ -1,8 +1,7 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
 
-import { notCallableMessage } from "../runtime/runtime.js";
-import type { WorkspaceRuntimeValue } from "../runtime/types.js";
+import { notCallableMessage } from "../../runtime/runtime.js";
+import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -110,16 +109,36 @@ export type ExecToolOutput =
     }
   | { command: string; cwd: string | null; backend: string; error: string };
 
-export function createExecTool(options: ExecToolOptions): Tool<
-  {
-    command: string;
-    cwd?: string;
-    backend?: string;
-    env?: Record<string, string>;
-    input?: WorkspaceRuntimeValue;
-  },
-  ExecToolOutput
-> {
+export interface ExecInput {
+  command: string;
+  cwd?: string;
+  backend?: string;
+  env?: Record<string, string>;
+  input?: WorkspaceRuntimeValue;
+}
+
+export interface ExecCallContext {
+  abortSignal?: AbortSignal;
+}
+
+/** The exec tool with no agent library attached. Each library wraps it in its own tool shape. */
+export interface ExecDefinition {
+  description: string;
+  inputSchema: z.ZodType<ExecInput>;
+  /**
+   * Yields running snapshots while the command streams, then one
+   * terminal snapshot. Every snapshot is a complete result, so a
+   * library that cannot stream tool output keeps the last one.
+   */
+  execute(input: ExecInput, context?: ExecCallContext): AsyncGenerator<ExecToolOutput>;
+}
+
+/**
+ * Check the backends once and build the exec tool's description, input
+ * schema, and executor. Throws when no backend is given or the default
+ * is not among them, so a misconfigured tool fails when it is built.
+ */
+export function defineExec(options: ExecToolOptions): ExecDefinition {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
@@ -171,7 +190,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
       ].join(" "),
     );
 
-  return tool({
+  return {
     description,
     inputSchema: z.object({
       command: z
@@ -193,7 +212,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
           "Structured value handed to a callable backend's module. Only callable backends accept it; other backends reject it.",
         ),
     }),
-    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal }) {
+    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal } = {}) {
       const selectedBackend = backend ?? options.defaultBackend;
       const base = { command, cwd: cwd ?? null, backend: selectedBackend };
       if (input !== undefined && !callableBackendIds.has(selectedBackend)) {
@@ -294,7 +313,7 @@ export function createExecTool(options: ExecToolOptions): Tool<
         }
       }
     },
-  });
+  };
 }
 
 function errorMessage(err: unknown): string {
