@@ -21,11 +21,14 @@ import type {
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
+import type { ExecSyncResult } from "../shell.js";
 import { truncateText } from "../text-truncation.js";
 
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const EXEC_OPTION_KEYS = new Set(["cwd", "env", "stdin", "timeoutMs"]);
+const MAX_SKIPPED_PATHS = 100;
+const MAX_SYNC_ERROR_BYTES = 1024;
 
 /** Options for {@link createContainerModule}. */
 export interface ContainerModuleOptions {
@@ -45,7 +48,9 @@ export interface ContainerModuleOptions {
  * backend.
  *
  * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
- * returns `{ exitCode, stdout, stderr }` once the command finishes. A
+ * returns `{ exitCode, stdout, stderr, sync }` once the command
+ * finishes. `sync` reports whether the container's file changes reached
+ * the Workspace, the first 100 paths it skipped, and `skippedCount`. A
  * non-zero exit code is a normal result, not an error. Cancelling the
  * execution kills the command.
  *
@@ -118,6 +123,7 @@ export function createContainerModule(
           exitCode: result.exitCode,
           stdout: truncateText(result.stdout, maxOutputBytes),
           stderr: truncateText(result.stderr, maxOutputBytes),
+          sync: syncSummary(result.sync),
         };
       } finally {
         context.signal.removeEventListener("abort", kill);
@@ -131,7 +137,27 @@ const DESCRIPTION = [
   "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
   'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
   "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
+  "`sync.status` is `pending` if the container's file changes have not reached the workspace yet. The container's changes win over files written meanwhile, so do not write files the command also writes while it runs.",
 ].join(" ");
+
+// How the container's file changes came back to the Workspace. A
+// "pending" status means they did not, yet; `skipped` lists paths the
+// container wrote that the Workspace refused, such as read-only mounts.
+//
+// The list is capped, and the error cut short, so a command that skips
+// thousands of paths still fits within the bridge's response limits;
+// otherwise the call would fail after the command had already run.
+// `skippedCount` is the full count.
+function syncSummary(sync: ExecSyncResult) {
+  return {
+    status: sync.status,
+    skipped: sync.skipped.slice(0, MAX_SKIPPED_PATHS).map((entry) => entry.path),
+    skippedCount: sync.skipped.length,
+    ...(sync.status === "pending" && sync.error !== undefined
+      ? { error: truncateText(sync.error, MAX_SYNC_ERROR_BYTES) }
+      : {}),
+  };
+}
 
 interface ExecRequest {
   readonly command: string;
