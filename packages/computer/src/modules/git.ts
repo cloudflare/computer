@@ -85,7 +85,7 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceModule
     },
   });
   return Object.assign(create, {
-    description: `The workspace's Git repository tools: \`status({ dir })\`, \`diff({ dir })\`, \`log({ dir, depth })\`, \`clone({ url, dir })\`, and \`cli({ argv, cwd })\` for any other git subcommand.${allowNetwork ? "" : " Network commands such as clone, fetch, and push are not allowed."}`,
+    description: `The workspace's Git repository tools: \`status({ dir })\`, \`diff({ dir })\`, \`log({ dir, depth })\`, \`clone({ url, dir })\`, and \`cli({ argv, cwd })\` for any other git subcommand, including a leading \`-C <path>\`.${allowNetwork ? "" : " Network commands such as clone, fetch, and push are not allowed."}`,
   });
 }
 
