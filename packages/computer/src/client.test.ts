@@ -15,7 +15,7 @@ import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-jav
 import { getWorkspace, type WorkspaceClient } from "./client.js";
 import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
-import { createAITools } from "./tools/ai-sdk.js";
+import { createAITools } from "./tools/ai-sdk/index.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
 import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
 

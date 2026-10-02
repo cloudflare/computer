@@ -175,11 +175,17 @@ produces the Node SEA single-file binary at
 
 ## Tools
 
-AI SDK tools (`read`, `write`, `edit`, `ls`, `exec`, and optional
-`publish`) ship from the package rather than a separate one:
-`createAITools()` from `@cloudflare/computer/tools/ai-sdk`, and the
-individual `create*Tool` functions from `@cloudflare/computer/tools`. They live under
-[`packages/computer/src/tools/`](../packages/computer/src/tools/). See
+Agent tools (`read`, `write`, `edit`, `ls`, `exec`, and optional
+`publish`) ship from the package rather than a separate one, with one
+entry point per agent library: `createAITools()` from
+`@cloudflare/computer/tools/ai-sdk`, `createPiTools()` from
+`@cloudflare/computer/tools/pi-ai`, and `createTanStackTools()` from
+`@cloudflare/computer/tools/tanstack-ai`. The individual AI SDK
+`create*Tool` functions come from `@cloudflare/computer/tools`. They live under
+[`packages/computer/src/tools/`](../packages/computer/src/tools/):
+`common/` holds each tool's schema, description, and executor with no
+agent library in it, and `ai-sdk/`, `pi-ai/`, and `tanstack-ai/` wrap
+those in each library's tool shape. See
 [09. Tool Interface (Agents)](./09_tool_interface.md).
 
 ## Git

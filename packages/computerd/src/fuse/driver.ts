@@ -2,6 +2,11 @@ import { writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
 import { buildFuseOptionString } from "./options.js";
+import {
+  type LocalPassthroughOptions,
+  type PassthroughStats,
+  withLocalPassthrough,
+} from "./passthrough.js";
 import { createFuseTracer, type FuseTracer, wrapFuseOpsWithTracer } from "./tracer.js";
 import type { NodeVirtualFileSystem } from "./vfs.js";
 
@@ -135,6 +140,9 @@ export interface FuseMount {
   // filesystem. Only present when the mount was created via mountFuse;
   // the shim does not expose this.
   getBufferStats?: () => FuseBufferStats;
+  // Counters for the local-only layer. Present only when MOUNT_IGNORE
+  // configured local-only paths on a real FUSE mount.
+  getLocalPathStats?: () => PassthroughStats;
 }
 
 interface FuseNativeInstance {
@@ -961,6 +969,14 @@ export async function mountFuse(options: {
   backend?: FUSEBackend;
   mountPoint: string;
   vfs: NodeVirtualFileSystem;
+  /**
+   * Local-only path configuration (#179).
+   *
+   * When present and non-empty, matching paths are served from the
+   * container's disk instead of the VFS and never enter sync. Omitted
+   * or empty leaves the op table exactly as it was.
+   */
+  localPaths?: LocalPassthroughOptions;
 }): Promise<FuseMount> {
   // biome-ignore lint/suspicious/noExplicitAny: fuse-native ships no types
   const fuseModule: any = await import("fuse-native");
@@ -973,7 +989,15 @@ export async function mountFuse(options: {
   const traceMode = process.env.COMPUTERD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
-  const { getBufferStats: _getBufferStats, ...fuseOps } = baseOps;
+  // Local-only paths are routed before tracing, so the trace counts a
+  // passthrough op once, at the layer that actually served it, rather
+  // than attributing it to the VFS driver that never saw it.
+  const localPaths =
+    options.localPaths === undefined
+      ? undefined
+      : withLocalPassthrough(baseOps, options.localPaths);
+  const routedOps = localPaths === undefined ? baseOps : localPaths.ops;
+  const { getBufferStats: _getBufferStats, ...fuseOps } = routedOps;
   const ops =
     tracer === undefined
       ? fuseOps
@@ -1046,6 +1070,7 @@ export async function mountFuse(options: {
       });
     },
     getBufferStats: _getBufferStats,
+    ...(localPaths === undefined ? {} : { getLocalPathStats: localPaths.stats }),
   };
 }
 

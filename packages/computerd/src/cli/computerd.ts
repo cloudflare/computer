@@ -15,13 +15,16 @@ import { Runner } from "../exec/index.js";
 import type { ExecEvent as ComputerdExecEvent } from "../exec/types.js";
 import {
   createNodeVirtualFileSystem,
+  describeMountIgnore,
   type FUSEBackend,
   type FuseMount,
+  type MountIgnoreInfo,
   mountFuse,
   parseFuseMountMode,
   parseStoreMode,
   type ResolvedStore,
   resolveFuseBackend,
+  resolveMountIgnoreConfig,
   resolveStore,
 } from "../fuse/index.js";
 import { mountShim, type ShimMount } from "../shim/index.js";
@@ -151,6 +154,7 @@ interface ComputerdInfo {
   mountPoint: string;
   port: number;
   store: ResolvedStore;
+  ignore: MountIgnoreInfo;
 }
 
 // Snapshot DOFS table sizes and process memory so an external caller
@@ -631,6 +635,35 @@ async function main(): Promise<void> {
   const backend: FUSEBackend = await resolveFuseBackend(fuseMountMode);
   console.log(`[info] FUSE_MOUNT=${fuseMountMode} resolved to backend=${backend.kind}`);
 
+  // Local-only paths (#179). Resolved before the store so a
+  // misconfiguration fails the daemon at startup rather than after the
+  // mount is live: a silently dropped entry would send a full
+  // node_modules into the Durable Object, which is the failure this
+  // feature exists to prevent.
+  const ignoreConfig = resolveMountIgnoreConfig(process.env, mountPoint);
+  // The shim copies everything under the mount into the VFS, so it has
+  // no way to keep a path local. Starting anyway would report the paths
+  // as local-only on /__computerd/info while syncing them, and the
+  // host's check would pass. FUSE_MOUNT=auto lands here too when
+  // /dev/fuse is missing, which is exactly when this needs to be loud.
+  if (ignoreConfig.enabled && backend.kind === "shim") {
+    throw new Error(
+      `MOUNT_IGNORE is not supported on the userspace shim (FUSE_MOUNT=${fuseMountMode} ` +
+        `resolved to backend=shim). Run with real FUSE, or unset MOUNT_IGNORE.`,
+    );
+  }
+  if (ignoreConfig.enabled) {
+    console.log(
+      `[info] MOUNT_IGNORE active: ${ignoreConfig.ignore.paths.length} path(s) ` +
+        `local-only under ${ignoreConfig.root} (${ignoreConfig.ignore.paths.join(", ")})`,
+    );
+    if (ignoreConfig.ignore.redundant.length > 0) {
+      console.log(
+        `[warn] MOUNT_IGNORE entries dropped as redundant: ${ignoreConfig.ignore.redundant.join(", ")}`,
+      );
+    }
+  }
+
   const store = resolveStore(parseStoreMode(process.env.COMPUTERD_DB), mountPoint);
   console.log(
     `[info] COMPUTERD_DB resolved to store=${store.kind}${
@@ -645,7 +678,13 @@ async function main(): Promise<void> {
     storeStats,
     close: closeStore,
   } = await createNodeVirtualFileSystem({ store });
-  const info: ComputerdInfo = { backend, mountPoint, port, store };
+  const info: ComputerdInfo = {
+    backend,
+    mountPoint,
+    port,
+    store,
+    ignore: describeMountIgnore(ignoreConfig),
+  };
 
   let fuse: FuseMount | undefined;
   // When running on the userspace shim, capture the typed handle
@@ -665,10 +704,26 @@ async function main(): Promise<void> {
       shim = await mountShim({ vfs, mountPoint });
       fuse = shim;
     } else {
+      // The local-only store is created eagerly so a permission or
+      // read-only-filesystem problem surfaces at mount time, next to
+      // the configuration that caused it, rather than on the first
+      // write into an ignored path mid-command.
+      if (ignoreConfig.enabled) {
+        await mkdir(ignoreConfig.root, { recursive: true });
+      }
       fuse = await mountFuse({
         backend,
         mountPoint,
         vfs,
+        ...(ignoreConfig.enabled
+          ? {
+              localPaths: {
+                root: ignoreConfig.root,
+                ignore: ignoreConfig.ignore,
+                mountPoint,
+              },
+            }
+          : {}),
       });
     }
   }
@@ -746,6 +801,7 @@ async function main(): Promise<void> {
       return {
         ...collectDbStats(db),
         ...(fuse?.getBufferStats?.() ?? {}),
+        ...(fuse?.getLocalPathStats === undefined ? {} : { localPaths: fuse.getLocalPathStats() }),
         store_size_bytes: sizeBytes,
         store_freelist_count: freelistCount,
       };

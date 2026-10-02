@@ -1,11 +1,10 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { WorkerJavaScriptBackend } from "../backends/worker-javascript/worker-javascript.js";
-import { createGitModule } from "../modules/git.js";
-import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../runtime/types.js";
-import { Workspace } from "../workspace.js";
-import { createAITools } from "./ai-sdk.js";
+import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript.js";
+import { createGitModule } from "../../modules/git.js";
+import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../../runtime/types.js";
+import { Workspace } from "../../workspace.js";
 import {
   createDeleteTool,
   createEditTool,
@@ -15,7 +14,8 @@ import {
   createWriteTool,
   type FileStore,
   WorkspaceFileStore,
-} from "./index.js";
+} from "../index.js";
+import { createAITools } from "./index.js";
 
 const toolOptions = { toolCallId: "test-call", messages: [] };
 
