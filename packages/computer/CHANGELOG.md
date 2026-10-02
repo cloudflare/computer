@@ -1,5 +1,11 @@
 # @cloudflare/computer
 
+## 0.4.1
+
+### Patch Changes
+
+- [#192](https://github.com/cloudflare/computer/pull/192) Add `ignore` to `ContainerBackend`: glob patterns, such as `**/node_modules` and `!/vendor/node_modules`, for paths the container keeps on its own disk instead of syncing. ([`2f76387`](https://github.com/cloudflare/computer/commit/2f76387771c9e4a64dc08a7bbd82cbbcf9fadec1)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.4.0
 
 ### Minor Changes
