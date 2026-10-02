@@ -14,7 +14,7 @@
 # back to the userspace shim transparently.
 
 
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.4.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.4.1 AS computerd
 
 FROM debian:stable-slim
 
