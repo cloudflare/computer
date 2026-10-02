@@ -98,14 +98,14 @@ describe("diffIgnore", () => {
     expect(diffIgnore(["dist", "dist"], ["dist"])).toBeNull();
   });
 
-  test("reports a path the image does not apply", () => {
+  test("reports a path the container does not apply", () => {
     expect(diffIgnore(["node_modules", "dist"], ["node_modules"])).toEqual({
       missing: ["dist"],
       unexpected: [],
     });
   });
 
-  test("reports a path the image applies but the caller did not declare", () => {
+  test("reports a path the container applies but the caller did not declare", () => {
     expect(diffIgnore(["node_modules"], ["node_modules", "target"])).toEqual({
       missing: [],
       unexpected: ["target"],
@@ -116,9 +116,9 @@ describe("diffIgnore", () => {
     expect(diffIgnore(["a", "b"], ["b", "c"])).toEqual({ missing: ["a"], unexpected: ["c"] });
   });
 
-  test("an empty declaration against a configured image is a mismatch", () => {
+  test("an empty declaration against a configured container is a mismatch", () => {
     // Distinct from omitting `ignore` entirely, which skips the check.
-    // Declaring "nothing is local-only" against an image that makes
+    // Declaring "nothing is local-only" against a container that makes
     // node_modules local-only is a real disagreement.
     expect(diffIgnore([], ["node_modules"])).toEqual({
       missing: [],
@@ -187,7 +187,7 @@ describe("assertIgnoreMatches", () => {
     }
   });
 
-  test("names which paths will be synced when the image is missing one", () => {
+  test("names which paths will be synced when the container is missing one", () => {
     try {
       assertIgnoreMatches(["node_modules", "dist"], supported(["node_modules"]));
       expect.unreachable("should have thrown");
@@ -198,7 +198,7 @@ describe("assertIgnoreMatches", () => {
     }
   });
 
-  test("names which paths will not be synced when the image adds one", () => {
+  test("names which paths will not be synced when the container adds one", () => {
     // The opposite direction is just as dangerous: the caller believes
     // `target` is durable and it is not.
     try {

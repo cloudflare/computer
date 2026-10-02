@@ -1,11 +1,13 @@
-// Client-side assertion over the container's local-only path set. The
-// set is owned by the image; a client can only state what it expects
-// and refuse to connect on disagreement. See packages/computerd/README.md.
+// Client-side check of the container's local-only path set. The backend
+// passes `ignore` to the container as MOUNT_IGNORE at start, then reads
+// back what computerd actually applied and refuses to connect if the two
+// disagree. See packages/computerd/README.md.
 //
 // Fails the connection rather than warning, because the failure it
-// guards is silent and expensive: an image built without MOUNT_IGNORE
-// looks identical to a correct one until a command writes a large
-// dependency tree and the whole thing is pulled into the Durable
+// guards is silent and expensive: a computerd too old to read
+// MOUNT_IGNORE, or a MOUNT_IGNORE in `containerEnv` overriding the
+// option, looks identical to a correct setup until a command writes a
+// large dependency tree and the whole thing is pulled into the Durable
 // Object -- the #179 symptom. A mismatch is a deployment error, and a
 // loud one is cheaper than a slow one.
 
@@ -96,9 +98,10 @@ export function readIgnoreReport(info: unknown): ResolvedIgnore {
 }
 
 /**
- * Compares a declared set against what the image applies; null when they
- * agree. Order-insensitive and duplicate-collapsing, because computerd
- * normalizes the same way and the two spellings mean the same thing.
+ * Compares a declared set against what the container applies; null when
+ * they agree. Order-insensitive and duplicate-collapsing, because
+ * computerd normalizes the same way and the two spellings mean the same
+ * thing.
  */
 export function diffIgnore(
   declared: readonly string[],
@@ -115,7 +118,7 @@ export function diffIgnore(
 }
 
 /**
- * Throws when the image disagrees. `declared === undefined` skips the
+ * Throws when the container disagrees. `declared === undefined` skips the
  * check, so an existing deployment cannot start failing because a new
  * field appeared.
  */
@@ -148,13 +151,13 @@ export function assertIgnoreMatches(
   const parts: string[] = [];
   if (difference.missing.length > 0) {
     parts.push(
-      `declared but not applied by the image: ${formatList(difference.missing)} ` +
+      `declared but not applied by the container: ${formatList(difference.missing)} ` +
         `(these paths WILL be synced)`,
     );
   }
   if (difference.unexpected.length > 0) {
     parts.push(
-      `applied by the image but not declared: ${formatList(difference.unexpected)} ` +
+      `applied by the container but not declared: ${formatList(difference.unexpected)} ` +
         `(these paths will NOT be synced)`,
     );
   }
