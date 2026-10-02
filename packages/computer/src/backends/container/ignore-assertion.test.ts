@@ -119,6 +119,18 @@ describe("checkIgnorePatterns", () => {
     }
   });
 
+  test("rejects wildcards that match every path at some depth", () => {
+    for (const pattern of ["/*", "/**/*", "**/*", "/*/*", "/*/**", "!/*"]) {
+      rejects(pattern, /whole mount/);
+    }
+  });
+
+  test("still accepts targeted wildcards", () => {
+    expect(() =>
+      checkIgnorePatterns(["/*.log", "/packages/*/dist", "**/*.tsbuildinfo", "/build-*"]),
+    ).not.toThrow();
+  });
+
   test("rejects . and .. segments, and empty segments", () => {
     rejects("/a/../b", /"\." or "\.\." segment/);
     rejects("/./a", /"\." or "\.\." segment/);

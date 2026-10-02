@@ -198,7 +198,7 @@ These fail the daemon at startup, because a dropped pattern means a full
 | --- | --- |
 | `node_modules` | not anchored. In gitignore it would match at any depth; write `/node_modules` or `**/node_modules` |
 | `**node_modules`, `/a**/b` | `**` must be a whole path segment |
-| `**`, `/**`, `/` | would make the whole mount local-only |
+| `**`, `/**`, `/`, `/*`, `**/*` | would make the whole mount local-only. A pattern of only `*` and `**` segments matches every top-level entry, and everything under a local-only directory is local-only |
 | `/a/../b`, `/./a`, `/a//b` | `.`, `..`, and empty segments |
 | `/*.{js,ts}`, `/[ab]`, `/a?`, `/a\*` | braces, character classes, `?`, and escapes aren't supported |
 

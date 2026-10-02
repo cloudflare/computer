@@ -233,6 +233,18 @@ describe("resolveMountIgnore: rejected patterns", () => {
     }
   });
 
+  test("rejects wildcards that match every path at some depth", () => {
+    // "/*" matches every top-level entry, and everything under a
+    // local-only directory is local-only, so nothing would sync.
+    for (const pattern of ["/*", "/**/*", "**/*", "/*/*", "/*/**", "!/*"]) {
+      rejects(pattern, /whole mount/);
+    }
+  });
+
+  test("still accepts targeted wildcards", () => {
+    expect(() => set(["/*.log", "/packages/*/dist", "**/*.tsbuildinfo", "/build-*"])).not.toThrow();
+  });
+
   test("rejects . and .. segments", () => {
     rejects("/a/../b", /"\." or "\.\." segment/);
     rejects("/./a", /"\." or "\.\." segment/);

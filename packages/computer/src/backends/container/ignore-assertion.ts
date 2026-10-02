@@ -134,7 +134,10 @@ export function checkIgnorePatterns(patterns: readonly string[]): void {
     if (parts.some((part) => part !== "**" && part.includes("**"))) {
       fail(`uses "**" inside a segment. "**" must be a whole path segment.`);
     }
-    if (parts.every((part) => part === "**")) {
+    // Only "*" and "**" segments match every path at some depth, and
+    // everything under a local-only directory is local-only: "/*" alone
+    // would keep the whole workspace off the Durable Object.
+    if (parts.every((part) => part === "**" || part === "*")) {
       fail("would make the whole mount local-only, so nothing would be synced.");
     }
   }
