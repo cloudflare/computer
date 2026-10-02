@@ -1,0 +1,25 @@
+.changeset/isolate-values.md
+  s_b2fd9413bbc158::t_75d5b5056d300c 1-5
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_b2fd9413bbc158::t_6a0db2838a0c08 362,365-371
+packages/computer/src/runtime/capability.ts
+  s_b2fd9413bbc158::t_a7cf8eb1b31637 277-281
+packages/computer/tests/script-runner.test.ts
+  s_b2fd9413bbc158::t_31a7eea9e9f249 401-436
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7a0cef9f5e95e466dc39fd6f85222f4bff0ad3b2",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
