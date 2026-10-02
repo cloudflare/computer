@@ -21,6 +21,7 @@ import type {
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
+import type { ExecSyncResult } from "../shell.js";
 import { truncateText } from "../text-truncation.js";
 
 const DEFAULT_BACKEND = "container-shell";
@@ -45,7 +46,9 @@ export interface ContainerModuleOptions {
  * backend.
  *
  * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
- * returns `{ exitCode, stdout, stderr }` once the command finishes. A
+ * returns `{ exitCode, stdout, stderr, sync }` once the command
+ * finishes. `sync` reports whether the container's file changes reached
+ * the Workspace, and which paths it skipped. A
  * non-zero exit code is a normal result, not an error. Cancelling the
  * execution kills the command.
  *
@@ -118,6 +121,7 @@ export function createContainerModule(
           exitCode: result.exitCode,
           stdout: truncateText(result.stdout, maxOutputBytes),
           stderr: truncateText(result.stderr, maxOutputBytes),
+          sync: syncSummary(result.sync),
         };
       } finally {
         context.signal.removeEventListener("abort", kill);
@@ -131,7 +135,19 @@ const DESCRIPTION = [
   "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
   'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
   "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
+  "`sync.status` is `pending` if the container's file changes have not reached the workspace yet. The container's changes win over files written meanwhile, so do not write files the command also writes while it runs.",
 ].join(" ");
+
+// How the container's file changes came back to the Workspace. A
+// "pending" status means they did not, yet; `skipped` lists paths the
+// container wrote that the Workspace refused, such as read-only mounts.
+function syncSummary(sync: ExecSyncResult) {
+  return {
+    status: sync.status,
+    skipped: sync.skipped.map((entry) => entry.path),
+    ...(sync.status === "pending" && sync.error !== undefined ? { error: sync.error } : {}),
+  };
+}
 
 interface ExecRequest {
   readonly command: string;

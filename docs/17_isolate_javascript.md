@@ -287,6 +287,8 @@ export default async function () {
 
 `exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, or runs module source rather than shell commands, the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
 
+The result also carries `sync`: `{ status, skipped, error? }`. `status` is `pending` when the container's file changes have not reached the Workspace yet, and `error` says why. `skipped` lists paths the container wrote that the Workspace refused, such as files in a read-only mount. The sync is last-writer-wins: the container's changes replace files written in the Workspace while the command runs, without reporting them as skipped. Don't write files from the isolate that the running command also writes.
+
 A few limits follow from `exec` being a host call:
 
 - Output comes back when the command finishes, not while it runs. Each stream is cut at `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`.
