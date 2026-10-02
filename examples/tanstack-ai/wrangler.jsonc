@@ -1,0 +1,40 @@
+{
+  // Example: a one-shot TanStack AI agent in a Durable Object.
+  //
+  // The DO holds a Workspace whose shell is a Dynamic Worker, and
+  // talks to Workers AI through the AI binding, so the example needs
+  // no API key.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-tanstack-ai-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  // Workers AI. Running this uses your account's Workers AI quota.
+  "ai": {
+    "binding": "AI"
+  },
+
+  // The workspace shell runs in a Dynamic Worker minted through this.
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TanStackAgent",
+        "class_name": "TanStackAgent"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TanStackAgent"]
+    }
+  ]
+}

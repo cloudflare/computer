@@ -123,6 +123,139 @@ byte sizes, inline byte totals, and the process's RSS/heap/external
 figures. Poll it during a long-running install or test to watch
 how the store grows.
 
+## Local-only paths (`MOUNT_IGNORE`)
+
+Everything a container command writes under `MOUNT_POINT` is recorded in
+the VFS and pulled into the Durable Object after the command. That is
+right for source and wrong for `node_modules`, `.venv`, `target/`,
+`dist/` and caches: tens of thousands of rebuildable files that never
+need to be durable. `MOUNT_IGNORE` names paths that stay on the
+container's local disk instead. They are never recorded, pushed, or
+pulled.
+
+Content under a local-only path is visible only inside the container;
+`workspace.fs` and the worker shell do not see it. It is absent from
+sync, so a container replaced without a snapshot restore loses it. It
+does survive a container snapshot, because `MOUNT_IGNORE_PATH` is a real
+filesystem path, which is why the default sits under `/tmp` rather than
+on a tmpfs. That suits a dependency tree a package manager can rebuild,
+not anything a user typed.
+
+### Configuration
+
+`ContainerBackend` takes an `ignore` option and passes it to the
+container's start environment, so changing the set is a deployment
+change rather than an image rebuild. `LegacyContainerBackend` has no
+such option; set `MOUNT_IGNORE` through its `containerEnv` instead.
+
+```ts
+new ContainerBackend({
+  container: env.CONTAINER,
+  workspace: { binding: "SESSIONS", id: sessionId },
+  ignore: ["/node_modules", "/.venv", "/dist"],
+});
+```
+
+That becomes `MOUNT_IGNORE=/node_modules,/.venv,/dist`. Setting the
+variable directly, in `containerEnv` or a Dockerfile, works too and
+takes precedence.
+
+`MOUNT_IGNORE` is a comma-separated list of paths anchored at the mount
+root: `/node_modules` means `$MOUNT_POINT/node_modules`. There is no glob
+syntax and no negation. A path is local-only if it equals an entry or
+sits beneath it, so `/app/node_modules` matches only that path, and a
+monorepo lists each `<pkg>/node_modules` separately. A path containing a
+comma cannot be expressed. `MOUNT_IGNORE_PATH` sets where local-only
+content is stored and defaults to `/tmp` + `$MOUNT_POINT`.
+
+The set is compiled once at startup, so it cannot change under a running
+container, and two sessions sharing one container see the same
+durability boundary. `connect()` reads the resolved set back off
+`/__computerd/info` and refuses the connection if it disagrees with what
+was declared, which catches a computerd too old to honor the variable.
+The handle exposes it as absolute container paths:
+
+```ts
+const handle = await backend.connect();
+handle.ignore;
+// {
+//   paths: ["/workspace/node_modules", "/workspace/.venv", "/workspace/dist"],
+//   root: "/tmp/workspace",
+//   mountPoint: "/workspace",
+//   supported: true,
+// }
+```
+
+`supported: false` means the container predates the feature and every
+path is synced.
+
+### Validation
+
+`MOUNT_IGNORE_PATH` must be absolute, must not be `/`, and must not be
+equal to or inside `MOUNT_POINT`, since a root inside the mount would
+resolve into itself. Entries may not contain `.` or `..` segments. Each
+of these fails the daemon at startup rather than quietly disabling the
+feature, because a dropped entry means a full `node_modules` goes into
+the Durable Object. Duplicates and entries nested inside another entry
+are dropped as redundant and reported.
+
+`/__computerd/info` reports the normalized configuration:
+
+```jsonc
+{
+  "ignore": {
+    "supported": true,
+    "enabled": true,
+    "root": "/tmp/workspace",
+    "paths": ["node_modules", "dist"],
+    "redundant": ["node_modules/.cache"],
+    "fastPaths": {
+      "passthrough": false,
+      "passthroughReason": "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API",
+      "writebackCache": false
+    }
+  }
+}
+```
+
+`fastPaths.passthrough` is `false` on current builds by design. Ignored
+writes skip the VFS and the transfer but still cross FUSE; see
+[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore).
+
+### Renames across the boundary
+
+A rename whose source and destination sit on opposite sides of the
+boundary returns `EXDEV` (`Invalid cross-device link`). The two sides are
+different filesystems, so the rename cannot be atomic, and copying then
+unlinking would fake the atomicity `rename(2)` promises. `mv` and
+Python's `shutil.move` copy instead when they see `EXDEV`, but a program
+that calls `rename` directly, such as Node's `fs.rename` or Go's
+`os.Rename`, gets the error. Renames within one side are ordinary atomic
+renames. Hardlinks across the boundary return `EXDEV` for the same
+reason.
+
+The usual cause is a build tool that stages into a sibling directory and
+renames into place. The fix is to ignore the staging path too:
+
+```ts
+ignore: ["/dist", "/.tmp-build"];
+```
+
+Candidates worth checking are `.next`, `.turbo`, `node_modules/.cache`,
+and any staging directory a bundler creates next to its output.
+computerd logs this guidance on the first crossing rename per mount,
+naming both sides and the entry to add. Later occurrences are not
+logged, but `GET /__computerd/stats` counts them all under
+`localPaths.crossLayerRenames`.
+
+### `MOUNT_IGNORE` versus `fetchChanges({ ignore })`
+
+`MOUNT_IGNORE` works at the mount: the path never enters the VFS.
+`fetchChanges({ ignore })` works at the sync RPC: the path is skipped in
+one transfer but still occupies the container's store. A wrapper that
+injects `ignore` into `fetchChanges` to keep a dependency tree out of the
+Durable Object should be deleted in favor of `MOUNT_IGNORE`.
+
 ## FUSE prerequisites
 
 Linux hosts/containers need access to `/dev/fuse` and mount permissions.

@@ -48,6 +48,50 @@ computerd is ~2x slower than the container's ext4 disk for the full
 `npm install`, and ~3.6x slower than tmpfs. The disk comparison is
 the more realistic baseline for general usage.
 
+> [!IMPORTANT]
+> These numbers measure the **mount**, not the **pull**. They stop when
+> `npm install` returns. What follows — moving 36,675 files into the
+> Durable Object — is not counted here, and for a dependency tree it is
+> the larger cost.
+>
+> [#179](https://github.com/cloudflare/computer/issues/179) reports an
+> install timing out at 120 s and then taking ~3 further minutes to
+> return while the partial `node_modules` was pulled, after which the
+> next command failed with a storage timeout the workspace did not
+> recover from. None of that is visible in the table above.
+>
+> If you are sizing a workload against these figures, add the transfer
+> yourself, or keep the tree out of sync entirely — see
+> [`computerd`: Local-only paths](../packages/computerd/README.md#local-only-paths-mount_ignore).
+
+## Local-only paths (`MOUNT_IGNORE`)
+
+A path listed in `MOUNT_IGNORE` is served from the container's disk and
+never enters the VFS, the store, the change-pack encoding, or the pull.
+
+What this does **not** change is the FUSE round trip: the bytes still
+cross from the kernel into the daemon. Passthrough (`FOPEN_PASSTHROUGH`)
+would remove that too, but computerd mounts through `fuse-native`, which
+binds libfuse 2.9, and passthrough needs the libfuse 3.17 API. So expect
+a local-only `npm install` to track the `computerd FUSE` row above
+rather than the `ext4 disk` row.
+
+The saving is the transfer, and for a dependency tree the transfer is
+most of the wall clock.
+
+| Scenario | Install duration | Bytes pulled into the DO |
+|---|---:|---:|
+| `npm install` to a synced path | 124.7 s | *(not yet measured)* |
+| `npm install` to a `MOUNT_IGNORE` path | *(not yet measured)* | 0 by construction |
+
+> [!NOTE]
+> The empty cells are deliberate. Bytes-pulled is the load-bearing
+> number for this feature and it has not been measured yet; the zero in
+> the last cell is a property of the design — an ignored path produces
+> no sync entries — not an observation. Fill the table from the same
+> `cloudflare/sandbox-sdk` install used above, on the same instance
+> type, before quoting any of it.
+
 ## In-memory store versus on-disk store
 
 `computerd` keeps its SQLite store in memory by default. Set

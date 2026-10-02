@@ -1,9 +1,8 @@
-import { type Tool, tool } from "ai";
 import { z } from "zod";
-import type { WorkspaceBackendInfo } from "../runtime/runtime.js";
-import { notCallableMessage } from "../runtime/runtime.js";
-import type { WorkspaceRuntimeValue } from "../runtime/types.js";
-import { truncateText, utf8Prefix } from "../text-truncation.js";
+import type { WorkspaceBackendInfo } from "../../runtime/runtime.js";
+import { notCallableMessage } from "../../runtime/runtime.js";
+import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
+import { truncateText, utf8Prefix } from "../../text-truncation.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -124,15 +123,36 @@ export type ExecToolOutput =
     }
   | { command: string; cwd: string | null; backend: string; error: string };
 
-type ExecToolInput = {
+export interface ExecInput {
   command: string;
   cwd?: string;
   backend?: string;
   env?: Record<string, string>;
   input?: WorkspaceRuntimeValue;
-};
+}
 
-export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, ExecToolOutput> {
+export interface ExecCallContext {
+  abortSignal?: AbortSignal;
+}
+
+/** The exec tool with no agent library attached. Each library wraps it in its own tool shape. */
+export interface ExecDefinition {
+  description: string;
+  inputSchema: z.ZodType<ExecInput>;
+  /**
+   * Yields running snapshots while the command streams, then one
+   * terminal snapshot. Every snapshot is a complete result, so a
+   * library that cannot stream tool output keeps the last one.
+   */
+  execute(input: ExecInput, context?: ExecCallContext): AsyncGenerator<ExecToolOutput>;
+}
+
+/**
+ * Resolve the backends once and build the exec tool's description,
+ * input schema, and executor. Throws when no backend is left or an id
+ * is unknown, so a misconfigured tool fails when it is built.
+ */
+export function defineExec(options: ExecToolOptions): ExecDefinition {
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
   const now = options.now ?? Date.now;
@@ -168,7 +188,7 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
   };
   if (!single) {
     shape.backend = z
-      // SAFETY: createExecTool checked that backendIds has at least one entry.
+      // SAFETY: defineExec checked that backendIds has at least one entry.
       .enum(backendIds as [string, ...string[]])
       .describe(
         "Which backend to run on. If a command fails because the backend lacks that tool, retry on a backend whose description covers it.",
@@ -183,13 +203,13 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
           : "Structured value handed to a callable backend's module. Other backends reject it.",
       );
   }
-  // SAFETY: Every field in `shape` has the type ExecToolInput gives it, and the fields left out are optional there.
-  const inputSchema = z.object(shape) as unknown as z.ZodType<ExecToolInput>;
+  // SAFETY: Every field in `shape` has the type ExecInput gives it, and the fields left out are optional there.
+  const inputSchema = z.object(shape) as unknown as z.ZodType<ExecInput>;
 
-  return tool({
+  return {
     description,
     inputSchema,
-    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal }) {
+    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal } = {}) {
       // With one backend there is nothing to choose. With several the
       // schema requires `backend`; a caller that skips the schema gets
       // the same answer as an error.
@@ -297,7 +317,7 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecToolInput, Ex
         }
       }
     },
-  });
+  };
 }
 
 const FILE_TOOLS_HINT =
