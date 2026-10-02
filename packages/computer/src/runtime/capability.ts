@@ -274,6 +274,10 @@ function assertValue(value: unknown, seen: WeakSet<object>): void {
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error("Workspace code inputs and results must use plain objects.");
   }
-  for (const item of Object.values(value)) assertValue(item, seen);
+  // An undefined field is absent, as with JSON.stringify, which drops
+  // it when the value is framed.
+  for (const item of Object.values(value)) {
+    if (item !== undefined) assertValue(item, seen);
+  }
   seen.delete(value);
 }
