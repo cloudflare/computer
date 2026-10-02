@@ -105,7 +105,7 @@ describe("createContainerModule", () => {
       exitCode: 3,
       stdout: "out",
       stderr: "err",
-      sync: { status: "complete", skipped: [] },
+      sync: { status: "complete", skipped: [], skippedCount: 0 },
     });
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({
@@ -189,7 +189,7 @@ describe("createContainerModule", () => {
       exitCode: 0,
       stdout: "a🙂\n\n[truncated, 1 more bytes]",
       stderr: "🙂\n\n[truncated, 4 more bytes]",
-      sync: { status: "complete", skipped: [] },
+      sync: { status: "complete", skipped: [], skippedCount: 0 },
     });
   });
 
@@ -252,8 +252,33 @@ describe("createContainerModule", () => {
     const container = build(runtime);
 
     await expect(container.exec(["touch ro/x.txt"], callContext())).resolves.toMatchObject({
-      sync: { status: "pending", error: "pull failed", skipped: ["/workspace/ro/x.txt"] },
+      sync: {
+        status: "pending",
+        error: "pull failed",
+        skipped: ["/workspace/ro/x.txt"],
+        skippedCount: 1,
+      },
     });
+  });
+
+  it("caps a large skipped list so the result fits the bridge limits", async () => {
+    const skipped = Array.from({ length: 5000 }, (_, index) => ({
+      path: `/workspace/ro/${index}.txt`,
+      mountRoot: "/workspace/ro",
+      op: "write" as const,
+      reason: "read-only" as const,
+    }));
+    const { runtime } = fakeRuntime({
+      sync: { status: "pending", applied: 0, error: "e".repeat(10_000), skipped },
+    });
+    const container = build(runtime);
+
+    const result = (await container.exec(["touch ro/*"], callContext())) as {
+      sync: { skipped: string[]; skippedCount: number; error: string };
+    };
+    expect(result.sync.skipped).toHaveLength(100);
+    expect(result.sync.skippedCount).toBe(5000);
+    expect(new TextEncoder().encode(result.sync.error).byteLength).toBeLessThan(1200);
   });
 
   it("describes itself for a model", () => {

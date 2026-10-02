@@ -27,6 +27,8 @@ import { truncateText } from "../text-truncation.js";
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const EXEC_OPTION_KEYS = new Set(["cwd", "env", "stdin", "timeoutMs"]);
+const MAX_SKIPPED_PATHS = 100;
+const MAX_SYNC_ERROR_BYTES = 1024;
 
 /** Options for {@link createContainerModule}. */
 export interface ContainerModuleOptions {
@@ -48,7 +50,7 @@ export interface ContainerModuleOptions {
  * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
  * returns `{ exitCode, stdout, stderr, sync }` once the command
  * finishes. `sync` reports whether the container's file changes reached
- * the Workspace, and which paths it skipped. A
+ * the Workspace, the first 100 paths it skipped, and `skippedCount`. A
  * non-zero exit code is a normal result, not an error. Cancelling the
  * execution kills the command.
  *
@@ -141,11 +143,19 @@ const DESCRIPTION = [
 // How the container's file changes came back to the Workspace. A
 // "pending" status means they did not, yet; `skipped` lists paths the
 // container wrote that the Workspace refused, such as read-only mounts.
+//
+// The list is capped, and the error cut short, so a command that skips
+// thousands of paths still fits within the bridge's response limits;
+// otherwise the call would fail after the command had already run.
+// `skippedCount` is the full count.
 function syncSummary(sync: ExecSyncResult) {
   return {
     status: sync.status,
-    skipped: sync.skipped.map((entry) => entry.path),
-    ...(sync.status === "pending" && sync.error !== undefined ? { error: sync.error } : {}),
+    skipped: sync.skipped.slice(0, MAX_SKIPPED_PATHS).map((entry) => entry.path),
+    skippedCount: sync.skipped.length,
+    ...(sync.status === "pending" && sync.error !== undefined
+      ? { error: truncateText(sync.error, MAX_SYNC_ERROR_BYTES) }
+      : {}),
   };
 }
 
