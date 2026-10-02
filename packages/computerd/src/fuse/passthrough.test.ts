@@ -94,7 +94,7 @@ describe("withLocalPassthrough: routing", () => {
   };
 
   test("creates and reads a file on local disk, never touching the VFS", () => {
-    const { ops, calls } = build(["node_modules"]);
+    const { ops, calls } = build(["/node_modules"]);
 
     let fh = 0;
     ops.create("/node_modules/pkg/index.js", 0o644, (code, handle) => {
@@ -127,13 +127,13 @@ describe("withLocalPassthrough: routing", () => {
   });
 
   test("creates missing parent directories on first write", () => {
-    const { ops } = build(["node_modules"]);
+    const { ops } = build(["/node_modules"]);
     ops.create("/node_modules/a/b/c/deep.js", 0o644, (code) => expect(code).toBe(0));
     expect(readFileSync(join(root, "node_modules/a/b/c/deep.js"), "utf8")).toBe("");
   });
 
   test("passes non-ignored paths straight through to the VFS", () => {
-    const { ops, calls } = build(["node_modules"]);
+    const { ops, calls } = build(["/node_modules"]);
     ops.getattr("/src/main.ts", () => {});
     ops.create("/src/new.ts", 0o644, () => {});
     ops.unlink("/src/old.ts", () => {});
@@ -141,13 +141,13 @@ describe("withLocalPassthrough: routing", () => {
   });
 
   test("does not route a path that merely shares a prefix", () => {
-    const { ops, calls } = build(["node_modules"]);
+    const { ops, calls } = build(["/node_modules"]);
     ops.getattr("/node_modules_extra/x.js", () => {});
     expect(calls).toEqual(["getattr"]);
   });
 
   test("routes by handle, so a VFS handle is never served locally", () => {
-    const { ops, calls } = build(["node_modules"]);
+    const { ops, calls } = build(["/node_modules"]);
     const buffer = Buffer.alloc(8);
     // 7 is what the recording VFS hands out; it must stay with the VFS.
     ops.read("/src/main.ts", 7, buffer, 8, 0, () => {});
@@ -155,7 +155,7 @@ describe("withLocalPassthrough: routing", () => {
   });
 
   test("reports EBADF for an unknown local handle rather than guessing", () => {
-    const { ops } = build(["node_modules"]);
+    const { ops } = build(["/node_modules"]);
     const buffer = Buffer.alloc(8);
     let code = 0;
     ops.read("/node_modules/x.js", 0x4000_0000 + 999, buffer, 8, 0, (result) => {
@@ -179,7 +179,7 @@ describe("withLocalPassthrough: deciding paths", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
     ops.create("/node_modules/a/b/c/d/e/f.js", 0o644, (code) => expect(code).toBe(0));
@@ -193,7 +193,7 @@ describe("withLocalPassthrough: deciding paths", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
     ops.mkdir("/node_modules", 0o755, () => {});
@@ -218,7 +218,7 @@ describe("withLocalPassthrough: deciding paths", () => {
     });
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
       fs: counting,
     });
@@ -252,7 +252,7 @@ describe("withLocalPassthrough: rename", () => {
   };
 
   test("renames within the local layer", () => {
-    const { ops } = build(["node_modules"]);
+    const { ops } = build(["/node_modules"]);
     ops.create("/node_modules/.staging", 0o644, () => {});
     let code = -1;
     ops.rename("/node_modules/.staging", "/node_modules/final", (result) => {
@@ -263,7 +263,7 @@ describe("withLocalPassthrough: rename", () => {
   });
 
   test("delegates a rename entirely within the VFS", () => {
-    const { ops, calls } = build(["node_modules"]);
+    const { ops, calls } = build(["/node_modules"]);
     ops.rename("/src/a.ts", "/src/b.ts", () => {});
     expect(calls).toEqual(["rename"]);
   });
@@ -278,7 +278,7 @@ describe("withLocalPassthrough: rename", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["dist"], MOUNT),
+      ignore: resolveMountIgnore(["/dist"], MOUNT),
       mountPoint: MOUNT,
       warn: (message) => warnings.push(message),
     });
@@ -307,7 +307,7 @@ describe("withLocalPassthrough: rename", () => {
     const source = recordingOps();
     const { ops, stats } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["dist"], MOUNT),
+      ignore: resolveMountIgnore(["/dist"], MOUNT),
       mountPoint: MOUNT,
       warn: (message) => warnings.push(message),
     });
@@ -323,7 +323,7 @@ describe("withLocalPassthrough: rename", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["dist"], MOUNT),
+      ignore: resolveMountIgnore(["/dist"], MOUNT),
       mountPoint: MOUNT,
       warn: (message) => warnings.push(message),
     });
@@ -340,7 +340,7 @@ describe("withLocalPassthrough: rename", () => {
     // mid-copy into a half-written file where the caller was promised
     // all-or-nothing. EXDEV is what rename(2) returns between any two
     // filesystems.
-    const { ops, calls } = build(["dist"]);
+    const { ops, calls } = build(["/dist"]);
 
     let intoLocal = 0;
     ops.rename("/.tmp-build", "/dist", (code) => {
@@ -374,7 +374,7 @@ describe("withLocalPassthrough: directory listing", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
 
@@ -396,7 +396,7 @@ describe("withLocalPassthrough: directory listing", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
 
@@ -413,7 +413,7 @@ describe("withLocalPassthrough: directory listing", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
 
@@ -446,7 +446,7 @@ describe("withLocalPassthrough: symlinks", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
 
@@ -469,7 +469,7 @@ describe("withLocalPassthrough: symlinks", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
     ops.symlink("node_modules/pkg", "/src/link", () => {});
@@ -491,7 +491,7 @@ describe("withLocalPassthrough: errors", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
     });
     return ops;
@@ -547,7 +547,7 @@ describe("withLocalPassthrough: descriptor and metadata operations", () => {
     const source = recordingOps();
     const { ops } = withLocalPassthrough(source.ops, {
       root,
-      ignore: resolveMountIgnore(["node_modules"], MOUNT),
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
       mountPoint: MOUNT,
       ...(fs === undefined ? {} : { fs: { ...realFs(), ...fs } }),
     });
@@ -679,5 +679,133 @@ describe("withLocalPassthrough: descriptor and metadata operations", () => {
 
     expect(status((cb) => ops.chown("/node_modules/link", 0, 0, cb))).toBe(0);
     expect(changed).toEqual(["lchown"]);
+  });
+});
+
+describe("withLocalPassthrough: synced directories that hold local-only paths", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "computerd-passthrough-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const build = (patterns = ["**/node_modules"]) => {
+    const source = recordingOps();
+    const warnings: string[] = [];
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(patterns, MOUNT),
+      mountPoint: MOUNT,
+      warn: (message) => warnings.push(message),
+    });
+    return { ops, calls: source.calls, warnings };
+  };
+
+  const list = (ops: FuseOps, path: string): string[] => {
+    let names: string[] = [];
+    ops.readdir(path, (code, result) => {
+      expect(code).toBe(0);
+      names = result as string[];
+    });
+    return names;
+  };
+
+  const status = (run: (cb: (code: number) => void) => void): number => {
+    let result = 1;
+    run((code) => {
+      result = code;
+    });
+    return result;
+  };
+
+  test("lists a local-only child of a synced directory, at any depth", () => {
+    const { ops } = build();
+    mkdirSync(join(root, "packages/app/node_modules"), { recursive: true });
+    expect(list(ops, "/packages/app")).toEqual(["vfs-entry", "node_modules"]);
+  });
+
+  test("does not list the scaffolding that holds a local-only path", () => {
+    // packages/ and packages/app/ exist under the local root only so
+    // node_modules has somewhere to live. They belong to the synced side.
+    const { ops } = build();
+    mkdirSync(join(root, "packages/app/node_modules"), { recursive: true });
+    expect(list(ops, "/")).toEqual(["vfs-entry"]);
+    expect(list(ops, "/packages")).toEqual(["vfs-entry"]);
+  });
+
+  test("lists nothing extra when the local side has no such directory", () => {
+    const { ops } = build();
+    expect(list(ops, "/src")).toEqual(["vfs-entry"]);
+  });
+
+  test("respects exclusions when listing", () => {
+    const { ops } = build(["**/node_modules", "!/vendor/node_modules"]);
+    mkdirSync(join(root, "vendor/node_modules"), { recursive: true });
+    expect(list(ops, "/vendor")).toEqual(["vfs-entry"]);
+  });
+
+  test("moves local-only contents when a synced directory is renamed", () => {
+    // Otherwise packages/foo/node_modules stays at the old path on disk,
+    // unreachable, and the new path has none.
+    const { ops, calls } = build();
+    mkdirSync(join(root, "packages/foo/node_modules/pkg"), { recursive: true });
+    writeFileSync(join(root, "packages/foo/node_modules/pkg/index.js"), "x");
+
+    expect(status((cb) => ops.rename("/packages/foo", "/apps/bar", cb))).toBe(0);
+
+    expect(calls).toEqual(["rename"]);
+    expect(readFileSync(join(root, "apps/bar/node_modules/pkg/index.js"), "utf8")).toBe("x");
+    expect(nodeFs.existsSync(join(root, "packages/foo"))).toBe(false);
+  });
+
+  test("a synced rename succeeds even if the local move fails, and says so", () => {
+    const { ops, warnings } = build();
+    mkdirSync(join(root, "packages/foo/node_modules"), { recursive: true });
+    // A non-empty directory already at the destination makes the local
+    // rename fail with ENOTEMPTY.
+    mkdirSync(join(root, "packages/bar/node_modules/other"), { recursive: true });
+
+    expect(status((cb) => ops.rename("/packages/foo", "/packages/bar", cb))).toBe(0);
+    expect(warnings.join("\n")).toMatch(/packages\/foo.*packages\/bar/);
+  });
+
+  test("rmdir of a synced directory also removes its empty scaffolding", () => {
+    const { ops, calls } = build();
+    mkdirSync(join(root, "app"), { recursive: true });
+
+    expect(status((cb) => ops.rmdir("/app", cb))).toBe(0);
+
+    expect(calls).toEqual(["rmdir"]);
+    expect(nodeFs.existsSync(join(root, "app"))).toBe(false);
+  });
+
+  test("rmdir of a synced directory with local-only contents is ENOTEMPTY", () => {
+    // The synced side thinks app is empty because it never sees
+    // node_modules. Removing it would orphan node_modules on disk.
+    const { ops, calls } = build();
+    mkdirSync(join(root, "app/node_modules"), { recursive: true });
+
+    expect(status((cb) => ops.rmdir("/app", cb))).toBe(-39);
+
+    expect(calls).toEqual([]);
+    expect(nodeFs.existsSync(join(root, "app/node_modules"))).toBe(true);
+  });
+
+  test("a rename within node_modules stays local when ** decides the boundary", () => {
+    const { ops, calls } = build();
+    mkdirSync(join(root, "app/node_modules/.staging"), { recursive: true });
+    expect(
+      status((cb) => ops.rename("/app/node_modules/.staging", "/app/node_modules/pkg", cb)),
+    ).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test("renaming node_modules itself to a synced name is EXDEV", () => {
+    const { ops } = build();
+    mkdirSync(join(root, "app/node_modules"), { recursive: true });
+    expect(status((cb) => ops.rename("/app/node_modules", "/app/node_modules2", cb))).toBe(-18);
   });
 });

@@ -11,13 +11,13 @@ describe("resolveMountIgnoreConfig: the root", () => {
     // Under /tmp rather than a tmpfs so a container snapshot captures
     // it. Snapshots are the only durability local-only content has.
     expect(defaultIgnoreRoot("/workspace")).toBe("/tmp/workspace");
-    const config = resolveMountIgnoreConfig({ MOUNT_IGNORE: "node_modules" }, "/workspace");
+    const config = resolveMountIgnoreConfig({ MOUNT_IGNORE: "/node_modules" }, "/workspace");
     expect(config.root).toBe("/tmp/workspace");
   });
 
   test("honors an explicit MOUNT_IGNORE_PATH", () => {
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "node_modules", MOUNT_IGNORE_PATH: "/var/local-only" },
+      { MOUNT_IGNORE: "/node_modules", MOUNT_IGNORE_PATH: "/var/local-only" },
       "/workspace",
     );
     expect(config.root).toBe("/var/local-only");
@@ -25,7 +25,7 @@ describe("resolveMountIgnoreConfig: the root", () => {
 
   test("strips a trailing slash", () => {
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "/var/local/" },
+      { MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "/var/local/" },
       "/workspace",
     );
     expect(config.root).toBe("/var/local");
@@ -34,7 +34,7 @@ describe("resolveMountIgnoreConfig: the root", () => {
   test("rejects a relative MOUNT_IGNORE_PATH", () => {
     expect(() =>
       resolveMountIgnoreConfig(
-        { MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "relative/path" },
+        { MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "relative/path" },
         "/workspace",
       ),
     ).toThrow(/absolute path/);
@@ -45,7 +45,7 @@ describe("resolveMountIgnoreConfig: the root", () => {
     // an ignored path lands at a location that is also an ignored path.
     expect(() =>
       resolveMountIgnoreConfig(
-        { MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "/workspace/.local" },
+        { MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "/workspace/.local" },
         "/workspace",
       ),
     ).toThrow(/must not be inside MOUNT_POINT/);
@@ -54,7 +54,7 @@ describe("resolveMountIgnoreConfig: the root", () => {
   test("rejects a root equal to the mount point", () => {
     expect(() =>
       resolveMountIgnoreConfig(
-        { MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "/workspace" },
+        { MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "/workspace" },
         "/workspace",
       ),
     ).toThrow(/must not be inside MOUNT_POINT/);
@@ -62,14 +62,14 @@ describe("resolveMountIgnoreConfig: the root", () => {
 
   test("rejects the filesystem root", () => {
     expect(() =>
-      resolveMountIgnoreConfig({ MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "/" }, "/workspace"),
+      resolveMountIgnoreConfig({ MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "/" }, "/workspace"),
     ).toThrow(/filesystem root/);
   });
 
   test("allows a sibling path that merely shares a prefix string", () => {
     // /workspace-cache is not inside /workspace, despite startsWith.
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "dist", MOUNT_IGNORE_PATH: "/workspace-cache" },
+      { MOUNT_IGNORE: "/dist", MOUNT_IGNORE_PATH: "/workspace-cache" },
       "/workspace",
     );
     expect(config.root).toBe("/workspace-cache");
@@ -94,7 +94,7 @@ describe("resolveMountIgnoreConfig: the set", () => {
       "/workspace",
     );
     expect(config.enabled).toBe(true);
-    expect(config.ignore.paths).toEqual(["node_modules", "dist"]);
+    expect(config.ignore.patterns).toEqual(["/node_modules", "/dist"]);
   });
 
   test("propagates a bad entry as a startup failure", () => {
@@ -105,14 +105,22 @@ describe("resolveMountIgnoreConfig: the set", () => {
 });
 
 describe("describeMountIgnore", () => {
-  test("reports the normalized set and the redundant entries", () => {
+  test("reports the normalized patterns in order, and exclusions that do nothing", () => {
     const config = resolveMountIgnoreConfig(
-      { MOUNT_IGNORE: "/node_modules,/node_modules/.cache,/dist" },
+      {
+        MOUNT_IGNORE: "**/node_modules,!**/node_modules/.bin,!/vendor/node_modules,/workspace/dist",
+      },
       "/workspace",
     );
     const info = describeMountIgnore(config);
-    expect(info.paths).toEqual(["node_modules", "dist"]);
-    expect(info.redundant).toEqual(["/node_modules/.cache"]);
+    expect(info.patterns).toEqual([
+      "**/node_modules",
+      "!**/node_modules/.bin",
+      "!/vendor/node_modules",
+      "/dist",
+    ]);
+    expect(info.ineffectiveExclusions).toEqual(["!**/node_modules/.bin"]);
+    expect(info).not.toHaveProperty("paths");
     expect(info.enabled).toBe(true);
     expect(info.root).toBe("/tmp/workspace");
   });

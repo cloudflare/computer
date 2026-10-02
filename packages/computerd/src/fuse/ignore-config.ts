@@ -74,8 +74,10 @@ export interface MountIgnoreInfo {
   readonly supported: true;
   readonly enabled: boolean;
   readonly root: string;
-  readonly paths: readonly string[];
-  readonly redundant: readonly string[];
+  // Patterns, not paths: "**/node_modules" can't be joined onto the
+  // mount point.
+  readonly patterns: readonly string[];
+  readonly ineffectiveExclusions: readonly string[];
   readonly fastPaths: {
     /**
      * Always false: fuse-native binds libfuse 2.9, passthrough needs the
@@ -97,8 +99,8 @@ export function describeMountIgnore(config: MountIgnoreConfig): MountIgnoreInfo 
     supported: true,
     enabled: config.enabled,
     root: config.root,
-    paths: config.ignore.paths,
-    redundant: config.ignore.redundant,
+    patterns: config.ignore.patterns,
+    ineffectiveExclusions: config.ignore.ineffectiveExclusions,
     fastPaths: {
       passthrough: false,
       passthroughReason: PASSTHROUGH_UNAVAILABLE_REASON,

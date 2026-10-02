@@ -654,12 +654,16 @@ async function main(): Promise<void> {
   }
   if (ignoreConfig.enabled) {
     console.log(
-      `[info] MOUNT_IGNORE active: ${ignoreConfig.ignore.paths.length} path(s) ` +
-        `local-only under ${ignoreConfig.root} (${ignoreConfig.ignore.paths.join(", ")})`,
+      `[info] MOUNT_IGNORE active: local-only under ${ignoreConfig.root} ` +
+        `(${ignoreConfig.ignore.patterns.join(", ")})`,
     );
-    if (ignoreConfig.ignore.redundant.length > 0) {
+    for (const exclusion of ignoreConfig.ignore.ineffectiveExclusions) {
+      // Same rule as git: a path can't be put back in sync once a
+      // directory above it is local-only, because the synced side has no
+      // directory for it to live in.
       console.log(
-        `[warn] MOUNT_IGNORE entries dropped as redundant: ${ignoreConfig.ignore.redundant.join(", ")}`,
+        `[warn] MOUNT_IGNORE exclusion ${exclusion} has no effect: a directory ` +
+          `above it is already local-only.`,
       );
     }
   }

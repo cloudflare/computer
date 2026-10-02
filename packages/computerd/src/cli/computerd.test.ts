@@ -107,8 +107,8 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
       supported: true,
       enabled: false,
       root: `/tmp${mountPoint}`,
-      paths: [],
-      redundant: [],
+      patterns: [],
+      ineffectiveExclusions: [],
       fastPaths: {
         passthrough: false,
         passthroughReason: expect.stringContaining("libfuse 2.9"),
@@ -146,7 +146,7 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   expect(JSON.parse(info.body).ignore).toMatchObject({
     enabled: true,
     root: ignoreRoot,
-    paths: ["node_modules", "dist"],
+    patterns: ["/node_modules", "/dist"],
   });
 
   // Write through the mount into an ignored path.
