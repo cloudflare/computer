@@ -136,6 +136,21 @@ describe("shell feature groups", () => {
     expect(curlOnDisk).toBe(true);
   });
 
+  it("ships SQLite's query worker and WebAssembly module only in the sqlite group", () => {
+    expect(sqliteModules["sql-wasm.wasm"]).toMatchObject({
+      wasm: expect.any(ArrayBuffer),
+    });
+    expect(SHELL_CORE_MODULES["sql-wasm.wasm"]).toBeUndefined();
+
+    const sqliteSource = Object.values(sqliteModules)
+      .filter((module): module is { js: string } => "js" in module)
+      .map((module) => module.js)
+      .join("\n");
+    expect(sqliteSource).toContain("function executeQuery");
+    expect(sqliteSource).toContain("InlineSqliteWorker");
+    expect(sqliteSource).not.toContain("sqlite3 worker not found");
+  });
+
   it("keeps feature groups disjoint from each other", () => {
     // A chunk owned by one feature must not also appear in another;
     // a shared chunk belongs in core.
