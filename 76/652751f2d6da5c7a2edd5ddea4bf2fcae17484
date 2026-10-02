@@ -1,0 +1,33 @@
+.changeset/remote-client-assets.md
+  s_b2fd9413bbc158::t_22b0d762f0280f 1-5
+packages/computer/src/client.test.ts
+  s_b2fd9413bbc158::t_a1fc6ec2ac7eaf 429-448
+packages/computer/src/client.ts
+  s_a3f5a53ce67f56::t_7f47a2eed7cf83 354,369-370,372,410,426
+packages/computer/src/stub.ts
+  s_a3f5a53ce67f56::t_73796182a32713 670-676
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "76652751f2d6da5c7a2edd5ddea4bf2fcae17484",
+  "prompts": {},
+  "sessions": {
+    "s_a3f5a53ce67f56": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f330-49b4-70ab-8c0f-40d28884698f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
