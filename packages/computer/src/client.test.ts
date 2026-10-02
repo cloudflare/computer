@@ -426,6 +426,26 @@ describe("getWorkspace — backend information", () => {
     });
   }
 
+  for (const [path, connect] of [
+    ["local", (ws: Workspace) => getWorkspace({ [WORKSPACE]: ws })],
+    [
+      "remote",
+      (ws: Workspace) => getWorkspace({ __getWorkspaceStub: () => Promise.resolve(ws.stub()) }),
+    ],
+  ] as const) {
+    it(`leaves publish out on a ${path} client without assets`, async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [echoBackend()],
+      });
+      const client = await connect(workspace);
+
+      expect(client.assets).toBeUndefined();
+      expect(createAITools({ workspace: client }).publish).toBeUndefined();
+      await workspace.close();
+    });
+  }
+
   it("keeps its backend snapshot from being edited", async () => {
     const client = await getWorkspace({
       [WORKSPACE]: new Workspace({ storage: new SQLiteTestStorage(), backends: [echoBackend()] }),

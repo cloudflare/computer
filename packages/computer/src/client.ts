@@ -351,6 +351,7 @@ function makeClient(
   dispose: () => void,
   useThink: boolean,
   backends: readonly WorkspaceBackendInfo[],
+  hasAssets: boolean,
 ): WorkspaceClient {
   const runtime = makeRuntimeClient(
     surface.runtime as UnderlyingRuntime,
@@ -365,8 +366,10 @@ function makeClient(
     get git() {
       return surface.git;
     },
+    // Undefined when the Workspace has no assets publisher, so tools
+    // built from the client leave `publish` out, as they do locally.
     get assets() {
-      return surface.assets;
+      return hasAssets ? surface.assets : undefined;
     },
     get artifacts() {
       return surface.artifacts;
@@ -404,6 +407,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       () => {},
       local.useThink,
       local.runtime.backends(),
+      local.assets !== undefined,
     );
   }
   // Remote path: fetch the stub over RPC and delegate to it. Handle
@@ -419,6 +423,7 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       },
       await stub.useThink,
       await stub.runtime.backends(),
+      await stub.hasAssets,
     );
   } catch (error) {
     (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
