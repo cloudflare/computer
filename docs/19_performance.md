@@ -66,7 +66,7 @@ the more realistic baseline for general usage.
 
 ## Local-only paths (`MOUNT_IGNORE`)
 
-A path listed in `MOUNT_IGNORE` is served from the container's disk and
+A path matched by `MOUNT_IGNORE` is served from the container's disk and
 never enters the VFS, the store, the change-pack encoding, or the pull.
 
 What this does **not** change is the FUSE round trip: the bytes still

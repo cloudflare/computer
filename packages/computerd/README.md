@@ -144,7 +144,7 @@ not anything a user typed.
 ### Configuration
 
 `ContainerBackend` takes an `ignore` option and passes it to the
-container's start environment, so changing the set is a deployment
+container's start environment, so changing the patterns is a deployment
 change rather than an image rebuild. `LegacyContainerBackend` has no
 such option; set `MOUNT_IGNORE` through its `containerEnv` instead.
 
@@ -152,54 +152,90 @@ such option; set `MOUNT_IGNORE` through its `containerEnv` instead.
 new ContainerBackend({
   container: env.CONTAINER,
   workspace: { binding: "SESSIONS", id: sessionId },
-  ignore: ["/node_modules", "/.venv", "/dist"],
+  ignore: ["**/node_modules", "!/vendor/node_modules", "**/.venv", "/dist"],
 });
 ```
 
-That becomes `MOUNT_IGNORE=/node_modules,/.venv,/dist`. Setting the
-variable directly, in `containerEnv` or a Dockerfile, works too and
-takes precedence.
-
-`MOUNT_IGNORE` is a comma-separated list of paths anchored at the mount
-root: `/node_modules` means `$MOUNT_POINT/node_modules`. There is no glob
-syntax and no negation. A path is local-only if it equals an entry or
-sits beneath it, so `/app/node_modules` matches only that path, and a
-monorepo lists each `<pkg>/node_modules` separately. A path containing a
-comma cannot be expressed. `MOUNT_IGNORE_PATH` sets where local-only
+That becomes
+`MOUNT_IGNORE=**/node_modules,!/vendor/node_modules,**/.venv,/dist`.
+Setting the variable directly, in `containerEnv` or a Dockerfile, works
+too and takes precedence. `MOUNT_IGNORE_PATH` sets where local-only
 content is stored and defaults to `/tmp` + `$MOUNT_POINT`.
 
-The set is compiled once at startup, so it cannot change under a running
-container, and two sessions sharing one container see the same
-durability boundary. `connect()` reads the resolved set back off
-`/__computerd/info` and refuses the connection if it disagrees with what
-was declared, which catches a computerd too old to honor the variable.
-The handle exposes it as absolute container paths:
+### Patterns
+
+`MOUNT_IGNORE` is a comma-separated list of glob patterns, a small
+subset of gitignore. Every pattern starts with `/` (from the mount root)
+or `**/` (at any depth):
+
+| Pattern | Means |
+| --- | --- |
+| `/dist` | `$MOUNT_POINT/dist` and everything under it |
+| `/workspace/dist` | the same; the mount point is optional |
+| `**/node_modules` | `node_modules` at any depth, including the root |
+| `/packages/*/dist` | `*` matches within one path segment and never crosses `/` |
+| `/app/**/node_modules` | any depth under `app` |
+| `**/*.tsbuildinfo` | single files work too |
+| `!/vendor/node_modules` | an exclusion: keeps a path synced |
+
+A pattern names a path and everything under it, so `/cache` and
+`/cache/**` mean the same thing. A trailing `/` is ignored. Matching is
+case-sensitive.
+
+The last matching pattern wins, and a path is local-only if it or any
+directory above it is ignored. That is git's rule, and it decides what
+an exclusion can do. `**/node_modules,!/vendor/node_modules` keeps
+`vendor/node_modules` synced, because the exclusion applies at the same
+level as the match. `**/node_modules,!**/node_modules/.bin` does nothing:
+once `node_modules` is on local disk, the synced side has no directory
+for `.bin` to live in. computerd warns about an exclusion like that at
+startup.
+
+These fail the daemon at startup, because a dropped pattern means a full
+`node_modules` goes into the Durable Object:
+
+| Pattern | Why |
+| --- | --- |
+| `node_modules` | not anchored. In gitignore it would match at any depth; write `/node_modules` or `**/node_modules` |
+| `**node_modules`, `/a**/b` | `**` must be a whole path segment |
+| `**`, `/**`, `/` | would make the whole mount local-only |
+| `/a/../b`, `/./a`, `/a//b` | `.`, `..`, and empty segments |
+| `/*.{js,ts}`, `/[ab]`, `/a?`, `/a\*` | braces, character classes, `?`, and escapes aren't supported |
+
+A pattern can't contain a comma, since commas separate patterns.
+`ContainerBackend` checks `ignore` against the same rules in its
+constructor, so a typo throws before a container starts.
+
+`MOUNT_IGNORE_PATH` must be absolute, must not be `/`, and must not be
+equal to or inside `MOUNT_POINT`, since a root inside the mount would
+resolve into itself.
+
+### Checking what the container applied
+
+The patterns are compiled once at startup, so they can't change under a
+running container, and two sessions sharing one container see the same
+durability boundary. `connect()` reads the applied patterns back off
+`/__computerd/info` and refuses the connection unless they match what
+was declared, in the same order, since order changes the meaning. That
+catches a computerd too old to read patterns, and a `MOUNT_IGNORE` in
+`containerEnv` overriding the option. The handle exposes them:
 
 ```ts
 const handle = await backend.connect();
 handle.ignore;
 // {
-//   paths: ["/workspace/node_modules", "/workspace/.venv", "/workspace/dist"],
+//   patterns: ["**/node_modules", "!/vendor/node_modules", "**/.venv", "/dist"],
 //   root: "/tmp/workspace",
 //   mountPoint: "/workspace",
 //   supported: true,
 // }
 ```
 
-`supported: false` means the container predates the feature and every
-path is synced.
+`supported: false` means the container predates patterns and every path
+is synced.
 
-### Validation
-
-`MOUNT_IGNORE_PATH` must be absolute, must not be `/`, and must not be
-equal to or inside `MOUNT_POINT`, since a root inside the mount would
-resolve into itself. Entries may not contain `.` or `..` segments. Each
-of these fails the daemon at startup rather than quietly disabling the
-feature, because a dropped entry means a full `node_modules` goes into
-the Durable Object. Duplicates and entries nested inside another entry
-are dropped as redundant and reported.
-
-`/__computerd/info` reports the normalized configuration:
+`/__computerd/info` reports the patterns in computerd's normalized
+spelling, with the mount point and trailing slashes removed:
 
 ```jsonc
 {
@@ -207,8 +243,8 @@ are dropped as redundant and reported.
     "supported": true,
     "enabled": true,
     "root": "/tmp/workspace",
-    "paths": ["node_modules", "dist"],
-    "redundant": ["node_modules/.cache"],
+    "patterns": ["**/node_modules", "!/vendor/node_modules", "!**/node_modules/.bin"],
+    "ineffectiveExclusions": ["!**/node_modules/.bin"],
     "fastPaths": {
       "passthrough": false,
       "passthroughReason": "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API",
@@ -221,6 +257,25 @@ are dropped as redundant and reported.
 `fastPaths.passthrough` is `false` on current builds by design. Ignored
 writes skip the VFS and the transfer but still cross FUSE; see
 [19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore).
+
+### Synced directories that hold local-only paths
+
+A local-only path is stored at the same relative path under
+`MOUNT_IGNORE_PATH`, so `packages/app/node_modules` lives at
+`/tmp/workspace/packages/app/node_modules`. The parent `packages/app`
+stays synced. computerd keeps the two sides in step:
+
+- Listing a synced directory includes its local-only children.
+- Renaming a synced directory moves its local-only contents too. The
+  two moves can't be atomic together, so if the local one fails, the
+  rename still succeeds and computerd logs where the contents were left.
+  A rename that changes which patterns match, such as moving a
+  directory out from under `/app/**/node_modules`, leaves contents on
+  local disk that are no longer local-only and so aren't reachable;
+  prefer `**/` patterns for trees that get moved.
+- Removing a synced directory returns `ENOTEMPTY` while it still holds
+  local-only contents, which the synced side can't see. `rm -rf` removes
+  the contents first, so it works as usual.
 
 ### Renames across the boundary
 
@@ -240,6 +295,10 @@ renames into place. The fix is to ignore the staging path too:
 ```ts
 ignore: ["/dist", "/.tmp-build"];
 ```
+
+With `**/` patterns, keep staging directories and their destinations on
+the same side: `**/node_modules` already covers anything a package
+manager stages inside `node_modules`.
 
 Candidates worth checking are `.next`, `.turbo`, `node_modules/.cache`,
 and any staging directory a bundler creates next to its output.
