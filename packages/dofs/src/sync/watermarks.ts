@@ -128,7 +128,24 @@ export function writePushCursor(
       cursor.path,
     );
     writeWatermarkValue(db, "pushRev", cursor.rev, backend);
+    // Provenance below the cursor's rev can no longer matter: those
+    // versions have been shipped. Keep the cursor's own rev, which a
+    // partial push may have shipped only in part.
+    db.run("DELETE FROM _vfs_upstream_revs WHERE backend = ? AND rev < ?", backend, cursor.rev);
   });
+}
+
+// Record local revs in (after, through] as minted by applying a pull
+// from `backend`. See _vfs_upstream_revs.
+export function recordUpstreamRevs(
+  db: Database,
+  after: number,
+  through: number,
+  backend: string = DEFAULT_BACKEND_ID,
+): void {
+  for (let rev = after + 1; rev <= through; rev++) {
+    db.run("INSERT OR IGNORE INTO _vfs_upstream_revs (backend, rev) VALUES (?, ?)", backend, rev);
+  }
 }
 
 export function writeFetchCursor(
