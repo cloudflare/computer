@@ -359,14 +359,16 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       }
       return payload.result;
     }
-    function approximateBytes(value) {
+    function approximateBytes(value, seen = new Set()) {
       if (typeof value === "string") return value.length;
       if (value instanceof Uint8Array) return value.byteLength;
-      if (Array.isArray(value)) return value.reduce((total, item) => total + approximateBytes(item), 8);
-      if (value && typeof value === "object") {
-        return Object.entries(value).reduce((total, [key, item]) => total + key.length + approximateBytes(item), 8);
-      }
-      return 8;
+      if (!value || typeof value !== "object") return 8;
+      if (seen.has(value)) throw new Error("Workspace capability request values must be acyclic.");
+      seen.add(value);
+      const entries = Array.isArray(value) ? value.map((item) => ["", item]) : Object.entries(value);
+      const total = entries.reduce((sum, [key, item]) => sum + key.length + approximateBytes(item, seen), 8);
+      seen.delete(value);
+      return total;
     }
   `;
 }
