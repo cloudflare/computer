@@ -667,6 +667,13 @@ export class WorkspaceStub extends RpcTarget {
     return this.#assets;
   }
 
+  // Whether the Workspace has an assets publisher. Reading `assets`
+  // over RPC always yields a placeholder, so a client asks this plain
+  // boolean once instead.
+  get hasAssets(): boolean {
+    return this.#assets !== undefined;
+  }
+
   get artifacts(): WorkspaceArtifactsStub {
     return this.#artifacts;
   }
