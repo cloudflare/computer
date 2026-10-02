@@ -1,0 +1,19 @@
+packages/computer/src/modules/git.ts
+  s_b2fd9413bbc158::t_7fba6a6fbc8f74 88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ab9ecbb08c9ae3dbb389db327f39e254fc26af07",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
