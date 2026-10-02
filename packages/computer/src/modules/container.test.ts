@@ -5,6 +5,7 @@ import type {
   WorkspaceModuleFunction,
   WorkspaceModuleHost,
 } from "../runtime/types.js";
+import type { ExecSyncResult } from "../shell.js";
 import { createContainerModule } from "./container.js";
 
 interface ExecOptions {
@@ -31,6 +32,7 @@ function fakeRuntime(output: {
   stderr?: string;
   hang?: boolean;
   truncated?: Record<string, unknown>;
+  sync?: ExecSyncResult;
 }) {
   const runs: Run[] = [];
   const runtime = {
@@ -54,6 +56,7 @@ function fakeRuntime(output: {
             stdout: output.stdout ?? "",
             stderr: output.stderr ?? "",
             ...(output.truncated === undefined ? {} : { truncated: output.truncated }),
+            sync: output.sync ?? { status: "complete" as const, applied: 0, skipped: [] },
           };
         },
         async kill() {
@@ -101,7 +104,12 @@ describe("createContainerModule", () => {
         ["npm test", { cwd: "/workspace/app", env: { CI: "1" }, stdin: "y\n" }],
         callContext(),
       ),
-    ).resolves.toEqual({ exitCode: 3, stdout: "out", stderr: "err" });
+    ).resolves.toEqual({
+      exitCode: 3,
+      stdout: "out",
+      stderr: "err",
+      sync: { status: "complete", skipped: [] },
+    });
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({
       command: "npm test",
@@ -194,6 +202,7 @@ describe("createContainerModule", () => {
       stdout: "tail\n",
       stderr: "",
       truncated: { stdout: saved },
+      sync: { status: "complete", skipped: [] },
     });
     expect(runs[0]?.options.output).toEqual({ maxBytes: 1024 });
   });
@@ -206,6 +215,7 @@ describe("createContainerModule", () => {
       exitCode: 0,
       stdout: "a🙂\n\n[truncated, 1 more bytes]",
       stderr: "🙂\n\n[truncated, 4 more bytes]",
+      sync: { status: "complete", skipped: [] },
     });
   });
 
@@ -247,6 +257,29 @@ describe("createContainerModule", () => {
     expect(() => build(runtime, { backend: "worker-javascript" })).toThrow(
       /runs module source, not shell commands/,
     );
+  });
+
+  it("reports a sync that has not reached the Workspace, and skipped paths", async () => {
+    const { runtime } = fakeRuntime({
+      sync: {
+        status: "pending",
+        applied: 1,
+        error: "pull failed",
+        skipped: [
+          {
+            path: "/workspace/ro/x.txt",
+            mountRoot: "/workspace/ro",
+            op: "write",
+            reason: "read-only",
+          },
+        ],
+      },
+    });
+    const container = build(runtime);
+
+    await expect(container.exec(["touch ro/x.txt"], callContext())).resolves.toMatchObject({
+      sync: { status: "pending", error: "pull failed", skipped: ["/workspace/ro/x.txt"] },
+    });
   });
 
   it("describes itself for a model", () => {
