@@ -49,6 +49,17 @@ class InlineSqliteWorker {
   }
 }
 
+// just-bash keys its sqlite3 database locks on `fsIdentity ?? fs`, then on the
+// canonical database path. ShellWorker.exec builds a fresh Bash and
+// WorkspaceFsAdapter per execution, and the wrapper below allocates a fresh
+// Proxy on top of that, so without an explicit identity every execution lands
+// in its own lock bucket and concurrent writers never contend. Because
+// writeback replaces the whole database image, the later writer would silently
+// discard the earlier one. Every execution in this isolate addresses the same
+// workspace store, so pin one shared identity and let the canonical path keep
+// distinguishing databases.
+const SQLITE_FS_IDENTITY = {};
+
 // WorkspaceFsAdapter has no Node dev/ino pair because its storage is remote.
 // It also does not support hard links, so a canonical path is a stable lock
 // identity for the database. Keep this compatibility layer in SQLite's lazy
@@ -85,6 +96,7 @@ export function adaptSqliteCommand(command) {
       return command.execute(args, {
         ...context,
         fs: filesystemWithStableIdentity(context.fs),
+        fsIdentity: SQLITE_FS_IDENTITY,
       });
     },
   };
