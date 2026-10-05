@@ -2,6 +2,7 @@ import { constants as fsConstants, writeFileSync as nodeWriteFileSync } from "no
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
 import { toBindingOps } from "./binding-ops.js";
+import type { PassthroughStatus } from "./ignore-config.js";
 import { buildFuseInitConfig, buildFuseMountOptions, passthroughRequested } from "./options.js";
 import {
   type LocalPassthroughOptions,
@@ -172,6 +173,9 @@ export interface FuseMount {
   // Counters for the local-only layer. Present only when MOUNT_IGNORE
   // configured local-only paths on a real FUSE mount.
   getLocalPathStats?: () => PassthroughStats;
+  // Live passthrough state for /__computerd/info. Only present on a
+  // kernel FUSE mount.
+  getPassthroughStatus?: () => PassthroughStatus;
 }
 
 interface FuseInstance {
@@ -978,9 +982,9 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         cb(ERRNO.ENOENT);
         return;
       }
-      // Note: with libfuse2/fuse-native, touch -a / touch -m alone do not
-      // reach this op — the kernel/libfuse short-circuits when only one of
-      // atime/mtime is provided (UTIME_OMIT). touch with both set works.
+      // Always sets both. toBindingOps resolves UTIME_NOW and reads back
+      // the current value for UTIME_OMIT before calling this, so
+      // `touch -a` and `touch -m` arrive here with both times filled in.
       updateMeta(path, { atime: new Date(atime), mtime: new Date(mtime) });
       cb(0);
     },
@@ -1208,6 +1212,15 @@ export async function mountFuse(options: {
     },
     getBufferStats: routedOps.getBufferStats,
     ...(localPaths === undefined ? {} : { getLocalPathStats: localPaths.stats }),
+    getPassthroughStatus: () => {
+      const stats = localPaths?.stats();
+      return {
+        requested: wantPassthrough,
+        negotiated: passthroughNegotiated,
+        opens: stats?.passthroughOpens ?? 0,
+        fallbacks: stats?.passthroughFallbacks ?? 0,
+      };
+    },
   };
 }
 

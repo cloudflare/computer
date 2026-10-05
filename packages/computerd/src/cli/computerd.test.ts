@@ -111,7 +111,9 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
       ineffectiveExclusions: [],
       fastPaths: {
         passthrough: false,
-        passthroughReason: expect.stringContaining("libfuse 2.9"),
+        passthroughReason: expect.stringContaining("MOUNT_IGNORE"),
+        passthroughOpens: 0,
+        passthroughFallbacks: 0,
         writebackCache: false,
       },
     },
@@ -164,6 +166,15 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   expect(await fs.readFile(path.join(ignoreRoot, "node_modules/pkg/index.js"), "utf8")).toBe(
     "module.exports=1",
   );
+
+  // The open is accounted for on /__computerd/info, read live: handed to
+  // the kernel where the host supports passthrough, served by computerd
+  // otherwise. Which one depends on the kernel and libfuse of the host
+  // running the test, so only the sum is pinned.
+  const fastPaths = JSON.parse((await request(`http://127.0.0.1:${port}/__computerd/info`)).body)
+    .ignore.fastPaths;
+  expect(fastPaths.passthroughOpens + fastPaths.passthroughFallbacks).toBeGreaterThan(0);
+  expect(fastPaths.passthroughReason).toEqual(expect.any(String));
 
   // A non-ignored sibling still goes to the VFS as before.
   await fs.mkdir(path.join(mountPoint, "src"), { recursive: true });

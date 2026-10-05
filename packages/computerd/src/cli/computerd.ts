@@ -682,15 +682,19 @@ async function main(): Promise<void> {
     storeStats,
     close: closeStore,
   } = await createNodeVirtualFileSystem({ store });
+  let fuse: FuseMount | undefined;
   const info: ComputerdInfo = {
     backend,
     mountPoint,
     port,
     store,
-    ignore: describeMountIgnore(ignoreConfig),
+    // A getter, so each /__computerd/info request reports what the
+    // mount is doing now rather than a snapshot from startup.
+    get ignore() {
+      return describeMountIgnore(ignoreConfig, fuse?.getPassthroughStatus?.());
+    },
   };
 
-  let fuse: FuseMount | undefined;
   // When running on the userspace shim, capture the typed handle
   // so we can wire `flush()` and `reconcileNow()` into the SyncRPC
   // afterApply / beforeFetch hooks below. A real FUSE mount serves

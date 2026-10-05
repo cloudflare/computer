@@ -19,7 +19,7 @@ function handleOf(result: unknown): number {
   return typeof result === "number" ? result : (result as { fd: number }).fd;
 }
 
-const fuseNativeOperationNames = [
+const operationNames = [
   "init",
   "error",
   "access",
@@ -69,10 +69,10 @@ function disableDirectWrites(vfs: unknown): void {
   delete target.truncateFileSync;
 }
 
-test("FUSE ops expose the complete fuse-native operation surface", async () => {
+test("FUSE ops expose the complete operation surface", async () => {
   const ops = makeFUSEOps((await createNodeVirtualFileSystem()).vfs);
 
-  for (const name of fuseNativeOperationNames) {
+  for (const name of operationNames) {
     expect(typeof ops[name]).toBe("function", `${name} should be defined`);
   }
 });
@@ -1111,7 +1111,7 @@ test("xattr: getxattr for a VFS-backed file returns correct codes", async () => 
   expect(await status((cb) => ops.removexattr("/xattr-backed.txt", "user.x", cb))).toBe(-61);
 });
 
-test("FUSE ftruncate does not depend on fuse-native binding this", async () => {
+test("FUSE ftruncate does not depend on the binding's this", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);
 
