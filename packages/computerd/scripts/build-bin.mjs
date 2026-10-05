@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// Build computerd as a self-contained Node SEA binary for linux-x64. Steps:
+// Build computerd as a self-contained Node SEA binary for linux-x64, the
+// published target. COMPUTERD_BIN_TARGETS=linux-arm64 (or a comma-separated
+// list) builds others, for running the binary natively on an arm64 machine
+// while debugging or benchmarking. Steps per target:
 //   1. Compile the vendored fuse-napi addon inside a Debian trixie
 //      container for the target platform (see buildAddon below).
 //   2. esbuild a single ESM bundle (see scripts/sea/bundle.mjs).
@@ -12,7 +15,8 @@
 // The addon links the system libfuse 3 at runtime rather than carrying a
 // copy, so the image that runs the binary needs libfuse 3.17 or newer
 // (the `fuse3` package on Debian trixie). Set COMPUTERD_FUSE_ADDON to the
-// path of a prebuilt fuse.node to skip the container build.
+// path of a prebuilt fuse.node to skip the container build; it applies to
+// every target built in that run, so use it with a single target.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -41,7 +45,7 @@ const nodeVersion = "v22.22.3";
 const addonBuildImage = "node:22-trixie-slim";
 const minimumLibfuse = [3, 17];
 
-const targets = [
+const allTargets = [
   {
     name: "linux-x64",
     outputName: "computerd-linux-x64",
@@ -49,11 +53,34 @@ const targets = [
     nodeBinaryInArchive: `node-${nodeVersion}-linux-x64/bin/node`,
     dockerPlatform: "linux/amd64",
   },
+  {
+    name: "linux-arm64",
+    outputName: "computerd-linux-arm64",
+    nodeArchive: `node-${nodeVersion}-linux-arm64.tar.xz`,
+    nodeBinaryInArchive: `node-${nodeVersion}-linux-arm64/bin/node`,
+    dockerPlatform: "linux/arm64",
+  },
 ];
+
+const requestedTargets = (process.env.COMPUTERD_BIN_TARGETS ?? "linux-x64")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name !== "");
+const targets = requestedTargets.map((name) => {
+  const target = allTargets.find((candidate) => candidate.name === name);
+  if (target === undefined) {
+    throw new Error(
+      `unknown COMPUTERD_BIN_TARGETS entry ${JSON.stringify(name)}; ` +
+        `expected one of ${allTargets.map((candidate) => candidate.name).join(", ")}`,
+    );
+  }
+  return target;
+});
 
 async function main() {
   await runNpm("build");
-  await rm(outputDir, { recursive: true, force: true });
+  // Each target overwrites only its own file, so building one target
+  // leaves another's binary in place.
   await mkdir(outputDir, { recursive: true });
   await mkdir(seaWorkDir, { recursive: true });
   await mkdir(nodeCacheDir, { recursive: true });
