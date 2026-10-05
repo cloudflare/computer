@@ -11,10 +11,6 @@ const callback = (fn: (cb: (errno: number, result: unknown) => void) => void) =>
 const status = (fn: (cb: (value: number) => void) => void) =>
   new Promise<number>((resolve) => fn((value) => resolve(value)));
 
-/**
- * open/create reply with a libfuse 3 file-info object carrying the
- * per-open cache decision; opendir still replies with a bare handle.
- */
 function handleOf(result: unknown): number {
   return typeof result === "number" ? result : (result as { fd: number }).fd;
 }
@@ -109,8 +105,6 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   const create = await callback((cb) => ops.create("/dir/file.txt", 0o644, cb));
   expect(create.errno).toBe(0);
   expect(typeof handleOf(create.result)).toBe("number");
-  // A newly created file has no previous mtime/size to match, so the
-  // kernel page cache is never reused for it.
   expect((create.result as { keepCache?: boolean }).keepCache).toBe(false);
 
   const open = await callback((cb) => ops.open("/dir/file.txt", 0, cb));
@@ -165,7 +159,6 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(await status((cb) => ops.getxattr("/dir/file.txt", "user.test", 0, cb))).toBe(-61);
   const xattrs = await callback((cb) => ops.listxattr("/dir/file.txt", cb));
   expect(xattrs.errno).toBe(0);
-  // fuse-napi wants the attribute names as an array of strings.
   expect(xattrs.result).toEqual([]);
   expect(await status((cb) => ops.removexattr("/dir/file.txt", "user.test", cb))).toBe(-61);
   expect(await status((cb) => ops.utimens("/dir/file.txt", Date.now(), Date.now(), cb))).toBe(0);
@@ -321,9 +314,6 @@ test("FUSE write is visible through the backing VFS after release", async () => 
 });
 
 test("FUSE open with O_TRUNC empties the file", async () => {
-  // libfuse 3 negotiates atomic O_TRUNC by default, so `: > f` arrives
-  // as open(O_TRUNC) with no separate truncate. Ignoring the flag
-  // leaves the old bytes in place.
   const { vfs } = await createNodeVirtualFileSystem();
   vfs.writeFileSync("/existing.txt", "old contents\n");
   const ops = makeFUSEOps(vfs);

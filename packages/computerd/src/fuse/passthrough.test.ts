@@ -127,9 +127,7 @@ describe("withLocalPassthrough: routing", () => {
   });
 
   test("fsync on a local handle stays local, whatever datasync is", () => {
-    // fuse-napi passes (path, datasync, fd, cb). With the arguments
-    // swapped, the boolean lands where the handle should be, misses
-    // the local handle range, and the call leaks into the VFS.
+    // fuse-napi passes (path, datasync, fd, cb).
     const { ops, calls } = build(["/node_modules"]);
     let fh = 0;
     ops.create("/node_modules/sync.js", 0o644, (_code, handle) => {
@@ -876,7 +874,6 @@ describe("withLocalPassthrough: kernel passthrough", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  /** Stands in for the binding's backingOpen / backingClose. */
   const registrar = (failWith?: string) => {
     const opened: number[] = [];
     const closed: number[] = [];
@@ -945,7 +942,6 @@ describe("withLocalPassthrough: kernel passthrough", () => {
   });
 
   test("never sets keepCache or directIO alongside a backing id", () => {
-    // The kernel refuses either combination with EIO at open time.
     const { ops } = build(registrar().passthrough);
     const reply = open(ops, "/node_modules/a.js") as Record<string, unknown>;
     expect(reply).not.toHaveProperty("keepCache");
@@ -953,10 +949,6 @@ describe("withLocalPassthrough: kernel passthrough", () => {
   });
 
   test("shares one backing id between concurrent opens of one file", () => {
-    // Two registrations of the same file both succeed and return
-    // distinct ids, and then the second open fails EIO in the kernel.
-    // There is no error to catch at registration, so reuse is the only
-    // correct behavior.
     const backing = registrar();
     const { ops } = build(backing.passthrough);
     const first = open(ops, "/node_modules/a.js");
@@ -1021,8 +1013,6 @@ describe("withLocalPassthrough: kernel passthrough", () => {
   });
 
   test("says the kernel did not offer passthrough when that is the reason", () => {
-    // The driver's registrar answers ENOTSUP until init has negotiated
-    // the capability. Advice about CAP_SYS_ADMIN would mislead here.
     const { ops, warnings } = build(registrar("ENOTSUP").passthrough);
     open(ops, "/node_modules/a.js");
     expect(warnings[0]).toContain("did not negotiate");

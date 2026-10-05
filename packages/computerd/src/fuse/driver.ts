@@ -54,26 +54,9 @@ type StatusCallback = (errnoOrBytes: number) => void;
 type ResultCallback<T> = (errno: number, result: T) => void;
 type NotImplementedOperation = (...args: unknown[]) => void;
 
-/**
- * What open/create may hand back under libfuse 3.
- *
- * A bare number is still accepted and means "just the handle". The object
- * form carries the per-open cache decision, and a backing id when the
- * local-only layer has registered the file for passthrough.
- */
 export interface FuseFileInfoResult {
   readonly fd: number;
-  /**
-   * Reuse the kernel page cache for this file. Replaces the auto_cache
-   * mount option, which libfuse applies after this callback returns and
-   * which the kernel refuses alongside passthrough.
-   */
   readonly keepCache?: boolean;
-  /**
-   * Backing id from the FUSE passthrough registration. When set, the
-   * kernel serves reads and writes for this handle directly from the
-   * backing file and the daemon is out of the data path.
-   */
   readonly backingId?: number;
 }
 
@@ -117,7 +100,6 @@ export interface FuseOps {
   statfs(path: string, cb: ResultCallback<Record<string, number>>): void;
   chmod(path: string, mode: number, cb: StatusCallback): void;
   chown(path: string, uid: number, gid: number, cb: StatusCallback): void;
-  // fuse-napi puts datasync before the handle, unlike fuse-native.
   fsync(path: string, datasync: boolean, fh: number, cb: StatusCallback): void;
   fsyncdir(path: string, datasync: boolean, fh: number, cb: StatusCallback): void;
   utimens(path: string, atime: number, mtime: number, cb: StatusCallback): void;
@@ -173,8 +155,7 @@ export interface FuseMount {
   // Counters for the local-only layer. Present only when MOUNT_IGNORE
   // configured local-only paths on a real FUSE mount.
   getLocalPathStats?: () => PassthroughStats;
-  // Live passthrough state for /__computerd/info. Only present on a
-  // kernel FUSE mount.
+  // Only present on a kernel FUSE mount.
   getPassthroughStatus?: () => PassthroughStatus;
 }
 
@@ -183,7 +164,6 @@ interface FuseInstance {
   unmount(cb: (error: Error | null) => void): void;
 }
 
-/** The binding's backing-file registration, from the vendored patch. */
 interface BackingRegistrar {
   backingOpen(fd: number): number;
   backingClose(backingId: number): void;
@@ -219,19 +199,10 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     return openHandle(path);
   };
 
-  /*
-   * Per-open page cache decision, replacing the auto_cache mount option.
-   *
-   * libfuse applies auto_cache *after* the open callback returns and does
-   * not check for passthrough, and the kernel rejects FOPEN_KEEP_CACHE
-   * alongside FOPEN_PASSTHROUGH with EIO. So the rule moves here, where it
-   * can be applied per file and skipped for a passthrough handle.
-   *
-   * The rule is auto_cache's own: keep the cache when neither mtime nor
-   * size has changed since this path was last opened. Anything else -- a
-   * first open, a changed file, a stat we could not take -- invalidates,
-   * which is the safe direction.
-   */
+  // auto_cache's rule, applied per open: keep the page cache only when
+  // mtime and size are unchanged since this path was last opened. It can't
+  // stay a mount option, because libfuse would then set keep_cache on
+  // passthrough opens too, and the kernel fails those with EIO.
   const cacheMarks = new Map<string, string>();
 
   const resolveKeepCache = (path: string): boolean => {
@@ -610,9 +581,8 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     },
 
     open(path, flags, cb) {
-      // libfuse 3 negotiates atomic O_TRUNC by default, so the kernel
-      // folds `: > f` into this open rather than sending a separate
-      // truncate. Honor it here or the old bytes survive.
+      // libfuse 3 enables atomic O_TRUNC, so `: > f` arrives as this flag
+      // rather than as a separate truncate.
       if ((flags & O_TRUNC) !== 0) {
         truncatePath(path, 0, (code) => {
           if (code !== 0) {
@@ -982,9 +952,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         cb(ERRNO.ENOENT);
         return;
       }
-      // Always sets both. toBindingOps resolves UTIME_NOW and reads back
-      // the current value for UTIME_OMIT before calling this, so
-      // `touch -a` and `touch -m` arrive here with both times filled in.
+      // toBindingOps has already resolved UTIME_NOW and UTIME_OMIT.
       updateMeta(path, { atime: new Date(atime), mtime: new Date(mtime) });
       cb(0);
     },
@@ -1082,21 +1050,17 @@ export async function mountFuse(options: {
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
 
-  // Kernel passthrough for local-only files. Only requested when there
-  // are local-only paths to use it on, so a mount without MOUNT_IGNORE
-  // negotiates exactly what it did before.
+  // Only requested with local-only paths, so a mount without MOUNT_IGNORE
+  // negotiates what it always did.
   const wantPassthrough =
     options.localPaths !== undefined &&
     !options.localPaths.ignore.isEmpty &&
     passthroughRequested(process.env);
   let passthroughNegotiated = false;
 
-  // The registrar is late-bound. The op table has to exist before the
-  // Fuse instance does, because the constructor takes it, so the
-  // closure reads `mountedFuse`, assigned just after construction. No
-  // open can arrive before init, and until init confirms the
-  // capability the answer is ENOTSUP, which the local-only layer turns
-  // into a fallback to serving the file itself.
+  // Late-bound, because the Fuse constructor takes the op table that holds
+  // this. No open arrives before init, and until init has negotiated
+  // passthrough the local-only layer gets ENOTSUP and serves files itself.
   let mountedFuse: BackingRegistrar | undefined;
   const registrar: PassthroughRegistrar = {
     backingOpen(fd) {
@@ -1124,17 +1088,8 @@ export async function mountFuse(options: {
         });
   const routedOps = localPaths === undefined ? baseOps : localPaths.ops;
   const fuseOps = toBindingOps(routedOps);
-  const ops =
-    tracer === undefined
-      ? fuseOps
-      : wrapFuseOpsWithTracer(fuseOps as unknown as Record<string, unknown>, tracer);
-  // buildFuseMountOptions reads COMPUTERD_FUSE_* env vars; with none set it
-  // emits the production-safe profile (use_ino, 512 KiB max_read, and
-  // one-second metadata timeouts).
+  const ops = tracer === undefined ? fuseOps : wrapFuseOpsWithTracer(fuseOps, tracer);
   const mountOptions = buildFuseMountOptions(process.env);
-  // libfuse 3 takes max_write through the init config rather than as a
-  // mount option, and the passthrough capability has to be requested at
-  // init or the backing-file ioctl fails with EPERM.
   const initConfig = buildFuseInitConfig(process.env);
   const CAP_PASSTHROUGH: number = Fuse.CAP_PASSTHROUGH ?? 1 << 29;
 
@@ -1148,6 +1103,8 @@ export async function mountFuse(options: {
       passthroughNegotiated = wantPassthrough && (capable & CAP_PASSTHROUGH) !== 0;
       const config: Record<string, number> = { maxWrite: initConfig.maxWrite };
       if (passthroughNegotiated) {
+        // Offered is not enough: without it in `want`, backingOpen fails
+        // with EPERM.
         config.want = (info.want >>> 0) | CAP_PASSTHROUGH;
         config.maxBackingStackDepth = initConfig.maxBackingStackDepth;
       }

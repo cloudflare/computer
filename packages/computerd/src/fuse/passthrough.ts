@@ -6,23 +6,16 @@
 // is provably a no-op: `withLocalPassthrough` returns the source object
 // unchanged.
 //
-// When the mount negotiated FUSE passthrough, an open of a local-only
-// file registers the file with the kernel and replies with its backing
-// id. The kernel then serves reads, writes, and mmap for that handle
-// straight from the backing file, and this process is out of the data
-// path. Metadata (lookup, getattr, readdir) still comes here.
+// When the mount negotiated FUSE passthrough, opening a local-only file
+// registers it with the kernel, which then serves reads, writes, and mmap
+// straight from the backing file. Metadata still comes through here.
+// Otherwise this process serves the data itself, which still skips the
+// VFS, the store, and the pull into the Durable Object.
 //
-// When passthrough is unavailable, for the mount or for one file, data
-// still crosses the FUSE boundary into this process. What it skips is
-// the VFS, the SQLite store, the change-pack encoding, and the pull
-// into the Durable Object.
-//
-// Those fallback writes go straight to the host filesystem with pwrite
-// rather than through the buffered FileEntry machinery in driver.ts.
-// That buffering exists because the VFS has no ranged-write primitive
-// and a naive implementation is O(N^2) over sequential appends; the
-// kernel does not have that problem, so the indirection would be pure
-// cost here.
+// Writes served here go straight to the host filesystem with pwrite
+// rather than through the buffered FileEntry machinery in driver.ts. That
+// buffering exists because the VFS has no ranged-write primitive; the
+// kernel does not have that problem.
 
 import {
   accessSync,
@@ -90,19 +83,11 @@ export interface LocalPassthroughOptions {
   readonly onMaterialize?: (relativePath: string) => void;
   /** Operator-facing warnings. Defaults to console.warn; injected for tests. */
   readonly warn?: (message: string) => void;
-  /**
-   * Registers backing files for kernel passthrough. Omitted means every
-   * local-only open is served by this process.
-   */
+  /** Omitted means every local-only open is served by this process. */
   readonly passthrough?: PassthroughRegistrar;
 }
 
-/**
- * The binding's backing-file registration, as a seam.
- *
- * `backingOpen` throws an Error whose `code` is the errno name when the
- * kernel refuses, or when the mount did not negotiate passthrough.
- */
+/** `backingOpen` throws an Error whose `code` is the errno name. */
 export interface PassthroughRegistrar {
   backingOpen(fd: number): number;
   backingClose(backingId: number): void;
@@ -247,15 +232,11 @@ export function withLocalPassthrough(
   let nextHandle = LOCAL_HANDLE_BASE;
   const handles = new Map<number, { fd: number; path: string; backingKey?: string }>();
 
-  // One backing id per file, shared by every open of it. The kernel
-  // allows a single backing file per inode: a second registration of
-  // the same file succeeds and returns a new id, and then the open that
-  // uses it fails with EIO. Nothing reports the conflict at
-  // registration, so the table is the only thing preventing it.
-  //
-  // Keyed on dev:ino rather than the path, because a hard link reaches
-  // the same inode through a different name.
-  const backing = new Map<string, { id: number; refs: number }>();
+  // The kernel allows one backing file per inode. Registering the same
+  // file twice succeeds with a second id, and the open that uses it then
+  // fails with EIO, so every open of a file shares one id. Keyed on
+  // dev:ino because a hard link reaches the same inode by another name.
+  const backingIds = new Map<string, { id: number; refs: number }>();
   const isLocalHandle = (fh: number): boolean => fh >= LOCAL_HANDLE_BASE;
 
   const ensureParent = (target: string): void => {
@@ -761,56 +742,57 @@ export function withLocalPassthrough(
     return handle;
   }
 
-  // Attach a backing id to a freshly opened handle, reusing the file's
-  // existing id when it has one. Returns what open/create reply with.
-  //
-  // Never sets keepCache or directIO alongside the id: the kernel
-  // refuses either combination with EIO.
+  // Never sets keepCache or directIO: the kernel refuses either one
+  // alongside a backing id.
   function registerOpen(fh: number): FuseOpenResult {
     const handle = handles.get(fh);
     if (registrar === undefined || handle === undefined) return fh;
+    const key = inodeKey(handle.fd);
+    if (key === undefined) return fh;
 
-    let key: string;
-    try {
-      const stat = fs.fstatSync(handle.fd);
-      key = `${stat.dev}:${stat.ino}`;
-    } catch {
-      return fh;
+    let entry = backingIds.get(key);
+    if (entry === undefined) {
+      const id = registerBackingFile(registrar, handle);
+      if (id === undefined) return fh;
+      entry = { id, refs: 0 };
+      backingIds.set(key, entry);
     }
-
-    const existing = backing.get(key);
-    if (existing !== undefined) {
-      existing.refs += 1;
-      handle.backingKey = key;
-      passthroughOpens += 1;
-      return { fd: fh, backingId: existing.id };
-    }
-
-    let id: number;
-    try {
-      id = registrar.backingOpen(handle.fd);
-    } catch (error) {
-      // Served by this process instead, through read/write below. A
-      // refusal is a property of the file or the mount (EPERM without
-      // CAP_SYS_ADMIN, ELOOP for a backing store stacked too deep), so
-      // every open of the same file falls back the same way and the
-      // kernel never sees a mix of the two modes on one inode.
-      reportFallback(handle.path, error);
-      return fh;
-    }
-    backing.set(key, { id, refs: 1 });
+    entry.refs += 1;
     handle.backingKey = key;
     passthroughOpens += 1;
-    return { fd: fh, backingId: id };
+    return { fd: fh, backingId: entry.id };
+  }
+
+  function inodeKey(fd: number): string | undefined {
+    try {
+      const stat = fs.fstatSync(fd);
+      return `${stat.dev}:${stat.ino}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // A refusal comes from the file or the mount, so every open of one file
+  // falls back alike and the kernel never sees both modes on one inode.
+  function registerBackingFile(
+    target: PassthroughRegistrar,
+    handle: { fd: number; path: string },
+  ): number | undefined {
+    try {
+      return target.backingOpen(handle.fd);
+    } catch (error) {
+      reportFallback(handle.path, error);
+      return undefined;
+    }
   }
 
   function releaseBacking(key: string | undefined): void {
     if (key === undefined || registrar === undefined) return;
-    const entry = backing.get(key);
+    const entry = backingIds.get(key);
     if (entry === undefined) return;
     entry.refs -= 1;
     if (entry.refs > 0) return;
-    backing.delete(key);
+    backingIds.delete(key);
     try {
       registrar.backingClose(entry.id);
     } catch (error) {
@@ -920,7 +902,7 @@ export function withLocalPassthrough(
       crossLayerRenames,
       passthroughOpens,
       passthroughFallbacks,
-      passthroughFiles: backing.size,
+      passthroughFiles: backingIds.size,
     }),
   };
 }

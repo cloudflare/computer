@@ -48,8 +48,7 @@ RUN apt-get update >/dev/null \
 DOCKERFILE
 fi
 
-# Forward local-only path and FUSE tuning settings from the caller, so a
-# test can boot computerd with MOUNT_IGNORE or COMPUTERD_FUSE_TRACE set.
+# Lets a test boot computerd with MOUNT_IGNORE or COMPUTERD_FUSE_* set.
 FORWARD_ENV=()
 while IFS='=' read -r name _; do
   case "$name" in

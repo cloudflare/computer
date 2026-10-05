@@ -46,9 +46,6 @@ function call(ops: Record<string, unknown>, atime: object, mtime: object): Promi
 
 describe("toBindingOps", () => {
   test("drops the entries fuse-napi refuses", () => {
-    // `error` is not an operation it knows, `init` is mutually exclusive
-    // with the initWithConfig the mount adds, and getBufferStats is not
-    // an operation at all.
     const out = toBindingOps(fakeOps().ops);
     expect(out).not.toHaveProperty("error");
     expect(out).not.toHaveProperty("init");
@@ -57,8 +54,6 @@ describe("toBindingOps", () => {
   });
 
   test("replaces utimens with the timespec variant", () => {
-    // Plain utimens in fuse-napi answers EOPNOTSUPP whenever the kernel
-    // sends UTIME_NOW or UTIME_OMIT, which is what a bare `touch` does.
     const out = toBindingOps(fakeOps().ops);
     expect(out).not.toHaveProperty("utimens");
     expect(typeof out.utimensWithTimespec).toBe("function");

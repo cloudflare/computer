@@ -688,8 +688,7 @@ async function main(): Promise<void> {
     mountPoint,
     port,
     store,
-    // A getter, so each /__computerd/info request reports what the
-    // mount is doing now rather than a snapshot from startup.
+    // A getter, so each request reports live passthrough state.
     get ignore() {
       return describeMountIgnore(ignoreConfig, fuse?.getPassthroughStatus?.());
     },

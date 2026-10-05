@@ -138,10 +138,6 @@ describe("describeMountIgnore", () => {
     });
   });
 
-  // Each reason below has a different fix, so each gets its own text.
-  // An operator should be able to act on the string without reading
-  // the source.
-
   test("says so when no kernel FUSE mount is running", () => {
     const info = describeMountIgnore(enabled);
     expect(info.fastPaths.passthrough).toBe(false);

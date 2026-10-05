@@ -24,10 +24,9 @@
 #                   /tmp/workspace/ignored local-only (MOUNT_IGNORE)
 #   COMPUTERD_FUSE_PASSTHROUGH  set to 0 to measure local-only paths
 #                   without kernel passthrough
-#   PLATFORM        docker platform (default: linux/amd64). Use
-#                   linux/arm64 with a computerd-linux-arm64 binary to run
-#                   natively on an arm64 machine; emulated timings are
-#                   not meaningful.
+#   PLATFORM        docker platform (default: linux/amd64). On an arm64
+#                   machine use linux/arm64 and a computerd-linux-arm64
+#                   binary; emulated timings are not meaningful.
 #
 # Requirements:
 #   docker          available and able to run --privileged containers

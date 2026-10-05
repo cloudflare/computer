@@ -1,8 +1,3 @@
-// Adapts computerd's op table to what the vendored fuse-napi binding
-// accepts. Kept apart from makeFUSEOps so the VFS driver and the
-// local-only layer keep one simple shape, and the binding's rules live
-// in one place.
-
 import type { FuseOps } from "./driver.js";
 
 // The kernel's sentinel nanosecond values, as fuse-napi passes them.
@@ -14,37 +9,31 @@ export interface Timespec {
   readonly nanoseconds: number;
 }
 
+type StatusCallback = (code: number) => void;
+
 export interface BindingOpsOptions {
-  /** Clock for UTIME_NOW. Injected for tests. */
   readonly now?: () => number;
 }
 
 /**
- * Returns the op table to hand to `new Fuse()`.
+ * The op table to hand to `new Fuse()`.
  *
- * fuse-napi validates the table before it mounts, and refuses three of
- * our entries: `error` is not an operation it knows, `init` is mutually
- * exclusive with the `initWithConfig` the mount adds, and
- * `getBufferStats` is not an operation at all.
- *
- * `utimens` is swapped for `utimensWithTimespec`. Plain `utimens` in
- * fuse-napi answers EOPNOTSUPP when either time is UTIME_NOW or
- * UTIME_OMIT, and that is what `touch`, `touch -m`, and most archive
- * tools send.
+ * fuse-napi refuses `error` (not an operation it knows), `init` (mutually
+ * exclusive with the `initWithConfig` the mount adds) and `getBufferStats`.
+ * Its plain `utimens` answers EOPNOTSUPP whenever the kernel sends
+ * UTIME_NOW or UTIME_OMIT, which is what `touch` does, so the timespec
+ * variant is used instead.
  */
 export function toBindingOps(
   ops: FuseOps,
   options: BindingOpsOptions = {},
 ): Record<string, unknown> {
-  const now = options.now ?? Date.now;
-  const { getBufferStats: _stats, error: _error, init: _init, utimens, ...rest } = ops;
+  const { getBufferStats: _stats, error: _error, init: _init, utimens: _utimens, ...rest } = ops;
+  return { ...rest, utimensWithTimespec: utimensWithTimespec(ops, options.now ?? Date.now) };
+}
 
-  const utimensWithTimespec = (
-    path: string,
-    atime: Timespec,
-    mtime: Timespec,
-    cb: (code: number) => void,
-  ): void => {
+function utimensWithTimespec(ops: FuseOps, now: () => number) {
+  return (path: string, atime: Timespec, mtime: Timespec, cb: StatusCallback): void => {
     const omitAtime = atime.nanoseconds === UTIME_OMIT;
     const omitMtime = mtime.nanoseconds === UTIME_OMIT;
     if (omitAtime && omitMtime) {
@@ -52,13 +41,13 @@ export function toBindingOps(
       return;
     }
 
+    const resolve = (time: Timespec, current: number): number => {
+      if (time.nanoseconds === UTIME_OMIT) return current;
+      if (time.nanoseconds === UTIME_NOW) return now();
+      return toMilliseconds(time);
+    };
     const apply = (currentAtime: number, currentMtime: number): void => {
-      const resolve = (time: Timespec, current: number): number => {
-        if (time.nanoseconds === UTIME_OMIT) return current;
-        if (time.nanoseconds === UTIME_NOW) return now();
-        return toMilliseconds(time);
-      };
-      utimens.call(ops, path, resolve(atime, currentAtime), resolve(mtime, currentMtime), cb);
+      ops.utimens(path, resolve(atime, currentAtime), resolve(mtime, currentMtime), cb);
     };
 
     if (!omitAtime && !omitMtime) {
@@ -66,8 +55,7 @@ export function toBindingOps(
       return;
     }
 
-    // Only one side is changing. Keep the other as it is by reading it
-    // back first, since our utimens always sets both.
+    // Our utimens always sets both times, so read back the one being kept.
     ops.getattr(path, (code, stat) => {
       if (code !== 0 || stat === null) {
         cb(code !== 0 ? code : -2);
@@ -76,8 +64,6 @@ export function toBindingOps(
       apply(stat.atime.getTime(), stat.mtime.getTime());
     });
   };
-
-  return { ...rest, utimensWithTimespec };
 }
 
 function toMilliseconds(time: Timespec): number {

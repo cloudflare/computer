@@ -5,11 +5,9 @@
 //     capnweb's top-level await survives without an async-IIFE wrapper. A banner
 //     re-establishes `require`, `__filename`, and `__dirname` for any CJS code
 //     transpiled into the bundle.
-//   * fuse-napi loads its addon through `require('node-gyp-build')(root)`. An
-//     esbuild plugin replaces that module with a shim that reads the addon
-//     from the SEA assets (via `node:sea`), writes it to a temp directory
-//     keyed by its sha256, and dlopens it. The addon links the system
-//     libfuse 3, which the dynamic loader finds on its default path.
+//   * fuse-napi loads its addon through `require('node-gyp-build')(root)`.
+//     An esbuild plugin swaps that module for a shim that writes the
+//     embedded addon to a temp directory keyed by its hash and dlopens it.
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

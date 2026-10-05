@@ -1,22 +1,12 @@
 #!/usr/bin/env node
-// Build computerd as a self-contained Node SEA binary for linux-x64, the
-// published target. COMPUTERD_BIN_TARGETS=linux-arm64 (or a comma-separated
-// list) builds others, for running the binary natively on an arm64 machine
-// while debugging or benchmarking. Steps per target:
-//   1. Compile the vendored fuse-napi addon inside a Debian trixie
-//      container for the target platform (see buildAddon below).
-//   2. esbuild a single ESM bundle (see scripts/sea/bundle.mjs).
-//   3. Write a sea-config.json that names the bundle as main and embeds
-//      the addon as an asset.
-//   4. Generate the SEA blob via `node --experimental-sea-config`.
-//   5. Download the target's Node binary (cached under .devbox/node-binaries),
-//      copy it into artifacts/, and inject the blob with postject.
+// Builds computerd as a self-contained Node SEA binary. linux-x64 is the
+// published target; COMPUTERD_BIN_TARGETS=linux-arm64 (or a comma-separated
+// list) builds others, for running natively on an arm64 machine.
 //
-// The addon links the system libfuse 3 at runtime rather than carrying a
-// copy, so the image that runs the binary needs libfuse 3.17 or newer
-// (the `fuse3` package on Debian trixie). Set COMPUTERD_FUSE_ADDON to the
-// path of a prebuilt fuse.node to skip the container build; it applies to
-// every target built in that run, so use it with a single target.
+// The binary embeds the FUSE addon but links the system libfuse 3, so the
+// image that runs it needs libfuse 3.17 or newer (Debian trixie's fuse3).
+// COMPUTERD_FUSE_ADDON names a prebuilt fuse.node to use instead of
+// compiling one; it applies to every target in the run.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -39,9 +29,8 @@ const nodeCacheDir = resolve(repoRoot, ".devbox/node-binaries");
 const addonSourceDir = resolve(computerdRoot, "vendor/fuse-napi");
 const nodeVersion = "v22.22.3";
 
-// The addon is built against the same Node major as the SEA runtime and
-// the same Debian release as the container images, so the libfuse it
-// links is the one that is present when the binary runs.
+// Same Node major as the SEA runtime, and same Debian release as the
+// container images, so the addon links the libfuse those images carry.
 const addonBuildImage = "node:22-trixie-slim";
 const minimumLibfuse = [3, 17];
 
@@ -79,8 +68,6 @@ const targets = requestedTargets.map((name) => {
 
 async function main() {
   await runNpm("build");
-  // Each target overwrites only its own file, so building one target
-  // leaves another's binary in place.
   await mkdir(outputDir, { recursive: true });
   await mkdir(seaWorkDir, { recursive: true });
   await mkdir(nodeCacheDir, { recursive: true });
@@ -139,13 +126,9 @@ async function buildTarget(target) {
   await execFileP(process.execPath, postjectArgs);
 }
 
-// Compile fuse-napi for the target inside a container, so the result
-// does not depend on the build host's architecture or on its libfuse.
-// CI runners carry an older libfuse 3 than the 3.17 that passthrough
-// needs, and a developer machine may not be x64 at all.
-//
-// The result is cached under dist/sea, keyed on the addon sources and
-// the build image, because an emulated compile takes minutes.
+// Compiled in a container so the result doesn't depend on the build host:
+// CI runners carry libfuse 3.14, too old for passthrough, and a developer
+// machine may not be x64. Cached because an emulated compile takes minutes.
 async function buildAddon(target) {
   const override = process.env.COMPUTERD_FUSE_ADDON;
   if (override !== undefined && override !== "") {
@@ -155,70 +138,71 @@ async function buildAddon(target) {
 
   const outDir = resolve(seaWorkDir, `${target.name}-addon`);
   const addonPath = resolve(outDir, "fuse.node");
-  const stampPath = resolve(outDir, "fuse.node.key");
+  const keyPath = resolve(outDir, "fuse.node.key");
   const key = await addonCacheKey(target);
-  if ((await exists(addonPath)) && (await readText(stampPath)) === key) {
-    return addonPath;
-  }
+  if ((await exists(addonPath)) && (await readText(keyPath)) === key) return addonPath;
 
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
   console.log(`[computerd-bin] compiling fuse-napi for ${target.name} in ${addonBuildImage}`);
+  await runInContainer(
+    target.dockerPlatform,
+    [`${addonSourceDir}:/src:ro`, `${outDir}:/out`],
+    [
+      "set -eu",
+      "apt-get update -qq",
+      "apt-get install -y -qq --no-install-recommends g++ make python3 pkg-config libfuse3-dev >/dev/null",
+      "mkdir /build",
+      "tar -C /src --exclude=./build --exclude=./node_modules -cf - . | tar -C /build -xf -",
+      "cd /build",
+      "npm install --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error",
+      "npx --yes node-gyp@11 rebuild --nodedir=/usr/local --loglevel=error",
+      "cp build/Release/fuse.node /out/fuse.node",
+      "pkg-config --modversion fuse3 > /out/libfuse-version",
+    ],
+  );
 
-  const script = [
-    "set -eu",
-    "apt-get update -qq",
-    "apt-get install -y -qq --no-install-recommends g++ make python3 pkg-config libfuse3-dev >/dev/null",
-    "mkdir /build",
-    "tar -C /src --exclude=./build --exclude=./node_modules -cf - . | tar -C /build -xf -",
-    "cd /build",
-    "npm install --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error",
-    // The image ships the Node headers, so node-gyp does not download them.
-    "npx --yes node-gyp@11 rebuild --nodedir=/usr/local --loglevel=error",
-    "cp build/Release/fuse.node /out/fuse.node",
-    "pkg-config --modversion fuse3 > /out/libfuse-version",
-  ].join("\n");
+  assertLibfuseVersion((await readText(resolve(outDir, "libfuse-version"))).trim());
+  await writeFile(keyPath, key);
+  return addonPath;
+}
 
-  // Detached, then waited on, rather than an attached `docker run`: an
-  // attached client can lose its stream on a remote daemon and return
-  // before the container finishes, which would read as a missing addon.
-  const { stdout: containerId } = await execFileP("docker", [
+// Detached, then waited on: an attached `docker run` against a remote
+// daemon can lose its stream and return before the container finishes.
+async function runInContainer(platform, volumes, scriptLines) {
+  const volumeArgs = volumes.flatMap((volume) => ["-v", volume]);
+  const { stdout } = await execFileP("docker", [
     "run",
     "-d",
     "--platform",
-    target.dockerPlatform,
-    "-v",
-    `${addonSourceDir}:/src:ro`,
-    "-v",
-    `${outDir}:/out`,
+    platform,
+    ...volumeArgs,
     addonBuildImage,
     "sh",
     "-c",
-    script,
+    scriptLines.join("\n"),
   ]);
-  const id = containerId.trim();
+  const id = stdout.trim();
   try {
     const { stdout: status } = await execFileP("docker", ["wait", id]);
     if (status.trim() !== "0") {
-      const { stdout, stderr } = await execFileP("docker", ["logs", id], {
-        maxBuffer: 64 * 1024 * 1024,
-      });
-      throw new Error(`fuse-napi build exited ${status.trim()}:\n${stdout}${stderr}`);
+      const logs = await execFileP("docker", ["logs", id], { maxBuffer: 64 * 1024 * 1024 });
+      throw new Error(`fuse-napi build exited ${status.trim()}:\n${logs.stdout}${logs.stderr}`);
     }
   } finally {
     await execFileP("docker", ["rm", "-f", id]).catch(() => {});
   }
+}
 
-  const libfuseVersion = (await readText(resolve(outDir, "libfuse-version"))).trim();
-  const [major = 0, minor = 0] = libfuseVersion.split(".").map(Number);
-  if (major < minimumLibfuse[0] || (major === minimumLibfuse[0] && minor < minimumLibfuse[1])) {
+function assertLibfuseVersion(version) {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  const [minMajor, minMinor] = minimumLibfuse;
+  if (major < minMajor || (major === minMajor && minor < minMinor)) {
     throw new Error(
-      `${addonBuildImage} carries libfuse ${libfuseVersion}; passthrough needs ` +
+      `${addonBuildImage} carries libfuse ${version}; passthrough needs ` +
         `${minimumLibfuse.join(".")} or newer`,
     );
   }
-  await writeFile(stampPath, key);
-  return addonPath;
 }
 
 async function addonCacheKey(target) {

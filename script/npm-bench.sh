@@ -28,10 +28,8 @@
 #   TARGETS         comma-separated label:directory pairs to install into
 #                   (default: native:$BASE,fuse:$MOUNT)
 #
-# Each run also times reading every installed file back once, after the
-# install, as readMs. An install is mostly metadata (create, mkdir,
-# rename); the read-back is the data path, which is what FUSE
-# passthrough changes for local-only paths.
+# Each run also reports readMs, the time to read every installed file
+# back once: the data path, where an install itself is mostly metadata.
 set -euo pipefail
 
 MOUNT="${MOUNT:-/tmp/workspace}"
@@ -205,7 +203,6 @@ run_install() {
   end_ts="$(date +%s%N)"
   local elapsed_ms=$(( (end_ts - start_ts) / 1000000 ))
 
-  # Read every installed file back once.
   local read_start read_end read_ms=0
   if [ -d "$work_dir/node_modules" ]; then
     read_start="$(date +%s%N)"

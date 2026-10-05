@@ -2,9 +2,8 @@ FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.4.1 AS computerd
 
 FROM debian:trixie-slim
 
-# fuse3 brings libfuse 3. Releases after 0.4.1 link it and need 3.17
-# or newer, which is Debian trixie. 0.4.1 and earlier link libfuse 2
-# instead, hence libfuse2t64; drop it once the pin above is past 0.4.1.
+# libfuse2t64 is for the pinned 0.4.1 binary. Later releases need only
+# fuse3, at libfuse 3.17 or newer (Debian trixie); drop it then.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       fuse3 libfuse2t64 ca-certificates curl \

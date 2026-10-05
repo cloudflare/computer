@@ -1,70 +1,26 @@
-// FUSE mount option assembly, for libfuse 3.
-//
-// Split into two parts because libfuse 3 moved some of these out of the
-// mount options and into the init config:
-//
-//   - buildFuseMountOptions() emits what still belongs on the mount:
-//     use_ino, max_read, and the metadata timeouts. The vendored
-//     fuse-napi binding takes these as a typed object, not a raw -o
-//     string, and validates every name before it mounts.
-//   - buildFuseInitConfig() emits max_write, which libfuse 3 only
-//     accepts through fuse_conn_info at init.
-//
-// The defaults are the production-safe profile derived from the
-// benchmark report and the mtime-propagation contract tests.
-// attr_timeout and entry_timeout sit at one second so stat-heavy tools
-// (find, ls -l, git status) skip repeated FUSE round-trips.
-// negative_timeout stays at zero so a just-written file shows up
-// immediately to a process that probed before it existed. use_ino tells
-// the kernel to trust the inode numbers returned by getattr, which is
-// required for hard links to stat as the same inode. 512 KiB max_read
-// and max_write match the dofs CHUNK_SIZE so a single FUSE read maps to
-// a single chunk fetch.
-//
-// Three options the libfuse 2.9 build set are deliberately gone:
-//
-//   - big_writes. libfuse 3 removed it; batching up to max_write is the
-//     default there, which is what the option used to buy.
-//   - auto_cache. libfuse sets keep_cache *after* the open callback
-//     returns and does not check for passthrough, and the kernel
-//     refuses FOPEN_PASSTHROUGH combined with FOPEN_KEEP_CACHE
-//     (fs/fuse/iomode.c) with EIO. The driver now decides keepCache per
-//     open instead, applying auto_cache's own rule (reuse the cache
-//     when mtime and size are unchanged since the last open) for
-//     VFS-backed files only. See resolveKeepCache in driver.ts.
-//   - ac_attr_timeout. It only tunes auto_cache, and the binding refuses
-//     it without auto_cache.
-//
-// Every default is opt-out via the matching COMPUTERD_FUSE_* env var.
-// Setting an option to "" turns it off; a valid value overrides the
-// default.
+// The dofs chunk size, so one FUSE request maps to one chunk fetch.
+const DEFAULT_REQUEST_SIZE = 512 * 1024;
 
-// 512 KiB matches the dofs CHUNK_SIZE so a single FUSE read maps to a
-// single chunk fetch. Earlier defaults at 128 KiB issued four reads
-// per chunk and four SQL lookups for the same blob.
-const DEFAULT_MAX_READ = 524288;
-const DEFAULT_MAX_WRITE = 524288;
-const DEFAULT_ATTR_TIMEOUT = "1";
-const DEFAULT_ENTRY_TIMEOUT = "1";
-const DEFAULT_NEGATIVE_TIMEOUT = "0";
+// One second of attribute and entry caching saves round trips for tools
+// that stat repeatedly (find, ls -l, git status). Failed lookups are never
+// cached, so a file another process has just created is visible at once.
+const DEFAULT_TIMEOUTS = { attrTimeout: 1, entryTimeout: 1, negativeTimeout: 0 } as const;
 
-// Options that must never reach the mount.
-//
-//   - big_writes: removed in libfuse 3, which fails the mount on it.
-//   - max_write: init config in libfuse 3, not a mount option.
-//   - auto_cache / kernel_cache: incompatible with passthrough, and the
-//     driver now owns the keep-cache decision per open.
-//   - writeback_cache: possible under libfuse 3 but it changes
-//     behavior for the synced mount; a separate change.
-//   - ac_attr_timeout: tunes auto_cache only, and the binding refuses it
-//     without auto_cache.
-const DISALLOWED_OPTS = new Set([
+type TimeoutOption = keyof typeof DEFAULT_TIMEOUTS;
+
+// Dropped from COMPUTERD_FUSE_EXTRA_OPTS rather than allowed to fail the
+// mount. libfuse 3 removed big_writes and moved max_write into the init
+// config. The kernel refuses auto_cache and kernel_cache on a passthrough
+// open, so the driver decides keepCache per open instead, and
+// ac_attr_timeout only tunes auto_cache. writeback_cache would change write
+// behavior on the synced mount.
+const IGNORED_EXTRA_OPTS = new Set([
   "big_writes",
   "max_write",
   "auto_cache",
   "kernel_cache",
-  "writeback_cache",
   "ac_attr_timeout",
+  "writeback_cache",
 ]);
 
 export interface FuseOptionEnv {
@@ -77,86 +33,65 @@ export interface FuseOptionEnv {
   COMPUTERD_FUSE_PASSTHROUGH?: string;
 }
 
-/**
- * Mount options in the binding's own spelling: camelCase names, a bare
- * flag as `true`, numbers as numbers.
- */
-export type FuseMountOptions = Readonly<Record<string, boolean | number | string>>;
+type OptionValue = boolean | number | string;
 
-/** The subset of the libfuse 3 init config computerd sets. */
+/** Mount options in the binding's spelling: camelCase names, flags as `true`. */
+export type FuseMountOptions = Readonly<Record<string, OptionValue>>;
+
 export interface FuseInitConfig {
-  /** Maximum bytes per write request. Mount option in 2.9, init in 3. */
   readonly maxWrite: number;
-  /**
-   * Stacking depth allowed for a passthrough backing file. 1 covers a
-   * backing store on overlayfs; without it registration fails ELOOP.
-   */
   readonly maxBackingStackDepth: number;
 }
 
-/**
- * Build the init config handed to libfuse 3 from the init callback.
- *
- * Separate from the option string because libfuse 3 rejects max_write as
- * a mount option, so the two cannot be assembled together.
- */
 export function buildFuseInitConfig(env: FuseOptionEnv): FuseInitConfig {
   return {
-    maxWrite: parsePositiveInt(env.COMPUTERD_FUSE_MAX_WRITE) ?? DEFAULT_MAX_WRITE,
+    maxWrite: parsePositiveInt(env.COMPUTERD_FUSE_MAX_WRITE) ?? DEFAULT_REQUEST_SIZE,
+    // Lets a passthrough backing file sit on overlayfs, the usual
+    // container root. Without it registration fails with ELOOP.
     maxBackingStackDepth: 1,
   };
 }
 
-/**
- * Build the mount options handed to the binding. Pure function over an
- * env-like object, so tests can drive it directly.
- */
 export function buildFuseMountOptions(env: FuseOptionEnv): FuseMountOptions {
-  const opts: Record<string, boolean | number | string> = {
+  return {
+    // Trust getattr's inode numbers, so hard links stat as one inode.
     useIno: true,
-    maxRead: parsePositiveInt(env.COMPUTERD_FUSE_MAX_READ) ?? DEFAULT_MAX_READ,
+    maxRead: parsePositiveInt(env.COMPUTERD_FUSE_MAX_READ) ?? DEFAULT_REQUEST_SIZE,
+    ...timeoutOption("attrTimeout", env.COMPUTERD_FUSE_ATTR_TIMEOUT),
+    ...timeoutOption("entryTimeout", env.COMPUTERD_FUSE_ENTRY_TIMEOUT),
+    ...timeoutOption("negativeTimeout", env.COMPUTERD_FUSE_NEGATIVE_TIMEOUT),
+    ...parseExtraOptions(env.COMPUTERD_FUSE_EXTRA_OPTS),
   };
-
-  setTimeoutOption(opts, "attrTimeout", env.COMPUTERD_FUSE_ATTR_TIMEOUT, DEFAULT_ATTR_TIMEOUT);
-  setTimeoutOption(opts, "entryTimeout", env.COMPUTERD_FUSE_ENTRY_TIMEOUT, DEFAULT_ENTRY_TIMEOUT);
-  setTimeoutOption(
-    opts,
-    "negativeTimeout",
-    env.COMPUTERD_FUSE_NEGATIVE_TIMEOUT,
-    DEFAULT_NEGATIVE_TIMEOUT,
-  );
-
-  // EXTRA_OPTS keeps the libfuse spelling operators already know
-  // ("allow_other,fsname=x"). Each entry is translated to the binding's
-  // name, so it overrides a default instead of conflicting with it. An
-  // unknown name still fails the mount, in the binding, with its name in
-  // the error.
-  const extra = env.COMPUTERD_FUSE_EXTRA_OPTS;
-  if (extra !== undefined && extra !== "") {
-    for (const part of extra.split(",")) {
-      const trimmed = part.trim();
-      if (trimmed === "") continue;
-      const separator = trimmed.indexOf("=");
-      const name = separator === -1 ? trimmed : trimmed.slice(0, separator);
-      if (DISALLOWED_OPTS.has(name)) continue;
-      const raw = separator === -1 ? undefined : trimmed.slice(separator + 1);
-      opts[toCamelCase(name)] = raw === undefined ? true : parseOptionValue(raw);
-    }
-  }
-
-  return opts;
 }
 
-/**
- * Whether to ask the kernel for FUSE passthrough on local-only paths.
- *
- * On unless COMPUTERD_FUSE_PASSTHROUGH says otherwise, as a switch for
- * ruling passthrough in or out while chasing a problem. Only explicit
- * negatives turn it off.
- */
 export function passthroughRequested(env: FuseOptionEnv): boolean {
   const value = env.COMPUTERD_FUSE_PASSTHROUGH?.trim().toLowerCase();
   return !(value === "0" || value === "false" || value === "no" || value === "off");
+}
+
+// An unset variable keeps the default and an empty one turns the option off.
+function timeoutOption(name: TimeoutOption, raw: string | undefined): Record<string, number> {
+  if (raw === "") return {};
+  const value = raw === undefined ? DEFAULT_TIMEOUTS[name] : parseNonNegativeNumber(raw);
+  return value === undefined ? {} : { [name]: value };
+}
+
+// Entries use libfuse's spelling ("allow_other,fsname=x") and are renamed
+// to the binding's, so an entry overrides a default instead of conflicting
+// with it. An unknown name still fails the mount, in the binding.
+function parseExtraOptions(extra: string | undefined): Record<string, OptionValue> {
+  const options: Record<string, OptionValue> = {};
+  for (const entry of (extra ?? "").split(",")) {
+    const [name = "", value] = splitOnce(entry.trim(), "=");
+    if (name === "" || IGNORED_EXTRA_OPTS.has(name)) continue;
+    options[toCamelCase(name)] = value === undefined ? true : parseOptionValue(value);
+  }
+  return options;
+}
+
+function splitOnce(text: string, separator: string): [string, string | undefined] {
+  const index = text.indexOf(separator);
+  return index === -1 ? [text, undefined] : [text.slice(0, index), text.slice(index + 1)];
 }
 
 function toCamelCase(name: string): string {
@@ -171,27 +106,10 @@ function parseOptionValue(raw: string): number | string {
 function parsePositiveInt(value: string | undefined): number | undefined {
   if (value === undefined || value === "") return undefined;
   const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return undefined;
-  return n;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
-function parseNonNegativeNumber(value: string | undefined): number | undefined {
-  if (value === undefined || value === "") return undefined;
+function parseNonNegativeNumber(value: string): number | undefined {
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return undefined;
-  return n;
-}
-
-function setTimeoutOption(
-  opts: Record<string, boolean | number | string>,
-  name: string,
-  raw: string | undefined,
-  fallback: string,
-): void {
-  // Distinguish unset (use the default) from explicit empty (turn the
-  // option off). Unset is undefined here; explicit empty is "".
-  const effective = raw === undefined ? fallback : raw === "" ? undefined : raw;
-  const n = parseNonNegativeNumber(effective);
-  if (n === undefined) return;
-  opts[name] = n;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }

@@ -167,10 +167,8 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
     "module.exports=1",
   );
 
-  // The open is accounted for on /__computerd/info, read live: handed to
-  // the kernel where the host supports passthrough, served by computerd
-  // otherwise. Which one depends on the kernel and libfuse of the host
-  // running the test, so only the sum is pinned.
+  // Whether the open used passthrough depends on the host's kernel and
+  // libfuse, so only the sum is pinned.
   const fastPaths = JSON.parse((await request(`http://127.0.0.1:${port}/__computerd/info`)).body)
     .ignore.fastPaths;
   expect(fastPaths.passthroughOpens + fastPaths.passthroughFallbacks).toBeGreaterThan(0);

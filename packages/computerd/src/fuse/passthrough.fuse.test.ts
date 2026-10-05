@@ -1,17 +1,8 @@
-// Kernel FUSE passthrough for local-only paths, against a real mount.
-//
-// The unit tests drive the backing-id table through a fake registrar.
-// What they cannot show is the kernel's side: that a passthrough open
-// really takes computerd out of the data path, and that concurrent
-// opens of one file do not trip the EIO the kernel gives a second
-// backing id for the same inode. This boots the linux-x64 binary in a
-// privileged container, the same way runner.fuse.test.ts does, and
-// counts the daemon's read and write callbacks with the op tracer.
-//
-// Skips without Docker or the binary. The passthrough cases also skip,
-// rather than fail, when the host kernel does not offer passthrough
-// (Linux before 6.9), since that is a property of the machine running
-// the test.
+// Boots the linux-x64 binary in a privileged container, as
+// runner.fuse.test.ts does, and counts the daemon's read and write
+// callbacks with the op tracer. Skips without Docker or the binary. The
+// passthrough cases also skip on a host kernel without passthrough
+// (Linux before 6.9).
 
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { accessSync } from "node:fs";
@@ -52,7 +43,7 @@ describeIfReal("FUSE passthrough under a real mount", () => {
   let cid: string | undefined;
   let url = "";
   let client: ReturnType<typeof createWorkspaceClient> | undefined;
-  let kernelOffersPassthrough = false;
+  let passthroughAvailable = false;
 
   beforeAll(async () => {
     const proc = spawn("bash", [RUN_COMPUTERD_SCRIPT], {
@@ -75,10 +66,7 @@ describeIfReal("FUSE passthrough under a real mount", () => {
       url: `${url.replace(/^http(s?):\/\//, "ws$1://")}/api`,
       WebSocketImpl: WebSocket,
     });
-    // Before any open the reason says whether the kernel offered the
-    // capability at all, or whether COMPUTERD_FUSE_PASSTHROUGH in the
-    // caller's environment turned it off.
-    kernelOffersPassthrough = !/kernel did not offer|turned off/.test(
+    passthroughAvailable = !/kernel did not offer|turned off/.test(
       (await fastPaths()).passthroughReason,
     );
   }, 120_000);
@@ -129,7 +117,7 @@ describeIfReal("FUSE passthrough under a real mount", () => {
   }
 
   test("the kernel serves local-only file data without the daemon", async (ctx) => {
-    if (!kernelOffersPassthrough) ctx.skip();
+    if (!passthroughAvailable) ctx.skip();
     const before = await dataOps();
     const result = await run(
       [
@@ -142,8 +130,6 @@ describeIfReal("FUSE passthrough under a real mount", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe(`${8 * 1024 * 1024}\nsame\n`);
 
-    // Through computerd this would be 8 writes and 16 or more reads at
-    // the 512 KiB request size. Passthrough makes it none.
     expect(await dataOps()).toEqual(before);
 
     const reported = await fastPaths();
@@ -153,10 +139,7 @@ describeIfReal("FUSE passthrough under a real mount", () => {
   }, 60_000);
 
   test("concurrent opens of one file, and of a hard link to it, all work", async (ctx) => {
-    // A second backing id for an inode that already has one makes the
-    // kernel fail the open with EIO. Every open here goes through the
-    // one shared id instead.
-    if (!kernelOffersPassthrough) ctx.skip();
+    if (!passthroughAvailable) ctx.skip();
     const result = await run(
       [
         "mkdir -p node_modules",
@@ -173,9 +156,6 @@ describeIfReal("FUSE passthrough under a real mount", () => {
   }, 60_000);
 
   test("a synced file still reuses the page cache across opens", async () => {
-    // auto_cache is gone from the mount options, because the kernel
-    // refuses it alongside passthrough. The driver applies the same rule
-    // per open instead: an unchanged file keeps its cached pages.
     await run("echo cached > synced.txt && cat synced.txt > /dev/null");
     const warm = await dataOps();
     const result = await run("cat synced.txt && cat synced.txt");

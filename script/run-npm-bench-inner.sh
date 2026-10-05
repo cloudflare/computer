@@ -11,9 +11,8 @@ apt-get install -y --no-install-recommends \
 
 mkdir -p /tmp/workspace /tmp/baseline
 
-# With IGNORE_NODE_MODULES=1, each run's node_modules under
-# /tmp/workspace/ignored is local-only while its package.json and lock
-# stay synced, which is how MOUNT_IGNORE is meant to be used.
+# Only node_modules is local-only, so package.json and the lock stay
+# synced, as in a real project.
 MOUNT_IGNORE=""
 if [ "${IGNORE_NODE_MODULES:-0}" = "1" ]; then
   MOUNT_IGNORE="/ignored/*/node_modules"

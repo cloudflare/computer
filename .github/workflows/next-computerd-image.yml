@@ -67,8 +67,7 @@ jobs:
       - name: Build all workspaces
         run: npm run build --workspaces --if-present
 
-      # build:bin compiles the FUSE addon inside a Debian trixie container,
-      # so the runner needs Docker but no FUSE packages of its own.
+      # Compiles the FUSE addon in a container, so no FUSE packages here.
       - name: Build the computerd binary
         run: npm run build:bin --workspace @cloudflare/computerd
 

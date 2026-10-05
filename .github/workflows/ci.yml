@@ -67,9 +67,8 @@ jobs:
             path: packages/computerd
             needs-siblings: true
             build-computerd-bin: true
-            # fuse3 ships fusermount3, which the real-FUSE tests mount
-            # through. The addon itself is compiled during npm ci. xz-utils
-            # extracts the target Node binary used by build:bin.
+            # fuse3 provides fusermount3 for the real-FUSE tests; xz-utils
+            # unpacks the Node binary build:bin injects into.
             system-deps: "fuse3 xz-utils"
     steps:
       - uses: actions/checkout@v6
