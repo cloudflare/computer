@@ -303,10 +303,11 @@ static const uint32_t op_lseek = 44;
 #define FUSE_OPERATION_FLAG_UTIME_OMIT_OK 4U
 #define FUSE_OPERATION_FLAG_DIRECT_IO 8U
 #define FUSE_OPERATION_FLAG_POLL_HANDLE 16U
+#define FUSE_OPERATION_FLAG_USE_INO 32U
 #define FUSE_OPERATION_FLAGS_ALLOWED \
   (FUSE_OPERATION_FLAG_NULL_PATH_OK | FUSE_OPERATION_FLAG_NO_PATH | \
    FUSE_OPERATION_FLAG_UTIME_OMIT_OK | FUSE_OPERATION_FLAG_DIRECT_IO | \
-   FUSE_OPERATION_FLAG_POLL_HANDLE)
+   FUSE_OPERATION_FLAG_POLL_HANDLE | FUSE_OPERATION_FLAG_USE_INO)
 
 // Data structures
 
@@ -2543,6 +2544,12 @@ static void * fuse_native_init (
        (FUSE_OPERATION_FLAG_NULL_PATH_OK | FUSE_OPERATION_FLAG_NO_PATH)) != 0;
     config->direct_io =
       (ft->operation_flags & FUSE_OPERATION_FLAG_DIRECT_IO) != 0;
+    /*
+     * use_ino is a fuse_config field in FUSE 3, not a mount option;
+     * fuse_new() rejects it on the command line.
+     */
+    config->use_ino =
+      (ft->operation_flags & FUSE_OPERATION_FLAG_USE_INO) != 0;
   }
 
   if (!ft->implemented[op_init] || l == NULL) return ft;

@@ -14,7 +14,7 @@ it is a much shorter path to passthrough than patching libfuse 2.
 
 ## What we changed
 
-All changes are in `fuse-native.c` and `index.js`.
+All changes are in `fuse-native.c`, `index.js`, and `index.d.ts`.
 
 ### `fuse-native.c`
 
@@ -49,6 +49,15 @@ All changes are in `fuse-native.c` and `index.js`.
   refused alongside `keepCache` / `directIO`.
 - `maxBackingStackDepth` init config field; the config array grew 7 -> 8.
 - `Fuse.CAP_PASSTHROUGH` (bit 29) and `Fuse.CAP_ASYNC_READ`.
+- `useIno` (`use_ino`) and `negativeTimeout` (`negative_timeout`)
+  options, which upstream does not expose, and there is no raw option
+  string to pass them through instead. computerd needs `use_ino` so hard
+  links stat as one inode, and sets `negative_timeout=0` explicitly so a
+  lookup miss is never cached. `negative_timeout` is still a mount
+  option, but `use_ino` moved into `struct fuse_config` in FUSE 3 and
+  `fuse_new()` rejects it on the command line, so it travels as a new
+  operation flag (`FUSE_OPERATION_FLAG_USE_INO`, 32) and the init hook
+  sets `config->use_ino`.
 
 ## Verified on this host
 

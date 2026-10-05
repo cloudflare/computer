@@ -422,9 +422,9 @@ export function withLocalPassthrough(
       cb(0);
     },
 
-    fsync(path, fh, datasync, cb) {
+    fsync(path, datasync, fh, cb) {
       if (!isLocalHandle(fh)) {
-        ops.fsync(path, fh, datasync, cb);
+        ops.fsync(path, datasync, fh, cb);
         return;
       }
       const handle = handles.get(fh);
@@ -434,7 +434,7 @@ export function withLocalPassthrough(
       }
       localOps += 1;
       try {
-        if (datasync !== 0) fs.fdatasyncSync(handle.fd);
+        if (datasync) fs.fdatasyncSync(handle.fd);
         else fs.fsyncSync(handle.fd);
         cb(0);
       } catch (error) {

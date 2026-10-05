@@ -36,6 +36,7 @@ const OPERATION_FLAG_NO_PATH = 2
 const OPERATION_FLAG_UTIME_OMIT_OK = 4
 const OPERATION_FLAG_DIRECT_IO = 8
 const OPERATION_FLAG_POLL_HANDLE = 16
+const OPERATION_FLAG_USE_INO = 32
 const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const XATTR_NOT_FOUND = -(os.constants.errno.ENOATTR || os.constants.errno.ENODATA || 61)
 const EMPTY_INIT_CONFIG = new Uint32Array(8)
@@ -234,6 +235,8 @@ const OPTION_ALIASES = new Map([
   ['auto_cache', 'autoCache'],
   ['entry_timeout', 'entryTimeout'],
   ['attr_timeout', 'attrTimeout'],
+  ['negative_timeout', 'negativeTimeout'],
+  ['use_ino', 'useIno'],
   ['ac_attr_timeout', 'acAttrTimeout'],
   ['nonempty', 'nonEmpty'],
   ['direct_io', 'directIo'],
@@ -245,7 +248,8 @@ const KNOWN_OPTIONS = new Set([
   'blksize', 'maxRead', 'nonEmpty', 'fd', 'userId', 'fsname', 'subtype',
   'kernelCache', 'autoCache', 'umask', 'entryTimeout', 'attrTimeout',
   'acAttrTimeout', 'noforget', 'remember', 'modules', 'name', 'onError',
-  'maxConcurrency', 'nullPathOk', 'noPath', 'directIo'
+  'maxConcurrency', 'nullPathOk', 'noPath', 'directIo', 'useIno',
+  'negativeTimeout'
 ])
 
 const pollHandleFinalizer = new FinalizationRegistry(state => {
@@ -399,6 +403,7 @@ class Fuse extends Nanoresource {
         ? OPERATION_FLAG_UTIME_OMIT_OK
         : 0) |
       (this.opts.directIo ? OPERATION_FLAG_DIRECT_IO : 0) |
+      (this.opts.useIno ? OPERATION_FLAG_USE_INO : 0) |
       (this.ops.pollWithHandle ? OPERATION_FLAG_POLL_HANDLE : 0)
 
     this._force = !!this.opts.force
@@ -457,6 +462,7 @@ class Fuse extends Nanoresource {
     if (hasValue('gid')) options.push('gid=' + mountInteger('gid', this.opts.gid))
     if (hasValue('entryTimeout')) options.push('entry_timeout=' + mountNumber('entryTimeout', this.opts.entryTimeout))
     if (hasValue('attrTimeout')) options.push('attr_timeout=' + mountNumber('attrTimeout', this.opts.attrTimeout))
+    if (hasValue('negativeTimeout')) options.push('negative_timeout=' + mountNumber('negativeTimeout', this.opts.negativeTimeout))
     if (hasValue('acAttrTimeout')) options.push('ac_attr_timeout=' + mountNumber('acAttrTimeout', this.opts.acAttrTimeout))
     if (this.opts.noforget) options.push('noforget')
     if (hasValue('remember')) options.push('remember=' + mountInteger('remember', this.opts.remember))
@@ -2007,9 +2013,9 @@ function validateOptions (opts) {
   const booleanOptions = [
     'displayFolder', 'debug', 'force', 'mkdir', 'allowOther', 'allowRoot',
     'autoUnmount', 'defaultPermissions', 'blkdev', 'kernelCache', 'autoCache',
-    'noforget', 'nonEmpty', 'nullPathOk', 'noPath', 'directIo'
+    'noforget', 'nonEmpty', 'nullPathOk', 'noPath', 'directIo', 'useIno'
   ]
-  const numberOptions = ['entryTimeout', 'attrTimeout', 'acAttrTimeout']
+  const numberOptions = ['entryTimeout', 'attrTimeout', 'acAttrTimeout', 'negativeTimeout']
   const stringOptions = ['fsname', 'subtype', 'modules', 'name']
 
   for (const name of Reflect.ownKeys(opts)) {

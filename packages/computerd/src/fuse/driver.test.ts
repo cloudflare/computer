@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+
 import { expect, test } from "vitest";
 
 import { createNodeVirtualFileSystem, makeFUSEOps } from "./index.js";
@@ -150,8 +152,10 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(await status((cb) => ops.chmod("/dir/file.txt", 0o600, cb))).toBe(0);
   expect(await status((cb) => ops.chown("/dir/file.txt", 123, 456, cb))).toBe(0);
   expect(await status((cb) => ops.flush("/dir/file.txt", handleOf(create.result), cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/dir/file.txt", handleOf(create.result), 0, cb))).toBe(0);
-  expect(await status((cb) => ops.fsyncdir("/dir", rootDir.result as number, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/dir/file.txt", false, handleOf(create.result), cb))).toBe(
+    0,
+  );
+  expect(await status((cb) => ops.fsyncdir("/dir", false, rootDir.result as number, cb))).toBe(0);
 
   expect(
     await status((cb) =>
@@ -161,8 +165,8 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(await status((cb) => ops.getxattr("/dir/file.txt", "user.test", 0, cb))).toBe(-61);
   const xattrs = await callback((cb) => ops.listxattr("/dir/file.txt", cb));
   expect(xattrs.errno).toBe(0);
-  expect(Buffer.isBuffer(xattrs.result)).toBe(true);
-  expect((xattrs.result as Buffer).length).toBe(0);
+  // fuse-napi wants the attribute names as an array of strings.
+  expect(xattrs.result).toEqual([]);
   expect(await status((cb) => ops.removexattr("/dir/file.txt", "user.test", cb))).toBe(-61);
   expect(await status((cb) => ops.utimens("/dir/file.txt", Date.now(), Date.now(), cb))).toBe(0);
   expect(await status((cb) => ops.utimens("/missing", Date.now(), Date.now(), cb))).toBe(-2);
@@ -304,7 +308,7 @@ test("FUSE write is visible through the backing VFS after release", async () => 
   // release + flush + fsync — every codepath a well-behaved
   // client would call before considering the write durable.
   expect(await status((cb) => ops.flush("/from-fuse.txt", fh, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/from-fuse.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/from-fuse.txt", false, fh, cb))).toBe(0);
   expect(await status((cb) => ops.release("/from-fuse.txt", fh, cb))).toBe(0);
 
   // The VFS is the RPC surface's source of truth. Anything that
@@ -314,6 +318,53 @@ test("FUSE write is visible through the backing VFS after release", async () => 
     "from-fuse\n",
     "FUSE writes must be flushed into the backing VFS for RPC reads to see them",
   );
+});
+
+test("FUSE open with O_TRUNC empties the file", async () => {
+  // libfuse 3 negotiates atomic O_TRUNC by default, so `: > f` arrives
+  // as open(O_TRUNC) with no separate truncate. Ignoring the flag
+  // leaves the old bytes in place.
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/existing.txt", "old contents\n");
+  const ops = makeFUSEOps(vfs);
+
+  const opened = await callback((cb) =>
+    ops.open("/existing.txt", fsConstants.O_WRONLY | fsConstants.O_TRUNC, cb),
+  );
+  expect(opened.errno).toBe(0);
+  const fh = handleOf(opened.result);
+
+  const stat = await callback((cb) => ops.getattr("/existing.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(0);
+
+  expect(await status((cb) => ops.release("/existing.txt", fh, cb))).toBe(0);
+  expect(vfs.readFileSync("/existing.txt").length).toBe(0);
+});
+
+test("FUSE open with O_TRUNC empties a file whose create is still buffered", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+  const created = await callback((cb) => ops.create("/pending.txt", 0o644, cb));
+  const createdFh = handleOf(created.result);
+  const payload = Buffer.from("buffered");
+  await status((cb) => ops.write("/pending.txt", createdFh, payload, payload.length, 0, cb));
+
+  const opened = await callback((cb) =>
+    ops.open("/pending.txt", fsConstants.O_WRONLY | fsConstants.O_TRUNC, cb),
+  );
+  expect(opened.errno).toBe(0);
+  const stat = await callback((cb) => ops.getattr("/pending.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(0);
+});
+
+test("FUSE open without O_TRUNC keeps the contents", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/kept.txt", "keep me");
+  const ops = makeFUSEOps(vfs);
+  const opened = await callback((cb) => ops.open("/kept.txt", fsConstants.O_RDWR, cb));
+  expect(opened.errno).toBe(0);
+  const stat = await callback((cb) => ops.getattr("/kept.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(7);
 });
 
 test("FUSE truncate is visible through the backing VFS after fsync", async () => {
@@ -336,12 +387,12 @@ test("FUSE truncate is visible through the backing VFS after fsync", async () =>
   await status((cb: (value: number) => void) =>
     ops.write("/t.txt", fh, payload, payload.byteLength, 0, cb),
   );
-  expect(await status((cb) => ops.fsync("/t.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/t.txt", false, fh, cb))).toBe(0);
   expect(vfs.statSync("/t.txt").size).toBe(payload.byteLength);
 
   // Shrink via truncate and re-sync.
   expect(await status((cb) => ops.truncate("/t.txt", 5, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/t.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/t.txt", false, fh, cb))).toBe(0);
 
   expect(vfs.statSync("/t.txt").size).toBe(5);
   expect(Buffer.from(vfs.readFileSync("/t.txt")).toString("utf8")).toBe("origi");
@@ -368,7 +419,7 @@ test("FUSE rename carries the buffered bytes to the new path", async () => {
   // Rename before the buffer ever spills. The buffer entry moves
   // with the file; fsync on the new path spills correctly.
   expect(await status((cb) => ops.rename("/old.txt", "/new.txt", cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/new.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/new.txt", false, fh, cb))).toBe(0);
 
   expect(Buffer.from(vfs.readFileSync("/new.txt")).toString("utf8")).toBe("renamed-content");
   // Old path is gone from both layers.
@@ -401,7 +452,7 @@ test("FUSE getattr size matches what readFileSync would return", async () => {
 
   // After flush they still agree — anything calling stat through
   // the VFS (RPC, host-side platformatic/vfs) needs the truth.
-  expect(await status((cb) => ops.fsync("/g.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/g.txt", false, fh, cb))).toBe(0);
   const afterFlush = await callback((cb: (errno: number, result: unknown) => void) =>
     ops.getattr("/g.txt", cb),
   );
@@ -473,7 +524,7 @@ test("FUSE clean buffers are not spilled repeatedly", async () => {
   ).toBe(payload.byteLength);
 
   expect(await status((cb) => ops.flush("/clean-after-flush.txt", fh, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/clean-after-flush.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/clean-after-flush.txt", false, fh, cb))).toBe(0);
   expect(await status((cb) => ops.release("/clean-after-flush.txt", fh, cb))).toBe(0);
 
   expect(writesAfterCreate).toBe(1);
@@ -1052,10 +1103,10 @@ test("xattr: getxattr for a VFS-backed file returns correct codes", async () => 
   expect(
     await status((cb) => ops.setxattr("/xattr-backed.txt", "user.x", Buffer.from("v"), 0, 0, cb)),
   ).toBe(0);
-  // listxattr returns an empty buffer.
+  // listxattr returns an empty list of names.
   const lx = await callback((cb) => ops.listxattr("/xattr-backed.txt", cb));
   expect(lx.errno).toBe(0);
-  expect((lx.result as Buffer).length).toBe(0);
+  expect(lx.result).toEqual([]);
   // removexattr returns ENODATA.
   expect(await status((cb) => ops.removexattr("/xattr-backed.txt", "user.x", cb))).toBe(-61);
 });

@@ -126,6 +126,21 @@ describe("withLocalPassthrough: routing", () => {
     expect(readBack).toBe("module.exports = 1\n");
   });
 
+  test("fsync on a local handle stays local, whatever datasync is", () => {
+    // fuse-napi passes (path, datasync, fd, cb). With the arguments
+    // swapped, the boolean lands where the handle should be, misses
+    // the local handle range, and the call leaks into the VFS.
+    const { ops, calls } = build(["/node_modules"]);
+    let fh = 0;
+    ops.create("/node_modules/sync.js", 0o644, (_code, handle) => {
+      fh = handle as number;
+    });
+    for (const datasync of [false, true]) {
+      ops.fsync("/node_modules/sync.js", datasync, fh, (code) => expect(code).toBe(0));
+    }
+    expect(calls).toEqual([]);
+  });
+
   test("creates missing parent directories on first write", () => {
     const { ops } = build(["/node_modules"]);
     ops.create("/node_modules/a/b/c/deep.js", 0o644, (code) => expect(code).toBe(0));
@@ -600,8 +615,8 @@ describe("withLocalPassthrough: descriptor and metadata operations", () => {
     writeFileSync(join(root, "node_modules/a"), "x");
     const fh = open(ops, "/node_modules/a");
 
-    expect(status((cb) => ops.fsync("/node_modules/a", fh, 0, cb))).toBe(0);
-    expect(status((cb) => ops.fsync("/node_modules/a", fh, 1, cb))).toBe(0);
+    expect(status((cb) => ops.fsync("/node_modules/a", false, fh, cb))).toBe(0);
+    expect(status((cb) => ops.fsync("/node_modules/a", true, fh, cb))).toBe(0);
     expect(synced).toEqual(["fsync", "fdatasync"]);
   });
 

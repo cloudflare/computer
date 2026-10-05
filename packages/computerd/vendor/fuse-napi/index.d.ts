@@ -514,6 +514,14 @@ declare namespace Fuse {
     acAttrTimeout?: number;
     /** Native libfuse spelling for acAttrTimeout. */
     ac_attr_timeout?: number;
+    /** Seconds the kernel caches a failed lookup. 0 turns it off. */
+    negativeTimeout?: number;
+    /** Native libfuse spelling for negativeTimeout. */
+    negative_timeout?: number;
+    /** Trust the inode numbers returned by getattr, so hard links match. */
+    useIno?: boolean;
+    /** Native libfuse spelling for useIno. */
+    use_ino?: boolean;
     noforget?: boolean;
     remember?: number;
     modules?: string;
