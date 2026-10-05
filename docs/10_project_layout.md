@@ -144,10 +144,14 @@ packages/computerd/
 │   ├── cli/
 │   │   └── computerd.ts                   # CLI entry
 │   ├── fuse/
-│   │   ├── driver.ts
+│   │   ├── driver.ts                # VFS op table and mountFuse
+│   │   ├── binding-ops.ts           # adapts the op table to fuse-napi
+│   │   ├── passthrough.ts           # local-only paths (MOUNT_IGNORE)
+│   │   ├── ignore.ts                # MOUNT_IGNORE matcher
+│   │   ├── ignore-config.ts         # startup config and /__computerd/info
+│   │   ├── options.ts               # mount options and init config
 │   │   ├── backend.ts
 │   │   ├── vfs.ts
-│   │   ├── fuse-native.d.ts         # fuse-native typings
 │   │   └── index.ts
 │   └── exec/
 │       ├── runner.ts
@@ -155,6 +159,8 @@ packages/computerd/
 │       ├── types.ts
 │       ├── log.ts
 │       └── index.ts
+├── vendor/
+│   └── fuse-napi/                   # patched libfuse 3 binding; see PATCHES.md
 ├── scripts/
 │   ├── build.mjs                    # → dist/cli/computerd.cjs
 │   ├── build-bin.mjs                # SEA driver
@@ -162,8 +168,7 @@ packages/computerd/
 │       └── bundle.mjs               # esbuild → SEA bundle
 ├── artifacts/
 │   └── computerd/
-│       ├── computerd-linux-x64
-│       └── computerd-macos-x64
+│       └── computerd-linux-x64
 ├── tsconfig.json
 └── package.json
 ```

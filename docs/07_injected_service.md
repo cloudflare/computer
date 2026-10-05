@@ -11,14 +11,14 @@ exec runner, and the capnweb RPC endpoint the DO talks to.
 
 The package ships it as a single self-contained Node SEA binary —
 **`computerd`** — produced by `packages/computerd/` (npm package
-`@cloudflare/computerd`, bin name `computerd`). The binary embeds Node,
-the `fuse-native` prebuilds, and `libfuse` as SEA assets, so the host
-image does **not** need a Node runtime. Build it with:
+`@cloudflare/computerd`, bin name `computerd`). The binary embeds Node
+and the FUSE addon as SEA assets, so the host image does **not** need a
+Node runtime. It links the system libfuse 3, so the image does need
+libfuse 3.17 or newer. Build it with:
 
 ```bash
 npm run build:bin --workspace @cloudflare/computerd
 # → artifacts/computerd/computerd-linux-x64
-# → artifacts/computerd/computerd-macos-x64
 ```
 
 `examples/container/Dockerfile` is the canonical recipe for staging the
@@ -68,11 +68,11 @@ The capnweb bootstrap interface is **`WorkspaceRPC`** (defined in
 The canonical recipe is `examples/container/Dockerfile`:
 
 ```dockerfile
-FROM --platform=linux/amd64 debian:stable-slim
+FROM --platform=linux/amd64 debian:trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 ca-certificates \
+      fuse3 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY build/computerd-linux-x64 /usr/local/bin/computerd
@@ -90,9 +90,10 @@ Notes:
 
 - No Node, no `npm install`, no `package.json` — the SEA binary
   embeds everything.
-- `libfuse` itself is bundled into the binary as a SEA asset; the apt
-  install of `fuse3 libfuse2t64` provides the userland tooling and
-  `/dev/fuse` plumbing for the host kernel.
+- `fuse3` provides libfuse 3 and `fusermount3`. computerd needs libfuse
+  3.17 or newer, which is Debian trixie or later; bookworm's 3.14 is too
+  old. computerd 0.4.1 and earlier linked libfuse 2 instead and also
+  need `libfuse2t64`.
 - `EXPOSE 8080` matches the Cloudflare backend's pinned port. If you
   run `computerd` outside Cloudflare Containers, leave `PORT` unset (default
   `45678`) or pick your own.

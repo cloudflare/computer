@@ -14,7 +14,7 @@ Computer daemon CLI and FUSE mount package.
 
 ## `computerd`
 
-`computerd` starts a FUSE-backed virtual filesystem and an HTTP server. The filesystem is backed by `@platformatic/vfs`, while the FUSE mount is provided by `fuse-native`.
+`computerd` starts a FUSE-backed virtual filesystem and an HTTP server. The filesystem is backed by `@platformatic/vfs`, while the FUSE mount is provided by a vendored, patched copy of [`fuse-napi`](vendor/fuse-napi/PATCHES.md), which binds libfuse 3.
 
 The HTTP server listens on the port provided by the `PORT` environment variable, defaulting to `45678`. The FUSE mount point is provided by `MOUNT_POINT`, defaulting to `/workspace`. The backing VFS stores files under the same absolute prefix: VFS `/workspace/repo/a.txt` is visible to container processes as `/workspace/repo/a.txt`, so capnweb reads, shim materialisation, and shell `exec` agree on absolute paths.
 
@@ -25,7 +25,7 @@ PORT=45678 MOUNT_POINT=/tmp/workspace npx -p @cloudflare/computerd computerd
 Current endpoints:
 
 - `GET /health` returns `200 OK` with `ok\n` once the HTTP server is up (it does not currently block on FUSE readiness).
-- `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
+- `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port, plus an `ignore` block describing local-only paths and whether the kernel is serving them through FUSE passthrough. See [Local-only paths](#local-only-paths-mount_ignore).
 - `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, process resident memory, and the store's own size and free-page count. Useful for watching how the store grows under load.
 - `POST /__computerd/checkpoint` folds the store's write-ahead log back into the database file and returns `{ walFrames, sizeBytes, durationMs }`. For a host about to take a disk snapshot. Any other method returns `405`.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
@@ -42,7 +42,8 @@ check, which is what the container harnesses rely on.
 Current filesystem support:
 
 - `@platformatic/vfs` in-memory filesystem provided by `@cloudflare/dofs`'s node provider.
-- FUSE operation adapter covering the full `fuse-native` operation surface.
+- FUSE operation adapter covering the full operation surface the binding exposes.
+- Local-only paths (`MOUNT_IGNORE`) served from the container's disk and kept out of sync. When the kernel supports it, their file data goes through FUSE passthrough and never reaches `computerd`.
 - Unsupported FUSE operations return `ENOSYS` to the kernel; the binding logs a one-shot warning per operation.
 - capnweb RPC over `/api` exposes the workspace database and an `exec` runner to clients.
 - Synchronization is driven by whoever holds the other end of the session. The daemon serves `SyncRPC`; it does not run a sync loop of its own.
@@ -246,17 +247,36 @@ spelling, with the mount point and trailing slashes removed:
     "patterns": ["**/node_modules", "!/vendor/node_modules", "!**/node_modules/.bin"],
     "ineffectiveExclusions": ["!**/node_modules/.bin"],
     "fastPaths": {
-      "passthrough": false,
-      "passthroughReason": "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API",
+      "passthrough": true,
+      "passthroughReason": "active",
+      "passthroughOpens": 1284,
+      "passthroughFallbacks": 0,
       "writebackCache": false
     }
   }
 }
 ```
 
-`fastPaths.passthrough` is `false` on current builds by design. Ignored
-writes skip the VFS and the transfer but still cross FUSE; see
-[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore).
+`fastPaths` is read on every request. `passthrough` is `true` once the
+kernel is serving local-only file data itself, through FUSE passthrough,
+and the two counters say how opens were served. When it is `false`,
+`passthroughReason` names the case, because each has a different fix:
+
+| `passthroughReason` says | What to do |
+| --- | --- |
+| no local-only paths are configured | Nothing; set `MOUNT_IGNORE` to use the feature. |
+| no kernel FUSE mount is running | Expected under `FUSE_MOUNT=shim` or `none`. |
+| turned off with `COMPUTERD_FUSE_PASSTHROUGH` | Unset it. |
+| the kernel did not offer FUSE passthrough | The host needs Linux 6.9 or newer. |
+| refused every backing registration | Give computerd `CAP_SYS_ADMIN`, and keep `MOUNT_IGNORE_PATH` off overlayfs stacked on another overlayfs. |
+| negotiated, but no local-only file has been opened yet | Nothing; it flips on the first open. |
+
+In every one of these cases the local-only paths still work. They are
+served by computerd instead of the kernel, which is slower but otherwise
+the same. computerd also logs the first refused registration per mount
+with the error code. See
+[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore)
+for what passthrough changes.
 
 ### Synced directories that hold local-only paths
 
@@ -318,14 +338,15 @@ Durable Object should be deleted in favor of `MOUNT_IGNORE`.
 
 ## FUSE prerequisites
 
-Linux hosts/containers need access to `/dev/fuse` and mount permissions.
+Linux hosts and containers need access to `/dev/fuse`, mount permissions, and libfuse 3.17 or newer at runtime. On Debian that is the `fuse3` package from trixie onward. The binary links the system libfuse rather than carrying a copy, and exits with a message naming the package if the library is missing.
 
-### macOS: macFUSE
+Kernel passthrough for local-only paths also needs Linux 6.9 or newer and `CAP_SYS_ADMIN`. Without either, those paths still work and are served through `computerd` instead; `/__computerd/info` says which case applies.
 
-Install macFUSE. On Apple Silicon, macFUSE may require Reduced
-Security / kernel extension approval. FUSE-T is intentionally
-unsupported — the libfuse2 surface our `fuse-native` dependency
-wraps does not work against the FUSE-T userland.
+Building from source needs a C toolchain and the libfuse 3 headers (`build-essential pkg-config libfuse3-dev` on Debian or Ubuntu). Any libfuse 3 compiles; an older one than 3.17 builds without passthrough.
+
+### macOS
+
+No macOS binary is published. The binding supports macFUSE 5.3.1 or newer with its libfuse 3 runtime, and `FUSE_MOUNT=macfuse` still selects it when running from source, but that path has not been tested since the move to libfuse 3. FUSE-T is not supported.
 
 Pick the backend with `FUSE_MOUNT`:
 
@@ -345,7 +366,11 @@ EXEC_SHELL=/usr/bin/bash          # interpreter exec runs commands under (defaul
 RPC_CLIENT_SECRET=<secret>        # require Authorization: Bearer <secret> on every route but /health
 COMPUTER_VAR_NODE_ENV=production  # forwarded into exec as NODE_ENV
 COMPUTERD_DB=/var/lib/computerd/state.db  # on-disk store; "memory" or unset keeps it in memory
+MOUNT_IGNORE=node_modules,dist    # local-only paths, kept on the container's disk and out of sync
+COMPUTERD_FUSE_PASSTHROUGH=0      # serve local-only paths through computerd instead of the kernel
 ```
+
+`COMPUTERD_FUSE_PASSTHROUGH` is on by default and only matters when `MOUNT_IGNORE` is set. Turning it off is for ruling passthrough in or out while chasing a problem.
 
 `EXEC_SHELL` must be an absolute path. It exists because `/bin/sh` is `dash` on a Debian-family image, where bash-only syntax is a parse error that aborts the command rather than a missing feature: `${PIPESTATUS[@]}`, arrays, `[[ ... ]]`, and process substitution all fail that way. `PIPESTATUS` is the usual way to recover the real exit status of a pipeline whose output is filtered — a command redacting a credential through `sed`, for instance — so a caller that needs it can select an interpreter that has it without repointing `/bin/sh` for every other script in the image.
 
@@ -383,7 +408,7 @@ The test command does not build first. Some suites need build output that is not
 
 This package requires Node.js 22+ because `@platformatic/vfs` does.
 
-The two real-FUSE suites gate themselves differently. `src/cli/computerd.test.ts` runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise auto-detection resolves to the shim and the case skips. The guard is a bare existence check, so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the skip and the mount then fails with `EPERM` — leave the device absent unless the container is privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). `src/exec/runner.fuse.test.ts` is separate: it skips unless both Docker and the prebuilt `computerd` binary are available, and runs `computerd` inside a privileged container, so the host's `/dev/fuse` does not matter. See the [`debugging-computerd-fuse`](../../.agents/skills/debugging-computerd-fuse/SKILL.md) skill for the privileged Docker setup.
+The two real-FUSE suites gate themselves differently. `src/cli/computerd.test.ts` runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise auto-detection resolves to the shim and the case skips. The guard is a bare existence check, so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the skip and the mount then fails with `EPERM` — leave the device absent unless the container is privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). `src/exec/runner.fuse.test.ts` and `src/fuse/passthrough.fuse.test.ts` are separate: they skip unless both Docker and the prebuilt `computerd` binary are available, and run `computerd` inside a privileged container, so the host's `/dev/fuse` does not matter. The passthrough cases also skip on a kernel older than 6.9. See the [`debugging-computerd-fuse`](../../.agents/skills/debugging-computerd-fuse/SKILL.md) skill for the privileged Docker setup.
 
 ## Standalone release artifacts
 
@@ -393,4 +418,6 @@ Standalone binaries are release artifacts, not files published in the npm packag
 npm run build:bin --workspace=@cloudflare/computerd
 ```
 
-The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets per target.
+The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` compiles the FUSE addon inside a `node:22-trixie-slim` container for the target platform, bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. The addon is embedded as a SEA asset; libfuse is not, and comes from the system at runtime.
+
+The published target is linux-x64. `COMPUTERD_BIN_TARGETS=linux-arm64` builds an arm64 binary as well, for running natively on an arm64 machine. Building needs Docker; the compiled addon is cached under `dist/sea`, and `COMPUTERD_FUSE_ADDON` points at a prebuilt `fuse.node` to skip the container.
