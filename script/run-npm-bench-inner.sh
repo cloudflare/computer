@@ -6,7 +6,7 @@ set -u
 
 apt-get update >/dev/null 2>&1
 apt-get install -y --no-install-recommends \
-  fuse3 libfuse2t64 attr util-linux coreutils findutils \
+  fuse3 attr util-linux coreutils findutils \
   ca-certificates curl nodejs npm >/dev/null 2>&1
 
 mkdir -p /tmp/workspace /tmp/baseline

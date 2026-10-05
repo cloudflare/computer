@@ -50,9 +50,12 @@ capnweb endpoints from a plain Node script.
 
 There's already a recipe — `packages/computer/test-harness/run-computerd.sh`.
 It picks a host port, runs the binary with `--privileged
---device /dev/fuse --cap-add SYS_ADMIN --cap-add MKNOD`, installs
-fuse3 + libfuse2t64 from apt, waits for `/health`, prints the URL
-on stdout and the container id on stderr.
+--device /dev/fuse --cap-add SYS_ADMIN --cap-add MKNOD` on Debian
+trixie with fuse3 from apt (computerd links the system libfuse 3 and
+needs 3.17 or newer), waits for `/health`, prints the URL on stdout
+and the container id on stderr. It forwards `MOUNT_IGNORE`,
+`MOUNT_IGNORE_PATH`, and any `COMPUTERD_FUSE_*` variable from your
+environment into the container.
 
 ```bash
 # Start
@@ -179,8 +182,8 @@ running container:
 docker exec <CID> sh -c 'echo container-write > /workspace/r2/hello.txt'
 ```
 
-This is a real FUSE write: kernel → fuse-native → computerd's
-`writeBuf` op → computerd's in-memory buffer for that file → on
+This is a real FUSE write: kernel → fuse-napi → computerd's
+`write` op → computerd's in-memory buffer for that file → on
 `release`/`flush`/`fsync` the buffer spills into the backing VFS
 (commit `68407fc`). On the host side you can then `pullOnce` and
 see the new entry land in `applyChanges`.
@@ -261,9 +264,31 @@ goes through Node's `fs` against the mount point must be async
 
 ## Recipe library
 
+### Is passthrough engaged?
+
+With `MOUNT_IGNORE` set, an open of a local-only file should hand the
+file to the kernel and keep computerd out of the data path. Two ways to
+check, from inside the container:
+
+```bash
+# What the mount negotiated, and how opens were served.
+curl -s localhost:8080/__computerd/info | jq .ignore.fastPaths
+
+# Whether data still reaches the daemon. Boot with
+# COMPUTERD_FUSE_TRACE=summary and COMPUTERD_FUSE_TRACE_FILE=/tmp/trace.json,
+# do the I/O, then dump the counters. read and write should not move
+# for local-only files.
+kill -USR2 1 && jq '.ops[] | select(.op == "read" or .op == "write")' /tmp/trace.json
+```
+
+Keep the trace file outside the mount: a process serving a FUSE mount
+deadlocks if it writes into that mount. `passthroughReason` names the
+likely cause when passthrough is off, and `COMPUTERD_FUSE_PASSTHROUGH=0`
+turns it off on purpose, to rule it in or out of a bug.
+
 ### Reset between probes
 
-A wedged computerd container can leave fuse-native zombie processes
+A wedged computerd container can leave FUSE zombie processes
 that `docker kill` refuses to reap. The cleanest fix:
 
 ```bash
@@ -369,7 +394,7 @@ your host) so the inspector port is reachable, or `docker run
 through computerd's launch env.
 
 If even that doesn't surface it, the wedge is probably below the
-JS layer — in fuse-native or libuv. At that point reach for
+JS layer — in the fuse-napi binding or libuv. At that point reach for
 `strace -fp <computerd-pid>` inside the container; the FUSE callbacks
 all surface as `read(/dev/fuse, ...)` and the per-call timing
 will show you exactly which op deadlocks.

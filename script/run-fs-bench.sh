@@ -13,7 +13,7 @@
 # binary release would bloat the bootstrap time.
 set -u
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates curl npm >/dev/null 2>&1
+apt-get install -y --no-install-recommends fuse3 attr util-linux coreutils findutils git ca-certificates curl npm >/dev/null 2>&1
 
 # /tmp/baseline gives the bench a native target to compare against. The
 # previous version forgot to create it, so fs-bench silently dropped the

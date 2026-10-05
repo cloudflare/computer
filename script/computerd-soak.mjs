@@ -72,7 +72,7 @@ const DISABLE_FUSE = process.env.SOAK_DISABLE_FUSE === "1" || !existsSync("/dev/
 const MOUNT_POINT = "/workspace";
 const TICK_MS = Number(process.env.SOAK_TICK_MS ?? 100);
 
-const IMAGE_TAG = "computerd-harness:libfuse2";
+const IMAGE_TAG = "computerd-harness:libfuse3";
 
 if (!existsSync(BINARY)) {
   console.error(`computerd binary not found at ${BINARY}`);
@@ -93,7 +93,7 @@ async function ensureImage() {
   proc.stdin.end(
     `FROM --platform=linux/amd64 debian:stable-slim
 RUN apt-get update >/dev/null && apt-get install -y --no-install-recommends \\
-      fuse3 libfuse2t64 attr util-linux coreutils findutils \\
+      fuse3 attr util-linux coreutils findutils \\
       >/dev/null && rm -rf /var/lib/apt/lists/*
 `,
   );

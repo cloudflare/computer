@@ -20,6 +20,9 @@ FROM debian:stable-slim
 # come in handy for ad-hoc agent commands too. The cost is ~120 MB
 # of layer over the base; acceptable for an example whose whole
 # point is running real build/test workflows.
+# fuse3 brings libfuse 3. Releases after 0.4.1 link it and need 3.17
+# or newer, which is Debian trixie. 0.4.1 and earlier link libfuse 2
+# instead, hence libfuse2t64; drop it once the pin above is past 0.4.1.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       fuse3 libfuse2t64 ca-certificates curl gnupg git \
