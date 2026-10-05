@@ -67,11 +67,10 @@ jobs:
             path: packages/computerd
             needs-siblings: true
             build-computerd-bin: true
-            # libfuse2 (libfuse.so.2) is what fuse-native binds to at
-            # runtime; fuse3 ships /dev/fuse helpers and the
-            # FUSE_MOUNT=shim tests need it for the userspace mount path.
-            # xz-utils extracts the target Node binary used by build:bin.
-            system-deps: "libfuse2t64 fuse3 xz-utils"
+            # fuse3 ships fusermount3, which the real-FUSE tests mount
+            # through. The addon itself is compiled during npm ci. xz-utils
+            # extracts the target Node binary used by build:bin.
+            system-deps: "fuse3 xz-utils"
     steps:
       - uses: actions/checkout@v6
         with:

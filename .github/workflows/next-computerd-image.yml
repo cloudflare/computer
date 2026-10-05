@@ -55,11 +55,6 @@ jobs:
 
       - uses: ./.github/actions/install
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libfuse2t64 fuse3
-
       # build-bin generates the SEA blob with the active Node executable and
       # injects it into the pinned Node 22.22.3 target binary.
       - name: Use the target Node version for the binary build
@@ -72,6 +67,8 @@ jobs:
       - name: Build all workspaces
         run: npm run build --workspaces --if-present
 
+      # build:bin compiles the FUSE addon inside a Debian trixie container,
+      # so the runner needs Docker but no FUSE packages of its own.
       - name: Build the computerd binary
         run: npm run build:bin --workspace @cloudflare/computerd
 
