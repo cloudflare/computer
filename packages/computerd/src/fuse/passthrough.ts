@@ -6,17 +6,23 @@
 // is provably a no-op: `withLocalPassthrough` returns the source object
 // unchanged.
 //
-// Despite the name there is no FUSE passthrough (FOPEN_PASSTHROUGH)
-// here; fuse-native binds libfuse 2.9, below the API version that can
-// negotiate it. Data still crosses the FUSE boundary into this process.
-// What it skips is the VFS, the SQLite store, the change-pack encoding,
-// and the pull into the Durable Object.
+// When the mount negotiated FUSE passthrough, an open of a local-only
+// file registers the file with the kernel and replies with its backing
+// id. The kernel then serves reads, writes, and mmap for that handle
+// straight from the backing file, and this process is out of the data
+// path. Metadata (lookup, getattr, readdir) still comes here.
 //
-// Writes go straight to the host filesystem with pwrite rather than
-// through the buffered FileEntry machinery in driver.ts. That buffering
-// exists because the VFS has no ranged-write primitive and a naive
-// implementation is O(N^2) over sequential appends; the kernel does not
-// have that problem, so the indirection would be pure cost here.
+// When passthrough is unavailable, for the mount or for one file, data
+// still crosses the FUSE boundary into this process. What it skips is
+// the VFS, the SQLite store, the change-pack encoding, and the pull
+// into the Durable Object.
+//
+// Those fallback writes go straight to the host filesystem with pwrite
+// rather than through the buffered FileEntry machinery in driver.ts.
+// That buffering exists because the VFS has no ranged-write primitive
+// and a naive implementation is O(N^2) over sequential appends; the
+// kernel does not have that problem, so the indirection would be pure
+// cost here.
 
 import {
   accessSync,
@@ -48,7 +54,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { FuseOps, FuseStat } from "./driver.js";
+import type { FuseOpenResult, FuseOps, FuseStat } from "./driver.js";
 import type { MountIgnoreSet } from "./ignore.js";
 
 // Mirrors driver.ts. Duplicated rather than exported across modules
@@ -84,6 +90,22 @@ export interface LocalPassthroughOptions {
   readonly onMaterialize?: (relativePath: string) => void;
   /** Operator-facing warnings. Defaults to console.warn; injected for tests. */
   readonly warn?: (message: string) => void;
+  /**
+   * Registers backing files for kernel passthrough. Omitted means every
+   * local-only open is served by this process.
+   */
+  readonly passthrough?: PassthroughRegistrar;
+}
+
+/**
+ * The binding's backing-file registration, as a seam.
+ *
+ * `backingOpen` throws an Error whose `code` is the errno name when the
+ * kernel refuses, or when the mount did not negotiate passthrough.
+ */
+export interface PassthroughRegistrar {
+  backingOpen(fd: number): number;
+  backingClose(backingId: number): void;
 }
 
 /**
@@ -157,6 +179,12 @@ export interface PassthroughStats {
   readonly openHandles: number;
   /** Renames refused with EXDEV for crossing the boundary. */
   readonly crossLayerRenames: number;
+  /** Opens handed to the kernel with a backing id. */
+  readonly passthroughOpens: number;
+  /** Opens served by this process because registration failed. */
+  readonly passthroughFallbacks: number;
+  /** Files with a live backing id right now. */
+  readonly passthroughFiles: number;
 }
 
 export interface LocalPassthrough {
@@ -182,6 +210,9 @@ export function withLocalPassthrough(
         localOps: 0,
         openHandles: 0,
         crossLayerRenames: 0,
+        passthroughOpens: 0,
+        passthroughFallbacks: 0,
+        passthroughFiles: 0,
       }),
     };
   }
@@ -192,7 +223,10 @@ export function withLocalPassthrough(
 
   let localOps = 0;
   let crossLayerRenames = 0;
+  let passthroughOpens = 0;
+  let passthroughFallbacks = 0;
   const warn = options.warn ?? ((message: string) => console.warn(message));
+  const registrar = options.passthrough;
 
   // No cache. The ignore set is a handful of entries and the test is a
   // prefix comparison against each, which costs about what a cache
@@ -211,7 +245,17 @@ export function withLocalPassthrough(
   // layers would read one file and write another.
   const LOCAL_HANDLE_BASE = 0x4000_0000;
   let nextHandle = LOCAL_HANDLE_BASE;
-  const handles = new Map<number, { fd: number; path: string }>();
+  const handles = new Map<number, { fd: number; path: string; backingKey?: string }>();
+
+  // One backing id per file, shared by every open of it. The kernel
+  // allows a single backing file per inode: a second registration of
+  // the same file succeeds and returns a new id, and then the open that
+  // uses it fails with EIO. Nothing reports the conflict at
+  // registration, so the table is the only thing preventing it.
+  //
+  // Keyed on dev:ino rather than the path, because a hard link reaches
+  // the same inode through a different name.
+  const backing = new Map<string, { id: number; refs: number }>();
   const isLocalHandle = (fh: number): boolean => fh >= LOCAL_HANDLE_BASE;
 
   const ensureParent = (target: string): void => {
@@ -298,7 +342,7 @@ export function withLocalPassthrough(
         // create() for that. But a flag set including O_TRUNC still has
         // to reach the real file, so the flags are passed through as-is.
         const fd = fs.openSync(target, flags);
-        cb(0, allocateHandle(fd, path));
+        cb(0, registerOpen(allocateHandle(fd, path)));
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -341,7 +385,7 @@ export function withLocalPassthrough(
           fsConstants.O_RDWR | fsConstants.O_CREAT | fsConstants.O_TRUNC,
           mode === 0 ? DEFAULT_FILE_MODE : mode,
         );
-        cb(0, allocateHandle(fd, path));
+        cb(0, registerOpen(allocateHandle(fd, path)));
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -399,6 +443,8 @@ export function withLocalPassthrough(
         cb(0);
       } catch (error) {
         cb(toErrno(error));
+      } finally {
+        releaseBacking(handle.backingKey);
       }
     },
 
@@ -715,6 +761,81 @@ export function withLocalPassthrough(
     return handle;
   }
 
+  // Attach a backing id to a freshly opened handle, reusing the file's
+  // existing id when it has one. Returns what open/create reply with.
+  //
+  // Never sets keepCache or directIO alongside the id: the kernel
+  // refuses either combination with EIO.
+  function registerOpen(fh: number): FuseOpenResult {
+    const handle = handles.get(fh);
+    if (registrar === undefined || handle === undefined) return fh;
+
+    let key: string;
+    try {
+      const stat = fs.fstatSync(handle.fd);
+      key = `${stat.dev}:${stat.ino}`;
+    } catch {
+      return fh;
+    }
+
+    const existing = backing.get(key);
+    if (existing !== undefined) {
+      existing.refs += 1;
+      handle.backingKey = key;
+      passthroughOpens += 1;
+      return { fd: fh, backingId: existing.id };
+    }
+
+    let id: number;
+    try {
+      id = registrar.backingOpen(handle.fd);
+    } catch (error) {
+      // Served by this process instead, through read/write below. A
+      // refusal is a property of the file or the mount (EPERM without
+      // CAP_SYS_ADMIN, ELOOP for a backing store stacked too deep), so
+      // every open of the same file falls back the same way and the
+      // kernel never sees a mix of the two modes on one inode.
+      reportFallback(handle.path, error);
+      return fh;
+    }
+    backing.set(key, { id, refs: 1 });
+    handle.backingKey = key;
+    passthroughOpens += 1;
+    return { fd: fh, backingId: id };
+  }
+
+  function releaseBacking(key: string | undefined): void {
+    if (key === undefined || registrar === undefined) return;
+    const entry = backing.get(key);
+    if (entry === undefined) return;
+    entry.refs -= 1;
+    if (entry.refs > 0) return;
+    backing.delete(key);
+    try {
+      registrar.backingClose(entry.id);
+    } catch (error) {
+      warn(`computerd: closing passthrough backing id ${entry.id} failed: ${String(error)}`);
+    }
+  }
+
+  function reportFallback(path: string, error: unknown): void {
+    passthroughFallbacks += 1;
+    if (passthroughFallbacks > 1) return;
+    const code = errnoOf(error) ?? String(error);
+    const reason =
+      code === "ENOTSUP" || code === "EOPNOTSUPP"
+        ? "the mount did not negotiate FUSE passthrough with the kernel (it needs Linux 6.9 or newer)"
+        : `FUSE passthrough registration for ${path} failed with ${code}. EPERM ` +
+          `usually means the process lacks CAP_SYS_ADMIN, and ELOOP that ` +
+          `MOUNT_IGNORE_PATH sits on a filesystem stacked too deep, such as ` +
+          `overlayfs on overlayfs`;
+    warn(
+      `computerd: ${reason}. Local-only files are served through computerd ` +
+        `instead, which works but is slower. Further fallbacks are counted on ` +
+        `/__computerd/info and not logged.`,
+    );
+  }
+
   function reportCrossLayerRename(
     source: string,
     destination: string,
@@ -797,6 +918,9 @@ export function withLocalPassthrough(
       localOps,
       openHandles: handles.size,
       crossLayerRenames,
+      passthroughOpens,
+      passthroughFallbacks,
+      passthroughFiles: backing.size,
     }),
   };
 }

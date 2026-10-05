@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import type { FuseOps } from "./driver.js";
+import type { FuseOpenResult, FuseOps } from "./driver.js";
 import { resolveMountIgnore } from "./ignore.js";
 import { type PassthroughFs, withLocalPassthrough } from "./passthrough.js";
 
@@ -860,5 +860,210 @@ describe("withLocalPassthrough: synced directories that hold local-only paths", 
     const { ops } = build();
     mkdirSync(join(root, "app/node_modules"), { recursive: true });
     expect(status((cb) => ops.rename("/app/node_modules", "/app/node_modules2", cb))).toBe(-18);
+  });
+});
+
+describe("withLocalPassthrough: kernel passthrough", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "computerd-passthrough-backing-"));
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+    writeFileSync(join(root, "node_modules/a.js"), "a");
+    writeFileSync(join(root, "node_modules/b.js"), "b");
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** Stands in for the binding's backingOpen / backingClose. */
+  const registrar = (failWith?: string) => {
+    const opened: number[] = [];
+    const closed: number[] = [];
+    let next = 100;
+    return {
+      opened,
+      closed,
+      passthrough: {
+        backingOpen(fd: number): number {
+          if (failWith !== undefined) {
+            throw Object.assign(new Error(`backingOpen failed: ${failWith}`), { code: failWith });
+          }
+          opened.push(fd);
+          return next++;
+        },
+        backingClose(id: number): void {
+          closed.push(id);
+        },
+      },
+    };
+  };
+
+  const build = (passthrough: ReturnType<typeof registrar>["passthrough"]) => {
+    const source = recordingOps();
+    const warnings: string[] = [];
+    const layer = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
+      mountPoint: MOUNT,
+      passthrough,
+      warn: (message) => warnings.push(message),
+    });
+    return { ...layer, calls: source.calls, warnings };
+  };
+
+  const open = (ops: FuseOps, path: string): FuseOpenResult => {
+    let reply: FuseOpenResult = 0;
+    ops.open(path, 0, (code, result) => {
+      expect(code).toBe(0);
+      reply = result;
+    });
+    return reply;
+  };
+  const handleOf = (reply: FuseOpenResult): number =>
+    typeof reply === "number" ? reply : reply.fd;
+  const release = (ops: FuseOps, path: string, reply: FuseOpenResult) =>
+    ops.release(path, handleOf(reply), (code) => expect(code).toBe(0));
+
+  test("replies with a backing id so the kernel serves the data", () => {
+    const backing = registrar();
+    const { ops } = build(backing.passthrough);
+    const reply = open(ops, "/node_modules/a.js");
+    expect(reply).toEqual({ fd: expect.any(Number), backingId: 100 });
+    expect(backing.opened).toHaveLength(1);
+  });
+
+  test("registers a created file too", () => {
+    const backing = registrar();
+    const { ops } = build(backing.passthrough);
+    let reply: FuseOpenResult = 0;
+    ops.create("/node_modules/new.js", 0o644, (code, result) => {
+      expect(code).toBe(0);
+      reply = result;
+    });
+    expect(reply).toEqual({ fd: expect.any(Number), backingId: 100 });
+  });
+
+  test("never sets keepCache or directIO alongside a backing id", () => {
+    // The kernel refuses either combination with EIO at open time.
+    const { ops } = build(registrar().passthrough);
+    const reply = open(ops, "/node_modules/a.js") as Record<string, unknown>;
+    expect(reply).not.toHaveProperty("keepCache");
+    expect(reply).not.toHaveProperty("directIO");
+  });
+
+  test("shares one backing id between concurrent opens of one file", () => {
+    // Two registrations of the same file both succeed and return
+    // distinct ids, and then the second open fails EIO in the kernel.
+    // There is no error to catch at registration, so reuse is the only
+    // correct behavior.
+    const backing = registrar();
+    const { ops } = build(backing.passthrough);
+    const first = open(ops, "/node_modules/a.js");
+    const second = open(ops, "/node_modules/a.js");
+    expect(first).toMatchObject({ backingId: 100 });
+    expect(second).toMatchObject({ backingId: 100 });
+    expect(backing.opened).toHaveLength(1);
+  });
+
+  test("keys the table on the inode, so a hard link shares the id", () => {
+    const backing = registrar();
+    const { ops } = build(backing.passthrough);
+    ops.link("/node_modules/a.js", "/node_modules/linked.js", (code) => expect(code).toBe(0));
+    const viaName = open(ops, "/node_modules/a.js");
+    const viaLink = open(ops, "/node_modules/linked.js");
+    expect(viaLink).toMatchObject({ backingId: (viaName as { backingId: number }).backingId });
+    expect(backing.opened).toHaveLength(1);
+  });
+
+  test("gives different files different ids", () => {
+    const { ops } = build(registrar().passthrough);
+    expect(open(ops, "/node_modules/a.js")).toMatchObject({ backingId: 100 });
+    expect(open(ops, "/node_modules/b.js")).toMatchObject({ backingId: 101 });
+  });
+
+  test("closes the backing id on the last release only", () => {
+    const backing = registrar();
+    const { ops, stats } = build(backing.passthrough);
+    const first = open(ops, "/node_modules/a.js");
+    const second = open(ops, "/node_modules/a.js");
+
+    release(ops, "/node_modules/a.js", first);
+    expect(backing.closed).toEqual([]);
+    expect(stats().passthroughFiles).toBe(1);
+
+    release(ops, "/node_modules/a.js", second);
+    expect(backing.closed).toEqual([100]);
+    expect(stats().passthroughFiles).toBe(0);
+  });
+
+  test("registers afresh after the last release", () => {
+    const backing = registrar();
+    const { ops } = build(backing.passthrough);
+    release(ops, "/node_modules/a.js", open(ops, "/node_modules/a.js"));
+    expect(open(ops, "/node_modules/a.js")).toMatchObject({ backingId: 101 });
+  });
+
+  test("falls back to serving reads itself when registration fails", () => {
+    const { ops, stats, warnings } = build(registrar("EPERM").passthrough);
+    const reply = open(ops, "/node_modules/a.js");
+    expect(typeof reply === "number" || !("backingId" in reply)).toBe(true);
+
+    const buffer = Buffer.alloc(8);
+    let bytes = -1;
+    ops.read("/node_modules/a.js", handleOf(reply), buffer, 8, 0, (result) => {
+      bytes = result;
+    });
+    expect(buffer.subarray(0, bytes).toString()).toBe("a");
+    expect(stats().passthroughFallbacks).toBe(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("EPERM");
+  });
+
+  test("says the kernel did not offer passthrough when that is the reason", () => {
+    // The driver's registrar answers ENOTSUP until init has negotiated
+    // the capability. Advice about CAP_SYS_ADMIN would mislead here.
+    const { ops, warnings } = build(registrar("ENOTSUP").passthrough);
+    open(ops, "/node_modules/a.js");
+    expect(warnings[0]).toContain("did not negotiate");
+    expect(warnings[0]).not.toContain("CAP_SYS_ADMIN");
+  });
+
+  test("logs a failed registration once per mount", () => {
+    const { ops, stats, warnings } = build(registrar("ELOOP").passthrough);
+    open(ops, "/node_modules/a.js");
+    open(ops, "/node_modules/b.js");
+    expect(stats().passthroughFallbacks).toBe(2);
+    expect(warnings).toHaveLength(1);
+  });
+
+  test("counts passthrough opens and registered files", () => {
+    const { ops, stats } = build(registrar().passthrough);
+    open(ops, "/node_modules/a.js");
+    open(ops, "/node_modules/a.js");
+    open(ops, "/node_modules/b.js");
+    expect(stats()).toMatchObject({
+      passthroughOpens: 3,
+      passthroughFallbacks: 0,
+      passthroughFiles: 2,
+    });
+  });
+
+  test("never registers a file served by the VFS", () => {
+    const backing = registrar();
+    const { ops, calls } = build(backing.passthrough);
+    ops.open("/src/index.js", 0, () => {});
+    expect(calls).toEqual(["open"]);
+    expect(backing.opened).toEqual([]);
+  });
+
+  test("replies with a bare handle when no registrar is configured", () => {
+    const source = recordingOps();
+    const { ops } = withLocalPassthrough(source.ops, {
+      root,
+      ignore: resolveMountIgnore(["/node_modules"], MOUNT),
+      mountPoint: MOUNT,
+    });
+    expect(typeof open(ops, "/node_modules/a.js")).toBe("number");
   });
 });

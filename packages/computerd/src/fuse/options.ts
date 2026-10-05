@@ -74,6 +74,7 @@ export interface FuseOptionEnv {
   COMPUTERD_FUSE_ENTRY_TIMEOUT?: string;
   COMPUTERD_FUSE_NEGATIVE_TIMEOUT?: string;
   COMPUTERD_FUSE_EXTRA_OPTS?: string;
+  COMPUTERD_FUSE_PASSTHROUGH?: string;
 }
 
 /**
@@ -144,6 +145,18 @@ export function buildFuseMountOptions(env: FuseOptionEnv): FuseMountOptions {
   }
 
   return opts;
+}
+
+/**
+ * Whether to ask the kernel for FUSE passthrough on local-only paths.
+ *
+ * On unless COMPUTERD_FUSE_PASSTHROUGH says otherwise, as a switch for
+ * ruling passthrough in or out while chasing a problem. Only explicit
+ * negatives turn it off.
+ */
+export function passthroughRequested(env: FuseOptionEnv): boolean {
+  const value = env.COMPUTERD_FUSE_PASSTHROUGH?.trim().toLowerCase();
+  return !(value === "0" || value === "false" || value === "no" || value === "off");
 }
 
 function toCamelCase(name: string): string {

@@ -2,9 +2,10 @@ import { constants as fsConstants, writeFileSync as nodeWriteFileSync } from "no
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
 import { toBindingOps } from "./binding-ops.js";
-import { buildFuseInitConfig, buildFuseMountOptions } from "./options.js";
+import { buildFuseInitConfig, buildFuseMountOptions, passthroughRequested } from "./options.js";
 import {
   type LocalPassthroughOptions,
+  type PassthroughRegistrar,
   type PassthroughStats,
   withLocalPassthrough,
 } from "./passthrough.js";
@@ -176,6 +177,12 @@ export interface FuseMount {
 interface FuseInstance {
   mount(cb: (error: Error | null) => void): void;
   unmount(cb: (error: Error | null) => void): void;
+}
+
+/** The binding's backing-file registration, from the vendored patch. */
+interface BackingRegistrar {
+  backingOpen(fd: number): number;
+  backingClose(backingId: number): void;
 }
 
 export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseOps {
@@ -1070,13 +1077,47 @@ export async function mountFuse(options: {
   const traceMode = process.env.COMPUTERD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
+
+  // Kernel passthrough for local-only files. Only requested when there
+  // are local-only paths to use it on, so a mount without MOUNT_IGNORE
+  // negotiates exactly what it did before.
+  const wantPassthrough =
+    options.localPaths !== undefined &&
+    !options.localPaths.ignore.isEmpty &&
+    passthroughRequested(process.env);
+  let passthroughNegotiated = false;
+
+  // The registrar is late-bound. The op table has to exist before the
+  // Fuse instance does, because the constructor takes it, so the
+  // closure reads `mountedFuse`, assigned just after construction. No
+  // open can arrive before init, and until init confirms the
+  // capability the answer is ENOTSUP, which the local-only layer turns
+  // into a fallback to serving the file itself.
+  let mountedFuse: BackingRegistrar | undefined;
+  const registrar: PassthroughRegistrar = {
+    backingOpen(fd) {
+      if (!passthroughNegotiated || mountedFuse === undefined) {
+        throw Object.assign(new Error("FUSE passthrough was not negotiated"), {
+          code: "ENOTSUP",
+        });
+      }
+      return mountedFuse.backingOpen(fd);
+    },
+    backingClose(backingId) {
+      mountedFuse?.backingClose(backingId);
+    },
+  };
+
   // Local-only paths are routed before tracing, so the trace counts a
   // passthrough op once, at the layer that actually served it, rather
   // than attributing it to the VFS driver that never saw it.
   const localPaths =
     options.localPaths === undefined
       ? undefined
-      : withLocalPassthrough(baseOps, options.localPaths);
+      : withLocalPassthrough(baseOps, {
+          ...options.localPaths,
+          ...(wantPassthrough ? { passthrough: registrar } : {}),
+        });
   const routedOps = localPaths === undefined ? baseOps : localPaths.ops;
   const fuseOps = toBindingOps(routedOps);
   const ops =
@@ -1092,7 +1133,6 @@ export async function mountFuse(options: {
   // init or the backing-file ioctl fails with EPERM.
   const initConfig = buildFuseInitConfig(process.env);
   const CAP_PASSTHROUGH: number = Fuse.CAP_PASSTHROUGH ?? 1 << 29;
-  let passthroughNegotiated = false;
 
   const opsWithInit = {
     ...ops,
@@ -1101,7 +1141,7 @@ export async function mountFuse(options: {
       cb: (errno: number, config?: unknown) => void,
     ) {
       const capable = info.capable >>> 0;
-      passthroughNegotiated = (capable & CAP_PASSTHROUGH) !== 0;
+      passthroughNegotiated = wantPassthrough && (capable & CAP_PASSTHROUGH) !== 0;
       const config: Record<string, number> = { maxWrite: initConfig.maxWrite };
       if (passthroughNegotiated) {
         config.want = (info.want >>> 0) | CAP_PASSTHROUGH;
@@ -1115,7 +1155,8 @@ export async function mountFuse(options: {
     ...mountOptions,
     autoUnmount: true,
     debug: false,
-  }) as FuseInstance;
+  }) as FuseInstance & BackingRegistrar;
+  mountedFuse = fuse;
 
   const emitTrace = (reason: string): void => {
     if (tracer === undefined) return;

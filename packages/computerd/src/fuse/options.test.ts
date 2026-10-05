@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { buildFuseInitConfig, buildFuseMountOptions, type FuseOptionEnv } from "./options.js";
+import {
+  buildFuseInitConfig,
+  buildFuseMountOptions,
+  type FuseOptionEnv,
+  passthroughRequested,
+} from "./options.js";
 
 const empty: FuseOptionEnv = {};
 
@@ -169,6 +174,24 @@ describe("the vendored binding", () => {
     ]) {
       const options = { autoUnmount: true, ...buildFuseMountOptions(env) };
       expect(() => Fuse.validateOptions(options)).not.toThrow();
+    }
+  });
+});
+
+describe("passthroughRequested", () => {
+  test("is on by default", () => {
+    expect(passthroughRequested(empty)).toBe(true);
+  });
+
+  test("turns off with any of the usual negative spellings", () => {
+    for (const value of ["0", "false", "no", "off", "FALSE", " off "]) {
+      expect(passthroughRequested({ COMPUTERD_FUSE_PASSTHROUGH: value })).toBe(false);
+    }
+  });
+
+  test("stays on for anything else, so a typo cannot quietly cost speed", () => {
+    for (const value of ["1", "true", "yes", "on", ""]) {
+      expect(passthroughRequested({ COMPUTERD_FUSE_PASSTHROUGH: value })).toBe(true);
     }
   });
 });
