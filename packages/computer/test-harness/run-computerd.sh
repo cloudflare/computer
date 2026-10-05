@@ -48,6 +48,15 @@ RUN apt-get update >/dev/null \
 DOCKERFILE
 fi
 
+# Forward local-only path and FUSE tuning settings from the caller, so a
+# test can boot computerd with MOUNT_IGNORE or COMPUTERD_FUSE_TRACE set.
+FORWARD_ENV=()
+while IFS='=' read -r name _; do
+  case "$name" in
+    MOUNT_IGNORE | MOUNT_IGNORE_PATH | COMPUTERD_FUSE_*) FORWARD_ENV+=(-e "$name") ;;
+  esac
+done < <(env)
+
 # Boot the container. Privileged + /dev/fuse + SYS_ADMIN is
 # the same recipe as script/fs-tests.sh; lets the FUSE binding
 # actually mount.
@@ -62,6 +71,7 @@ CID=$(docker run --rm -d \
   -p "$HOST_PORT:8080" \
   -e PORT=8080 \
   -e MOUNT_POINT=/workspace \
+  ${FORWARD_ENV[@]+"${FORWARD_ENV[@]}"} \
   "$IMAGE_TAG" \
   /usr/local/bin/computerd)
 
