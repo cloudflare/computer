@@ -2,7 +2,11 @@ import { RpcTarget } from "cloudflare:workers";
 
 import { utf8Prefix } from "../text-truncation.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
-import type { WorkspaceModuleCallContext, WorkspaceModuleFunctions } from "./types.js";
+import type {
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFunctions,
+  WorkspaceRuntimeValue,
+} from "./types.js";
 
 export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #capability: WorkspaceRuntimeCapability;
@@ -193,9 +197,11 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#inFlight.delete(operation);
       this.#abortControllers.delete(abort);
     });
+    // Errors count against the response budget too. The budget error
+    // itself is short and not counted, and `maxCalls` bounds how many
+    // the isolate can see.
     return call.then((response) => {
-      if (!("result" in response)) return response;
-      const bytes = response.bytes;
+      const bytes = "result" in response ? response.bytes : errorBytes(response);
       if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
         return boundedError(
           new Error(
@@ -205,7 +211,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         );
       }
       this.#responseBytes += bytes;
-      return { result: response.result };
+      return "result" in response ? { result: response.result } : response;
     });
   }
 
@@ -237,43 +243,52 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     if (typeof fn !== "function") {
       throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
-    assertBridgeValues(args);
     // Called on its module, so a method that uses `this` still works.
-    const result = (await fn.call(functions, args, context)) ?? null;
-    assertBridgeValues([result]);
-    return result;
+    const result = await fn.call(functions, hostArguments(args), context);
+    return hostValue(result ?? null);
   }
 }
 
-function assertBridgeValues(
-  values: unknown[],
-): asserts values is import("./types.js").WorkspaceRuntimeValue[] {
+function hostArguments(args: unknown[]): WorkspaceRuntimeValue[] {
+  return args.map((arg) => hostValue(arg ?? null));
+}
+
+// Host module values follow JSON: an undefined object field is left
+// out, and an undefined array item becomes null, as JSON.stringify
+// does. Native RPC would otherwise carry undefined through, and the
+// isolate's result check rejects it.
+function hostValue(value: unknown): WorkspaceRuntimeValue {
   const seen = new Set<object>();
-  const visit = (value: unknown): void => {
+  const visit = (item: unknown): WorkspaceRuntimeValue => {
     if (
-      value === null ||
-      typeof value === "boolean" ||
-      typeof value === "string" ||
-      (typeof value === "number" && Number.isFinite(value))
-    )
-      return;
-    if (typeof value !== "object") throw new Error("Host module values must be JSON-compatible.");
-    if (seen.has(value)) throw new Error("Host module values must be acyclic.");
-    seen.add(value);
-    if (Array.isArray(value)) for (const item of value) visit(item);
-    else {
-      const prototype = Object.getPrototypeOf(value);
+      item === null ||
+      typeof item === "boolean" ||
+      typeof item === "string" ||
+      (typeof item === "number" && Number.isFinite(item))
+    ) {
+      return item;
+    }
+    if (typeof item !== "object") throw new Error("Host module values must be JSON-compatible.");
+    if (seen.has(item)) throw new Error("Host module values must be acyclic.");
+    seen.add(item);
+    let copy: WorkspaceRuntimeValue;
+    if (Array.isArray(item)) {
+      copy = item.map((child: unknown) => (child === undefined ? null : visit(child)));
+    } else {
+      const prototype = Object.getPrototypeOf(item);
       if (prototype !== Object.prototype && prototype !== null) {
         throw new Error("Host module values must contain only plain objects.");
       }
-      // An undefined field is allowed, as in JSON, and arrives as undefined.
-      for (const item of Object.values(value as Record<string, unknown>)) {
-        if (item !== undefined) visit(item);
+      const fields: Record<string, WorkspaceRuntimeValue> = {};
+      for (const [key, child] of Object.entries(item)) {
+        if (child !== undefined) fields[key] = visit(child);
       }
+      copy = fields;
     }
-    seen.delete(value);
+    seen.delete(item);
+    return copy;
   };
-  for (const value of values) visit(value);
+  return visit(value);
 }
 
 function decodeBytes(value: unknown): string | Uint8Array {
@@ -324,12 +339,14 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
       add(8);
       return;
     }
+    // Every value costs at least one byte, so the byte limit also bounds
+    // how many values the host walks, even for empty strings and objects.
     if (typeof item === "string") {
-      add(encoder.encode(item).byteLength);
+      add(Math.max(1, encoder.encode(item).byteLength));
       return;
     }
     if (item instanceof Uint8Array) {
-      add(item.byteLength);
+      add(Math.max(1, item.byteLength));
       return;
     }
     if (typeof item !== "object") {
@@ -345,8 +362,9 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
       if (prototype !== Object.prototype && prototype !== null) {
         throw new Error(`Workspace capability ${kind} values must be plain data.`);
       }
+      add(8);
       for (const [key, child] of Object.entries(item)) {
-        add(encoder.encode(key).byteLength);
+        add(Math.max(1, encoder.encode(key).byteLength));
         visit(child);
       }
     }
@@ -386,18 +404,37 @@ async function respond(
   }
 }
 
-// An error the isolate can rebuild, with its message cut to fit the
-// payload limit. `code` and `path` carry node:fs error details.
+// Room for the envelope's keys and punctuation around the strings.
+const ERROR_OVERHEAD_BYTES = 64;
+
+// An error the isolate can rebuild, cut to fit the payload limit as a
+// whole. `code` and `path` carry node:fs error details; each is kept
+// only if it leaves room for the message, and the message is cut to
+// what is left.
 function boundedError(error: unknown, maxPayloadBytes: number) {
   const value = error as { code?: unknown; path?: unknown };
   const message = error instanceof Error ? error.message : String(error);
-  return {
-    error: {
-      message: truncateText(message, Math.max(0, maxPayloadBytes - 64)),
-      ...(typeof value?.code === "string" ? { code: value.code } : {}),
-      ...(typeof value?.path === "string" ? { path: value.path } : {}),
-    },
-  };
+  let room = Math.max(0, maxPayloadBytes - ERROR_OVERHEAD_BYTES);
+  const details: { code?: string; path?: string } = {};
+  for (const key of ["code", "path"] as const) {
+    const detail = value?.[key];
+    if (typeof detail !== "string") continue;
+    const bytes = encoder.encode(detail).byteLength;
+    if (bytes > room / 2) continue;
+    details[key] = detail;
+    room -= bytes;
+  }
+  return { error: { message: truncateText(message, room), ...details } };
+}
+
+function errorBytes(response: Extract<BridgeResponse, { error: unknown }>): number {
+  const { message, code, path } = response.error;
+  return (
+    ERROR_OVERHEAD_BYTES +
+    encoder.encode(message).byteLength +
+    encoder.encode(code ?? "").byteLength +
+    encoder.encode(path ?? "").byteLength
+  );
 }
 
 function truncateText(value: string, maxBytes: number) {

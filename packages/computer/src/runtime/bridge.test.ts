@@ -53,9 +53,52 @@ describe("WorkspaceRuntimeBridge cumulative limits", () => {
       `responses exceed ${bytes * 2} bytes`,
     );
   });
+
+  it("counts error responses against the cumulative response budget", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxTotalResponseBytes: 256,
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            fail: async () => {
+              throw new Error("x".repeat(100));
+            },
+          },
+        ],
+      ]),
+    });
+    await expect(message(target.call("host/ws:test.fail", []))).resolves.toBe("x".repeat(100));
+    await expect(message(target.call("host/ws:test.fail", []))).resolves.toContain(
+      "responses exceed 256 bytes",
+    );
+  });
 });
 
 describe("WorkspaceRuntimeBridge host modules", () => {
+  function echo(values: unknown[]) {
+    return new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async () => values[0],
+            args: async (received) => received,
+          },
+        ],
+      ]),
+    });
+  }
+
+  it("leaves undefined fields out and turns undefined array items into null", async () => {
+    await expect(
+      echo([{ value: 1, optional: undefined, list: [1, undefined] }]).call("host/ws:test.run", []),
+    ).resolves.toEqual({ result: { value: 1, list: [1, null] } });
+    await expect(
+      echo([]).call("host/ws:test.args", [undefined, { a: undefined, b: 2 }]),
+    ).resolves.toEqual({ result: [null, { b: 2 }] });
+  });
+
   it("calls a host function on its module", async () => {
     const functions = {
       async name() {
@@ -101,6 +144,39 @@ describe("WorkspaceRuntimeBridge values", () => {
     await expect(message(echoBridge().call("host/ws:test.run", [cyclic]))).resolves.toContain(
       "acyclic",
     );
+  });
+
+  it("rejects a request of many empty values by the payload limit", async () => {
+    await expect(
+      message(echoBridge(256).call("host/ws:test.run", [new Array(300).fill("")])),
+    ).resolves.toContain("request exceeds 256 bytes");
+    await expect(
+      message(echoBridge(256).call("host/ws:test.run", [new Array(40).fill({})])),
+    ).resolves.toContain("request exceeds 256 bytes");
+  });
+
+  it("keeps an error with a long path within the payload limit", async () => {
+    const path = `/${"p".repeat(900)}`;
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxPayloadBytes: 1024,
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async () => {
+              throw Object.assign(new Error(`ENOENT: no such file, open '${path}'`), {
+                code: "ENOENT",
+                path,
+              });
+            },
+          },
+        ],
+      ]),
+    });
+    const response = await target.call("host/ws:test.run", []);
+    expect(response).toMatchObject({ error: { code: "ENOENT" } });
+    expect(response).not.toHaveProperty("error.path");
+    expect(encoder.encode(JSON.stringify(response)).byteLength).toBeLessThanOrEqual(1024);
   });
 
   it("rejects a request over the payload limit by its UTF-8 size", async () => {
