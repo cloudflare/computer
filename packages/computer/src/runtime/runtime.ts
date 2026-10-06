@@ -160,7 +160,13 @@ export class WorkspaceRuntime {
     const limits =
       requested === undefined
         ? output.limits
-        : makeOutputLimits({ ...output.limits, ...requested }, "runtime.exec output");
+        : makeOutputLimits(
+            {
+              maxLines: requested.maxLines ?? output.limits.maxLines,
+              maxBytes: requested.maxBytes ?? output.limits.maxBytes,
+            },
+            "runtime.exec output",
+          );
     const name = `${fileNamePart(backend)}.${fileNamePart(id)}`;
     return () => ({
       stdout: new OutputSpool(limits, output.files, `${name}.stdout.log`),

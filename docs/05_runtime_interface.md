@@ -91,7 +91,7 @@ if (result.truncated?.stdout?.status === "saved") {
 flowchart LR
   B[backend events] --> S{over 2000 lines<br/>or 50 KiB?}
   S -- no --> R[result keeps all output]
-  S -- yes --> F["/.computer/output/&lt;backend&gt;.&lt;id&gt;.stdout.log<br/>(full output, streamed)"]
+  S -- yes --> F["/.computer/output/backend.id.stdout.log<br/>(full output, streamed)"]
   S -- yes --> T[result keeps the last lines<br/>+ truncated.stdout]
 ```
 

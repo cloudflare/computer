@@ -1,5 +1,5 @@
 ---
-"@cloudflare/computer": minor
+"@cloudflare/computer": patch
 ---
 
 Long command output is now cut and saved to a file by default, the way pi's bash tool does it. A stream longer than 2000 lines or 50 KiB comes back from `result()` as its last 2000 lines or 50 KiB, and its full output is saved byte for byte to `/.computer/output/<backend>.<id>.stdout.log` (or `.stderr.log`). `result.truncated` and the `exit` event say which streams were cut and where each was saved. Only a window of the end is held in memory, so a command that prints hundreds of megabytes no longer fills the Durable Object's memory.

@@ -169,7 +169,9 @@ export class OutputWindow {
   push(chunk: Uint8Array): void {
     if (chunk.length === 0) return;
     this.#totalBytes += chunk.length;
-    for (const byte of chunk) if (byte === NEWLINE) this.#newlines += 1;
+    for (let at = chunk.indexOf(NEWLINE); at !== -1; at = chunk.indexOf(NEWLINE, at + 1)) {
+      this.#newlines += 1;
+    }
     this.#endsInNewline = chunk[chunk.length - 1] === NEWLINE;
     this.#chunks.push(chunk);
     this.#chunkBytes += chunk.length;
