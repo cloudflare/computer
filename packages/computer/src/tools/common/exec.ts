@@ -343,8 +343,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
   };
 }
 
-const FILE_TOOLS_HINT =
-  "Prefer the dedicated read, write, and edit tools for file operations.";
+const FILE_TOOLS_HINT = "Prefer the dedicated read, write, and edit tools for file operations.";
 
 // How the reply cuts long output, and where the rest goes.
 function outputHint(limits: OutputLimits): string {
@@ -367,7 +366,14 @@ function describeTool(backends: readonly DescribedBackend[], limits: OutputLimit
   const [only, ...others] = backends;
   if (only !== undefined && others.length === 0) {
     return only.callable
-      ? ["Run code in the workspace.", "", only.text, "", CALLABLE_HINT, `${FILE_TOOLS_HINT} ${output}`].join("\n")
+      ? [
+          "Run code in the workspace.",
+          "",
+          only.text,
+          "",
+          CALLABLE_HINT,
+          `${FILE_TOOLS_HINT} ${output}`,
+        ].join("\n")
       : [
           "Run a shell command in the workspace.",
           "",
