@@ -1,0 +1,23 @@
+packages/computer/tests/script-runner.test.ts
+  s_b2fd9413bbc158::t_ff81de985d28c8 417,424-460
+packages/computer/src/modules/git.ts
+  s_b2fd9413bbc158::t_c88921ca331694 75-77,82-83,112-128
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_ef18bab700f4fb 237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "85de9f522b88de42188cd36d8615c6a2a559cddf",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
