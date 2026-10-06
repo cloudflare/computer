@@ -1,0 +1,44 @@
+packages/computer/src/modules/container.test.ts
+  s_b2fd9413bbc158::t_4af0f9e866016f 37,41,219-223,230-231,233-235
+  s_b2fd9413bbc158::t_ee8bcfba01a89f 8,33,56,104-109,192,236-258
+packages/computer/src/modules/container.ts
+  s_b2fd9413bbc158::t_377e7634f924d7 19,55-57,62-63,76-77,80-85,89,91-97,129,135
+  s_b2fd9413bbc158::t_89f8e946945394 24,49-51,124,138,141-151
+.changeset/exec-tool-options.md
+  s_b2fd9413bbc158::t_f74bc448c7c574 7
+.changeset/exec-tool-review-fixes.md
+  s_b2fd9413bbc158::t_5556ab6c164124 5
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_fae919f6552ac3 327
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_da3a224ef2897d 255-273,298
+  s_b2fd9413bbc158::t_f78594af293423 290-291
+examples/mcp/src/index.ts
+  s_b2fd9413bbc158::t_a4bc3aba800da2 10,29,37,41-43
+examples/mcp/wrangler.jsonc
+  s_b2fd9413bbc158::t_a0e72b77d6eace 12-15
+examples/think/README.md
+  s_b2fd9413bbc158::t_50753a3afc0b6f 79-81,92
+examples/think/src/agent.ts
+  s_b2fd9413bbc158::t_50668c9105a916 18-19,35,58,62,72,76,81-83
+examples/think/wrangler.jsonc
+  s_b2fd9413bbc158::t_e5aff4773e0b38 18-26
+.changeset/container-sync-report.md
+  s_b2fd9413bbc158::t_fe522817b88d10 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "85a247db49bde84760ff45b250682e826bb0876f",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
