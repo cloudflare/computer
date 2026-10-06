@@ -1,0 +1,21 @@
+packages/computer/src/modules/container.test.ts
+  s_b2fd9413bbc158::t_4af0f9e866016f 35-39,210-221
+packages/computer/src/modules/container.ts
+  s_b2fd9413bbc158::t_377e7634f924d7 19,52-54,59-61,72-91,122,128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "0a000a2d14d06378a2b7a16682158b548f7bd51c",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
