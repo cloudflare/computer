@@ -1877,6 +1877,14 @@ describe("createAITools exec with one backend", () => {
     ]);
   });
 
+  it("runs on the only backend when a direct caller names another", async () => {
+    const { calls, workspace } = recordingWorkspace(false);
+    const tools = createAITools({ workspace, exec: { shell: {} } });
+
+    await executeTool(tools.exec, { command: "echo hi", backend: "container" });
+    expect(calls).toEqual([{ command: "echo hi", backend: "shell", input: undefined }]);
+  });
+
   it("does not mention backends in the description", () => {
     const { workspace } = recordingWorkspace(true);
     const tools = createAITools({
