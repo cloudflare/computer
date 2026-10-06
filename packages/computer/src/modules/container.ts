@@ -144,7 +144,7 @@ const DESCRIPTION = [
   "Runs shell commands in a full Linux container that shares this workspace's files.",
   "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
   'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
-  "Output comes back when the command finishes. Long output keeps its last lines; `truncated.stdout.path` (or `truncated.stderr.path`) then names a workspace file holding all of it, which `node:fs` can read. A non-zero `exitCode` is returned, not thrown.",
+  "Output comes back when the command finishes. Long output keeps its last lines; `truncated.stdout.path` (or `truncated.stderr.path`) then names a workspace file holding all of it. The file usually sits outside this code's `node:fs` root, so return the path and open it with the agent's read or grep tools. A non-zero `exitCode` is returned, not thrown.",
 ].join(" ");
 
 interface ExecRequest {

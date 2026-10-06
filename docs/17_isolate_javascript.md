@@ -289,7 +289,7 @@ export default async function () {
 
 A few limits follow from `exec` being a host call:
 
-- Output comes back when the command finishes, not while it runs. Each stream keeps its last 2000 lines or `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`. When a stream is cut, the result's `truncated.stdout.path` (or `stderr`) names a Workspace file holding all of it (see [Long output](./05_runtime_interface.md#long-output)), and the host never holds more than the end in memory.
+- Output comes back when the command finishes, not while it runs. Each stream keeps its last 2000 lines or `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`. When a stream is cut, the result's `truncated.stdout.path` (or `stderr`) names a Workspace file holding all of it (see [Long output](./05_runtime_interface.md#long-output)), and the host never holds more than the end in memory. The default directory, `/.computer/output`, is outside the backend's default `root` (`/workspace`), so isolate code cannot open it with `node:fs`; the agent's `read` and `grep` tools can. Set the Workspace's `output.dir` under `root` if isolate code needs to read it.
 - The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
 - Cancelling the execution kills the running command.
 
