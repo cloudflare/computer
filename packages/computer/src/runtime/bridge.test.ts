@@ -155,6 +155,32 @@ describe("WorkspaceRuntimeBridge values", () => {
     ).resolves.toContain("request exceeds 256 bytes");
   });
 
+  it("keeps an own __proto__ field in a host module result", async () => {
+    const value = JSON.parse('{"__proto__": {"a": 1}, "b": 2}') as unknown;
+    const response = await echoBridge().call("host/ws:test.run", [value]);
+    expect(Object.keys((response as { result: object }).result)).toEqual(["__proto__", "b"]);
+  });
+
+  it("keeps a path that fits beside a short error message", async () => {
+    const path = `/${"p".repeat(600)}`;
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxPayloadBytes: 1024,
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async () => {
+              throw Object.assign(new Error("ENOENT"), { code: "ENOENT", path });
+            },
+          },
+        ],
+      ]),
+    });
+    await expect(target.call("host/ws:test.run", [])).resolves.toEqual({
+      error: { message: "ENOENT", code: "ENOENT", path },
+    });
+  });
+
   it("keeps an error with a long path within the payload limit", async () => {
     const path = `/${"p".repeat(900)}`;
     const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
