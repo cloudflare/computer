@@ -1,8 +1,15 @@
 import { z } from "zod";
 
+import type { TruncatedOutput } from "../../runtime/output-spool.js";
+import {
+  DEFAULT_OUTPUT_MAX_BYTES,
+  DEFAULT_OUTPUT_MAX_LINES,
+  makeOutputLimits,
+  type OutputLimits,
+  OutputWindow,
+} from "../../runtime/output-tail.js";
 import { notCallableMessage } from "../../runtime/runtime.js";
-import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
-import { truncateText, utf8Prefix } from "../../text-truncation.js";
+import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types.js";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather
@@ -29,7 +36,7 @@ const jsonValueSchema: z.ZodType<WorkspaceRuntimeValue> = z.lazy(() =>
 export type ExecStreamEvent =
   | { name: "stdout"; value: string }
   | { name: "stderr"; value: string }
-  | { name: "exit"; code: number; result?: unknown };
+  | { name: "exit"; code: number; result?: unknown; truncated?: WorkspaceRuntimeTruncation };
 
 // A detached execution handle. The tool streams stdout / stderr
 // chunks by iterating the handle when it is async-iterable, and
@@ -40,6 +47,7 @@ export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent
     stdout: string;
     stderr: string;
     value?: unknown;
+    truncated?: WorkspaceRuntimeTruncation;
   }>;
   // Signal the running execution. The tool calls it when the model
   // turn aborts, so the backend stops rather than running on after
@@ -57,6 +65,7 @@ export interface ExecWorkspaceLike {
         backend?: string;
         env?: Record<string, string>;
         input?: WorkspaceRuntimeValue;
+        output?: { maxBytes: number; maxLines: number };
       },
     ): Promise<ExecRuntimeHandle>;
     // Whether a backend accepts a structured `input` value and returns
@@ -87,20 +96,23 @@ export interface ExecToolOptions {
   // Backend used when the model omits `backend`. Required when more
   // than one backend is configured; with one it defaults to that one.
   defaultBackend?: string;
-  // Per-snapshot display cap for each of stdout and stderr, in bytes.
-  // Output past it is shown as a truncation marker. Defaults to 64 KiB.
+  // The most bytes of each of stdout and stderr the model sees.
+  // Longer output keeps its last lines, like pi's bash tool, and the
+  // runtime saves the full output to a file the reply names. Defaults
+  // to 64 KiB.
   maxBytes?: number;
-  // In-memory cap per stream while streaming, in bytes. Output past it
-  // is counted toward the truncation marker but not retained, so a long
-  // run does not grow the buffer without bound. Defaults to 512 KiB.
+  // The most lines of each stream the model sees. Defaults to 2000.
+  maxLines?: number;
+  /**
+   * @deprecated Ignored. Memory per stream is now bounded by a few
+   * times `maxBytes`.
+   */
   streamMaxBytes?: number;
   // Clock backing the running-snapshot coalescing floor. Defaults to
   // Date.now; injectable so tests can drive the interval deterministically.
   now?: () => number;
 }
 
-const DEFAULT_MAX_BYTES = 64 * 1024;
-const DEFAULT_STREAM_MAX_BYTES = 512 * 1024;
 // Minimum wall-clock gap between running snapshots. A chatty command
 // yields at most one snapshot per interval instead of one per chunk;
 // the terminal snapshot always fires regardless.
@@ -152,8 +164,13 @@ export interface ExecDefinition {
  * is not among them, so a misconfigured tool fails when it is built.
  */
 export function defineExec(options: ExecToolOptions): ExecDefinition {
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const streamMaxBytes = options.streamMaxBytes ?? DEFAULT_STREAM_MAX_BYTES;
+  const limits = makeOutputLimits(
+    {
+      maxBytes: options.maxBytes ?? DEFAULT_OUTPUT_MAX_BYTES,
+      maxLines: options.maxLines ?? DEFAULT_OUTPUT_MAX_LINES,
+    },
+    "createExecTool",
+  );
   const now = options.now ?? Date.now;
   const backendIds = Object.keys(options.backends);
   if (backendIds.length === 0) {
@@ -180,7 +197,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     return { id, text, callable: runtime.isCallable?.(id) === true };
   });
   const callableBackendIds = new Set(backends.filter((b) => b.callable).map((b) => b.id));
-  const description = describeTool(backends, defaultBackend);
+  const description = describeTool(backends, defaultBackend, limits);
   // Offer only the fields that can work: `backend` when there is a
   // choice, `input` when some backend accepts it.
   const shape: Record<string, z.ZodType> = {
@@ -234,6 +251,9 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           backend: selectedBackend,
           env,
           input,
+          // The runtime cuts and saves by the same limits the tool
+          // shows, so whatever the model does not see is in the file.
+          output: limits,
         });
       } catch (err) {
         yield { ...base, error: errorMessage(err) };
@@ -260,8 +280,9 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         // running output so the model sees progress before the run
         // ends; the exit event settles the terminal snapshot.
         if (typeof handle[Symbol.asyncIterator] === "function") {
-          const stdout = new StreamBuffer(streamMaxBytes);
-          const stderr = new StreamBuffer(streamMaxBytes);
+          const stdout = new OutputText(limits);
+          const stderr = new OutputText(limits);
+          let truncated: WorkspaceRuntimeTruncation | undefined;
           let exitCode: number | null = null;
           let value: unknown;
           let hasValue = false;
@@ -275,6 +296,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
               else if (event.name === "stderr") stderr.push(event.value);
               else {
                 exitCode = event.code;
+                truncated = event.truncated;
                 if ("result" in event) {
                   value = event.result;
                   hasValue = true;
@@ -287,8 +309,8 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
               yield {
                 ...base,
                 exitCode: null,
-                stdout: stdout.render(maxBytes),
-                stderr: stderr.render(maxBytes),
+                stdout: stdout.render(),
+                stderr: stderr.render(),
               };
             }
           } catch (err) {
@@ -298,8 +320,8 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           yield {
             ...base,
             exitCode,
-            stdout: stdout.render(maxBytes),
-            stderr: stderr.render(maxBytes),
+            stdout: stdout.render(truncated?.stdout ?? "unsaved"),
+            stderr: stderr.render(truncated?.stderr ?? "unsaved"),
             ...(hasValue ? { result: value } : {}),
           };
           return;
@@ -311,8 +333,8 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           yield {
             ...base,
             exitCode: result.exitCode,
-            stdout: truncateText(result.stdout, maxBytes),
-            stderr: truncateText(result.stderr, maxBytes),
+            stdout: showResult(result.stdout, result.truncated?.stdout, limits),
+            stderr: showResult(result.stderr, result.truncated?.stderr, limits),
             ...(result.value === undefined ? {} : { result: result.value }),
           };
         } catch (err) {
@@ -323,8 +345,12 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
   };
 }
 
-const FILE_TOOLS_HINT =
-  "Prefer the dedicated read, write, and edit tools for file operations. Long output is truncated to keep tool replies small.";
+const FILE_TOOLS_HINT = "Prefer the dedicated read, write, and edit tools for file operations.";
+
+// How the reply cuts long output, and where the rest goes.
+function outputHint(limits: OutputLimits): string {
+  return `Each of stdout and stderr is cut to its last ${limits.maxLines} lines or ${formatSize(limits.maxBytes)}, whichever is hit first; when it is, the full output is saved to a file the reply names, which the read and grep tools can open.`;
+}
 const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
 const CALLABLE_HINT =
   "Pass `input` to hand the module a structured value, and read its return value back from the `result` field.";
@@ -337,17 +363,29 @@ interface DescribedBackend {
 
 // With one backend the description is about what it does. With several
 // it lists them and explains how to choose.
-function describeTool(backends: readonly DescribedBackend[], defaultBackend: string): string {
+function describeTool(
+  backends: readonly DescribedBackend[],
+  defaultBackend: string,
+  limits: OutputLimits,
+): string {
+  const output = outputHint(limits);
   const [only, ...others] = backends;
   if (only !== undefined && others.length === 0) {
     return only.callable
-      ? ["Run code in the workspace.", "", only.text, "", CALLABLE_HINT, FILE_TOOLS_HINT].join("\n")
+      ? [
+          "Run code in the workspace.",
+          "",
+          only.text,
+          "",
+          CALLABLE_HINT,
+          `${FILE_TOOLS_HINT} ${output}`,
+        ].join("\n")
       : [
           "Run a shell command in the workspace.",
           "",
           only.text,
           "",
-          `${SHELL_HINT} ${FILE_TOOLS_HINT}`,
+          `${SHELL_HINT} ${FILE_TOOLS_HINT} ${output}`,
         ].join("\n");
   }
   const callable = backends.filter((backend) => backend.callable).map((b) => JSON.stringify(b.id));
@@ -361,7 +399,7 @@ function describeTool(backends: readonly DescribedBackend[], defaultBackend: str
     ),
     "",
     `Default backend: ${JSON.stringify(defaultBackend)}. Try this first for any command you're not sure about; if it fails with a "command not found" or a similar capability error, retry on a backend whose description covers the missing tool.`,
-    `${SHELL_HINT} ${FILE_TOOLS_HINT}`,
+    `${SHELL_HINT} ${FILE_TOOLS_HINT} ${output}`,
     ...(callable.length === 0
       ? []
       : [
@@ -384,43 +422,98 @@ function errorMessage(err: unknown): string {
 }
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
-// A bounded, incrementally-counted accumulator for one output stream.
-// It keeps at most `cap` bytes of head text in memory while tracking
-// the total bytes seen, so a long run neither grows without bound nor
-// re-encodes the whole buffer on every snapshot. `render` returns the
-// display-capped view with a marker for the bytes not shown.
-class StreamBuffer {
-  #head = "";
-  #headBytes = 0;
-  #totalBytes = 0;
-  readonly #cap: number;
+// One stream of streamed output as the model sees it: everything while
+// it fits the limits, then its last lines with a note saying which
+// lines are shown and where the rest is. Memory stays bounded however
+// long the run.
+class OutputText {
+  readonly #window: OutputWindow;
+  readonly #limits: OutputLimits;
 
-  constructor(cap: number) {
-    this.#cap = cap;
+  constructor(limits: OutputLimits) {
+    this.#window = new OutputWindow(limits);
+    this.#limits = limits;
   }
 
   push(chunk: string): void {
-    const chunkBytes = encoder.encode(chunk).byteLength;
-    this.#totalBytes += chunkBytes;
-    if (this.#headBytes >= this.#cap) return;
-    if (this.#headBytes + chunkBytes <= this.#cap) {
-      this.#head += chunk;
-      this.#headBytes += chunkBytes;
-      return;
-    }
-    // The chunk crosses the cap: keep the largest whole-character
-    // prefix that fits, then stop growing the head.
-    const prefix = utf8Prefix(chunk, this.#cap - this.#headBytes);
-    this.#head += prefix.text;
-    this.#headBytes += prefix.bytes;
+    this.#window.push(encoder.encode(chunk));
   }
 
-  render(maxBytes: number): string {
-    if (this.#totalBytes <= maxBytes && this.#totalBytes === this.#headBytes) {
-      return this.#head;
-    }
-    const shown = utf8Prefix(this.#head, maxBytes);
-    return `${shown.text}\n\n[truncated, ${this.#totalBytes - shown.bytes} more bytes]`;
+  // Running snapshots pass nothing; the terminal one passes what the
+  // runtime said about saving, or "unsaved" when it saved nothing.
+  render(saved?: TruncatedOutput | "unsaved"): string {
+    const kept = this.#window.read();
+    const text = decoder.decode(kept.bytes);
+    if (kept._tag === "whole" || saved === undefined) return text;
+    return `${text}${note(
+      {
+        firstLine: kept.firstLine,
+        lastLine: kept.lastLine,
+        totalLines: this.#window.totalLines,
+        partialLine: kept.partialLine,
+        shownBytes: kept.bytes.length,
+      },
+      saved === "unsaved" ? undefined : saved,
+      this.#limits,
+    )}`;
   }
+}
+
+// A result's output as the model sees it. A runtime that cut it says
+// so on `truncated`; output from a runtime that does not cut is cut
+// here, without a file to point to.
+function showResult(
+  value: string,
+  truncated: TruncatedOutput | undefined,
+  limits: OutputLimits,
+): string {
+  if (truncated !== undefined) {
+    return `${value}${note(
+      {
+        firstLine: truncated.firstLine,
+        lastLine: truncated.totalLines,
+        totalLines: truncated.totalLines,
+        partialLine: truncated.partialLine,
+        shownBytes: encoder.encode(value).length,
+      },
+      truncated,
+      limits,
+    )}`;
+  }
+  const text = new OutputText(limits);
+  text.push(value);
+  return text.render("unsaved");
+}
+
+interface ShownLines {
+  readonly firstLine: number;
+  readonly lastLine: number;
+  readonly totalLines: number;
+  readonly partialLine: boolean;
+  readonly shownBytes: number;
+}
+
+// The note after cut output, worded as pi words it.
+function note(shown: ShownLines, saved: TruncatedOutput | undefined, limits: OutputLimits): string {
+  const where =
+    saved === undefined
+      ? ""
+      : saved.status === "saved"
+        ? ` Full output: ${saved.path}`
+        : ` Full output was not saved: ${saved.reason}`;
+  if (shown.partialLine) {
+    return `\n\n[Showing last ${formatSize(shown.shownBytes)} of line ${shown.lastLine}.${where}]`;
+  }
+  const range = `lines ${shown.firstLine}-${shown.lastLine} of ${shown.totalLines}`;
+  const byLines = shown.lastLine - shown.firstLine + 1 >= limits.maxLines;
+  const limit = byLines ? "" : ` (${formatSize(limits.maxBytes)} limit)`;
+  return `\n\n[Showing ${range}${limit}.${where}]`;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }

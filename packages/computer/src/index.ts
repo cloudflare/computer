@@ -70,6 +70,8 @@ export {
   type WorkspaceServiceProxyProps,
 } from "./proxy.js";
 export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
+export type { WorkspaceOutputOptions } from "./runtime/output-files.js";
+export type { TruncatedOutput } from "./runtime/output-spool.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
@@ -91,8 +93,10 @@ export type {
   WorkspaceRuntimeGetOptions,
   WorkspaceRuntimeKillOptions,
   WorkspaceRuntimeLoader,
+  WorkspaceRuntimeOutputOptions,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeStatus,
+  WorkspaceRuntimeTruncation,
   WorkspaceRuntimeValue,
 } from "./runtime/types.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";

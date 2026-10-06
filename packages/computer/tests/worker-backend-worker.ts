@@ -20,7 +20,11 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import curlModules from "@cloudflare/computer/shell/curl";
 import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
-import type { DurableObjectStorageLike, WorkspaceStub } from "../src/index.js";
+import type {
+  DurableObjectStorageLike,
+  WorkspaceRuntimeTruncation,
+  WorkspaceStub,
+} from "../src/index.js";
 import { Workspace } from "../src/index.js";
 
 export { WorkspaceServiceProxy } from "../src/proxy.js";
@@ -81,7 +85,12 @@ export class HostDO extends DurableObject<Env> {
     return this.#workspace.fs.readFile(path, "utf8");
   }
 
-  async exec(command: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async exec(command: string): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    truncated?: WorkspaceRuntimeTruncation;
+  }> {
     await this.#seed();
     const handle = await this.#workspace.runtime.exec(command, {
       encoding: "utf8",
@@ -91,6 +100,7 @@ export class HostDO extends DurableObject<Env> {
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      ...(result.truncated === undefined ? {} : { truncated: result.truncated }),
     };
   }
 }

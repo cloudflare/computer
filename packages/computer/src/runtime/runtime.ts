@@ -1,6 +1,8 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding } from "../shell.js";
+import { type CommandOutputFiles, OutputSpool, type SpooledOutput } from "./output-spool.js";
+import { makeOutputLimits, type OutputLimits } from "./output-tail.js";
 import type {
   ModuleExecutionEnvelope,
   WorkspaceModuleBackendHandle,
@@ -18,7 +20,13 @@ interface WorkspaceRuntimeRouterOptions {
   backends: ReadonlyMap<string, { readonly callable?: boolean; readonly description?: string }>;
   backendHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
+  // Where output too long for a result is saved, and the default
+  // limits. Absent when the Workspace turned saving off.
+  output?: { readonly files: CommandOutputFiles; readonly limits: OutputLimits };
 }
+
+// Fresh spools for one pass over an execution's events.
+type OutputSpools = () => { readonly stdout: OutputSpool; readonly stderr: OutputSpool };
 
 // The error a caller sees when it hands structured `input` to a
 // backend that does not accept it. Exported so the exec tool rejects
@@ -89,6 +97,7 @@ export class WorkspaceRuntime {
       true,
       envelope.sync,
       envelope.runtimeId,
+      this.#outputSpools(backend, envelope.id, options.output),
     );
   }
 
@@ -109,15 +118,20 @@ export class WorkspaceRuntime {
     const backend = this.#backend(options.backend);
     const runtime = await this.#options.backendHandle(backend);
     const envelope = await runtime.getExec({ id, after: resumeToAfter(options.resume) });
+    const full = options.resume === undefined || options.resume === "full";
     return wrapModuleHandle(
       runtime,
       backend,
       envelope.id,
       envelope.events,
       options.encoding,
-      options.resume === undefined || options.resume === "full",
+      full,
       envelope.sync,
       envelope.runtimeId,
+      // Only a replay from the start sees all the output to save. A
+      // partial replay still cuts `result()` by the same limits, since
+      // it falls back to a full replay.
+      this.#outputSpools(backend, envelope.id, options.output),
     );
   }
 
@@ -131,6 +145,33 @@ export class WorkspaceRuntime {
     assertExecutionId(id);
     const backend = this.#backend(options.backend);
     await (await this.#options.backendHandle(backend)).disposeExec({ id });
+  }
+
+  // Spools that cut each stream to the limits and save the full output
+  // under a name unique to the backend and execution. Undefined when
+  // saving is off for the Workspace or this call.
+  #outputSpools(
+    backend: string,
+    id: string,
+    requested: WorkspaceRuntimeExecOptions["output"],
+  ): OutputSpools | undefined {
+    const output = this.#options.output;
+    if (output === undefined || requested === false) return undefined;
+    const limits =
+      requested === undefined
+        ? output.limits
+        : makeOutputLimits(
+            {
+              maxLines: requested.maxLines ?? output.limits.maxLines,
+              maxBytes: requested.maxBytes ?? output.limits.maxBytes,
+            },
+            "runtime.exec output",
+          );
+    const name = `${fileNamePart(backend)}.${fileNamePart(id)}`;
+    return () => ({
+      stdout: new OutputSpool(limits, output.files, `${name}.stdout.log`),
+      stderr: new OutputSpool(limits, output.files, `${name}.stderr.log`),
+    });
   }
 
   #backend(requested: string | undefined): string {
@@ -153,6 +194,7 @@ function wrapModuleHandle<E extends ExecEncoding>(
   resultMayUseSource = true,
   sync?: ModuleExecutionEnvelope["sync"],
   runtimeId?: string,
+  spools?: OutputSpools,
 ): WorkspaceRuntimeExecHandle<E> {
   let claimed: "result" | "stream" | undefined;
   let sourceCancelled = false;
@@ -167,7 +209,13 @@ function wrapModuleHandle<E extends ExecEncoding>(
           return;
         }
         claimed = "stream";
-        reader ??= transformModuleEvents(source, encoding).getReader();
+        if (reader === undefined) {
+          // A partial replay misses the start of the output, so it is
+          // streamed as is rather than saved over a full copy.
+          const events =
+            spools !== undefined && resultMayUseSource ? spoolEvents(source, spools()) : source;
+          reader = transformModuleEvents(events, encoding).getReader();
+        }
         try {
           const next = await reader.read();
           if (next.done) {
@@ -211,11 +259,11 @@ function wrapModuleHandle<E extends ExecEncoding>(
             resultReader = active;
           };
           if (resultMayUseSource && !sourceCancelled) {
-            return drainModuleResult<E>(source, encoding, setReader, sync);
+            return drainModuleResult<E>(source, encoding, setReader, sync, spools?.());
           }
           if (!sourceCancelled) await source.cancel("result() requested a full replay");
           const replay = await runtime.getExec({ id, runtimeId });
-          return drainModuleResult<E>(replay.events, encoding, setReader, replay.sync);
+          return drainModuleResult<E>(replay.events, encoding, setReader, replay.sync, spools?.());
         })();
         return resultPromise;
       },
@@ -317,9 +365,20 @@ async function drainModuleResult<E extends ExecEncoding>(
   encoding: E | undefined,
   setReader: (reader: ReadableStreamDefaultReader<WorkspaceRuntimeEvent> | undefined) => void,
   sync?: ModuleExecutionEnvelope["sync"],
+  spools?: ReturnType<OutputSpools>,
 ): Promise<WorkspaceRuntimeResult<E>> {
+  // With spools, output goes through them and only the end is kept;
+  // without, every chunk is kept.
   const stdout: Uint8Array[] = [];
   const stderr: Uint8Array[] = [];
+  const collect = async (
+    spool: OutputSpool | undefined,
+    chunks: Uint8Array[],
+    chunk: Uint8Array,
+  ) => {
+    if (spool === undefined) chunks.push(chunk);
+    else await spool.push(chunk);
+  };
   let value: WorkspaceRuntimeResult<E>["value"];
   // -1 marks a stream that closed without an exit frame, keeping that
   // case distinct from a genuine exit 1. Both settle as "failed".
@@ -331,17 +390,26 @@ async function drainModuleResult<E extends ExecEncoding>(
       const next = await reader.read();
       if (next.done) break;
       const event = next.value;
-      if (event.name === "stdout") stdout.push(event.value);
-      if (event.name === "stderr") stderr.push(event.value);
+      if (event.name === "stdout") await collect(spools?.stdout, stdout, event.value);
+      if (event.name === "stderr") await collect(spools?.stderr, stderr, event.value);
       if (event.name === "exit") {
         exitCode = event.code;
         if ("result" in event) value = event.result;
       }
     }
+  } catch (error) {
+    // Close any output file so its writer does not wait forever.
+    await Promise.all([spools?.stdout.finish(), spools?.stderr.finish()]);
+    throw error;
   } finally {
     reader.releaseLock();
     setReader(undefined);
   }
+  const [out, err] = await Promise.all([
+    spools?.stdout.finish() ?? { bytes: joinBytes(stdout) },
+    spools?.stderr.finish() ?? { bytes: joinBytes(stderr) },
+  ]);
+  const truncated = truncation(out, err);
   // A backend with a remote store reports its sync bracket stats;
   // the pull outcome settles once the event stream above drains.
   const pull = sync ? await sync.outcome : undefined;
@@ -349,9 +417,10 @@ async function drainModuleResult<E extends ExecEncoding>(
     status:
       exitCode === 0 ? "completed" : isCancellationExitCode(exitCode) ? "cancelled" : "failed",
     exitCode,
-    stdout: join(stdout, encoding) as WorkspaceRuntimeResult<E>["stdout"],
-    stderr: join(stderr, encoding) as WorkspaceRuntimeResult<E>["stderr"],
+    stdout: decode(out.bytes, encoding) as WorkspaceRuntimeResult<E>["stdout"],
+    stderr: decode(err.bytes, encoding) as WorkspaceRuntimeResult<E>["stderr"],
     ...(value === undefined ? {} : { value }),
+    ...(truncated === undefined ? {} : { truncated }),
     pushed: sync?.pushed ?? 0,
     pulled: pull?.applied ?? 0,
     skipped: pull?.skipped ?? ([] as SkippedEntry[]),
@@ -363,7 +432,7 @@ function isCancellationExitCode(exitCode: number) {
   return exitCode === 129 || exitCode === 130 || exitCode === 137 || exitCode === 143;
 }
 
-function join(chunks: Uint8Array[], encoding: ExecEncoding): string | Uint8Array {
+function joinBytes(chunks: Uint8Array[]): Uint8Array {
   const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -371,7 +440,77 @@ function join(chunks: Uint8Array[], encoding: ExecEncoding): string | Uint8Array
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return bytes;
+}
+
+function decode(bytes: Uint8Array, encoding: ExecEncoding): string | Uint8Array {
   return encoding === "utf8" ? new TextDecoder().decode(bytes) : bytes;
+}
+
+// What a result or exit event says about the streams that were cut.
+function truncation(
+  stdout: SpooledOutput,
+  stderr: SpooledOutput,
+): WorkspaceRuntimeResult["truncated"] | undefined {
+  if (stdout.truncated === undefined && stderr.truncated === undefined) return undefined;
+  return {
+    ...(stdout.truncated === undefined ? {} : { stdout: stdout.truncated }),
+    ...(stderr.truncated === undefined ? {} : { stderr: stderr.truncated }),
+  };
+}
+
+// Pass events through unchanged while feeding output into the spools.
+// The exit event waits for the spools to finish, so it can say where
+// any cut output was saved before the caller sees the run end. A
+// caller that stops early still closes the files.
+function spoolEvents(
+  source: ReadableStream<WorkspaceRuntimeEvent>,
+  spools: ReturnType<OutputSpools>,
+): ReadableStream<WorkspaceRuntimeEvent> {
+  const finish = async () => {
+    const [stdout, stderr] = await Promise.all([spools.stdout.finish(), spools.stderr.finish()]);
+    return truncation(stdout, stderr);
+  };
+  const reader = source.getReader();
+  return new ReadableStream<WorkspaceRuntimeEvent>(
+    {
+      async pull(controller) {
+        let next: ReadableStreamReadResult<WorkspaceRuntimeEvent>;
+        try {
+          next = await reader.read();
+        } catch (error) {
+          await finish();
+          controller.error(error);
+          return;
+        }
+        if (next.done) {
+          await finish();
+          controller.close();
+          return;
+        }
+        const event = next.value;
+        if (event.name === "stdout") await spools.stdout.push(event.value);
+        else if (event.name === "stderr") await spools.stderr.push(event.value);
+        else {
+          const truncated = await finish();
+          controller.enqueue(truncated === undefined ? event : { ...event, truncated });
+          return;
+        }
+        controller.enqueue(event);
+      },
+      async cancel(reason) {
+        await reader.cancel(reason);
+        await finish();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+// One part of an output file name. `.` separates the parts, so it is
+// escaped along with anything a path cannot hold.
+function fileNamePart(value: string): string {
+  return encodeURIComponent(value).replaceAll(".", "%2E");
 }
 
 function assertExecutionId(id: string) {
