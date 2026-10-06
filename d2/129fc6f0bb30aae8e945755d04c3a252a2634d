@@ -1,0 +1,23 @@
+docs/17_isolate_javascript.md
+  s_5cfd25d288ea5e::t_7cbf9623a358ee 292
+packages/computer/src/modules/container.test.ts
+  s_5cfd25d288ea5e::t_b335bbbb9ade7b 17,33,56,126,180-201
+packages/computer/src/modules/container.ts
+  s_5cfd25d288ea5e::t_7757055936708c 36-38,107-110,122-123,126-134,147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d2129fc6f0bb30aae8e945755d04c3a252a2634d",
+  "prompts": {},
+  "sessions": {
+    "s_5cfd25d288ea5e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11213-19dd-7244-8844-1b70b7418dd1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
