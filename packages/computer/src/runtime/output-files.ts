@@ -52,6 +52,13 @@ export const DEFAULT_OUTPUT_DIR = "/.computer/output";
 /** Saved output files kept per Workspace when it sets no `output.keep`. */
 export const DEFAULT_OUTPUT_KEEP = 50;
 
+// Output queued for the file before a writer waits for storage.
+const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
+
+// The names this class gives files, so cleanup leaves anything else in
+// the directory alone.
+const OUTPUT_FILE = /\.(stdout|stderr)\.log$/;
+
 /**
  * Save command output to files in a Workspace directory, keeping only
  * the newest `keep` of them. Output streams into the file as it
@@ -90,19 +97,36 @@ export class WorkspaceCommandOutputFiles implements CommandOutputFiles {
     // Set once the write fails or the file is closed, after which the
     // stream no longer takes chunks.
     let open = true;
-    const content = new ReadableStream<Uint8Array>({
-      start(c) {
-        controller = c;
+    // Writers waiting for the queue to drain below its high-water mark.
+    let waiting: Array<() => void> = [];
+    const release = () => {
+      const resolved = waiting;
+      waiting = [];
+      for (const resolve of resolved) resolve();
+    };
+    const content = new ReadableStream<Uint8Array>(
+      {
+        start(c) {
+          controller = c;
+        },
+        pull() {
+          release();
+        },
       },
-    });
+      new ByteLengthQueuingStrategy({ highWaterMark: QUEUE_HIGH_WATER_BYTES }),
+    );
     const written = this.#write(path, content).then((result) => {
       open = false;
+      release();
       return result;
     });
     return {
       path,
-      write: (chunk) => {
-        if (open) controller?.enqueue(chunk);
+      write: async (chunk) => {
+        if (!open || controller === undefined) return;
+        controller.enqueue(chunk);
+        if ((controller.desiredSize ?? 1) > 0) return;
+        await new Promise<void>((resolve) => waiting.push(resolve));
       },
       close: async () => {
         if (open) {
@@ -110,7 +134,7 @@ export class WorkspaceCommandOutputFiles implements CommandOutputFiles {
           controller?.close();
         }
         const result = await written;
-        if (result._tag === "ok") await this.#prune();
+        if (result._tag === "ok") await this.#prune(path);
         return result;
       },
     };
@@ -131,13 +155,19 @@ export class WorkspaceCommandOutputFiles implements CommandOutputFiles {
     }
   }
 
-  // Remove the oldest files past `keep`. Best effort: a failed cleanup
-  // must not fail the command whose output was just saved.
-  async #prune(): Promise<void> {
+  // Remove the oldest output files past `keep`, never the one just
+  // saved and never a file this class did not name. Best effort: a
+  // failed cleanup must not fail the command whose output was saved.
+  async #prune(saved: string): Promise<void> {
     try {
       const entries = await this.#fs.readdir(this.#dir);
-      const files = entries.filter((entry) => entry.isFile).sort((a, b) => b.mtime - a.mtime);
-      for (const stale of files.slice(this.#keep)) {
+      const others = entries
+        .filter(
+          (entry) =>
+            entry.isFile && OUTPUT_FILE.test(entry.name) && `${this.#dir}/${entry.name}` !== saved,
+        )
+        .sort((a, b) => b.mtime - a.mtime);
+      for (const stale of others.slice(this.#keep - 1)) {
         await this.#fs.rm(`${this.#dir}/${stale.name}`, { force: true });
       }
     } catch {

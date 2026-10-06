@@ -65,8 +65,10 @@ interface WorkspaceRuntimeResult {
     | { status: "pending"; applied: number; skipped: SkippedEntry[]; error: string };
 }
 
-type TruncatedOutput = {
-  status: "saved" | "not-saved"; // "saved" carries `path`, "not-saved" carries `reason`
+type TruncatedOutput = (
+  | { status: "saved"; path: string } // the full output, byte for byte
+  | { status: "not-saved"; reason: string }
+) & {
   totalBytes: number;
   totalLines: number;
   firstLine: number; // first line kept
@@ -93,10 +95,10 @@ flowchart LR
   S -- yes --> T[result keeps the last lines<br/>+ truncated.stdout]
 ```
 
-- Memory stays bounded: once a stream passes the limits, only a window of its end, a few times `maxBytes`, stays in memory. The rest streams into the file through the chunked writer.
+- Memory stays bounded: once a stream passes the limits, only a window of its end, a few times `maxBytes`, stays in memory. The rest streams into the file through the chunked writer, and a command that prints faster than storage writes waits for it rather than queueing output.
 - A streaming caller still gets every chunk. The `exit` event carries the same `truncated` field, sent after the file is written.
 - The file holds raw bytes, so binary output such as an image survives. Open it with `workspace.fs` or the `read` tool, which detects images by content.
-- `new Workspace({ output })` sets the limits, the directory (`/.computer/output`) and how many files to keep (the newest 50). `output: false` keeps all output and saves nothing. `exec(..., { output })` overrides the limits for one run.
+- `new Workspace({ output })` sets the limits, the directory (`/.computer/output`) and how many files to keep (the newest 50). Cleanup only removes files it named (`*.stdout.log`, `*.stderr.log`). `output: false` keeps all output and saves nothing. `exec(..., { output })` overrides the limits for one run.
 - The files are ordinary Workspace files. A container backend receives them on its next push like any other change.
 - If saving fails, for example under a read-only mount, the entry has `status: "not-saved"` and a `reason`; the result still holds the last lines.
 

@@ -27,8 +27,12 @@ export type CommandOutputSaveResult =
 export interface CommandOutputFile {
   /** Where the file is in the Workspace. */
   readonly path: string;
-  /** Append a chunk. Never blocks; the file is written as chunks arrive. */
-  write(chunk: Uint8Array): void;
+  /**
+   * Append a chunk. Resolves once the file can take more, so a command
+   * that prints faster than storage writes waits instead of queueing
+   * its output in memory.
+   */
+  write(chunk: Uint8Array): Promise<void>;
   /** Finish the file once the output ends. */
   close(): Promise<CommandOutputSaveResult>;
 }
@@ -114,22 +118,25 @@ export class OutputSpool {
   }
 
   /**
-   * Add a chunk of output.
+   * Add a chunk of output. Resolves once the file, if any, can take
+   * more; await it before reading the next chunk.
    *
    * @param chunk - Raw output bytes.
    */
-  push(chunk: Uint8Array): void {
+  async push(chunk: Uint8Array): Promise<void> {
     if (chunk.length === 0) return;
     this.#window.push(chunk);
     if (this.#file !== undefined) {
-      this.#file.write(chunk);
+      await this.#file.write(chunk);
       return;
     }
     this.#pending.push(chunk);
     if (!this.#window.overLimits) return;
-    this.#file = this.#files.open(this.#name);
-    for (const kept of this.#pending) this.#file.write(kept);
+    const file = this.#files.open(this.#name);
+    this.#file = file;
+    const pending = this.#pending;
     this.#pending = [];
+    for (const kept of pending) await file.write(kept);
   }
 
   /**

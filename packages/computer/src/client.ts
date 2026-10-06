@@ -35,6 +35,7 @@ import type { WorkspaceFilesystem } from "@cloudflare/dofs";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
+  WorkspaceRuntimeOutputOptions,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeValue,
 } from "./runtime/types.js";
@@ -227,12 +228,16 @@ export interface RuntimeExecOptions {
   input?: WorkspaceRuntimeValue;
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
+  /** Output limits for this run; see `WorkspaceRuntimeExecOptions.output`. */
+  output?: WorkspaceRuntimeOutputOptions | false;
 }
 
 export interface RuntimeGetOptions {
   encoding?: "utf8";
   backend?: string;
   resume?: "tail" | "full" | number;
+  /** Output limits for this replay; see `WorkspaceRuntimeExecOptions.output`. */
+  output?: WorkspaceRuntimeOutputOptions | false;
 }
 
 export interface RuntimeKillOptions {

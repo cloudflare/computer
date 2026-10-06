@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { Workspace } from "../workspace.js";
 import type { WorkspaceOutputOptions } from "./output-files.js";
+import { type CommandOutputFiles, OutputSpool } from "./output-spool.js";
 import { DEFAULT_OUTPUT_MAX_BYTES, takeTail } from "./output-tail.js";
 import type {
   WorkspaceModuleBackend,
@@ -21,7 +22,7 @@ function lines(count: number, from = 1): string {
 
 // A module backend whose every run prints the configured chunks to
 // stdout, then exits 0. Each run gets its own id.
-function printingBackend(chunks: () => Uint8Array[]): WorkspaceModuleBackend {
+function printingBackend(chunks: () => Uint8Array[], id = "printer"): WorkspaceModuleBackend {
   let runs = 0;
   const handle: WorkspaceModuleBackendHandle = {
     async exec(input) {
@@ -35,7 +36,7 @@ function printingBackend(chunks: () => Uint8Array[]): WorkspaceModuleBackend {
     async killExec() {},
     async disposeExec() {},
   };
-  return { protocol: "module", id: "printer", type: "test", connect: async () => handle };
+  return { protocol: "module", id, type: "test", connect: async () => handle };
 }
 
 function eventsFor(id: string, chunks: Uint8Array[]): ReadableStream<WorkspaceRuntimeEvent> {
@@ -205,6 +206,53 @@ describe("Workspace command output", () => {
     expect(names).toEqual(["printer.run-2.stdout.log", "printer.run-3.stdout.log"]);
   });
 
+  it("gives each backend and execution its own file", async () => {
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        printingBackend(() => [encoder.encode(lines(3000))], "a.b"),
+        printingBackend(() => [encoder.encode(lines(3000, 7))], "a"),
+      ],
+    });
+    const first = await (await ws.runtime.exec("print", { backend: "a.b", id: "c" })).result();
+    const second = await (await ws.runtime.exec("print", { backend: "a", id: "b.c" })).result();
+    const paths = [first.truncated?.stdout, second.truncated?.stdout].map((entry) =>
+      entry?.status === "saved" ? entry.path : undefined,
+    );
+    expect(paths).toEqual([
+      "/.computer/output/a%2Eb.c.stdout.log",
+      "/.computer/output/a.b%2Ec.stdout.log",
+    ]);
+  });
+
+  it("cleans up only its own files and keeps the newest on clock ties", async () => {
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [printingBackend(() => [encoder.encode(lines(3000))])],
+      now: () => 1000,
+      output: { dir: "/logs", keep: 1 },
+    });
+    await ws.fs.mkdir("/logs");
+    await ws.fs.writeFile("/logs/notes.txt", "mine");
+    for (let run = 0; run < 3; run += 1) {
+      await (await ws.runtime.exec("print")).result();
+    }
+    const names = (await ws.fs.readdir("/logs")).map((entry) => entry.name).sort();
+    expect(names).toEqual(["notes.txt", "printer.run-3.stdout.log"]);
+  });
+
+  it("closes the file when a streaming caller stops early", async () => {
+    const ws = workspaceWith(() => [encoder.encode(lines(3000)), encoder.encode(lines(10))]);
+    const handle = await ws.runtime.exec("print", { encoding: "utf8" });
+    for await (const event of handle) {
+      if (event.name === "stdout") break;
+    }
+    // The file holds what was read before the caller stopped, which can
+    // include output read ahead of the caller.
+    const saved = await ws.fs.readFile("/.computer/output/printer.run-1.stdout.log", "utf8");
+    expect(saved.startsWith(lines(3000))).toBe(true);
+  });
+
   it("rejects bad output options when the Workspace is built", () => {
     const build = (output: WorkspaceOutputOptions) => () =>
       new Workspace({ storage: new SQLiteTestStorage(), output });
@@ -212,5 +260,36 @@ describe("Workspace command output", () => {
     expect(build({ maxBytes: 1.5 })).toThrow(/maxBytes must be a positive integer/);
     expect(build({ dir: "logs" })).toThrow(/absolute path/);
     expect(build({ keep: -1 })).toThrow(/keep must be a positive integer/);
+  });
+});
+
+describe("OutputSpool", () => {
+  it("waits for the file before taking more output", async () => {
+    const written: string[] = [];
+    let drain: () => void = () => {};
+    const files: CommandOutputFiles = {
+      open: (name) => ({
+        path: `/out/${name}`,
+        write: (chunk) => {
+          written.push(decoder.decode(chunk));
+          return new Promise((resolve) => {
+            drain = resolve;
+          });
+        },
+        close: async () => ({ _tag: "ok" }),
+      }),
+    };
+    const spool = new OutputSpool({ maxLines: 1, maxBytes: 1024 }, files, "run.stdout.log");
+
+    let settled = false;
+    const pushed = spool.push(encoder.encode("a\nb\n")).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(written).toEqual(["a\nb\n"]);
+    expect(settled).toBe(false);
+    drain();
+    await pushed;
+    expect(settled).toBe(true);
   });
 });

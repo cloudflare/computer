@@ -161,7 +161,7 @@ export class WorkspaceRuntime {
       requested === undefined
         ? output.limits
         : makeOutputLimits({ ...output.limits, ...requested }, "runtime.exec output");
-    const name = `${encodeURIComponent(backend)}.${encodeURIComponent(id)}`;
+    const name = `${fileNamePart(backend)}.${fileNamePart(id)}`;
     return () => ({
       stdout: new OutputSpool(limits, output.files, `${name}.stdout.log`),
       stderr: new OutputSpool(limits, output.files, `${name}.stderr.log`),
@@ -365,9 +365,13 @@ async function drainModuleResult<E extends ExecEncoding>(
   // without, every chunk is kept.
   const stdout: Uint8Array[] = [];
   const stderr: Uint8Array[] = [];
-  const collect = (spool: OutputSpool | undefined, chunks: Uint8Array[], chunk: Uint8Array) => {
+  const collect = async (
+    spool: OutputSpool | undefined,
+    chunks: Uint8Array[],
+    chunk: Uint8Array,
+  ) => {
     if (spool === undefined) chunks.push(chunk);
-    else spool.push(chunk);
+    else await spool.push(chunk);
   };
   let value: WorkspaceRuntimeResult<E>["value"];
   // -1 marks a stream that closed without an exit frame, keeping that
@@ -380,13 +384,17 @@ async function drainModuleResult<E extends ExecEncoding>(
       const next = await reader.read();
       if (next.done) break;
       const event = next.value;
-      if (event.name === "stdout") collect(spools?.stdout, stdout, event.value);
-      if (event.name === "stderr") collect(spools?.stderr, stderr, event.value);
+      if (event.name === "stdout") await collect(spools?.stdout, stdout, event.value);
+      if (event.name === "stderr") await collect(spools?.stderr, stderr, event.value);
       if (event.name === "exit") {
         exitCode = event.code;
         if ("result" in event) value = event.result;
       }
     }
+  } catch (error) {
+    // Close any output file so its writer does not wait forever.
+    await Promise.all([spools?.stdout.finish(), spools?.stderr.finish()]);
+    throw error;
   } finally {
     reader.releaseLock();
     setReader(undefined);
@@ -447,7 +455,8 @@ function truncation(
 
 // Pass events through unchanged while feeding output into the spools.
 // The exit event waits for the spools to finish, so it can say where
-// any cut output was saved before the caller sees the run end.
+// any cut output was saved before the caller sees the run end. A
+// caller that stops early still closes the files.
 function spoolEvents(
   source: ReadableStream<WorkspaceRuntimeEvent>,
   spools: ReturnType<OutputSpools>,
@@ -456,11 +465,26 @@ function spoolEvents(
     const [stdout, stderr] = await Promise.all([spools.stdout.finish(), spools.stderr.finish()]);
     return truncation(stdout, stderr);
   };
-  return source.pipeThrough(
-    new TransformStream<WorkspaceRuntimeEvent, WorkspaceRuntimeEvent>({
-      async transform(event, controller) {
-        if (event.name === "stdout") spools.stdout.push(event.value);
-        else if (event.name === "stderr") spools.stderr.push(event.value);
+  const reader = source.getReader();
+  return new ReadableStream<WorkspaceRuntimeEvent>(
+    {
+      async pull(controller) {
+        let next: ReadableStreamReadResult<WorkspaceRuntimeEvent>;
+        try {
+          next = await reader.read();
+        } catch (error) {
+          await finish();
+          controller.error(error);
+          return;
+        }
+        if (next.done) {
+          await finish();
+          controller.close();
+          return;
+        }
+        const event = next.value;
+        if (event.name === "stdout") await spools.stdout.push(event.value);
+        else if (event.name === "stderr") await spools.stderr.push(event.value);
         else {
           const truncated = await finish();
           controller.enqueue(truncated === undefined ? event : { ...event, truncated });
@@ -468,11 +492,19 @@ function spoolEvents(
         }
         controller.enqueue(event);
       },
-      async flush() {
+      async cancel(reason) {
+        await reader.cancel(reason);
         await finish();
       },
-    }),
+    },
+    { highWaterMark: 0 },
   );
+}
+
+// One part of an output file name. `.` separates the parts, so it is
+// escaped along with anything a path cannot hold.
+function fileNamePart(value: string): string {
+  return encodeURIComponent(value).replaceAll(".", "%2E");
 }
 
 function assertExecutionId(id: string) {
