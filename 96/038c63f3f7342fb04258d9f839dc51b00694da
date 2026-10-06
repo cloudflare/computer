@@ -1,0 +1,21 @@
+packages/computer/src/runtime/bridge.test.ts
+  s_5cfd25d288ea5e::t_c40957d3d0f8e8 56-74
+packages/computer/src/runtime/bridge.ts
+  s_5cfd25d288ea5e::t_10336a0df3a121 232-233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "96038c63f3f7342fb04258d9f839dc51b00694da",
+  "prompts": {},
+  "sessions": {
+    "s_5cfd25d288ea5e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11213-19dd-7244-8844-1b70b7418dd1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
