@@ -1,6 +1,7 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
+import type { TruncatedOutput } from "./output-spool.js";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
@@ -155,7 +156,26 @@ type RuntimeChunk<E extends ExecEncoding> = E extends "utf8" ? string : Uint8Arr
 export type WorkspaceRuntimeEvent<E extends ExecEncoding = undefined> =
   | { id: string; seq: number; name: "stdout"; value: RuntimeChunk<E> }
   | { id: string; seq: number; name: "stderr"; value: RuntimeChunk<E> }
-  | { id: string; seq: number; name: "exit"; code: number; result?: WorkspaceRuntimeValue };
+  | {
+      id: string;
+      seq: number;
+      name: "exit";
+      code: number;
+      result?: WorkspaceRuntimeValue;
+      /** Output that passed the limits, and where it was saved in full. */
+      truncated?: WorkspaceRuntimeTruncation;
+    };
+
+/**
+ * Which streams of a run were cut to their last lines, and where each
+ * was saved in full. A stream that fit its limits is absent.
+ */
+export interface WorkspaceRuntimeTruncation {
+  /** Present when stdout was cut. */
+  stdout?: TruncatedOutput;
+  /** Present when stderr was cut. */
+  stderr?: TruncatedOutput;
+}
 
 export interface WorkspaceRuntimeResult<E extends ExecEncoding = undefined> {
   status: WorkspaceRuntimeStatus;
@@ -163,6 +183,12 @@ export interface WorkspaceRuntimeResult<E extends ExecEncoding = undefined> {
   stdout: E extends "utf8" ? string : Uint8Array;
   stderr: E extends "utf8" ? string : Uint8Array;
   value?: WorkspaceRuntimeValue;
+  /**
+   * Present when output passed the limits. `stdout` and `stderr` then
+   * hold only the end of the output; the full output is in the file
+   * each entry names.
+   */
+  truncated?: WorkspaceRuntimeTruncation;
   pushed: number;
   pulled: number;
   skipped: SkippedEntry[];
@@ -179,12 +205,29 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   stdin?: Uint8Array | string;
   timeoutMs?: number;
   sync?: "wait" | "defer";
+  /**
+   * How much output `result()` keeps per stream. Output past it is cut
+   * to its last lines and saved in full to a Workspace file. Overrides
+   * the Workspace's `output` limits for this run; `false` keeps all
+   * output and saves nothing.
+   */
+  output?: WorkspaceRuntimeOutputOptions | false;
+}
+
+/** Per-run output limits. Fields left out use the Workspace's limits. */
+export interface WorkspaceRuntimeOutputOptions {
+  /** The most lines kept per stream. Defaults to 2000. */
+  maxLines?: number;
+  /** The most bytes kept per stream. Defaults to 50 KiB. */
+  maxBytes?: number;
 }
 
 export interface WorkspaceRuntimeGetOptions<E extends ExecEncoding = undefined> {
   backend?: string;
   encoding?: E;
   resume?: "tail" | "full" | number;
+  /** Output limits for this replay, as for `exec`. */
+  output?: WorkspaceRuntimeOutputOptions | false;
 }
 
 export interface WorkspaceRuntimeKillOptions {

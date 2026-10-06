@@ -1345,7 +1345,7 @@ describe("createAITools exec tool", () => {
     ).toBeDefined();
   });
 
-  it("runs shell commands on the selected backend and truncates output", async () => {
+  it("runs shell commands on the selected backend and keeps the end of long output", async () => {
     const calls: Array<{ command: string; cwd: string | undefined; backend: string | undefined }> =
       [];
     const workspace = {
@@ -1383,8 +1383,8 @@ describe("createAITools exec tool", () => {
       cwd: "/workspace",
       backend: "container",
       exitCode: 2,
-      stdout: "abc\n\n[truncated, 3 more bytes]",
-      stderr: "uvw\n\n[truncated, 3 more bytes]",
+      stdout: "def\n\n[Showing last 3B of line 1.]",
+      stderr: "xyz\n\n[Showing last 3B of line 1.]",
     });
     expect(calls).toEqual([{ command: "npm test", cwd: "/workspace", backend: "container" }]);
   });
@@ -1415,8 +1415,8 @@ describe("createAITools exec tool", () => {
     });
 
     await expect(executeTool(tools.exec, { command: "echo emoji" })).resolves.toMatchObject({
-      stdout: "a🙂\n\n[truncated, 1 more bytes]",
-      stderr: "🙂\n\n[truncated, 4 more bytes]",
+      stdout: "🙂b\n\n[Showing last 5B of line 1.]",
+      stderr: "🙂\n\n[Showing last 4B of line 1.]",
     });
   });
 
@@ -2027,7 +2027,7 @@ describe("createAITools exec streaming", () => {
     const chunks = await collectTool(tools.exec, { command: "echo emoji" });
     expect(chunks.at(-1)).toMatchObject({
       exitCode: 0,
-      stdout: "a\u{1f642}\n\n[truncated, 1 more bytes]",
+      stdout: "\u{1f642}b\n\n[Showing last 5B of line 1.]",
     });
   });
 
@@ -2096,34 +2096,74 @@ describe("createAITools exec streaming", () => {
     ]);
   });
 
-  it("caps streamed output in memory at streamMaxBytes", async () => {
+  it("shows the last lines of long streamed output and names the saved file", async () => {
+    const lines = Array.from({ length: 10 }, (_, index) => `line ${index + 1}\n`).join("");
+    const requested: unknown[] = [];
     const workspace = {
       runtime: {
-        async exec() {
+        async exec(_command: string, options: { output?: unknown }) {
+          requested.push(options.output);
           return streamingHandle([
-            { name: "stdout", value: "a".repeat(10) },
-            { name: "stdout", value: "b".repeat(10) },
-            { name: "exit", code: 0 },
+            { name: "stdout", value: lines },
+            {
+              name: "exit",
+              code: 0,
+              truncated: {
+                stdout: {
+                  status: "saved",
+                  path: "/.computer/output/shell.run.stdout.log",
+                  totalBytes: lines.length,
+                  totalLines: 10,
+                  firstLine: 8,
+                  partialLine: false,
+                },
+              },
+            },
           ]);
         },
       },
     };
-    // Hold at most 12 bytes; show at most 8. The marker counts every
-    // byte seen (20), not just the 12 retained.
     const tools = createAITools({
       workspace,
       shell: {
         defaultBackend: "shell",
         backends: { shell: { description: "fast shell" } },
-        maxBytes: 8,
-        streamMaxBytes: 12,
+        maxLines: 3,
+      },
+    });
+
+    const chunks = await collectTool(tools.exec, { command: "run" });
+    expect(requested).toEqual([{ maxLines: 3, maxBytes: 50 * 1024 }]);
+    expect(chunks.at(-1)).toMatchObject({
+      exitCode: 0,
+      stdout:
+        "line 8\nline 9\nline 10\n\n\n[Showing lines 8-10 of 10. Full output: /.computer/output/shell.run.stdout.log]",
+    });
+  });
+
+  it("names the byte limit when it cut output before the line limit", async () => {
+    const workspace = {
+      runtime: {
+        async exec() {
+          return streamingHandle([
+            { name: "stdout", value: "aaaa\nbbbb\ncccc\n" },
+            { name: "exit", code: 0 },
+          ]);
+        },
+      },
+    };
+    const tools = createAITools({
+      workspace,
+      shell: {
+        defaultBackend: "shell",
+        backends: { shell: { description: "fast shell" } },
+        maxBytes: 10,
       },
     });
 
     const chunks = await collectTool(tools.exec, { command: "run" });
     expect(chunks.at(-1)).toMatchObject({
-      exitCode: 0,
-      stdout: "aaaaaaaa\n\n[truncated, 12 more bytes]",
+      stdout: "bbbb\ncccc\n\n\n[Showing lines 2-3 of 3 (10B limit).]",
     });
   });
 

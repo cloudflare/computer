@@ -44,6 +44,14 @@ import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
 import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
+import {
+  DEFAULT_OUTPUT_DIR,
+  DEFAULT_OUTPUT_KEEP,
+  parseOutputOptions,
+  WorkspaceCommandOutputFiles,
+  type WorkspaceOutputOptions,
+} from "./runtime/output-files.js";
+import { makeOutputLimits } from "./runtime/output-tail.js";
 import { WorkspaceRuntime } from "./runtime/runtime.js";
 import {
   isModuleBackend,
@@ -159,6 +167,13 @@ export interface WorkspaceOptions {
     sessionId?: string | null;
   };
 
+  // How much command output a run's result keeps, and where the rest
+  // goes. Output past the limits is cut to its last lines, like pi's
+  // bash tool, and saved in full to a file under `dir`, newest `keep`
+  // files kept. Defaults: 2000 lines, 50 KiB, `/.computer/output`, 50
+  // files. `false` keeps all output in results and saves nothing.
+  output?: WorkspaceOutputOptions | false;
+
   // Add Think's string-oriented WorkspaceLike filesystem methods
   // directly to the Workspace instance. This is off by default so
   // the primary Workspace API stays on the `workspace.fs` wrapper;
@@ -220,6 +235,7 @@ export class Workspace {
   readonly #backendsById: Map<string, WorkspaceBackend>;
   readonly #moduleBackendsById: Map<string, WorkspaceModuleBackend>;
   readonly #registeredBackends: Map<string, WorkspaceRegisteredBackend>;
+  readonly #output: WorkspaceOutputOptions | false;
   readonly #defaultBackendId: string | undefined;
   readonly #observer: WorkspaceObserver;
   readonly #syncLogger: SyncLogger;
@@ -305,6 +321,7 @@ export class Workspace {
       registered.filter(isModuleBackend).map((backend) => [backend.id, backend]),
     );
     this.#registeredBackends = new Map();
+    this.#output = parseOutputOptions(options.output);
     for (const backend of registered) {
       if (this.#registeredBackends.has(backend.id)) {
         throw new Error(
@@ -428,6 +445,18 @@ export class Workspace {
         backends: this.#registeredBackends,
         backendHandle: (id) => this.#backendHandleFor(id),
         resolveBackendId: (id) => this.#resolveBackendId(id) ?? "",
+        ...(this.#output === false
+          ? {}
+          : {
+              output: {
+                limits: makeOutputLimits(this.#output, "Workspace output"),
+                files: new WorkspaceCommandOutputFiles(
+                  this.#fs,
+                  this.#output.dir ?? DEFAULT_OUTPUT_DIR,
+                  this.#output.keep ?? DEFAULT_OUTPUT_KEEP,
+                ),
+              },
+            }),
       });
     }
     return this.#runtime;

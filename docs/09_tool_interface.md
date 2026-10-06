@@ -346,6 +346,17 @@ The tool offers only the arguments that can work:
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
+Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (50 KiB), whichever is hit first. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
+
+```text
+line 2999
+line 3000
+
+[Showing lines 1001-3000 of 3000. Full output: /.computer/output/shell.exec-1.stdout.log]
+```
+
+The model can open that file with `read` or search it with `grep`. `streamMaxBytes` is ignored; memory per stream stays within a few times `maxBytes`.
+
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 
 ## `publish`
