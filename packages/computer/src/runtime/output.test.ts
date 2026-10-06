@@ -120,18 +120,18 @@ describe("Workspace command output", () => {
     ).resolves.toBe(full);
   });
 
-  it("keeps at most 50 KiB of long output that arrives in many chunks", async () => {
+  it("keeps at most 64 KiB of long output that arrives in many chunks", async () => {
     const chunk = encoder.encode(`${"x".repeat(1023)}\n`.repeat(64));
     const ws = workspaceWith(() => Array.from({ length: 160 }, () => chunk));
     const result = await (await ws.runtime.exec("print")).result();
 
     expect(result.stdout.length).toBeLessThanOrEqual(DEFAULT_OUTPUT_MAX_BYTES);
-    expect(result.stdout.length).toBe(50 * 1024);
+    expect(result.stdout.length).toBe(64 * 1024);
     expect(result.truncated?.stdout).toMatchObject({
       status: "saved",
       totalBytes: 160 * chunk.length,
       totalLines: 160 * 64,
-      firstLine: 160 * 64 - 49,
+      firstLine: 160 * 64 - 63,
     });
     const saved = await ws.fs.stat("/.computer/output/printer.run-1.stdout.log");
     expect(saved.size).toBe(160 * chunk.length);

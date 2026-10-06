@@ -170,7 +170,7 @@ export interface WorkspaceOptions {
   // How much command output a run's result keeps, and where the rest
   // goes. Output past the limits is cut to its last lines, like pi's
   // bash tool, and saved in full to a file under `dir`, newest `keep`
-  // files kept. Defaults: 2000 lines, 50 KiB, `/.computer/output`, 50
+  // files kept. Defaults: 2000 lines, 64 KiB, `/.computer/output`, 50
   // files. `false` keeps all output in results and saves nothing.
   output?: WorkspaceOutputOptions | false;
 

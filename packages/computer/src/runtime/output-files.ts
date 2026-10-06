@@ -13,7 +13,7 @@ import { makeOutputLimits } from "./output-tail.js";
 export interface WorkspaceOutputOptions {
   /** The most lines a result keeps per stream. Defaults to 2000. */
   readonly maxLines?: number;
-  /** The most bytes a result keeps per stream. Defaults to 50 KiB. */
+  /** The most bytes a result keeps per stream. Defaults to 64 KiB. */
   readonly maxBytes?: number;
   /** The absolute Workspace directory full output is saved in. Defaults to `/.computer/output`. */
   readonly dir?: string;

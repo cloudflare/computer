@@ -218,7 +218,7 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
 export interface WorkspaceRuntimeOutputOptions {
   /** The most lines kept per stream. Defaults to 2000. */
   maxLines?: number;
-  /** The most bytes kept per stream. Defaults to 50 KiB. */
+  /** The most bytes kept per stream. Defaults to 64 KiB. */
   maxBytes?: number;
 }
 

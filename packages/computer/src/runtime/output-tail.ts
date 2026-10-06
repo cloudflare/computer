@@ -1,13 +1,14 @@
-// How much of a command's output stays in a result: the same rule pi
-// uses for its bash tool. A command's last lines are kept, because
-// that is where errors and summaries end up, up to a line limit and a
-// byte limit, whichever is hit first.
+// How much of a command's output stays in a result. Like pi's bash
+// tool, a command's last lines are kept, because that is where errors
+// and summaries end up, up to a line limit and a byte limit, whichever
+// is hit first. The byte limit stays at the exec tool's long-standing
+// 64 KiB rather than pi's 50 KB.
 
 /** Lines kept from the end of a command's output by default. */
 export const DEFAULT_OUTPUT_MAX_LINES = 2000;
 
 /** UTF-8 bytes kept from the end of a command's output by default. */
-export const DEFAULT_OUTPUT_MAX_BYTES = 50 * 1024;
+export const DEFAULT_OUTPUT_MAX_BYTES = 64 * 1024;
 
 /** How much output to keep: at most `maxLines` lines and `maxBytes` bytes from the end. */
 export interface OutputLimits {

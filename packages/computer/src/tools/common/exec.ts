@@ -99,7 +99,7 @@ export interface ExecToolOptions {
   // The most bytes of each of stdout and stderr the model sees.
   // Longer output keeps its last lines, like pi's bash tool, and the
   // runtime saves the full output to a file the reply names. Defaults
-  // to 50 KiB.
+  // to 64 KiB.
   maxBytes?: number;
   // The most lines of each stream the model sees. Defaults to 2000.
   maxLines?: number;

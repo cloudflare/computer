@@ -2133,7 +2133,7 @@ describe("createAITools exec streaming", () => {
     });
 
     const chunks = await collectTool(tools.exec, { command: "run" });
-    expect(requested).toEqual([{ maxLines: 3, maxBytes: 50 * 1024 }]);
+    expect(requested).toEqual([{ maxLines: 3, maxBytes: 64 * 1024 }]);
     expect(chunks.at(-1)).toMatchObject({
       exitCode: 0,
       stdout:

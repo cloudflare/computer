@@ -346,7 +346,7 @@ The tool offers only the arguments that can work:
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (50 KiB), whichever is hit first. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
+Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
 
 ```text
 line 2999

@@ -78,7 +78,7 @@ type TruncatedOutput = (
 
 ## Long output
 
-Every backend's output goes through the same limits, the ones pi's bash tool uses. A stream that fits 2000 lines and 50 KiB comes back whole. A longer one comes back as its last 2000 lines or 50 KiB, whichever is hit first, and its full output is saved byte for byte to a Workspace file, which `truncated.stdout.path` (or `stderr`) names:
+Every backend's output goes through the same limits, modeled on pi's bash tool. A stream that fits 2000 lines and 64 KiB comes back whole. A longer one comes back as its last 2000 lines or 64 KiB, whichever is hit first, and its full output is saved byte for byte to a Workspace file, which `truncated.stdout.path` (or `stderr`) names:
 
 ```ts
 const result = await (await ws.runtime.exec("npm test", { encoding: "utf8" })).result();
@@ -89,7 +89,7 @@ if (result.truncated?.stdout?.status === "saved") {
 
 ```mermaid
 flowchart LR
-  B[backend events] --> S{over 2000 lines<br/>or 50 KiB?}
+  B[backend events] --> S{over 2000 lines<br/>or 64 KiB?}
   S -- no --> R[result keeps all output]
   S -- yes --> F["/.computer/output/backend.id.stdout.log<br/>(full output, streamed)"]
   S -- yes --> T[result keeps the last lines<br/>+ truncated.stdout]
