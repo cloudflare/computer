@@ -202,7 +202,7 @@ describe("createContainerModule", () => {
       stdout: "tail\n",
       stderr: "",
       truncated: { stdout: saved },
-      sync: { status: "complete", skipped: [] },
+      sync: { status: "complete", skipped: [], skippedCount: 0 },
     });
     expect(runs[0]?.options.output).toEqual({ maxBytes: 1024 });
   });
