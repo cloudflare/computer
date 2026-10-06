@@ -14,6 +14,7 @@ interface ExecOptions {
   readonly env?: Record<string, string>;
   readonly stdin?: string;
   readonly timeoutMs: number;
+  readonly output?: { readonly maxBytes: number };
 }
 
 interface Run {
@@ -29,6 +30,7 @@ function fakeRuntime(output: {
   stdout?: string;
   stderr?: string;
   hang?: boolean;
+  truncated?: Record<string, unknown>;
 }) {
   const runs: Run[] = [];
   const runtime = {
@@ -51,6 +53,7 @@ function fakeRuntime(output: {
             exitCode: run.killed ? 130 : (output.exitCode ?? 0),
             stdout: output.stdout ?? "",
             stderr: output.stderr ?? "",
+            ...(output.truncated === undefined ? {} : { truncated: output.truncated }),
           };
         },
         async kill() {
@@ -120,6 +123,7 @@ describe("createContainerModule", () => {
     expect(Object.keys(runs[0]?.options ?? {}).sort()).toEqual([
       "backend",
       "encoding",
+      "output",
       "timeoutMs",
     ]);
     expect(runs[0]?.options.backend).toBe("linux");
@@ -173,7 +177,28 @@ describe("createContainerModule", () => {
     expect(runs).toHaveLength(0);
   });
 
-  it("truncates each stream on UTF-8 boundaries", async () => {
+  it("asks the runtime to cut output and passes on where it saved the rest", async () => {
+    const saved = {
+      status: "saved",
+      path: "/.computer/output/container-shell.run.stdout.log",
+      totalBytes: 900_000,
+      totalLines: 20_000,
+      firstLine: 18_001,
+      partialLine: false,
+    };
+    const { runtime, runs } = fakeRuntime({ stdout: "tail\n", truncated: { stdout: saved } });
+    const container = build(runtime, { maxOutputBytes: 1024 });
+
+    await expect(container.exec(["npm test"], callContext())).resolves.toEqual({
+      exitCode: 0,
+      stdout: "tail\n",
+      stderr: "",
+      truncated: { stdout: saved },
+    });
+    expect(runs[0]?.options.output).toEqual({ maxBytes: 1024 });
+  });
+
+  it("truncates each stream on UTF-8 boundaries when the runtime did not", async () => {
     const { runtime } = fakeRuntime({ stdout: "a🙂b", stderr: "🙂🙂" });
     const container = build(runtime, { maxOutputBytes: 5 });
 

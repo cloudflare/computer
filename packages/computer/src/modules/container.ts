@@ -33,8 +33,9 @@ export interface ContainerModuleOptions {
   readonly backend?: string;
   /**
    * Largest standard output and standard error returned to the
-   * isolate, in bytes per stream. Output past it is cut and ends with
-   * a truncation marker. Defaults to 64 KiB. Keep both streams well
+   * isolate, in bytes per stream. Longer output keeps its last lines
+   * (up to 2000), and the runtime saves all of it to a Workspace file
+   * that `truncated` names. Defaults to 64 KiB. Keep both streams well
    * under the backend's `maxCapabilityBytes`.
    */
   readonly maxOutputBytes?: number;
@@ -103,6 +104,10 @@ export function createContainerModule(
         backend,
         encoding: "utf8",
         timeoutMs,
+        // The runtime keeps only the end of long output in memory and
+        // saves the rest to a file, so a noisy command cannot exhaust
+        // the Durable Object.
+        output: { maxBytes: maxOutputBytes },
         ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
         ...(request.env === undefined ? {} : { env: request.env }),
         ...(request.stdin === undefined ? {} : { stdin: request.stdin }),
@@ -114,10 +119,19 @@ export function createContainerModule(
       else context.signal.addEventListener("abort", kill, { once: true });
       try {
         const result = await handle.result();
+        // A Workspace with `output: false` returns everything, so cut
+        // here too; the runtime already cut a stream it reports.
         return {
           exitCode: result.exitCode,
-          stdout: truncateText(result.stdout, maxOutputBytes),
-          stderr: truncateText(result.stderr, maxOutputBytes),
+          stdout:
+            result.truncated?.stdout === undefined
+              ? truncateText(result.stdout, maxOutputBytes)
+              : result.stdout,
+          stderr:
+            result.truncated?.stderr === undefined
+              ? truncateText(result.stderr, maxOutputBytes)
+              : result.stderr,
+          ...(result.truncated === undefined ? {} : { truncated: { ...result.truncated } }),
         };
       } finally {
         context.signal.removeEventListener("abort", kill);
@@ -130,7 +144,7 @@ const DESCRIPTION = [
   "Runs shell commands in a full Linux container that shares this workspace's files.",
   "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
   'Call `const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" })`. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
-  "Output comes back when the command finishes, and long output is truncated. A non-zero `exitCode` is returned, not thrown.",
+  "Output comes back when the command finishes. Long output keeps its last lines; `truncated.stdout.path` (or `truncated.stderr.path`) then names a workspace file holding all of it, which `node:fs` can read. A non-zero `exitCode` is returned, not thrown.",
 ].join(" ");
 
 interface ExecRequest {
