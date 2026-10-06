@@ -1,0 +1,25 @@
+.changeset/container-sync-report.md
+  s_b2fd9413bbc158::t_709d4dd190b6bb 5
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_8b77afa0173321 290
+packages/computer/src/modules/container.test.ts
+  s_b2fd9413bbc158::t_d658ddc8cfb253 111,218,281-298,300-307
+packages/computer/src/modules/container.ts
+  s_b2fd9413bbc158::t_39bdea7abb52a5 30-31,54,160-164,168-172
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "a77231b2c96b6f09e5b6949590c0a1329d25cc40",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
