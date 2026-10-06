@@ -114,7 +114,7 @@ describe("structured RLM strategy", () => {
 
     expect(prompt).toContain("structured-v1");
     expect(prompt).toContain("last_spell_by_episode");
-    expect(prompt).toContain('callModel("batch", requests)');
+    expect(prompt).toContain("batch(requests)");
     expect(prompt).not.toContain("SECRET_GOLD");
   });
 });

@@ -31,6 +31,14 @@
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
     },
+    "./modules/git": {
+      "types": "./dist/modules/git.d.ts",
+      "import": "./dist/modules/git.js"
+    },
+    "./modules/artifacts": {
+      "types": "./dist/modules/artifacts.d.ts",
+      "import": "./dist/modules/artifacts.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"

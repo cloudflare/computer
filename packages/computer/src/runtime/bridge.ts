@@ -1,17 +1,11 @@
 import { RpcTarget } from "cloudflare:workers";
 
-import type { ArtifactClient } from "../artifacts/index.js";
-import type { GitClient } from "../git/index.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
-import type { WorkspaceTrustedModule } from "./types.js";
+import type { WorkspaceModuleCallContext, WorkspaceModuleFunctions } from "./types.js";
 
 export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #capability: WorkspaceRuntimeCapability;
-  readonly #git: GitClient | undefined;
-  readonly #artifacts: ArtifactClient | undefined;
-  readonly #trustedModules: Record<string, WorkspaceTrustedModule>;
-  readonly #allowGitNetwork: boolean;
-  readonly #allowArtifactNetwork: boolean;
+  readonly #hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
   readonly #maxPayloadBytes: number;
   readonly #maxCallDurationMs: number;
   readonly #maxConcurrentCalls: number;
@@ -31,11 +25,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   constructor(
     capability: WorkspaceRuntimeCapability,
     integrations: {
-      git?: GitClient;
-      artifacts?: ArtifactClient;
-      trustedModules?: Record<string, WorkspaceTrustedModule>;
-      allowGitNetwork?: boolean;
-      allowArtifactNetwork?: boolean;
+      hostModules?: ReadonlyMap<string, WorkspaceModuleFunctions>;
       maxPayloadBytes?: number;
       maxCallDurationMs?: number;
       maxConcurrentCalls?: number;
@@ -48,11 +38,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   ) {
     super();
     this.#capability = capability;
-    this.#git = integrations.git;
-    this.#artifacts = integrations.artifacts;
-    this.#trustedModules = integrations.trustedModules ?? {};
-    this.#allowGitNetwork = integrations.allowGitNetwork ?? false;
-    this.#allowArtifactNetwork = integrations.allowArtifactNetwork ?? false;
+    this.#hostModules = integrations.hostModules ?? new Map();
     this.#maxPayloadBytes = integrations.maxPayloadBytes ?? 1024 * 1024;
     this.#maxCallDurationMs = integrations.maxCallDurationMs ?? 30_000;
     this.#maxConcurrentCalls = integrations.maxConcurrentCalls ?? 16;
@@ -114,10 +100,14 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const operation = encodeCall(async () => {
       const encodedArgs = JSON.parse(argsJson) as unknown[];
       const args = encodedArgs.map(decodeBridgeValue);
-      if (name.startsWith("git.")) return this.#callGit(name.slice(4), args);
-      if (name.startsWith("artifacts.")) return this.#callArtifacts(name.slice(10), args);
-      if (name.startsWith("trusted/")) {
-        return this.#callTrusted(name, args, { signal: abort.signal, deadline });
+      if (name.startsWith("host/")) {
+        return this.#callHostModule(name, args, {
+          signal: abort.signal,
+          deadline,
+          access: this.#capability.access,
+          resolvePath: (path, options) =>
+            this.#capability.resolveConfined(path, options?.allowMissing ?? false),
+        });
       }
       const operation = name.startsWith("fs.") ? name.slice(3) : name;
       switch (operation) {
@@ -221,140 +211,29 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
   }
 
-  async #callTrusted(
-    name: string,
-    args: unknown[],
-    context: { signal: AbortSignal; deadline: number },
-  ) {
-    const suffix = ".call";
-    const specifier = name.endsWith(suffix) ? name.slice("trusted/".length, -suffix.length) : "";
-    const trusted = this.#trustedModules[specifier];
-    if (!trusted) {
-      throw new Error(`Unknown trusted Workspace module call ${JSON.stringify(name)}.`);
+  // `name` is `host/<specifier>.<function>`. Function names are
+  // identifiers and never contain a dot, so the last dot splits them
+  // from a specifier such as `ws:a.b`. Own-property checks keep
+  // isolate code from reaching `toString` or other inherited members.
+  async #callHostModule(name: string, args: unknown[], context: WorkspaceModuleCallContext) {
+    const target = name.slice("host/".length);
+    const dot = target.lastIndexOf(".");
+    const specifier = dot === -1 ? "" : target.slice(0, dot);
+    const functionName = dot === -1 ? "" : target.slice(dot + 1);
+    const functions = this.#hostModules.get(specifier);
+    const fn =
+      functions !== undefined && Object.hasOwn(functions, functionName)
+        ? functions[functionName]
+        : undefined;
+    if (typeof fn !== "function") {
+      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
-    const method = String(args[0]);
-    const callArgs = args.slice(1);
-    assertBridgeValues(callArgs);
-    const result = await trusted.call(method, callArgs, context);
+    assertBridgeValues(args);
+    // Called on its module, so a method that uses `this` still works.
+    const result = (await fn.call(functions, args, context)) ?? null;
     assertBridgeValues([result]);
     return result;
   }
-
-  async #callGit(name: string, args: unknown[]) {
-    if (!this.#git) throw new Error("Workspace Git is not configured for this execution.");
-    switch (name) {
-      case "clone":
-        this.#requireWrite("Git clone");
-        this.#requireGitNetwork("Git clone");
-        return this.#git
-          .clone(
-            (await this.#gitOptions(args[0], true)) as unknown as Parameters<GitClient["clone"]>[0],
-          )
-          .then(() => null);
-      case "diff":
-        return this.#git.diff(
-          (await this.#gitOptions(args[0])) as Parameters<GitClient["diff"]>[0],
-        );
-      case "status":
-        return this.#git.status(
-          (await this.#gitOptions(args[0])) as Parameters<GitClient["status"]>[0],
-        );
-      case "log":
-        return this.#git.log((await this.#gitOptions(args[0])) as Parameters<GitClient["log"]>[0]);
-      case "cli": {
-        this.#requireWrite("Git CLI");
-        const input = (args[0] ?? {}) as Parameters<GitClient["cli"]>[0];
-        assertSafeGitCliArguments(input.argv);
-        if (isGitNetworkCommand(input.argv)) this.#requireGitNetwork("Git CLI network command");
-        return this.#git.cli({
-          ...input,
-          cwd: await this.#capability.resolveConfined(input.cwd ?? ".", true),
-        });
-      }
-      default:
-        throw new Error(`Unknown Workspace Git operation ${JSON.stringify(name)}.`);
-    }
-  }
-
-  #callArtifacts(name: string, args: unknown[]) {
-    if (!this.#artifacts)
-      throw new Error("Workspace Artifacts are not configured for this execution.");
-    switch (name) {
-      case "create":
-        this.#requireWrite("Artifacts create");
-        return this.#artifacts.create(
-          String(args[0]),
-          args[1] as Parameters<ArtifactClient["create"]>[1],
-        );
-      case "get":
-        return this.#artifacts.get(String(args[0]));
-      case "list":
-        return this.#artifacts.list();
-      case "importArtifact":
-        this.#requireWrite("Artifacts import");
-        if (!this.#allowArtifactNetwork) {
-          throw new Error(
-            "Artifacts import requires WorkerJavaScriptBackend allowArtifactNetwork: true.",
-          );
-        }
-        return this.#artifacts.import(
-          String(args[0]),
-          args[1] as Parameters<ArtifactClient["import"]>[1],
-          args[2] as Parameters<ArtifactClient["import"]>[2],
-        );
-      case "deleteArtifact":
-        this.#requireWrite("Artifacts delete");
-        return this.#artifacts.delete(String(args[0]));
-      default:
-        throw new Error(`Unknown Workspace Artifacts operation ${JSON.stringify(name)}.`);
-    }
-  }
-
-  async #gitOptions(value: unknown, allowMissing = false): Promise<Record<string, unknown>> {
-    const options = (value ?? {}) as Record<string, unknown>;
-    return {
-      ...options,
-      dir: await this.#capability.resolveConfined(
-        typeof options.dir === "string" ? options.dir : ".",
-        allowMissing,
-      ),
-    };
-  }
-
-  #requireGitNetwork(operation: string) {
-    if (!this.#allowGitNetwork) {
-      throw new Error(`${operation} requires WorkerJavaScriptBackend allowGitNetwork: true.`);
-    }
-  }
-
-  #requireWrite(operation: string) {
-    if (this.#capability.access !== "read-write") {
-      throw new Error(`${operation} requires Workspace write access.`);
-    }
-  }
-}
-
-function assertSafeGitCliArguments(argv: string[] | undefined) {
-  if (
-    argv?.some(
-      (argument) =>
-        argument === "-C" ||
-        argument.startsWith("-C") ||
-        argument === "--git-dir" ||
-        argument.startsWith("--git-dir=") ||
-        argument === "--work-tree" ||
-        argument.startsWith("--work-tree="),
-    )
-  ) {
-    throw new Error(
-      "Git CLI path overrides are not available inside a confined Workspace runtime.",
-    );
-  }
-}
-
-function isGitNetworkCommand(argv: string[] | undefined) {
-  const networkCommands = new Set(["clone", "fetch", "pull", "push", "ls-remote", "submodule"]);
-  return argv?.some((argument) => networkCommands.has(argument.toLowerCase())) ?? false;
 }
 
 function assertBridgeValues(
@@ -369,17 +248,19 @@ function assertBridgeValues(
       (typeof value === "number" && Number.isFinite(value))
     )
       return;
-    if (typeof value !== "object")
-      throw new Error("Trusted module values must be JSON-compatible.");
-    if (seen.has(value)) throw new Error("Trusted module values must be acyclic.");
+    if (typeof value !== "object") throw new Error("Host module values must be JSON-compatible.");
+    if (seen.has(value)) throw new Error("Host module values must be acyclic.");
     seen.add(value);
     if (Array.isArray(value)) for (const item of value) visit(item);
     else {
       const prototype = Object.getPrototypeOf(value);
       if (prototype !== Object.prototype && prototype !== null) {
-        throw new Error("Trusted module values must contain only plain objects.");
+        throw new Error("Host module values must contain only plain objects.");
       }
-      for (const item of Object.values(value as Record<string, unknown>)) visit(item);
+      // An undefined field is absent, as in JSON. encodeBridgeValue drops it.
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        if (item !== undefined) visit(item);
+      }
     }
     seen.delete(value);
   };
@@ -398,7 +279,9 @@ function encodeBridgeValue(value: unknown): unknown {
   if (Array.isArray(value)) return wrap("array", { items: value.map(encodeBridgeValue) });
   if (value && typeof value === "object") {
     return wrap("object", {
-      entries: Object.entries(value).map(([key, child]) => [key, encodeBridgeValue(child)]),
+      entries: Object.entries(value)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, encodeBridgeValue(child)]),
     });
   }
   return value;

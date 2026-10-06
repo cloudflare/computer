@@ -16,11 +16,11 @@ The executor command must be a complete ES module with export default async func
 
 export const RLM_SYSTEM_PROMPT = `Solve the Oolong benchmark with one comprehensive recursive Computer execution, then answer briefly.
 
-The executor command must be a complete ES module with export default async function. Use import fs from "node:fs/promises" and import { call as callModel } from "ws:model". Read /workspace/oolong-real/manifest.json. Its contextChunks contain the long corpus.
+The executor command must be a complete ES module with export default async function. Use import fs from "node:fs/promises" and import { batch } from "ws:model". Read /workspace/oolong-real/manifest.json. Its contextChunks contain the long corpus.
 
 Use Computer as an RLM. Do not make manifest-inspection, schema-discovery, or diagnostic-only calls:
 1. Read the bounded corpus chunks.
-2. You have one child-call budget of 24 total requests. Call callModel("batch", requests) exactly once with at most 24 focused requests. Each request is { prompt, input }; keep each input to one chunk and ask for structured, question-specific evidence.
+2. You have one child-call budget of 24 total requests. Call batch(requests) exactly once with at most 24 focused requests. Each request is { prompt, input }; keep each input to one chunk and ask for structured, question-specific evidence.
 3. Each child result is { index, ok, text, error }. Aggregate successful findings in JavaScript and tolerate failed workers. For first/last-event questions, retain chunk indexes and choose evidence by transcript position; never replace an earlier event with a later, more salient one.
 4. Parse the child text, aggregate findings in corpus chunk order, and return { answer } from the default function. If a later execution is needed to finalize from prior findings, it must still return { answer }.
 

@@ -107,7 +107,7 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
       root: WORKSPACE_ROOT,
       access: "read",
       egress: { mode: "none" },
-      trustedModules: { "ws:model": modelCapability },
+      modules: { "ws:model": modelCapability },
       maxConcurrentExecutions: 1,
       maxConcurrentCapabilityCalls: 4,
       // One manifest read + 24 chunk reads + one bounded ws:model batch.
