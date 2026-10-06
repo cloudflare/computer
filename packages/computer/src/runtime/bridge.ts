@@ -281,7 +281,15 @@ function hostValue(value: unknown): WorkspaceRuntimeValue {
       }
       const fields: Record<string, WorkspaceRuntimeValue> = {};
       for (const [key, child] of Object.entries(item)) {
-        if (child !== undefined) fields[key] = visit(child);
+        // defineProperty keeps an own `__proto__` key a field.
+        if (child !== undefined) {
+          Object.defineProperty(fields, key, {
+            value: visit(child),
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        }
       }
       copy = fields;
     }
@@ -408,19 +416,20 @@ async function respond(
 const ERROR_OVERHEAD_BYTES = 64;
 
 // An error the isolate can rebuild, cut to fit the payload limit as a
-// whole. `code` and `path` carry node:fs error details; each is kept
-// only if it leaves room for the message, and the message is cut to
-// what is left.
+// whole. `code` and `path` carry node:fs error details. Each is kept if
+// it fits beside the message, or beside half the room when the message
+// is long, and the message is cut to what is left.
 function boundedError(error: unknown, maxPayloadBytes: number) {
   const value = error as { code?: unknown; path?: unknown };
   const message = error instanceof Error ? error.message : String(error);
   let room = Math.max(0, maxPayloadBytes - ERROR_OVERHEAD_BYTES);
+  const messageReserve = Math.min(encoder.encode(message).byteLength, room / 2);
   const details: { code?: string; path?: string } = {};
   for (const key of ["code", "path"] as const) {
     const detail = value?.[key];
     if (typeof detail !== "string") continue;
     const bytes = encoder.encode(detail).byteLength;
-    if (bytes > room / 2) continue;
+    if (bytes > room - messageReserve) continue;
     details[key] = detail;
     room -= bytes;
   }
