@@ -1,0 +1,25 @@
+.changeset/spill-large-command-output.md
+  s_5cfd25d288ea5e::t_4fc5a1342458de 2
+docs/05_runtime_interface.md
+  s_5cfd25d288ea5e::t_4d2dd1e30e73f7 94
+packages/computer/src/runtime/output-tail.ts
+  s_5cfd25d288ea5e::t_0ba3fefa3e9151 172-174
+packages/computer/src/runtime/runtime.ts
+  s_5cfd25d288ea5e::t_de8d360a82eb6a 163-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "fb99ffc19181f9670df9951de3e5f9b8191b0778",
+  "prompts": {},
+  "sessions": {
+    "s_5cfd25d288ea5e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11213-19dd-7244-8844-1b70b7418dd1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
