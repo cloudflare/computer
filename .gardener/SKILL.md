@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.10. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.11. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -29,7 +29,7 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.10 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.11 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -145,7 +145,7 @@ instructions ask for an effect that isn't declared, it can't happen.
 | Family | Kinds |
 | --- | --- |
 | Issues | `issue.comment.create`, `issue.comment.update`, `issue.label.add`, `issue.label.remove`, `issue.assignee.add`, `issue.assignee.remove`, `issue.close`, `issue.reopen`, `issue.create` |
-| Pull requests | `pull_request.comment.create`, `pull_request.comment.update`, `pull_request.review.submit`, `pull_request.reviewer.request`, `pull_request.reviewer.remove`, `pull_request.update`, `pull_request.label.add`, `pull_request.label.remove`, `pull_request.update_branch`, `pull_request.open`, `pull_request.open_draft`, `pull_request.merge` |
+| Pull requests | `pull_request.comment.create`, `pull_request.comment.update`, `pull_request.review.submit`, `pull_request.reviewer.request`, `pull_request.reviewer.remove`, `pull_request.update`, `pull_request.label.add`, `pull_request.label.remove`, `pull_request.update_branch`, `pull_request.review_comment.reply`, `pull_request.review_thread.resolve`, `pull_request.open`, `pull_request.open_draft`, `pull_request.merge` |
 | Git | `branch.create`, `commit.create` |
 | Discussions | `discussion.comment.create`, `discussion.comment.update`, `discussion.answer.mark`, `discussion.answer.unmark`, `discussion.close`, `discussion.reopen` |
 | Checks | `check.rerun` |
@@ -156,6 +156,9 @@ instructions ask for an effect that isn't declared, it can't happen.
 - Labels must already exist in the repository; the model can't create them. Tell it to pick only
   from existing labels (with `provider.api.read` it can list them).
 - `pull_request.open` / `open_draft` with `labels` also needs `pull_request.label.add`.
+- `pull_request.review_comment.reply` (a reply in a review thread, by any comment id in it) and
+  `pull_request.review_thread.resolve` (by the thread's GraphQL node id) act only on the pull
+  request that triggered the run. Resolve only threads the task's own commit fixed.
 - **Code changes** need `repository.exec` (to edit files), `branch.create`, `commit.create` and
   `pull_request.open_draft` (or `.open`). The commit is made from files changed in the checkout,
   on a branch created from the checked-out commit. Changes under `.github/workflows/`,
@@ -199,7 +202,7 @@ network:            # tasks with repository.exec
 | --- | --- | --- |
 | `runtime-seconds` | Wall-clock limit for the run. | 30–21,000 |
 | `max-turns` | Model responses. | at least 3 |
-| `max-tool-calls` | Tool calls (each file read, API call or command counts). | at least 3 |
+| `max-tool-calls` | Tool calls (each file read, API call or command counts, plus the final `finish_task`, so the task's own work gets one fewer). | at least 3 |
 | `input-tokens` | Largest single model request. The whole conversation is resent each turn. | any positive |
 | `output-tokens` | Total generated across the run, including reasoning. | at least 16 × `max-turns` |
 | `max-effect-operations` | Optional cap on proposed changes per run. | 1–1,000 |
