@@ -1,5 +1,6 @@
 packages/computer/src/backends/worker-javascript/module-graph.ts
   s_b2fd9413bbc158::t_51daeb0d4cf2ae 345-347,350,353,355-357,360,363-364
+  s_b2fd9413bbc158::t_6a0db2838a0c08 362,365-371
 packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
   s_b2fd9413bbc158::t_d28a7065c2d465 517,752,754,803,805,1080,1090,1092,1111
 docs/17_isolate_javascript.md
@@ -9,12 +10,17 @@ packages/computer/src/runtime/types.ts
 packages/computer/tests/script-runner.test.ts
   s_b2fd9413bbc158::t_aecc7d397a6700 103-125
   s_b2fd9413bbc158::t_665cfb7eac0e76 126
+  s_b2fd9413bbc158::t_31a7eea9e9f249 401-436
 packages/computer/src/runtime/bridge.ts
   s_b2fd9413bbc158::t_ce6d53982be52b 3,18,75-79,81,83-90,110,197-198,200,208,268,282-287,289-295,297-355,359,363,365,368,376-379,382,384,388-390,393,395,399,402-403
 packages/computer/src/runtime/bridge.test.ts
   s_b2fd9413bbc158::t_697dbb084f9da3 3,7,20-22,36-37,47-48,58-95
 .changeset/native-rpc-modules.md
   s_b2fd9413bbc158::t_0e14afb7cec447 1-5
+.changeset/isolate-values.md
+  s_b2fd9413bbc158::t_75d5b5056d300c 1-5
+packages/computer/src/runtime/capability.ts
+  s_b2fd9413bbc158::t_a7cf8eb1b31637 277-281
 ---
 {
   "schema_version": "authorship/3.0.0",
