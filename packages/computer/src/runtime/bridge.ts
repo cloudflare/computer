@@ -229,7 +229,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
     assertBridgeValues(args);
-    const result = (await fn(args, context)) ?? null;
+    // Called on its module, so a method that uses `this` still works.
+    const result = (await fn.call(functions, args, context)) ?? null;
     assertBridgeValues([result]);
     return result;
   }

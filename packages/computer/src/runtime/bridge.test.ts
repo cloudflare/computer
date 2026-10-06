@@ -53,6 +53,25 @@ describe("WorkspaceRuntimeBridge cumulative limits", () => {
   });
 });
 
+describe("WorkspaceRuntimeBridge host modules", () => {
+  it("calls a host function on its module", async () => {
+    const functions = {
+      async name() {
+        return "ok";
+      },
+      async run(this: { name(): Promise<string> }) {
+        return this.name();
+      },
+    };
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      hostModules: new Map([["ws:test", functions]]),
+    });
+    await expect(target.call("host/ws:test.run", args)).resolves.toBe(
+      JSON.stringify({ result: "ok" }),
+    );
+  });
+});
+
 describe("WorkspaceRuntimeBridge assertResult", () => {
   function resultBridge(maxResultBytes?: number) {
     return new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, { maxResultBytes });
