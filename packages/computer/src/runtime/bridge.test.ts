@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
 import type { WorkspaceRuntimeCapability } from "./capability.js";
@@ -209,6 +209,18 @@ describe("WorkspaceRuntimeBridge values", () => {
     await expect(
       message(echoBridge(256).call("host/ws:test.run", ["é".repeat(200)])),
     ).resolves.toContain("request exceeds 256 bytes");
+  });
+
+  it("measures a request without copying its strings", async () => {
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    try {
+      await expect(
+        message(echoBridge(1024).call("host/ws:test.run", ["x".repeat(1024 * 1024)])),
+      ).resolves.toContain("request exceeds 1024 bytes");
+      expect(encode).not.toHaveBeenCalled();
+    } finally {
+      encode.mockRestore();
+    }
   });
 });
 
