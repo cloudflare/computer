@@ -1,7 +1,5 @@
 ---
-"@cloudflare/computer": minor
+"@cloudflare/computer": patch
 ---
 
-The `exec` tool offers only the arguments that can work. With one backend there is no `backend` argument, the tool always runs there, and the description talks about what that backend does rather than how to choose one. `input` appears only when a configured backend accepts it.
-
-Each backend's entry now adds what the backend says about itself, read through `workspace.runtime.backends()`. For `WorkerJavaScriptBackend` that is its source language and every module code can import, so the module list the model reads cannot drift from `modules`.
+The `exec` tool only documents `backend` and `input` when needed; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec).

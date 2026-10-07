@@ -51,6 +51,8 @@ const result = await handle.result();
 
 The source is a real ES module. Static imports, literal dynamic imports, and top-level await are supported. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
 
+The returned value becomes the result's `value` and must be JSON-compatible plain data. As with `JSON.stringify`, an `undefined` object field is left out, so `{ kept: 1, dropped: undefined }` completes as `{ kept: 1 }`, and returning `undefined` gives `null`. A function, a class instance such as a `Date`, an `undefined` array item, or a cycle fails the run. `options.input` is checked the same way.
+
 `runtime.exec()` returns before the Dynamic Worker finishes: the run keeps advancing while its event stream is consumed and the host call into the Dynamic Worker stays in flight. That pending work keeps the Durable Object resident on its own. A run whose handle is returned but never read can be evicted once the object goes idle; drain the event stream (or `result()`) to keep the run alive, and schedule an alarm through `ctx.storage.setAlarm()` for work that must survive eviction.
 
 ## Durable imports
