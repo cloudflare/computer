@@ -24,7 +24,7 @@ would use, so no bespoke HTTP route or transport is involved.
 
 [think]: https://www.npmjs.com/package/@cloudflare/think
 [workspace]: ../../packages/computer
-[tools]: ../../packages/computer/src/tools
+[tools]: ../../packages/computer/src/tools/ai-sdk.ts
 [aisdk7]: https://vercel.com/blog/ai-sdk-7
 
 ## Shape
@@ -53,9 +53,10 @@ model, a Workspace, and the workspace tools.
 ## Tools
 
 The tools come from `createAITools()` in
-[`@cloudflare/computer/tools`][tools]. This example enables the file
-tools and opts into `exec` by passing a shell backend description; it
-does not configure the assets publisher, so `publish` is not offered.
+[`@cloudflare/computer/tools/ai-sdk`][tools]. This example offers the
+file tools and an `exec` tool over both backends, each of which
+describes itself to the model. It does not configure the assets
+publisher, so `publish` is not offered.
 
 | Tool    | What it does                                              |
 | ------- | --------------------------------------------------------- |
@@ -75,8 +76,9 @@ does not configure the assets publisher, so `publish` is not offered.
   and `git log` work from inside `exec` even though the shell isolate
   has no public network of its own. Only `https://` URLs are
   supported.
-- `"container"` — a Cloudflare Container running `computerd` over capnweb,
-  modelled on [`examples/container-legacy`](../container-legacy). It has full Linux
+- `"container"` — a `ContainerBackend` running `computerd` over capnweb
+  in a Cloudflare Container the durable object schedules, modelled on
+  [`examples/container`](../container). It has full Linux
   userland, public network, `npm`, `node`, `python`, package managers,
   test runners, and other real binaries on `$PATH`. It cold-starts
   more slowly, so use it when the shell backend cannot run the
@@ -87,7 +89,7 @@ The system prompt tells the model to prefer `read`/`ls` over
 fast `shell` backend before falling through to `container`. See
 [`docs/05_runtime_interface.md`](../../docs/05_runtime_interface.md),
 [`docs/13_git_interface.md`](../../docs/13_git_interface.md), and
-[`examples/container-legacy`](../container-legacy).
+[`examples/container`](../container).
 
 ## Running it locally
 

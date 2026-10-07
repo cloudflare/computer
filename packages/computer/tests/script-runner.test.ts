@@ -100,7 +100,30 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("round-trips bytes and marker-shaped plain objects without codec collisions", async () => {
+  it("moves bytes through node:fs without inflating them", async () => {
+    // 900 bytes fits under this fixture's 1024-byte capability limit as
+    // raw bytes. Encoded as JSON numbers it would be about four times
+    // larger and rejected.
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        export default async () => {
+          await fs.writeFile("/workspace/blob.bin", new Uint8Array(900).fill(255));
+          const back = await fs.readFile("/workspace/blob.bin");
+          return { isBytes: back instanceof Uint8Array, length: back.byteLength, last: back[899] };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: { isBytes: true, length: 900, last: 255 },
+    });
+  });
+
+  it("round-trips bytes, and plain objects shaped like the old codec, unchanged", async () => {
     const response = await runtime({
       source: `
         import fs from "node:fs/promises";
@@ -330,6 +353,85 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text), text).toMatchObject({
       result: { status: "failed", stderr: expect.stringContaining("does not provide an export") },
     });
+  });
+
+  it("runs container commands from isolate code through ws:container", async () => {
+    const response = await runtime({
+      source: `
+        import { exec } from "ws:container";
+        export default () =>
+          exec("npm test", { cwd: "/workspace/app", env: { WHO: "isolate" }, stdin: "y" });
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text), text).toMatchObject({
+      result: {
+        status: "completed",
+        value: {
+          exitCode: 8,
+          stdout: "ran npm test in /workspace/app with isolate and y\n",
+          stderr: "warn\n",
+        },
+      },
+    });
+  });
+
+  it("rejects a malformed ws:container call inside the isolate", async () => {
+    const response = await runtime({
+      source: `
+        import { exec } from "ws:container";
+        export default async () => {
+          try {
+            await exec("ls", { shell: "zsh" });
+            return "ran";
+          } catch (error) {
+            return error.message;
+          }
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value).toContain('unknown option "shell"');
+  });
+
+  it("rejects a cyclic argument with a clear error", async () => {
+    const response = await runtime({
+      source: `
+        import { echo } from "ws:test-host";
+        export default async () => {
+          const value = {};
+          value.self = value;
+          try {
+            await echo(value);
+            return "sent";
+          } catch (error) {
+            return error.message;
+          }
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value, text).toContain("acyclic");
+  });
+
+  it("drops undefined fields from a run result, as JSON does", async () => {
+    const response = await runtime({
+      source: `export default () => ({ kept: 1, dropped: undefined, nested: { also: undefined } });`,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: { kept: 1, nested: {} },
+    });
+    expect(JSON.parse(text).result.value).not.toHaveProperty("dropped");
   });
 
   it("does not expose unrestricted host operations through the node:fs dispatcher", async () => {

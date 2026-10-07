@@ -3,21 +3,23 @@ import type { SkippedEntry } from "@cloudflare/dofs";
 import type { ExecEncoding } from "../shell.js";
 import { type CommandOutputFiles, OutputSpool, type SpooledOutput } from "./output-spool.js";
 import { makeOutputLimits, type OutputLimits } from "./output-tail.js";
-import type {
-  ModuleExecutionEnvelope,
-  WorkspaceModuleBackendHandle,
-  WorkspaceRuntimeDisposeOptions,
-  WorkspaceRuntimeEvent,
-  WorkspaceRuntimeExecHandle,
-  WorkspaceRuntimeExecOptions,
-  WorkspaceRuntimeGetOptions,
-  WorkspaceRuntimeKillOptions,
-  WorkspaceRuntimeResult,
+import {
+  isModuleBackend,
+  type ModuleExecutionEnvelope,
+  type WorkspaceModuleBackendHandle,
+  type WorkspaceRegisteredBackend,
+  type WorkspaceRuntimeDisposeOptions,
+  type WorkspaceRuntimeEvent,
+  type WorkspaceRuntimeExecHandle,
+  type WorkspaceRuntimeExecOptions,
+  type WorkspaceRuntimeGetOptions,
+  type WorkspaceRuntimeKillOptions,
+  type WorkspaceRuntimeResult,
 } from "./types.js";
 
 interface WorkspaceRuntimeRouterOptions {
   // What each registered backend says about itself.
-  backends: ReadonlyMap<string, { readonly callable?: boolean; readonly description?: string }>;
+  backends: ReadonlyMap<string, WorkspaceRegisteredBackend>;
   backendHandle: (id: string) => Promise<WorkspaceModuleBackendHandle>;
   resolveBackendId: (id: string | undefined) => string;
   // Where output too long for a result is saved, and the default
@@ -36,6 +38,21 @@ export function notCallableMessage(backend: string): string {
   return `Backend ${JSON.stringify(backend)} is not callable; it does not accept structured input.`;
 }
 
+/** What a registered backend says about itself. */
+export interface WorkspaceBackendInfo {
+  /** The id the backend is registered under. */
+  readonly id: string;
+  /**
+   * What `exec` source means on this backend: a shell command
+   * (`"command"`) or module source (`"module"`).
+   */
+  readonly protocol: "command" | "module";
+  /** Whether the backend takes structured `input` and returns a `result`. */
+  readonly callable: boolean;
+  /** What the backend tells a model about itself. */
+  readonly description?: string;
+}
+
 export class WorkspaceRuntime {
   readonly #options: WorkspaceRuntimeRouterOptions;
 
@@ -51,12 +68,17 @@ export class WorkspaceRuntime {
     return this.#options.backends.get(id)?.callable === true;
   }
 
-  // What the named backend says about itself for a model: its source
-  // language and, for the JavaScript backend, the modules code can
-  // import. The exec tool adds it to the backend's entry so a caller
-  // does not have to repeat it.
-  describe(id: string): string | undefined {
-    return this.#options.backends.get(id)?.description;
+  // What each registered backend says about itself, in registration
+  // order. The exec tool builds itself from this, and a Workspace
+  // client snapshots it when it is created, so the answer is the same
+  // locally and over RPC.
+  backends(): WorkspaceBackendInfo[] {
+    return [...this.#options.backends].map(([id, backend]) => ({
+      id,
+      protocol: isModuleBackend(backend) ? ("module" as const) : ("command" as const),
+      callable: backend.callable === true,
+      ...(backend.description === undefined ? {} : { description: backend.description }),
+    }));
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;

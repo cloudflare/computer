@@ -25,12 +25,6 @@ export { WorkspaceServiceProxy };
 
 const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-// The one worker shell `exec` runs on.
-const SHELL = {
-  backends: { shell: { description: "A just-bash shell over the workspace files." } },
-  defaultBackend: "shell",
-};
-
 // Bound the spend if the model fails to converge.
 const MAX_TURNS = 10;
 
@@ -54,7 +48,9 @@ export class PiAgent extends DurableObject<Env> {
   }
 
   async run(task: string): Promise<string> {
-    const { tools, execute } = createPiTools({ workspace: this.workspace, shell: SHELL });
+    // `exec` offers every backend the Workspace has; here that is the
+    // one worker shell, so the model never names a backend.
+    const { tools, execute } = createPiTools({ workspace: this.workspace });
 
     const models = createModels();
     models.setProvider(workersAI(this.env.AI, MODEL));

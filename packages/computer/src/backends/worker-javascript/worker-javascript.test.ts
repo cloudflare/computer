@@ -486,49 +486,6 @@ describe("WorkerJavaScriptBackend", () => {
     await workspace.close();
   });
 
-  it("limits concurrent Dynamic Workers", async () => {
-    let resolveEvaluation!: (value: { result: number }) => void;
-    const evaluation = new Promise<{ result: number }>((resolve) => {
-      resolveEvaluation = resolve;
-    });
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      backends: [
-        new WorkerJavaScriptBackend({
-          maxConcurrentExecutions: 1,
-          loader: {
-            load() {
-              return {
-                getEntrypoint() {
-                  return {
-                    evaluate: (
-                      _input: unknown,
-                      host: {
-                        assertResult(value: unknown): Promise<void>;
-                        attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
-                      },
-                    ) => evaluation.then((outcome) => evaluateResult(host, outcome.result)),
-                  };
-                },
-              };
-            },
-          },
-        }),
-      ],
-    });
-    await workspace.fs.mkdir("/workspace", { recursive: true });
-    const first = await workspace.runtime.exec("export default 1", { id: "first" });
-    await expect(
-      workspace.runtime.exec("export default 2", { id: "second" }),
-    ).rejects.toMatchObject({ code: "EEXEC_BUSY" });
-    resolveEvaluation({ result: 1 });
-    await expect(first.result()).resolves.toMatchObject({ status: "completed" });
-    await expect(
-      workspace.runtime.exec("export default 2", { id: "second" }),
-    ).resolves.toBeDefined();
-    await workspace.close();
-  });
-
   it("waits for accepted host calls before reporting successful completion", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
@@ -557,7 +514,7 @@ describe("WorkerJavaScriptBackend", () => {
                     attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
                   },
                 ) {
-                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  void host.call("fs.writeFile", ["/workspace/output.txt", "done"]);
                   return evaluateResult(host, 1);
                 },
               };
@@ -792,9 +749,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 async evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  await host.call("host/ws:test.run", JSON.stringify([]));
+                  await host.call("host/ws:test.run", []);
                 },
               };
             },
@@ -843,9 +800,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  void host.call("fs.writeFile", JSON.stringify(["/workspace/output.txt", "done"]));
+                  void host.call("fs.writeFile", ["/workspace/output.txt", "done"]);
                   return new Promise(() => undefined);
                 },
               };
@@ -1120,7 +1077,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
-    let response = "";
+    let response: unknown;
     const backend = new WorkerJavaScriptBackend({
       modules: { "ws:test": { run: async () => null } },
       loader: {
@@ -1130,9 +1087,9 @@ describe("WorkerJavaScriptBackend", () => {
               return {
                 async evaluate(
                   _input: unknown,
-                  host: { call(name: string, args: string): Promise<string> },
+                  host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  response = await host.call("host/ws:test.toString", JSON.stringify([]));
+                  response = await host.call("host/ws:test.toString", []);
                 },
               };
             },
@@ -1151,7 +1108,7 @@ describe("WorkerJavaScriptBackend", () => {
     for await (const _event of execution.events) {
       // Drain the run so the host call settles.
     }
-    expect(JSON.parse(response)).toMatchObject({
+    expect(response).toMatchObject({
       error: { message: expect.stringContaining("Unknown Workspace host module call") },
     });
     await handle.close?.();
@@ -1168,6 +1125,52 @@ describe("WorkerJavaScriptBackend", () => {
         workspace.runtime.exec(`import * as m from "${specifier}"; export default () => m;`),
       ).rejects.toThrow(/is not configured/);
     }
+  });
+
+  it("runs concurrent executions without a cap of its own", async () => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new WorkerJavaScriptBackend({
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return {
+                    evaluate: (
+                      _input: unknown,
+                      host: {
+                        assertResult(value: unknown): Promise<void>;
+                        attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+                      },
+                    ) => {
+                      started += 1;
+                      return released.then(() => evaluateResult(host, 1));
+                    },
+                  };
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const handles = await Promise.all(
+      Array.from({ length: 30 }, (_, index) =>
+        workspace.runtime.exec("export default 1", { id: `run-${index}` }),
+      ),
+    );
+    await vi.waitFor(() => expect(started).toBe(30));
+    release();
+    const results = await Promise.all(handles.map((handle) => handle.result()));
+    expect(results.every((result) => result.status === "completed")).toBe(true);
+    await workspace.close();
   });
 
   it("rejects relative imports that collide with internal Loader modules", async () => {

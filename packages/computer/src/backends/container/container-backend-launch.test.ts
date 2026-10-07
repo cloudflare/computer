@@ -106,3 +106,20 @@ describe("both launch paths request the same container", () => {
     }
   });
 });
+
+describe("ContainerBackend description", () => {
+  test.each([
+    [undefined, "It has no network access."],
+    [{ mode: "none" as const }, "It has no network access."],
+    [{ mode: "direct" as const }, "It has network access."],
+  ])("matches egress %o", (egress, expected) => {
+    const backend = new ContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => ({}) }) as never,
+      workspace: { binding: "SESSIONS", id: "session-1" },
+      ...(egress === undefined ? {} : { egress }),
+    });
+
+    expect(backend.description).toContain("full Linux container");
+    expect(backend.description).toContain(expected);
+  });
+});

@@ -68,6 +68,7 @@ import type {
 import type { ShareOptions } from "./assets/index.js";
 import type { GitCliInput, GitCliResult } from "./git/index.js";
 import { withSpan } from "./observe.js";
+import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -407,6 +408,11 @@ export class WorkspaceRuntimeStub extends RpcTarget {
     untrackStub(this);
   }
 
+  /** What each backend says about itself. A client snapshots this when it is created. */
+  backends(): WorkspaceBackendInfo[] {
+    return this.#ws.runtime.backends();
+  }
+
   exec(source: string): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
   exec(
     source: string,
@@ -659,6 +665,13 @@ export class WorkspaceStub extends RpcTarget {
 
   get assets(): WorkspaceAssetsStub | undefined {
     return this.#assets;
+  }
+
+  // Whether the Workspace has an assets publisher. Reading `assets`
+  // over RPC always yields a placeholder, so a client asks this plain
+  // boolean once instead.
+  get hasAssets(): boolean {
+    return this.#assets !== undefined;
   }
 
   get artifacts(): WorkspaceArtifactsStub {

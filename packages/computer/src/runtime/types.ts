@@ -29,10 +29,10 @@ export interface WorkspaceModuleCallContext {
  *
  * `args` holds the arguments the isolate passed, decoded from the wire.
  * They come from untrusted code, so parse them before use. The function
- * may return a value or a promise of one. The result must be
- * JSON-compatible: the bridge checks it at runtime, treats `undefined`
- * as `null`, and drops `undefined` object fields, the way
- * `JSON.stringify` does.
+ * may return a value or a promise of one. Arguments and results cross
+ * the isolate boundary as real values through Workers RPC, not as
+ * encoded text. The result must be JSON-compatible plain data: the
+ * bridge checks it at runtime and treats `undefined` as `null`.
  */
 export type WorkspaceModuleFunction = (
   args: readonly WorkspaceRuntimeValue[],

@@ -342,44 +342,33 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       }
       return call(namespace, method, args);
     }
+    // Arguments and results cross as real values through Workers RPC.
+    // The host bridge measures and limits them; this early check only
+    // spares an obviously oversized request the round trip.
     export async function call(namespace, method, args) {
       if (!host) throw new Error("Workspace capabilities are not installed");
-      const request = JSON.stringify(args.map(encode));
-      if (new TextEncoder().encode(request).byteLength > ${maxCapabilityBytes}) {
+      if (approximateBytes(args) > ${maxCapabilityBytes}) {
         throw new Error(${JSON.stringify(requestTooLargeMessage)});
       }
-      const raw = await host.call(namespace + "." + method, request);
-      const payload = JSON.parse(String(raw));
+      const payload = await host.call(namespace + "." + method, args);
       if (payload.error !== undefined) {
-        const detail = typeof payload.error === "string" ? { message: payload.error } : payload.error;
-        const error = new Error(detail.message);
-        if (detail.code !== undefined) error.code = detail.code;
-        if (detail.path !== undefined) error.path = detail.path;
+        const error = new Error(payload.error.message);
+        if (payload.error.code !== undefined) error.code = payload.error.code;
+        if (payload.error.path !== undefined) error.path = payload.error.path;
         throw error;
       }
-      return decode(payload.result);
+      return payload.result;
     }
-    function wrap(type, fields) {
-      return { __workspace_codec__: { version: 1, type, ...fields } };
-    }
-    function encode(value) {
-      if (value instanceof Uint8Array) return wrap("bytes", { data: Array.from(value) });
-      if (Array.isArray(value)) return wrap("array", { items: value.map(encode) });
-      if (value && typeof value === "object") return wrap("object", { entries: Object.entries(value).map(([key, child]) => [key, encode(child)]) });
-      return value;
-    }
-    function decode(value) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-      if (Object.keys(value).length !== 1 || !("__workspace_codec__" in value)) throw new Error("Invalid Workspace codec envelope");
-      const codec = value.__workspace_codec__;
-      if (!codec || codec.version !== 1) throw new Error("Invalid Workspace codec envelope");
-      if (codec.type === "bytes") {
-        if (!Array.isArray(codec.data) || !codec.data.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) throw new Error("Invalid Workspace byte value");
-        return new Uint8Array(codec.data);
-      }
-      if (codec.type === "array" && Array.isArray(codec.items)) return codec.items.map(decode);
-      if (codec.type === "object" && Array.isArray(codec.entries)) return Object.fromEntries(codec.entries.map(([key, child]) => [key, decode(child)]));
-      throw new Error("Invalid Workspace codec envelope");
+    function approximateBytes(value, seen = new Set()) {
+      if (typeof value === "string") return value.length;
+      if (value instanceof Uint8Array) return value.byteLength;
+      if (!value || typeof value !== "object") return 8;
+      if (seen.has(value)) throw new Error("Workspace capability request values must be acyclic.");
+      seen.add(value);
+      const entries = Array.isArray(value) ? value.map((item) => ["", item]) : Object.entries(value);
+      const total = entries.reduce((sum, [key, item]) => sum + key.length + approximateBytes(item, seen), 8);
+      seen.delete(value);
+      return total;
     }
   `;
 }

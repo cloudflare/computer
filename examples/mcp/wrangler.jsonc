@@ -9,11 +9,10 @@
   "containers": [
     {
       "class_name": "ComputerMCP",
-      "image": "./Dockerfile",
-      "instance_type": "standard-2",
-      "max_instances": 1,
-      "rollout_active_grace_period": 0,
-      "rollout_step_percentage": [100]
+      "scheduling_policy": "durable_object",
+      "images": {
+        "app": { "dockerfile": "./Dockerfile" }
+      }
     }
   ],
   "durable_objects": {

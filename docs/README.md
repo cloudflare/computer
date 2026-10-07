@@ -20,9 +20,9 @@ It provides:
  - R2-backed mounts for pre-filling read-only data into the workspace tree.
  - Durability over DO restarts for all file operations.
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
- - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:artifacts`, and managed execution records.
+ - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:container`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
- - Out-of-the-box agent tools for the AI SDK (`createAITools()` in `@cloudflare/computer/tools`), pi (`createPiTools()` in `@cloudflare/computer/tools/pi-ai`), and TanStack AI (`createTanStackTools()` in `@cloudflare/computer/tools/tanstack-ai`).
+ - Out-of-the-box agent tools for the AI SDK (`createAITools()` in `@cloudflare/computer/tools/ai-sdk`), pi (`createPiTools()` in `@cloudflare/computer/tools/pi-ai`), and TanStack AI (`createTanStackTools()` in `@cloudflare/computer/tools/tanstack-ai`).
 
 It comes with the following limitations:
 
@@ -49,9 +49,11 @@ The package ships several entrypoints:
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped wrapper over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
+| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
 | `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi, as declarations plus a function that runs a tool call. |
 | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI, as the list `chat({ tools })` takes. |
 

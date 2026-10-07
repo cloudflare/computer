@@ -72,6 +72,7 @@ export {
 export type { WorkspaceEgressPolicy } from "./runtime/egress.js";
 export type { WorkspaceOutputOptions } from "./runtime/output-files.js";
 export type { TruncatedOutput } from "./runtime/output-spool.js";
+export type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,

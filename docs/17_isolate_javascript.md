@@ -80,9 +80,9 @@ Workspace parses the graph before loading the Worker, confines every durable pat
 
 ## Execution limits and retention
 
-The backend admits up to twenty-four executions at a time by default. A concurrent start past that ceiling fails with `EEXEC_BUSY` instead of creating an unbounded number of Dynamic Workers. Adjust `maxConcurrentExecutions` after measuring the Durable Object and Worker Loader limits for the deployment.
+The backend does not cap concurrent executions itself. The platform limits how many Dynamic Workers run at once, and an execution started past that limit fails with the platform's error.
 
-Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host.
+Each execution also bounds combined stdout and stderr output, active event subscribers, directory entries per read, concurrent and total capability calls, and cumulative capability request and response bytes. The corresponding `maxStdioBytes`, `maxExecutionSubscribers`, `maxDirectoryEntries`, and `max*Capability*` options may be lowered for public workloads. Directory reads apply their limit in SQLite before materializing rows. Requests are checked inside the isolate before Workers RPC and again by the host. Every capability call goes through one host bridge that enforces these limits. Values cross as real Workers RPC values, measured as UTF-8 bytes for strings and raw bytes for byte arrays, and anything that is not plain data, such as a function, an RPC stub, or a cycle, is rejected before the host acts on it.
 
 Completed execution records remain available for replay for sixty minutes by default. The backend also keeps at most 100 completed records. Configure these bounds with `retentionMs` and `maxRetainedExecutions`. Completed records leave the in-memory active set immediately; replay reads them from SQLite.
 
@@ -127,10 +127,11 @@ Caller source can import three kinds of module, and all of them are fixed when t
 | --- | --- | --- | --- |
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:artifacts`, your own |
+| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
+import { createContainerModule } from "@cloudflare/computer/modules/container";
 import { createGitModule } from "@cloudflare/computer/modules/git";
 
 new WorkerJavaScriptBackend({
@@ -139,6 +140,7 @@ new WorkerJavaScriptBackend({
     "tar-stream": TAR_STREAM_BUNDLE,
     "ws:git": createGitModule(),
     "ws:artifacts": createArtifactsModule(),
+    "ws:container": createContainerModule(),
     "ws:weather": {
       forecast: ([city]) => lookUpForecast(String(city)),
     },
@@ -148,7 +150,7 @@ new WorkerJavaScriptBackend({
 
 An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
 
-The backend describes its modules for a model in `backend.description`, which `workspace.runtime.describe(id)` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
+The backend describes its modules for a model in `backend.description`, which `workspace.runtime.backends()` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
 
 ```text
 `command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
@@ -158,6 +160,7 @@ Modules code can import:
 - `node:fs/promises` (also `node:fs`): the workspace's files. ...
 - `tar-stream`: a bundled library.
 - `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
+- `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
 - `ws:weather`: exports `forecast`.
 ```
 
@@ -224,7 +227,7 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 | `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
 | `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
 
-The arguments come from caller code, so parse them before use. A function may return a value or a promise. The result must be JSON-compatible, and the bridge checks it at runtime: `undefined` becomes `null` and `undefined` object fields are dropped, as with `JSON.stringify`. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
+The arguments come from caller code, so parse them before use. A function may return a value or a promise. Arguments and results cross the isolate boundary as real values through Workers RPC, not as encoded text. The result must be JSON-compatible plain data, and the bridge checks it at runtime. As in JSON, an `undefined` result or array item becomes `null` and an `undefined` object field is left out, in arguments and results alike. Byte arrays work for `node:fs` calls but not for host modules. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
 
 Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. A module must export at least one function, and every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
@@ -243,6 +246,56 @@ import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts"
 ```
 
 `createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
+
+### `ws:container`
+
+`createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
+
+```ts
+import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
+
+class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  workspace = new Workspace({
+    storage: this.ctx.storage,
+    backends: [
+      new WorkerJavaScriptBackend({
+        loader: this.env.LOADER,
+        access: "read-write",
+        modules: { "ws:container": createContainerModule() },
+      }),
+      new ContainerBackend({
+        container: () => this,
+        workspace: { binding: "Agent", id: this.ctx.id.toString() },
+        egress: { mode: "direct" },
+      }),
+    ],
+  });
+}
+
+// Offer only the JavaScript backend; the container is reached through ws:container.
+const tools = createAITools({ workspace: this.workspace, exec: { "worker-javascript": {} } });
+```
+
+```js
+import { exec } from "ws:container";
+
+export default async function () {
+  const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace/app" });
+  return { passed: exitCode === 0, stdout, stderr };
+}
+```
+
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, or runs module source rather than shell commands, the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+
+The result also carries `sync`: `{ status, skipped, skippedCount, error? }`. `status` is `pending` when the container's file changes have not reached the Workspace yet, and `error` says why. `skipped` lists up to 100 paths the container wrote that the Workspace refused, such as files in a read-only mount, and `skippedCount` gives the full count. The sync is last-writer-wins: the container's changes replace files written in the Workspace while the command runs, without reporting them as skipped. Don't write files from the isolate that the running command also writes.
+
+A few limits follow from `exec` being a host call:
+
+- Output comes back when the command finishes, not while it runs. Each stream keeps its last 2000 lines or `maxOutputBytes` (64 KiB by default), which must stay well under the backend's `maxCapabilityBytes`. When a stream is cut, the result's `truncated.stdout.path` (or `stderr`) names a Workspace file holding all of it (see [Long output](./05_runtime_interface.md#long-output)), and the host never holds more than the end in memory. The default directory, `/.computer/output`, is outside the backend's default `root` (`/workspace`), so isolate code cannot open it with `node:fs`; the agent's `read` and `grep` tools can. Set the Workspace's `output.dir` under `root` if isolate code needs to read it.
+- The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
+- Cancelling the execution kills the running command.
+
+A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the JavaScript backend's.
 
 ## Isolation and lifecycle
 

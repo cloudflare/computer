@@ -2,11 +2,18 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { validateToolCall } from "@earendil-works/pi-ai";
 import { makeStrictJsonSchema } from "@earendil-works/pi-ai/api/constrained-sampling";
 import { describe, expect, it } from "vitest";
+import type { WorkspaceBackendInfo } from "../../runtime/runtime.js";
 import { Workspace } from "../../workspace.js";
 import { createPiTools, type PiJSONSchema } from "./index.js";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });
+}
+
+// Stands in for registered backends, so the tests can shape what the
+// exec tool sees without running one.
+function fakeBackends(workspace: Workspace, backends: WorkspaceBackendInfo[]): void {
+  (workspace.runtime as unknown as Record<string, unknown>).backends = () => backends;
 }
 
 function declaration(tools: ReturnType<typeof createPiTools>, name: string) {
@@ -40,38 +47,48 @@ describe("createPiTools declarations", () => {
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
-  it("offers the backends `shell` lists, with the default named", () => {
-    const tools = createPiTools({
-      workspace: makeWorkspace(),
-      shell: {
-        backends: {
-          "worker-shell": { description: "Fast worker shell." },
-          "container-shell": { description: "Full Linux container." },
-        },
-        defaultBackend: "worker-shell",
-      },
-    });
+  it("names a backend on every exec call when there are several", () => {
+    const workspace = makeWorkspace();
+    fakeBackends(workspace, [
+      { id: "worker-shell", callable: false, description: "Fast worker shell." },
+      { id: "container-shell", callable: false, description: "Full Linux container." },
+    ]);
+    const tools = createPiTools({ workspace });
 
     const exec = declaration(tools, "exec");
     expect(exec.description).toContain("Fast worker shell.");
     expect(exec.description).toContain("Full Linux container.");
-    expect(exec.description).toContain('Default backend: "worker-shell"');
     const backend = exec.parameters.properties?.backend as { enum?: string[] };
     expect(backend.enum).toEqual(["worker-shell", "container-shell"]);
-    expect(exec.parameters.required).not.toContain("backend");
+    expect(exec.parameters.required).toContain("backend");
   });
 
-  it("leaves exec out without `shell` and for a read-only set", () => {
+  it("offers only the backends `exec` lists, with no backend argument for one", () => {
     const workspace = makeWorkspace();
-    const shell = {
-      backends: { "worker-shell": { description: "Fast worker shell." } },
-      defaultBackend: "worker-shell",
-    };
+    fakeBackends(workspace, [
+      { id: "worker-shell", callable: false, description: "Fast worker shell." },
+      { id: "container-shell", callable: false, description: "Full Linux container." },
+    ]);
+    const tools = createPiTools({
+      workspace,
+      exec: { "worker-shell": { description: "Use for quick checks." } },
+    });
 
-    expect(createPiTools({ workspace }).tools.map((t) => t.name)).not.toContain("exec");
-    expect(
-      createPiTools({ workspace, shell, readonly: true }).tools.map((t) => t.name),
-    ).not.toContain("exec");
+    const exec = declaration(tools, "exec");
+    expect(exec.description).toContain("Use for quick checks.");
+    expect(exec.description).not.toContain("Full Linux container.");
+    expect(exec.parameters.properties).not.toHaveProperty("backend");
+    expect(exec.parameters.properties).not.toHaveProperty("input");
+  });
+
+  it("leaves exec out for `exec: {}` and for a read-only set", () => {
+    const workspace = makeWorkspace();
+    fakeBackends(workspace, [{ id: "worker-shell", callable: false }]);
+
+    expect(createPiTools({ workspace, exec: {} }).tools.map((t) => t.name)).not.toContain("exec");
+    expect(createPiTools({ workspace, readonly: true }).tools.map((t) => t.name)).not.toContain(
+      "exec",
+    );
   });
 
   it("emits required fields without a $schema key and keeps defaults optional", () => {
@@ -236,11 +253,8 @@ describe("createPiTools execution", () => {
       seen.push({ input: options.input });
       return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
     };
-    (workspace.runtime as unknown as Record<string, unknown>).isCallable = () => true;
-    const tools = createPiTools({
-      workspace,
-      shell: { backends: { js: { description: "callable" } }, defaultBackend: "js" },
-    });
+    fakeBackends(workspace, [{ id: "js", callable: true, description: "callable" }]);
+    const tools = createPiTools({ workspace });
 
     await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: null } });
     await tools.execute({ id: "2", name: "exec", arguments: { command: "b" } });
