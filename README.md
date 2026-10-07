@@ -14,8 +14,8 @@ SQLite and exposes one pluggable execution surface through
   Workers RPC, so there is no second store or sync round trip.
 - **Isolate JavaScript** runs an ECMAScript module in a fresh Dynamic
   Worker with structured input/results, durable relative imports,
-  configured libraries, Workspace-backed `node:fs/promises`, and trusted `ws:git` and
-  `ws:artifacts` modules.
+  configured libraries, Workspace-backed `node:fs/promises`, and host modules such as
+  `ws:git` and `ws:artifacts`.
 
 A Workspace may register multiple backends under stable IDs.
 `workspace.runtime.exec(source, { backend })` is the single execution
@@ -74,6 +74,11 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/rlm`](examples/rlm) — shows how generated JavaScript can read long
   context from a Computer Workspace, call bounded model workers, and reduce their
   structured results with code.
+- [`examples/pi-ai`](examples/pi-ai) — a one-shot [pi](https://github.com/earendil-works/pi)
+  agent. Its loop asks the model, runs the workspace tools it asked for,
+  and repeats until the model stops asking.
+- [`examples/tanstack-ai`](examples/tanstack-ai) — the same one-shot agent on
+  [TanStack AI](https://tanstack.com/ai), where `chat()` runs the loop.
 - [`examples/think`](examples/think) — a [`@cloudflare/think`](https://www.npmjs.com/package/@cloudflare/think)
   chat agent that uses the workspace as its working directory, reachable
   from a terminal.

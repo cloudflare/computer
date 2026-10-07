@@ -69,7 +69,12 @@ async function read(id: string, path: string): Promise<string> {
 async function exec(
   id: string,
   command: string,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+): Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  truncated?: { stdout?: { status: string; path?: string; totalLines: number } };
+}> {
   const url = new URL("http://test/exec");
   url.searchParams.set("id", id);
   url.searchParams.set("command", command);
@@ -120,6 +125,19 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toBe("payload");
     expect(await read(id, "/workspace/new.txt")).toBe("payload");
+  });
+
+  it("keeps the last 2000 lines of long output and saves the rest to a file", async () => {
+    const id = freshId();
+    const result = await exec(id, "seq 1 5000");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.split("\n").slice(0, 2)).toEqual(["3001", "3002"]);
+    expect(result.stdout.endsWith("5000\n")).toBe(true);
+    expect(result.truncated?.stdout).toMatchObject({ status: "saved", totalLines: 5000 });
+    const path = result.truncated?.stdout?.path ?? "";
+    const full = await read(id, path);
+    expect(full.split("\n").length).toBe(5001);
+    expect(full.startsWith("1\n2\n3\n")).toBe(true);
   });
 
   it("reports a non-zero exit code with stderr captured", async () => {

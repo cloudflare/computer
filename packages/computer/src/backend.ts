@@ -60,6 +60,11 @@ export interface WorkspaceBackend {
   // too. Defaults to false when omitted.
   readonly callable?: boolean;
 
+  // What the backend tells a model about itself, such as the language
+  // it runs and what that code can use. The exec tool shows it next to
+  // the caller's own description. Omit when there is nothing to add.
+  readonly description?: string;
+
   // Materialise a connection. Called lazily on first use, once
   // per backend per workspace lifetime. The Workspace caches the
   // resulting handle by `id`; subsequent exec / push / pull
@@ -90,6 +95,19 @@ export interface BackendHandle {
   //              Durable Object). push/pull are no-ops, and the
   //              reconcile-watermarks pass on connect is skipped.
   sync?: "remote" | "none";
+  // The MOUNT_IGNORE patterns this backend's container applies, as the
+  // container reports them (#179). Paths they match stay on the
+  // container's own disk. Absent on backends with no such concept.
+  //
+  // `supported: false` means the container predates patterns, so every
+  // path is synced regardless of what the host asked for. Worth
+  // logging: it is the difference between a configuration that works
+  // and one that silently does nothing.
+  ignore?: {
+    readonly patterns: readonly string[];
+    readonly root: string | undefined;
+    readonly supported: boolean;
+  };
   // Resolves when the underlying transport closes for any reason
   // (clean close, peer crash, network drop). The Workspace listens
   // for this and drops its cached handle so the next ready() call

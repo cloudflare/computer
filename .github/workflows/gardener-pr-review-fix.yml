@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/pr-review-fix/TASK.md
 # Task: pr-review-fix
-# Bundle: sha256:3a3efd0e253dd73b2fbb775746c85208d099e0758e859c5f1e1ac602e6e7a6ed
+# Bundle: sha256:3aeddea5e0455eff68174b00a072845d3d708acdb40287891987ad6c45fa58af
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Pull request review fix"
@@ -41,12 +41,12 @@ jobs:
       issues: read
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@f3aca211a4ee2559f3df05cac12836090127812a
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8e5fa4f844bfe26ff1d152757caf4ac0110ff6ef
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "pr-review-fix"
       task-name: "Pull request review fix"
       task-source: ".gardener/tasks/pr-review-fix/TASK.md"
-      task-bundle-hash: 3a3efd0e253dd73b2fbb775746c85208d099e0758e859c5f1e1ac602e6e7a6ed
+      task-bundle-hash: 3aeddea5e0455eff68174b00a072845d3d708acdb40287891987ad6c45fa58af
       plan-timeout-minutes: 40
       checkout-ref: ${{ github.event.pull_request.head.sha }}

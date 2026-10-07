@@ -1,6 +1,14 @@
 # 09. Tool interface (agents)
 
-`@cloudflare/computer/tools` ships ready-made [AI SDK](https://github.com/vercel/ai) tools for agents that use a `Workspace`.
+Computer ships a ready-made tool set for agents that use a `Workspace`, once for each of three agent libraries:
+
+| Library | Entry point | Factory |
+| --- | --- | --- |
+| [AI SDK](https://github.com/vercel/ai) (`ai`) | `@cloudflare/computer/tools` | `createAITools` |
+| [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`) | `@cloudflare/computer/tools/pi-ai` | `createPiTools` |
+| [TanStack AI](https://tanstack.com/ai) (`@tanstack/ai`) | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools` |
+
+All three take the same options and build the same tools, with the same names, descriptions, schemas, and limits. Only the shape they return differs. Each entry point imports only `zod` and its own library's types, so a pi agent never loads `ai` and an AI SDK agent never loads pi. The individual AI SDK `create*Tool` functions and `WorkspaceFileStore` also come from `@cloudflare/computer/tools`.
 
 The tools wrap three Workspace surfaces:
 
@@ -13,6 +21,8 @@ The tools wrap three Workspace surfaces:
 | Export | Purpose |
 | --- | --- |
 | `createAITools` | Create the default AI SDK `ToolSet` for a Workspace. |
+| `createPiTools` | Create pi tool declarations and the function that runs a pi tool call. |
+| `createTanStackTools` | Create the TanStack AI tool list for a Workspace. |
 | `createReadTool` | Stream text by line and pass images or PDFs to capable models. |
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
 | `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
@@ -24,7 +34,7 @@ The tools wrap three Workspace surfaces:
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 
-`createAITools()` always names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+Every tool set names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the caller supplies `shell` options. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -55,7 +65,16 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-Pass `shell` only when the Workspace has matching backend ids:
+Pass `shell` only when the Workspace has matching backend ids. With one backend, `exec` has no `backend` argument and always runs there:
+
+```ts
+const tools = createAITools({
+  workspace,
+  shell: { backends: { "worker-javascript": {} } },
+});
+```
+
+With more than one, pass `defaultBackend` and the model picks a backend per call:
 
 ```ts
 const tools = createAITools({
@@ -70,7 +89,74 @@ const tools = createAITools({
 });
 ```
 
-## `createAITools`
+`createPiTools` and `createTanStackTools` take `shell` the same way.
+
+## pi
+
+pi keeps tool declarations apart from the code that runs them. `Context.tools` carries declarations with JSON Schema `parameters`, and the caller's own loop runs each call. `createPiTools` returns both, so they cannot drift apart.
+
+```ts
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
+
+const { tools, execute } = createPiTools({ workspace });
+
+const message = await models.complete(model, { systemPrompt, messages, tools });
+messages.push(message);
+
+for (const block of message.content) {
+  if (block.type !== "toolCall") continue;
+  const { content, isError } = await execute(block);
+  messages.push({
+    role: "toolResult",
+    toolCallId: block.id,
+    toolName: block.name,
+    content,
+    isError,
+    timestamp: Date.now(),
+  });
+}
+```
+
+`execute` checks the call's arguments against the tool's schema and returns pi `toolResult` content. A bad call or a failed tool comes back as `isError: true`, so the model can retry and the loop does not throw. pi describes tool parameters with TypeBox, which also accepts plain JSON Schema, so the Zod schemas are converted to JSON Schema and pi needs nothing else. A field with a default stays optional for the model.
+
+`read`, `write`, and `edit` carry byte offsets and long verbatim strings, so they ask for pi's `constrainedSampling`. A provider that supports it enforces the schema while sampling, and a malformed `edit` never reaches the tool. The declarations stay open. pi closes a schema itself when the provider supports strict mode, making every field required and the optional ones nullable. `execute` drops a null on an optional field that does not accept one, and keeps a null the tool accepts, such as `exec`'s `input`.
+
+The default is `"prefer"`, which falls back to ordinary tool calling on a provider that cannot enforce a schema. `"require"` fails the request instead, for a pinned model known to support it. `false` turns it off and keeps the schemas open:
+
+```ts
+createPiTools({ workspace, constrainedSampling: "require" });
+```
+
+pi tool results carry text and images. An image from `read` comes back as an `image` block; a PDF comes back as text saying it cannot be attached. `exec` returns its final snapshot.
+
+## TanStack AI
+
+A TanStack tool's `inputSchema` is a Standard Schema, which Zod implements, so the schemas pass through unchanged. The tools come back as a list, the shape `chat({ tools })`, `mergeAgentTools`, and `createToolRegistry` take. `format: "object"` keys them by name instead, for reaching one tool directly.
+
+```ts
+import { chat, toServerSentEventsResponse } from "@tanstack/ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
+
+const abortController = new AbortController();
+const tools = createTanStackTools({ workspace, approve: "mutating" });
+
+return toServerSentEventsResponse(chat({ adapter, messages, tools, abortController }));
+```
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `format` | `"array"` | `"object"` keys the tools by name. |
+| `approve` | none | Tool names that pause for TanStack's `needsApproval`, or `"mutating"` for every tool that changes the Workspace. |
+| `lazy` | none | Tool names, or `"all"`, to withhold from the prompt until TanStack's lazy discovery asks for them. |
+| `streamEventName` | none | Forward each running `exec` snapshot through `emitCustomEvent` under this name. |
+
+`write`, `edit`, `delete`, and `publish` have one fixed result shape, so they also carry an `outputSchema`. It covers failures too, because TanStack validates every return against it, and a success-only schema would replace the real error with a validation complaint. Paged tools such as `ls` have none.
+
+An image or PDF from `read` comes back as a text part plus an `image` or `document` content part, the array shape `chat()` passes to the adapter as multimodal content instead of stringifying it.
+
+Aborting the chat run through its `abortController` kills a running `exec`. A TanStack tool settles on one value, so `exec` returns its final snapshot.
+
+## Options
 
 ```ts
 createAITools({
@@ -93,6 +179,8 @@ createAITools({
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
 | `shell` | omitted | Options passed to `createExecTool`. |
+
+`createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
 
 ## `read`
 
@@ -244,7 +332,30 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output. Backend descriptions are included in the model-facing tool description, so describe capabilities and startup cost in plain language.
+`exec` is opt-in. It calls `workspace.runtime.exec` with the configured backend and streams bounded output.
+
+Each backend's entry in the tool description joins two parts: the `description` you pass, and what the backend says about itself (`backend.description`, read through `workspace.runtime.describe(id)`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so `{ "worker-javascript": {} }` is enough and the list stays in step with `modules`. A backend that does not describe itself needs a `description`. Describe capabilities and startup cost in plain language.
+
+The tool offers only the arguments that can work:
+
+| Backends | Arguments |
+| --- | --- |
+| One shell backend | `command`, `cwd`, `env` |
+| One callable backend | `command`, `cwd`, `env`, `input` |
+| More than one | `command`, `cwd`, `backend`, `env`, plus `input` when any is callable. `defaultBackend` is required. |
+
+A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
+
+Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
+
+```text
+line 2999
+line 3000
+
+[Showing lines 1001-3000 of 3000. Full output: /.computer/output/shell.exec-1.stdout.log]
+```
+
+The model can open that file with `read` or search it with `grep`. `streamMaxBytes` is ignored; memory per stream stays within a few times `maxBytes`.
 
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Omit `shell` or use `readonly: true` when command execution is not part of the agent's job.
 

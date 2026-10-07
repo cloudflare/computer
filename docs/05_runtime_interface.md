@@ -33,6 +33,7 @@ interface WorkspaceRuntimeExecOptions {
   timeoutMs?: number;
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
+  output?: { maxLines?: number; maxBytes?: number } | false;
 }
 
 interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEvent> {
@@ -55,6 +56,7 @@ interface WorkspaceRuntimeResult {
   stdout: Uint8Array | string;
   stderr: Uint8Array | string;
   value?: WorkspaceRuntimeValue;
+  truncated?: { stdout?: TruncatedOutput; stderr?: TruncatedOutput };
   pushed: number;
   pulled: number;
   skipped: SkippedEntry[];
@@ -62,7 +64,43 @@ interface WorkspaceRuntimeResult {
     | { status: "complete"; applied: number; skipped: SkippedEntry[] }
     | { status: "pending"; applied: number; skipped: SkippedEntry[]; error: string };
 }
+
+type TruncatedOutput = (
+  | { status: "saved"; path: string } // the full output, byte for byte
+  | { status: "not-saved"; reason: string }
+) & {
+  totalBytes: number;
+  totalLines: number;
+  firstLine: number; // first line kept
+  partialLine: boolean; // kept part starts mid-line (one line longer than maxBytes)
+};
 ```
+
+## Long output
+
+Every backend's output goes through the same limits, modeled on pi's bash tool. A stream that fits 2000 lines and 64 KiB comes back whole. A longer one comes back as its last 2000 lines or 64 KiB, whichever is hit first, and its full output is saved byte for byte to a Workspace file, which `truncated.stdout.path` (or `stderr`) names:
+
+```ts
+const result = await (await ws.runtime.exec("npm test", { encoding: "utf8" })).result();
+if (result.truncated?.stdout?.status === "saved") {
+  const full = await ws.fs.readFile(result.truncated.stdout.path, "utf8");
+}
+```
+
+```mermaid
+flowchart LR
+  B[backend events] --> S{over 2000 lines<br/>or 64 KiB?}
+  S -- no --> R[result keeps all output]
+  S -- yes --> F["/.computer/output/backend.id.stdout.log<br/>(full output, streamed)"]
+  S -- yes --> T[result keeps the last lines<br/>+ truncated.stdout]
+```
+
+- Memory stays bounded: once a stream passes the limits, only a window of its end, a few times `maxBytes`, stays in memory. The rest streams into the file through the chunked writer, and a command that prints faster than storage writes waits for it rather than queueing output.
+- A streaming caller still gets every chunk. The `exit` event carries the same `truncated` field, sent after the file is written.
+- The file holds raw bytes, so binary output such as an image survives. Open it with `workspace.fs` or the `read` tool, which detects images by content.
+- `new Workspace({ output })` sets the limits, the directory (`/.computer/output`) and how many files to keep (the newest 50). Cleanup only removes files it named (`*.stdout.log`, `*.stderr.log`). `output: false` keeps all output and saves nothing. `exec(..., { output })` overrides the limits for one run.
+- The files are ordinary Workspace files. A container backend receives them on its next push like any other change.
+- If saving fails, for example under a read-only mount, the entry has `status: "not-saved"` and a `reason`; the result still holds the last lines.
 
 Command backends leave `value` unset. `worker-javascript` uses `value` for the module's structured return value and reports a zero-entry completed sync. A command can complete while its post-command pull fails; in that case `sync.status` is `"pending"`, and the next `pull()` resumes the operation from its durable watermark without rerunning the command.
 

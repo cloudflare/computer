@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/computer",
-  "version": "0.3.2",
+  "version": "0.4.1",
   "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
   "license": "MIT",
   "repository": {
@@ -31,9 +31,25 @@
       "types": "./dist/artifacts/index.d.ts",
       "import": "./dist/artifacts/index.js"
     },
+    "./modules/git": {
+      "types": "./dist/modules/git.d.ts",
+      "import": "./dist/modules/git.js"
+    },
+    "./modules/artifacts": {
+      "types": "./dist/modules/artifacts.d.ts",
+      "import": "./dist/modules/artifacts.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
+    },
+    "./tools/pi-ai": {
+      "types": "./dist/tools/pi-ai.d.ts",
+      "import": "./dist/tools/pi-ai.js"
+    },
+    "./tools/tanstack-ai": {
+      "types": "./dist/tools/tanstack-ai.d.ts",
+      "import": "./dist/tools/tanstack-ai.js"
     },
     "./backends/container-legacy": {
       "types": "./dist/backends/container-legacy/index.d.ts",
@@ -149,7 +165,9 @@
     "@cloudflare/dofs": "*",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
+    "@earendil-works/pi-ai": "^0.99.2",
     "@platformatic/vfs": "^0.4.0",
+    "@tanstack/ai": "^0.63.0",
     "ai": "^7.0.0",
     "diff": "^9.0.0",
     "esbuild": "^0.28.1",

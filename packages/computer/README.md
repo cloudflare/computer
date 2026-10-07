@@ -50,8 +50,11 @@ worker-shell and worker-javascript backends additionally need the
 own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
-feature: `ai` and `zod` (for `@cloudflare/computer/tools`),
-`@platformatic/vfs` (for the Node-side VFS provider).
+feature: `zod` for every tools entry point, `ai` for
+`@cloudflare/computer/tools`, and
+`@platformatic/vfs` for the Node-side VFS provider. The pi and TanStack
+AI entry points need nothing beyond `zod`; your agent brings its own
+library.
 
 ## Quick start
 
@@ -255,8 +258,8 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   [`examples/worker-shell`](../../examples/worker-shell).
 - **Worker JavaScript** evaluates a module with structured
   input/results, durable relative imports, configured libraries,
-  Workspace-backed `node:fs/promises`, and trusted `ws:git` /
-  `ws:artifacts` modules. It runs after `runtime.exec()` returns; the
+  Workspace-backed `node:fs/promises`, and host modules such as
+  `ws:git` and `ws:artifacts`. It runs after `runtime.exec()` returns; the
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
@@ -302,6 +305,21 @@ the original text, so untargeted content stays byte-for-byte unchanged. File
 mutations share locks across tool sets for the same workspace, and recursive
 deletion excludes mutations throughout its subtree. See
 [`docs/09_tool_interface.md`](../../docs/09_tool_interface.md).
+
+The same tools, with the same options, come for two more agent
+libraries. Each entry point loads only `zod` and its own code, so
+importing one never pulls in another library.
+
+```ts
+import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
+import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
+
+// pi: declarations for the model, and a function your loop calls per tool call.
+const { tools, execute } = createPiTools({ workspace });
+
+// TanStack AI: a list for chat({ tools }). This one asks before changing files.
+const tanstackTools = createTanStackTools({ workspace, approve: "mutating" });
+```
 
 ## Git
 
@@ -418,8 +436,12 @@ on a computerd instance.
 | `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
 | `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
-| `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and trusted `ws:git` / `ws:artifacts`. |
+| `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
+| `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
+| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
+| `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`). |
+| `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |

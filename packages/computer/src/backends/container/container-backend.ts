@@ -58,6 +58,12 @@ import { WorkspaceTransportError } from "../../transport-failure.js";
 import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record.js";
 import { probeComputerdHealth } from "./health-probe.js";
+import {
+  assertIgnoreMatches,
+  checkIgnorePatterns,
+  type ResolvedIgnore,
+  readIgnoreReport,
+} from "./ignore-assertion.js";
 
 // What the backend's `container` factory returns: anything with
 // a getWorkspaceContainer() method — the shape withWorkspaceContainer
@@ -109,6 +115,20 @@ export interface ContainerBackendOptions {
   // than waiting for the next real RPC, and keep middlebox idle
   // timers warm. Default 20_000ms. Set 0 to disable.
   heartbeatIntervalMs?: number;
+
+  // Paths the container keeps on its local disk instead of the
+  // workspace (#179), as glob patterns passed to the container at start
+  // time as MOUNT_IGNORE. Each starts with "/" (from the mount root) or
+  // "**/" (at any depth); "*" matches within a path segment, and a
+  // leading "!" excludes. The last matching pattern wins.
+  //
+  //   ignore: ["**/node_modules", "!/vendor/node_modules", "/dist"]
+  //
+  // The constructor throws on a pattern computerd would refuse. connect()
+  // reads the applied patterns back off /__computerd/info and refuses the
+  // connection if they disagree, which catches an image whose computerd
+  // is too old to read them.
+  ignore?: readonly string[];
 
   // Number of forced restart attempts after startup readiness
   // fails. The first attempt runs host.start() then probes computerd;
@@ -209,15 +229,26 @@ export class ContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
   readonly id: string;
 
+  // `ignore` sits with the un-defaulted options rather than under
+  // Required: undefined is a meaningful value for it (skip the check),
+  // not a gap to be filled with a default.
   readonly #options: Required<
     Omit<
       ContainerBackendOptions,
-      "container" | "workspace" | "containerEnv" | "egress" | "id" | "name" | "instance" | "launch"
+      | "container"
+      | "workspace"
+      | "containerEnv"
+      | "egress"
+      | "id"
+      | "name"
+      | "instance"
+      | "launch"
+      | "ignore"
     >
   > &
     Pick<
       ContainerBackendOptions,
-      "container" | "workspace" | "containerEnv" | "name" | "instance" | "launch"
+      "container" | "workspace" | "containerEnv" | "name" | "instance" | "launch" | "ignore"
     >;
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
@@ -239,10 +270,12 @@ export class ContainerBackend implements WorkspaceBackend {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
+    if (options.ignore !== undefined) checkIgnorePatterns(options.ignore);
     this.#options = {
       container: options.container,
       workspace: options.workspace,
       containerEnv: options.containerEnv,
+      ignore: options.ignore,
       egressHost: options.egressHost ?? DEFAULT_EGRESS_HOST,
       containerPort: options.containerPort ?? DEFAULT_CONTAINER_PORT,
       connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
@@ -276,6 +309,9 @@ export class ContainerBackend implements WorkspaceBackend {
     const env = {
       PORT: String(this.#options.containerPort),
       MOUNT_POINT: "/workspace",
+      ...(this.#options.ignore !== undefined
+        ? { MOUNT_IGNORE: this.#options.ignore.join(",") }
+        : {}),
       ...this.#options.containerEnv,
     };
     let runtimeId: string;
@@ -374,10 +410,36 @@ export class ContainerBackend implements WorkspaceBackend {
       });
     }
 
+    // Checked before the handle is published, so a mismatched image
+    // never serves a single command. Doing this after connect() returned
+    // would let the first exec write into a path the caller believes is
+    // local-only, which is precisely the state that is expensive to
+    // discover later.
+    const resolvedIgnore = await this.#resolveIgnore(host, clientSecret);
+    try {
+      assertIgnoreMatches(this.#options.ignore, resolvedIgnore);
+    } catch (error) {
+      // Tear the transport down rather than leaking a live socket for a
+      // connection the caller is not going to get.
+      try {
+        (stub as unknown as Disposable)[Symbol.dispose]?.();
+      } catch {
+        // already disposed; idempotent
+      }
+      try {
+        ws.close();
+      } catch {
+        // already closed; idempotent
+      }
+      stopHeartbeat?.();
+      throw error;
+    }
+
     const handle: BackendHandle = {
       rpc: stub as unknown as WorkspaceRPC,
       runtimeId,
       closed,
+      ignore: resolvedIgnore,
       close: async () => {
         stopHeartbeat?.();
         // Dispose the root stub first. Per capnweb's docs, this is
@@ -574,6 +636,40 @@ export class ContainerBackend implements WorkspaceBackend {
       }),
       lastError instanceof Error ? { cause: lastError } : undefined,
     );
+  }
+
+  // Reads the container's local-only path configuration.
+  //
+  // A failure to reach /__computerd/info is reported as "unsupported"
+  // rather than propagated. The endpoint is diagnostic, and a client
+  // that declared no `ignore` should not lose a working connection
+  // because a diagnostic request failed. A client that *did* declare
+  // one still fails, via assertIgnoreMatches -- which is the right
+  // split: silence is only acceptable when nobody asked.
+  //
+  // The endpoint sits behind the client secret like every route except
+  // /health. Without the token an enforcing container answers 401, which
+  // would read as "unsupported" and fail every connect that declared
+  // `ignore`.
+  async #resolveIgnore(
+    host: IWorkspaceContainerAPI,
+    clientSecret: string,
+  ): Promise<ResolvedIgnore> {
+    try {
+      const res = await host.fetchPort(
+        this.#options.containerPort,
+        "http://container/__computerd/info",
+        {
+          headers: { authorization: `Bearer ${clientSecret}` },
+          signal: AbortSignal.timeout(this.#options.healthProbeTimeoutMs),
+        },
+      );
+      if (!res.ok)
+        return { patterns: [], root: undefined, mountPoint: undefined, supported: false };
+      return readIgnoreReport(await res.json());
+    } catch {
+      return { patterns: [], root: undefined, mountPoint: undefined, supported: false };
+    }
   }
 
   async #probeUntilHealthy(host: IWorkspaceContainerAPI, deadline: number): Promise<void> {

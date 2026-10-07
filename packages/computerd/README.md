@@ -123,6 +123,199 @@ byte sizes, inline byte totals, and the process's RSS/heap/external
 figures. Poll it during a long-running install or test to watch
 how the store grows.
 
+## Local-only paths (`MOUNT_IGNORE`)
+
+Everything a container command writes under `MOUNT_POINT` is recorded in
+the VFS and pulled into the Durable Object after the command. That is
+right for source and wrong for `node_modules`, `.venv`, `target/`,
+`dist/` and caches: tens of thousands of rebuildable files that never
+need to be durable. `MOUNT_IGNORE` names paths that stay on the
+container's local disk instead. They are never recorded, pushed, or
+pulled.
+
+Content under a local-only path is visible only inside the container;
+`workspace.fs` and the worker shell do not see it. It is absent from
+sync, so a container replaced without a snapshot restore loses it. It
+does survive a container snapshot, because `MOUNT_IGNORE_PATH` is a real
+filesystem path, which is why the default sits under `/tmp` rather than
+on a tmpfs. That suits a dependency tree a package manager can rebuild,
+not anything a user typed.
+
+### Configuration
+
+`ContainerBackend` takes an `ignore` option and passes it to the
+container's start environment, so changing the patterns is a deployment
+change rather than an image rebuild. `LegacyContainerBackend` has no
+such option; set `MOUNT_IGNORE` through its `containerEnv` instead.
+
+```ts
+new ContainerBackend({
+  container: env.CONTAINER,
+  workspace: { binding: "SESSIONS", id: sessionId },
+  ignore: ["**/node_modules", "!/vendor/node_modules", "**/.venv", "/dist"],
+});
+```
+
+That becomes
+`MOUNT_IGNORE=**/node_modules,!/vendor/node_modules,**/.venv,/dist`.
+Setting the variable directly, in `containerEnv` or a Dockerfile, works
+too and takes precedence. `MOUNT_IGNORE_PATH` sets where local-only
+content is stored and defaults to `/tmp` + `$MOUNT_POINT`.
+
+### Patterns
+
+`MOUNT_IGNORE` is a comma-separated list of glob patterns, a small
+subset of gitignore. Every pattern starts with `/` (from the mount root)
+or `**/` (at any depth):
+
+| Pattern | Means |
+| --- | --- |
+| `/dist` | `$MOUNT_POINT/dist` and everything under it |
+| `/workspace/dist` | the same; the mount point is optional |
+| `**/node_modules` | `node_modules` at any depth, including the root |
+| `/packages/*/dist` | `*` matches within one path segment and never crosses `/` |
+| `/app/**/node_modules` | any depth under `app` |
+| `**/*.tsbuildinfo` | single files work too |
+| `!/vendor/node_modules` | an exclusion: keeps a path synced |
+
+A pattern names a path and everything under it, so `/cache` and
+`/cache/**` mean the same thing. A trailing `/` is ignored. Matching is
+case-sensitive.
+
+The last matching pattern wins, and a path is local-only if it or any
+directory above it is ignored. That is git's rule, and it decides what
+an exclusion can do. `**/node_modules,!/vendor/node_modules` keeps
+`vendor/node_modules` synced, because the exclusion applies at the same
+level as the match. `**/node_modules,!**/node_modules/.bin` does nothing:
+once `node_modules` is on local disk, the synced side has no directory
+for `.bin` to live in. computerd warns about an exclusion like that at
+startup.
+
+These fail the daemon at startup, because a dropped pattern means a full
+`node_modules` goes into the Durable Object:
+
+| Pattern | Why |
+| --- | --- |
+| `node_modules` | not anchored. In gitignore it would match at any depth; write `/node_modules` or `**/node_modules` |
+| `**node_modules`, `/a**/b` | `**` must be a whole path segment |
+| `**`, `/**`, `/`, `/*`, `**/*` | would make the whole mount local-only. A pattern of only `*` and `**` segments matches every top-level entry, and everything under a local-only directory is local-only |
+| `/a/../b`, `/./a`, `/a//b` | `.`, `..`, and empty segments |
+| `/*.{js,ts}`, `/[ab]`, `/a?`, `/a\*` | braces, character classes, `?`, and escapes aren't supported |
+
+A pattern can't contain a comma, since commas separate patterns.
+`ContainerBackend` checks `ignore` against the same rules in its
+constructor, so a typo throws before a container starts.
+
+`MOUNT_IGNORE_PATH` must be absolute, must not be `/`, and must not be
+equal to or inside `MOUNT_POINT`, since a root inside the mount would
+resolve into itself.
+
+### Checking what the container applied
+
+The patterns are compiled once at startup, so they can't change under a
+running container, and two sessions sharing one container see the same
+durability boundary. `connect()` reads the applied patterns back off
+`/__computerd/info` and refuses the connection unless they match what
+was declared, in the same order, since order changes the meaning. That
+catches a computerd too old to read patterns, and a `MOUNT_IGNORE` in
+`containerEnv` overriding the option. The handle exposes them:
+
+```ts
+const handle = await backend.connect();
+handle.ignore;
+// {
+//   patterns: ["**/node_modules", "!/vendor/node_modules", "**/.venv", "/dist"],
+//   root: "/tmp/workspace",
+//   mountPoint: "/workspace",
+//   supported: true,
+// }
+```
+
+`supported: false` means the container predates patterns and every path
+is synced.
+
+`/__computerd/info` reports the patterns in computerd's normalized
+spelling, with the mount point and trailing slashes removed:
+
+```jsonc
+{
+  "ignore": {
+    "supported": true,
+    "enabled": true,
+    "root": "/tmp/workspace",
+    "patterns": ["**/node_modules", "!/vendor/node_modules", "!**/node_modules/.bin"],
+    "ineffectiveExclusions": ["!**/node_modules/.bin"],
+    "fastPaths": {
+      "passthrough": false,
+      "passthroughReason": "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API",
+      "writebackCache": false
+    }
+  }
+}
+```
+
+`fastPaths.passthrough` is `false` on current builds by design. Ignored
+writes skip the VFS and the transfer but still cross FUSE; see
+[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore).
+
+### Synced directories that hold local-only paths
+
+A local-only path is stored at the same relative path under
+`MOUNT_IGNORE_PATH`, so `packages/app/node_modules` lives at
+`/tmp/workspace/packages/app/node_modules`. The parent `packages/app`
+stays synced. computerd keeps the two sides in step:
+
+- Listing a synced directory includes its local-only children.
+- Renaming a synced directory moves its local-only contents too. The
+  two moves can't be atomic together, so if the local one fails, the
+  rename still succeeds and computerd logs where the contents were left.
+  A rename that changes which patterns match, such as moving a
+  directory out from under `/app/**/node_modules`, leaves contents on
+  local disk that are no longer local-only and so aren't reachable;
+  prefer `**/` patterns for trees that get moved.
+- Removing a synced directory, or renaming another directory onto it,
+  returns `ENOTEMPTY` while it still holds local-only contents, which
+  the synced side can't see. `rm -rf` removes
+  the contents first, so it works as usual.
+
+### Renames across the boundary
+
+A rename whose source and destination sit on opposite sides of the
+boundary returns `EXDEV` (`Invalid cross-device link`). The two sides are
+different filesystems, so the rename cannot be atomic, and copying then
+unlinking would fake the atomicity `rename(2)` promises. `mv` and
+Python's `shutil.move` copy instead when they see `EXDEV`, but a program
+that calls `rename` directly, such as Node's `fs.rename` or Go's
+`os.Rename`, gets the error. Renames within one side are ordinary atomic
+renames. Hardlinks across the boundary return `EXDEV` for the same
+reason.
+
+The usual cause is a build tool that stages into a sibling directory and
+renames into place. The fix is to ignore the staging path too:
+
+```ts
+ignore: ["/dist", "/.tmp-build"];
+```
+
+With `**/` patterns, keep staging directories and their destinations on
+the same side: `**/node_modules` already covers anything a package
+manager stages inside `node_modules`.
+
+Candidates worth checking are `.next`, `.turbo`, `node_modules/.cache`,
+and any staging directory a bundler creates next to its output.
+computerd logs this guidance on the first crossing rename per mount,
+naming both sides and the entry to add. Later occurrences are not
+logged, but `GET /__computerd/stats` counts them all under
+`localPaths.crossLayerRenames`.
+
+### `MOUNT_IGNORE` versus `fetchChanges({ ignore })`
+
+`MOUNT_IGNORE` works at the mount: the path never enters the VFS.
+`fetchChanges({ ignore })` works at the sync RPC: the path is skipped in
+one transfer but still occupies the container's store. A wrapper that
+injects `ignore` into `fetchChanges` to keep a dependency tree out of the
+Durable Object should be deleted in favor of `MOUNT_IGNORE`.
+
 ## FUSE prerequisites
 
 Linux hosts/containers need access to `/dev/fuse` and mount permissions.

@@ -1,17 +1,86 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
+import type { TruncatedOutput } from "./output-spool.js";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
-export interface WorkspaceTrustedModule {
-  /** Dispatch a call made through a host-installed reserved ws:* module. */
-  call(
-    method: string,
-    args: WorkspaceRuntimeValue[],
-    context?: { signal: AbortSignal; deadline: number },
-  ): Promise<WorkspaceRuntimeValue>;
+/** Per-call context the backend passes to every host module function. */
+export interface WorkspaceModuleCallContext {
+  /** Aborts when the call passes its deadline or the execution is cancelled. */
+  readonly signal: AbortSignal;
+  /** Epoch milliseconds after which the caller stops waiting for this call. */
+  readonly deadline: number;
+  /** Access level of the backend running the call. */
+  readonly access: WorkspaceRuntimeAccess;
+  /**
+   * Resolve a path the isolate passed against the backend's root.
+   * Rejects paths that escape the root or pass through a symlink.
+   *
+   * @param path - An absolute path, or one relative to the backend root.
+   * @param options - Set `allowMissing` when the path may not exist yet.
+   * @returns The confined absolute path.
+   */
+  resolvePath(path: string, options?: { readonly allowMissing?: boolean }): Promise<string>;
 }
+
+/**
+ * One host function exported by a host module.
+ *
+ * `args` holds the arguments the isolate passed, decoded from the wire.
+ * They come from untrusted code, so parse them before use. The function
+ * may return a value or a promise of one. The result must be
+ * JSON-compatible: the bridge checks it at runtime, treats `undefined`
+ * as `null`, and drops `undefined` object fields, the way
+ * `JSON.stringify` does.
+ */
+export type WorkspaceModuleFunction = (
+  args: readonly WorkspaceRuntimeValue[],
+  context: WorkspaceModuleCallContext,
+) => unknown;
+
+/** Named functions a host module exports into the isolate. */
+export type WorkspaceModuleFunctions = Readonly<Record<string, WorkspaceModuleFunction>>;
+
+/** Workspace services a host module factory can build its functions from. */
+export interface WorkspaceModuleHost {
+  /** The Workspace's Git client. Throws on use when Git is not configured. */
+  readonly git: import("../git/index.js").GitClient;
+  /** The Workspace's Artifacts client. Throws on use when Artifacts is not configured. */
+  readonly artifacts: import("../artifacts/index.js").ArtifactClient;
+  /** The Workspace runtime, for running commands on other backends. */
+  readonly runtime: import("./runtime.js").WorkspaceRuntime;
+}
+
+/**
+ * Builds a host module's functions from the Workspace's services. The
+ * backend calls it once when it connects to its Workspace. The
+ * prebuilt modules in `@cloudflare/computer/modules/*` are factories.
+ */
+export interface WorkspaceModuleFactory {
+  (host: WorkspaceModuleHost): WorkspaceModuleFunctions;
+  /**
+   * What the module does and how to call it, for a model. The
+   * JavaScript backend adds it to its own description, which the exec
+   * tool shows. Objects of functions are listed by their export names.
+   */
+  readonly description?: string;
+}
+
+/**
+ * A module caller source can import.
+ *
+ * - A string is JavaScript source bundled into the isolate, with no host access.
+ * - An object of functions is a host module. Its functions run in the
+ *   Durable Object and each becomes a named export:
+ *   `{ "ws:weather": { forecast } }` lets code write
+ *   `import { forecast } from "ws:weather"`.
+ * - A factory is a host module that needs the Workspace's Git client,
+ *   Artifacts client, or runtime, such as `createGitModule()`.
+ *
+ * Host modules must use a `ws:*` specifier.
+ */
+export type WorkspaceModule = string | WorkspaceModuleFunctions | WorkspaceModuleFactory;
 
 export type WorkspaceRuntimeValue =
   | null
@@ -87,7 +156,26 @@ type RuntimeChunk<E extends ExecEncoding> = E extends "utf8" ? string : Uint8Arr
 export type WorkspaceRuntimeEvent<E extends ExecEncoding = undefined> =
   | { id: string; seq: number; name: "stdout"; value: RuntimeChunk<E> }
   | { id: string; seq: number; name: "stderr"; value: RuntimeChunk<E> }
-  | { id: string; seq: number; name: "exit"; code: number; result?: WorkspaceRuntimeValue };
+  | {
+      id: string;
+      seq: number;
+      name: "exit";
+      code: number;
+      result?: WorkspaceRuntimeValue;
+      /** Output that passed the limits, and where it was saved in full. */
+      truncated?: WorkspaceRuntimeTruncation;
+    };
+
+/**
+ * Which streams of a run were cut to their last lines, and where each
+ * was saved in full. A stream that fit its limits is absent.
+ */
+export interface WorkspaceRuntimeTruncation {
+  /** Present when stdout was cut. */
+  stdout?: TruncatedOutput;
+  /** Present when stderr was cut. */
+  stderr?: TruncatedOutput;
+}
 
 export interface WorkspaceRuntimeResult<E extends ExecEncoding = undefined> {
   status: WorkspaceRuntimeStatus;
@@ -95,6 +183,12 @@ export interface WorkspaceRuntimeResult<E extends ExecEncoding = undefined> {
   stdout: E extends "utf8" ? string : Uint8Array;
   stderr: E extends "utf8" ? string : Uint8Array;
   value?: WorkspaceRuntimeValue;
+  /**
+   * Present when output passed the limits. `stdout` and `stderr` then
+   * hold only the end of the output; the full output is in the file
+   * each entry names.
+   */
+  truncated?: WorkspaceRuntimeTruncation;
   pushed: number;
   pulled: number;
   skipped: SkippedEntry[];
@@ -111,12 +205,29 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   stdin?: Uint8Array | string;
   timeoutMs?: number;
   sync?: "wait" | "defer";
+  /**
+   * How much output `result()` keeps per stream. Output past it is cut
+   * to its last lines and saved in full to a Workspace file. Overrides
+   * the Workspace's `output` limits for this run; `false` keeps all
+   * output and saves nothing.
+   */
+  output?: WorkspaceRuntimeOutputOptions | false;
+}
+
+/** Per-run output limits. Fields left out use the Workspace's limits. */
+export interface WorkspaceRuntimeOutputOptions {
+  /** The most lines kept per stream. Defaults to 2000. */
+  maxLines?: number;
+  /** The most bytes kept per stream. Defaults to 64 KiB. */
+  maxBytes?: number;
 }
 
 export interface WorkspaceRuntimeGetOptions<E extends ExecEncoding = undefined> {
   backend?: string;
   encoding?: E;
   resume?: "tail" | "full" | number;
+  /** Output limits for this replay, as for `exec`. */
+  output?: WorkspaceRuntimeOutputOptions | false;
 }
 
 export interface WorkspaceRuntimeKillOptions {
@@ -181,13 +292,19 @@ export interface WorkspaceModuleBackendHandle {
   close?(): Promise<void>;
 }
 
-export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost;
+/** What a module backend receives when it connects to its Workspace. */
+export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost & {
+  /** The Workspace runtime, handed to host modules. */
+  readonly runtime: import("./runtime.js").WorkspaceRuntime;
+};
 
 export interface WorkspaceModuleBackend {
   readonly protocol: "module";
   readonly id: string;
   readonly type: string;
   readonly callable?: boolean;
+  /** What the backend tells a model about itself. Shown by the exec tool. */
+  readonly description?: string;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
 }
 
