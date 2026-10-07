@@ -132,6 +132,7 @@ export function writePushCursor(
     // versions have been shipped. Keep the cursor's own rev, which a
     // partial push may have shipped only in part.
     db.run("DELETE FROM _vfs_upstream_revs WHERE backend = ? AND rev < ?", backend, cursor.rev);
+    db.run("DELETE FROM _vfs_upstream_paths WHERE backend = ? AND rev < ?", backend, cursor.rev);
   });
 }
 
@@ -145,6 +146,25 @@ export function recordUpstreamRevs(
 ): void {
   for (let rev = after + 1; rev <= through; rev++) {
     db.run("INSERT OR IGNORE INTO _vfs_upstream_revs (backend, rev) VALUES (?, ?)", backend, rev);
+  }
+}
+
+// Record local revs in (after, through] as minted by applying a pull
+// from `backend` to `path` alone. See _vfs_upstream_paths.
+export function recordUpstreamPathRevs(
+  db: Database,
+  after: number,
+  through: number,
+  path: string,
+  backend: string = DEFAULT_BACKEND_ID,
+): void {
+  for (let rev = after + 1; rev <= through; rev++) {
+    db.run(
+      "INSERT OR IGNORE INTO _vfs_upstream_paths (backend, rev, path) VALUES (?, ?, ?)",
+      backend,
+      rev,
+      path,
+    );
   }
 }
 

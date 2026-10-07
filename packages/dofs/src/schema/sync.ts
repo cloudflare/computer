@@ -80,6 +80,17 @@ export const SYNC_STATEMENTS = [
     rev     INTEGER NOT NULL,
     PRIMARY KEY (backend, rev)
   ) WITHOUT ROWID`,
+  // Per-name provenance for a pulled write whose rev must stay local
+  // because another, unpushed hardlink name shares the inode. The row
+  // says only `path` at `rev` holds what `backend` sent, so a later
+  // delete of that name wins while the other names stay protected.
+  // Pruned with _vfs_upstream_revs.
+  `CREATE TABLE IF NOT EXISTS _vfs_upstream_paths (
+    backend TEXT    NOT NULL,
+    rev     INTEGER NOT NULL,
+    path    TEXT    NOT NULL,
+    PRIMARY KEY (backend, rev, path)
+  ) WITHOUT ROWID`,
   // Durable half of a restartable sync operation. One row per
   // (backend, direction): the plan's key. A restarted iterator reads
   // this row to recover the fixed target and generation it was working

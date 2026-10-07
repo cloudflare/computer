@@ -20,6 +20,7 @@ import {
   DEFAULT_BACKEND_ID,
   readPushCursor,
   readWatermark,
+  recordUpstreamPathRevs,
   recordUpstreamRevs,
 } from "./watermarks.js";
 
@@ -393,7 +394,7 @@ export async function applyChanges(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      if (!keepsLocalLink) recordPulledRevs(db, options, revBefore);
+      recordPulledRevs(db, entry, options, revBefore, keepsLocalLink);
     }
   }
 
@@ -528,7 +529,7 @@ export function applyChangesSync(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      if (!keepsLocalLink) recordPulledRevs(db, options, revBefore);
+      recordPulledRevs(db, entry, options, revBefore, keepsLocalLink);
     }
   }
 
@@ -640,10 +641,15 @@ function tombstoneIsStale(
       WHERE n.rev >= ?
         AND NOT EXISTS (
           SELECT 1 FROM _vfs_upstream_revs u WHERE u.backend = ? AND u.rev = n.rev
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM _vfs_upstream_paths p
+           WHERE p.backend = ? AND p.rev = n.rev AND p.path = tree.path
         )`,
     live.inode,
     entry.path,
     pushed.rev,
+    backend,
     backend,
   );
   return candidates.some((node) => compareChangeCursors(node, pushed) > 0);
@@ -660,9 +666,22 @@ function shippedCursor(db: Database, backend: string): ChangeCursor {
 // Remember revs minted while applying a pull, so a later delete from
 // the same backend can tell them from local edits. Push receivers
 // (receivedCursor set) guard replays by cursor instead and never prune,
-// so they record nothing.
-function recordPulledRevs(db: Database, options: ApplyOptions, revBefore: number): void {
+// so they record nothing. A write that restamps an unpushed hardlink
+// records its revs for the written name only: that name holds what the
+// remote sent, while the inode's other names stay local.
+function recordPulledRevs(
+  db: Database,
+  entry: ChangeEntry,
+  options: ApplyOptions,
+  revBefore: number,
+  keepsLocalLink: boolean,
+): void {
   if (options.source !== "upstream" || options.receivedCursor !== undefined) return;
+  if (keepsLocalLink) {
+    const { path } = canonicalizePath(entry.path);
+    recordUpstreamPathRevs(db, revBefore, currentRev(db), path, options.backend);
+    return;
+  }
   recordUpstreamRevs(db, revBefore, currentRev(db), options.backend);
 }
 
@@ -670,6 +689,7 @@ function recordPulledRevs(db: Database, options: ApplyOptions, revBefore: number
 // every name shares. When that inode holds an unpushed local version,
 // such as a fresh link, the new rev must stay local: recording it as
 // upstream would let a later delete of another name discard that link.
+// recordPulledRevs records it for the written name alone instead.
 function rewritesUnpushedHardlink(
   db: Database,
   entry: ChangeEntry,

@@ -343,6 +343,63 @@ describe("block replay idempotency", () => {
         });
       });
 
+      it(`${name}: lets a remote delete remove the rewritten name beside an unpushed hardlink`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          link(db, "/x", "/y");
+          const update: ChangeEntry = {
+            kind: "file",
+            rev: 7,
+            path: "/x",
+            mode: 0o644,
+            mtime: 2,
+            size: 0,
+            chunks: [],
+          };
+          // A pull rewrites /x, and a later pull deletes /x. The delete
+          // removes only that name, so it must win while /y stays.
+          const first = await apply(db, [update], new Map(), { source: "upstream" });
+          expect(first.applied).toBe(1);
+          const second = await apply(db, [{ kind: "delete", rev: 8, path: "/x" }], new Map(), {
+            source: "upstream",
+          });
+          expect(second.applied).toBe(1);
+          expect(resolveInode(db, "/x", { followSymlinks: false })).toBeNull();
+          expect(resolveInode(db, "/y", { followSymlinks: false })).not.toBeNull();
+          // /y is still unpushed, so its own remote delete stays blocked.
+          const third = await apply(db, [{ kind: "delete", rev: 9, path: "/y" }], new Map(), {
+            source: "upstream",
+          });
+          expect(third.applied).toBe(0);
+          expect(resolveInode(db, "/y", { followSymlinks: false })).not.toBeNull();
+        });
+      });
+
+      it(`${name}: still protects a local edit after a pull rewrites a hardlinked name`, async () => {
+        await withDB(async (db) => {
+          await writeFile(db, "/x", "content", {}, () => 1);
+          writeWatermark(db, "pushRev", currentRev(db));
+          link(db, "/x", "/y");
+          const update: ChangeEntry = {
+            kind: "file",
+            rev: 7,
+            path: "/x",
+            mode: 0o644,
+            mtime: 2,
+            size: 0,
+            chunks: [],
+          };
+          await apply(db, [update], new Map(), { source: "upstream" });
+          await writeFile(db, "/x", "edited", {}, () => 3);
+          const result = await apply(db, [{ kind: "delete", rev: 8, path: "/x" }], new Map(), {
+            source: "upstream",
+          });
+          expect(result.applied).toBe(0);
+          expect(await readFile(db, "/x", "utf8")).toBe("edited");
+        });
+      });
+
       it(`${name}: still deletes a pushed hardlink after a pull rewrites its inode`, async () => {
         await withDB(async (db) => {
           await writeFile(db, "/x", "content", {}, () => 1);
