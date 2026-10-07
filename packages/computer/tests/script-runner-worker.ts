@@ -1,7 +1,10 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
 import type { WorkspaceBackend } from "../src/backend.js";
-import { WorkerJavaScriptBackend } from "../src/backends/worker-javascript/index.js";
+import {
+  WorkerJavaScriptBackend,
+  type WorkerJavaScriptBackendOptions,
+} from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
 import type {
   DurableObjectStorageLike,
@@ -58,6 +61,64 @@ function fakeContainerBackend(): WorkspaceBackend {
   };
 }
 
+// The Worker Loader resolves imports differently under the legacy and
+// the new module registry, so the same backend runs on both.
+const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
+
+function javascriptBackend(
+  env: Env,
+  overrides: Partial<
+    Pick<WorkerJavaScriptBackendOptions, "id" | "compatibilityFlags" | "loader">
+  > = {},
+) {
+  return new WorkerJavaScriptBackend({
+    loader: env.LOADER,
+    ...overrides,
+    maxStdioBytes: 64,
+    maxCapabilityBytes: 1024,
+    maxConcurrentCapabilityCalls: 2,
+    modules: {
+      "math-kit": "export const double = (value) => value * 2;",
+      counter: "let count = 0; export const bump = () => ++count;",
+      facade: `import { double } from "math-kit"; import { echo } from "ws:test-host"; export const both = async (value) => ({ doubled: double(value), echoed: await echo(value) });`,
+      "ws:git": createGitModule(),
+      "ws:artifacts": createArtifactsModule(),
+      "ws:container": createContainerModule(),
+      "ws:test-host": {
+        async echo(args) {
+          return { args: [...args] };
+        },
+        async sum(args) {
+          return args.reduce<number>(
+            (total, value) => total + (typeof value === "number" ? value : 0),
+            0,
+          );
+        },
+        async delete(args) {
+          return { deleted: args[0] ?? null };
+        },
+        async invalidResult() {
+          // SAFETY: The test hands the bridge a non-JSON value on purpose to check that it rejects it.
+          return new Date() as never;
+        },
+        async largeError() {
+          throw new Error("x".repeat(5000));
+        },
+        async slow() {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return null;
+        },
+        async marker() {
+          return {
+            __workspace_codec__: { version: 1, type: "bytes", data: [1] },
+            keep: true,
+          };
+        },
+      },
+    },
+  });
+}
+
 export class HostDO extends DurableObject<Env> {
   readonly #workspace: Workspace;
 
@@ -68,47 +129,14 @@ export class HostDO extends DurableObject<Env> {
       waitUntil: ctx.waitUntil.bind(ctx),
       git: createGitClient(),
       backends: [
-        new WorkerJavaScriptBackend({
-          loader: env.LOADER,
-          maxStdioBytes: 64,
-          maxCapabilityBytes: 1024,
-          maxConcurrentCapabilityCalls: 2,
-          modules: {
-            "math-kit": "export const double = (value) => value * 2;",
-            "ws:git": createGitModule(),
-            "ws:artifacts": createArtifactsModule(),
-            "ws:container": createContainerModule(),
-            "ws:test-host": {
-              async echo(args) {
-                return { args: [...args] };
-              },
-              async sum(args) {
-                return args.reduce<number>(
-                  (total, value) => total + (typeof value === "number" ? value : 0),
-                  0,
-                );
-              },
-              async delete(args) {
-                return { deleted: args[0] ?? null };
-              },
-              async invalidResult() {
-                // SAFETY: The test hands the bridge a non-JSON value on purpose to check that it rejects it.
-                return new Date() as never;
-              },
-              async largeError() {
-                throw new Error("x".repeat(5000));
-              },
-              async slow() {
-                await new Promise((resolve) => setTimeout(resolve, 20));
-                return null;
-              },
-              async marker() {
-                return {
-                  __workspace_codec__: { version: 1, type: "bytes", data: [1] },
-                  keep: true,
-                };
-              },
-            },
+        javascriptBackend(env),
+        javascriptBackend(env, {
+          id: NEW_REGISTRY_BACKEND,
+          compatibilityFlags: ["nodejs_compat", "new_module_registry"],
+          // Local workerd still marks the new registry experimental.
+          loader: {
+            load: (code: Parameters<Env["LOADER"]["load"]>[0]) =>
+              env.LOADER.load({ ...code, allowExperimental: true }),
           },
         }),
         fakeContainerBackend(),
@@ -145,10 +173,11 @@ export class HostDO extends DurableObject<Env> {
     id?: string;
     env?: Record<string, string>;
     stdin?: string;
+    backend?: string;
   }) {
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: "worker-javascript",
+      backend: input.backend ?? "worker-javascript",
       cwd: input.cwd,
       input: input.value,
       id: input.id,
@@ -371,6 +400,7 @@ export default class extends WorkerEntrypoint<Env> {
               id?: string;
               env?: Record<string, string>;
               stdin?: string;
+              backend?: string;
             },
           ),
         );

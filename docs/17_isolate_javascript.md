@@ -53,9 +53,9 @@ The source is a real ES module. Static imports, literal dynamic imports, and top
 
 `runtime.exec()` returns before the Dynamic Worker finishes: the run keeps advancing while its event stream is consumed and the host call into the Dynamic Worker stays in flight. That pending work keeps the Durable Object resident on its own. A run whose handle is returned but never read can be evicted once the object goes idle; drain the event stream (or `result()`) to keep the run alive, and schedule an alarm through `ctx.storage.setAlarm()` for work that must survive eviction.
 
-## Durable relative imports
+## Durable imports
 
-Relative imports resolve from `cwd` through the durable Workspace filesystem:
+Relative imports resolve from the importing file, as in Node, and absolute imports such as `/workspace/lib/util.js` resolve from the Workspace root. Both read through the durable Workspace filesystem, and the entry source sits in `cwd`:
 
 ```ts
 await workspace.fs.writeFile(
@@ -76,7 +76,7 @@ await workspace.runtime.exec(
 );
 ```
 
-Workspace parses the graph before loading the Worker, confines every durable path, rejects symlink traversal, and enforces aggregate source, module-count, and import-depth limits. Dynamic imports must use string literals.
+Workspace parses the graph before loading the Worker, confines every durable path, absolute ones included, to the backend root, rejects symlink traversal, and enforces aggregate source, module-count, and import-depth limits. Dynamic imports must use string literals.
 
 ## Execution limits and retention
 
@@ -148,7 +148,9 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-An import that is not built in, configured, or a relative Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+An import that is not built in, configured, or a relative or absolute Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+
+Any import that is not a path is resolved by name. The Worker Loader has no `node_modules` lookup and resolves a bare import next to the importing file, so Workspace stores each source and host module once, in a `__modules__` directory of the Worker's bundle, and rewrites every import of one into a relative path to it. Every file that imports `lodash` gets the same instance, however many directories the code spans. An absolute import is rewritten the same way. Relative paths are the only form the Worker Loader's legacy and new module registries resolve alike, so imports work whether or not `compatibilityFlags` includes `new_module_registry`. When a module fails to link, the error names it as the code wrote it.
 
 The backend describes its modules for a model in `backend.description`, which `workspace.runtime.backends()` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
 
@@ -185,6 +187,8 @@ Path confinement rejects lexical escapes and every symlink component before an o
 ### Source modules
 
 A string value is JavaScript source installed as a bare import, such as a bundled library. It is plain code with no host access, and it cannot use the `ws:` namespace or replace `node:fs` or `node:fs/promises`.
+
+Source modules live together in the module directory, not beside the caller's files. A source module may import another source module by its bare name or as `./name`, a configured host module, or a built-in module, but not a Workspace file; an import of one fails before the Worker is created and names the module. A computed dynamic import in a source module resolves by name at run time among the other source modules.
 
 ### Host modules
 

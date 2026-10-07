@@ -704,3 +704,87 @@ describe("WorkspaceRuntime", () => {
     expect(missing.status).toBe(400);
   });
 });
+
+// The Worker Loader resolves import specifiers differently under its
+// legacy and new module registries, so each case runs on both.
+describe.each([
+  ["the legacy module registry", "worker-javascript"],
+  ["the new module registry", "worker-javascript-new-registry"],
+])("module resolution on %s", (_label, backend) => {
+  async function run(source: string, cwd = "/workspace/app") {
+    const response = await runtime({ source, cwd, backend });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    return (JSON.parse(text) as { result: { status: string; value?: unknown; stderr?: string } })
+      .result;
+  }
+
+  it("resolves bare, relative, and absolute imports from nested directories", async () => {
+    await write(
+      "/workspace/app/lib/util.js",
+      `import { double } from "math-kit";
+       import { echo } from "ws:test-host";
+       import { shared } from "/workspace/shared/abs.js";
+       export const fromNested = async () => ({ doubled: double(2), echoed: await echo("nested"), shared });`,
+    );
+    await write("/workspace/shared/abs.js", `export const shared = "absolute";`);
+
+    const result = await run(`
+      import { double } from "math-kit";
+      import { echo } from "ws:test-host";
+      import { fromNested } from "./lib/util.js";
+      import { shared } from "/workspace/shared/abs.js";
+      const lazy = await import("/workspace/shared/abs.js");
+      export default async () => ({
+        doubled: double(1),
+        echoed: await echo("entry"),
+        nested: await fromNested(),
+        shared,
+        lazy: lazy.shared,
+      });
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: {
+        doubled: 2,
+        echoed: { args: ["entry"] },
+        nested: { doubled: 4, echoed: { args: ["nested"] }, shared: "absolute" },
+        shared: "absolute",
+        lazy: "absolute",
+      },
+    });
+  });
+
+  it("shares one instance of a configured module across directories", async () => {
+    await write(
+      "/workspace/app/deep/er/bump.js",
+      `import { bump } from "counter"; export const again = () => bump();`,
+    );
+    const result = await run(`
+      import { bump } from "counter";
+      import { again } from "./deep/er/bump.js";
+      export default () => { bump(); return again(); };
+    `);
+    expect(result).toMatchObject({ status: "completed", value: 2 });
+  });
+
+  it("names a module as it was written when linking fails", async () => {
+    const result = await run(`import { missing } from "math-kit"; export default missing;`);
+    expect(result).toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("'math-kit'"),
+    });
+    expect(result).not.toMatchObject({ stderr: expect.stringContaining("__modules__") });
+  });
+
+  it("lets a configured module import other configured and host modules", async () => {
+    const result = await run(`
+      import { both } from "facade";
+      export default () => both(3);
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: { doubled: 6, echoed: { args: [3] } },
+    });
+  });
+});
