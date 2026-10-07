@@ -1,5 +1,5 @@
 ---
-"@cloudflare/computer": minor
+"@cloudflare/computer": patch
 ---
 
-Add `createContainerModule()` in `@cloudflare/computer/modules/container`. Install it as `modules: { "ws:container": createContainerModule() }` on a `WorkerJavaScriptBackend`, and JavaScript can run shell commands in the Workspace's `ContainerBackend` with `import { exec } from "ws:container"`. The JavaScript backend fails to connect if that backend is missing or runs module source rather than shell commands. The container shares the Workspace's files, a canceled execution kills the command, and `exec` refuses to run on a read-only backend. The module describes itself, so the `exec` tool tells the model about it without extra configuration.
+Add `ws:container` so isolate JavaScript can run shell commands in the Workspace's `ContainerBackend`; see [`ws:container` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wscontainer).
