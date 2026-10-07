@@ -1,6 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
 
-import { utf8Prefix } from "../text-truncation.js";
+import { utf8ByteLength, utf8Prefix } from "../text-truncation.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
 import type {
   WorkspaceModuleCallContext,
@@ -70,7 +70,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // rather than silently coerced by the JSON framing downstream.
   async assertResult(value: unknown): Promise<void> {
     assertRuntimeValue(value);
-    const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const bytes = utf8ByteLength(JSON.stringify(value));
     if (bytes > this.#maxResultBytes) {
       throw new Error(`Workspace runtime result exceeds ${this.#maxResultBytes} bytes.`);
     }
@@ -315,7 +315,6 @@ type MeasuredResponse =
   | { result: unknown; bytes: number }
   | Extract<BridgeResponse, { error: unknown }>;
 
-const encoder = new TextEncoder();
 const MAX_RESPONSE_VALUES = 4096;
 
 // Measure plain data the way it costs the Durable Object: UTF-8 bytes
@@ -350,7 +349,7 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
     // Every value costs at least one byte, so the byte limit also bounds
     // how many values the host walks, even for empty strings and objects.
     if (typeof item === "string") {
-      add(Math.max(1, encoder.encode(item).byteLength));
+      add(Math.max(1, utf8ByteLength(item)));
       return;
     }
     if (item instanceof Uint8Array) {
@@ -372,7 +371,7 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
       }
       add(8);
       for (const [key, child] of Object.entries(item)) {
-        add(Math.max(1, encoder.encode(key).byteLength));
+        add(Math.max(1, utf8ByteLength(key)));
         visit(child);
       }
     }
@@ -423,12 +422,12 @@ function boundedError(error: unknown, maxPayloadBytes: number) {
   const value = error as { code?: unknown; path?: unknown };
   const message = error instanceof Error ? error.message : String(error);
   let room = Math.max(0, maxPayloadBytes - ERROR_OVERHEAD_BYTES);
-  const messageReserve = Math.min(encoder.encode(message).byteLength, room / 2);
+  const messageReserve = Math.min(utf8ByteLength(message), room / 2);
   const details: { code?: string; path?: string } = {};
   for (const key of ["code", "path"] as const) {
     const detail = value?.[key];
     if (typeof detail !== "string") continue;
-    const bytes = encoder.encode(detail).byteLength;
+    const bytes = utf8ByteLength(detail);
     if (bytes > room - messageReserve) continue;
     details[key] = detail;
     room -= bytes;
@@ -440,9 +439,9 @@ function errorBytes(response: Extract<BridgeResponse, { error: unknown }>): numb
   const { message, code, path } = response.error;
   return (
     ERROR_OVERHEAD_BYTES +
-    encoder.encode(message).byteLength +
-    encoder.encode(code ?? "").byteLength +
-    encoder.encode(path ?? "").byteLength
+    utf8ByteLength(message) +
+    utf8ByteLength(code ?? "") +
+    utf8ByteLength(path ?? "")
   );
 }
 
