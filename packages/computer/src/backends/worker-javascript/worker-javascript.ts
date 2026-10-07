@@ -20,6 +20,7 @@ import {
   buildModuleGraph,
   type ParsedModules,
   parseModules,
+  prepareSourceModules,
 } from "./module-graph.js";
 
 export interface WorkerJavaScriptBackendOptions {
@@ -256,6 +257,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
   #closed = false;
@@ -328,6 +330,16 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
+  // Parsing a large bundle on every run would be wasteful, so source
+  // modules are prepared once, on the first run that needs them.
+  #preparedSourceModules(): Readonly<Record<string, string>> {
+    this.#sourceModules ??= prepareSourceModules(
+      this.#options.modules.source,
+      new Set(this.#options.modules.host.keys()),
+    );
+    return this.#sourceModules;
+  }
+
   async exec(input: ModuleExecutionInput): Promise<ModuleExecutionEnvelope> {
     if (this.#closed) throw runtimeError("ECLOSED", "Workspace JavaScript backend is closed");
     const id = input.id ?? crypto.randomUUID();
@@ -377,7 +389,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         source: input.source,
         cwd: input.cwd ?? this.#options.root,
         capability,
-        configuredModules: this.#options.modules.source,
+        configuredModules: this.#preparedSourceModules(),
         hostModules: this.#hostModuleFunctions,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
@@ -1191,7 +1203,10 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           await host.assertResult(value);
           enqueue({ name: "exit", code: 0, result: value });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          // Imports of configured and host modules were rewritten to paths
+          // into the module directory. Name them as the code wrote them.
+          const message = (error instanceof Error ? error.message : String(error))
+            .replace(/(?:file:\\/\\/\\/bundle\\/|(?:\\.\\.?\\/)+)__modules__\\//g, "");
           enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
           enqueue({ name: "exit", code: 1 });
         }

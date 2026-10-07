@@ -1188,7 +1188,7 @@ describe("WorkerJavaScriptBackend", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it.each(["__workspace_entry__.js", "workspace-capabilities.js", "nested/lib"])(
+  it.each(["__workspace_entry__.js", "workspace-capabilities.js", "__modules__", "nested/lib"])(
     "rejects a source module named %s at construction",
     (specifier) => {
       expect(
@@ -1200,4 +1200,176 @@ describe("WorkerJavaScriptBackend", () => {
       ).toThrow(/reserved module name/);
     },
   );
+  describe("module resolution", () => {
+    function completingLoader() {
+      return vi.fn((_code: { modules: Record<string, string | { js?: string }> }) => ({
+        getEntrypoint() {
+          return {
+            evaluate: (
+              _input: unknown,
+              host: {
+                assertResult(value: unknown): Promise<void>;
+                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+              },
+            ) => evaluateResult(host, null),
+          };
+        },
+      }));
+    }
+
+    function source(module: string | { js?: string } | undefined) {
+      return typeof module === "string" ? module : module?.js;
+    }
+
+    it("stores each configured and host module once, however many directories import it", async () => {
+      const load = completingLoader();
+      const large = `export default ${JSON.stringify("x".repeat(1000))};`;
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { large, "ws:echo": { run: async () => null } },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace/a/b", { recursive: true });
+      await workspace.fs.writeFile(
+        "/workspace/a/one.js",
+        `import "large"; import "ws:echo"; import "./b/two.js";`,
+      );
+      await workspace.fs.writeFile("/workspace/a/b/two.js", `import "large"; import "ws:echo";`);
+
+      const execution = await workspace.runtime.exec(
+        `import "large"; import "ws:echo"; import "./a/one.js";`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(Object.keys(modules).filter((name) => name.endsWith("large"))).toEqual([
+        "__modules__/large",
+      ]);
+      expect(Object.keys(modules).filter((name) => name.endsWith("ws:echo"))).toEqual([
+        "__modules__/ws:echo",
+      ]);
+      expect(source(modules["workspace/a/b/two.js"])).toBe(
+        `import "../../../__modules__/large"; import "../../../__modules__/ws:echo";`,
+      );
+    });
+
+    it("rewrites an absolute import to a path relative to its importer", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      });
+      await workspace.fs.mkdir("/workspace/shared", { recursive: true });
+      await workspace.fs.writeFile("/workspace/shared/util.js", "export const value = 1;");
+
+      const execution = await workspace.runtime.exec(
+        `import { value } from "/workspace/shared/util.js"; export default value;`,
+        { cwd: "/workspace/app" },
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["workspace/app/__workspace_entry__.js"])).toBe(
+        `import { value } from "../shared/util.js"; export default value;`,
+      );
+      expect(source(modules["workspace/shared/util.js"])).toBe("export const value = 1;");
+    });
+
+    it("confines absolute imports to the backend root", async () => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      });
+      await workspace.fs.mkdir("/outside", { recursive: true });
+      await workspace.fs.writeFile("/outside/secret.js", "export default 1;");
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      await expect(
+        workspace.runtime.exec(`import "/outside/secret.js"; export default 1;`),
+      ).rejects.toThrow(/must stay under \/workspace/);
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it("rejects an absolute import of the module directory", async () => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            root: "/",
+            modules: { lib: "export default 1;" },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/__modules__", { recursive: true });
+      await workspace.fs.writeFile("/__modules__/lib", "export default 2;");
+
+      await expect(
+        workspace.runtime.exec(`import "/__modules__/lib"; export default 1;`, { cwd: "/" }),
+      ).rejects.toThrow(/reserved for Workspace internals/);
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        "a relative import of a Workspace file",
+        `import "./helper.js";`,
+        /imports "\.\/helper\.js", which is not a configured module/,
+      ],
+      [
+        "an absolute import",
+        `import "/workspace/helper.js";`,
+        /imports "\/workspace\/helper\.js", which is not a configured module/,
+      ],
+      [
+        "an unconfigured host module",
+        `import "ws:missing";`,
+        /imports "ws:missing", which is not configured/,
+      ],
+    ])("rejects a configured module with %s", async (_label, imports, message) => {
+      const load = vi.fn();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load }, modules: { lib: imports } })],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      await expect(workspace.runtime.exec(`import "lib"; export default 1;`)).rejects.toThrow(
+        message,
+      );
+      expect(load).not.toHaveBeenCalled();
+    });
+
+    it("rewrites a configured module's host module imports to its own directory", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: {
+              base: "export const value = 1;",
+              facade: `import { value } from "base"; import { run } from "ws:echo"; export { value, run };`,
+              "ws:echo": { run: async () => null },
+            },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(`import "facade"; export default 1;`);
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["__modules__/facade"])).toBe(
+        `import { value } from "base"; import { run } from "./ws:echo"; export { value, run };`,
+      );
+    });
+  });
 });

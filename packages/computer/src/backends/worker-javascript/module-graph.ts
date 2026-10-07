@@ -17,6 +17,12 @@ export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
 const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
 const CAPABILITIES_MODULE = "workspace-capabilities.js";
+// Configured and host modules are stored once, here. The Loader
+// resolves a bare import next to the importing file and has no
+// node_modules lookup, so every import of one of them is rewritten to a
+// relative path that points here. Relative paths are the only form both
+// the legacy and the new Loader module registry resolve the same way.
+const MODULES_DIRECTORY = "__modules__";
 // Installed in every execution and backed by the Workspace. No module
 // in the `modules` option may use these names.
 const BUILT_IN_MODULES = ["node:fs", "node:fs/promises"] as const;
@@ -136,36 +142,97 @@ export interface BuildModuleGraphOptions {
   maxDepth?: number;
 }
 
+/**
+ * Prepare the backend's source modules for the module directory, once
+ * per backend handle: check what each one imports, and point its host
+ * module imports at the module directory.
+ *
+ * A source module is stored beside the other configured modules rather
+ * than beside the caller's files, so it may import them, host modules,
+ * and built-in modules, but not Workspace files.
+ *
+ * @param sources - Source modules by specifier.
+ * @param hostModules - The specifiers of the backend's host modules.
+ * @returns Each source module, ready to store in the module directory.
+ * @throws When a source module is not valid JavaScript, or imports a
+ *   path that is not another configured module or a host module that is
+ *   not configured.
+ */
+export function prepareSourceModules(
+  sources: Readonly<Record<string, string>>,
+  hostModules: ReadonlySet<string>,
+): Readonly<Record<string, string>> {
+  const prepared: Record<string, string> = Object.create(null);
+  for (const [specifier, source] of Object.entries(sources)) {
+    let sites: ImportSite[];
+    try {
+      sites = importSites(source, { allowComputed: true });
+    } catch (error) {
+      throw new Error(`Configured module ${JSON.stringify(specifier)} is not valid JavaScript.`, {
+        cause: error,
+      });
+    }
+    const edits: ImportSite[] = [];
+    for (const site of sites) {
+      const imported = site.specifier;
+      if (imported.startsWith("ws:")) {
+        if (!hostModules.has(imported)) {
+          throw new Error(
+            `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not configured.`,
+          );
+        }
+        // The new registry reads "ws:x" as a URL with its own scheme, so
+        // only the relative form finds the stored host module.
+        edits.push({ ...site, specifier: `./${imported}` });
+        continue;
+      }
+      if (imported.startsWith(".") || imported.startsWith("/")) {
+        const sibling = imported.startsWith("./") ? imported.slice(2) : undefined;
+        if (sibling === undefined || !Object.hasOwn(sources, sibling)) {
+          throw new Error(
+            `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not a configured module.`,
+          );
+        }
+      }
+    }
+    prepared[specifier] = rewriteImports(source, edits);
+  }
+  return prepared;
+}
+
 export async function buildModuleGraph(options: BuildModuleGraphOptions) {
-  const cwd = normalizeCwd(await options.capability.resolveConfined(options.cwd, true));
+  const cwd = normalizePath(await options.capability.resolveConfined(options.cwd, true));
   const entryPath = `${cwd === "/" ? "" : cwd}/${ENTRY_BASENAME}`;
   const entryName = moduleName(entryPath);
   const modules: Record<string, string | { js?: string }> = Object.assign(Object.create(null), {
-    [entryName]: options.source,
     [CAPABILITIES_MODULE]: capabilitiesModule(options.maxCapabilityBytes),
   });
   const seen = new Set<string>();
-  const directories = new Set<string>([directoryName(entryName)]);
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
   const maxModules = options.maxModules ?? 128;
   const maxDepth = options.maxDepth ?? 32;
-  const importableModuleNames = new Set<string>([
-    ...BUILT_IN_MODULES,
-    ...options.hostModules.keys(),
-  ]);
+  const storedName = (specifier: string) => `${MODULES_DIRECTORY}/${specifier}`;
 
   async function visit(path: string, source: string, depth: number): Promise<void> {
     if (depth > maxDepth) throw new Error(`Workspace JavaScript import depth exceeds ${maxDepth}.`);
     const name = moduleName(path);
     if (seen.has(name)) return;
     seen.add(name);
-    directories.add(directoryName(name));
     if (seen.size > maxModules) {
       throw new Error(`Workspace JavaScript module graph exceeds ${maxModules} modules.`);
     }
 
-    for (const specifier of imports(source)) {
-      if (importableModuleNames.has(specifier)) continue;
+    const edits: ImportSite[] = [];
+    for (const site of importSites(source, { allowComputed: false })) {
+      const specifier = site.specifier;
+      if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) continue;
+      if (
+        options.hostModules.has(specifier) ||
+        Object.hasOwn(options.configuredModules, specifier)
+      ) {
+        edits.push({ ...site, specifier: relativeSpecifier(name, storedName(specifier)) });
+        continue;
+      }
       if (specifier === CAPABILITIES_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
       }
@@ -174,14 +241,18 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
           `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option.`,
         );
       }
-      if (specifier.startsWith(".")) {
-        const resolved = resolveRelative(path, specifier);
+      if (specifier.startsWith(".") || specifier.startsWith("/")) {
+        const absolute = specifier.startsWith("/");
+        const resolved = absolute ? normalizePath(specifier) : resolveRelative(path, specifier);
         const childName = moduleName(resolved);
         if (isInternalModuleName(childName)) {
           throw new Error(
             `Module ${JSON.stringify(childName)} is reserved for Workspace internals.`,
           );
         }
+        // The new registry resolves "/x" outside the Worker's bundle, so
+        // an absolute import becomes a path relative to its importer.
+        if (absolute) edits.push({ ...site, specifier: relativeSpecifier(name, childName) });
         if (seen.has(childName)) continue;
         const stat = await options.capability.stat(resolved);
         if (totalBytes + stat.size > options.maxSourceBytes) {
@@ -196,74 +267,95 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
             `Workspace JavaScript module graph exceeds ${options.maxSourceBytes} source bytes.`,
           );
         }
-        modules[childName] = child;
         await visit(resolved, child, depth + 1);
         continue;
       }
-      if (specifier.startsWith("/")) {
-        throw new Error(
-          `Absolute JavaScript import ${JSON.stringify(specifier)} is not supported; use a relative Workspace import.`,
-        );
-      }
-      if (!Object.hasOwn(options.configuredModules, specifier)) {
-        throw new Error(
-          `Module ${JSON.stringify(specifier)} is not configured for the worker-javascript backend.`,
-        );
-      }
+      throw new Error(
+        `Module ${JSON.stringify(specifier)} is not configured for the worker-javascript backend.`,
+      );
     }
+    modules[name] = rewriteImports(source, edits);
   }
 
   await visit(entryPath, options.source, 0);
 
-  // node:* specifiers use protocol-style resolution and therefore need exact
-  // module-map keys rather than the importer-directory aliases used by ws:*.
+  // node:* specifiers are resolved by name in both registries, so they
+  // keep their exact keys.
   modules["node:fs/promises"] = { js: nodeFsPromisesModule() };
   modules["node:fs"] = { js: nodeFsModule() };
 
-  for (const directory of directories) {
-    const prefix = directory ? `${directory}/` : "";
-    const toCapabilities = relativeModule(directory, CAPABILITIES_MODULE);
-    for (const [specifier, functions] of options.hostModules) {
-      modules[`${prefix}${specifier}`] = {
-        js: hostModule(toCapabilities, specifier, Object.keys(functions)),
-      };
-    }
-    for (const [specifier, source] of Object.entries(options.configuredModules)) {
-      const key = `${prefix}${specifier}`;
-      if (key in modules) {
-        throw new Error(
-          `Configured module ${JSON.stringify(specifier)} collides with ${JSON.stringify(key)}.`,
-        );
-      }
-      modules[key] = { js: source };
-    }
+  const toCapabilities = relativeSpecifier(storedName("module"), CAPABILITIES_MODULE);
+  for (const [specifier, functions] of options.hostModules) {
+    modules[storedName(specifier)] = {
+      js: hostModule(toCapabilities, specifier, Object.keys(functions)),
+    };
+  }
+  for (const [specifier, source] of Object.entries(options.configuredModules)) {
+    modules[storedName(specifier)] = { js: source };
   }
 
   return { entryName, modules };
 }
 
-function imports(source: string): string[] {
-  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" }) as unknown as {
-    body: unknown[];
-  };
-  const found: string[] = [];
+// An import written as a string literal, and where that literal sits in
+// the source, quotes included.
+interface ImportSite {
+  readonly specifier: string;
+  readonly start: number;
+  readonly end: number;
+}
+
+// Every import, re-export, and dynamic import written as a string
+// literal. Caller source must be fully analyzable, so a computed dynamic
+// import is an error there. Configured modules may use one; it resolves
+// at run time.
+function importSites(source: string, options: { allowComputed: boolean }): ImportSite[] {
+  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+  const found: ImportSite[] = [];
   walk(ast, (node) => {
-    const item = node as { type?: string; source?: { type?: string; value?: unknown } };
+    const item = node as {
+      type?: string;
+      source?: { type?: string; value?: unknown; start: number; end: number } | null;
+    };
     if (
-      item.type === "ImportDeclaration" ||
-      item.type === "ExportNamedDeclaration" ||
-      item.type === "ExportAllDeclaration"
+      item.type !== "ImportDeclaration" &&
+      item.type !== "ExportNamedDeclaration" &&
+      item.type !== "ExportAllDeclaration" &&
+      item.type !== "ImportExpression"
     ) {
-      if (typeof item.source?.value === "string") found.push(item.source.value);
+      return;
     }
-    if (item.type === "ImportExpression") {
-      if (item.source?.type !== "Literal" || typeof item.source.value !== "string") {
-        throw new Error("Workspace JavaScript dynamic imports must use a string literal.");
-      }
-      found.push(item.source.value);
+    const literal = item.source;
+    if (literal?.type === "Literal" && typeof literal.value === "string") {
+      found.push({ specifier: literal.value, start: literal.start, end: literal.end });
+    } else if (item.type === "ImportExpression" && !options.allowComputed) {
+      throw new Error("Workspace JavaScript dynamic imports must use a string literal.");
     }
   });
   return found;
+}
+
+// Replace each edited import literal with its new specifier, working from
+// the end so earlier positions stay valid.
+function rewriteImports(source: string, edits: readonly ImportSite[]): string {
+  let rewritten = source;
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    rewritten = `${rewritten.slice(0, edit.start)}${JSON.stringify(edit.specifier)}${rewritten.slice(edit.end)}`;
+  }
+  return rewritten;
+}
+
+// The path from one module to another, starting with "./" or "../".
+function relativeSpecifier(fromName: string, toName: string) {
+  const from = directoryName(fromName).split("/").filter(Boolean);
+  const to = toName.split("/");
+  let common = 0;
+  while (common < from.length && common < to.length - 1 && from[common] === to[common]) {
+    common += 1;
+  }
+  const rest = to.slice(common).join("/");
+  const up = from.length - common;
+  return up === 0 ? `./${rest}` : `${"../".repeat(up)}${rest}`;
 }
 
 function walk(value: unknown, visit: (node: unknown) => void): void {
@@ -275,10 +367,10 @@ function walk(value: unknown, visit: (node: unknown) => void): void {
   }
 }
 
-function normalizeCwd(cwd: string) {
-  if (!cwd.startsWith("/")) throw new Error("Workspace JavaScript cwd must be absolute.");
+function normalizePath(path: string) {
+  if (!path.startsWith("/")) throw new Error("Workspace JavaScript paths must be absolute.");
   const parts: string[] = [];
-  for (const part of cwd.split("/")) {
+  for (const part of path.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") parts.pop();
     else parts.push(part);
@@ -298,11 +390,6 @@ function resolveRelative(importer: string, specifier: string) {
   return `/${resolved.join("/")}`;
 }
 
-function relativeModule(fromDirectory: string, target: string) {
-  if (!fromDirectory) return `./${target}`;
-  return `${"../".repeat(fromDirectory.split("/").length)}${target}`;
-}
-
 function moduleName(path: string) {
   return path.replace(/^\/+/, "");
 }
@@ -317,6 +404,8 @@ function isInternalModuleName(name: string) {
     name === CAPABILITIES_MODULE ||
     name === RUNNER_MODULE ||
     name === ENTRY_BASENAME ||
+    name === MODULES_DIRECTORY ||
+    name.startsWith(`${MODULES_DIRECTORY}/`) ||
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
     name.split("/").at(-1)?.startsWith("ws:") === true
