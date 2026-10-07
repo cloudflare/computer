@@ -126,6 +126,22 @@ await workspace.runtime.exec(
 
 Omitting `backend` selects the first configured backend. Backend selection is routing, not authorization; public gateways must validate it against server-side policy.
 
+`workspace.runtime.backends()` lists the registered backends in registration order, each with what it says about itself:
+
+```ts
+workspace.runtime.backends();
+// [
+//   { id: "worker-javascript", protocol: "module", callable: true, description: "..." },
+//   { id: "container-shell", protocol: "command", callable: false, description: "..." },
+// ]
+```
+
+- `protocol` says what `exec` source means there: a shell command (`"command"`) or module source (`"module"`).
+- `callable` says whether the backend takes structured `input` and returns a `value`.
+- `description`, when present, is what the backend tells a model about itself. `WorkerJavaScriptBackend` lists its source language and every module code can import, and `WorkerShellBackend` and `ContainerBackend` describe what they can run. The `exec` tool builds its description from these.
+
+The list is fixed when the Workspace is constructed. A client from `getWorkspace()` takes a copy of it when the client is created, so the answer is the same locally and over RPC.
+
 ## Command synchronization
 
 Command backends continue to use the existing synchronization bracket:

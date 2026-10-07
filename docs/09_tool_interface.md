@@ -80,6 +80,19 @@ Each backend describes itself, and a `description` you pass comes first. `exec: 
 
 `createPiTools` and `createTanStackTools` take `exec` the same way.
 
+The Workspace can also be a client from `getWorkspace()`, in the Durable Object that owns it or in another Worker:
+
+```ts
+import { getWorkspace } from "@cloudflare/computer";
+
+async function runTurn(env: Env, id: DurableObjectId, prompt: string) {
+  using workspace = await getWorkspace(env.Agent.get(id));
+  return generateText({ model, prompt, tools: createAITools({ workspace }) });
+}
+```
+
+Tools built from a client match tools built from the Workspace itself. The client answers `runtime.backends()` from a copy taken when it is created, so `exec` offers the same backends with the same descriptions, and `publish` appears only when the Workspace has an assets publisher. Dispose the client after the tools are done with it.
+
 ## pi
 
 pi keeps tool declarations apart from the code that runs them. `Context.tools` carries declarations with JSON Schema `parameters`, and the caller's own loop runs each call. `createPiTools` returns both, so they cannot drift apart.
@@ -167,8 +180,8 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `exec` | every backend | Backend id to `{ description? }`. `{}` omits `exec`. |
-| `shell` | omitted | Deprecated. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
+| `exec` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. Both types are exported from `@cloudflare/computer/tools`. |
+| `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
 
 `createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
 
@@ -322,7 +335,7 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, streamMaxBytes? })` takes the same `backends` as the `exec` option, plus output limits.
+`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, maxLines? })` takes the same `backends` as the `exec` option, plus output limits.
 
 Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `ContainerBackend` describe their command sets, network access, and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
