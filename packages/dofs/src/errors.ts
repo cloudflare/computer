@@ -24,7 +24,9 @@ export function createWorkspaceError(
   message: string,
   path?: string,
 ): WorkspaceFsError {
-  const error = new Error(path === undefined ? message : `${message}: ${path}`) as WorkspaceFsError;
+  // Many callers already end the message with the path. Name it once.
+  const named = path === undefined || message.endsWith(path) ? message : `${message}: ${path}`;
+  const error = new Error(named) as WorkspaceFsError;
   error.name = "WorkspaceFsError";
   error.code = code;
   error.path = path;
