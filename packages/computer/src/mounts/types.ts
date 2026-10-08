@@ -30,6 +30,10 @@ export interface MountBase {
   // create. Same enforcement timing and rollback semantics as
   // maxBytes.
   readonly maxEntries?: number;
+  // Content version. The indexer records it in _vfs_mounts.version
+  // after a successful materialize() and runs materialize() again, over
+  // an emptied root, when a later boot brings a different value. Leave
+  // it unset to materialize once per store.
   readonly version?: string;
 }
 
@@ -37,11 +41,13 @@ export interface MountBase {
 // This is the only strategy supported in the initial cut; the lazy
 // branch is reserved for a later milestone.
 //
-// Indexed exactly once per workspace store. After materialize()
-// returns successfully — even if it produced zero entries —
-// _vfs_mounts.indexed=1 is set and subsequent workspace boots over
-// the same store skip this mount. Upstream changes (new R2 objects,
-// new commits) are not picked up automatically; the workspace must
+// Indexed once per workspace store, or once per `version` when the
+// mount declares one. After materialize() returns successfully — even
+// if it produced zero entries — _vfs_mounts.indexed=1 is set and
+// subsequent workspace boots over the same store skip this mount
+// while the version is unchanged. Upstream changes (new R2 objects,
+// new commits) are not picked up automatically unless the mount
+// reports them through a new version; otherwise the workspace must
 // be torn down and rebuilt over a fresh store.
 export interface EagerMount extends MountBase {
   readonly strategy: "eager";

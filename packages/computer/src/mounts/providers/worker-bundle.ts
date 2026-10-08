@@ -1,28 +1,71 @@
+// WorkerBundle: an eager, read-only mount over a directory that ships
+// inside the Worker's own upload.
+//
+// With nodejs_compat, workerd exposes every module in the upload as a
+// read-only file under /bundle, readable through node:fs. A module's
+// name is its path, so a directory survives only when the toolchain
+// uploads each file as its own module under its relative path:
+// wrangler does that for files matched by `rules` when
+// `find_additional_modules` is on, and @cloudflare/computer/vite does
+// it for Vite builds. A file imported from code is renamed to a
+// content hash instead, so it can't be found by path.
+//
+// All node:fs calls in workerd are synchronous under the hood, so the
+// provider uses the sync API throughout. That keeps WorkerBundle()
+// itself synchronous, which MountFactory requires, while still letting
+// it check the directory and compute a version at construction.
+//
+// The mount is always read-only. The deployment owns these files, so
+// there is nowhere to write changes back to, and a redeploy replaces
+// the copy (see `version` below).
+
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 
 import type { EagerMount, MountWriteAPI } from "../types.js";
 
 export interface WorkerBundleEntry {
+  // Relative to the bundled directory, forward slashes, no leading slash.
   readonly path: string;
   readonly type: "file" | "dir";
 }
 
 export interface WorkerBundleOptions {
+  // Return false to skip an entry. Skipping a directory skips its
+  // whole subtree, and skipped entries don't count toward the version.
   filter?: (entry: WorkerBundleEntry) => boolean;
+  // workerd's file system has no permission bits, so every bundled file
+  // reads back the same way and scripts lose their executable bit.
+  // Return a mode to set one, or undefined for the default: 0o755 for
+  // files that start with "#!", 0o644 otherwise.
   fileMode?: (path: string, bytes: Uint8Array) => number | undefined;
+  // Compared by the mount indexer with the version recorded at the last
+  // index; a mismatch replaces the subtree. Defaults to a SHA-256 of the
+  // included paths, modes and bytes. Pass a string, such as a build id,
+  // to skip hashing a large tree, or false to index once per store.
   version?: string | false;
   maxBytes?: number;
   maxEntries?: number;
 }
 
+// Lets tests point the provider at a stand-in for /bundle. Not
+// exported from the package.
 export interface WorkerBundleInternals {
   bundleDir: string;
 }
 
 const DEFAULT_BUNDLE_DIR = "/bundle";
+// Under `vite dev` the Worker runs through Vite's module runner, and
+// /bundle holds only the runner's own modules, this one among them.
+// None of the project's files are there, so its presence turns a
+// confusing "does not exist" into an explanation.
 const VITE_DEV_MARKER = "__VITE_WORKER_ENTRY__";
 
+// /bundle can't change while an isolate is alive, so a hash computed
+// once holds for every durable object the isolate hosts. Keyed by root
+// plus the source text of filter and fileMode, which change the result.
+// A filter that closes over per-session values gets the same key for
+// different results, so those callers should pass an explicit version.
 const versionCache = new Map<string, string>();
 
 export function WorkerBundle(path: string, options: WorkerBundleOptions = {}): EagerMount {
@@ -62,6 +105,8 @@ export function createWorkerBundle(
   };
 }
 
+// Relative paths are read from /bundle. Absolute paths are used as-is,
+// which is how tests and Node callers point at a directory on disk.
 function resolveBundlePath(path: string, bundleDir: string): string {
   if (path.length === 0) {
     throw new Error("WorkerBundle: path must not be empty");
@@ -78,6 +123,9 @@ function resolveBundlePath(path: string, bundleDir: string): string {
   return `/${normalized}`;
 }
 
+// A missing directory almost always means the wrangler rule or the
+// Vite plugin is missing, so fail when the durable object starts, with
+// the fix in the message, rather than mount an empty directory.
 function assertDirectory(root: string, bundleDir: string): void {
   let isDirectory = false;
   let exists = false;
@@ -107,6 +155,8 @@ function assertDirectory(root: string, bundleDir: string): void {
   );
 }
 
+// Sorted so materialize() and the hash see entries in the same order
+// on every run, whatever order readdirSync returns.
 function* walk(
   root: string,
   rel: string,
@@ -158,6 +208,8 @@ function hashTree(
     hash.update(`${entry.type}\0${entry.path}\0`);
     if (entry.type === "file") {
       const bytes = readBytes(`${root}/${entry.path}`);
+      // The mode is part of the copy, so a fileMode change has to
+      // trigger a refresh just like a content change.
       hash.update(`${fileMode(entry.path, bytes).toString(8)}\0`);
       hash.update(bytes);
       hash.update("\0");
@@ -175,6 +227,9 @@ function defaultFileMode(bytes: Uint8Array): number {
   return bytes[0] === 0x23 && bytes[1] === 0x21 ? 0o755 : 0o644;
 }
 
+// MountWriteAPI takes a stream so large sources can flow through
+// without buffering. Bundled files are already in memory as modules,
+// so one chunk is enough.
 function singleChunk(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {

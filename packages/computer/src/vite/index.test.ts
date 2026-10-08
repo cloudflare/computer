@@ -37,6 +37,10 @@ function project(files: Record<string, string | Uint8Array>): string {
   return root;
 }
 
+// createBuilder + buildApp rather than build(): the Cloudflare plugin
+// builds the Worker as its own Vite environment, and build() only builds
+// the client one. inspectorPort: false keeps the plugin from opening a
+// debugger port the tests don't need.
 async function build(root: string, plugins: Plugin[]): Promise<void> {
   const builder = await createBuilder({
     root,

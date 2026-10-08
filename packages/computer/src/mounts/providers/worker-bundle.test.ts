@@ -83,6 +83,8 @@ async function modeOf(ws: Workspace, path: string): Promise<number> {
   return (await ws.fs.stat(path)).mode & 0o777;
 }
 
+// Relative paths and the missing-directory errors depend on /bundle, so
+// these tests swap in a temporary directory for it.
 function bundle(
   path: string,
   options: WorkerBundleOptions = {},
@@ -234,6 +236,8 @@ describe("WorkerBundle", () => {
   it("drops container writes under the root on pull", async () => {
     const dir = writeTree(tempDir(), sampleTree());
     const ws = await indexed(WorkerBundle(dir));
+    // applyChanges is what a pull from the container runs, so this is a
+    // container-side write arriving after an exec.
     const result = await applyChanges(
       ws.db,
       [
@@ -329,6 +333,8 @@ describe("WorkerBundle versions", () => {
   it("computes the hash once per directory", () => {
     const dir = writeTree(tempDir(), { "a.txt": "one" });
     const first = WorkerBundle(dir).version;
+    // /bundle can't change in production, so the cache never sees this.
+    // Changing the file here shows the second call didn't hash again.
     writeFileSync(join(dir, "a.txt"), "two");
     expect(WorkerBundle(dir).version).toBe(first);
   });

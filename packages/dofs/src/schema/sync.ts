@@ -121,8 +121,8 @@ export const SYNC_STATEMENTS = [
     at         INTEGER NOT NULL,
     PRIMARY KEY (backend, direction, generation, path)
   )`,
-  // The `mode` column was added at schema v2; `schema/migrations.ts`
-  // owns the ALTER for existing databases. Keep the CHECK
+  // The `mode` column was added at schema v2 and `version` at v9;
+  // `schema/migrations.ts` owns the ALTERs for existing databases. Keep the CHECK
   // constraint here aligned with the migration's CHECK so fresh
   // installs and upgrades enforce the same allowed set.
   `CREATE TABLE IF NOT EXISTS _vfs_mounts (
