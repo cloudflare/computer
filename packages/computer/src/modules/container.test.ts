@@ -15,7 +15,7 @@ interface ExecOptions {
   readonly env?: Record<string, string>;
   readonly stdin?: string;
   readonly timeoutMs: number;
-  readonly output?: { readonly maxBytes: number };
+  readonly output?: { readonly maxBytes: number; readonly maxLines?: number };
 }
 
 interface Run {
@@ -247,6 +247,18 @@ describe("createContainerModule", () => {
       stderr: "🙂\n\n[truncated, 4 more bytes]",
       sync: { status: "complete", skipped: [], skippedCount: 0 },
     });
+  });
+
+  it("asks the runtime to keep at most the configured lines", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { maxOutputBytes: 2048, maxOutputLines: 200 });
+
+    await container.exec(["npm test"], callContext());
+    expect(runs[0]?.options.output).toEqual({ maxBytes: 2048, maxLines: 200 });
+  });
+
+  it.each([0, -1, 1.5])("rejects maxOutputLines %s", (maxOutputLines) => {
+    expect(() => createContainerModule({ maxOutputLines })).toThrow(/maxOutputLines/);
   });
 
   it.each([
