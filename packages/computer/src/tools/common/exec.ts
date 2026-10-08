@@ -140,7 +140,7 @@ export interface ExecInput {
   cwd?: string;
   backend?: string;
   env?: Record<string, string>;
-  input?: WorkspaceRuntimeValue;
+  input?: { [key: string]: WorkspaceRuntimeValue };
 }
 
 export interface ExecCallContext {
@@ -213,12 +213,13 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       );
   }
   if (callableBackendIds.size > 0) {
-    shape.input = jsonValueSchema
+    shape.input = z
+      .record(z.string(), jsonValueSchema)
       .optional()
       .describe(
         single
-          ? "Structured value handed to the module."
-          : "Structured value handed to a callable backend's module. Other backends reject it.",
+          ? "Input object handed to the module."
+          : "Input object handed to a callable backend's module. Other backends reject it.",
       );
   }
   // SAFETY: Every field in `shape` has the type ExecInput gives it, and the fields left out are optional there.
@@ -351,7 +352,7 @@ function outputHint(limits: OutputLimits): string {
 }
 const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
 const CALLABLE_HINT =
-  "Pass `input` to hand the module a structured value, and read its return value back from the `result` field.";
+  "Pass an `input` object to hand the module structured values, and read its return value back from the `result` field.";
 
 interface DescribedBackend {
   readonly id: string;
