@@ -1098,6 +1098,32 @@ describe("WorkerJavaScriptBackend", () => {
     expect(seen).toBe(git);
   });
 
+  it("hands host modules the Workspace's assets client", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const assets = { marker: "assets" };
+    const seen: unknown[] = [];
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: {
+        "ws:test": (host) => {
+          seen.push(host.assets);
+          return { run: async () => null };
+        },
+      },
+    });
+    const host = {
+      db,
+      fs: new WorkspaceFilesystem(db),
+      git: undefined as never,
+      artifacts: undefined as never,
+      runtime: undefined as never,
+    };
+    await backend.connect({ ...host, assets: assets as never });
+    await backend.connect(host);
+    expect(seen).toEqual([assets, undefined]);
+  });
+
   it("does not dispatch inherited members of a host module", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);

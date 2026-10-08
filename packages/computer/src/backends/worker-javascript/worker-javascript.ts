@@ -275,7 +275,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
     for (const [specifier, factory] of options.modules.host) {
-      const built = factory({ git: host.git, artifacts: host.artifacts, runtime: host.runtime });
+      const built = factory({
+        git: host.git,
+        artifacts: host.artifacts,
+        runtime: host.runtime,
+        ...(host.assets === undefined ? {} : { assets: host.assets }),
+      });
       assertHostModuleExports(specifier, built);
       functions.set(specifier, built);
     }
