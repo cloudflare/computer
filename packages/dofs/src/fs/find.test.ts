@@ -223,6 +223,61 @@ describe("find", () => {
       });
     });
 
+    it("prunes the directory a trailing /** names, not only what is below it", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/node_modules/pkg", { recursive: true }, () => 0);
+        mkdir(db, "/a/src", { recursive: true }, () => 0);
+        await writeFile(db, "/a/src/x.ts", "", {}, () => 0);
+        await writeFile(db, "/a/node_modules/pkg/index.ts", "", {}, () => 0);
+
+        const modulesInode = resolveInode(db, "/a/node_modules")?.inode;
+        expect(modulesInode).toBeDefined();
+        const listedParents: unknown[] = [];
+        const all = db.all.bind(db);
+        // biome-ignore lint/suspicious/noExplicitAny: test spy over the generic method
+        (db as any).all = (query: string, ...bindings: unknown[]) => {
+          if (query.includes("FROM vfs_dirents d")) listedParents.push(bindings[0]);
+          return all(query, ...bindings);
+        };
+        let paths: string[];
+        try {
+          paths = find(db, "/a", undefined, { exclude: ["node_modules/**"] })
+            .map((e) => e.path)
+            .sort();
+        } finally {
+          // biome-ignore lint/suspicious/noExplicitAny: restore the spied method
+          (db as any).all = all;
+        }
+
+        expect(paths).toEqual(["/a/src", "/a/src/x.ts"]);
+        expect(listedParents).not.toContain(modulesInode);
+      });
+    });
+
+    it("keeps a file a trailing /** names", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/sub/.git", { recursive: true }, () => 0);
+        await writeFile(db, "/a/.git", "gitdir: ../.git/modules/a", {}, () => 0);
+        await writeFile(db, "/a/sub/.git/HEAD", "", {}, () => 0);
+        const paths = find(db, "/a", undefined, { exclude: [".git/**", "sub/.git/**"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/a/.git", "/a/sub"]);
+      });
+    });
+
+    it("prunes a directory a **/name/** exclusion names at any depth", async () => {
+      await withDB(async (db) => {
+        mkdir(db, "/a/pkg/.git/objects", { recursive: true }, () => 0);
+        await writeFile(db, "/a/pkg/index.ts", "", {}, () => 0);
+        await writeFile(db, "/a/pkg/.git/HEAD", "", {}, () => 0);
+        const paths = find(db, "/a", undefined, { exclude: ["**/.git/**"] })
+          .map((e) => e.path)
+          .sort();
+        expect(paths).toEqual(["/a/pkg", "/a/pkg/index.ts"]);
+      });
+    });
+
     it("applies limit and offset to the surviving matches", async () => {
       await withDB(async (db) => {
         mkdir(db, "/a/skip", { recursive: true }, () => 0);
