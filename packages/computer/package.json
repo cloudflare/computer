@@ -55,6 +55,10 @@
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
     },
+    "./tools/core": {
+      "types": "./dist/tools/core.d.ts",
+      "import": "./dist/tools/core.js"
+    },
     "./tools/pi-ai": {
       "types": "./dist/tools/pi-ai.d.ts",
       "import": "./dist/tools/pi-ai.js"
