@@ -570,6 +570,55 @@ describe("initializeSchema", () => {
     expect(norm(tableSql(db, "_vfs_sync_skips"))).toBe(norm(tableSql(fresh, "_vfs_sync_skips")));
   });
 
+  it("creates _vfs_mounts.version as a nullable column on a fresh DB", () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+
+    db.run("INSERT INTO _vfs_mounts (root, kind) VALUES (?, ?)", "/m1", "bundle");
+    db.run("INSERT INTO _vfs_mounts (root, kind, version) VALUES (?, ?, ?)", "/m2", "bundle", "v1");
+    const rows = db
+      .all<{ root: string; version: string | null }>(
+        "SELECT root, version FROM _vfs_mounts ORDER BY root",
+      )
+      .map((r) => ({ ...r }));
+    expect(rows).toEqual([
+      { root: "/m1", version: null },
+      { root: "/m2", version: "v1" },
+    ]);
+  });
+
+  it("upgrades a v8 database with _vfs_mounts.version", () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    db.run("ALTER TABLE _vfs_mounts DROP COLUMN version");
+    db.run("UPDATE vfs_meta SET v = ? WHERE k = ?", 8, "schema_version");
+    db.run(
+      "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, 'read-only')",
+      "/m1",
+      "r2",
+    );
+
+    initializeSchema(db, () => 0);
+
+    expect(db.one<{ v: number }>("SELECT v FROM vfs_meta WHERE k = ?", "schema_version")?.v).toBe(
+      SCHEMA_VERSION,
+    );
+    const row = db.one<{
+      root: string;
+      kind: string;
+      indexed: number;
+      mode: string;
+      version: string | null;
+    }>("SELECT root, kind, indexed, mode, version FROM _vfs_mounts WHERE root = ?", "/m1");
+    expect({ ...row }).toEqual({
+      root: "/m1",
+      kind: "r2",
+      indexed: 1,
+      mode: "read-only",
+      version: null,
+    });
+  });
+
   it("is idempotent across repeat calls", () => {
     const storage = new SQLiteTestStorage();
     const db = new Database(storage);

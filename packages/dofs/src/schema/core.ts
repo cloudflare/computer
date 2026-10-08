@@ -17,7 +17,7 @@
 // `vfs_changes_by_op_rev`, so tombstone scans can restrict on the rev
 // window. See `schema/migrations.ts` for the migration list; `sync.ts`
 // carries the fresh-install DDL.
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [

@@ -130,6 +130,7 @@ export const SYNC_STATEMENTS = [
     kind    TEXT NOT NULL,
     indexed INTEGER NOT NULL DEFAULT 0,
     mode    TEXT NOT NULL DEFAULT 'read-only'
-            CHECK(mode IN ('read-only', 'read-write'))
+            CHECK(mode IN ('read-only', 'read-write')),
+    version TEXT
   )`,
 ] as const;
