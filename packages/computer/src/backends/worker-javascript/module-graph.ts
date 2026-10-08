@@ -105,7 +105,7 @@ const FILESYSTEM_DESCRIPTION =
 export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
   const source: Record<string, string> = Object.create(null);
   const host = new Map<string, WorkspaceModuleFactory>();
-  const lines = [FILESYSTEM_DESCRIPTION];
+  const lines: Array<string | (() => string)> = [FILESYSTEM_DESCRIPTION];
   for (const [specifier, module] of Object.entries(modules)) {
     const name = `\`${specifier}\``;
     if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) {
@@ -131,7 +131,7 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     }
     if (typeof module === "function") {
       host.set(specifier, module);
-      lines.push(`- ${name}: ${module.description ?? "a host module."}`);
+      lines.push(() => `- ${name}: ${module.description ?? "a host module."}`);
       continue;
     }
     if (module === null || typeof module !== "object" || Array.isArray(module)) {
@@ -144,7 +144,13 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     const exports = Object.keys(module).map((key) => `\`${key}\``);
     lines.push(`- ${name}: exports ${exports.join(", ")}.`);
   }
-  return { source, host, description: lines.join("\n") };
+  return {
+    source,
+    host,
+    get description() {
+      return lines.map((line) => (typeof line === "string" ? line : line())).join("\n");
+    },
+  };
 }
 
 /**
