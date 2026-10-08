@@ -177,6 +177,8 @@ function readChildren(db: Database, parentInode: number, afterName: string): Chi
 //   *  matches any run of characters except '/'
 //   ** matches any run of characters including '/'
 //   ?  matches one character except '/'
+//   {a,b} matches either alternative; groups nest, and a brace with
+//         no top-level comma or no closing brace is a literal
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
 function compileGlob(pattern: string): RegExp {

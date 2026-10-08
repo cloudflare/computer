@@ -336,15 +336,19 @@ matched against each candidate's path **relative to `directory`**, not
 its absolute path — so `**/*.ts` under `/workspace/src` matches
 `a/b.ts`, not `/workspace/src/a/b.ts`.
 
-The glob supports `*`, `**`, `**/`, and `?`. Character classes and
-brace expansions are matched literally.
+The glob supports `*`, `**`, `**/`, `?`, and brace alternatives:
+`**/*.{ts,tsx}` matches either extension, and groups nest. A brace with
+no comma, or with no closing brace, is matched literally, as in a
+shell. Character classes are matched literally.
 
 `exclude` takes globs of the same shape, matched against the same
 relative path. An exclusion is decided before the inclusion glob, so it
 always wins. When an excluded entry is a directory the walk prunes it:
 neither the directory nor anything beneath it is read, which is what
 makes skipping `node_modules` or `.git` cheap rather than merely quiet.
-`limit` and `offset` then paginate whatever survives.
+An exclusion ending in `/**` also excludes the directory it names, so
+`node_modules/**` prunes `node_modules` itself; a file of that name is
+kept. `limit` and `offset` then paginate whatever survives.
 
 ```ts
 // Every TypeScript file in the project.
@@ -355,7 +359,7 @@ const all = await fs.find("/workspace/notes");
 
 // Skip generated trees without descending into them.
 const sources = await fs.find("/workspace", "**/*.ts", {
-  exclude: ["node_modules", "node_modules/**", ".git", ".git/**"],
+  exclude: ["{node_modules,.git}/**"],
 });
 ```
 
@@ -424,9 +428,8 @@ paginate matching lines.
 `exclude` takes globs of the same shape as `find`'s, matched against the same
 directory-relative path and applied before `include`, so an exclusion always
 wins. An excluded directory is pruned before its children are queried, so the
-subtree costs nothing rather than being read and filtered. As with `find`, name
-both the directory and its contents to skip a whole subtree: `node_modules/**`
-matches what is below `node_modules`, not `node_modules` itself.
+subtree costs nothing rather than being read and filtered. As with `find`,
+`node_modules/**` skips the whole subtree, `node_modules` included.
 
 `path` may be a directory or a single file. Directory searches return matches
 in deterministic depth-first discovery order, then line order within each
@@ -437,7 +440,7 @@ traversal to prune, so `exclude` does not apply to it.
 const hits = await fs.grep("TODO", "/workspace/src", {
   ignoreCase: true,
   include: "**/*.ts",
-  exclude: ["node_modules", "node_modules/**"],
+  exclude: ["node_modules/**"],
 });
 for (const hit of hits) {
   console.log(`${hit.path}:${hit.line}: ${hit.text}`);
@@ -526,7 +529,7 @@ maps to `Workspace.fs`:
 | `symlink` / `readlink` | `symlink` / `readlink` | Same argument order as Node. Targets are stored verbatim and may dangle. |
 | `watch` | — | Low-level primitive in `fs/watch.ts` (`createWatcher`, `createWatchAsyncIterable`, `WatchHandle`, `WatchOptions`); not exposed on the `WorkspaceFilesystem` class. |
 | `open` / `FileHandle` | — | Use streams instead. |
-| `glob` | `find` | Limited glob support (`*`, `**`, `**/`, and `?`), plus `exclude` for pruning subtrees. |
+| `glob` | `find` | Limited glob support (`*`, `**`, `**/`, `?`, and `{a,b}`), plus `exclude` for pruning subtrees. |
 | — | `grep` | Not in `node:fs`; literal by default, with optional regular expressions. Shares `find`'s `include`/`exclude` globs. |
 | — | `find` | Recursive directory walk with an optional glob, relative-rooted. |
 | — | `ls` | Flat list of file paths under a directory (segment-aware). |
