@@ -8,7 +8,7 @@ Computer ships a ready-made tool set for agents that use a `Workspace`, once for
 | [pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-ai`) | `@cloudflare/computer/tools/pi-ai` | `createPiTools` |
 | [TanStack AI](https://tanstack.com/ai) (`@tanstack/ai`) | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools` |
 
-All three take the same options and build the same tools, with the same names, descriptions, schemas, and limits. Only the shape they return differs. Each entry point imports only `zod` and its own library's types, so a pi agent never loads `ai` and an AI SDK agent never loads pi. The individual AI SDK `create*Tool` functions and `WorkspaceFileStore` come from `@cloudflare/computer/tools`.
+All three take the same options and build the same tools, with the same names, descriptions, schemas, and limits. Only the shape they return differs. Each entry point imports only `zod` and its own library's types, so a pi agent never loads `ai` and an AI SDK agent never loads pi. The individual AI SDK `create*Tool` functions and `WorkspaceFileStore` come from `@cloudflare/computer/tools`. `defineExec`, the `exec` tool with no agent library attached, comes from `@cloudflare/computer/tools/core`, which imports only `zod`.
 
 The tools wrap three Workspace surfaces:
 
@@ -27,12 +27,13 @@ The tools wrap three Workspace surfaces:
 | `createWriteTool` | Write a whole file with a UTF-8 byte cap. |
 | `createEditTool` | Apply atomic targeted replacements and return a unified diff. |
 | `createListTool` | Page through one directory with file metadata. |
-| `createFindTool` | Find paths with `*`, `**`, and `?` globs. |
+| `createFindTool` | Find paths with `*`, `**`, `?`, and `{a,b}` globs. |
 | `createGrepTool` | Search text with regular expressions or fixed strings. |
 | `createDeleteTool` | Delete a file or directory. |
 | `createExecTool` | Run a command through a configured Workspace backend. |
 | `createPublishTool` | Publish a workspace file through `workspace.assets`. |
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
+| `defineExec` | Build the `exec` tool's description, input schema, argument repair, and executor, for a library with no adapter here. |
 
 Every tool set names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: {}`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
@@ -107,21 +108,22 @@ messages.push(message);
 
 for (const block of message.content) {
   if (block.type !== "toolCall") continue;
-  const { content, isError } = await execute(block);
+  const { content, isError, details } = await execute(block);
   messages.push({
     role: "toolResult",
     toolCallId: block.id,
     toolName: block.name,
     content,
+    details,
     isError,
     timestamp: Date.now(),
   });
 }
 ```
 
-`execute` checks the call's arguments against the tool's schema and returns pi `toolResult` content. A bad call or a failed tool comes back as `isError: true`, so the model can retry and the loop does not throw. pi describes tool parameters with TypeBox, which also accepts plain JSON Schema, so the Zod schemas are converted to JSON Schema and pi needs nothing else. A field with a default stays optional for the model.
+`execute` checks the call's arguments against the tool's schema and returns pi `toolResult` content. A bad call or a failed tool comes back as `isError: true`, so the model can retry and the loop does not throw. `details` carries the tool's own output, such as `exec`'s exit code and streams, for the caller and its interface; it is absent when the call failed validation or threw, and for a `read` that returns an image, whose bytes are already in `content`. pi describes tool parameters with TypeBox, which also accepts plain JSON Schema, so the Zod schemas are converted to JSON Schema and pi needs nothing else. A field with a default stays optional for the model.
 
-`read`, `write`, and `edit` carry byte offsets and long verbatim strings, so they ask for pi's `constrainedSampling`. A provider that supports it enforces the schema while sampling, and a malformed `edit` never reaches the tool. The declarations stay open. pi closes a schema itself when the provider supports strict mode, making every field required and the optional ones nullable. `execute` drops a null on an optional field that does not accept one, and keeps a null the tool accepts, such as `exec`'s `input`.
+`read`, `write`, and `edit` carry byte offsets and long verbatim strings, so they ask for pi's `constrainedSampling`. A provider that supports it enforces the schema while sampling, and a malformed `edit` never reaches the tool. The declarations stay open. pi closes a schema itself when the provider supports strict mode, making every field required and the optional ones nullable. `execute` drops a null on an optional field that does not accept one. It also parses an `exec` `input` object sent as a string of JSON before validating it.
 
 The default is `"prefer"`, which falls back to ordinary tool calling on a provider that cannot enforce a schema. `"require"` fails the request instead, for a pinned model known to support it. `false` turns it off and keeps the schemas open:
 
@@ -169,6 +171,8 @@ createAITools({
   write?,
   edit?,
   exec?,
+  execOutput?,
+  root?,
 });
 ```
 
@@ -176,14 +180,26 @@ createAITools({
 | --- | --- | --- |
 | `workspace` | required | A `Workspace` or structural equivalent. |
 | `readonly` | `false` | Omit `write`, `edit`, `delete`, `exec`, and `publish`. Search remains available. |
+| `root` | none | Confine the file tools and `publish` to one directory. See [Root](#root). |
 | `assets` | `true` | Set to `false` to omit `publish`. |
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
 | `exec` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. Both types are exported from `@cloudflare/computer/tools`. |
+| `execOutput` | 2000 lines, 64 KiB | `{ maxLines?, maxBytes? }`: how much of each `exec` stream the model sees. See [`exec`](#exec). |
 | `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
 
 `createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
+
+### Root
+
+`root` confines `read`, `write`, `edit`, `delete`, `ls`, `find`, `grep`, and `publish` to one directory:
+
+```ts
+createAITools({ workspace, root: "/workspace" });
+```
+
+A relative path resolves against the root, and `.` and `..` are resolved before the check. A path that leaves the root is refused, and so is a path with a symbolic link at or below the root when the filesystem has `lstat`, as `workspace.fs` does. A refusal comes back as the tool's ordinary error result and touches nothing. `exec` is not affected: a backend confines itself, through its own `root`.
 
 ## `read`
 
@@ -259,15 +275,15 @@ Entries are in name order. A non-final page includes `nextOffset`; pass it as th
 {
   path?: string;      // default /workspace
   pattern: string;
-  exclude?: string[];
+  exclude?: string | string[];
   limit?: number;     // default 200, maximum 1000
   offset?: number;
 }
 ```
 
-The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, and `?` matches one non-separator character. Results contain `path` and `type`; a non-final page includes `nextOffset`. Pagination reaches `workspace.fs.find`, which walks directory children in fixed-size pages and stops after collecting the requested page instead of materializing every match.
+The pattern is relative to `path`. `*` stays within one path segment, `**` crosses directories, `?` matches one non-separator character, and `{a,b}` matches either alternative. Results contain `path` and `type`; a non-final page includes `nextOffset`. Pagination reaches `workspace.fs.find`, which walks directory children in fixed-size pages and stops after collecting the requested page instead of materializing every match.
 
-`exclude` takes globs of the same shape, matched against the same relative path, and beats the inclusion pattern. An excluded directory is pruned rather than filtered, so `exclude: ["node_modules", "node_modules/**"]` keeps the walk out of a package tree instead of walking it and discarding the results.
+`exclude` takes one glob or a list, of the same shape, matched against the same relative path, and beats the inclusion pattern. An excluded directory is pruned rather than filtered, so `exclude: "node_modules/**"` keeps the walk out of a package tree instead of walking it and discarding the results: a glob ending in `/**` also excludes the directory it names.
 
 ## `grep`
 
@@ -275,8 +291,8 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
 {
   path?: string;          // default /workspace
   query: string;
-  include?: string;       // glob relative to path
-  exclude?: string[];     // globs pruned from the walk
+  include?: string | string[];  // globs relative to path
+  exclude?: string | string[];  // globs pruned from the walk
   regex?: boolean;        // default false
   ignoreCase?: boolean;   // default false
   context?: number;       // 0 through 10
@@ -287,7 +303,7 @@ The pattern is relative to `path`. `*` stays within one path segment, `**` cross
 
 The AI tool defaults to literal, case-sensitive matching. Set `regex: true` to interpret `query` as a regular expression and `ignoreCase: true` to ignore letter case. Matches include path, line number, text, and optional numbered context. Invalid regular expressions return a structured error. A non-final page includes `nextOffset`.
 
-`exclude` works exactly as it does on `find`: globs of the same shape, matched against the same relative path, applied before `include` so an exclusion always wins. An excluded directory is pruned before its children are queried rather than being read and filtered, so `exclude: ["node_modules", "node_modules/**"]` keeps the search out of a package tree. Name both forms, since `node_modules/**` matches what is below the directory rather than the directory itself. A single-file search has no traversal to prune, so `exclude` does not apply to it.
+`exclude` works exactly as it does on `find`: globs of the same shape, matched against the same relative path, applied before `include` so an exclusion always wins. An excluded directory is pruned before its children are queried rather than being read and filtered, so `exclude: "node_modules/**"` keeps the search out of a package tree. Several `include` globs search files matching any of them. A single-file search has no traversal to prune, so `exclude` does not apply to it.
 
 The tool passes `include`, `exclude`, `limit`, and `offset` through one `workspace.fs.grep` call. The storage search pages matching files and stops after the requested matches, so an included search does not build the full file or match list in the tool layer. Directory searches return matches in deterministic depth-first discovery order, then line order within each file. They are not globally sorted by full path.
 
@@ -304,7 +320,7 @@ The schema is `{ path, content }`. Writing overwrites the file and preserves its
 ## `edit`
 
 ```ts
-createEditTool({ store, maxBytes? }); // default 2 MiB
+createEditTool({ store, maxBytes?, maxDiffLines?, maxDiffBytes? }); // defaults 2 MiB, 2000, 128 KiB
 ```
 
 The schema is:
@@ -319,6 +335,8 @@ The schema is:
 Every `oldText` must identify one unique, non-overlapping range in the original content. Exact matching is tried first. If that misses, the tool can locate the range after NFKC normalization, trailing-whitespace trimming, and common quote, dash, and space folding. Fuzzy normalization is lookup-only: the replacement is spliced into the original text, so content outside the matched range stays unchanged and the returned diff describes the bytes written. A fuzzy match whose normalized boundary cannot map unambiguously to the source is rejected; copy a larger exact range in that case.
 
 The tool applies the batch atomically, preserves the byte order mark, line ending style, and file mode, and returns a unified patch plus `firstChangedLine`.
+
+Diffing costs roughly the square of the number of changed lines, so the diff is bounded while the edit is not. When the replaced text, counted in lines on either side of each edit, exceeds `maxDiffLines`, the diff and patch are empty. Otherwise each is cut to `maxDiffBytes` on a character boundary. Either way the result sets `diffTruncated: true`.
 
 `edit`, `write`, and `delete` share locks through the store's stable `lockIdentity`. Every `WorkspaceFileStore` over the same `workspace.fs` uses the same identity, including adapters created by separate `createAITools()` calls. A write cannot land between edit's read and write phases, while unrelated workspaces and paths remain independent. Recursive deletion also locks the whole subtree, so mutations to ancestors or descendants cannot interleave with it.
 
@@ -344,12 +362,14 @@ The tool offers only the arguments that can work:
 | Backends | Arguments |
 | --- | --- |
 | One shell backend | `command`, `cwd`, `env` |
-| One callable backend | `command`, `cwd`, `env`, `input` |
+| One callable backend | `command`, `cwd`, `env`, `input` (an object) |
 | More than one | `command`, `cwd`, `backend` (required), `env`, plus `input` when any is callable |
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
+`input` is an object of JSON values, described to the model as an input object. Offered any JSON value, some models send the object they mean as a string of JSON. A string that parses to an object is replaced by that object before validation, through the definition's `prepareArguments`; `createPiTools` applies it, and a caller of `defineExec` should too.
+
+Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. Set them with `execOutput` on a tool set, or on `createExecTool` directly. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
 
 ```text
 line 2999
@@ -400,7 +420,7 @@ interface MutableFileStore extends FileStore {
 
 ## Conventions for agents
 
-- Tools take absolute paths. Resolve user input against the configured workspace root before calling them. See [01. VFS](./01_vfs.md).
+- Tools take absolute paths. Pass `root` to resolve relative paths against a directory and refuse paths outside it, or resolve user input yourself before calling them. See [01. VFS](./01_vfs.md).
 - The `read` tool returns line and byte continuation offsets. Pass both back on the next call instead of asking for the whole file again.
 - Tell the model that each `edit` batch applies against the original file content. Treating each edit as an incremental change can produce overlapping edits, which the tool rejects.
 - Describe every shell backend in plain language. The model reads these descriptions when deciding where to run a command.
