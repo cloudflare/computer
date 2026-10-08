@@ -47,6 +47,10 @@
       "types": "./dist/modules/assets.d.ts",
       "import": "./dist/modules/assets.js"
     },
+    "./modules/jq": {
+      "types": "./dist/modules/jq.d.ts",
+      "import": "./dist/modules/jq.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"

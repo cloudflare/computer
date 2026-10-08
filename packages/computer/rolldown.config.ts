@@ -38,6 +38,7 @@ export default defineConfig({
     "modules/git": "src/modules/git.ts",
     "modules/artifacts": "src/modules/artifacts.ts",
     "modules/assets": "src/modules/assets.ts",
+    "modules/jq": "src/modules/jq.ts",
     "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",
