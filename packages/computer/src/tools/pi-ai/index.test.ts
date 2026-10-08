@@ -307,6 +307,41 @@ describe("createPiTools execution", () => {
     expect(array.isError).toBe(true);
   });
 
+  it("parses an input object sent as JSON text", async () => {
+    const seen: unknown[] = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { input?: unknown },
+    ) => {
+      seen.push(options.input);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [{ id: "js", callable: true, description: "callable" }]);
+    const tools = createPiTools({ workspace });
+
+    const text = await tools.execute({
+      id: "1",
+      name: "exec",
+      arguments: { command: "a", input: ' {"dir": "/workspace"}' },
+    });
+    const array = await tools.execute({
+      id: "2",
+      name: "exec",
+      arguments: { command: "b", input: "[1]" },
+    });
+    const broken = await tools.execute({
+      id: "3",
+      name: "exec",
+      arguments: { command: "c", input: "{dir:" },
+    });
+
+    expect(text.isError).toBe(false);
+    expect(seen).toEqual([{ dir: "/workspace" }]);
+    expect(array.isError).toBe(true);
+    expect(broken.isError).toBe(true);
+  });
+
   it("cuts exec output by the limits `execOutput` sets", async () => {
     const seen: unknown[] = [];
     const workspace = makeWorkspace();
