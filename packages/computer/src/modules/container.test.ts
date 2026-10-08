@@ -137,6 +137,36 @@ describe("createContainerModule", () => {
     expect(runs[0]?.options.backend).toBe("linux");
   });
 
+  it("runs the prelude on its own line before each command", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "set -o pipefail\nexport CI=1" });
+
+    await container.exec(["# comment\nnpm test | tee log"], callContext());
+    expect(runs[0]?.command).toBe("set -o pipefail\nexport CI=1\n# comment\nnpm test | tee log");
+  });
+
+  it("leaves the command alone with a blank prelude", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "  " });
+
+    await container.exec(["ls"], callContext());
+    expect(runs[0]?.command).toBe("ls");
+  });
+
+  it("checks the command before adding the prelude", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "set -e" });
+
+    await expect(container.exec([" "], callContext())).rejects.toThrow(/non-empty string/);
+    expect(runs).toHaveLength(0);
+  });
+
+  it("rejects a prelude that is not a string", () => {
+    expect(() => createContainerModule({ prelude: 1 as never })).toThrow(
+      /prelude must be a string/,
+    );
+  });
+
   it("refuses to run on a read-only backend", async () => {
     const { runtime, runs } = fakeRuntime({});
     const container = build(runtime);

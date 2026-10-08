@@ -42,6 +42,7 @@ export interface ContainerModuleOptions {
    * under the backend's `maxCapabilityBytes`.
    */
   readonly maxOutputBytes?: number;
+  readonly prelude?: string;
 }
 
 /**
@@ -75,6 +76,12 @@ export function createContainerModule(
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
   }
+  const prelude = options.prelude;
+  if (prelude !== undefined && typeof prelude !== "string") {
+    throw new Error("createContainerModule: prelude must be a string.");
+  }
+  const withPrelude = (command: string) =>
+    prelude === undefined || prelude.trim() === "" ? command : `${prelude}\n${command}`;
 
   const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => {
     // The factory runs when the JavaScript backend connects, so a
@@ -105,7 +112,7 @@ export function createContainerModule(
       const timeoutMs = remainingTime(request.timeoutMs, context);
       context.signal.throwIfAborted();
 
-      const handle = await host.runtime.exec(request.command, {
+      const handle = await host.runtime.exec(withPrelude(request.command), {
         backend,
         encoding: "utf8",
         timeoutMs,
