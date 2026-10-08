@@ -279,8 +279,7 @@ describe("createPiTools execution", () => {
     expect((result.content[0] as { text: string }).text).toContain('Unknown tool "nope"');
   });
 
-  it("keeps a null the tool genuinely accepts", async () => {
-    // `exec`'s structured input is any JSON value, so null means null.
+  it("hands exec an input object, and treats a null input as absent", async () => {
     const seen: Array<{ input: unknown }> = [];
     const workspace = makeWorkspace();
     (workspace.runtime as unknown as Record<string, unknown>).exec = async (
@@ -293,11 +292,19 @@ describe("createPiTools execution", () => {
     fakeBackends(workspace, [{ id: "js", callable: true, description: "callable" }]);
     const tools = createPiTools({ workspace });
 
-    await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: null } });
-    await tools.execute({ id: "2", name: "exec", arguments: { command: "b" } });
+    const exec = declaration(tools, "exec");
+    const input = exec.parameters.properties?.input as { type?: string } | undefined;
+    expect(input?.type).toBe("object");
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: { n: [1] } } });
+    await tools.execute({ id: "2", name: "exec", arguments: { command: "b", input: null } });
+    const array = await tools.execute({
+      id: "3",
+      name: "exec",
+      arguments: { command: "c", input: [1, 2] },
+    });
 
-    expect(seen[0].input).toBeNull();
-    expect(seen[1].input).toBeUndefined();
+    expect(seen).toEqual([{ input: { n: [1] } }, { input: undefined }]);
+    expect(array.isError).toBe(true);
   });
 
   it("cuts exec output by the limits `execOutput` sets", async () => {
