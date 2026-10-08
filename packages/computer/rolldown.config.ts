@@ -59,6 +59,7 @@ export default defineConfig({
     "backends/worker-shell/shell/xan": "src/backends/worker-shell/generated/xan.ts",
     "backends/worker-shell/shell/jq": "src/backends/worker-shell/generated/jq.ts",
     "observe/cloudflare": "src/observe/cloudflare.ts",
+    "vite/index": "src/vite/index.ts",
   },
   external: [
     "cloudflare:workers",
@@ -67,6 +68,7 @@ export default defineConfig({
     "ai",
     "zod",
     "just-bash",
+    "vite",
     /^node:/,
     // shell-modules.ts imports the generated groups by their
     // published subpath. Keep the specifiers intact in the emitted
