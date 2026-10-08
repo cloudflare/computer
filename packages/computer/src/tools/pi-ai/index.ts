@@ -73,6 +73,7 @@ export type PiToolResultContent =
 export interface PiToolResult {
   content: PiToolResultContent[];
   isError: boolean;
+  details?: unknown;
 }
 
 export interface CreatePiToolsResult {
@@ -239,9 +240,11 @@ function dispatcher(
       | undefined;
     try {
       const output = await settle(run(parsed.data, context));
-      return toPiResult(
-        toOutput ? toOutput({ input: parsed.data, output }) : defaultModelOutput(output),
-      );
+      const modelOutput = toOutput
+        ? toOutput({ input: parsed.data, output })
+        : defaultModelOutput(output);
+      const result = toPiResult(modelOutput);
+      return modelOutput.type === "media" ? result : { ...result, details: output };
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
     }
