@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.11. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.13. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -23,13 +23,13 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
   tasks/<dir>/TASK.md      one task per directory; the only files you write
 .github/workflows/
   gardener-<id>.yml        generated, one per task; never edit
-  gardener-sync.yml        generated; never edit
+  gardener-sync.yml        generated (or the "syncWorkflow" name in gardener.json); never edit
 ```
 
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.11 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.13 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -89,6 +89,7 @@ Unknown keys are errors.
 | `model` | no | Model ID. Defaults to `"@cf/zai-org/glm-5.3"`. Quote IDs starting with `@`. |
 | `draft` | no | `true` makes the task run only by hand. See [Trying a task](#trying-a-task). |
 | `checkout` | no | `pull-request-head` checks out a pull request's head instead of GitHub's merge preview. Implied when `commit.create` may write beyond `gardener/**`. |
+| `reactions` | no | `false` stops the 👀 reaction while the task works on an issue or comment, and the 🚀 or 😕 it leaves after. On by default. |
 
 ## Triggers
 

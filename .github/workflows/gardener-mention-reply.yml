@@ -41,7 +41,7 @@ jobs:
       issues: write
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8e5fa4f844bfe26ff1d152757caf4ac0110ff6ef
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8aa3054967ee696be08ff61936c72e199c750ba7
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "mention-reply"
@@ -49,3 +49,8 @@ jobs:
       task-source: ".gardener/tasks/mention-reply/TASK.md"
       task-bundle-hash: 0980fb762bddd6564da80e353d307b83b45b2daa952d413ad9cb17d289906b6a
       plan-timeout-minutes: 40
+      reactions: >-
+        ${{
+        (github.event_name == 'issue_comment' && github.event.action == 'created' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+        || (github.event_name == 'discussion_comment' && github.event.action == 'created' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+        }}
