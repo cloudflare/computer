@@ -56,11 +56,13 @@ function fakeMount(opts: {
   mode?: "read-only" | "read-write";
   onMaterialize?: () => void;
   throwAfter?: number; // throw after writing N files
+  version?: string;
 }): EagerMount & { calls: number } {
   return {
     kind: opts.kind ?? "fake",
     mode: opts.mode ?? "read-only",
     strategy: "eager",
+    version: opts.version,
     calls: 0,
     async materialize(api: MountWriteAPI) {
       // biome-ignore lint/suspicious/noExplicitAny: self-reference for the call counter
@@ -592,5 +594,176 @@ describe("mount indexer", () => {
     release!();
     await Promise.all([a, b]);
     expect(entered).toBe(1);
+  });
+});
+
+describe("mount versions", () => {
+  function bootWith(storage: SQLiteTestStorage, mount: EagerMount): Workspace {
+    return new Workspace({ storage, backends, mounts: { "/workspace/m": mount } });
+  }
+
+  function mountRow(
+    ws: Workspace,
+  ): { indexed: number; mode: string; version: string | null } | undefined {
+    const row = ws.db.one<{ indexed: number; mode: string; version: string | null }>(
+      "SELECT indexed, mode, version FROM _vfs_mounts WHERE root = ?",
+      "/workspace/m",
+    );
+    return row === undefined ? undefined : { ...row };
+  }
+
+  it("records the version after a successful index", async () => {
+    const ws = bootWith(
+      makeStorage(),
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    );
+    await ws.ensureMountsIndexed();
+    expect(mountRow(ws)).toEqual({ indexed: 1, mode: "read-only", version: "v1" });
+  });
+
+  it("does not re-materialize when the version is unchanged", async () => {
+    const storage = makeStorage();
+    const first = fakeMount({
+      version: "v1",
+      files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }],
+    });
+    await bootWith(storage, first).ensureMountsIndexed();
+
+    const second = fakeMount({
+      version: "v1",
+      files: [{ path: "/workspace/m/a.txt", bytes: utf8("b") }],
+    });
+    const ws = bootWith(storage, second);
+    await ws.ensureMountsIndexed();
+    expect(second.calls).toBe(0);
+    expect(await ws.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a");
+  });
+
+  it("replaces the subtree when the version changes", async () => {
+    const storage = makeStorage();
+    await bootWith(
+      storage,
+      fakeMount({
+        version: "v1",
+        files: [
+          { path: "/workspace/m/changed.txt", bytes: utf8("old") },
+          { path: "/workspace/m/removed.txt", bytes: utf8("gone") },
+          { path: "/workspace/m/sub/kept.txt", bytes: utf8("kept") },
+        ],
+      }),
+    ).ensureMountsIndexed();
+
+    const next = fakeMount({
+      version: "v2",
+      files: [
+        { path: "/workspace/m/changed.txt", bytes: utf8("new") },
+        { path: "/workspace/m/sub/kept.txt", bytes: utf8("kept") },
+        { path: "/workspace/m/added.txt", bytes: utf8("added") },
+      ],
+    });
+    const ws = bootWith(storage, next);
+    await ws.ensureMountsIndexed();
+
+    expect(next.calls).toBe(1);
+    expect(await ws.fs.readFile("/workspace/m/changed.txt", "utf8")).toBe("new");
+    expect(await ws.fs.readFile("/workspace/m/added.txt", "utf8")).toBe("added");
+    expect(await ws.fs.readFile("/workspace/m/sub/kept.txt", "utf8")).toBe("kept");
+    await expect(ws.fs.readFile("/workspace/m/removed.txt", "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(mountRow(ws)).toEqual({ indexed: 1, mode: "read-only", version: "v2" });
+  });
+
+  it("restores the read-only guard after a refresh", async () => {
+    const storage = makeStorage();
+    await bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    ).ensureMountsIndexed();
+    const ws = bootWith(
+      storage,
+      fakeMount({ version: "v2", files: [{ path: "/workspace/m/a.txt", bytes: utf8("b") }] }),
+    );
+    await ws.ensureMountsIndexed();
+    await expect(ws.fs.writeFile("/workspace/m/new.txt", utf8("x"))).rejects.toMatchObject({
+      code: "EROFS",
+    });
+  });
+
+  it("records the removal of old files as changes", async () => {
+    const storage = makeStorage();
+    await bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/removed.txt", bytes: utf8("x") }] }),
+    ).ensureMountsIndexed();
+    const ws = bootWith(
+      storage,
+      fakeMount({ version: "v2", files: [{ path: "/workspace/m/other.txt", bytes: utf8("y") }] }),
+    );
+    await ws.ensureMountsIndexed();
+    const deletes = ws.db
+      .all<{ path: string }>("SELECT path FROM vfs_changes WHERE op = 'delete'")
+      .map((r) => r.path);
+    expect(deletes).toContain("/workspace/m/removed.txt");
+  });
+
+  it("leaves an empty root and indexed=0 when a refresh fails, then retries", async () => {
+    const storage = makeStorage();
+    await bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    ).ensureMountsIndexed();
+
+    const failing = bootWith(
+      storage,
+      fakeMount({
+        version: "v2",
+        files: [
+          { path: "/workspace/m/a.txt", bytes: utf8("b") },
+          { path: "/workspace/m/b.txt", bytes: utf8("b") },
+        ],
+        throwAfter: 1,
+      }),
+    );
+    await expect(failing.ensureMountsIndexed()).rejects.toThrow(/boom/);
+    expect(mountRow(failing)?.indexed).toBe(0);
+    await expect(failing.fs.readdir("/workspace/m")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const retry = fakeMount({
+      version: "v2",
+      files: [{ path: "/workspace/m/a.txt", bytes: utf8("b") }],
+    });
+    const ws = bootWith(storage, retry);
+    await ws.ensureMountsIndexed();
+    expect(retry.calls).toBe(1);
+    expect(await ws.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("b");
+    expect(mountRow(ws)).toEqual({ indexed: 1, mode: "read-only", version: "v2" });
+  });
+
+  it("does not re-materialize a mount without a version", async () => {
+    const storage = makeStorage();
+    await bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    ).ensureMountsIndexed();
+    const unversioned = fakeMount({ files: [{ path: "/workspace/m/a.txt", bytes: utf8("b") }] });
+    const ws = bootWith(storage, unversioned);
+    await ws.ensureMountsIndexed();
+    expect(unversioned.calls).toBe(0);
+    expect(await ws.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a");
+  });
+
+  it("keeps files that existed at the root before the first index", async () => {
+    const storage = makeStorage();
+    const before = new Workspace({ storage, backends });
+    await before.fs.mkdir("/workspace/m", { recursive: true });
+    await before.fs.writeFile("/workspace/m/existing.txt", utf8("here"));
+
+    const ws = bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    );
+    await ws.ensureMountsIndexed();
+    expect(await ws.fs.readFile("/workspace/m/existing.txt", "utf8")).toBe("here");
   });
 });

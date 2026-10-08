@@ -30,6 +30,7 @@ export interface MountBase {
   // create. Same enforcement timing and rollback semantics as
   // maxBytes.
   readonly maxEntries?: number;
+  readonly version?: string;
 }
 
 // Eager mounts populate everything in one shot through MountWriteAPI.

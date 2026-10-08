@@ -35,9 +35,15 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
   // Snapshot the indexed flag per root so we don't re-run something
   // a previous attach already finished.
   const status = new Map<string, boolean>();
-  for (const root of mounts.keys()) {
-    const row = db.one<{ indexed: number }>("SELECT indexed FROM _vfs_mounts WHERE root = ?", root);
-    status.set(root, row?.indexed === 1);
+  const stale = new Set<string>();
+  for (const [root, mount] of mounts) {
+    const row = db.one<{ indexed: number; version: string | null }>(
+      "SELECT indexed, version FROM _vfs_mounts WHERE root = ?",
+      root,
+    );
+    const versionMatches = mount.version === undefined || row?.version === mount.version;
+    status.set(root, row?.indexed === 1 && versionMatches);
+    if (row?.indexed === 1 && !versionMatches) stale.add(root);
   }
 
   // Run every pending mount in parallel. Per-mount failures clear
@@ -73,6 +79,7 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
         // with ENOENT. The mkdir is inside the try block so a crash
         // mid-materialize rolls it back via the existing fs.rm path
         // below.
+        if (stale.has(root)) await fs.rm(root, { recursive: true, force: true });
         await fs.mkdir(root, { recursive: true });
         await mount.materialize(api);
         // Stamp every node reachable from the mount root with
@@ -102,7 +109,12 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
       // UPDATE, then invalidate the guard cache so subsequent
       // writes through Workspace.fs (and any pull) see the final
       // mode.
-      db.run("UPDATE _vfs_mounts SET mode = ?, indexed = 1 WHERE root = ?", mount.mode, root);
+      db.run(
+        "UPDATE _vfs_mounts SET mode = ?, indexed = 1, version = ? WHERE root = ?",
+        mount.mode,
+        mount.version ?? null,
+        root,
+      );
       invalidateReadOnlyMountCache(db);
     }),
   );
