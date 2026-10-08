@@ -1,136 +1,87 @@
-// workerBundle: a Vite plugin that ships a directory into a Worker's
-// upload so WorkerBundle() can read it from /bundle.
+// computerBundle: a Vite plugin that turns a project directory into a
+// module a Worker can import and hand to WorkerBundle().
 //
-// @cloudflare/vite-plugin ignores `find_additional_modules` and `rules`
-// in wrangler.jsonc, and the wrangler.json it generates for deploy sets
-// `no_bundle: true` with an ESModule-only rule. Wrangler then uploads
-// the output directory's JavaScript plus files matching its default
-// rules (.txt, .html, .sql, .bin, .wasm), so anything else in the
-// output never reaches the Worker. This plugin closes that gap: it
-// emits the directory into the Worker's output with its paths intact,
-// and adds a Data rule for it to the generated wrangler.json. Both
-// `vite preview` and `wrangler deploy` read that file.
+//   import skills from "computer:bundle/src/skills";
+//   mounts: { "/workspace/.agents/skills": WorkerBundle(skills) }
 //
-// Runs at build time only. `vite dev` serves the Worker through Vite's
-// module runner and never populates /bundle, so there is nothing for
-// the plugin to do there; WorkerBundle() reports that case itself.
+// @cloudflare/vite-plugin never puts project files under /bundle, and
+// under `vite dev` the Worker runs through Vite's module runner, so the
+// node:fs form of WorkerBundle can't see them. Instead, the plugin
+// resolves each `computer:bundle/<dir>` specifier to a virtual module
+// whose body is a call to Vite's own `import.meta.glob`:
+//
+//   const files = import.meta.glob("./**/*", { base: "/src/skills", query: "?raw", import: "default" });
+//   export default { version: "sha256:…", files };
+//
+// Vite then does the heavy lifting, the same way in dev and in build:
+// each file becomes its own module, loaded only when the mount is
+// copied in; edits and new files invalidate the module; and `vite
+// build` emits one small chunk per file, which wrangler uploads as an
+// ES module. `?raw` reads files as UTF-8 text, so this is for text
+// files only. Like `import.meta.glob`, it skips dotfiles and
+// node_modules.
+//
+// The plugin adds the version, a hash of the paths and contents,
+// computed here at build time so the Worker never has to load every
+// file to tell whether the bundle changed.
 
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 
 import type { Plugin } from "vite";
 
-export interface WorkerBundlePluginOptions {
-  // Directory to ship, relative to the Vite root.
-  dir: string;
-  // Path under /bundle. Defaults to the last segment of `dir`, so
-  // "src/templates" matches WorkerBundle("templates").
-  as?: string;
-  // Vite environment to apply to. Defaults to every Worker environment
-  // the Cloudflare plugin builds.
-  environment?: string;
-}
+const SPECIFIER_PREFIX = "computer:bundle/";
+// The \0 prefix is Vite's convention for virtual modules: other plugins
+// leave the id alone and no file lookup is attempted.
+const RESOLVED_PREFIX = `\0${SPECIFIER_PREFIX}`;
 
-// The slices of wrangler's config shape this plugin reads and writes.
-interface Rule {
-  type: string;
-  globs: string[];
-  fallthrough?: boolean;
-}
-
-interface OutputWorkerConfig {
-  rules?: Rule[];
-  [key: string]: unknown;
-}
-
-const WRANGLER_JSON = "wrangler.json";
-
-export function workerBundle(options: WorkerBundlePluginOptions): Plugin {
-  const as = normalizeAs(options.as ?? lastSegment(options.dir));
-  const glob = `${as}/**/*`;
-  let sourceDir = "";
+export function computerBundle(): Plugin {
+  let root = "";
 
   return {
-    name: "@cloudflare/computer:worker-bundle",
-    apply: "build",
+    name: "@cloudflare/computer:bundle",
     configResolved(config) {
-      sourceDir = resolve(config.root, options.dir);
+      root = config.root;
     },
-    buildStart() {
-      // The client environment builds browser assets, never a Worker.
-      if (this.environment.name === "client") return;
-      if (!isDirectory(sourceDir)) {
-        this.error(`workerBundle: ${sourceDir} does not exist or is not a directory`);
+    resolveId(id) {
+      if (!id.startsWith(SPECIFIER_PREFIX)) return undefined;
+      return RESOLVED_PREFIX + normalizeDir(id.slice(SPECIFIER_PREFIX.length));
+    },
+    load(id) {
+      if (!id.startsWith(RESOLVED_PREFIX)) return undefined;
+      const rel = id.slice(RESOLVED_PREFIX.length);
+      const dir = resolve(root, rel);
+      if (!isDirectory(dir)) {
+        this.error(`computerBundle: ${dir} does not exist or is not a directory`);
       }
-      for (const file of listFiles(sourceDir)) this.addWatchFile(file);
-    },
-    // The Cloudflare plugin emits wrangler.json as an asset from its own
-    // generateBundle hook. Running after it ("post") lets us edit that
-    // asset in memory instead of rewriting the file once it is on disk,
-    // and its presence tells us which environments are Workers.
-    generateBundle: {
-      order: "post",
-      handler(_outputOptions, bundle) {
-        const environment = this.environment.name;
-        if (environment === "client") return;
-        if (options.environment !== undefined && options.environment !== environment) return;
-
-        const asset = bundle[WRANGLER_JSON];
-        if (asset === undefined || asset.type !== "asset") {
-          if (options.environment !== undefined) {
-            this.error(
-              `workerBundle: environment "${environment}" did not produce a ${WRANGLER_JSON}. ` +
-                "Is it a Worker built by @cloudflare/vite-plugin?",
-            );
-          }
-          return;
-        }
-
-        const source =
-          typeof asset.source === "string" ? asset.source : new TextDecoder().decode(asset.source);
-        const config = JSON.parse(source) as OutputWorkerConfig;
-        config.rules = withDataRule(config.rules ?? [], glob);
-        asset.source = JSON.stringify(config);
-
-        for (const file of listFiles(sourceDir)) {
-          const rel = relative(sourceDir, file).split(sep).join("/");
-          this.emitFile({ type: "asset", fileName: `${as}/${rel}`, source: readFileSync(file) });
-        }
-      },
+      const files = listFiles(dir);
+      // A content edit only invalidates that file's own module, not this
+      // one, so watch each file to keep the version current in dev.
+      // Added and removed files are covered by Vite's glob handling.
+      for (const file of files) this.addWatchFile(file);
+      const base = JSON.stringify(`/${rel}`);
+      return [
+        `const files = import.meta.glob("./**/*", { base: ${base}, query: "?raw", import: "default" });`,
+        `export default { version: ${JSON.stringify(hashFiles(dir, files))}, files };`,
+        "",
+      ].join("\n");
     },
   };
 }
 
-// Added with fallthrough, because without it wrangler drops every later
-// rule of the same type, its default .bin rule among them, and .bin
-// imports elsewhere in the Worker would stop resolving. The cost is a
-// harmless "Ignoring duplicate module" warning for bundled .bin files,
-// which match both rules. Skipped when already present so two plugin
-// instances for one directory add one rule.
-function withDataRule(rules: Rule[], glob: string): Rule[] {
-  const exists = rules.some((rule) => rule.type === "Data" && rule.globs.includes(glob));
-  if (exists) return rules;
-  return [{ type: "Data", globs: [glob], fallthrough: true }, ...rules];
-}
-
-function lastSegment(dir: string): string {
-  const segments = dir.split(/[\\/]/).filter((s) => s.length > 0 && s !== ".");
-  const last = segments.at(-1);
-  if (last === undefined || last === "..") {
+// The specifier names a directory relative to the Vite root.
+function normalizeDir(dir: string): string {
+  const segments = dir.split("/").filter((s) => s.length > 0 && s !== ".");
+  if (segments.length === 0) {
     throw new Error(
-      `workerBundle: cannot derive a name from dir ${JSON.stringify(dir)}; pass \`as\``,
+      `computerBundle: "${SPECIFIER_PREFIX}" needs a directory, such as "${SPECIFIER_PREFIX}src/skills"`,
     );
   }
-  return last;
-}
-
-function normalizeAs(as: string): string {
-  const segments = as.split("/").filter((s) => s.length > 0 && s !== ".");
-  if (segments.length === 0) {
-    throw new Error(`workerBundle: \`as\` must not be empty`);
-  }
   if (segments.includes("..")) {
-    throw new Error(`workerBundle: \`as\` must not contain '..' segments: ${JSON.stringify(as)}`);
+    throw new Error(
+      `computerBundle: directory must not contain '..' segments: ${JSON.stringify(dir)}`,
+    );
   }
   return segments.join("/");
 }
@@ -143,15 +94,28 @@ function isDirectory(path: string): boolean {
   }
 }
 
+// The same files `import.meta.glob("./**/*")` matches by default:
+// everything except dotfiles, dot-directories and node_modules.
 function listFiles(dir: string): string[] {
   const out: string[] = [];
   const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
     a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
   );
   for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
     const abs = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...listFiles(abs));
     else if (entry.isFile()) out.push(abs);
   }
   return out;
+}
+
+function hashFiles(dir: string, files: string[]): string {
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(`${relative(dir, file).split(sep).join("/")}\0`);
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return `sha256:${hash.digest("hex")}`;
 }

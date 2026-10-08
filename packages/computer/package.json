@@ -122,13 +122,17 @@
     "./vite": {
       "types": "./dist/vite/index.d.ts",
       "import": "./dist/vite/index.js"
+    },
+    "./vite/client": {
+      "types": "./vite-client.d.ts"
     }
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "vite-client.d.ts"
   ],
   "scripts": {
     "build:deps": "npm run build --workspace @cloudflare/computer-rpc",
