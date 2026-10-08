@@ -180,10 +180,22 @@ function readChildren(db: Database, parentInode: number, afterName: string): Chi
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
 function compileGlob(pattern: string): RegExp {
+  return new RegExp(`^${globSource(pattern)}$`);
+}
+
+function globSource(pattern: string): string {
   let re = "";
   let i = 0;
   while (i < pattern.length) {
     const ch = pattern[i];
+    if (ch === "{") {
+      const alternatives = braceAlternatives(pattern, i);
+      if (alternatives !== undefined) {
+        re += `(?:${alternatives.parts.map(globSource).join("|")})`;
+        i = alternatives.end + 1;
+        continue;
+      }
+    }
     if (ch === "*") {
       if (pattern[i + 1] === "*") {
         // '**/' matches zero or more path segments. Without the slash, '**'
@@ -213,7 +225,31 @@ function compileGlob(pattern: string): RegExp {
     }
     i += 1;
   }
-  return new RegExp(`^${re}$`);
+  return re;
+}
+
+function braceAlternatives(
+  pattern: string,
+  open: number,
+): { parts: string[]; end: number } | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open + 1; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      if (depth === 0) {
+        parts.push(pattern.slice(start, i));
+        return parts.length > 1 ? { parts, end: i } : undefined;
+      }
+      depth -= 1;
+    } else if (ch === "," && depth === 0) {
+      parts.push(pattern.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return undefined;
 }
 
 const REGEX_METACHARS = new Set([".", "+", "?", "^", "$", "(", ")", "[", "]", "{", "}", "|", "\\"]);
