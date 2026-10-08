@@ -505,6 +505,31 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result, text).toMatchObject({ status: "completed", value: "handled" });
   });
 
+  it("creates its root in a fresh Workspace", async () => {
+    const response = await SELF.fetch(
+      `https://example.test/runtime?object=${crypto.randomUUID()}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: `
+            import fs from "node:fs/promises";
+            export default async () => {
+              await fs.writeFile("/workspace/first.txt", "written");
+              return await fs.readdir("/workspace");
+            };
+          `,
+        }),
+      },
+    );
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: ["first.txt"],
+    });
+  });
+
   it("drops undefined fields from a run result, as JSON does", async () => {
     const response = await runtime({
       source: `export default () => ({ kept: 1, dropped: undefined, nested: { also: undefined } });`,

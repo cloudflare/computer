@@ -1,3 +1,4 @@
+import type { WorkspaceBackendHost } from "../../backend.js";
 import { WorkspaceRuntimeBridge } from "../../runtime/bridge.js";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability.js";
 import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
@@ -379,6 +380,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#pendingStarts += 1;
     this.#pendingIds.add(id);
     try {
+      if (this.#options.access === "read-write")
+        await ensureDirectory(this.#host.fs, this.#options.root);
       const capability = new WorkspaceRuntimeCapability(
         this.#host.fs,
         this.#options.root,
@@ -1239,6 +1242,19 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
       }
     }
   `;
+}
+
+// A new Workspace has no directories, not even the root that code reads
+// and writes by default. Create it the first time it's needed. A
+// recursive mkdir records a change even when the directory exists, so
+// look first rather than calling it on every run.
+async function ensureDirectory(fs: WorkspaceBackendHost["fs"], path: string): Promise<void> {
+  try {
+    await fs.stat(path);
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "ENOENT") throw error;
+    await fs.mkdir(path, { recursive: true });
+  }
 }
 
 function assertLoaderGraph(

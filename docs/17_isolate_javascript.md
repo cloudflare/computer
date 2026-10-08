@@ -24,6 +24,8 @@ const workspace = new Workspace({
 });
 ```
 
+`root`, `/workspace` by default, confines every path isolate code touches. A new Workspace doesn't have that directory yet, so a read-write backend creates it the first time it runs.
+
 Execute a module through the common runtime entry point:
 
 ```ts

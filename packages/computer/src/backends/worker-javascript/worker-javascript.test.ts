@@ -1208,6 +1208,46 @@ describe("WorkerJavaScriptBackend", () => {
       ).toThrow(/reserved module name/);
     },
   );
+  describe("root directory", () => {
+    const loader = {
+      load: () => ({
+        getEntrypoint: () => ({
+          evaluate: (
+            _input: unknown,
+            host: {
+              assertResult(value: unknown): Promise<void>;
+              attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+            },
+          ) => evaluateResult(host, null),
+        }),
+      }),
+    };
+
+    it("is created on the first run in a fresh Workspace", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader })],
+      });
+
+      const execution = await workspace.runtime.exec("export default () => null;");
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      await expect(workspace.fs.stat("/workspace")).resolves.toMatchObject({ isDirectory: true });
+    });
+
+    it("is left alone by a read-only backend", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader, access: "read" })],
+      });
+
+      const execution = await workspace.runtime.exec("export default () => null;");
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      await expect(workspace.fs.stat("/workspace")).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  });
+
   describe("module resolution", () => {
     function completingLoader() {
       return vi.fn((_code: { modules: Record<string, string | { js?: string }> }) => ({

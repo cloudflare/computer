@@ -175,7 +175,6 @@ export class HostDO extends DurableObject<Env> {
     stdin?: string;
     backend?: string;
   }) {
-    await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: input.backend ?? "worker-javascript",
       cwd: input.cwd,
@@ -189,7 +188,6 @@ export class HostDO extends DurableObject<Env> {
   }
 
   async startRuntime(input: { source: string; id: string }) {
-    await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: "worker-javascript",
       id: input.id,
@@ -265,7 +263,9 @@ class StdioProbeBridge extends RpcTarget {
 export default class extends WorkerEntrypoint<Env> {
   override async fetch(request: Request) {
     const url = new URL(request.url);
-    const stub = this.env.HOST.get(this.env.HOST.idFromName("script-runner"));
+    // `object` picks a fresh Workspace; the default is shared by every test.
+    const name = url.searchParams.get("object") ?? "script-runner";
+    const stub = this.env.HOST.get(this.env.HOST.idFromName(name));
 
     try {
       if (url.pathname === "/module-probe") {
