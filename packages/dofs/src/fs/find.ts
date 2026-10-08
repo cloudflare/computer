@@ -33,7 +33,12 @@ interface WalkStart {
   path: string;
   prefix: string;
   regex: RegExp | undefined;
-  excludes: RegExp[];
+  excludes: Exclusion[];
+}
+
+interface Exclusion {
+  regex: RegExp;
+  directoryOnly: boolean;
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -99,7 +104,13 @@ function prepareWalk(
   // An empty exclusion pattern is dropped rather than compiled: like
   // the inclusion glob it would only match the empty relative path,
   // which no candidate ever has.
-  const excludes = (exclude ?? []).filter((glob) => glob !== "").map(compileGlob);
+  const excludes = (exclude ?? [])
+    .filter((glob) => glob !== "")
+    .flatMap((glob): Exclusion[] => {
+      const own = { regex: compileGlob(glob), directoryOnly: false };
+      if (!glob.endsWith("/**") || glob.length <= 3) return [own];
+      return [own, { regex: compileGlob(glob.slice(0, -3)), directoryOnly: true }];
+    });
   return {
     inode: node.inode,
     path: canonical,
@@ -127,7 +138,12 @@ function* walk(
       // Exclusion is decided before inclusion, and before any child
       // query: an excluded directory takes its whole subtree with it,
       // so the walker never reads below it.
-      if (excludes.some((excluded) => excluded.test(relativePath))) {
+      if (
+        excludes.some(
+          (excluded) =>
+            (!excluded.directoryOnly || child.type === "dir") && excluded.regex.test(relativePath),
+        )
+      ) {
         continue;
       }
       if (regex === undefined || regex.test(relativePath)) {
