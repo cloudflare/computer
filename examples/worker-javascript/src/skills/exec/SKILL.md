@@ -30,7 +30,8 @@ export default async function (input) {
 - `console.log` and `console.info` go to standard output.
   `console.warn` and `console.error` go to standard error.
 - A thrown error ends the run with a non-zero exit code and the message
-  on standard error.
+  on standard error. So does a promise that rejects with nothing
+  handling it, so `await` everything you start.
 - Code at the top level runs before the call is set up. A file read or a
   `fetch` there fails with `Disallowed operation called within global
   scope`. Imports at the top are fine.
@@ -41,10 +42,13 @@ export default async function (input) {
   supported calls are `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`,
   `stat`, `lstat`, `readlink`, `symlink`, `chmod` and `access`. All of
   them are async.
+- Node.js built-ins such as `node:path`, `node:crypto`, `node:zlib` and
+  `node:buffer`, with subpaths like `node:stream/promises`. Bare names
+  such as `path` work too.
 - Relative imports resolve from `cwd` in the workspace, so you can write
   a helper module with one call and import it in the next.
-- There is no `node_modules` lookup and no npm. Only the modules above,
-  and any the host configures, are available.
+- There is no `node_modules` lookup and no npm. Beyond the modules
+  above, only the ones the host configures are available.
 
 ## Limits
 
