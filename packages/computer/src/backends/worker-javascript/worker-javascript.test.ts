@@ -1048,6 +1048,14 @@ describe("WorkerJavaScriptBackend", () => {
     expect(backend.description).toContain("- `ws:plain`: a host module.");
   });
 
+  it("tells a model to put the work in a default-exported function", () => {
+    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+
+    expect(backend.description).toContain(
+      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
+    );
+  });
+
   it("builds host modules from the Workspace services when it connects", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);

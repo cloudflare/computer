@@ -240,6 +240,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     };
     this.description = [
       "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
+      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
       ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
       ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
       "",

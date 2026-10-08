@@ -174,6 +174,7 @@ The backend describes its modules for a model in `backend.description`, which `w
 
 ```text
 `command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
+Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from "./main.js"`.
 Code has no direct network access.
 
 Modules code can import:
