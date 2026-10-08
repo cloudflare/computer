@@ -1,0 +1,27 @@
+.changeset/isolate-unhandled-rejections.md
+  s_a636b12ef32437::t_f999210c5736bb 1-5
+docs/17_isolate_javascript.md
+  s_a636b12ef32437::t_a31557e900e1e6 52-54
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_a636b12ef32437::t_e4966a20156218 424-427,430,447-464
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_a636b12ef32437::t_cb3d7bc9a2ca67 1055-1067,1209,1215-1221
+packages/computer/tests/script-runner.test.ts
+  s_a636b12ef32437::t_f2d897a8ecdc92 423-507
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5b065edd3d0f7e06db1fae4e9835f26708371158",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
