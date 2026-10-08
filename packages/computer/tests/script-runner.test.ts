@@ -420,6 +420,118 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value, text).toContain("acyclic");
   });
 
+  it("fails a run when a floating promise at module scope rejects", async () => {
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        (async () => {
+          await fs.writeFile("/workspace/floating.txt", "never");
+        })();
+        export default () => "returned";
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("node:fs writeFile can't run at module scope");
+  });
+
+  it("fails a run that caught a call refused at module scope", async () => {
+    const response = await runtime({
+      source: `
+        import { echo } from "ws:test-host";
+        (async () => {
+          try {
+            await echo("too early");
+          } catch {}
+        })();
+        export default () => "returned";
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("ws:test-host echo can't run at module scope");
+  });
+
+  it("names the call when top-level await does I/O", async () => {
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        await fs.readdir("/workspace");
+        export default () => "returned";
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("node:fs readdir can't run at module scope");
+  });
+
+  it("fails a run when a promise the default export left behind rejects", async () => {
+    const response = await runtime({
+      source: `
+        export default async () => {
+          Promise.reject(new Error("left behind"));
+          return "returned";
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("left behind");
+  });
+
+  it("ignores a rejection the module handles", async () => {
+    const response = await runtime({
+      source: `
+        export default async () => {
+          const failing = Promise.reject(new Error("handled"));
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return await failing.catch((error) => error.message);
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({ status: "completed", value: "handled" });
+  });
+
+  it("creates its root in a fresh Workspace", async () => {
+    const response = await SELF.fetch(
+      `https://example.test/runtime?object=${crypto.randomUUID()}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          source: `
+            import fs from "node:fs/promises";
+            export default async () => {
+              await fs.writeFile("/workspace/first.txt", "written");
+              return await fs.readdir("/workspace");
+            };
+          `,
+        }),
+      },
+    );
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: ["first.txt"],
+    });
+  });
+
   it("drops undefined fields from a run result, as JSON does", async () => {
     const response = await runtime({
       source: `export default () => ({ kept: 1, dropped: undefined, nested: { also: undefined } });`,
@@ -718,6 +830,74 @@ describe.each([
     return (JSON.parse(text) as { result: { status: string; value?: unknown; stderr?: string } })
       .result;
   }
+
+  it("runs Node.js built-ins the runtime provides, by node: or bare name", async () => {
+    const result = await run(`
+      import { join } from "node:path";
+      import { createHash } from "node:crypto";
+      import { gzipSync, gunzipSync } from "node:zlib";
+      import path from "path";
+      export default () => ({
+        joined: join("/workspace", "a", "..", "b.txt"),
+        bare: path.basename("/workspace/c.txt"),
+        sha: createHash("sha256").update("abc").digest("hex").slice(0, 8),
+        zipped: gunzipSync(gzipSync("round trip")).toString(),
+      });
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: { joined: "/workspace/b.txt", bare: "c.txt", sha: "ba7816bf", zipped: "round trip" },
+    });
+  });
+
+  it("runs a default export re-exported from a workspace file", async () => {
+    await write(
+      "/workspace/app/main.js",
+      `import fs from "node:fs/promises";
+      export default async (input) => {
+        await fs.writeFile("/workspace/app/out.txt", String(input.n * 21));
+        return fs.readFile("/workspace/app/out.txt", "utf8");
+      };`,
+    );
+    const response = await runtime({
+      source: `export { default } from "./main.js";`,
+      cwd: "/workspace/app",
+      backend,
+      value: { n: 2 },
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text)).toMatchObject({ result: { status: "completed", value: "42" } });
+  });
+
+  it("runs the Node.js timer, async context, and diagnostics built-ins", async () => {
+    const result = await run(`
+      import { setTimeout as fire } from "node:timers";
+      import { setTimeout as sleep } from "node:timers/promises";
+      import { AsyncLocalStorage } from "node:async_hooks";
+      import diagnostics from "node:diagnostics_channel";
+      export default async () => {
+        const fired = await new Promise((resolve) => fire(() => resolve("fired"), 1));
+        const slept = await sleep(1, "slept");
+        const storage = new AsyncLocalStorage();
+        const stored = await storage.run(7, async () => {
+          await sleep(1);
+          return storage.getStore();
+        });
+        const channel = diagnostics.channel("probe");
+        let published;
+        channel.subscribe((message) => {
+          published = message;
+        });
+        channel.publish("sent");
+        return { fired, slept, stored, published };
+      };
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: { fired: "fired", slept: "slept", stored: 7, published: "sent" },
+    });
+  });
 
   it("resolves bare, relative, and absolute imports from nested directories", async () => {
     await write(

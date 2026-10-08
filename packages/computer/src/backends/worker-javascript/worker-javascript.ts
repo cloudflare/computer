@@ -1,3 +1,4 @@
+import type { WorkspaceBackendHost } from "../../backend.js";
 import { WorkspaceRuntimeBridge } from "../../runtime/bridge.js";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability.js";
 import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
@@ -18,6 +19,8 @@ import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   assertHostModuleExports,
   buildModuleGraph,
+  hasNodeModules,
+  NODE_MODULES_DESCRIPTION,
   type ParsedModules,
   parseModules,
   prepareSourceModules,
@@ -240,11 +243,13 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     };
     this.description = [
       "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
+      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
       ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
       ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
       "",
       "Modules code can import:",
       this.#options.modules.description,
+      ...(hasNodeModules(this.#options.compatibilityFlags) ? [NODE_MODULES_DESCRIPTION] : []),
     ].join("\n");
   }
 
@@ -378,6 +383,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#pendingStarts += 1;
     this.#pendingIds.add(id);
     try {
+      if (this.#options.access === "read-write")
+        await ensureDirectory(this.#host.fs, this.#options.root);
       const capability = new WorkspaceRuntimeCapability(
         this.#host.fs,
         this.#options.root,
@@ -391,6 +398,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         capability,
         configuredModules: this.#preparedSourceModules(),
         hostModules: this.#hostModuleFunctions,
+        nodeModules: hasNodeModules(this.#options.compatibilityFlags),
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
@@ -1052,7 +1060,19 @@ function startJavaScriptExecution(options: {
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
-    import { install } from "workspace-capabilities.js";
+    import { install, moduleScopeRefusals } from "workspace-capabilities.js";
+
+    // A promise nobody awaits would otherwise fail without a trace while
+    // the run reports success. Track the rejections nothing handled, and
+    // fail the run if any are left once it is done. The runtime doesn't
+    // report rejections from module evaluation this way, which is why
+    // capability calls refused at module scope are tracked separately.
+    const unhandled = new Map();
+    addEventListener("unhandledrejection", (event) => {
+      unhandled.set(event.promise, event.reason);
+      event.preventDefault();
+    });
+    addEventListener("rejectionhandled", (event) => unhandled.delete(event.promise));
 
     export default class extends WorkerEntrypoint {
       async evaluate(input, host, context) {
@@ -1194,11 +1214,19 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         // holds the host bridge stub alive for the whole run; frames
         // enqueue as output is produced.
         const drained = host.attachOutput(output.readable);
+        unhandled.clear();
         try {
           const module = await import(${JSON.stringify(entryName)});
           const result = typeof module.default === "function"
             ? await module.default(input)
             : module.default ?? null;
+          // Rejections are reported after the microtask queue drains.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (moduleScopeRefusals.length > 0) throw moduleScopeRefusals[0];
+          for (const reason of unhandled.values()) {
+            const message = reason instanceof Error ? reason.message : String(reason);
+            throw new Error("Unhandled rejection: " + message);
+          }
           const value = result ?? null;
           await host.assertResult(value);
           enqueue({ name: "exit", code: 0, result: value });
@@ -1218,6 +1246,19 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
       }
     }
   `;
+}
+
+// A new Workspace has no directories, not even the root that code reads
+// and writes by default. Create it the first time it's needed. A
+// recursive mkdir records a change even when the directory exists, so
+// look first rather than calling it on every run.
+async function ensureDirectory(fs: WorkspaceBackendHost["fs"], path: string): Promise<void> {
+  try {
+    await fs.stat(path);
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "ENOENT") throw error;
+    await fs.mkdir(path, { recursive: true });
+  }
 }
 
 function assertLoaderGraph(

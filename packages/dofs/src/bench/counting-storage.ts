@@ -49,13 +49,10 @@ export class CountingStorage implements DurableObjectStorageLike {
 
   constructor(inner: DurableObjectStorageLike) {
     this.sql = {
-      exec: <Row extends object = Record<string, unknown>>(
-        query: string,
-        ...bindings: unknown[]
-      ): SQLCursorLike<Row> => {
+      exec: (query: string, ...bindings: unknown[]): SQLCursorLike => {
         this.statements += 1;
         this.classify(query);
-        const cursor = inner.sql.exec<Row>(query, ...bindings);
+        const cursor = inner.sql.exec(query, ...bindings);
         // Writes report rowsWritten eagerly after exec on the DO
         // backend; run() never iterates the cursor, so capture it here.
         const written = readNumber(cursor, "rowsWritten");
@@ -63,7 +60,7 @@ export class CountingStorage implements DurableObjectStorageLike {
           this.rowsWritten += written;
         }
         return {
-          toArray: (): Row[] => {
+          toArray: () => {
             const rows = cursor.toArray();
             // rowsRead is only meaningful once the cursor is drained,
             // which all() does exactly once.

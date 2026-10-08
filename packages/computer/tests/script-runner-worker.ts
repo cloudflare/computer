@@ -6,11 +6,7 @@ import {
   type WorkerJavaScriptBackendOptions,
 } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
-import type {
-  DurableObjectStorageLike,
-  WorkspaceRuntimeValue,
-  WorkspaceStub,
-} from "../src/index.js";
+import type { WorkspaceRuntimeValue, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
@@ -125,7 +121,7 @@ export class HostDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      storage: ctx.storage,
       waitUntil: ctx.waitUntil.bind(ctx),
       git: createGitClient(),
       backends: [
@@ -175,7 +171,6 @@ export class HostDO extends DurableObject<Env> {
     stdin?: string;
     backend?: string;
   }) {
-    await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: input.backend ?? "worker-javascript",
       cwd: input.cwd,
@@ -189,7 +184,6 @@ export class HostDO extends DurableObject<Env> {
   }
 
   async startRuntime(input: { source: string; id: string }) {
-    await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: "worker-javascript",
       id: input.id,
@@ -265,7 +259,9 @@ class StdioProbeBridge extends RpcTarget {
 export default class extends WorkerEntrypoint<Env> {
   override async fetch(request: Request) {
     const url = new URL(request.url);
-    const stub = this.env.HOST.get(this.env.HOST.idFromName("script-runner"));
+    // `object` picks a fresh Workspace; the default is shared by every test.
+    const name = url.searchParams.get("object") ?? "script-runner";
+    const stub = this.env.HOST.get(this.env.HOST.idFromName(name));
 
     try {
       if (url.pathname === "/module-probe") {

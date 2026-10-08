@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   R2Bucket,
   type WorkspaceRuntimeValue,
@@ -12,7 +11,7 @@ import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-ja
 export class ContainerExample extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: [new WorkerJavaScriptBackend({ loader: env.LOADER })],
     mounts: {
       "/workspace/r2": R2Bucket(env.Bucket),

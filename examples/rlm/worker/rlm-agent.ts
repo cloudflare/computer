@@ -1,9 +1,5 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import {
-  type DurableObjectStorageLike,
-  Workspace,
-  type WorkspaceRuntimeLoader,
-} from "@cloudflare/computer";
+import { Workspace, type WorkspaceRuntimeLoader } from "@cloudflare/computer";
 import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
 import type { Connection } from "agents";
 import { isStepCount, streamText, type ToolSet } from "ai";
@@ -121,7 +117,7 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
       maxTimeoutMs: 360_000,
     });
     this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      storage: ctx.storage,
       backends: [backend],
     });
     this.#tools = createExecutorTool(this.#workspace, RLM_BACKEND);

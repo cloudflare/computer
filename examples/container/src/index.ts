@@ -28,7 +28,6 @@
 import { DurableObject, tracing } from "cloudflare:workers";
 
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   type WorkspaceOptions,
   WorkspaceProxy,
@@ -79,10 +78,7 @@ class ContainerBase extends withWorkspaceContainer(class extends DurableObject<E
 function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOptions {
   const { ctx } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
-    // ctx.storage.sql.exec returns a narrower row type than
-    // DurableObjectStorageLike declares; the runtime shape
-    // matches. Cast through unknown to bypass invariance.
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: [self.backend],
     // Route every workspace operation through the Cloudflare
     // runtime's user-tracing surface. The runtime owns the span

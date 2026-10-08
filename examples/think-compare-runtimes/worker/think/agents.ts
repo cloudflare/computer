@@ -1,5 +1,4 @@
 import {
-  type DurableObjectStorageLike,
   Workspace,
   WorkspaceProxy,
   WorkspaceServiceProxy,
@@ -320,7 +319,7 @@ export class WorkspaceThinkAgent extends RuntimeThinkAgent {
       containerEnv: this.env.FUSE_MOUNT ? { FUSE_MOUNT: this.env.FUSE_MOUNT } : undefined,
     });
     const workspace = new Workspace({
-      storage: this.#ctx.storage as unknown as DurableObjectStorageLike,
+      storage: this.#ctx.storage,
       backends: [
         new WorkerShellBackend({
           id: "shell",

@@ -143,7 +143,6 @@ import {
 } from "@cloudflare/computer/backends/container-legacy";
 import { Think } from "@cloudflare/think";
 import {
-  type DurableObjectStorageLike,
   type ThinkWorkspaceCompatibility,
   Workspace,
 } from "@cloudflare/computer";
@@ -158,7 +157,7 @@ export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
   });
 
   override workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    storage: this.ctx.storage,
     backends: [this.#backend],
     useThink: true,
   }) as Workspace & ThinkWorkspaceCompatibility;

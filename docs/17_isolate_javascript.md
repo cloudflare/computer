@@ -24,6 +24,8 @@ const workspace = new Workspace({
 });
 ```
 
+`root`, `/workspace` by default, confines every path isolate code touches. A new Workspace doesn't have that directory yet, so a read-write backend creates it the first time it runs.
+
 Execute a module through the common runtime entry point:
 
 ```ts
@@ -49,7 +51,23 @@ const result = await handle.result();
 // result.value = { value: 42, persisted: "42" }
 ```
 
-The source is a real ES module. Static imports, literal dynamic imports, and top-level await are supported. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
+The source is a real ES module, with static imports and literal dynamic imports. The module needs a default export, or the run fails before it starts. A default-exported function is called with `options.input`, and any other default value is the result. To run code that's already in a file, re-export it with `export { default } from "./main.js"`.
+
+Put the module's work in that function. Each run loads the module first, then calls its default export, and the Workers runtime doesn't allow I/O while a module loads. So `node:fs` and host module calls only work once the function is running:
+
+```js
+import fs from "node:fs/promises";
+
+// Fails: this runs while the module loads.
+const early = await fs.readFile("/workspace/a.txt", "utf8");
+
+export default async function () {
+  // Works: this runs when Workspace calls the function.
+  return fs.readFile("/workspace/a.txt", "utf8");
+}
+```
+
+A call made while the module loads fails the run with an error that names the call, even if the code catches the error, since the work it asked for never happened. The run also fails if a promise rejects and nothing has handled it by the time the function finishes. Top-level `await` is fine for anything that doesn't do I/O.
 
 The returned value becomes the result's `value` and must be JSON-compatible plain data. As with `JSON.stringify`, an `undefined` object field is left out, so `{ kept: 1, dropped: undefined }` completes as `{ kept: 1 }`, and returning `undefined` gives `null`. A function, a class instance such as a `Date`, an `undefined` array item, or a cycle fails the run. `options.input` is checked the same way.
 
@@ -123,11 +141,12 @@ const handle = await workspace.runtime.exec(
 
 ## Modules
 
-Caller source can import three kinds of module, and all of them are fixed when the backend is constructed:
+Caller source can import four kinds of module, and all of them are fixed when the backend is constructed:
 
 | Kind | Configured with | Runs in | Example |
 | --- | --- | --- | --- |
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
+| Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
 | Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
 
@@ -150,7 +169,9 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-An import that is not built in, configured, or a relative or absolute Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+An import that is not built in, configured, one of the allowed Node.js modules, or a relative or absolute Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+
+The allowed Node.js modules are the ones that work entirely inside the isolate: `node:path`, `node:url`, `node:util`, `node:events`, `node:buffer`, `node:assert`, `node:string_decoder`, `node:querystring`, `node:stream`, `node:crypto`, `node:zlib`, `node:timers`, `node:async_hooks`, and `node:diagnostics_channel`, with their subpaths such as `node:path/posix` and `node:timers/promises`. The runtime provides them, and imports of them are left as written. A bare name such as `path` works too and becomes `node:path`, unless a configured module has that name, in which case the configured module wins. The runtime has more Node.js modules, but they either duplicate what the Workspace provides, as `node:fs` does, reach outside the isolate, or are stubs that throw when called, so they stay unavailable.
 
 Any import that is not a path is resolved by name. The Worker Loader has no `node_modules` lookup and resolves a bare import next to the importing file, so Workspace stores each source and host module once, in a `__modules__` directory of the Worker's bundle, and rewrites every import of one into a relative path to it. Every file that imports `lodash` gets the same instance, however many directories the code spans. An absolute import is rewritten the same way. Relative paths are the only form the Worker Loader's legacy and new module registries resolve alike, so imports work whether or not `compatibilityFlags` includes `new_module_registry`. When a module fails to link, the error names it as the code wrote it.
 
@@ -158,6 +179,7 @@ The backend describes its modules for a model in `backend.description`, which `w
 
 ```text
 `command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
+Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from "./main.js"`.
 Code has no direct network access.
 
 Modules code can import:
@@ -166,6 +188,7 @@ Modules code can import:
 - `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
 - `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
 - `ws:weather`: exports `forecast`.
+- Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
 A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.

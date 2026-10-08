@@ -33,7 +33,6 @@ import { planBlock, selectMode } from "../sync/blocks.js";
 import { decodeChangePack, encodeChangePack } from "../sync/change-pack.js";
 import { MIN_BLOCK_PROFILE } from "../sync/operations.js";
 import { currentRev } from "../sync/watermarks.js";
-import type { DurableObjectStorageLike } from "../types.js";
 
 const NOW = (): number => 1000;
 const BIG_PROFILE = { maxEntries: 1_000_000, maxBytes: Number.MAX_SAFE_INTEGER };
@@ -45,7 +44,7 @@ function freshStub(): DurableObjectStub {
 
 async function withRealDB<T>(fn: (db: Database) => Promise<T> | T): Promise<T> {
   return runInDurableObject(freshStub(), async (_i: unknown, state: DurableObjectState) => {
-    const db = new Database(state.storage as unknown as DurableObjectStorageLike);
+    const db = new Database(state.storage);
     initializeSchema(db, NOW);
     return await fn(db);
   });

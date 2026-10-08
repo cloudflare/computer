@@ -6,12 +6,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import {
-  type DurableObjectStorageLike,
-  Workspace,
-  WorkspaceServiceProxy,
-  type WorkspaceStub,
-} from "@cloudflare/computer";
+import { Workspace, WorkspaceServiceProxy, type WorkspaceStub } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createTanStackTools } from "@cloudflare/computer/tools/tanstack-ai";
 import { chat, maxIterations, streamToText } from "@tanstack/ai";
@@ -25,7 +20,7 @@ const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 export class TanStackAgent extends DurableObject<Env> {
   workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    storage: this.ctx.storage,
     backends: [
       new WorkerShellBackend({
         id: "shell",

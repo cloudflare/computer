@@ -136,11 +136,11 @@ describe("hasObjects", () => {
     await withDB((db) => {
       const limitedStorage: DurableObjectStorageLike = {
         sql: {
-          exec<Row extends object>(query: string, ...bindings: unknown[]): SQLCursorLike<Row> {
+          exec(query: string, ...bindings: unknown[]): SQLCursorLike {
             if (bindings.length > 100) {
               throw new Error(`too many SQLite bindings: ${bindings.length}`);
             }
-            return db.sql.exec<Row>(query, ...bindings);
+            return db.sql.exec(query, ...bindings);
           },
         },
         transactionSync: (closure) => db.transactionSync(closure),

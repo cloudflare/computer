@@ -1,7 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   type WorkspaceClient,
   type WorkspaceOptions,
@@ -62,7 +61,7 @@ function workspaceOptions(self: InstanceType<typeof EgressContainerBase>): Works
   const workspace = { binding: "EgressExample", id: ctx.id.toString() };
 
   return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: [
       self.containerBackend,
       new WorkerShellBackend({

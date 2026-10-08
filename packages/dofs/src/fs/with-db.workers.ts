@@ -7,7 +7,6 @@ import { env, runInDurableObject } from "cloudflare:test";
 import type { TestBindings } from "../../tests/worker.js";
 import { initializeSchema } from "../schema/index.js";
 import { Database } from "../storage.js";
-import type { DurableObjectStorageLike } from "../types.js";
 
 export interface WithDBOptions {
   now?: () => number;
@@ -26,7 +25,7 @@ export async function withDB<T>(
 ): Promise<T> {
   const stub = freshStub();
   return runInDurableObject(stub, async (_instance: unknown, state: DurableObjectState) => {
-    const db = new Database(state.storage as unknown as DurableObjectStorageLike);
+    const db = new Database(state.storage);
     initializeSchema(db, options.now ?? (() => 1000));
     return await fn(db);
   });
@@ -55,13 +54,13 @@ export async function withTwoDBs<S, T>(
   const captured = await runInDurableObject(
     stubA,
     async (_a: unknown, stateA: DurableObjectState) => {
-      const a = new Database(stateA.storage as unknown as DurableObjectStorageLike);
+      const a = new Database(stateA.storage);
       initializeSchema(a, now);
       return await snapshot(a);
     },
   );
   return runInDurableObject(stubB, async (_b: unknown, stateB: DurableObjectState) => {
-    const b = new Database(stateB.storage as unknown as DurableObjectStorageLike);
+    const b = new Database(stateB.storage);
     initializeSchema(b, now);
     return await apply(b, captured);
   });

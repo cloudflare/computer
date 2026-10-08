@@ -17,12 +17,7 @@
 //
 // README.md walks through building this file from an empty directory.
 
-import {
-  type DurableObjectStorageLike,
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-  WorkspaceProxy,
-} from "@cloudflare/computer";
+import { type ThinkWorkspaceCompatibility, Workspace, WorkspaceProxy } from "@cloudflare/computer";
 import { createAssets } from "@cloudflare/computer/assets";
 import {
   LegacyContainerBackend,
@@ -52,7 +47,7 @@ export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
   });
 
   override workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    storage: this.ctx.storage,
     backends: [this.#backend],
     useThink: true,
   }) as Workspace & ThinkWorkspaceCompatibility;
