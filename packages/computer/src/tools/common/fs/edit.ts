@@ -20,9 +20,13 @@ export interface EditToolOptions {
    * Default 2 MiB.
    */
   maxBytes?: number;
+  maxDiffLines?: number;
+  maxDiffBytes?: number;
 }
 
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MAX_DIFF_LINES = 2_000;
+const DEFAULT_MAX_DIFF_BYTES = 128 * 1024;
 
 const replacementSchema = z
   .object({
@@ -59,6 +63,7 @@ export const editOutputSchema = z.union([
     diff: z.string(),
     patch: z.string(),
     firstChangedLine: z.number().int().optional(),
+    diffTruncated: z.boolean().optional(),
   }),
   z.object({ error: z.string() }),
 ]);
@@ -78,6 +83,7 @@ export interface EditSuccess {
   patch: string;
   /** Undefined when the edit produced no line-level change. */
   firstChangedLine: number | undefined;
+  diffTruncated?: boolean;
 }
 
 export type EditResult = EditSuccess | { error: string };
@@ -122,6 +128,8 @@ export async function editInStore(
 ): Promise<EditResult> {
   const { store } = options;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxDiffLines = options.maxDiffLines ?? DEFAULT_MAX_DIFF_LINES;
+  const maxDiffBytes = options.maxDiffBytes ?? DEFAULT_MAX_DIFF_BYTES;
   const { path, edits } = prepareArguments(rawInput);
 
   if (!Array.isArray(edits) || edits.length === 0) {
@@ -161,18 +169,51 @@ export async function editInStore(
       // that case so the store applies its own default.
       await store.write(path, new TextEncoder().encode(finalContent), { mode: stat.mode });
 
+      const replacedLines = edits.reduce(
+        (total, edit) => total + Math.max(countLines(edit.oldText), countLines(edit.newText)),
+        0,
+      );
+      if (replacedLines > maxDiffLines) {
+        return {
+          path,
+          editsApplied: edits.length,
+          diff: "",
+          patch: "",
+          firstChangedLine: undefined,
+          diffTruncated: true,
+        };
+      }
+
       const diffResult = generateDiffString(baseContent, newContent);
-      const patch = generateUnifiedPatch(path, baseContent, newContent);
+      const diff = truncateUtf8(diffResult.diff, maxDiffBytes);
+      const patch = truncateUtf8(generateUnifiedPatch(path, baseContent, newContent), maxDiffBytes);
 
       return {
         path,
         editsApplied: edits.length,
-        diff: diffResult.diff,
-        patch,
+        diff: diff.text,
+        patch: patch.text,
         firstChangedLine: diffResult.firstChangedLine,
+        ...(diff.truncated || patch.truncated ? { diffTruncated: true } : {}),
       };
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
   });
+}
+
+function countLines(value: string): number {
+  let lines = 1;
+  for (let index = value.indexOf("\n"); index !== -1; index = value.indexOf("\n", index + 1)) {
+    lines += 1;
+  }
+  return lines;
+}
+
+function truncateUtf8(value: string, maxBytes: number): { text: string; truncated: boolean } {
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.byteLength <= maxBytes) return { text: value, truncated: false };
+  let end = maxBytes;
+  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end -= 1;
+  return { text: new TextDecoder().decode(encoded.subarray(0, end)), truncated: true };
 }
