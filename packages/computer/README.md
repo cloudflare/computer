@@ -199,21 +199,27 @@ new Workspace({
 });
 ```
 
-`WorkerBundle` copies a directory that ships inside your Worker's own
-upload, such as skills or templates. The copy is read-only, and it is
-replaced automatically when a deploy changes the files.
+`WorkerBundle` copies files that ship inside your Worker, such as skills
+or templates. The copy is read-only, and it is replaced automatically
+when a deploy changes the files.
+
+With Vite, add `computerBundle()` from `@cloudflare/computer/vite` to
+your plugins and import the directory. This works in `vite dev` too,
+with edits picked up as you go. Text files only:
 
 ```ts
+// vite.config.ts: plugins: [cloudflare(), computerBundle()]
 import { WorkerBundle } from "@cloudflare/computer";
+import skills from "computer:bundle/src/skills";
 
 new Workspace({
   storage: ctx.storage,
-  mounts: { "/workspace/.agents/skills": WorkerBundle("skills") },
+  mounts: { "/workspace/.agents/skills": WorkerBundle(skills) },
 });
 ```
 
-The files have to be uploaded under their own paths. With wrangler, add
-a rule for the directory:
+With wrangler, pass a path instead. It's read from the Worker upload
+under `/bundle`, so each file has to be uploaded under its own path:
 
 ```jsonc
 // wrangler.jsonc, with "main": "src/index.ts"
@@ -221,10 +227,12 @@ a rule for the directory:
 "rules": [{ "type": "Data", "globs": ["skills/**/*"], "fallthrough": true }]
 ```
 
-With Vite, add `workerBundle({ dir: "src/skills" })` from
-`@cloudflare/computer/vite` to your plugins. `vite dev` isn't supported.
-See [Mount Interface](../../docs/06_mount_interface.md#workerbundlepath-options)
-for the options and for how refresh works.
+```ts
+mounts: { "/workspace/.agents/skills": WorkerBundle("skills") }
+```
+
+See [Mount Interface](../../docs/06_mount_interface.md#workerbundlesource-options)
+for the options, types, and how refresh works.
 
 ## Running commands and code
 
@@ -471,7 +479,8 @@ on a computerd instance.
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | `@cloudflare/computer/observe/cloudflare` | Cloudflare-runtime adapter for the observability hook. |
-| `@cloudflare/computer/vite` | `workerBundle()`: a build-time Vite plugin that ships a directory into the Worker upload for `WorkerBundle`. |
+| `@cloudflare/computer/vite` | `computerBundle()`: a Vite plugin that serves `computer:bundle/<dir>` imports for `WorkerBundle`. |
+| `@cloudflare/computer/vite/client` | Types for `computer:bundle/<dir>` imports. |
 
 A consumer that only uses the container backend never imports the worker
 subpaths, so unused backend payloads tree-shake away. Wire types shared
