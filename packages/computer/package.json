@@ -179,7 +179,7 @@
   "devDependencies": {
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
-    "@cloudflare/vite-plugin": "^1.54.6",
+    "@cloudflare/vite-plugin": "^1.63.0",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
     "@earendil-works/pi-ai": "^0.99.2",
@@ -195,7 +195,7 @@
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
     "vitest": "^4.1.11",
-    "wrangler": "^4.137.0",
+    "wrangler": "^4.148.0",
     "zod": "^4.4.3"
   }
 }

@@ -20,6 +20,6 @@
   "devDependencies": {
     "@cloudflare/dofs": "*",
     "typescript": "^6.0.3",
-    "wrangler": "^4.137.0"
+    "wrangler": "^4.148.0"
   }
 }
