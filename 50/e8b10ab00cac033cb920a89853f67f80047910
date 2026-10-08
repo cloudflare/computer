@@ -1,0 +1,25 @@
+docs/17_isolate_javascript.md
+  s_a636b12ef32437::t_50f56eae3a8d92 54
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_a636b12ef32437::t_6af2b921709d69 336,357-394
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_a636b12ef32437::t_89b72ba2399135 1310,1412-1441
+packages/computer/tests/script-runner.test.ts
+  s_a636b12ef32437::t_36d8f89697e3c9 430,466,853-872
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "50e8b10ab00cac033cb920a89853f67f80047910",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
