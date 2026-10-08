@@ -25,7 +25,7 @@
 // won't produce a working link. Deploy it and hit the deployed URL.
 
 import { DurableObject } from "cloudflare:workers";
-import { type DurableObjectStorageLike, Workspace } from "@cloudflare/computer";
+import { Workspace } from "@cloudflare/computer";
 import { createAssets } from "@cloudflare/computer/assets";
 
 // Black Forest Labs FLUX.2 [klein] 9B — a fast text-to-image model.
@@ -46,10 +46,7 @@ export class AssetWorkspace extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#workspace = new Workspace({
-      // ctx.storage.sql.exec returns a narrower row type than
-      // DurableObjectStorageLike declares; the runtime shape
-      // matches. Cast through unknown to bypass invariance.
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      storage: ctx.storage,
       // No backend: this workspace only needs its filesystem. The
       // shell half throws if touched, which we never do.
       sessionId: ctx.id.toString(),

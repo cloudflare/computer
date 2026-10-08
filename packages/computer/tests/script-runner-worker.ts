@@ -6,11 +6,7 @@ import {
   type WorkerJavaScriptBackendOptions,
 } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
-import type {
-  DurableObjectStorageLike,
-  WorkspaceRuntimeValue,
-  WorkspaceStub,
-} from "../src/index.js";
+import type { WorkspaceRuntimeValue, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
@@ -125,7 +121,7 @@ export class HostDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      storage: ctx.storage,
       waitUntil: ctx.waitUntil.bind(ctx),
       git: createGitClient(),
       backends: [

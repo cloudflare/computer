@@ -7,12 +7,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import {
-  type DurableObjectStorageLike,
-  Workspace,
-  WorkspaceServiceProxy,
-  type WorkspaceStub,
-} from "@cloudflare/computer";
+import { Workspace, WorkspaceServiceProxy, type WorkspaceStub } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { createModels, type Message } from "@earendil-works/pi-ai";
@@ -30,7 +25,7 @@ const MAX_TURNS = 10;
 
 export class PiAgent extends DurableObject<Env> {
   workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    storage: this.ctx.storage,
     backends: [
       new WorkerShellBackend({
         id: "shell",

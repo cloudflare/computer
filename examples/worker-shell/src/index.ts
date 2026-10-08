@@ -28,13 +28,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import {
-  type DurableObjectStorageLike,
-  getWorkspace,
-  R2Bucket,
-  WorkspaceServiceProxy,
-  withWorkspace,
-} from "@cloudflare/computer";
+import { getWorkspace, R2Bucket, WorkspaceServiceProxy, withWorkspace } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 // Opt-in shell commands. Each import pulls one command group into
 // this Worker's bundle; a group you do not import is unreachable
@@ -59,10 +53,7 @@ export { WorkspaceServiceProxy };
 export class ContainerExample extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
-    // ctx.storage.sql.exec returns a narrower row type than
-    // DurableObjectStorageLike declares; the runtime shape
-    // matches. Cast through unknown to bypass invariance.
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: [
       new WorkerShellBackend({
         loader: env.LOADER,

@@ -1,10 +1,5 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import {
-  type DurableObjectStorageLike,
-  getWorkspace,
-  type WorkspaceRuntimeLoader,
-  withWorkspace,
-} from "@cloudflare/computer";
+import { getWorkspace, type WorkspaceRuntimeLoader, withWorkspace } from "@cloudflare/computer";
 import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { routeAgentRequest } from "agents";
 import { convertToModelMessages, isStepCount, streamText } from "ai";
@@ -35,7 +30,7 @@ class CelldAgentBase extends AIChatAgent<CelldAgentEnv> {
 export class CelldAgent extends withWorkspace(CelldAgentBase, (self) => {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: CelldAgentEnv };
   return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: env.LOADER ? [new CelldJavaScriptBackend(env.LOADER)] : [],
   };
 }) {

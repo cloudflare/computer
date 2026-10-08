@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   type WorkspaceOptions,
   WorkspaceProxy,
@@ -47,7 +46,7 @@ class ComputerMCPBase extends withWorkspaceContainer(ComputerMCPDurableObject) {
 function workspaceOptions(self: InstanceType<typeof ComputerMCPBase>): WorkspaceOptions {
   const { ctx } = self as unknown as { ctx: DurableObjectState };
   return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     sessionId: ctx.id.toString(),
     git: createGitClient(),
     backends: [self.workerShell, self.containerShell],

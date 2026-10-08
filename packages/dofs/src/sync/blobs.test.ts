@@ -36,11 +36,11 @@ describe("stageBlob", () => {
       const hash = sha256(bytes);
       const failingDb = new Database({
         sql: {
-          exec: <Row extends object>(query: string, ...bindings: unknown[]) => {
+          exec: (query: string, ...bindings: unknown[]) => {
             if (query.startsWith("INSERT INTO vfs_blob_bytes")) {
               throw new Error("injected bytes failure");
             }
-            return db.sql.exec<Row>(query, ...bindings);
+            return db.sql.exec(query, ...bindings);
           },
         },
         transactionSync: (closure) => db.transactionSync(closure),

@@ -20,11 +20,7 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import curlModules from "@cloudflare/computer/shell/curl";
 import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
-import type {
-  DurableObjectStorageLike,
-  WorkspaceRuntimeTruncation,
-  WorkspaceStub,
-} from "../src/index.js";
+import type { WorkspaceRuntimeTruncation, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
 
 export { WorkspaceServiceProxy } from "../src/proxy.js";
@@ -41,7 +37,7 @@ export class HostDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#workspace = new Workspace({
-      storage: ctx.storage as unknown as DurableObjectStorageLike,
+      storage: ctx.storage,
       backends: [
         new WorkerShellBackend({
           loader: env.LOADER,

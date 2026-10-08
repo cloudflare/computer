@@ -20,7 +20,6 @@
 import { DurableObject, tracing } from "cloudflare:workers";
 
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   R2Bucket,
   type WorkspaceOptions,
@@ -63,10 +62,7 @@ class ContainerBase extends withLegacyWorkspaceContainer(class extends DurableOb
 function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOptions {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
-    // ctx.storage.sql.exec returns a narrower row type than
-    // DurableObjectStorageLike declares; the runtime shape
-    // matches. Cast through unknown to bypass invariance.
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     backends: [self.backend],
     // Mount the Bucket binding at /workspace/r2. Seed it with
     // `npm run seed:r2` (uploads ./seed/data/hello.txt) so the

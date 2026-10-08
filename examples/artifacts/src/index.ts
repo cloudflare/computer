@@ -11,7 +11,6 @@
 import { DurableObject } from "cloudflare:workers";
 
 import {
-  type DurableObjectStorageLike,
   getWorkspace,
   sh,
   type WorkspaceClient,
@@ -64,7 +63,7 @@ export class ArtifactCreator extends withWorkspace(class extends DurableObject<E
     ctx,
   };
   return {
-    storage: ctx.storage as unknown as DurableObjectStorageLike,
+    storage: ctx.storage,
     sessionId: ctx.id.toString(),
     artifacts: { binding: env.ARTIFACTS },
     backends: [new WorkerShellBackend(workerShellBackendOptions)],

@@ -25,7 +25,6 @@
  */
 
 import {
-  type DurableObjectStorageLike,
   type ThinkWorkspaceCompatibility,
   Workspace,
   WorkspaceProxy,
@@ -90,7 +89,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
    * the Cloudflare Container.
    */
   override workspace = new Workspace({
-    storage: this.ctx.storage as unknown as DurableObjectStorageLike,
+    storage: this.ctx.storage,
     backends: [
       new WorkerShellBackend({
         id: "shell",

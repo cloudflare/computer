@@ -53,7 +53,7 @@ async function withRealDb<T>(
 ): Promise<T> {
   const stub = freshStub();
   return runInDurableObject(stub, async (_instance: unknown, state: DurableObjectState) => {
-    const storage = state.storage as unknown as DurableObjectStorageLike;
+    const storage = state.storage;
     const db = new Database(storage);
     initializeSchema(db, NOW);
     const provider = new SQLiteWorkspaceProvider(db, { now: NOW });
@@ -68,7 +68,7 @@ async function withCountingDb<T>(
 ): Promise<T> {
   const stub = freshStub();
   return runInDurableObject(stub, async (_instance: unknown, state: DurableObjectState) => {
-    const counting = new CountingStorage(state.storage as unknown as DurableObjectStorageLike);
+    const counting = new CountingStorage(state.storage);
     const db = new Database(counting);
     initializeSchema(db, NOW);
     counting.reset();
