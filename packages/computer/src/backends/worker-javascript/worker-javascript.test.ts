@@ -1074,6 +1074,21 @@ describe("WorkerJavaScriptBackend", () => {
     );
   });
 
+  it("reads a factory's description each time it describes itself", () => {
+    let names = ["read"];
+    const factory = Object.defineProperty(() => ({ run: () => null }), "description", {
+      get: () => `Tools: ${names.join(", ")}.`,
+    });
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: { "ws:tools": factory },
+    });
+
+    expect(backend.description).toContain("- `ws:tools`: Tools: read.");
+    names = ["read", "grep"];
+    expect(backend.description).toContain("- `ws:tools`: Tools: read, grep.");
+  });
+
   it("builds host modules from the Workspace services when it connects", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
