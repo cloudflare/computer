@@ -435,8 +435,11 @@ on a computerd instance.
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
-| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts from isolate JavaScript. |
+| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |
+| `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `ws:assets`: publish a Workspace file from isolate JavaScript. |
+| `@cloudflare/computer/modules/tools` | `createToolsModule()` for `ws:tools`: call the agent's own tools from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
+| `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |
 | `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
 | `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`). |
 | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
