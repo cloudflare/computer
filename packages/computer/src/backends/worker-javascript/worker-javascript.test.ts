@@ -1048,6 +1048,24 @@ describe("WorkerJavaScriptBackend", () => {
     expect(backend.description).toContain("- `ws:plain`: a host module.");
   });
 
+  it("lists the Node.js built-ins code can import", () => {
+    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+
+    expect(backend.description).toContain(
+      "- Node.js built-ins: `node:path`, `node:url`, `node:util`,",
+    );
+    expect(backend.description).toContain("Bare names such as `path` work too.");
+  });
+
+  it("lists no Node.js built-ins without the nodejs_compat flag", () => {
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      compatibilityFlags: [],
+    });
+
+    expect(backend.description).not.toContain("Node.js built-ins");
+  });
+
   it("tells a model to put the work in a default-exported function", () => {
     const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
 
@@ -1303,6 +1321,92 @@ describe("WorkerJavaScriptBackend", () => {
       expect(source(modules["workspace/a/b/two.js"])).toBe(
         `import "../../../__modules__/large"; import "../../../__modules__/ws:echo";`,
       );
+    });
+
+    it("leaves a Node.js built-in import for the runtime to resolve", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      });
+
+      const execution = await workspace.runtime.exec(
+        `import { join } from "node:path"; import { createHash } from "node:crypto"; export default null;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["workspace/__workspace_entry__.js"])).toBe(
+        `import { join } from "node:path"; import { createHash } from "node:crypto"; export default null;`,
+      );
+    });
+
+    it("points a bare Node.js built-in name at its node: module", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      });
+
+      const execution = await workspace.runtime.exec(
+        `import path from "path"; import { inspect } from "util"; export default null;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["workspace/__workspace_entry__.js"])).toBe(
+        `import path from "node:path"; import { inspect } from "node:util"; export default null;`,
+      );
+    });
+
+    it("prefers a configured module over a Node.js built-in of the same name", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { events: "export const mine = true;" },
+          }),
+        ],
+      });
+
+      const execution = await workspace.runtime.exec(
+        `import { mine } from "events"; export default mine;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["workspace/__workspace_entry__.js"])).toBe(
+        `import { mine } from "../__modules__/events"; export default mine;`,
+      );
+    });
+
+    it.each(["node:child_process", "node:net", "node:process", "child_process"])(
+      "rejects %s, which is not one of the Node.js built-ins it allows",
+      async (specifier) => {
+        const workspace = new Workspace({
+          storage: new SQLiteTestStorage(),
+          backends: [new WorkerJavaScriptBackend({ loader: completingLoader() })],
+        });
+
+        await expect(
+          workspace.runtime.exec(`import ${JSON.stringify(specifier)}; export default null;`),
+        ).rejects.toThrow(`Module ${JSON.stringify(specifier)} is not configured`);
+      },
+    );
+
+    it("rejects Node.js built-ins without the nodejs_compat flag", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({ loader: completingLoader(), compatibilityFlags: [] }),
+        ],
+      });
+
+      await expect(
+        workspace.runtime.exec(`import "node:path"; export default null;`),
+      ).rejects.toThrow('Module "node:path" is not configured');
     });
 
     it("rewrites an absolute import to a path relative to its importer", async () => {

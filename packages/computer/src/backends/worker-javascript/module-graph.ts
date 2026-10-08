@@ -26,6 +26,53 @@ const MODULES_DIRECTORY = "__modules__";
 // Installed in every execution and backed by the Workspace. No module
 // in the `modules` option may use these names.
 const BUILT_IN_MODULES = ["node:fs", "node:fs/promises"] as const;
+
+// Node.js built-ins the Dynamic Worker provides itself under
+// `nodejs_compat`. They only compute: none reaches the network, the
+// process, or a filesystem, so code imports them unchanged. Workerd has
+// many more, but those either duplicate what the Workspace provides,
+// such as `node:fs`, or are stubs that throw when called.
+const NODE_MODULES = [
+  "path",
+  "path/posix",
+  "url",
+  "util",
+  "util/types",
+  "events",
+  "buffer",
+  "assert",
+  "assert/strict",
+  "string_decoder",
+  "querystring",
+  "stream",
+  "stream/promises",
+  "stream/web",
+  "crypto",
+  "zlib",
+  "timers",
+  "timers/promises",
+  "async_hooks",
+  "diagnostics_channel",
+] as const;
+
+/** Whether `flags` give a Dynamic Worker the Node.js built-ins. */
+export function hasNodeModules(flags: readonly string[]): boolean {
+  return flags.includes("nodejs_compat") || flags.includes("nodejs_compat_v2");
+}
+
+const TOP_LEVEL_NODE_MODULES = NODE_MODULES.filter((name) => !name.includes("/"))
+  .map((name) => `\`node:${name}\``)
+  .join(", ");
+
+/** One markdown bullet listing the Node.js built-ins, for a model. */
+export const NODE_MODULES_DESCRIPTION = `- Node.js built-ins: ${TOP_LEVEL_NODE_MODULES}, with subpaths such as \`node:stream/promises\`. Bare names such as \`path\` work too.`;
+
+// The `node:` form of a Node.js built-in the backend allows, from either
+// spelling, or undefined for anything else.
+function nodeModule(specifier: string): string | undefined {
+  const name = specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
+  return NODE_MODULES.some((allowed) => allowed === name) ? `node:${name}` : undefined;
+}
 const HOST_SPECIFIER = /^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 // `default` would turn the function into the default export, and a
@@ -136,6 +183,8 @@ export interface BuildModuleGraphOptions {
   capability: WorkspaceRuntimeCapability;
   configuredModules: Readonly<Record<string, string>>;
   hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Whether the Dynamic Worker has the Node.js built-ins. */
+  nodeModules: boolean;
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
@@ -231,6 +280,13 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         Object.hasOwn(options.configuredModules, specifier)
       ) {
         edits.push({ ...site, specifier: relativeSpecifier(name, storedName(specifier)) });
+        continue;
+      }
+      // A bare name becomes its node: form, which both module registries
+      // resolve as a built-in.
+      const node = options.nodeModules ? nodeModule(specifier) : undefined;
+      if (node !== undefined) {
+        if (node !== specifier) edits.push({ ...site, specifier: node });
         continue;
       }
       if (specifier === CAPABILITIES_MODULE) {

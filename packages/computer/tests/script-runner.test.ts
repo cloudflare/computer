@@ -829,6 +829,54 @@ describe.each([
       .result;
   }
 
+  it("runs Node.js built-ins the runtime provides, by node: or bare name", async () => {
+    const result = await run(`
+      import { join } from "node:path";
+      import { createHash } from "node:crypto";
+      import { gzipSync, gunzipSync } from "node:zlib";
+      import path from "path";
+      export default () => ({
+        joined: join("/workspace", "a", "..", "b.txt"),
+        bare: path.basename("/workspace/c.txt"),
+        sha: createHash("sha256").update("abc").digest("hex").slice(0, 8),
+        zipped: gunzipSync(gzipSync("round trip")).toString(),
+      });
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: { joined: "/workspace/b.txt", bare: "c.txt", sha: "ba7816bf", zipped: "round trip" },
+    });
+  });
+
+  it("runs the Node.js timer, async context, and diagnostics built-ins", async () => {
+    const result = await run(`
+      import { setTimeout as fire } from "node:timers";
+      import { setTimeout as sleep } from "node:timers/promises";
+      import { AsyncLocalStorage } from "node:async_hooks";
+      import diagnostics from "node:diagnostics_channel";
+      export default async () => {
+        const fired = await new Promise((resolve) => fire(() => resolve("fired"), 1));
+        const slept = await sleep(1, "slept");
+        const storage = new AsyncLocalStorage();
+        const stored = await storage.run(7, async () => {
+          await sleep(1);
+          return storage.getStore();
+        });
+        const channel = diagnostics.channel("probe");
+        let published;
+        channel.subscribe((message) => {
+          published = message;
+        });
+        channel.publish("sent");
+        return { fired, slept, stored, published };
+      };
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: { fired: "fired", slept: "slept", stored: 7, published: "sent" },
+    });
+  });
+
   it("resolves bare, relative, and absolute imports from nested directories", async () => {
     await write(
       "/workspace/app/lib/util.js",

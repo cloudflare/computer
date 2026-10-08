@@ -141,11 +141,12 @@ const handle = await workspace.runtime.exec(
 
 ## Modules
 
-Caller source can import three kinds of module, and all of them are fixed when the backend is constructed:
+Caller source can import four kinds of module, and all of them are fixed when the backend is constructed:
 
 | Kind | Configured with | Runs in | Example |
 | --- | --- | --- | --- |
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
+| Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
 | Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
 
@@ -168,7 +169,9 @@ new WorkerJavaScriptBackend({
 });
 ```
 
-An import that is not built in, configured, or a relative or absolute Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+An import that is not built in, configured, one of the allowed Node.js modules, or a relative or absolute Workspace path fails before the Worker is created. Caller source and durable files cannot shadow a configured or built-in module.
+
+The allowed Node.js modules are the ones that work entirely inside the isolate: `node:path`, `node:url`, `node:util`, `node:events`, `node:buffer`, `node:assert`, `node:string_decoder`, `node:querystring`, `node:stream`, `node:crypto`, `node:zlib`, `node:timers`, `node:async_hooks`, and `node:diagnostics_channel`, with their subpaths such as `node:path/posix` and `node:timers/promises`. The runtime provides them, and imports of them are left as written. A bare name such as `path` works too and becomes `node:path`, unless a configured module has that name, in which case the configured module wins. The runtime has more Node.js modules, but they either duplicate what the Workspace provides, as `node:fs` does, reach outside the isolate, or are stubs that throw when called, so they stay unavailable.
 
 Any import that is not a path is resolved by name. The Worker Loader has no `node_modules` lookup and resolves a bare import next to the importing file, so Workspace stores each source and host module once, in a `__modules__` directory of the Worker's bundle, and rewrites every import of one into a relative path to it. Every file that imports `lodash` gets the same instance, however many directories the code spans. An absolute import is rewritten the same way. Relative paths are the only form the Worker Loader's legacy and new module registries resolve alike, so imports work whether or not `compatibilityFlags` includes `new_module_registry`. When a module fails to link, the error names it as the code wrote it.
 
@@ -185,6 +188,7 @@ Modules code can import:
 - `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
 - `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
 - `ws:weather`: exports `forecast`.
+- Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
 A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.

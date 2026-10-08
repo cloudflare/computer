@@ -19,6 +19,8 @@ import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   assertHostModuleExports,
   buildModuleGraph,
+  hasNodeModules,
+  NODE_MODULES_DESCRIPTION,
   type ParsedModules,
   parseModules,
   prepareSourceModules,
@@ -247,6 +249,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       "",
       "Modules code can import:",
       this.#options.modules.description,
+      ...(hasNodeModules(this.#options.compatibilityFlags) ? [NODE_MODULES_DESCRIPTION] : []),
     ].join("\n");
   }
 
@@ -395,6 +398,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         capability,
         configuredModules: this.#preparedSourceModules(),
         hostModules: this.#hostModuleFunctions,
+        nodeModules: hasNodeModules(this.#options.compatibilityFlags),
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
