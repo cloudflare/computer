@@ -303,6 +303,45 @@ describe("find", () => {
     });
   });
 
+  it("matches any of the alternatives in braces", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/a/src/lib", { recursive: true }, () => 0);
+      await writeFile(db, "/a/src/x.ts", "", {}, () => 0);
+      await writeFile(db, "/a/src/lib/y.tsx", "", {}, () => 0);
+      await writeFile(db, "/a/z.json", "", {}, () => 0);
+      await writeFile(db, "/a/w.md", "", {}, () => 0);
+      const paths = find(db, "/a", "{**/*.{ts,tsx},*.json}")
+        .map((e) => e.path)
+        .sort();
+      expect(paths).toEqual(["/a/src/lib/y.tsx", "/a/src/x.ts", "/a/z.json"]);
+    });
+  });
+
+  it("treats braces without a comma, or unbalanced, as literal text", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/a", {}, () => 0);
+      await writeFile(db, "/a/{x}.ts", "", {}, () => 0);
+      await writeFile(db, "/a/{y.ts", "", {}, () => 0);
+      await writeFile(db, "/a/x.ts", "", {}, () => 0);
+      expect(find(db, "/a", "{x}.ts").map((e) => e.path)).toEqual(["/a/{x}.ts"]);
+      expect(find(db, "/a", "{y.ts").map((e) => e.path)).toEqual(["/a/{y.ts"]);
+    });
+  });
+
+  it("excludes any of the alternatives in braces", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/a/node_modules", { recursive: true }, () => 0);
+      mkdir(db, "/a/dist", { recursive: true }, () => 0);
+      await writeFile(db, "/a/x.ts", "", {}, () => 0);
+      await writeFile(db, "/a/node_modules/m.ts", "", {}, () => 0);
+      await writeFile(db, "/a/dist/d.ts", "", {}, () => 0);
+      const paths = find(db, "/a", "**/*.ts", { exclude: ["{node_modules,dist}/**"] }).map(
+        (e) => e.path,
+      );
+      expect(paths).toEqual(["/a/x.ts"]);
+    });
+  });
+
   it("escapes regex metacharacters in literal segments of a pattern", async () => {
     await withDB(async (db) => {
       mkdir(db, "/a", {}, () => 0);
