@@ -1,4 +1,5 @@
 import type { ExecBackends, ExecToolOptions, ExecWorkspaceLike } from "./exec.js";
+import { confineWorkspace } from "./fs/confine.js";
 import type { EditToolOptions } from "./fs/edit.js";
 import type { ReadToolOptions } from "./fs/read.js";
 import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./fs/store.js";
@@ -10,6 +11,7 @@ export interface CreateToolsOptions {
   workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
   /** Omit `write`, `edit`, `delete`, `exec`, and `publish`. */
   readonly?: boolean;
+  root?: string;
   /** Set `false` to omit `publish` even when assets are configured. */
   assets?: boolean;
   read?: Omit<ReadToolOptions, "store">;
@@ -49,7 +51,11 @@ export interface ResolvedToolOptions {
 
 /** Resolve the options into what each tool needs, so every tool set offers the same tools. */
 export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOptions {
-  const store = new WorkspaceFileStore(options.workspace);
+  const workspace =
+    options.root === undefined
+      ? options.workspace
+      : confineWorkspace(options.workspace, options.root);
+  const store = new WorkspaceFileStore(workspace);
   const readonly = options.readonly === true;
   return {
     read: { store, ...options.read },
@@ -57,9 +63,9 @@ export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOpt
     edit: { store, ...options.edit },
     delete: { store },
     exec: readonly ? undefined : execOptions(options),
-    publish: !readonly && options.assets !== false && options.workspace.assets !== undefined,
+    publish: !readonly && options.assets !== false && workspace.assets !== undefined,
     readonly,
-    workspace: options.workspace,
+    workspace,
   };
 }
 
