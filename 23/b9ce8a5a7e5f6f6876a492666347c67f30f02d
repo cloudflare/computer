@@ -1,0 +1,23 @@
+docs/17_isolate_javascript.md
+  s_5cfd25d288ea5e::t_4884aa7315761a 230
+packages/computer/src/runtime/bridge.test.ts
+  s_5cfd25d288ea5e::t_4bbf9adfe84797 56-75,79-101,149-181
+packages/computer/src/runtime/bridge.ts
+  s_5cfd25d288ea5e::t_79ac9115cc2de3 5-9,200-202,204,214,247-248,252-260,262,264-278,282-284,286,288-289,291,342-343,345,349,365,367,407-413,417-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "23b9ce8a5a7e5f6f6876a492666347c67f30f02d",
+  "prompts": {},
+  "sessions": {
+    "s_5cfd25d288ea5e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11213-19dd-7244-8844-1b70b7418dd1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

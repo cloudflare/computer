@@ -1,0 +1,27 @@
+.changeset/exec-tool-options.md
+  s_b2fd9413bbc158::t_f74bc448c7c574 7
+.changeset/exec-tool-review-fixes.md
+  s_b2fd9413bbc158::t_5556ab6c164124 5
+.changeset/ws-container-module.md
+  s_b2fd9413bbc158::t_42ec2beea7ece8 5
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_fae919f6552ac3 327
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_da3a224ef2897d 255-273,288,296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ead495e00332a675660e7761052939024808a03d",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

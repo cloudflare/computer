@@ -1,0 +1,83 @@
+.changeset/pi-ai-tanstack-ai-tools.md
+  s_b2fd9413bbc158::t_5e71ac6f6f1a5e 1-9
+.github/workflows/ci.yml
+  s_4f96e4ffcaca65::t_04a83b26e9f2b8 148-153
+README.md
+  s_4f96e4ffcaca65::t_2059b3dd854ae6 72-76
+docs/09_tool_interface.md
+  s_4f96e4ffcaca65::t_ff8480dd6d06ac 3-11,24-25,37,81-146,171-172
+docs/10_project_layout.md
+  s_4f96e4ffcaca65::t_efe3c7c61d7531 178-188
+docs/README.md
+  s_4f96e4ffcaca65::t_7f56c4a7c2ba4a 25,56-57
+examples/pi-ai/.gitignore
+  s_4f96e4ffcaca65::t_a6e12cec20a06d 1-2
+examples/pi-ai/README.md
+  s_4f96e4ffcaca65::t_8cebea7e0bfea9 1-50
+examples/pi-ai/local-shim.mjs
+  s_4f96e4ffcaca65::t_200e84e55e2bf3 1-16
+examples/pi-ai/package.json
+  s_4f96e4ffcaca65::t_63acaa0a6b963e 1-24
+examples/pi-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_51b2d69fc1c6b4 1-114
+examples/pi-ai/src/index.ts
+  s_4f96e4ffcaca65::t_3fcbc290c12fea 1-108
+examples/pi-ai/src/workers-ai.ts
+  s_4f96e4ffcaca65::t_ac7f9b523a2c26 1-96
+examples/pi-ai/tsconfig.json
+  s_4f96e4ffcaca65::t_6975dc6c9277c8 1-17
+examples/pi-ai/wrangler.jsonc
+  s_4f96e4ffcaca65::t_e72c9d03cea101 1-40
+examples/tanstack-ai/.gitignore
+  s_4f96e4ffcaca65::t_cb61ea6ab8bcc2 1-2
+examples/tanstack-ai/README.md
+  s_4f96e4ffcaca65::t_7c58c72c1b3676 1-51
+examples/tanstack-ai/local-shim.mjs
+  s_4f96e4ffcaca65::t_8f8d3f90342ab4 1-16
+examples/tanstack-ai/package.json
+  s_4f96e4ffcaca65::t_412d943ce6bb64 1-25
+examples/tanstack-ai/run-local.mjs
+  s_4f96e4ffcaca65::t_86a52711385133 1-103
+examples/tanstack-ai/src/index.ts
+  s_4f96e4ffcaca65::t_5e2606fd0afbd5 1-81
+examples/tanstack-ai/tsconfig.json
+  s_4f96e4ffcaca65::t_52d3b54dcb8e37 1-17
+examples/tanstack-ai/wrangler.jsonc
+  s_4f96e4ffcaca65::t_c74dcf4c7bc946 1-40
+package-lock.json
+  s_a3f5a53ce67f56::t_8ede557b0374cf 113-126,152-166,306-319,449-469,521-861,2480-2512,2984-2991,3022-3045,4492-4548,4955-5035,5043-5048,5336-5505,5709-5714,5928-5936,6269-6277,6384-6389,6473-6478,6890-6898,7131-7139,7563-7568,7652-7674,7756-7767,7876-7943,8086-8111,8307-8334,8759-8767,8774-8786,8872-8892,9196-9201,10443-10462,10624-10660,10720-10732,10812-10817,11115-11137,11151-11167,11568-11576,12354-12363,12837-12842,12906-12911,13625-13633
+packages/computer/README.md
+  s_4f96e4ffcaca65::t_17fc03c5c878a8 53-57,304-318,440-441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "619a0bdf5c4d23b8ac21044f28caf7480135974c",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_a3f5a53ce67f56": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f330-49b4-70ab-8c0f-40d28884698f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

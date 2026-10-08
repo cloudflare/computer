@@ -1,0 +1,27 @@
+examples/mcp/src/index.ts
+  s_b2fd9413bbc158::t_a4bc3aba800da2 10,29,37,41-43
+examples/mcp/wrangler.jsonc
+  s_b2fd9413bbc158::t_a0e72b77d6eace 12-15
+examples/think/README.md
+  s_b2fd9413bbc158::t_50753a3afc0b6f 79-81,92
+examples/think/src/agent.ts
+  s_b2fd9413bbc158::t_50668c9105a916 18-19,35,58,62,72,76,81-83
+examples/think/wrangler.jsonc
+  s_b2fd9413bbc158::t_e5aff4773e0b38 18-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ca38133b093060928dbead06f6c7bc226f95813c",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

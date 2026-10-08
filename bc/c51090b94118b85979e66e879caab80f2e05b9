@@ -1,0 +1,25 @@
+.changeset/js-no-execution-cap.md
+  s_b2fd9413bbc158::t_eb777b40aad85a 1-5
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_365dbfec6fca8d 83
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_b2fd9413bbc158::t_22c6109125278e 1130-1175
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_b2fd9413bbc158::t_a7f01a50febedc 363-365
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "bcc51090b94118b85979e66e879caab80f2e05b9",
+  "prompts": {},
+  "sessions": {
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

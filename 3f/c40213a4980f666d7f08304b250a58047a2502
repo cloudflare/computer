@@ -1,0 +1,206 @@
+.changeset/modules.md
+  s_b2fd9413bbc158::t_381ebfea2e8e25 1-8,10-11
+  s_b2fd9413bbc158::t_d92cba6a16fbf9 9
+README.md
+  s_b2fd9413bbc158::t_717912fe755c19 17
+  s_b2fd9413bbc158::t_5a791cc5e375be 18
+docs/16_code_execution.md
+  s_b2fd9413bbc158::t_6de8891b752763 20,88
+docs/17_isolate_javascript.md
+  s_b2fd9413bbc158::t_ef18bab700f4fb 91,122,124-129,133,135-136,141-142,144-146,151-152,155-162,164-166,168-169,183-229,231-232,245,248
+  s_b2fd9413bbc158::t_a6e28eda08b001 167
+  s_b2fd9413bbc158::t_6d9fc279eb336f 130,134,143,163,250-254,274,277-287,289-295,297
+  s_b2fd9413bbc158::t_eeba015a206d7d 275
+  s_b2fd9413bbc158::t_40ba9aee5cfdf9 276
+  s_b2fd9413bbc158::t_6fa0f6e81dbeec 153
+  s_b2fd9413bbc158::t_3056adabe5959e 85,230
+docs/README.md
+  s_b2fd9413bbc158::t_7c5093eeb9883a 49,53-54,254
+  s_b2fd9413bbc158::t_053ef3576c1bc2 23,52
+  s_b2fd9413bbc158::t_8a394892962ec0 25,56
+examples/rlm/README.md
+  s_b2fd9413bbc158::t_48b9a46e5b08ae 69,80,86,99,153
+examples/rlm/worker/capability.test.ts
+  s_b2fd9413bbc158::t_d263dd8db6202b 1,34-42,57,60,66-68,70,73,75,88-90,100,111,121,124,135,157-160,199,235,265,267,283-286
+examples/rlm/worker/capability.ts
+  s_b2fd9413bbc158::t_875fbf6f5913f6 1,76-82,84,89,170
+examples/rlm/worker/prompts.ts
+  s_b2fd9413bbc158::t_4f9d9c5554b017 19,23
+examples/rlm/worker/rlm-agent.ts
+  s_b2fd9413bbc158::t_8571b55b7632e8 110
+examples/rlm/worker/rlm-interfaces.txt
+  s_b2fd9413bbc158::t_4cbae1e47759eb 3,7
+examples/rlm/worker/step-settings.ts
+  s_b2fd9413bbc158::t_d7479f8278e1cd 8
+examples/rlm/worker/structured-rlm.test.ts
+  s_b2fd9413bbc158::t_12ec4d7d95cb9f 117
+packages/computer/README.md
+  s_b2fd9413bbc158::t_ad648fbe7da38a 258,417,419-420
+  s_b2fd9413bbc158::t_0834a3eddee842 259,418
+  s_b2fd9413bbc158::t_e6561d02cf2f5f 287-289
+  s_b2fd9413bbc158::t_98b47b926b21b9 282-283
+  s_b2fd9413bbc158::t_b19f73eefb7c5a 269,272-273,277,422
+packages/computer/package.json
+  s_b2fd9413bbc158::t_70aceebe78fb79 38-45
+  s_b2fd9413bbc158::t_57c86728271322 34-37
+  s_b2fd9413bbc158::t_f46ab9e24378c1 54-57
+packages/computer/rolldown.config.ts
+  s_b2fd9413bbc158::t_3b834dd48c7974 36-37
+  s_b2fd9413bbc158::t_da700242421dfe 35
+  s_b2fd9413bbc158::t_02258a753fb849 34
+packages/computer/src/backend.ts
+  s_b2fd9413bbc158::t_2f71da0ff262bc 63-67
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_b2fd9413bbc158::t_f4ced2abb1cdd2 4-9,20-125,131-132,152-155,168,173-175,226,228,374-378,381-382
+  s_b2fd9413bbc158::t_51daeb0d4cf2ae 345-347,350,353,355-357,360,362-367,369
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_b2fd9413bbc158::t_e8e751240466b7 247-253,319,574,639,694,757,768,776,778,780,810,862,1005,1014-1045,1048-1049,1051-1059,1062-1067,1069-1122,1124-1132,1134,1136-1153,1155-1170,1188-1199
+  s_b2fd9413bbc158::t_d28a7065c2d465 560,795,797,846,848,1123,1133,1135,1154
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_b2fd9413bbc158::t_53465e768a7a18 7,11,18-23,31-48,50,110,112,160-161,221,246-253,264,276-282,393-394,429
+packages/computer/src/index.ts
+  s_b2fd9413bbc158::t_76825994ca4997 77,81-85
+  s_b2fd9413bbc158::t_9266b93ae5f073 73
+packages/computer/src/modules/artifacts.ts
+  s_b2fd9413bbc158::t_7ca5922769c2d6 1-83
+packages/computer/src/modules/git.ts
+  s_b2fd9413bbc158::t_a52863d61c1aeb 1-74,78-81,84-111,129-145
+packages/computer/src/runtime/bridge.test.ts
+  s_b2fd9413bbc158::t_00dba799c8e279 16,28-30,39-41,50-52
+  s_b2fd9413bbc158::t_697dbb084f9da3 3,7,20-22,36-37,47-48,58-95
+packages/computer/src/runtime/bridge.ts
+  s_b2fd9413bbc158::t_c9788d8468fde3 5,9,29,42,111-118,223-238,240-241,259-260,266-267,269-270
+  s_b2fd9413bbc158::t_ce6d53982be52b 3,18,75-79,81,83-90,110,197-198,200,208,268,282-287,289-295,297-355,359,363,365,368,376-379,382,384,388-390,393,395,399,402-403
+packages/computer/src/runtime/runtime.test.ts
+  s_b2fd9413bbc158::t_7e1d4cf14a73ad 55,184,197
+packages/computer/src/runtime/runtime.ts
+  s_b2fd9413bbc158::t_4524bc4aaa45a4 17-18,53-55
+  s_b2fd9413bbc158::t_20fc87f153f208 31-40,60-67
+  s_b2fd9413bbc158::t_fe35483e643f79 56-59
+packages/computer/src/runtime/types.ts
+  s_b2fd9413bbc158::t_a2447e9d2185f0 7-23,26-30,35-83,252-256,263-264
+  s_b2fd9413bbc158::t_3a0efd8d15631d 31-34
+packages/computer/src/workspace.ts
+  s_b2fd9413bbc158::t_fdb0ae82f063d0 222,307,309,316,428,860,863,866,997
+packages/computer/tests/script-runner-worker.ts
+  s_b2fd9413bbc158::t_9284db4b37249d 12,14,78-79,82-109
+  s_b2fd9413bbc158::t_b4845cf3d8fa13 2-3,13,21-60,80,114
+packages/computer/tests/script-runner.test.ts
+  s_b2fd9413bbc158::t_e2e65f2bb7a49d 52,59,68-70,91-93,130,137,260,263-264,291,293,304,307-308,322-357,465,551,569,574
+  s_b2fd9413bbc158::t_df9bc7526b95cf 358-400
+  s_b2fd9413bbc158::t_aecc7d397a6700 103-125
+.changeset/exec-tool-single-backend.md
+  s_b2fd9413bbc158::t_69bf7aafee77ad 1-4,6
+  s_b2fd9413bbc158::t_2a4340cd9dd30f 5
+  s_b2fd9413bbc158::t_d13ab3ff1d2208 7
+docs/09_tool_interface.md
+  s_b2fd9413bbc158::t_f41535e26eb339 59-60,64,66-68,247,249-255,257-258
+  s_b2fd9413bbc158::t_61dad6bef7fce1 8,81,246
+  s_b2fd9413bbc158::t_8806dc1e614d2a 27,61,260
+  s_b2fd9413bbc158::t_4bf7bd9a2068ea 58,62-66
+  s_b2fd9413bbc158::t_4836913d63f401 3,33
+  s_b2fd9413bbc158::t_da83defd50871f 69,93-94,256
+packages/computer/src/text-truncation.ts
+  s_b2fd9413bbc158::t_26361c49134a4e 1-37
+packages/computer/src/tools/ai-sdk.test.ts
+  s_b2fd9413bbc158::t_f10ec43945822f 3-5,91-101,1767-1777,1781-1794,1796-1802,1804,1806-1850,1856-1917,1924
+  s_b2fd9413bbc158::t_af30f8270198dc 1333-1337,1339-1340,1342-1344,1346-1355,1357-1359,1362-1365,1367-1373,1375-1376,1378-1381,1382,1586,1588-1589,1795,1805,1919,1921,1923
+  s_b2fd9413bbc158::t_274286d16480e7 1341,1366
+  s_b2fd9413bbc158::t_fa5e2f3cadda80 1374,1377,1587,1803,1921-1923
+  s_b2fd9413bbc158::t_b3b22acf522193 8
+  s_b2fd9413bbc158::t_9ddbf5e3a512e0 1345,1356,1360-1361,1918,1920,1925-1930
+  s_b2fd9413bbc158::t_f144e1388982b8 1568-1585
+  s_b2fd9413bbc158::t_cf91d40face446 1628,1674,1698-1701,1756,1778-1780,1851-1855,2027
+packages/computer/src/tools/exec.ts
+  s_b2fd9413bbc158::t_4c28a06a924fc6 6,127-135,139,154-155,157-172,173,175-187,191,291-292,303-316,318-339,341-350,378-385,418-420,427-428
+  s_b2fd9413bbc158::t_bb62556403e711 78,83,91,141-142,143-144,146,150-153,352-353,355,357-362,363,365,367-377
+  s_b2fd9413bbc158::t_52d9ab85421a1e 72-77,79-81,84,364-367
+  s_b2fd9413bbc158::t_c038cab39a481d 82,88-90,156,174,193-200,317,340,351
+  s_b2fd9413bbc158::t_3aa4577c1b0631 3,63-68,140,145,147-149,354,356
+.changeset/ws-container-module.md
+  s_b2fd9413bbc158::t_e9b19f40427286 1-4
+packages/computer/src/modules/container.test.ts
+  s_b2fd9413bbc158::t_8ad533f22e1254 1-34,40-209,222-225
+packages/computer/src/modules/container.ts
+  s_b2fd9413bbc158::t_5739ccca79a8b5 1-18,20-51,55-58,62-71,92-121,123-127,129-209
+.changeset/exec-tool-options.md
+  s_b2fd9413bbc158::t_c6190c83e9056b 1-4,6,8
+  s_b2fd9413bbc158::t_4d14a87aca4dd3 10-11
+  s_b2fd9413bbc158::t_c5654706ec688d 5,9
+examples/celld/src/index.ts
+  s_b2fd9413bbc158::t_aeb0e3cac53819 52
+  s_b2fd9413bbc158::t_c67995abdea936 53-67
+  s_b2fd9413bbc158::t_a69b710c7339ca 8
+examples/mcp/src/server.ts
+  s_b2fd9413bbc158::t_da08fdf3175351 14
+  s_b2fd9413bbc158::t_4c754396178c6d 15-33
+  s_b2fd9413bbc158::t_21666c340fea20 4
+examples/think/src/agent.ts
+  s_b2fd9413bbc158::t_3fa395eb872756 157-159
+  s_b2fd9413bbc158::t_36768b2e856358 37
+  s_b2fd9413bbc158::t_5d129c62e713a0 140-141
+packages/computer/src/backends/worker-shell/worker-shell.ts
+  s_b2fd9413bbc158::t_da63c2f7fad4d6 142-144
+packages/computer/src/tools/ai-sdk.ts
+  s_b2fd9413bbc158::t_c1351c3a15b20a 2-7,30,34-38,40,67,71-72,81-82,93,95
+  s_379d5d0e28a496::t_6e959ecca1dee0 29,68-70,83-86,90
+  s_b2fd9413bbc158::t_68593b8e493a66 26,28,39
+  s_b2fd9413bbc158::t_394e8e7929390a 18,43-51
+  s_b2fd9413bbc158::t_49ad8e2cd1dcca 27,31-33,91-92
+  s_b2fd9413bbc158::t_2517dde31c571a 87-89
+  s_b2fd9413bbc158::t_17411146c66fa1 94
+packages/computer/src/tools/index.ts
+  s_b2fd9413bbc158::t_fb37607a4b3b83 4
+  s_b2fd9413bbc158::t_cb30bdd77e4d25 3
+examples/rlm/worker/executor-tool.ts
+  s_b2fd9413bbc158::t_a71b0596e6f5ba 17-20
+docs/10_project_layout.md
+  s_b2fd9413bbc158::t_23ecd5d997f920 178-181
+examples/celld/README.md
+  s_b2fd9413bbc158::t_e2950c05205673 131
+examples/think/README.md
+  s_b2fd9413bbc158::t_c2c5e3d95b3018 27,56-59
+examples/mcp/src/index.test.ts
+  s_b2fd9413bbc158::t_dc2aabf0e689ff 88-92
+.changeset/exec-tool-review-fixes.md
+  s_b2fd9413bbc158::t_50eb666bcf381b 1-4
+examples/mcp/README.md
+  s_b2fd9413bbc158::t_5569a2cf419be5 86,121
+  s_b2fd9413bbc158::t_6e9ffa8b3dc7ca 129
+packages/computer/src/client.test.ts
+  s_b2fd9413bbc158::t_33d67720cdfde8 12,14,18,79-81,340,379-393,439-448,454-468
+  s_b2fd9413bbc158::t_a07b02a713bdb4 449-453
+  s_b2fd9413bbc158::t_ec1599902c73fd 16-17,341-378,394-438
+packages/computer/src/client.ts
+  s_b2fd9413bbc158::t_ded6041230ae71 34,275,278,316-320,322,353,358,406,421
+  s_b2fd9413bbc158::t_a8bf298ec620fd 218-219,276-277
+  s_b2fd9413bbc158::t_f474d0fa7eb8cf 311-315,321
+packages/computer/src/stub.ts
+  s_b2fd9413bbc158::t_0d734e95352d8f 71,411-415
+.changeset/native-rpc-modules.md
+  s_b2fd9413bbc158::t_0e14afb7cec447 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3fc40213a4980f666d7f08304b250a58047a2502",
+  "prompts": {},
+  "sessions": {
+    "s_379d5d0e28a496": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f6ae-35ab-7049-9efa-0bf09d568c4f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    },
+    "s_b2fd9413bbc158": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f2d1-5590-743a-9714-84520cc557ec",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+packages/computer/src/tools/ai-sdk/index.ts
+  s_4f96e4ffcaca65::t_f6e5c2b500fd4a 46-48,58
+packages/computer/src/tools/common/exec.ts
+  s_4f96e4ffcaca65::t_86bc85083df91e 162,380,392
+packages/computer/src/tools/pi-ai/index.ts
+  s_4f96e4ffcaca65::t_68d00a6334767b 11-13,115,121,127
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_4f96e4ffcaca65::t_51711123b0f90f 20-22,37,46,138,145,152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "b5b9f36f50a1763b4c043c2e5d277dc910cec40a",
+  "prompts": {},
+  "sessions": {
+    "s_4f96e4ffcaca65": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f723-158b-70b3-8a3e-7bde19f8ad38",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
