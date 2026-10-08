@@ -38,7 +38,7 @@ jobs:
       issues: write
       pull-requests: read
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8e5fa4f844bfe26ff1d152757caf4ac0110ff6ef
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8aa3054967ee696be08ff61936c72e199c750ba7
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "triage"
@@ -46,3 +46,7 @@ jobs:
       task-source: ".gardener/tasks/triage/TASK.md"
       task-bundle-hash: 0bb7a5125f0c4cb7d83da0ccbc955748b9b3be62edd9e52f2aeaf2cf2ae1aceb
       plan-timeout-minutes: 15
+      reactions: >-
+        ${{
+        (github.event_name == 'issues' && github.event.action == 'opened' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+        }}
