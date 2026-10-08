@@ -21,6 +21,7 @@ export interface CreateToolsOptions {
    * Workspace has; `{}` means no exec tool.
    */
   exec?: ExecBackends;
+  execOutput?: Pick<ExecToolOptions, "maxBytes" | "maxLines">;
   /**
    * @deprecated Use `exec`. `{ backends }` becomes `exec: backends`;
    * `defaultBackend` is ignored, because the model names a backend
@@ -68,7 +69,13 @@ function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
   if (runtime === undefined) return undefined;
   const exec = selectExec(options, runtime);
   if (Object.keys(exec.backends).length === 0) return undefined;
-  return { workspace: { runtime }, ...exec };
+  const output = options.execOutput;
+  return {
+    workspace: { runtime },
+    ...exec,
+    ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
+    ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
+  };
 }
 
 function selectExec(

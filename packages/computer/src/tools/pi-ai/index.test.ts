@@ -263,6 +263,40 @@ describe("createPiTools execution", () => {
     expect(seen[1].input).toBeUndefined();
   });
 
+  it("cuts exec output by the limits `execOutput` sets", async () => {
+    const seen: unknown[] = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { output?: unknown },
+    ) => {
+      seen.push(options.output);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [{ id: "sh", callable: false }]);
+    const tools = createPiTools({
+      workspace,
+      exec: { sh: {} },
+      execOutput: { maxLines: 200, maxBytes: 4096 },
+    });
+
+    expect(declaration(tools, "exec").description).toContain("last 200 lines or 4.0KB");
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "ls" } });
+    expect(seen).toEqual([{ maxLines: 200, maxBytes: 4096 }]);
+  });
+
+  it("prefers `execOutput` to the deprecated shell limits", async () => {
+    const workspace = makeWorkspace();
+    fakeBackends(workspace, [{ id: "sh", callable: false }]);
+    const tools = createPiTools({
+      workspace,
+      shell: { backends: { sh: {} }, maxLines: 10 },
+      execOutput: { maxLines: 50 },
+    });
+
+    expect(declaration(tools, "exec").description).toContain("last 50 lines");
+  });
+
   it("applies a schema default when the model omits the field", async () => {
     const workspace = makeWorkspace();
     const tools = createPiTools({ workspace });
