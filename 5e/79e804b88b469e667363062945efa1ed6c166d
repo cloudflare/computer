@@ -1,0 +1,29 @@
+.changeset/isolate-node-modules.md
+  s_a636b12ef32437::t_f92d5a3c9a58a7 1-5
+docs/17_isolate_javascript.md
+  s_a636b12ef32437::t_89aa790cb21e34 144,149,172-174,191
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_a636b12ef32437::t_d7b41f9db7117e 29-71,182-183,281-287
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_a636b12ef32437::t_d61fc2857a5b57 1051-1068,1326-1411
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_a636b12ef32437::t_9db67d48f1207c 22-23,252,401
+packages/computer/tests/script-runner.test.ts
+  s_a636b12ef32437::t_1ef80de550f3d5 832-850
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5e79e804b88b469e667363062945efa1ed6c166d",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
