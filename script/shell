@@ -23,4 +23,4 @@ exec docker run --rm -it \
   -v "${repo_root}/script/fs-bench.sh:/usr/local/bin/fs-bench:ro" \
   -w /root \
   debian:stable-slim \
-  bash -c 'apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates >/dev/null 2>&1; exec bash'
+  bash -c 'apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends fuse3 attr util-linux coreutils findutils git ca-certificates >/dev/null 2>&1; exec bash'

@@ -102,11 +102,11 @@ the image is yours — here, `pandoc` and a PDF engine for it.
 ```dockerfile
 FROM ghcr.io/cloudflare/computer-computerd-linux-x64:VERSION AS computerd
 
-FROM debian:stable-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 ca-certificates curl xz-utils \
+      fuse3 ca-certificates curl xz-utils \
  && ...install pandoc and typst...
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
@@ -118,6 +118,9 @@ EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/computerd"]
 ```
+
+`fuse3` brings libfuse 3, which `computerd` needs at 3.17 or newer, so
+the base has to be Debian trixie or later.
 
 See [`Dockerfile`](Dockerfile) for the full version, including the
 pinned `pandoc` and `typst` downloads. `typst` is the PDF engine

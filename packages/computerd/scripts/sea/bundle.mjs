@@ -5,16 +5,9 @@
 //     capnweb's top-level await survives without an async-IIFE wrapper. A banner
 //     re-establishes `require`, `__filename`, and `__dirname` for any CJS code
 //     transpiled into the bundle.
-//   * fuse-native's `require('node-gyp-build')(__dirname)` call is intercepted
-//     by an esbuild plugin. The shim resolves the .node addon and libfuse
-//     shared library from SEA assets at runtime (via `node:sea`), writes them
-//     to a deterministic temp directory keyed by sha256, and dlopens the
-//     addon. The shared library is found by the dynamic loader via
-//     LD_LIBRARY_PATH / DYLD_LIBRARY_PATH, prepended in the same shim.
-//   * `fuse-shared-library` is also intercepted: in the deployed environment
-//     the host already provides `fusermount`, so configure/isConfigured are
-//     no-ops. The lib path field is left empty because nothing inside
-//     fuse-native reads it directly.
+//   * fuse-napi loads its addon through `require('node-gyp-build')(root)`.
+//     An esbuild plugin swaps that module for a shim that writes the
+//     embedded addon to a temp directory keyed by its hash and dlopens it.
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const computerdRoot = resolve(here, "../..");
 const repoRoot = resolve(computerdRoot, "../..");
 
-export async function bundleComputerd({ outfile, target }) {
+export async function bundleComputerd({ outfile }) {
   const nodeGypBuildShim = `
 const { writeFileSync, chmodSync, existsSync, mkdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
@@ -32,24 +25,30 @@ const { join } = require("node:path");
 const { createHash } = require("node:crypto");
 const sea = require("node:sea");
 
-const LIBFUSE_NAME = ${JSON.stringify(target.libfuseName)};
-const ENV_VAR = ${JSON.stringify(target.envVar)};
-
 let cached;
 function loadNative() {
 	if (cached) return cached;
-	const addonBuf = Buffer.from(sea.getAsset("fuse-native.node"));
-	const libBuf = Buffer.from(sea.getAsset(LIBFUSE_NAME));
-	const hash = createHash("sha256").update(addonBuf).update(libBuf).digest("hex").slice(0, 16);
+	const addonBuf = Buffer.from(sea.getAsset("fuse.node"));
+	const hash = createHash("sha256").update(addonBuf).digest("hex").slice(0, 16);
 	const dir = join(tmpdir(), "computerd-sea-" + hash);
 	try { mkdirSync(dir, { recursive: true }); } catch {}
-	const libPath = join(dir, LIBFUSE_NAME);
-	const addonPath = join(dir, "fuse-native.node");
-	if (!existsSync(libPath)) writeFileSync(libPath, libBuf);
+	const addonPath = join(dir, "fuse.node");
 	if (!existsSync(addonPath)) { writeFileSync(addonPath, addonBuf); chmodSync(addonPath, 0o755); }
-	process.env[ENV_VAR] = dir + (process.env[ENV_VAR] ? ":" + process.env[ENV_VAR] : "");
 	const m = { exports: {} };
-	process.dlopen(m, addonPath);
+	try {
+		process.dlopen(m, addonPath);
+	} catch (error) {
+		if (typeof error?.message === "string" && error.message.includes("libfuse3")) {
+			const wrapped = new Error(
+				"computerd needs libfuse 3.17 or newer. On Debian trixie or later, " +
+				"install it with: apt-get install fuse3",
+			);
+			wrapped.code = "EFUSEDEPENDENCY";
+			wrapped.cause = error;
+			throw wrapped;
+		}
+		throw error;
+	}
 	cached = m.exports;
 	return cached;
 }
@@ -57,32 +56,18 @@ function loadNative() {
 module.exports = function nodeGypBuild(_dir) { return loadNative(); };
 `;
 
-  const fuseSharedLibraryShim = `
-function noop(cb) { if (typeof cb === "function") process.nextTick(cb); }
-function isConfigured(cb) { process.nextTick(() => cb(null, true)); }
-module.exports = { beforeMount: noop, beforeUnmount: noop, configure: noop, unconfigure: noop, isConfigured };
-`;
-
   const nativeShimPlugin = {
-    name: "fuse-native-shim",
+    name: "fuse-napi-shim",
     setup(b) {
       b.onResolve({ filter: /^node-gyp-build$/ }, () => ({
         path: "node-gyp-build",
         namespace: "computerd-shim",
       }));
-      b.onResolve({ filter: /^fuse-shared-library$/ }, () => ({
-        path: "fuse-shared-library",
-        namespace: "computerd-shim",
+      b.onLoad({ filter: /.*/, namespace: "computerd-shim" }, () => ({
+        contents: nodeGypBuildShim,
+        loader: "js",
+        resolveDir: repoRoot,
       }));
-      b.onLoad({ filter: /.*/, namespace: "computerd-shim" }, (args) => {
-        if (args.path === "node-gyp-build") {
-          return { contents: nodeGypBuildShim, loader: "js", resolveDir: repoRoot };
-        }
-        if (args.path === "fuse-shared-library") {
-          return { contents: fuseSharedLibraryShim, loader: "js" };
-        }
-        return null;
-      });
     },
   };
 

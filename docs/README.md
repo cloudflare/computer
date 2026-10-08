@@ -72,11 +72,11 @@ Debian base:
 ```dockerfile
 FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.4.1 AS computerd
 
-FROM debian:stable-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 ca-certificates \
+      fuse3 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
@@ -88,6 +88,10 @@ EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/computerd"]
 ```
+
+`fuse3` brings libfuse 3, which computerd links and needs at 3.17 or
+newer, so the base has to be Debian trixie or later. computerd 0.4.1 and
+earlier linked libfuse 2 instead and also need `libfuse2t64`.
 
 To build the binary from source instead, run `npm run build:bin
 --workspace @cloudflare/computerd`, which emits

@@ -16,6 +16,14 @@ runs:
         registry-url: ${{ inputs.registry-url }}
         cache: npm
 
+    # npm ci compiles computerd's vendored FUSE addon against these.
+    - name: Install the libfuse 3 headers
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libfuse3-dev
+
     - name: Install dependencies
       shell: bash
       run: npm ci

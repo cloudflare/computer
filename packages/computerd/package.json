@@ -27,7 +27,7 @@
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
     "@platformatic/vfs": "^0.4.0",
-    "fuse-native": "^2.2.6"
+    "fuse-napi": "file:./vendor/fuse-napi"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

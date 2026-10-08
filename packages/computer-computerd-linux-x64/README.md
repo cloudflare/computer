@@ -11,9 +11,12 @@ Docker image context for the prebuilt `computerd` linux-x64 binary.
 `computerd` is the daemon side of [`@cloudflare/computer`](../computer) —
 see [`docs/`](../../docs) for the wire protocol and architecture.
 
-The binary is a Node single executable application. Everything needed at
-runtime — the Node runtime, `fuse-native`, and libfuse — is baked in. The
-host needs `/dev/fuse` and a recent enough kernel for FUSE, nothing else.
+The binary is a Node single executable application. The Node runtime and
+the FUSE addon are baked in. libfuse is not: the binary links the
+system's libfuse 3 and needs 3.17 or newer, which is the `fuse3` package
+on Debian trixie or later. The host also needs `/dev/fuse`, and Linux
+6.9 or newer for local-only paths to use FUSE passthrough. computerd
+0.4.1 and earlier linked libfuse 2 instead and also need `libfuse2t64`.
 
 This package is private and is not published to npm. The release workflow
 builds the binary, stages it into `bin/computerd`, and publishes the image
@@ -21,10 +24,10 @@ instead:
 
 ```dockerfile
 FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.4.1 AS computerd
-FROM debian:stable-slim
+FROM debian:trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 ca-certificates \
+      fuse3 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd

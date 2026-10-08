@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+
 import { expect, test } from "vitest";
 
 import { createNodeVirtualFileSystem, makeFUSEOps } from "./index.js";
@@ -9,7 +11,11 @@ const callback = (fn: (cb: (errno: number, result: unknown) => void) => void) =>
 const status = (fn: (cb: (value: number) => void) => void) =>
   new Promise<number>((resolve) => fn((value) => resolve(value)));
 
-const fuseNativeOperationNames = [
+function handleOf(result: unknown): number {
+  return typeof result === "number" ? result : (result as { fd: number }).fd;
+}
+
+const operationNames = [
   "init",
   "error",
   "access",
@@ -59,10 +65,10 @@ function disableDirectWrites(vfs: unknown): void {
   delete target.truncateFileSync;
 }
 
-test("FUSE ops expose the complete fuse-native operation surface", async () => {
+test("FUSE ops expose the complete operation surface", async () => {
   const ops = makeFUSEOps((await createNodeVirtualFileSystem()).vfs);
 
-  for (const name of fuseNativeOperationNames) {
+  for (const name of operationNames) {
     expect(typeof ops[name]).toBe("function", `${name} should be defined`);
   }
 });
@@ -98,23 +104,24 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
 
   const create = await callback((cb) => ops.create("/dir/file.txt", 0o644, cb));
   expect(create.errno).toBe(0);
-  expect(typeof create.result).toBe("number");
+  expect(typeof handleOf(create.result)).toBe("number");
+  expect((create.result as { keepCache?: boolean }).keepCache).toBe(false);
 
   const open = await callback((cb) => ops.open("/dir/file.txt", 0, cb));
   expect(open.errno).toBe(0);
-  expect(typeof open.result).toBe("number");
+  expect(typeof handleOf(open.result)).toBe("number");
 
   const bytes = Buffer.from("hello fuse");
   expect(
     await status((cb) =>
-      ops.write("/dir/file.txt", create.result as number, bytes, bytes.length, 0, cb),
+      ops.write("/dir/file.txt", handleOf(create.result), bytes, bytes.length, 0, cb),
     ),
   ).toBe(bytes.length);
 
   const readBuffer = Buffer.alloc(bytes.length);
   expect(
     await status((cb) =>
-      ops.read("/dir/file.txt", create.result as number, readBuffer, readBuffer.length, 0, cb),
+      ops.read("/dir/file.txt", handleOf(create.result), readBuffer, readBuffer.length, 0, cb),
     ),
   ).toBe(bytes.length);
   expect(readBuffer.toString()).toBe("hello fuse");
@@ -127,7 +134,7 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(stat.errno).toBe(0);
   expect((stat.result as { size: number }).size).toBe(bytes.length);
 
-  const fstat = await callback((cb) => ops.fgetattr("/dir/file.txt", create.result as number, cb));
+  const fstat = await callback((cb) => ops.fgetattr("/dir/file.txt", handleOf(create.result), cb));
   expect(fstat.errno).toBe(0);
   expect((fstat.result as { size: number }).size).toBe(bytes.length);
 
@@ -138,9 +145,11 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
 
   expect(await status((cb) => ops.chmod("/dir/file.txt", 0o600, cb))).toBe(0);
   expect(await status((cb) => ops.chown("/dir/file.txt", 123, 456, cb))).toBe(0);
-  expect(await status((cb) => ops.flush("/dir/file.txt", create.result as number, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/dir/file.txt", create.result as number, 0, cb))).toBe(0);
-  expect(await status((cb) => ops.fsyncdir("/dir", rootDir.result as number, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/dir/file.txt", handleOf(create.result), cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/dir/file.txt", false, handleOf(create.result), cb))).toBe(
+    0,
+  );
+  expect(await status((cb) => ops.fsyncdir("/dir", false, rootDir.result as number, cb))).toBe(0);
 
   expect(
     await status((cb) =>
@@ -150,8 +159,7 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(await status((cb) => ops.getxattr("/dir/file.txt", "user.test", 0, cb))).toBe(-61);
   const xattrs = await callback((cb) => ops.listxattr("/dir/file.txt", cb));
   expect(xattrs.errno).toBe(0);
-  expect(Buffer.isBuffer(xattrs.result)).toBe(true);
-  expect((xattrs.result as Buffer).length).toBe(0);
+  expect(xattrs.result).toEqual([]);
   expect(await status((cb) => ops.removexattr("/dir/file.txt", "user.test", cb))).toBe(-61);
   expect(await status((cb) => ops.utimens("/dir/file.txt", Date.now(), Date.now(), cb))).toBe(0);
   expect(await status((cb) => ops.utimens("/missing", Date.now(), Date.now(), cb))).toBe(-2);
@@ -171,7 +179,7 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   expect(truncBuf.subarray(0, 5).toString()).toBe("hello");
 
   expect(
-    await status((cb) => ops.ftruncate("/dir/renamed.txt", create.result as number, 2, cb)),
+    await status((cb) => ops.ftruncate("/dir/renamed.txt", handleOf(create.result), 2, cb)),
   ).toBe(0);
   const ftruncBuf = Buffer.alloc(64);
   expect(
@@ -179,10 +187,10 @@ test("implemented FUSE ops all have explicit current expectations", async () => 
   ).toBe(2);
   expect(ftruncBuf.subarray(0, 2).toString()).toBe("he");
 
-  expect(await status((cb) => ops.release("/dir/renamed.txt", create.result as number, cb))).toBe(
+  expect(await status((cb) => ops.release("/dir/renamed.txt", handleOf(create.result), cb))).toBe(
     0,
   );
-  expect(await status((cb) => ops.release("/dir/renamed.txt", open.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.release("/dir/renamed.txt", handleOf(open.result), cb))).toBe(0);
   expect(await status((cb) => ops.unlink("/dir/renamed.txt", cb))).toBe(0);
   expect(vfs.readdirSync("/dir")).toEqual([]);
   expect(await status((cb) => ops.rmdir("/dir", cb))).toBe(0);
@@ -216,7 +224,7 @@ test("FUSE maps read-only provider mutations to EROFS", async () => {
 
   const opened = await callback((cb) => ops.open("/readonly.txt", 0, cb));
   expect(opened.errno).toBe(0);
-  const fh = opened.result as number;
+  const fh = handleOf(opened.result);
   expect(await status((cb) => ops.write("/readonly.txt", fh, Buffer.from("x"), 1, 0, cb))).toBe(
     -30,
   );
@@ -248,7 +256,7 @@ test("write past the per-file cap returns EFBIG instead of growing unbounded", a
     ops.create("/big", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
 
   // Sized just past the cap. The driver allocates the buffer up-front
   // and writes into it, so this also catches an off-by-one in the
@@ -282,7 +290,7 @@ test("FUSE write is visible through the backing VFS after release", async () => 
     ops.create("/from-fuse.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
 
   const payload = Buffer.from("from-fuse\n", "utf8");
   const written = await status((cb: (value: number) => void) =>
@@ -293,7 +301,7 @@ test("FUSE write is visible through the backing VFS after release", async () => 
   // release + flush + fsync — every codepath a well-behaved
   // client would call before considering the write durable.
   expect(await status((cb) => ops.flush("/from-fuse.txt", fh, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/from-fuse.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/from-fuse.txt", false, fh, cb))).toBe(0);
   expect(await status((cb) => ops.release("/from-fuse.txt", fh, cb))).toBe(0);
 
   // The VFS is the RPC surface's source of truth. Anything that
@@ -303,6 +311,50 @@ test("FUSE write is visible through the backing VFS after release", async () => 
     "from-fuse\n",
     "FUSE writes must be flushed into the backing VFS for RPC reads to see them",
   );
+});
+
+test("FUSE open with O_TRUNC empties the file", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/existing.txt", "old contents\n");
+  const ops = makeFUSEOps(vfs);
+
+  const opened = await callback((cb) =>
+    ops.open("/existing.txt", fsConstants.O_WRONLY | fsConstants.O_TRUNC, cb),
+  );
+  expect(opened.errno).toBe(0);
+  const fh = handleOf(opened.result);
+
+  const stat = await callback((cb) => ops.getattr("/existing.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(0);
+
+  expect(await status((cb) => ops.release("/existing.txt", fh, cb))).toBe(0);
+  expect(vfs.readFileSync("/existing.txt").length).toBe(0);
+});
+
+test("FUSE open with O_TRUNC empties a file whose create is still buffered", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  const ops = makeFUSEOps(vfs);
+  const created = await callback((cb) => ops.create("/pending.txt", 0o644, cb));
+  const createdFh = handleOf(created.result);
+  const payload = Buffer.from("buffered");
+  await status((cb) => ops.write("/pending.txt", createdFh, payload, payload.length, 0, cb));
+
+  const opened = await callback((cb) =>
+    ops.open("/pending.txt", fsConstants.O_WRONLY | fsConstants.O_TRUNC, cb),
+  );
+  expect(opened.errno).toBe(0);
+  const stat = await callback((cb) => ops.getattr("/pending.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(0);
+});
+
+test("FUSE open without O_TRUNC keeps the contents", async () => {
+  const { vfs } = await createNodeVirtualFileSystem();
+  vfs.writeFileSync("/kept.txt", "keep me");
+  const ops = makeFUSEOps(vfs);
+  const opened = await callback((cb) => ops.open("/kept.txt", fsConstants.O_RDWR, cb));
+  expect(opened.errno).toBe(0);
+  const stat = await callback((cb) => ops.getattr("/kept.txt", cb));
+  expect((stat.result as { size: number }).size).toBe(7);
 });
 
 test("FUSE truncate is visible through the backing VFS after fsync", async () => {
@@ -320,17 +372,17 @@ test("FUSE truncate is visible through the backing VFS after fsync", async () =>
     ops.create("/t.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("original-content", "utf8");
   await status((cb: (value: number) => void) =>
     ops.write("/t.txt", fh, payload, payload.byteLength, 0, cb),
   );
-  expect(await status((cb) => ops.fsync("/t.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/t.txt", false, fh, cb))).toBe(0);
   expect(vfs.statSync("/t.txt").size).toBe(payload.byteLength);
 
   // Shrink via truncate and re-sync.
   expect(await status((cb) => ops.truncate("/t.txt", 5, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/t.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/t.txt", false, fh, cb))).toBe(0);
 
   expect(vfs.statSync("/t.txt").size).toBe(5);
   expect(Buffer.from(vfs.readFileSync("/t.txt")).toString("utf8")).toBe("origi");
@@ -348,7 +400,7 @@ test("FUSE rename carries the buffered bytes to the new path", async () => {
     ops.create("/old.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("renamed-content", "utf8");
   await status((cb: (value: number) => void) =>
     ops.write("/old.txt", fh, payload, payload.byteLength, 0, cb),
@@ -357,7 +409,7 @@ test("FUSE rename carries the buffered bytes to the new path", async () => {
   // Rename before the buffer ever spills. The buffer entry moves
   // with the file; fsync on the new path spills correctly.
   expect(await status((cb) => ops.rename("/old.txt", "/new.txt", cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/new.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/new.txt", false, fh, cb))).toBe(0);
 
   expect(Buffer.from(vfs.readFileSync("/new.txt")).toString("utf8")).toBe("renamed-content");
   // Old path is gone from both layers.
@@ -375,7 +427,7 @@ test("FUSE getattr size matches what readFileSync would return", async () => {
     ops.create("/g.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("twelve-bytes", "utf8");
   await status((cb: (value: number) => void) =>
     ops.write("/g.txt", fh, payload, payload.byteLength, 0, cb),
@@ -390,7 +442,7 @@ test("FUSE getattr size matches what readFileSync would return", async () => {
 
   // After flush they still agree — anything calling stat through
   // the VFS (RPC, host-side platformatic/vfs) needs the truth.
-  expect(await status((cb) => ops.fsync("/g.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/g.txt", false, fh, cb))).toBe(0);
   const afterFlush = await callback((cb: (errno: number, result: unknown) => void) =>
     ops.getattr("/g.txt", cb),
   );
@@ -416,7 +468,7 @@ test("FUSE ops translate kernel-relative paths onto the configured mount point",
   expect(open.errno).toBe(0);
   const readBuffer = Buffer.alloc(5);
   expect(
-    await status((cb) => ops.read("/repo/a.txt", open.result as number, readBuffer, 5, 0, cb)),
+    await status((cb) => ops.read("/repo/a.txt", handleOf(open.result), readBuffer, 5, 0, cb)),
   ).toBe(5);
   expect(readBuffer.toString()).toBe("alpha");
 
@@ -425,10 +477,10 @@ test("FUSE ops translate kernel-relative paths onto the configured mount point",
   const payload = Buffer.from("bravo");
   expect(
     await status((cb) =>
-      ops.write("/repo/b.txt", create.result as number, payload, payload.length, 0, cb),
+      ops.write("/repo/b.txt", handleOf(create.result), payload, payload.length, 0, cb),
     ),
   ).toBe(payload.length);
-  expect(await status((cb) => ops.release("/repo/b.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.release("/repo/b.txt", handleOf(create.result), cb))).toBe(0);
 
   expect(vfs.readFileSync("/workspace/repo/b.txt").toString()).toBe("bravo");
   // The unprefixed path doesn't exist in the VFS — it would only
@@ -445,7 +497,7 @@ test("FUSE clean buffers are not spilled repeatedly", async () => {
     ops.create("/clean-after-flush.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
 
   let writesAfterCreate = 0;
   const writeFileSync = vfs.writeFileSync.bind(vfs);
@@ -462,7 +514,7 @@ test("FUSE clean buffers are not spilled repeatedly", async () => {
   ).toBe(payload.byteLength);
 
   expect(await status((cb) => ops.flush("/clean-after-flush.txt", fh, cb))).toBe(0);
-  expect(await status((cb) => ops.fsync("/clean-after-flush.txt", fh, 0, cb))).toBe(0);
+  expect(await status((cb) => ops.fsync("/clean-after-flush.txt", false, fh, cb))).toBe(0);
   expect(await status((cb) => ops.release("/clean-after-flush.txt", fh, cb))).toBe(0);
 
   expect(writesAfterCreate).toBe(1);
@@ -485,7 +537,7 @@ test("FUSE read-only hydrated buffers are not spilled on close", async () => {
 
   const open = await callback((cb) => ops.open("/read-only.txt", 0, cb));
   expect(open.errno).toBe(0);
-  const fh = open.result as number;
+  const fh = handleOf(open.result);
   const buf = Buffer.alloc(8);
   expect(await status((cb) => ops.read("/read-only.txt", fh, buf, buf.byteLength, 0, cb))).toBe(8);
   expect(buf.toString()).toBe("existing");
@@ -504,7 +556,7 @@ test("FUSE flush uses ranged writes when the backing VFS supports them", async (
     ops.create("/ranged.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
 
   const rangedCalls: Array<{
     path: string;
@@ -548,10 +600,10 @@ test("FUSE partial writes preserve existing content", async () => {
   expect(open.errno).toBe(0);
   expect(
     await status((cb) =>
-      ops.write("/partial.txt", open.result as number, Buffer.from("X"), 1, 2, cb),
+      ops.write("/partial.txt", handleOf(open.result), Buffer.from("X"), 1, 2, cb),
     ),
   ).toBe(1);
-  expect(await status((cb) => ops.flush("/partial.txt", open.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/partial.txt", handleOf(open.result), cb))).toBe(0);
   expect(Buffer.from(vfs.readFileSync("/partial.txt")).toString("utf8")).toBe("abXde");
 });
 
@@ -568,7 +620,7 @@ test("FUSE direct reads do not force later writes onto the buffered fallback", a
     ops.create("/direct-read-write.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const first = Buffer.from("first");
   expect(
     await status((cb) => ops.write("/direct-read-write.txt", fh, first, first.byteLength, 0, cb)),
@@ -614,7 +666,7 @@ test("FUSE direct reads use readRangeSync instead of materializing the whole fil
     ops.open("/range.bin", 0, cb),
   );
   expect(open.errno).toBe(0);
-  const fh = open.result as number;
+  const fh = handleOf(open.result);
 
   const buf = Buffer.alloc(5);
   expect(await status((cb) => ops.read("/range.bin", fh, buf, buf.byteLength, 6, cb))).toBe(5);
@@ -633,7 +685,7 @@ test("FUSE direct writes are visible through the VFS before release", async () =
     ops.create("/direct.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("direct");
   expect(
     await status((cb) => ops.write("/direct.txt", fh, payload, payload.byteLength, 0, cb)),
@@ -661,7 +713,7 @@ test("FUSE buffer stats report resident write buffers", async () => {
     ops.create("/stats.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("tracked");
   expect(
     await status((cb) => ops.write("/stats.txt", fh, payload, payload.byteLength, 0, cb)),
@@ -695,7 +747,7 @@ test("FUSE release evicts clean file buffers after flush", async () => {
     ops.create("/evict.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const first = Buffer.from("first");
   expect(await status((cb) => ops.write("/evict.txt", fh, first, first.byteLength, 0, cb))).toBe(
     first.byteLength,
@@ -708,7 +760,7 @@ test("FUSE release evicts clean file buffers after flush", async () => {
   expect(open.errno).toBe(0);
   const out = Buffer.alloc("second".length);
   expect(
-    await status((cb) => ops.read("/evict.txt", open.result as number, out, out.byteLength, 0, cb)),
+    await status((cb) => ops.read("/evict.txt", handleOf(open.result), out, out.byteLength, 0, cb)),
   ).toBe(out.byteLength);
   expect(out.toString()).toBe("second");
 });
@@ -771,7 +823,7 @@ test("FUSE buffered writes surface a fresh size through getattr before flush", a
     ops.create("/buf.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("buffered");
   await status((cb: (value: number) => void) =>
     ops.write("/buf.txt", fh, payload, payload.byteLength, 0, cb),
@@ -798,7 +850,7 @@ test("FUSE mode survives a flush after chmod on a pre-existing file", async () =
 
   const open = await callback((cb) => ops.open("/mode.txt", 0, cb));
   expect(open.errno).toBe(0);
-  const fh = open.result as number;
+  const fh = handleOf(open.result);
   await status((cb) => ops.write("/mode.txt", fh, Buffer.from("b"), 1, 0, cb));
   expect(await status((cb) => ops.flush("/mode.txt", fh, cb))).toBe(0);
 
@@ -815,7 +867,7 @@ test("FUSE create+chmod+flush persists the chmod'd mode in the VFS", async () =>
     ops.create("/new.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   await status((cb) => ops.write("/new.txt", fh, Buffer.from("x"), 1, 0, cb));
   expect(await status((cb) => ops.chmod("/new.txt", 0o600, cb))).toBe(0);
   expect(await status((cb) => ops.flush("/new.txt", fh, cb))).toBe(0);
@@ -845,10 +897,10 @@ test("FUSE link creates a second name for the same file inode", async () => {
   const payload = Buffer.from("bye");
   expect(
     await status((cb) =>
-      ops.write("/b.txt", open.result as number, payload, payload.byteLength, 0, cb),
+      ops.write("/b.txt", handleOf(open.result), payload, payload.byteLength, 0, cb),
     ),
   ).toBe(payload.byteLength);
-  expect(await status((cb) => ops.flush("/b.txt", open.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/b.txt", handleOf(open.result), cb))).toBe(0);
 
   expect(Buffer.from(vfs.readFileSync("/a.txt")).toString("utf8")).toBe("bye");
 });
@@ -861,7 +913,7 @@ test("FUSE link flushes a pending-create source before linking", async () => {
     ops.create("/src.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   const payload = Buffer.from("linked");
   await status((cb) => ops.write("/src.txt", fh, payload, payload.byteLength, 0, cb));
 
@@ -894,7 +946,7 @@ test("FUSE rename of a pending-create file overwrites an existing destination", 
     ops.create("/src.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
   await status((cb) => ops.write("/src.txt", fh, Buffer.from("new"), 3, 0, cb));
 
   expect(await status((cb) => ops.rename("/src.txt", "/dst.txt", cb))).toBe(0);
@@ -947,11 +999,11 @@ test("FUSE getattr reports st_blocks so du sees non-zero usage", async () => {
   const payload = Buffer.alloc(513, 0x61);
   expect(
     await status((cb) =>
-      ops.write("/du.txt", create.result as number, payload, payload.length, 0, cb),
+      ops.write("/du.txt", handleOf(create.result), payload, payload.length, 0, cb),
     ),
   ).toBe(payload.length);
-  expect(await status((cb) => ops.flush("/du.txt", create.result as number, cb))).toBe(0);
-  expect(await status((cb) => ops.release("/du.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/du.txt", handleOf(create.result), cb))).toBe(0);
+  expect(await status((cb) => ops.release("/du.txt", handleOf(create.result), cb))).toBe(0);
 
   const stat = await callback((cb) => ops.getattr("/du.txt", cb));
   expect(stat.errno).toBe(0);
@@ -964,8 +1016,8 @@ test("FUSE getattr reports zero blocks for an empty file", async () => {
 
   const create = await callback((cb) => ops.create("/empty.txt", 0o644, cb));
   expect(create.errno).toBe(0);
-  expect(await status((cb) => ops.flush("/empty.txt", create.result as number, cb))).toBe(0);
-  expect(await status((cb) => ops.release("/empty.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/empty.txt", handleOf(create.result), cb))).toBe(0);
+  expect(await status((cb) => ops.release("/empty.txt", handleOf(create.result), cb))).toBe(0);
 
   const stat = await callback((cb) => ops.getattr("/empty.txt", cb));
   expect(stat.errno).toBe(0);
@@ -985,7 +1037,7 @@ test("FUSE getattr on a pending-create file reports block metadata", async () =>
   const payload = Buffer.alloc(1025, 0x62);
   expect(
     await status((cb) =>
-      ops.write("/pending.txt", create.result as number, payload, payload.length, 0, cb),
+      ops.write("/pending.txt", handleOf(create.result), payload, payload.length, 0, cb),
     ),
   ).toBe(payload.length);
 
@@ -1007,16 +1059,16 @@ test("FUSE getattr block count tracks buffered size before flush", async () => {
   const seed = Buffer.from("seed");
   expect(
     await status((cb) =>
-      ops.write("/buf-blocks.txt", create.result as number, seed, seed.length, 0, cb),
+      ops.write("/buf-blocks.txt", handleOf(create.result), seed, seed.length, 0, cb),
     ),
   ).toBe(seed.length);
-  expect(await status((cb) => ops.flush("/buf-blocks.txt", create.result as number, cb))).toBe(0);
+  expect(await status((cb) => ops.flush("/buf-blocks.txt", handleOf(create.result), cb))).toBe(0);
 
   // Grow the buffer past a block boundary without flushing.
   const grow = Buffer.alloc(2000, 0x63);
   expect(
     await status((cb) =>
-      ops.write("/buf-blocks.txt", create.result as number, grow, grow.length, 0, cb),
+      ops.write("/buf-blocks.txt", handleOf(create.result), grow, grow.length, 0, cb),
     ),
   ).toBe(grow.length);
 
@@ -1032,8 +1084,8 @@ test("xattr: getxattr for a VFS-backed file returns correct codes", async () => 
   // Create and flush a VFS-backed file.
   const create = await callback((cb) => ops.create("/xattr-backed.txt", 0o644, cb));
   expect(create.errno).toBe(0);
-  await status((cb) => ops.flush("/xattr-backed.txt", create.result as number, cb));
-  await status((cb) => ops.release("/xattr-backed.txt", create.result as number, cb));
+  await status((cb) => ops.flush("/xattr-backed.txt", handleOf(create.result), cb));
+  await status((cb) => ops.release("/xattr-backed.txt", handleOf(create.result), cb));
 
   // getxattr returns ENODATA (the file exists but has no xattrs).
   expect(await status((cb) => ops.getxattr("/xattr-backed.txt", "user.x", 0, cb))).toBe(-61);
@@ -1041,15 +1093,15 @@ test("xattr: getxattr for a VFS-backed file returns correct codes", async () => 
   expect(
     await status((cb) => ops.setxattr("/xattr-backed.txt", "user.x", Buffer.from("v"), 0, 0, cb)),
   ).toBe(0);
-  // listxattr returns an empty buffer.
+  // listxattr returns an empty list of names.
   const lx = await callback((cb) => ops.listxattr("/xattr-backed.txt", cb));
   expect(lx.errno).toBe(0);
-  expect((lx.result as Buffer).length).toBe(0);
+  expect(lx.result).toEqual([]);
   // removexattr returns ENODATA.
   expect(await status((cb) => ops.removexattr("/xattr-backed.txt", "user.x", cb))).toBe(-61);
 });
 
-test("FUSE ftruncate does not depend on fuse-native binding this", async () => {
+test("FUSE ftruncate does not depend on the binding's this", async () => {
   const { vfs } = await createNodeVirtualFileSystem();
   const ops = makeFUSEOps(vfs);
 
@@ -1057,7 +1109,7 @@ test("FUSE ftruncate does not depend on fuse-native binding this", async () => {
     ops.create("/ftruncate-this.txt", 0o644, cb),
   );
   expect(create.errno).toBe(0);
-  const fh = create.result as number;
+  const fh = handleOf(create.result);
 
   const payload = Buffer.from("abcdef", "utf8");
   expect(

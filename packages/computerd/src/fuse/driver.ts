@@ -1,9 +1,12 @@
-import { writeFileSync as nodeWriteFileSync } from "node:fs";
+import { constants as fsConstants, writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
 import type { FUSEBackend } from "./backend.js";
-import { buildFuseOptionString } from "./options.js";
+import { toBindingOps } from "./binding-ops.js";
+import type { PassthroughStatus } from "./ignore-config.js";
+import { buildFuseInitConfig, buildFuseMountOptions, passthroughRequested } from "./options.js";
 import {
   type LocalPassthroughOptions,
+  type PassthroughRegistrar,
   type PassthroughStats,
   withLocalPassthrough,
 } from "./passthrough.js";
@@ -35,6 +38,7 @@ const MAX_FILE_BYTES = 256 * 1024 * 1024;
 // (which reads st_blocks, not st_size) compute usage against this
 // constant. A getattr that omits blocks makes the kernel surface
 // st_blocks=0 and `du` reports zero usage for the whole mount.
+const O_TRUNC = fsConstants.O_TRUNC;
 const STAT_BLOCK_SIZE = 512;
 
 // st_blksize is the preferred I/O block size, not the st_blocks unit.
@@ -50,15 +54,23 @@ type StatusCallback = (errnoOrBytes: number) => void;
 type ResultCallback<T> = (errno: number, result: T) => void;
 type NotImplementedOperation = (...args: unknown[]) => void;
 
+export interface FuseFileInfoResult {
+  readonly fd: number;
+  readonly keepCache?: boolean;
+  readonly backingId?: number;
+}
+
+export type FuseOpenResult = number | FuseFileInfoResult;
+
 export interface FuseOps {
   init(cb?: StatusCallback): void;
   error: NotImplementedOperation;
   readdir(path: string, cb: ResultCallback<string[]>): void;
   getattr(path: string, cb: ResultCallback<FuseStat | null>): void;
   fgetattr(path: string, fh: number, cb: ResultCallback<FuseStat | null>): void;
-  open(path: string, flags: number, cb: ResultCallback<number>): void;
+  open(path: string, flags: number, cb: ResultCallback<FuseOpenResult>): void;
   opendir(path: string, flags: number, cb: ResultCallback<number>): void;
-  create(path: string, mode: number, cb: ResultCallback<number>): void;
+  create(path: string, mode: number, cb: ResultCallback<FuseOpenResult>): void;
   read(
     path: string,
     fh: number,
@@ -88,8 +100,8 @@ export interface FuseOps {
   statfs(path: string, cb: ResultCallback<Record<string, number>>): void;
   chmod(path: string, mode: number, cb: StatusCallback): void;
   chown(path: string, uid: number, gid: number, cb: StatusCallback): void;
-  fsync(path: string, fh: number, datasync: number, cb: StatusCallback): void;
-  fsyncdir(path: string, fh: number, datasync: number, cb: StatusCallback): void;
+  fsync(path: string, datasync: boolean, fh: number, cb: StatusCallback): void;
+  fsyncdir(path: string, datasync: boolean, fh: number, cb: StatusCallback): void;
   utimens(path: string, atime: number, mtime: number, cb: StatusCallback): void;
   readlink(path: string, cb: ResultCallback<string>): void;
   mknod: NotImplementedOperation;
@@ -102,7 +114,7 @@ export interface FuseOps {
     cb: StatusCallback,
   ): void;
   getxattr(path: string, name: string, position: number, cb: StatusCallback): void;
-  listxattr(path: string, cb: ResultCallback<Buffer>): void;
+  listxattr(path: string, cb: ResultCallback<string[]>): void;
   removexattr(path: string, name: string, cb: StatusCallback): void;
   link(source: string, destination: string, cb: StatusCallback): void;
   symlink(target: string, path: string, cb: StatusCallback): void;
@@ -143,12 +155,18 @@ export interface FuseMount {
   // Counters for the local-only layer. Present only when MOUNT_IGNORE
   // configured local-only paths on a real FUSE mount.
   getLocalPathStats?: () => PassthroughStats;
+  // Only present on a kernel FUSE mount.
+  getPassthroughStatus?: () => PassthroughStatus;
 }
 
-interface FuseNativeInstance {
+interface FuseInstance {
   mount(cb: (error: Error | null) => void): void;
   unmount(cb: (error: Error | null) => void): void;
-  _fuseOptions(): string;
+}
+
+interface BackingRegistrar {
+  backingOpen(fd: number): number;
+  backingClose(backingId: number): void;
 }
 
 export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseOps {
@@ -179,6 +197,30 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   const openFileHandle = (path: string): number => {
     fileOpenCounts.set(path, (fileOpenCounts.get(path) ?? 0) + 1);
     return openHandle(path);
+  };
+
+  // auto_cache's rule, applied per open: keep the page cache only when
+  // mtime and size are unchanged since this path was last opened. It can't
+  // stay a mount option, because libfuse would then set keep_cache on
+  // passthrough opens too, and the kernel fails those with EIO.
+  const cacheMarks = new Map<string, string>();
+
+  const resolveKeepCache = (path: string): boolean => {
+    let mark: string;
+    try {
+      const stat = vfs.statSync(toVfs(path));
+      mark = `${Number(stat.mtimeMs ?? 0)}:${Number(stat.size ?? 0)}`;
+    } catch {
+      cacheMarks.delete(path);
+      return false;
+    }
+    const previous = cacheMarks.get(path);
+    cacheMarks.set(path, mark);
+    return previous === mark;
+  };
+
+  const forgetCacheMark = (path: string): void => {
+    cacheMarks.delete(path);
   };
 
   const releaseFileHandle = (path: string): void => {
@@ -460,6 +502,29 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     };
   };
 
+  const openExisting = (path: string, cb: ResultCallback<FuseOpenResult>): void => {
+    try {
+      const entry = files.get(path);
+      if (entry?.pendingCreate === true) {
+        // Nothing durable to compare against yet, so never reuse the cache.
+        cb(0, { fd: openFileHandle(path), keepCache: false });
+        return;
+      }
+      const stat = vfs.statSync(toVfs(path));
+      if (stat.isDirectory()) {
+        cb(ERRNO.EISDIR, 0);
+        return;
+      }
+      if (hasBufferedWrites) {
+        directWriteVfs.openWriteBufferSync?.(toVfs(path));
+      }
+      const keepCache = resolveKeepCache(path);
+      cb(0, { fd: openFileHandle(path), keepCache });
+    } catch (error) {
+      cb(toErrno(error), 0);
+    }
+  };
+
   return {
     init(cb) {
       cb?.(0);
@@ -515,25 +580,20 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       this.getattr(path, cb);
     },
 
-    open(path, _flags, cb) {
-      try {
-        const entry = files.get(path);
-        if (entry?.pendingCreate === true) {
-          cb(0, openFileHandle(path));
-          return;
-        }
-        const stat = vfs.statSync(toVfs(path));
-        if (stat.isDirectory()) {
-          cb(ERRNO.EISDIR, 0);
-          return;
-        }
-        if (hasBufferedWrites) {
-          directWriteVfs.openWriteBufferSync?.(toVfs(path));
-        }
-        cb(0, openFileHandle(path));
-      } catch (error) {
-        cb(toErrno(error), 0);
+    open(path, flags, cb) {
+      // libfuse 3 enables atomic O_TRUNC, so `: > f` arrives as this flag
+      // rather than as a separate truncate.
+      if ((flags & O_TRUNC) !== 0) {
+        truncatePath(path, 0, (code) => {
+          if (code !== 0) {
+            cb(code, 0);
+            return;
+          }
+          openExisting(path, cb);
+        });
+        return;
       }
+      openExisting(path, cb);
     },
 
     opendir(path, _flags, cb) {
@@ -556,11 +616,13 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           cb(ERRNO.EEXIST, 0);
           return;
         }
+        // A recreated path must not inherit the previous file's mark.
+        forgetCacheMark(path);
         if (hasDeferredCreate) {
           // Single transaction at release time: defer the inode INSERT
           // and the chunk commit into one round trip.
           directWriteVfs.openWriteBufferForCreateSync?.(toVfs(path), { mode });
-          cb(0, openFileHandle(path));
+          cb(0, { fd: openFileHandle(path), keepCache: false });
           return;
         }
         if (hasDirectWrites) {
@@ -568,7 +630,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           if (hasBufferedWrites) {
             directWriteVfs.openWriteBufferSync?.(toVfs(path));
           }
-          cb(0, openFileHandle(path));
+          cb(0, { fd: openFileHandle(path), keepCache: false });
           return;
         }
         // Defer the VFS inode write until flush/release/fsync. Most create
@@ -588,7 +650,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           mode,
           pendingMtime: new Date(),
         });
-        cb(0, openFileHandle(path));
+        cb(0, { fd: openFileHandle(path), keepCache: false });
       } catch (error) {
         cb(toErrno(error), 0);
       }
@@ -875,13 +937,13 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
       cb(0);
     },
 
-    fsync(path, _fh, _datasync, cb) {
+    fsync(path, _datasync, _fh, cb) {
       // fsync(2) is the documented user-facing flush. Spill
       // whatever's buffered so subsequent VFS reads see it.
       cb(flushEntry(path));
     },
 
-    fsyncdir(_path, _fh, _datasync, cb) {
+    fsyncdir(_path, _datasync, _fh, cb) {
       cb(0);
     },
 
@@ -890,9 +952,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
         cb(ERRNO.ENOENT);
         return;
       }
-      // Note: with libfuse2/fuse-native, touch -a / touch -m alone do not
-      // reach this op — the kernel/libfuse short-circuits when only one of
-      // atime/mtime is provided (UTIME_OMIT). touch with both set works.
+      // toBindingOps has already resolved UTIME_NOW and UTIME_OMIT.
       updateMeta(path, { atime: new Date(atime), mtime: new Date(mtime) });
       cb(0);
     },
@@ -914,7 +974,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     },
 
     listxattr(path, cb) {
-      cb(exists(path) ? 0 : ERRNO.ENOENT, Buffer.alloc(0));
+      cb(exists(path) ? 0 : ERRNO.ENOENT, []);
     },
 
     removexattr(path, _name, cb) {
@@ -978,34 +1038,86 @@ export async function mountFuse(options: {
    */
   localPaths?: LocalPassthroughOptions;
 }): Promise<FuseMount> {
-  // biome-ignore lint/suspicious/noExplicitAny: fuse-native ships no types
-  const fuseModule: any = await import("fuse-native");
+  // biome-ignore lint/suspicious/noExplicitAny: the vendored binding is CJS
+  const fuseModule: any = await import("fuse-napi");
   const Fuse = fuseModule.default ?? fuseModule;
   // Optional op tracing. `COMPUTERD_FUSE_TRACE=summary` records per-op call
   // counts and timings; the summary is emitted on SIGUSR2 and on
   // unmount, to stderr by default or to `COMPUTERD_FUSE_TRACE_FILE` when set.
   // Disabled means zero wrapping overhead — the unwrapped ops object
-  // is handed to fuse-native directly.
+  // is handed to the binding directly.
   const traceMode = process.env.COMPUTERD_FUSE_TRACE;
   const tracer: FuseTracer | undefined = traceMode === "summary" ? createFuseTracer() : undefined;
   const baseOps = makeFUSEOps(options.vfs, options.mountPoint);
+
+  // Only requested with local-only paths, so a mount without MOUNT_IGNORE
+  // negotiates what it always did.
+  const wantPassthrough =
+    options.localPaths !== undefined &&
+    !options.localPaths.ignore.isEmpty &&
+    passthroughRequested(process.env);
+  let passthroughNegotiated = false;
+
+  // Late-bound, because the Fuse constructor takes the op table that holds
+  // this. No open arrives before init, and until init has negotiated
+  // passthrough the local-only layer gets ENOTSUP and serves files itself.
+  let mountedFuse: BackingRegistrar | undefined;
+  const registrar: PassthroughRegistrar = {
+    backingOpen(fd) {
+      if (!passthroughNegotiated || mountedFuse === undefined) {
+        throw Object.assign(new Error("FUSE passthrough was not negotiated"), {
+          code: "ENOTSUP",
+        });
+      }
+      return mountedFuse.backingOpen(fd);
+    },
+    backingClose(backingId) {
+      mountedFuse?.backingClose(backingId);
+    },
+  };
+
   // Local-only paths are routed before tracing, so the trace counts a
   // passthrough op once, at the layer that actually served it, rather
   // than attributing it to the VFS driver that never saw it.
   const localPaths =
     options.localPaths === undefined
       ? undefined
-      : withLocalPassthrough(baseOps, options.localPaths);
+      : withLocalPassthrough(baseOps, {
+          ...options.localPaths,
+          ...(wantPassthrough ? { passthrough: registrar } : {}),
+        });
   const routedOps = localPaths === undefined ? baseOps : localPaths.ops;
-  const { getBufferStats: _getBufferStats, ...fuseOps } = routedOps;
-  const ops =
-    tracer === undefined
-      ? fuseOps
-      : wrapFuseOpsWithTracer(fuseOps as unknown as Record<string, unknown>, tracer);
-  const fuse = new Fuse(options.mountPoint, ops, {
+  const fuseOps = toBindingOps(routedOps);
+  const ops = tracer === undefined ? fuseOps : wrapFuseOpsWithTracer(fuseOps, tracer);
+  const mountOptions = buildFuseMountOptions(process.env);
+  const initConfig = buildFuseInitConfig(process.env);
+  const CAP_PASSTHROUGH: number = Fuse.CAP_PASSTHROUGH ?? 1 << 29;
+
+  const opsWithInit = {
+    ...ops,
+    initWithConfig(
+      info: { capable: number; want: number },
+      cb: (errno: number, config?: unknown) => void,
+    ) {
+      const capable = info.capable >>> 0;
+      passthroughNegotiated = wantPassthrough && (capable & CAP_PASSTHROUGH) !== 0;
+      const config: Record<string, number> = { maxWrite: initConfig.maxWrite };
+      if (passthroughNegotiated) {
+        // Offered is not enough: without it in `want`, backingOpen fails
+        // with EPERM.
+        config.want = (info.want >>> 0) | CAP_PASSTHROUGH;
+        config.maxBackingStackDepth = initConfig.maxBackingStackDepth;
+      }
+      cb(0, config);
+    },
+  };
+
+  const fuse = new Fuse(options.mountPoint, opsWithInit, {
+    ...mountOptions,
     autoUnmount: true,
     debug: false,
-  }) as FuseNativeInstance;
+  }) as FuseInstance & BackingRegistrar;
+  mountedFuse = fuse;
 
   const emitTrace = (reason: string): void => {
     if (tracer === undefined) return;
@@ -1027,20 +1139,6 @@ export async function mountFuse(options: {
   if (tracer !== undefined) {
     process.on("SIGUSR2", () => emitTrace("SIGUSR2"));
   }
-
-  // fuse-native (libfuse 2.9) doesn't expose big_writes/max_write/max_read
-  // through opts, so monkey-patch _fuseOptions() to append them. big_writes
-  // lets the kernel batch up to max_write bytes per FUSE op instead of the
-  // default 4 KiB, cutting per-op round-trips ~32x on large sequential I/O.
-  // buildFuseOptionString reads COMPUTERD_FUSE_* env vars; with none set it
-  // emits the production-safe profile (auto_cache plus one-second
-  // metadata timeouts) backed by the auto_cache contract tests.
-  const origFuseOptions = fuse._fuseOptions.bind(fuse);
-  const extraOpts = buildFuseOptionString(process.env);
-  fuse._fuseOptions = (): string => {
-    const base = origFuseOptions();
-    return base ? `${base},${extraOpts}` : `-o${extraOpts}`;
-  };
 
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("FUSE mount timed out after 5s")), 5_000);
@@ -1069,8 +1167,17 @@ export async function mountFuse(options: {
         });
       });
     },
-    getBufferStats: _getBufferStats,
+    getBufferStats: routedOps.getBufferStats,
     ...(localPaths === undefined ? {} : { getLocalPathStats: localPaths.stats }),
+    getPassthroughStatus: () => {
+      const stats = localPaths?.stats();
+      return {
+        requested: wantPassthrough,
+        negotiated: passthroughNegotiated,
+        opens: stats?.passthroughOpens ?? 0,
+        fallbacks: stats?.passthroughFallbacks ?? 0,
+      };
+    },
   };
 }
 

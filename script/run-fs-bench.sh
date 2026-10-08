@@ -11,20 +11,32 @@
 # npm + git for the language-tool scenarios. go is still skipped
 # because it's not in debian:stable-slim's apt and pulling the
 # binary release would bloat the bootstrap time.
+#
+# LOCAL_ONLY=1 runs the bench under /tmp/workspace/bench and lists that
+# directory in MOUNT_IGNORE, to measure local-only paths.
+# COMPUTERD_FUSE_PASSTHROUGH=0 measures them without kernel passthrough.
 set -u
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates curl npm >/dev/null 2>&1
+apt-get install -y --no-install-recommends fuse3 attr util-linux coreutils findutils git ca-certificates curl npm >/dev/null 2>&1
 
 # /tmp/baseline gives the bench a native target to compare against. The
 # previous version forgot to create it, so fs-bench silently dropped the
 # baseline column from its output.
 mkdir -p /tmp/workspace /tmp/baseline
+BENCH_MOUNT=/tmp/workspace
+MOUNT_IGNORE=""
+if [ "${LOCAL_ONLY:-0}" = "1" ]; then
+  BENCH_MOUNT=/tmp/workspace/bench
+  MOUNT_IGNORE=/bench
+fi
 # Forward optional tracer config to computerd. When COMPUTERD_FUSE_TRACE=summary is
 # set the daemon writes a JSON summary on unmount or SIGUSR2; with
 # COMPUTERD_FUSE_TRACE_FILE pointed at a host-mounted path the trace survives
 # the container.
 COMPUTERD_FUSE_TRACE="${COMPUTERD_FUSE_TRACE:-}" \
   COMPUTERD_FUSE_TRACE_FILE="${COMPUTERD_FUSE_TRACE_FILE:-}" \
+  COMPUTERD_FUSE_PASSTHROUGH="${COMPUTERD_FUSE_PASSTHROUGH:-}" \
+  MOUNT_IGNORE="$MOUNT_IGNORE" \
   PORT=45678 MOUNT_POINT=/tmp/workspace /usr/local/bin/computerd >/tmp/computerd.log 2>&1 &
 COMPUTERD_PID=$!
 
@@ -44,7 +56,8 @@ fi
 
 # Forward bench knobs (REPS, WARMUP, RANDOMIZE_TARGETS, OUTPUT_JSON,
 # SCENARIOS) into the bench. fs-bench reads them from the environment.
-MOUNT=/tmp/workspace BASE=/tmp/baseline /usr/local/bin/fs-bench
+mkdir -p "$BENCH_MOUNT"
+MOUNT="$BENCH_MOUNT" BASE=/tmp/baseline /usr/local/bin/fs-bench
 status=$?
 
 # Ask computerd to dump the FUSE trace (if enabled) before the SIGTERM. The

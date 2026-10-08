@@ -32,24 +32,32 @@ if [[ ! -x "$BINARY" ]]; then
   exit 1
 fi
 
-# Pre-pull the libfuse2 packages once per container by using
-# our own intermediate image. Skipped if the image already
-# exists.
-IMAGE_TAG="computerd-harness:libfuse2"
+# Pre-pull the FUSE runtime once by using our own intermediate
+# image. Skipped if the image already exists. computerd links the
+# system libfuse 3 and needs 3.17 or newer, which is Debian trixie.
+IMAGE_TAG="computerd-harness:libfuse3"
 if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
   echo "building $IMAGE_TAG..." >&2
   docker build --platform linux/amd64 -t "$IMAGE_TAG" - <<'DOCKERFILE' >&2
-FROM --platform=linux/amd64 debian:stable-slim
+FROM --platform=linux/amd64 debian:trixie-slim
 RUN apt-get update >/dev/null \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 attr util-linux coreutils findutils \
+      fuse3 attr util-linux coreutils findutils \
       >/dev/null \
  && rm -rf /var/lib/apt/lists/*
 DOCKERFILE
 fi
 
+# Lets a test boot computerd with MOUNT_IGNORE or COMPUTERD_FUSE_* set.
+FORWARD_ENV=()
+while IFS='=' read -r name _; do
+  case "$name" in
+    MOUNT_IGNORE | MOUNT_IGNORE_PATH | COMPUTERD_FUSE_*) FORWARD_ENV+=(-e "$name") ;;
+  esac
+done < <(env)
+
 # Boot the container. Privileged + /dev/fuse + SYS_ADMIN is
-# the same recipe as script/fs-tests.sh; lets fuse-native
+# the same recipe as script/fs-tests.sh; lets the FUSE binding
 # actually mount.
 CID=$(docker run --rm -d \
   --platform linux/amd64 \
@@ -62,6 +70,7 @@ CID=$(docker run --rm -d \
   -p "$HOST_PORT:8080" \
   -e PORT=8080 \
   -e MOUNT_POINT=/workspace \
+  ${FORWARD_ENV[@]+"${FORWARD_ENV[@]}"} \
   "$IMAGE_TAG" \
   /usr/local/bin/computerd)
 

@@ -125,13 +125,54 @@ describe("describeMountIgnore", () => {
     expect(info.root).toBe("/tmp/workspace");
   });
 
-  test("reports passthrough as unavailable, with the reason", () => {
-    // Reported rather than omitted so an operator can see why without
-    // reading the source, and so a future binding upgrade shows up as
-    // a measurable change rather than an assumed one.
-    const info = describeMountIgnore(resolveMountIgnoreConfig({}, "/workspace"));
+  const enabled = resolveMountIgnoreConfig({ MOUNT_IGNORE: "/node_modules" }, "/workspace");
+  const live = { requested: true, negotiated: true, opens: 0, fallbacks: 0 };
+
+  test("reports passthrough active once a local-only file has used it", () => {
+    const info = describeMountIgnore(enabled, { ...live, opens: 1284, fallbacks: 2 });
+    expect(info.fastPaths).toMatchObject({
+      passthrough: true,
+      passthroughOpens: 1284,
+      passthroughFallbacks: 2,
+      writebackCache: false,
+    });
+  });
+
+  test("says so when no kernel FUSE mount is running", () => {
+    const info = describeMountIgnore(enabled);
     expect(info.fastPaths.passthrough).toBe(false);
-    expect(info.fastPaths.passthroughReason).toMatch(/libfuse 2\.9/);
-    expect(info.fastPaths.writebackCache).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/no kernel FUSE mount/);
+  });
+
+  test("says so when no local-only paths are configured", () => {
+    const info = describeMountIgnore(resolveMountIgnoreConfig({}, "/workspace"), live);
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/MOUNT_IGNORE/);
+  });
+
+  test("says so when it was turned off", () => {
+    const info = describeMountIgnore(enabled, { ...live, requested: false, negotiated: false });
+    expect(info.fastPaths.passthroughReason).toMatch(/COMPUTERD_FUSE_PASSTHROUGH/);
+  });
+
+  test("blames the kernel when it never offered the capability", () => {
+    const info = describeMountIgnore(enabled, { ...live, negotiated: false });
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/kernel did not offer/);
+    expect(info.fastPaths.passthroughReason).toMatch(/6\.9/);
+  });
+
+  test("points at privileges and overlayfs when every registration was refused", () => {
+    const info = describeMountIgnore(enabled, { ...live, fallbacks: 3 });
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/refused every/);
+    expect(info.fastPaths.passthroughReason).toMatch(/CAP_SYS_ADMIN/);
+    expect(info.fastPaths.passthroughReason).toMatch(/overlayfs/);
+  });
+
+  test("distinguishes a negotiated mount that has not opened a local-only file yet", () => {
+    const info = describeMountIgnore(enabled, live);
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/no local-only file has been opened/);
   });
 });

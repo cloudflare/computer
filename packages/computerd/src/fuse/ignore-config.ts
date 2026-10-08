@@ -69,6 +69,14 @@ export function resolveMountIgnoreConfig(
   return { root: normalizedRoot, ignore, enabled: !ignore.isEmpty };
 }
 
+export interface PassthroughStatus {
+  /** Local-only paths exist and COMPUTERD_FUSE_PASSTHROUGH did not turn it off. */
+  readonly requested: boolean;
+  readonly negotiated: boolean;
+  readonly opens: number;
+  readonly fallbacks: number;
+}
+
 /** The `ignore` block reported on /__computerd/info. */
 export interface MountIgnoreInfo {
   readonly supported: true;
@@ -79,22 +87,21 @@ export interface MountIgnoreInfo {
   readonly patterns: readonly string[];
   readonly ineffectiveExclusions: readonly string[];
   readonly fastPaths: {
-    /**
-     * Always false: fuse-native binds libfuse 2.9, passthrough needs the
-     * libfuse 3.17 API. Reported rather than omitted so the reason is
-     * visible without reading the source.
-     */
-    readonly passthrough: false;
+    readonly passthrough: boolean;
     readonly passthroughReason: string;
-    /** Also unavailable: libfuse 2.9 fails the mount on the option. */
+    readonly passthroughOpens: number;
+    readonly passthroughFallbacks: number;
+    /** Possible under libfuse 3, but it would change writes on the synced mount. */
     readonly writebackCache: false;
   };
 }
 
-export const PASSTHROUGH_UNAVAILABLE_REASON =
-  "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API";
-
-export function describeMountIgnore(config: MountIgnoreConfig): MountIgnoreInfo {
+/** `status` is undefined when no kernel FUSE mount is running. */
+export function describeMountIgnore(
+  config: MountIgnoreConfig,
+  status?: PassthroughStatus,
+): MountIgnoreInfo {
+  const inactive = inactivePassthroughReason(config, status);
   return {
     supported: true,
     enabled: config.enabled,
@@ -102,9 +109,41 @@ export function describeMountIgnore(config: MountIgnoreConfig): MountIgnoreInfo 
     patterns: config.ignore.patterns,
     ineffectiveExclusions: config.ignore.ineffectiveExclusions,
     fastPaths: {
-      passthrough: false,
-      passthroughReason: PASSTHROUGH_UNAVAILABLE_REASON,
+      passthrough: inactive === undefined,
+      passthroughReason: inactive ?? activeReason(status?.fallbacks ?? 0),
+      passthroughOpens: status?.opens ?? 0,
+      passthroughFallbacks: status?.fallbacks ?? 0,
       writebackCache: false,
     },
   };
+}
+
+// Each case has a different fix, so each gets its own wording.
+function inactivePassthroughReason(
+  config: MountIgnoreConfig,
+  status: PassthroughStatus | undefined,
+): string | undefined {
+  if (!config.enabled) return "no local-only paths are configured (MOUNT_IGNORE)";
+  if (status === undefined) {
+    return "no kernel FUSE mount is running, so local-only paths are not passed through";
+  }
+  if (!status.requested) return "turned off with COMPUTERD_FUSE_PASSTHROUGH";
+  if (!status.negotiated) {
+    return "the kernel did not offer FUSE passthrough at init; it needs Linux 6.9 or newer";
+  }
+  if (status.opens > 0) return undefined;
+  if (status.fallbacks > 0) {
+    return (
+      `the kernel offered passthrough but refused every backing registration ` +
+      `(${status.fallbacks}); check that computerd has CAP_SYS_ADMIN and that ` +
+      `MOUNT_IGNORE_PATH is not on overlayfs stacked on another overlayfs`
+    );
+  }
+  return "negotiated, but no local-only file has been opened yet";
+}
+
+function activeReason(fallbacks: number): string {
+  return fallbacks === 0
+    ? "active"
+    : `active; ${fallbacks} open(s) fell back to computerd after a refused registration`;
 }
