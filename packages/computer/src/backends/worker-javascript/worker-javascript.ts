@@ -277,7 +277,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     const functions = new Map<string, WorkspaceModuleFunctions>();
     const empty = new Set<string>();
     for (const [specifier, factory] of options.modules.host) {
-      const built = factory({ git: host.git, artifacts: host.artifacts, runtime: host.runtime });
+      const built = factory({
+        git: host.git,
+        artifacts: host.artifacts,
+        runtime: host.runtime,
+        ...(host.assets === undefined ? {} : { assets: host.assets }),
+      });
       // A factory can have nothing to offer on a connection, such as
       // ws:tools for an agent with no tools. Leaving its module out means
       // only an import of it fails, not every run. An object of functions
