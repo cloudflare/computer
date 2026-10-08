@@ -43,6 +43,10 @@
       "types": "./dist/modules/artifacts.d.ts",
       "import": "./dist/modules/artifacts.js"
     },
+    "./modules/assets": {
+      "types": "./dist/modules/assets.d.ts",
+      "import": "./dist/modules/assets.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
