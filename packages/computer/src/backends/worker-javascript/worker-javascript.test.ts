@@ -1307,7 +1307,7 @@ describe("WorkerJavaScriptBackend", () => {
       await workspace.fs.writeFile("/workspace/a/b/two.js", `import "large"; import "ws:echo";`);
 
       const execution = await workspace.runtime.exec(
-        `import "large"; import "ws:echo"; import "./a/one.js";`,
+        `import "large"; import "ws:echo"; import "./a/one.js"; export default null;`,
       );
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
 
@@ -1407,6 +1407,36 @@ describe("WorkerJavaScriptBackend", () => {
       await expect(
         workspace.runtime.exec(`import "node:path"; export default null;`),
       ).rejects.toThrow('Module "node:path" is not configured');
+    });
+
+    it("rejects a module with no default export before loading it", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
+      });
+
+      await expect(workspace.runtime.exec(`const x = 1;`)).rejects.toThrow(
+        'The module has no default export, so there is nothing to run. Put the work in `export default async function (input) { ... }`, or re-export one with `export { default } from "./main.js"`.',
+      );
+      await expect(
+        workspace.runtime.exec(`export function main() {} export const a = 1, b = 2;`),
+      ).rejects.toThrow("The module exports `main`, `a`, and `b` but no default");
+    });
+
+    it.each([
+      ["a default export", `export default 1;`],
+      ["a named default", `function main() {} export { main as default };`],
+      ["a re-exported default", `export { default } from "./main.js";`],
+    ])("runs a module with %s", async (_label, source) => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load: completingLoader() } })],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      await workspace.fs.writeFile("/workspace/main.js", "export default 1;");
+
+      const execution = await workspace.runtime.exec(source);
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
     });
 
     it("rewrites an absolute import to a path relative to its importer", async () => {

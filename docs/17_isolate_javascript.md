@@ -51,7 +51,7 @@ const result = await handle.result();
 // result.value = { value: 42, persisted: "42" }
 ```
 
-The source is a real ES module, with static imports and literal dynamic imports. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
+The source is a real ES module, with static imports and literal dynamic imports. The module needs a default export, or the run fails before it starts. A default-exported function is called with `options.input`, and any other default value is the result. To run code that's already in a file, re-export it with `export { default } from "./main.js"`.
 
 Put the module's work in that function. Each run loads the module first, then calls its default export, and the Workers runtime doesn't allow I/O while a module loads. So `node:fs` and host module calls only work once the function is running:
 

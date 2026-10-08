@@ -427,6 +427,7 @@ describe("WorkspaceRuntime", () => {
         (async () => {
           await fs.writeFile("/workspace/floating.txt", "never");
         })();
+        export default () => "returned";
       `,
       cwd: "/workspace",
     });
@@ -462,6 +463,7 @@ describe("WorkspaceRuntime", () => {
       source: `
         import fs from "node:fs/promises";
         await fs.readdir("/workspace");
+        export default () => "returned";
       `,
       cwd: "/workspace",
     });
@@ -846,6 +848,26 @@ describe.each([
       status: "completed",
       value: { joined: "/workspace/b.txt", bare: "c.txt", sha: "ba7816bf", zipped: "round trip" },
     });
+  });
+
+  it("runs a default export re-exported from a workspace file", async () => {
+    await write(
+      "/workspace/app/main.js",
+      `import fs from "node:fs/promises";
+      export default async (input) => {
+        await fs.writeFile("/workspace/app/out.txt", String(input.n * 21));
+        return fs.readFile("/workspace/app/out.txt", "utf8");
+      };`,
+    );
+    const response = await runtime({
+      source: `export { default } from "./main.js";`,
+      cwd: "/workspace/app",
+      backend,
+      value: { n: 2 },
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text)).toMatchObject({ result: { status: "completed", value: "42" } });
   });
 
   it("runs the Node.js timer, async context, and diagnostics built-ins", async () => {

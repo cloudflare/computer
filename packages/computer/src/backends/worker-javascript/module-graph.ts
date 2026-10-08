@@ -333,6 +333,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
     modules[name] = rewriteImports(source, edits);
   }
 
+  assertDefaultExport(options.source);
   await visit(entryPath, options.source, 0);
 
   // node:* specifiers are resolved by name in both registries, so they
@@ -351,6 +352,44 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   }
 
   return { entryName, modules };
+}
+
+// The run's result comes from the entry module's default export, so a
+// module without one would complete with nothing to show. Fail before
+// loading it, and name any other exports, since a model that writes
+// `export function main` meant one of them.
+function assertDefaultExport(source: string): void {
+  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+  const named: string[] = [];
+  for (const node of ast.body) {
+    if (node.type === "ExportDefaultDeclaration") return;
+    if (node.type !== "ExportNamedDeclaration") continue;
+    for (const specifier of node.specifiers) {
+      const exported = specifier.exported;
+      const name = exported.type === "Identifier" ? exported.name : String(exported.value);
+      if (name === "default") return;
+      named.push(name);
+    }
+    const declaration = node.declaration;
+    if (declaration?.type === "VariableDeclaration") {
+      for (const variable of declaration.declarations) {
+        if (variable.id.type === "Identifier") named.push(variable.id.name);
+      }
+    } else if (declaration?.id) {
+      named.push(declaration.id.name);
+    }
+  }
+  const shape =
+    'Put the work in `export default async function (input) { ... }`, or re-export one with `export { default } from "./main.js"`.';
+  if (named.length === 0) {
+    throw new Error(`The module has no default export, so there is nothing to run. ${shape}`);
+  }
+  const list = named.map((name) => `\`${name}\``);
+  const exports =
+    list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")}, and ${list[list.length - 1]}`;
+  throw new Error(
+    `The module exports ${exports} but no default, so there is nothing to run. ${shape}`,
+  );
 }
 
 // An import written as a string literal, and where that literal sits in
