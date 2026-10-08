@@ -131,6 +131,8 @@ createPiTools({ workspace, constrainedSampling: "require" });
 
 pi tool results carry text and images. An image from `read` comes back as an `image` block; a PDF comes back as text saying it cannot be attached. `exec` returns its final snapshot.
 
+`forPiTools()` serves pi tools to isolate JavaScript as `ws:tools`, through `createToolBindings()`. It takes the result of `createPiTools()` or executable pi tools of your own. See [`ws:tools`](17_isolate_javascript.md#wstools).
+
 ## TanStack AI
 
 A TanStack tool's `inputSchema` is a Standard Schema, which Zod implements, so the schemas pass through unchanged. The tools come back as a list, the shape `chat({ tools })`, `mergeAgentTools`, and `createToolRegistry` take. `format: "object"` keys them by name instead, for reaching one tool directly.
