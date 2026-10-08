@@ -33,8 +33,10 @@ export interface MountBase {
   // Content version. The indexer records it in _vfs_mounts.version
   // after a successful materialize() and runs materialize() again, over
   // an emptied root, when a later boot brings a different value. Leave
-  // it unset to materialize once per store.
-  readonly version?: string;
+  // it unset to materialize once per store. A function is awaited before
+  // the comparison, for sources that can only be versioned by reading
+  // them asynchronously.
+  readonly version?: string | (() => Promise<string>);
 }
 
 // Eager mounts populate everything in one shot through MountWriteAPI.

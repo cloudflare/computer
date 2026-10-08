@@ -753,6 +753,51 @@ describe("mount versions", () => {
     expect(await ws.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a");
   });
 
+  it("awaits a version function before comparing", async () => {
+    const storage = makeStorage();
+    const first = { ...fakeMount({ files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }) };
+    const v1 = Object.assign(first, { version: async () => "v1" });
+    const ws1 = bootWith(storage, v1);
+    await ws1.ensureMountsIndexed();
+    expect(mountRow(ws1)).toEqual({ indexed: 1, mode: "read-only", version: "v1" });
+
+    const same = fakeMount({ files: [{ path: "/workspace/m/a.txt", bytes: utf8("b") }] });
+    const ws2 = bootWith(storage, Object.assign(same, { version: async () => "v1" }));
+    await ws2.ensureMountsIndexed();
+    expect(same.calls).toBe(0);
+
+    const next = fakeMount({ files: [{ path: "/workspace/m/a.txt", bytes: utf8("c") }] });
+    const ws3 = bootWith(storage, Object.assign(next, { version: async () => "v2" }));
+    await ws3.ensureMountsIndexed();
+    expect(next.calls).toBe(1);
+    expect(await ws3.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("c");
+    expect(mountRow(ws3)?.version).toBe("v2");
+  });
+
+  it("fails only the mount whose version function rejects", async () => {
+    const broken = Object.assign(
+      fakeMount({ files: [{ path: "/workspace/broken/a.txt", bytes: utf8("x") }] }),
+      {
+        version: async () => {
+          throw new Error("no version");
+        },
+      },
+    );
+    const healthy = fakeMount({
+      version: "v1",
+      files: [{ path: "/workspace/ok/a.txt", bytes: utf8("ok") }],
+    });
+    const ws = new Workspace({
+      storage: makeStorage(),
+      backends,
+      mounts: { "/workspace/broken": broken, "/workspace/ok": healthy },
+    });
+    await expect(ws.ensureMountsIndexed()).rejects.toThrow(/no version/);
+    expect(broken.calls).toBe(0);
+    expect(healthy.calls).toBe(1);
+    expect(await ws.fs.readFile("/workspace/ok/a.txt", "utf8")).toBe("ok");
+  });
+
   it("keeps files that existed at the root before the first index", async () => {
     const storage = makeStorage();
     const before = new Workspace({ storage, backends });

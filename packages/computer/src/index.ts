@@ -39,7 +39,10 @@ export { R2Bucket, type R2BucketBinding, type R2BucketOptions } from "./mounts/p
 export {
   WorkerBundle,
   type WorkerBundleEntry,
+  type WorkerBundleFile,
   type WorkerBundleOptions,
+  type WorkerBundleSource,
+  type WorkerBundleTree,
 } from "./mounts/providers/worker-bundle.js";
 export type {
   EagerMount,

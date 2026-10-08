@@ -39,14 +39,33 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
   // version is only finished if the recorded version matches; one
   // indexed under a different version is stale and gets replaced.
   // Mounts without a version keep the once-per-store behavior.
+  //
+  // A version may be an async function (a lazily loaded source can only
+  // be hashed by loading it), so resolve every version first. A mount
+  // whose version can't be resolved fails on its own, like a failed
+  // materialize(), without holding up the others.
+  const versions = new Map<string, string | undefined>();
+  const versionFailures: unknown[] = [];
+  const resolved = await Promise.allSettled(
+    [...mounts].map(async ([root, mount]) => {
+      const version = typeof mount.version === "function" ? await mount.version() : mount.version;
+      versions.set(root, version);
+    }),
+  );
+  for (const result of resolved) {
+    if (result.status === "rejected") versionFailures.push(result.reason);
+  }
+
   const status = new Map<string, boolean>();
   const stale = new Set<string>();
-  for (const [root, mount] of mounts) {
+  for (const root of mounts.keys()) {
+    if (!versions.has(root)) continue;
+    const version = versions.get(root);
     const row = db.one<{ indexed: number; version: string | null }>(
       "SELECT indexed, version FROM _vfs_mounts WHERE root = ?",
       root,
     );
-    const versionMatches = mount.version === undefined || row?.version === mount.version;
+    const versionMatches = version === undefined || row?.version === version;
     status.set(root, row?.indexed === 1 && versionMatches);
     if (row?.indexed === 1 && !versionMatches) stale.add(root);
   }
@@ -54,8 +73,11 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
   // Run every pending mount in parallel. Per-mount failures clear
   // their own subtree; the overall index call rejects with the first
   // failure once every pending mount has settled.
-  const pending = [...mounts.entries()].filter(([root]) => status.get(root) !== true);
-  if (pending.length === 0) return;
+  const pending = [...mounts.entries()].filter(([root]) => status.get(root) === false);
+  if (pending.length === 0) {
+    if (versionFailures.length > 0) throw versionFailures[0];
+    return;
+  }
 
   const results = await Promise.allSettled(
     pending.map(async ([root, mount]) => {
@@ -125,18 +147,23 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
       db.run(
         "UPDATE _vfs_mounts SET mode = ?, indexed = 1, version = ? WHERE root = ?",
         mount.mode,
-        mount.version ?? null,
+        versions.get(root) ?? null,
         root,
       );
       invalidateReadOnlyMountCache(db);
     }),
   );
 
-  const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  const failures = [
+    ...versionFailures,
+    ...results
+      .filter((r): r is PromiseRejectedResult => r.status === "rejected")
+      .map((r) => r.reason),
+  ];
   if (failures.length > 0) {
     // Surface the first failure; preserve the original error so
     // tests / callers see the underlying message.
-    throw failures[0].reason;
+    throw failures[0];
   }
 }
 

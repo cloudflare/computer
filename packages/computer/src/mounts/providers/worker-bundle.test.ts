@@ -199,9 +199,8 @@ describe("WorkerBundle", () => {
     expect(() => bundle("templates", {}, bundleDir)).toThrow(/does not exist/);
     expect(() => bundle("templates", {}, bundleDir)).toThrow(/find_additional_modules/);
     expect(() => bundle("templates", {}, bundleDir)).toThrow(/templates\/\*\*\/\*/);
-    expect(() => bundle("templates", {}, bundleDir)).toThrow(
-      /workerBundle\(\{ dir: "src\/templates" \}\)/,
-    );
+    expect(() => bundle("templates", {}, bundleDir)).toThrow(/computerBundle\(\)/);
+    expect(() => bundle("templates", {}, bundleDir)).toThrow(/computer:bundle\/src\/templates/);
   });
 
   it("explains that vite dev is not supported when running under it", () => {
@@ -209,6 +208,7 @@ describe("WorkerBundle", () => {
     writeFileSync(join(bundleDir, "__VITE_WORKER_ENTRY__"), "");
     expect(() => bundle("templates", {}, bundleDir)).toThrow(/vite dev/);
     expect(() => bundle("templates", {}, bundleDir)).not.toThrow(/find_additional_modules/);
+    expect(() => bundle("templates", {}, bundleDir)).toThrow(/computerBundle\(\)/);
   });
 
   it("rejects a path that is a file", () => {
@@ -362,5 +362,149 @@ describe("WorkerBundle versions", () => {
     const unchanged = writeTree(tempDir(), { "a.txt": "three" });
     const third = await indexed(WorkerBundle(unchanged, { version: "2" }), storage);
     expect(await third.fs.readFile(`${ROOT}/a.txt`, "utf8")).toBe("two");
+  });
+});
+
+describe("WorkerBundle with a tree", () => {
+  const tree = {
+    "./app/package.json": '{"name":"app"}\n',
+    "./scripts/setup.sh": "#!/bin/sh\necho setup\n",
+    "./README.txt": "readme\n",
+    "./drafts/wip.txt": "draft\n",
+  };
+
+  it("copies a tree with glob-style keys", async () => {
+    const ws = await indexed(WorkerBundle(tree));
+    expect(await ws.fs.readFile(`${ROOT}/app/package.json`, "utf8")).toBe('{"name":"app"}\n');
+    expect(await ws.fs.readFile(`${ROOT}/README.txt`, "utf8")).toBe("readme\n");
+    expect((await ws.fs.readdir(ROOT)).map((entry) => entry.name).sort()).toEqual(
+      ["README.txt", "app", "drafts", "scripts"].sort(),
+    );
+  });
+
+  it("accepts Uint8Array contents", async () => {
+    const ws = await indexed(WorkerBundle({ "blob.bin": BINARY }));
+    expect(await readBytes(ws, `${ROOT}/blob.bin`)).toEqual(BINARY);
+  });
+
+  it("calls lazy loaders only when copying", async () => {
+    const calls: string[] = [];
+    const lazy = Object.fromEntries(
+      Object.entries(tree).map(([key, value]) => [
+        key,
+        async () => {
+          calls.push(key);
+          return value;
+        },
+      ]),
+    );
+    const mount = WorkerBundle(lazy, { version: "v1" });
+    expect(calls).toEqual([]);
+    const ws = await indexed(mount);
+    expect(calls.sort()).toEqual(Object.keys(tree).sort());
+    expect(await ws.fs.readFile(`${ROOT}/scripts/setup.sh`, "utf8")).toBe(
+      "#!/bin/sh\necho setup\n",
+    );
+  });
+
+  it("applies the default file mode and fileMode", async () => {
+    const ws = await indexed(
+      WorkerBundle(tree, { fileMode: (path) => (path === "README.txt" ? 0o600 : undefined) }),
+    );
+    expect(await modeOf(ws, `${ROOT}/scripts/setup.sh`)).toBe(0o755);
+    expect(await modeOf(ws, `${ROOT}/README.txt`)).toBe(0o600);
+    expect(await modeOf(ws, `${ROOT}/app/package.json`)).toBe(0o644);
+  });
+
+  it("filters files and derived directories", async () => {
+    const seen: string[] = [];
+    const ws = await indexed(
+      WorkerBundle(tree, {
+        filter: (entry) => {
+          seen.push(`${entry.type}:${entry.path}`);
+          return !(entry.type === "dir" && entry.path === "drafts");
+        },
+      }),
+    );
+    await expect(ws.fs.stat(`${ROOT}/drafts`)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(seen).toContain("dir:app");
+    expect(seen).not.toContain("file:drafts/wip.txt");
+  });
+
+  it("rejects keys with .. segments, empty keys and duplicates", () => {
+    expect(() => WorkerBundle({ "../etc/passwd": "x" })).toThrow(/'\.\.'/);
+    expect(() => WorkerBundle({ "./": "x" })).toThrow(/no path/);
+    expect(() => WorkerBundle({ "./a.txt": "x", "a.txt": "y" })).toThrow(/two keys/);
+    expect(() => WorkerBundle({ a: "x", "a/b": "y" })).toThrow(/both a file and a directory/);
+  });
+
+  it("is read-only after indexing", async () => {
+    const ws = await indexed(WorkerBundle(tree));
+    await expect(
+      ws.fs.writeFile(`${ROOT}/new.txt`, new TextEncoder().encode("x")),
+    ).rejects.toMatchObject({ code: "EROFS" });
+  });
+
+  it("uses a source's declared version", () => {
+    expect(WorkerBundle({ version: "build-7", files: tree }).version).toBe("build-7");
+  });
+
+  it("folds filter and fileMode into a declared version", () => {
+    const plain = WorkerBundle({ version: "build-7", files: tree }).version;
+    const filtered = WorkerBundle(
+      { version: "build-7", files: tree },
+      { filter: () => true },
+    ).version;
+    expect(filtered).toMatch(/^sha256:/);
+    expect(filtered).not.toBe(plain);
+  });
+
+  it("lets an explicit version win over the declared one", () => {
+    expect(WorkerBundle({ version: "build-7", files: tree }, { version: "mine" }).version).toBe(
+      "mine",
+    );
+  });
+
+  it("hashes an eager tree the same way as the same files on disk", () => {
+    const dir = writeTree(tempDir(), {
+      "app/package.json": tree["./app/package.json"],
+      "scripts/setup.sh": tree["./scripts/setup.sh"],
+      "README.txt": tree["./README.txt"],
+      "drafts/wip.txt": tree["./drafts/wip.txt"],
+    });
+    expect(WorkerBundle({ ...tree }).version).toBe(WorkerBundle(dir).version);
+  });
+
+  it("hashes a lazy tree asynchronously, loading each file once", async () => {
+    const calls: string[] = [];
+    const lazy = Object.fromEntries(
+      Object.entries(tree).map(([key, value]) => [
+        key,
+        async () => {
+          calls.push(key);
+          return value;
+        },
+      ]),
+    );
+    const mount = WorkerBundle(lazy);
+    expect(typeof mount.version).toBe("function");
+    const version = mount.version as () => Promise<string>;
+    const [first, second] = await Promise.all([version(), version()]);
+    expect(first).toBe(second);
+    expect(first).toBe(WorkerBundle({ ...tree }).version);
+    expect(calls).toHaveLength(Object.keys(tree).length);
+  });
+
+  it("refreshes when a new tree has a new version", async () => {
+    const storage = new SQLiteTestStorage();
+    await indexed(
+      WorkerBundle({ version: "1", files: { "a.txt": "one", "old.txt": "old" } }),
+      storage,
+    );
+    const ws = await indexed(WorkerBundle({ version: "2", files: { "a.txt": "two" } }), storage);
+    expect(await ws.fs.readFile(`${ROOT}/a.txt`, "utf8")).toBe("two");
+    await expect(ws.fs.readFile(`${ROOT}/old.txt`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
