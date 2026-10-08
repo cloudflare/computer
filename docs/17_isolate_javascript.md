@@ -49,7 +49,23 @@ const result = await handle.result();
 // result.value = { value: 42, persisted: "42" }
 ```
 
-The source is a real ES module. Static imports, literal dynamic imports, and top-level await are supported. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
+The source is a real ES module, with static imports and literal dynamic imports. If the module default-exports a function, Workspace invokes it with `options.input`. Otherwise module evaluation completes with a `null` structured result.
+
+Put the module's work in that function. Each run loads the module first, then calls its default export, and the Workers runtime doesn't allow I/O while a module loads. So `node:fs` and host module calls only work once the function is running:
+
+```js
+import fs from "node:fs/promises";
+
+// Fails: this runs while the module loads.
+const early = await fs.readFile("/workspace/a.txt", "utf8");
+
+export default async function () {
+  // Works: this runs when Workspace calls the function.
+  return fs.readFile("/workspace/a.txt", "utf8");
+}
+```
+
+A call made while the module loads fails the run with an error that names the call, even if the code catches the error, since the work it asked for never happened. The run also fails if a promise rejects and nothing has handled it by the time the function finishes. Top-level `await` is fine for anything that doesn't do I/O.
 
 The returned value becomes the result's `value` and must be JSON-compatible plain data. As with `JSON.stringify`, an `undefined` object field is left out, so `{ kept: 1, dropped: undefined }` completes as `{ kept: 1 }`, and returning `undefined` gives `null`. A function, a class instance such as a `Date`, an `undefined` array item, or a cycle fails the run. `options.input` is checked the same way.
 

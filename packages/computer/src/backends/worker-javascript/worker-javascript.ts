@@ -1052,7 +1052,19 @@ function startJavaScriptExecution(options: {
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
-    import { install } from "workspace-capabilities.js";
+    import { install, moduleScopeRefusals } from "workspace-capabilities.js";
+
+    // A promise nobody awaits would otherwise fail without a trace while
+    // the run reports success. Track the rejections nothing handled, and
+    // fail the run if any are left once it is done. The runtime doesn't
+    // report rejections from module evaluation this way, which is why
+    // capability calls refused at module scope are tracked separately.
+    const unhandled = new Map();
+    addEventListener("unhandledrejection", (event) => {
+      unhandled.set(event.promise, event.reason);
+      event.preventDefault();
+    });
+    addEventListener("rejectionhandled", (event) => unhandled.delete(event.promise));
 
     export default class extends WorkerEntrypoint {
       async evaluate(input, host, context) {
@@ -1194,11 +1206,19 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         // holds the host bridge stub alive for the whole run; frames
         // enqueue as output is produced.
         const drained = host.attachOutput(output.readable);
+        unhandled.clear();
         try {
           const module = await import(${JSON.stringify(entryName)});
           const result = typeof module.default === "function"
             ? await module.default(input)
             : module.default ?? null;
+          // Rejections are reported after the microtask queue drains.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          if (moduleScopeRefusals.length > 0) throw moduleScopeRefusals[0];
+          for (const reason of unhandled.values()) {
+            const message = reason instanceof Error ? reason.message : String(reason);
+            throw new Error("Unhandled rejection: " + message);
+          }
           const value = result ?? null;
           await host.assertResult(value);
           enqueue({ name: "exit", code: 0, result: value });

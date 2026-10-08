@@ -421,8 +421,13 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       "readFile", "readFileBytes", "writeFile", "mkdir", "rm", "chmod",
       "symlink", "readlink", "readdir", "readdirWithFileTypes", "stat", "lstat", "exists"
     ]);
+    // Calls the Workers runtime refused because they ran at module scope.
+    // The runner fails the run if any are left, even when the module
+    // caught the error, since the work it asked for never happened.
+    export const moduleScopeRefusals = [];
     export function install(value) {
       host = value;
+      moduleScopeRefusals.length = 0;
       globalThis[callKey] = filesystemCall;
     }
     async function filesystemCall(namespace, method, args) {
@@ -439,7 +444,24 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       if (approximateBytes(args) > ${maxCapabilityBytes}) {
         throw new Error(${JSON.stringify(requestTooLargeMessage)});
       }
-      const payload = await host.call(namespace + "." + method, args);
+      let payload;
+      try {
+        payload = await host.call(namespace + "." + method, args);
+      } catch (error) {
+        // A module is evaluated outside any request, and the runtime
+        // refuses I/O there with an error about request handlers, which
+        // this code doesn't have. Name the call and the fix instead.
+        if (error instanceof Error && error.message.startsWith("Disallowed operation called within global scope")) {
+          const name = namespace === "fs" ? "node:fs" : namespace.slice("host/".length);
+          const refused = new Error(
+            name + " " + method + " can't run at module scope, where the Workers runtime refuses I/O. " +
+            "Call it from inside the default-exported function."
+          );
+          moduleScopeRefusals.push(refused);
+          throw refused;
+        }
+        throw error;
+      }
       if (payload.error !== undefined) {
         const error = new Error(payload.error.message);
         if (payload.error.code !== undefined) error.code = payload.error.code;

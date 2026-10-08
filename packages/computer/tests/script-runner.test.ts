@@ -420,6 +420,91 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value, text).toContain("acyclic");
   });
 
+  it("fails a run when a floating promise at module scope rejects", async () => {
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        (async () => {
+          await fs.writeFile("/workspace/floating.txt", "never");
+        })();
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("node:fs writeFile can't run at module scope");
+  });
+
+  it("fails a run that caught a call refused at module scope", async () => {
+    const response = await runtime({
+      source: `
+        import { echo } from "ws:test-host";
+        (async () => {
+          try {
+            await echo("too early");
+          } catch {}
+        })();
+        export default () => "returned";
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("ws:test-host echo can't run at module scope");
+  });
+
+  it("names the call when top-level await does I/O", async () => {
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        await fs.readdir("/workspace");
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("node:fs readdir can't run at module scope");
+  });
+
+  it("fails a run when a promise the default export left behind rejects", async () => {
+    const response = await runtime({
+      source: `
+        export default async () => {
+          Promise.reject(new Error("left behind"));
+          return "returned";
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(result.stderr, text).toContain("left behind");
+  });
+
+  it("ignores a rejection the module handles", async () => {
+    const response = await runtime({
+      source: `
+        export default async () => {
+          const failing = Promise.reject(new Error("handled"));
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return await failing.catch((error) => error.message);
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({ status: "completed", value: "handled" });
+  });
+
   it("drops undefined fields from a run result, as JSON does", async () => {
     const response = await runtime({
       source: `export default () => ({ kept: 1, dropped: undefined, nested: { also: undefined } });`,
