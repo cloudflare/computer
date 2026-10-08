@@ -36,6 +36,11 @@ export {
 } from "./client.js";
 export { decodeExecEvents, encodeExecEvents } from "./exec-wire.js";
 export { R2Bucket, type R2BucketBinding, type R2BucketOptions } from "./mounts/providers/r2.js";
+export {
+  WorkerBundle,
+  type WorkerBundleEntry,
+  type WorkerBundleOptions,
+} from "./mounts/providers/worker-bundle.js";
 export type {
   EagerMount,
   Mount,
