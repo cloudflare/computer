@@ -17,7 +17,7 @@ The `@cloudflare/computer` package provides an out of the box virtual filesystem
 It provides:
 
  - A fs API for working with files and directories compatible with Worker bindings.
- - R2-backed mounts for pre-filling read-only data into the workspace tree.
+ - Read-only mounts for pre-filling the workspace tree from an R2 bucket or from files shipped with the Worker.
  - Durability over DO restarts for all file operations.
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
  - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git` and `ws:container`, and managed execution records.
@@ -42,7 +42,7 @@ The package ships several entrypoints:
 
 | Entrypoint | Purpose |
 | --- | --- |
-| `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
+| `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`, for a container the durable object schedules (`scheduling_policy: "durable_object"`). Same sync plumbing; the launch names the image and the instance size. |
 | `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |

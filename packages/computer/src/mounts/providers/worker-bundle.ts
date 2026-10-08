@@ -42,7 +42,9 @@ export interface WorkerBundleOptions {
   // Compared by the mount indexer with the version recorded at the last
   // index; a mismatch replaces the subtree. Defaults to a SHA-256 of the
   // included paths, modes and bytes. Pass a string, such as a build id,
-  // to skip hashing a large tree, or false to index once per store.
+  // to skip hashing a large tree, or when `filter` depends on the
+  // session (the cached hash can't tell such filters apart). Pass false
+  // to index once per store.
   version?: string | false;
   maxBytes?: number;
   maxEntries?: number;

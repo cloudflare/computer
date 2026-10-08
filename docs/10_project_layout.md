@@ -59,6 +59,8 @@ packages/computer/
 │   │   ├── worker-shell/            # Dynamic Worker + just-bash shell backend
 │   │   ├── worker-javascript/       # Dynamic Worker ECMAScript module backend
 │   │   └── test.ts                  # In-process test backend
+│   ├── mounts/                      # Mount registry, indexer, R2Bucket and WorkerBundle
+│   ├── vite/                        # workerBundle Vite plugin (@cloudflare/computer/vite)
 │   ├── proxy.ts                     # WorkspaceProxy
 │   ├── proxy-stub.ts                # Client-side stub plumbing
 │   ├── stub.ts                      # DO stub helpers

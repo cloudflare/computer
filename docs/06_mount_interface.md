@@ -155,6 +155,122 @@ R2Bucket(env.SHARED_FILES, {
 - `fetch(relPath)` issues one R2 `get()` per stub on first read.
 - `put` and `delete` proxy to R2 when `mode: "read-write"`.
 
+### `WorkerBundle(path, options?)`
+
+> [!NOTE]
+> Unlike the rest of this document, this section describes what ships
+> today.
+
+Eager, read-only mount over a directory that ships inside the Worker's
+own upload. Use it for files that belong to the deployment, such as
+skills, templates, or reference material.
+
+```ts
+import { WorkerBundle } from "@cloudflare/computer";
+
+new Workspace({
+  // ...
+  mounts: {
+    "/workspace/.agents/skills": WorkerBundle("skills"),
+  },
+});
+```
+
+With `nodejs_compat`, workerd exposes every module in the Worker upload
+as a read-only file under `/bundle`. `WorkerBundle()` walks a directory
+there with the synchronous `node:fs` APIs and copies it into the
+workspace. A relative `path` is read from `/bundle`, so `"skills"` and
+`"/bundle/skills"` are the same. An absolute path is read as-is, which
+is useful in tests that point at a directory on disk.
+
+The mount is always read-only. Writes under the root through
+`Workspace.fs` reject with `EROFS`, and writes from the container are
+dropped on pull. There's no `mode` option, because the deployment owns
+these files and there is nowhere to write changes back to.
+
+```ts
+WorkerBundle("skills", {
+  // Skip entries. Skipping a directory skips everything under it.
+  filter: ({ path, type }) => !path.startsWith("drafts/"),
+  // workerd's file system has no permission bits. By default, files
+  // that start with "#!" get 0o755 and everything else 0o644.
+  fileMode: (path, bytes) => (path.startsWith("scripts/") ? 0o755 : undefined),
+  // See "Versions" below. A string skips hashing; false turns refresh off.
+  version: env.CF_VERSION_METADATA.id,
+  maxBytes: 10 << 20,
+  maxEntries: 5_000,
+});
+```
+
+- `WorkerBundle()` checks that the directory exists when it is called,
+  and throws with the fix in the message if not. That's usually a
+  missing wrangler rule or Vite plugin (see below).
+- File contents are only read in `materialize()`, which runs on the
+  first index and after a version change.
+- By default the mount's `version` is a SHA-256 of the included paths,
+  file modes and bytes. It's computed once per isolate, because `/bundle`
+  can't change while the isolate is alive. When a deploy changes the
+  files, the hash changes and each workspace replaces its copy on its
+  next index. Pass an explicit `version`, such as a build id, for large
+  trees, or when `filter` depends on the session.
+
+#### Shipping the files with wrangler
+
+Files only appear under `/bundle` with their paths intact when wrangler
+uploads each one as its own module. Turn on `find_additional_modules`
+and add a rule for the directory. Paths are relative to `base_dir`,
+which defaults to the directory of `main`:
+
+```jsonc
+// wrangler.jsonc, with "main": "src/index.ts"
+"find_additional_modules": true,
+"rules": [{ "type": "Data", "globs": ["skills/**/*"], "fallthrough": true }]
+```
+
+`src/skills/exec/SKILL.md` then lands at `/bundle/skills/exec/SKILL.md`.
+A file imported from code doesn't work: wrangler renames it to a
+content hash such as `/bundle/76e042f4…-SKILL.md`. Files inside
+`node_modules` aren't uploaded at all.
+
+#### Shipping the files with Vite
+
+`@cloudflare/vite-plugin` ignores `find_additional_modules` and `rules`.
+The `wrangler.json` it generates for deploy only uploads JavaScript plus
+files that match wrangler's default rules (`.txt`, `.html`, `.sql`,
+`.bin`, `.wasm`). Add the `workerBundle` plugin from
+`@cloudflare/computer/vite`:
+
+```ts
+// vite.config.ts
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { workerBundle } from "@cloudflare/computer/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [cloudflare(), workerBundle({ dir: "src/skills" })],
+});
+```
+
+The plugin copies `dir` into each Worker's build output, keeping its
+paths, and adds a `Data` rule for it to the generated `wrangler.json`.
+Both `vite preview` and `wrangler deploy` read that file. The options
+are:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `dir` | (required) | Directory to ship, relative to the Vite root. |
+| `as` | last segment of `dir` | Path under `/bundle`, so `"src/skills"` matches `WorkerBundle("skills")`. |
+| `environment` | every Worker environment | Limit the plugin to one Vite environment. |
+
+`vite dev` isn't supported. It runs the Worker through Vite's module
+runner and never puts project files under `/bundle`. `WorkerBundle()`
+detects this and throws an error that points at `vite build && vite
+preview` or `wrangler dev`.
+
+Wrangler prints `Ignoring duplicate module` for bundled `.bin` files,
+because they match both the plugin's rule and wrangler's default `.bin`
+rule. The warning is harmless.
+
 ### `GitHubRepo(slug, options)`
 
 Eager mount that clones a GitHub repository via `isomorphic-git` and
@@ -194,6 +310,40 @@ const ArtifactBundle = (id: string): MountFactory => ({ sessionId, root, vfs }: 
 On first call to any `fs`, `shell`, or `prefetch` method, every mount
 is indexed in parallel. Index state is persisted to `_vfs_mounts`
 in SQLite so DO restarts don't trigger a re-list.
+
+### Versions
+
+> [!NOTE]
+> This section describes what ships today.
+
+A mount can declare a `version` string on `MountBase`. After a
+successful `materialize()`, the indexer records it in
+`_vfs_mounts.version`. On a later boot, it compares that with the
+registered mount's `version`:
+
+- **No version on the mount:** the mount is materialized once per store,
+  as before. `R2Bucket` works this way.
+- **Same version:** the mount is skipped.
+- **Different version:** the mount is stale. The indexer removes
+  everything under the root, runs `materialize()` again, and records the
+  new version.
+
+```text
+first boot      → materialize, record "sha256:abc…"
+same deploy     → versions match, skip
+new deploy      → "sha256:def…" ≠ "sha256:abc…" → rm root, materialize, record "sha256:def…"
+```
+
+The old subtree is only removed on a refresh. On a first index,
+anything already at the root is left in place. The remove and rewrite
+go through the workspace filesystem, so they're recorded as normal
+changes and reach the container on its next push. If a refresh fails,
+the root is left empty with `indexed = 0`, and the next pass tries
+again.
+
+`WorkerBundle()` sets `version` from a content hash by default, so a
+deploy that changes the bundled files refreshes every workspace on its
+next index.
 
 `workspace.prefetch(root?)` eagerly hydrates lazy stubs under the given
 mount root (or every mount if none supplied). Useful from `onStart` /

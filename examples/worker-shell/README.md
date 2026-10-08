@@ -88,6 +88,21 @@ npm run seed:r2:local --workspace @example/computer-worker-shell
 npm run seed:r2 --workspace @example/computer-worker-shell
 ```
 
+## Bundled skill
+
+`src/skills/exec/SKILL.md` explains how `exec` works on this backend,
+for an agent working in the workspace. It ships inside the Worker
+upload through the `find_additional_modules` rule in `wrangler.jsonc`,
+and `WorkerBundle("skills")` copies it to `/workspace/.agents/skills`
+as a read-only mount. When a deploy changes the file, each workspace
+picks up the new copy on its next start.
+
+```sh
+curl -X POST -H 'content-type: application/json' \
+  -d '{"command":"cat /workspace/.agents/skills/exec/SKILL.md"}' \
+  http://localhost:8787/c/demo/exec
+```
+
 ## HTTP surface
 
 ```
@@ -153,6 +168,7 @@ curl -X POST http://127.0.0.1:8787/c/demo/exec \
 examples/worker-shell/
   wrangler.jsonc    Worker + DO + worker_loaders binding
   src/index.ts      Worker handler + DO (ContainerExample)
+  src/skills/       Files mounted read-only at /workspace/.agents/skills
 ```
 
 Nothing else. The Dynamic Worker source ships from

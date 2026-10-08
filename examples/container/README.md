@@ -79,6 +79,22 @@ client ─► Worker /c/<name>/{file,exec}
 If a container fails its startup health check, the replacement uses the
 same image and instance size.
 
+## Bundled skill
+
+`src/skills/exec/SKILL.md` explains how `exec` works on this backend,
+for an agent working in the workspace. It ships inside the Worker
+upload through the `find_additional_modules` rule in `wrangler.jsonc`,
+and `WorkerBundle("skills")` copies it to `/workspace/.agents/skills`
+as a read-only mount. When a deploy changes the file, each workspace
+picks up the new copy on its next start. The mount reaches the container
+through the normal sync, like any other workspace file.
+
+```sh
+curl -X POST -H 'content-type: application/json' \
+  -d '{"command":"cat /workspace/.agents/skills/exec/SKILL.md"}' \
+  http://localhost:8787/c/demo/exec
+```
+
 ## Running it
 
 ```bash

@@ -199,6 +199,33 @@ new Workspace({
 });
 ```
 
+`WorkerBundle` copies a directory that ships inside your Worker's own
+upload, such as skills or templates. The copy is read-only, and it is
+replaced automatically when a deploy changes the files.
+
+```ts
+import { WorkerBundle } from "@cloudflare/computer";
+
+new Workspace({
+  storage: ctx.storage,
+  mounts: { "/workspace/.agents/skills": WorkerBundle("skills") },
+});
+```
+
+The files have to be uploaded under their own paths. With wrangler, add
+a rule for the directory:
+
+```jsonc
+// wrangler.jsonc, with "main": "src/index.ts"
+"find_additional_modules": true,
+"rules": [{ "type": "Data", "globs": ["skills/**/*"], "fallthrough": true }]
+```
+
+With Vite, add `workerBundle({ dir: "src/skills" })` from
+`@cloudflare/computer/vite` to your plugins. `vite dev` isn't supported.
+See [Mount Interface](../../docs/06_mount_interface.md#workerbundlepath-options)
+for the options and for how refresh works.
+
 ## Running commands and code
 
 `workspace.runtime.exec(source, options)` is the single execution entry
@@ -429,7 +456,7 @@ on a computerd instance.
 
 | Entrypoint | Purpose |
 | --- | --- |
-| `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 mount, and proxy classes. |
+| `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
 | `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
@@ -444,6 +471,7 @@ on a computerd instance.
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | `@cloudflare/computer/observe/cloudflare` | Cloudflare-runtime adapter for the observability hook. |
+| `@cloudflare/computer/vite` | `workerBundle()`: a build-time Vite plugin that ships a directory into the Worker upload for `WorkerBundle`. |
 
 A consumer that only uses the container backend never imports the worker
 subpaths, so unused backend payloads tree-shake away. Wire types shared
