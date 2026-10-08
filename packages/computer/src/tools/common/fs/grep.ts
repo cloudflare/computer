@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { globList, globOne } from "./globs.js";
 
 interface GrepContextLine {
   line: number;
@@ -40,11 +41,13 @@ export const grepInputSchema = z.object({
   path: z.string().default("/workspace").describe("Absolute file or directory to search."),
   query: z.string().describe("Literal string or regular expression to search for."),
   include: z
-    .string()
+    .union([z.string(), z.array(z.string())])
     .optional()
-    .describe('Glob relative to path that limits searched files, for example "**/*.ts".'),
+    .describe(
+      'Glob relative to path that limits searched files, for example "**/*.ts" or ["**/*.ts", "**/*.md"].',
+    ),
   exclude: z
-    .array(z.string())
+    .union([z.string(), z.array(z.string())])
     .optional()
     .describe(
       'Glob patterns to leave out, for example ["node_modules/**", "**/.git/**"]. An excluded directory is skipped along with everything below it.',
@@ -62,8 +65,8 @@ export const grepDescription =
 export interface GrepInput {
   path?: string;
   query: string;
-  include?: string;
-  exclude?: string[];
+  include?: string | string[];
+  exclude?: string | string[];
   regex?: boolean;
   ignoreCase?: boolean;
   context?: number;
@@ -103,8 +106,8 @@ export async function grepInWorkspace(
     };
     const matches = await workspace.fs.grep(query, target, {
       ...searchOptions,
-      include,
-      exclude,
+      include: globOne(include),
+      exclude: globList(exclude),
       limit: pageSize + 1,
       offset: pageOffset,
     });

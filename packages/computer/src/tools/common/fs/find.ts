@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { globList } from "./globs.js";
 
 interface FoundEntry {
   path: string;
@@ -28,7 +29,7 @@ export const findInputSchema = z.object({
     .string()
     .describe('Glob pattern relative to path, for example "**/*.ts" or "src/?.js".'),
   exclude: z
-    .array(z.string())
+    .union([z.string(), z.array(z.string())])
     .optional()
     .describe(
       'Glob patterns to leave out, for example ["node_modules/**", "**/.git/**"]. An excluded directory is skipped along with everything below it.',
@@ -43,7 +44,7 @@ export const findDescription =
 export interface FindInput {
   path?: string;
   pattern: string;
-  exclude?: string[];
+  exclude?: string | string[];
   limit?: number;
   offset?: number;
 }
@@ -76,7 +77,7 @@ export async function findInWorkspace(
     const matches = await workspace.fs.find(directory, pattern, {
       limit: pageSize + 1,
       offset: pageOffset,
-      exclude,
+      exclude: globList(exclude),
     });
     const truncated = matches.length > pageSize;
     const entries = truncated ? matches.slice(0, pageSize) : matches;
