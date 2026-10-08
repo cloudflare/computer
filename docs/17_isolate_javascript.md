@@ -152,8 +152,11 @@ Caller source can import four kinds of module, and all of them are fixed when th
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
+import { createAssetsModule } from "@cloudflare/computer/modules/assets";
 import { createContainerModule } from "@cloudflare/computer/modules/container";
 import { createGitModule } from "@cloudflare/computer/modules/git";
+import { createToolBindings } from "@cloudflare/computer/modules/tools";
+import { forPiTools } from "@cloudflare/computer/tools/pi-ai";
 
 new WorkerJavaScriptBackend({
   loader: env.LOADER,
@@ -161,7 +164,9 @@ new WorkerJavaScriptBackend({
     "tar-stream": TAR_STREAM_BUNDLE,
     "ws:git": createGitModule(),
     "ws:artifacts": createArtifactsModule(),
+    "ws:assets": createAssetsModule(),
     "ws:container": createContainerModule(),
+    "ws:tools": createToolBindings(forPiTools(() => agent.tools)),
     "ws:weather": {
       forecast: ([city]) => lookUpForecast(String(city)),
     },
@@ -191,7 +196,7 @@ Modules code can import:
 - Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
-A factory adds its own text through a `description` property, as the prebuilt modules do. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
+A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `ws:tools` does with the agent's tools. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 
@@ -229,7 +234,7 @@ modules: {
 }
 ```
 
-When the functions need the Workspace's Git client, Artifacts client, or runtime, pass a factory instead. The backend calls it once when it connects to its Workspace. This is how the prebuilt modules work:
+When the functions need the Workspace's Git client, Artifacts client, runtime, or assets client, pass a factory instead. `host.assets` is absent when the Workspace has no assets configured. The backend calls it once when it connects to its Workspace. This is how the prebuilt modules work:
 
 ```ts
 modules: {
@@ -271,10 +276,46 @@ import { clone, diff, status, log, cli } from "ws:git";
 ### `ws:artifacts`
 
 ```js
-import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts";
+import { create, get, list, importArtifact, deleteArtifact, createToken, share } from "ws:artifacts";
 ```
 
 `createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
+
+Two functions mint the git token that cloning or pushing a repository needs:
+
+- `createToken(name, scope?, ttl?)` returns `{ id, plaintext, scope, expiresAt }`.
+- `share(name, { scope?, ttl? })` returns the repository's remote URL with a token embedded, the same URL `artifacts share` prints. It resolves the repository first, so a missing one fails without minting a token.
+
+`scope` is `"read"` (the default) or `"write"`, and a write token needs a read-write backend. `ttl` is seconds, or a duration such as `"15m"` or `"2h30m"`; without it the binding's default applies. The URL from `share` is a credential: pass it to `ws:container` through `env` rather than in the command text, and do not return it from the run.
+
+```js
+import { share } from "ws:artifacts";
+import { exec } from "ws:container";
+
+export default async function () {
+  const url = await share("site", { scope: "write", ttl: "30m" });
+  const push = await exec('git push "$REMOTE" HEAD:main', { cwd: "/workspace/site", env: { REMOTE: url } });
+  return { pushed: push.exitCode === 0 };
+}
+```
+
+### `ws:assets`
+
+```js
+import { publish } from "ws:assets";
+```
+
+`createAssetsModule()` from `@cloudflare/computer/modules/assets` publishes a Workspace file through the Workspace's assets client (see [14. Assets interface](./14_assets_interface.md)) and returns a time-limited URL:
+
+```js
+import { publish } from "ws:assets";
+
+export default async function () {
+  return publish("/workspace/out/report.pdf", { expiresAfter: "1d", disposition: "attachment" });
+}
+```
+
+`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the JavaScript backend fails to connect.
 
 ### `ws:tools`
 
@@ -376,6 +417,20 @@ A few limits follow from `exec` being a host call:
 - Cancelling the execution kills the running command.
 
 A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the JavaScript backend's.
+
+Two options shape every command:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `prelude` | none | Shell text run before each command, joined to it by a newline, such as `set -o pipefail` or `export` lines. A newline keeps a command that opens with a comment or a shebang intact, and does not skip the command when the prelude's last status is non-zero. |
+| `maxOutputLines` | the runtime's 2000 | The most lines of each stream the result keeps, alongside `maxOutputBytes`. |
+
+```ts
+createContainerModule({
+  prelude: ["set -o pipefail", 'export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Agent}"'].join("\n"),
+  maxOutputLines: 200,
+});
+```
 
 ## Isolation and lifecycle
 
