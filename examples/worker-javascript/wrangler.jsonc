@@ -13,6 +13,13 @@
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat", "experimental"],
 
+  // Upload every file under src/skills as its own module, under its
+  // path relative to src/, so it shows up at /bundle/skills/... and
+  // WorkerBundle("skills") can copy it into the workspace. "Data" keeps
+  // the bytes exactly as they are on disk.
+  "find_additional_modules": true,
+  "rules": [{ "type": "Data", "globs": ["skills/**/*"], "fallthrough": true }],
+
   // Worker Loader binding. The DO's WorkerJavaScriptBackend calls
   // env.LOADER.load(...) to mint a Dynamic Worker that evaluates
   // each module.

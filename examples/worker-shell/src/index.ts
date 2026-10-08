@@ -28,7 +28,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-import { getWorkspace, R2Bucket, WorkspaceServiceProxy, withWorkspace } from "@cloudflare/computer";
+import {
+  getWorkspace,
+  R2Bucket,
+  WorkerBundle,
+  WorkspaceServiceProxy,
+  withWorkspace,
+} from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 // Opt-in shell commands. Each import pulls one command group into
 // this Worker's bundle; a group you do not import is unreachable
@@ -71,6 +77,9 @@ export class ContainerExample extends withWorkspace(class extends DurableObject<
     // reject with EROFS.
     mounts: {
       "/workspace/r2": R2Bucket(env.Bucket),
+      // Read-only copy of src/skills, shipped with the Worker through the
+      // rule in wrangler.jsonc. Refreshed when a deploy changes the files.
+      "/workspace/.agents/skills": WorkerBundle("skills"),
     },
   };
 }) {}
