@@ -1,0 +1,81 @@
+.changeset/storage-without-cast.md
+  s_a636b12ef32437::t_80ff06ff7b3db7 1-5
+examples/artifacts/src/index.ts
+  s_a636b12ef32437::t_6cf45ad87e92fa 66
+examples/assets/src/index.ts
+  s_a636b12ef32437::t_6ed5a1c9de15e6 28,49
+examples/celld/src/index.ts
+  s_a636b12ef32437::t_ebb262c978e0ab 2,33
+examples/container-legacy/src/index.ts
+  s_a636b12ef32437::t_ea870185127b04 65
+examples/container/src/index.ts
+  s_a636b12ef32437::t_63fdad8604e775 81
+examples/egress/src/index.ts
+  s_a636b12ef32437::t_db1c2281090d56 64
+examples/mcp/src/index.ts
+  s_a636b12ef32437::t_f82a3b819b4de7 49
+examples/pi-ai/src/index.ts
+  s_a636b12ef32437::t_d5d9001b7c37f2 10,28
+examples/rlm/worker/executor-agent.ts
+  s_a636b12ef32437::t_45ac4851c01629 2,57
+examples/rlm/worker/rlm-agent.ts
+  s_a636b12ef32437::t_e3295e5d2ae131 2,120
+examples/tanstack-ai/src/index.ts
+  s_a636b12ef32437::t_c1f971c1172485 9,23
+examples/think-compare-runtimes/worker/think/agents.ts
+  s_a636b12ef32437::t_2a31be1d0d2121 322
+examples/think/src/agent.ts
+  s_a636b12ef32437::t_0400975d4df1fe 92
+examples/tutorial/README.md
+  s_a636b12ef32437::t_0be0ae654c9d4a 160
+examples/tutorial/src/index.ts
+  s_a636b12ef32437::t_1306261d473264 20,50
+examples/worker-javascript/src/index.ts
+  s_a636b12ef32437::t_27c7032cb35ca0 14
+examples/worker-shell/src/index.ts
+  s_a636b12ef32437::t_838261ea055183 31,56
+packages/computer/tests/script-runner-worker.ts
+  s_a636b12ef32437::t_1314739af3a0f0 9,124
+packages/computer/tests/worker-backend-worker.ts
+  s_a636b12ef32437::t_b02651cf28aee5 23,40
+packages/dofs/src/bench/counting-storage.ts
+  s_a636b12ef32437::t_7b066b7ec8d9e8 52,55,63
+packages/dofs/src/bench/fs-ops.bench.ts
+  s_a636b12ef32437::t_c22581a07c7883 56,71
+packages/dofs/src/bench/sync-blocks.bench.ts
+  s_a636b12ef32437::t_9307c4cca9da39 47
+packages/dofs/src/fs/with-db.workers.ts
+  s_a636b12ef32437::t_30bece8a03faaa 28,57,63
+packages/dofs/src/storage.ts
+  s_de0b486c128948::t_b8aaea4cee016c 81
+packages/dofs/src/sync/blobs.test.ts
+  s_a636b12ef32437::t_7a159d6b8a48f9 39,43
+packages/dofs/src/sync/fetch.test.ts
+  s_a636b12ef32437::t_ee98a21b41a491 139,143
+packages/dofs/src/types.ts
+  s_a636b12ef32437::t_5736e491dbfd7b 6-9,17-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "264cdf4485b502a6c0b8cd2466cee9eeef86bac1",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
