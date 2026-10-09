@@ -1101,6 +1101,8 @@ describe("sync driver — streaming pullOnce", () => {
 
       await pullOnce(b.db, a.rpc);
       expect(providerB.readFileSync("/src/f299.txt", "utf8")).toBe("content 299");
+      // A pull stamps local revs; finish the echo push before remote deletion.
+      await pushOnce(b.db, a.rpc);
 
       providerA.renameSync("/src", "/dst");
       const renameRev = currentRev(a.db);

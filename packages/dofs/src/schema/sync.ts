@@ -69,6 +69,28 @@ export const SYNC_STATEMENTS = [
     path    TEXT,
     PRIMARY KEY (k, backend)
   )`,
+  // Local revs minted by applying a pull from `backend`. A node whose
+  // rev is listed here still holds exactly what that backend sent, so
+  // a later delete from the same backend may remove it before the echo
+  // push. Rows at or below the push cursor are pruned. Created by the
+  // baseline DDL on every boot, so existing databases gain it without
+  // a migration.
+  `CREATE TABLE IF NOT EXISTS _vfs_upstream_revs (
+    backend TEXT    NOT NULL,
+    rev     INTEGER NOT NULL,
+    PRIMARY KEY (backend, rev)
+  ) WITHOUT ROWID`,
+  // Per-name provenance for a pulled write whose rev must stay local
+  // because another, unpushed hardlink name shares the inode. The row
+  // says only `path` at `rev` holds what `backend` sent, so a later
+  // delete of that name wins while the other names stay protected.
+  // Pruned with _vfs_upstream_revs.
+  `CREATE TABLE IF NOT EXISTS _vfs_upstream_paths (
+    backend TEXT    NOT NULL,
+    rev     INTEGER NOT NULL,
+    path    TEXT    NOT NULL,
+    PRIMARY KEY (backend, rev, path)
+  ) WITHOUT ROWID`,
   // Durable half of a restartable sync operation. One row per
   // (backend, direction): the plan's key. A restarted iterator reads
   // this row to recover the fixed target and generation it was working
