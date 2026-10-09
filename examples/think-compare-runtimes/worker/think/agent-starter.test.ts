@@ -99,7 +99,9 @@ describe("startRuntimeThinkAgents", () => {
 
   test("emits each runtime terminal callback as soon as that runtime settles", async () => {
     const lifecycle: string[] = [];
+    // oxlint-disable-next-line typescript/no-invalid-void-type -- void as a call-site type argument
     const workspace = deferred<void>();
+    // oxlint-disable-next-line typescript/no-invalid-void-type -- void as a call-site type argument
     const sandbox = deferred<void>();
 
     const run = startRuntimeThinkAgents({

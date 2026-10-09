@@ -233,9 +233,12 @@ so each example can declare its own dependencies and scripts.
 - **TypeScript.** Each package has its own `tsconfig.json` — there
   is no shared root config. Per-package `tsconfig.build.json` files
   extend `./tsconfig.json` to configure the build output.
-- **Biome.** Both linter and formatter are enabled in `biome.jsonc`
-  at the repo root (`biome check` covers lint + format; `biome
-  format` formats only). No ESLint, no Prettier.
+- **oxlint.** Lints JS and TypeScript, configured in `.oxlintrc.json`
+  at the repo root. The rule set mirrors the Biome recommended set
+  the repo used before.
+- **oxfmt.** Formats JS, TypeScript and JSON, configured in
+  `.oxfmtrc.json` at the repo root. Markdown, YAML, HTML and CSS are
+  left alone. No ESLint, no Prettier.
 - **Rolldown.** Builds the Workspace package's ESM entrypoints and declarations.
 - **esbuild.** Used by `packages/computerd/scripts/sea/bundle.mjs` to produce the single-file `computerd` SEA bundle.
 - **vitest.** Drives unit tests in every package. `computerd` additionally

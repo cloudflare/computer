@@ -29,12 +29,14 @@ export function MarkdownText({ text }: { text: string }) {
 function Heading2(props: ComponentProps<"h2"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
+    // oxlint-disable-next-line jsx-a11y/heading-has-content -- children come via spread props
     <h2 className="mt-3 text-base font-semibold tracking-[-0.02em] text-[#111111]" {...rest} />
   );
 }
 
 function Heading3(props: ComponentProps<"h3"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
+  // oxlint-disable-next-line jsx-a11y/heading-has-content -- children come via spread props
   return <h3 className="mt-2 text-sm font-semibold tracking-[-0.01em] text-[#111111]" {...rest} />;
 }
 
@@ -70,6 +72,7 @@ function Strong(props: ComponentProps<"strong"> & { node?: unknown }) {
 function Link(props: ComponentProps<"a"> & { node?: unknown }) {
   const { node: _node, ...rest } = props;
   return (
+    // oxlint-disable-next-line jsx-a11y/anchor-has-content -- children come via spread props
     <a
       className="text-[#1D4ED8] underline decoration-[#1D4ED8]/40 underline-offset-4"
       rel="noreferrer"

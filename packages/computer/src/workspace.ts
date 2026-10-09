@@ -1012,6 +1012,7 @@ export class Workspace {
       );
     }
     const generation = this.#connectionGeneration;
+    // oxlint-disable-next-line eslint/prefer-const -- its callbacks read `promise`
     let promise!: Promise<WorkspaceModuleBackendHandle>;
     promise = withSpan(
       this.#observer,
@@ -1060,6 +1061,7 @@ export class Workspace {
       return Promise.reject(new Error(`Workspace: no backend with id ${JSON.stringify(id)}`));
     }
     const generation = this.#connectionGeneration;
+    // oxlint-disable-next-line eslint/prefer-const -- its callbacks read `promise`
     let promise!: Promise<BackendHandle>;
     promise = (async () => {
       let handle: BackendHandle | undefined;

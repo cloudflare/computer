@@ -257,9 +257,9 @@ function isTemplateStringsArray(value: unknown): value is TemplateStringsArray {
 // command string and options. Locally this is `Workspace.runtime`;
 // remotely it's the runtime stub.
 interface UnderlyingRuntime {
-  // biome-ignore lint/suspicious/noExplicitAny: bridges local and RPC overload sets
+  // oxlint-disable-next-line typescript/no-explicit-any -- bridges local and RPC overload sets
   exec(source: string, options?: Record<string, unknown>): Promise<any>;
-  // biome-ignore lint/suspicious/noExplicitAny: bridges local and RPC overload sets
+  // oxlint-disable-next-line typescript/no-explicit-any -- bridges local and RPC overload sets
   getExec(id: string, options?: Record<string, unknown>): Promise<any>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
@@ -340,17 +340,17 @@ function withExecutionId(
 export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
   readonly fs: WorkspaceFilesystem;
   readonly runtime: WorkspaceRuntimeClient;
-  // biome-ignore lint/suspicious/noExplicitAny: git type differs local vs remote
+  // oxlint-disable-next-line typescript/no-explicit-any -- git type differs local vs remote
   readonly git: any;
-  // biome-ignore lint/suspicious/noExplicitAny: assets type differs local vs remote
+  // oxlint-disable-next-line typescript/no-explicit-any -- assets type differs local vs remote
   readonly assets: any;
-  // biome-ignore lint/suspicious/noExplicitAny: artifacts type differs local vs remote
+  // oxlint-disable-next-line typescript/no-explicit-any -- artifacts type differs local vs remote
   readonly artifacts: any;
   [Symbol.dispose](): void;
 }
 
 function makeClient(
-  // biome-ignore lint/suspicious/noExplicitAny: underlying surface differs per path
+  // oxlint-disable-next-line typescript/no-explicit-any -- underlying surface differs per path
   surface: any,
   rehydrate: (handle: unknown, metadata?: RuntimeHandleMetadata) => unknown,
   dispose: () => void,

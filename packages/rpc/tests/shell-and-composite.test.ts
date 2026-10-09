@@ -157,7 +157,7 @@ describe("ShellRPC over a real WebSocket", () => {
       // ShellRpcServer is the top-level target for this harness, so
       // `client.exec(...)` lands on it directly. createWorkspaceClient
       // proxies all property access through; capnweb routes by name.
-      // biome-ignore lint/suspicious/noExplicitAny: client targets ShellRPC for this harness, not WorkspaceRPC
+      // oxlint-disable-next-line typescript/no-explicit-any -- client targets ShellRPC for this harness, not WorkspaceRPC
       const handle = await (client as any).exec({ source: "echo hi" });
       const events = await drainExec(handle.events);
       expect(events).toHaveLength(2);
@@ -177,15 +177,15 @@ describe("ShellRPC over a real WebSocket", () => {
     harness = await startShellHarness();
     const client = createWorkspaceClient({ url: harness.url });
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: see above
+      // oxlint-disable-next-line typescript/no-explicit-any -- see above
       const handle = await (client as any).exec({ source: "sleep", id: "fixed" });
       await drainExec(handle.events);
 
-      // biome-ignore lint/suspicious/noExplicitAny: see above
+      // oxlint-disable-next-line typescript/no-explicit-any -- see above
       await (client as any).killExec({ id: "fixed", signal: "SIGKILL" });
       expect(harness.runner.records.get("fixed")?.killed?.signal).toBe("SIGKILL");
 
-      // biome-ignore lint/suspicious/noExplicitAny: see above
+      // oxlint-disable-next-line typescript/no-explicit-any -- see above
       await (client as any).disposeExec({ id: "fixed" });
       expect(harness.runner.records.get("fixed")?.disposed).toBe(true);
     } finally {
@@ -197,11 +197,11 @@ describe("ShellRPC over a real WebSocket", () => {
     harness = await startShellHarness();
     const client = createWorkspaceClient({ url: harness.url });
     try {
-      // biome-ignore lint/suspicious/noExplicitAny: see above
+      // oxlint-disable-next-line typescript/no-explicit-any -- see above
       const first = await (client as any).exec({ source: "first", id: "repeat" });
       await drainExec(first.events);
 
-      // biome-ignore lint/suspicious/noExplicitAny: see above
+      // oxlint-disable-next-line typescript/no-explicit-any -- see above
       const second = await (client as any).getExec({ id: "repeat" });
       const replayed = await drainExec(second.events);
       expect(replayed).toHaveLength(2);

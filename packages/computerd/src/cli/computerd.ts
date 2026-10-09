@@ -161,7 +161,7 @@ interface ComputerdInfo {
 // can watch growth without attaching a debugger. Used by the
 // /__computerd/stats endpoint while diagnosing the npm install OOM.
 function collectDbStats(db: Database): Record<string, unknown> {
-  // biome-ignore lint/suspicious/noExplicitAny: small ad-hoc shape
+  // oxlint-disable-next-line typescript/no-explicit-any -- small ad-hoc shape
   const out: Record<string, any> = {};
   try {
     out.vfs_nodes_count = db.scalar<number>("SELECT COUNT(*) FROM vfs_nodes") ?? 0;

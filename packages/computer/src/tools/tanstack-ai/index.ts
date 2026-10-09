@@ -51,7 +51,7 @@ export interface TanStackTool<Input = unknown> {
   description: string;
   inputSchema: z.ZodType<Input>;
   outputSchema?: z.ZodType;
-  // biome-ignore lint/suspicious/noExplicitAny: matches the signature chat() calls
+  // oxlint-disable-next-line typescript/no-explicit-any -- matches the signature chat() calls
   execute: (input: any, context?: TanStackToolExecutionContext) => Promise<unknown>;
   needsApproval?: boolean;
   lazy?: boolean;

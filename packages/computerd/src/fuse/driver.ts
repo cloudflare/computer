@@ -978,7 +978,7 @@ export async function mountFuse(options: {
    */
   localPaths?: LocalPassthroughOptions;
 }): Promise<FuseMount> {
-  // biome-ignore lint/suspicious/noExplicitAny: fuse-native ships no types
+  // oxlint-disable-next-line typescript/no-explicit-any -- fuse-native ships no types
   const fuseModule: any = await import("fuse-native");
   const Fuse = fuseModule.default ?? fuseModule;
   // Optional op tracing. `COMPUTERD_FUSE_TRACE=summary` records per-op call

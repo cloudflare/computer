@@ -45,14 +45,14 @@ export interface WorkspaceLocalHost {
   [WORKSPACE]: Workspace;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: mixin constructor shape requires any[]
+// oxlint-disable-next-line typescript/no-explicit-any -- mixin constructor shape requires any[]
 type DOCtor = new (...args: any[]) => object;
 
 // Constructor type the mixin returns. Written out so
 // rolldown-plugin-dts can emit a stable declaration.
 export type WithWorkspaceCtor<TBase extends DOCtor> = TBase &
   (new (
-    // biome-ignore lint/suspicious/noExplicitAny: mirror mixin constructor shape
+    // oxlint-disable-next-line typescript/no-explicit-any -- mirror mixin constructor shape
     ...args: any[]
   ) => InstanceType<TBase> & WorkspaceStubHost & WorkspaceLocalHost);
 
@@ -61,7 +61,7 @@ export function withWorkspace<TBase extends DOCtor>(
   options: (self: InstanceType<TBase>) => WorkspaceOptions,
 ): WithWorkspaceCtor<TBase> {
   class WithWorkspace extends Base {
-    // biome-ignore lint/suspicious/noExplicitAny: mixin constructor shape requires any[]
+    // oxlint-disable-next-line typescript/no-explicit-any -- mixin constructor shape requires any[]
     constructor(...args: any[]) {
       super(...args);
       const self = this as unknown as InstanceType<TBase>;

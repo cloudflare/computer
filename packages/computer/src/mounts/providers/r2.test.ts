@@ -67,7 +67,7 @@ function fakeR2(objects: FakeR2Object[]): {
       return { body: stream, size: bytes.byteLength };
     },
   };
-  // biome-ignore lint/suspicious/noExplicitAny: fake satisfies the duck-typed shape we depend on
+  // oxlint-disable-next-line typescript/no-explicit-any -- fake satisfies the duck-typed shape we depend on
   return { bucket: bucket as any, spy };
 }
 
@@ -210,7 +210,7 @@ describe("R2Bucket provider", () => {
     expect(inodeRow).toBeDefined();
     const chunks = ws.db.all<{ size: number }>(
       "SELECT size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
-      // biome-ignore lint/style/noNonNullAssertion: existence asserted above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- existence asserted above
       inodeRow!.inode,
     );
     expect(chunks.length).toBeGreaterThan(1);
@@ -260,7 +260,7 @@ describe("R2Bucket provider", () => {
       async get() {
         return null;
       },
-      // biome-ignore lint/suspicious/noExplicitAny: duck-typed fake
+      // oxlint-disable-next-line typescript/no-explicit-any -- duck-typed fake
     } as any;
     const ws = new Workspace({
       storage: makeStorage(),

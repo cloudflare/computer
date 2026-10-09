@@ -169,6 +169,7 @@ function Segment({
     <div
       aria-label={`${segment.label} ${formatMs(segment.startMs - scale.startMs)} to ${formatMs(segment.endMs - scale.startMs)}`}
       className={`absolute top-1/2 h-5 -translate-y-1/2 ${segmentClass(segment.status, tone)}`}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a styled shape, not an <img>
       role="img"
       style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
       title={segment.label}
@@ -191,6 +192,7 @@ function Marker({
     <span
       aria-label={marker.label}
       className={`absolute top-1/2 h-5 w-1.5 -translate-y-1/2 ${marker.status === "failed" ? "bg-[#B42318]" : toneClass(tone)}`}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a styled shape, not an <img>
       role="img"
       style={{ left: `${positionPct(marker.atMs, scale)}%` }}
       title={marker.label}
