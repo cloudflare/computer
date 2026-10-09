@@ -20,7 +20,7 @@
     "@cloudflare/computer": "*",
     "@cloudflare/think": "^0.15.1",
     "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@platformatic/vfs": "^0.4.0",
     "agents": "^0.20.0",

@@ -24,6 +24,9 @@
     "changeset": "changeset",
     "gardener:generate": "npx --yes @scuffi/gardener@0.1.13 generate"
   },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.31.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@changesets/changelog-github": "^0.5.2",
