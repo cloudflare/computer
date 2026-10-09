@@ -30,6 +30,14 @@ import {
 } from "../common/publish.js";
 import { settle } from "../common/stream.js";
 
+export {
+  type ForPiToolsOptions,
+  forPiTools,
+  type PiAgentTool,
+  type PiAgentToolResult,
+  type PiToolCallRequest,
+} from "./bindings.js";
+
 export interface ToolCallContext {
   abortSignal?: AbortSignal;
 }

@@ -148,7 +148,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, your own |
+| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, `ws:tools`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
@@ -275,6 +275,44 @@ import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts"
 ```
 
 `createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
+
+### `ws:tools`
+
+`createToolBindings()` from `@cloudflare/computer/modules/tools` exports the agent's own tools to JavaScript, each under its own name. A loop over a hundred files is then one `exec` call instead of a hundred model turns:
+
+```js
+import { grep, read } from "ws:tools";
+
+export default async function ({ files }) {
+  const todos = {};
+  for (const path of files) {
+    const { text, isError } = await grep({ query: "TODO", path });
+    if (!isError && text.trim()) todos[path] = text;
+  }
+  return todos;
+}
+```
+
+Each export takes one object of the tool's arguments, the same object the model would pass, and resolves with `{ text, details, isError }`, plus `structuredContent` when the tool returns it. A tool that throws rejects the call. `exec` is left out by default, since the code is already running inside `exec` and a run that can start runs has no bound on how deep it goes. Pass `exclude` to change the list.
+
+What a tool is and how it runs belongs to the agent library, so `createToolBindings()` takes bindings: a name, and a function to call with the input and the call's context. `forPiTools()` from `@cloudflare/computer/tools/pi-ai` builds them from pi tools:
+
+```ts
+import { validateToolArguments } from "@earendil-works/pi-ai";
+import { createToolBindings } from "@cloudflare/computer/modules/tools";
+import { forPiTools } from "@cloudflare/computer/tools/pi-ai";
+
+new WorkerJavaScriptBackend({
+  loader: env.LOADER,
+  modules: {
+    "ws:tools": createToolBindings(forPiTools(() => agent.tools, { validate: validateToolArguments })),
+  },
+});
+```
+
+`forPiTools()` takes executable tools in the shape `@earendil-works/pi-agent-core` defines, or the result of `createPiTools()`. It runs a call the way pi's agent loop runs a model's call: `prepareArguments`, then `validate`, then `execute` with a fresh call id and the call's abort signal. Pass pi-ai's `validateToolArguments` as `validate` to hold code to the same check as the model; without it, arguments reach the tool unchecked. Text parts of the result are joined, and an image is named in place, as `[image: image/png]`.
+
+Pass a function of tools, rather than a list, when the tools need something that does not exist yet when the backend is constructed, such as the Workspace they act on. The function runs each time the backend connects. A tool whose name cannot be a JavaScript export, such as `list-files`, fails the connection with a message naming it; leave it out with `exclude`.
 
 ### `ws:container`
 
