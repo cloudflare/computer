@@ -241,17 +241,29 @@ to a later cursor rather than frozen at `fetchRev`. See
 CREATE TABLE _vfs_mounts (
   root    TEXT PRIMARY KEY,
   kind    TEXT NOT NULL,
-  indexed INTEGER NOT NULL DEFAULT 0
+  indexed INTEGER NOT NULL DEFAULT 0,
+  mode    TEXT NOT NULL DEFAULT 'read-only'
+          CHECK(mode IN ('read-only', 'read-write')),
+  version TEXT
 );
 ```
 
-*Planned; mount feature not yet implemented — see
-[06. Mount Interface](./06_mount_interface.md).* The schema seat is
-in place so the migration doesn't need to land alongside the mount
-runtime, but no code reads or writes this table yet. When mounts
-ship, the row will record that a mount root has been indexed (its
-directory tree listed and stub rows inserted into `vfs_nodes`) so a
-DO reload doesn't re-list.
+One row per registered mount root, written by the workspace's mount
+indexer. See [06. Mount Interface](./06_mount_interface.md).
+
+- `kind` names the provider, such as `r2` or `worker-bundle`. It's for
+  diagnostics only.
+- `indexed` is `1` once `materialize()` has finished successfully, so a
+  reload over the same store doesn't run it again. A failed run leaves
+  `0`, and the next pass retries.
+- `mode` is what the read-only guard reads to reject writes under the
+  root with `EROFS`. The indexer holds the row at `'read-write'` while it
+  materializes, then sets the mount's own mode.
+- `version` (added in schema v9) is the content version the mount
+  declared at its last successful index. It's `NULL` for mounts that
+  don't declare one. When a mount's version changes, the indexer
+  replaces its subtree; see
+  [Versions](./06_mount_interface.md#versions).
 
 ## Invariants
 

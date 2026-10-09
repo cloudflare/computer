@@ -29,6 +29,7 @@ import { DurableObject, tracing } from "cloudflare:workers";
 
 import {
   getWorkspace,
+  WorkerBundle,
   type WorkspaceOptions,
   WorkspaceProxy,
   withWorkspace,
@@ -80,6 +81,11 @@ function workspaceOptions(self: InstanceType<typeof ContainerBase>): WorkspaceOp
   return {
     storage: ctx.storage,
     backends: [self.backend],
+    mounts: {
+      // Read-only copy of src/skills, shipped with the Worker through the
+      // rule in wrangler.jsonc. Refreshed when a deploy changes the files.
+      "/workspace/.agents/skills": WorkerBundle("skills"),
+    },
     // Route every workspace operation through the Cloudflare
     // runtime's user-tracing surface. The runtime owns the span
     // lifecycle; the observer is a thin wrapper that forwards seed

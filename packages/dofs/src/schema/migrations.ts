@@ -221,6 +221,24 @@ function v7_to_v8_changes_op_rev_index(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS vfs_changes_by_op_rev ON vfs_changes(op, rev)`);
 }
 
+// v8 → v9 — add `_vfs_mounts.version`, the content version a mount
+// declared when it was last materialized. The workspace indexer
+// compares it with the registered mount's version and re-materializes
+// on a mismatch. Existing rows get NULL, which a versioned mount reads
+// as a mismatch (one refresh), and an unversioned one ignores.
+//
+// Nullable and with no default, so the ALTER needs no backfill. The
+// column check keeps the step safe on a database that already has it.
+// The column is duplicated in `sync.ts`'s fresh-install DDL.
+function v8_to_v9_add_mounts_version(db: Database): void {
+  const hasColumn = db
+    .all<{ name: string }>("PRAGMA table_info(_vfs_mounts)")
+    .some((column) => column.name === "version");
+  if (!hasColumn) {
+    db.run("ALTER TABLE _vfs_mounts ADD COLUMN version TEXT");
+  }
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
   { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
@@ -229,6 +247,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { from: 5, to: 6, migrator: v5_to_v6_push_cursor },
   { from: 6, to: 7, migrator: v6_to_v7_sync_operations },
   { from: 7, to: 8, migrator: v7_to_v8_changes_op_rev_index },
+  { from: 8, to: 9, migrator: v8_to_v9_add_mounts_version },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

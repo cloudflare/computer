@@ -2,7 +2,9 @@
 //
 // Drives each registered Mount's materialize() exactly once per DO
 // lifetime. Persists progress to _vfs_mounts so a subsequent
-// Workspace over the same store does not re-run. Failures roll back
+// Workspace over the same store does not re-run, unless the mount
+// declares a version that differs from the one recorded there, in
+// which case the subtree is replaced. Failures roll back
 // the subtree under the mount root and leave _vfs_mounts.indexed = 0
 // so the next pass retries from scratch.
 //
@@ -33,11 +35,20 @@ export interface IndexerOptions {
 async function runIndex(opts: IndexerOptions): Promise<void> {
   const { db, fs, mounts } = opts;
   // Snapshot the indexed flag per root so we don't re-run something
-  // a previous attach already finished.
+  // a previous attach already finished. A mount that declares a
+  // version is only finished if the recorded version matches; one
+  // indexed under a different version is stale and gets replaced.
+  // Mounts without a version keep the once-per-store behavior.
   const status = new Map<string, boolean>();
-  for (const root of mounts.keys()) {
-    const row = db.one<{ indexed: number }>("SELECT indexed FROM _vfs_mounts WHERE root = ?", root);
-    status.set(root, row?.indexed === 1);
+  const stale = new Set<string>();
+  for (const [root, mount] of mounts) {
+    const row = db.one<{ indexed: number; version: string | null }>(
+      "SELECT indexed, version FROM _vfs_mounts WHERE root = ?",
+      root,
+    );
+    const versionMatches = mount.version === undefined || row?.version === mount.version;
+    status.set(root, row?.indexed === 1 && versionMatches);
+    if (row?.indexed === 1 && !versionMatches) stale.add(root);
   }
 
   // Run every pending mount in parallel. Per-mount failures clear
@@ -73,6 +84,15 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
         // with ENOENT. The mkdir is inside the try block so a crash
         // mid-materialize rolls it back via the existing fs.rm path
         // below.
+        //
+        // A stale mount's old copy is removed first so files dropped
+        // from the new version don't linger. Only stale mounts: on a
+        // first index, anything already at the root is left alone, as
+        // it always was. The rm goes through the filesystem, so it is
+        // recorded as changes and reaches the container on the next
+        // push. If materialize() then fails, the rollback below leaves
+        // the root empty rather than restoring the old copy.
+        if (stale.has(root)) await fs.rm(root, { recursive: true, force: true });
         await fs.mkdir(root, { recursive: true });
         await mount.materialize(api);
         // Stamp every node reachable from the mount root with
@@ -102,7 +122,12 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
       // UPDATE, then invalidate the guard cache so subsequent
       // writes through Workspace.fs (and any pull) see the final
       // mode.
-      db.run("UPDATE _vfs_mounts SET mode = ?, indexed = 1 WHERE root = ?", mount.mode, root);
+      db.run(
+        "UPDATE _vfs_mounts SET mode = ?, indexed = 1, version = ? WHERE root = ?",
+        mount.mode,
+        mount.version ?? null,
+        root,
+      );
       invalidateReadOnlyMountCache(db);
     }),
   );

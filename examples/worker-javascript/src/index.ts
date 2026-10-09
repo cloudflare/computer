@@ -3,6 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   getWorkspace,
   R2Bucket,
+  WorkerBundle,
   type WorkspaceRuntimeValue,
   withWorkspace,
 } from "@cloudflare/computer";
@@ -15,6 +16,9 @@ export class ContainerExample extends withWorkspace(class extends DurableObject<
     backends: [new WorkerJavaScriptBackend({ loader: env.LOADER })],
     mounts: {
       "/workspace/r2": R2Bucket(env.Bucket),
+      // Read-only copy of src/skills, shipped with the Worker through the
+      // rule in wrangler.jsonc. Refreshed when a deploy changes the files.
+      "/workspace/.agents/skills": WorkerBundle("skills"),
     },
   };
 }) {}
