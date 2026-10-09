@@ -405,18 +405,16 @@ export function createOolongRealFixture(row: OolongRealRow): OolongRealFixture {
   const chunks = semanticChunks.map((chunk) => chunk.text);
   const contextBytes = encoder.encode(row.context).byteLength;
   const contextHash = fnv1a(row.context);
-  const contextChunks = semanticChunks.map(
-    (chunk, index): OolongContextChunkManifest => ({
-      index,
-      path: `/workspace/oolong-real/context-${String(index).padStart(4, "0")}.txt`,
-      hash: fnv1a(chunk.text),
-      byteLength: encoder.encode(chunk.text).byteLength,
-      episode: chunk.episode,
-      partIndex: chunk.partIndex,
-      startByte: chunk.startByte,
-      endByte: chunk.endByte,
-    }),
-  );
+  const contextChunks = semanticChunks.map((chunk, index): OolongContextChunkManifest => ({
+    index,
+    path: `/workspace/oolong-real/context-${String(index).padStart(4, "0")}.txt`,
+    hash: fnv1a(chunk.text),
+    byteLength: encoder.encode(chunk.text).byteLength,
+    episode: chunk.episode,
+    partIndex: chunk.partIndex,
+    startByte: chunk.startByte,
+    endByte: chunk.endByte,
+  }));
   const publicFixture = {
     version: 1 as const,
     taskId: OOLONG_TASK_ID,

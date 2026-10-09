@@ -77,8 +77,9 @@ export type TanStackToolsFor<Format extends TanStackToolFormat> = Format extends
   ? TanStackToolSet
   : TanStackToolList;
 
-export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = "array">
-  extends CreateToolsOptions {
+export interface CreateTanStackToolsOptions<
+  Format extends TanStackToolFormat = "array",
+> extends CreateToolsOptions {
   format?: Format;
   /** Tools that pause for approval. `"mutating"` selects every tool that changes workspace state. */
   approve?: string[] | "mutating";
