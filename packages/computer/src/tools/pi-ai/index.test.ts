@@ -211,6 +211,43 @@ describe("createPiTools execution", () => {
     expect(parsed.entries[0].name).toBe("a.txt");
   });
 
+  it("returns the tool's own output as details", async () => {
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async () => ({
+      result: async () => ({ exitCode: 2, stdout: "out", stderr: "err" }),
+    });
+    fakeBackends(workspace, [{ id: "sh", callable: false }]);
+    const tools = createPiTools({ workspace, exec: { sh: {} } });
+
+    await tools.execute({ id: "1", name: "write", arguments: { path: "/w/a.txt", content: "x" } });
+    const ls = await tools.execute({ id: "2", name: "ls", arguments: { path: "/w" } });
+    const exec = await tools.execute({ id: "3", name: "exec", arguments: { command: "make" } });
+    const missing = await tools.execute({
+      id: "4",
+      name: "read",
+      arguments: { path: "/w/missing.txt" },
+    });
+
+    expect(ls.details).toEqual(JSON.parse((ls.content[0] as { text: string }).text));
+    expect(exec.details).toEqual({
+      command: "make",
+      cwd: null,
+      backend: "sh",
+      exitCode: 2,
+      stdout: "out",
+      stderr: "err",
+    });
+    expect(missing).toMatchObject({ isError: true, details: { error: expect.any(String) } });
+  });
+
+  it("leaves details off a result that fails validation", async () => {
+    const tools = createPiTools({ workspace: makeWorkspace() });
+
+    const result = await tools.execute({ id: "1", name: "read", arguments: { path: 42 } });
+
+    expect(result).not.toHaveProperty("details");
+  });
+
   it("marks a missing file as an error result", async () => {
     const tools = createPiTools({ workspace: makeWorkspace() });
 
@@ -242,8 +279,7 @@ describe("createPiTools execution", () => {
     expect((result.content[0] as { text: string }).text).toContain('Unknown tool "nope"');
   });
 
-  it("keeps a null the tool genuinely accepts", async () => {
-    // `exec`'s structured input is any JSON value, so null means null.
+  it("hands exec an input object, and treats a null input as absent", async () => {
     const seen: Array<{ input: unknown }> = [];
     const workspace = makeWorkspace();
     (workspace.runtime as unknown as Record<string, unknown>).exec = async (
@@ -256,11 +292,88 @@ describe("createPiTools execution", () => {
     fakeBackends(workspace, [{ id: "js", callable: true, description: "callable" }]);
     const tools = createPiTools({ workspace });
 
-    await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: null } });
-    await tools.execute({ id: "2", name: "exec", arguments: { command: "b" } });
+    const exec = declaration(tools, "exec");
+    const input = exec.parameters.properties?.input as { type?: string } | undefined;
+    expect(input?.type).toBe("object");
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "a", input: { n: [1] } } });
+    await tools.execute({ id: "2", name: "exec", arguments: { command: "b", input: null } });
+    const array = await tools.execute({
+      id: "3",
+      name: "exec",
+      arguments: { command: "c", input: [1, 2] },
+    });
 
-    expect(seen[0].input).toBeNull();
-    expect(seen[1].input).toBeUndefined();
+    expect(seen).toEqual([{ input: { n: [1] } }, { input: undefined }]);
+    expect(array.isError).toBe(true);
+  });
+
+  it("parses an input object sent as JSON text", async () => {
+    const seen: unknown[] = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { input?: unknown },
+    ) => {
+      seen.push(options.input);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [{ id: "js", callable: true, description: "callable" }]);
+    const tools = createPiTools({ workspace });
+
+    const text = await tools.execute({
+      id: "1",
+      name: "exec",
+      arguments: { command: "a", input: ' {"dir": "/workspace"}' },
+    });
+    const array = await tools.execute({
+      id: "2",
+      name: "exec",
+      arguments: { command: "b", input: "[1]" },
+    });
+    const broken = await tools.execute({
+      id: "3",
+      name: "exec",
+      arguments: { command: "c", input: "{dir:" },
+    });
+
+    expect(text.isError).toBe(false);
+    expect(seen).toEqual([{ dir: "/workspace" }]);
+    expect(array.isError).toBe(true);
+    expect(broken.isError).toBe(true);
+  });
+
+  it("cuts exec output by the limits `execOutput` sets", async () => {
+    const seen: unknown[] = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { output?: unknown },
+    ) => {
+      seen.push(options.output);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [{ id: "sh", callable: false }]);
+    const tools = createPiTools({
+      workspace,
+      exec: { sh: {} },
+      execOutput: { maxLines: 200, maxBytes: 4096 },
+    });
+
+    expect(declaration(tools, "exec").description).toContain("last 200 lines or 4.0KB");
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "ls" } });
+    expect(seen).toEqual([{ maxLines: 200, maxBytes: 4096 }]);
+  });
+
+  it("prefers `execOutput` to the deprecated shell limits", async () => {
+    const workspace = makeWorkspace();
+    fakeBackends(workspace, [{ id: "sh", callable: false }]);
+    const tools = createPiTools({
+      workspace,
+      shell: { backends: { sh: {} }, maxLines: 10 },
+      execOutput: { maxLines: 50 },
+    });
+
+    expect(declaration(tools, "exec").description).toContain("last 50 lines");
   });
 
   it("applies a schema default when the model omits the field", async () => {
@@ -302,7 +415,7 @@ describe("createPiTools execution", () => {
       arguments: { path: "/workspace/out.png" },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       content: [{ type: "text", text: "bucket unavailable" }],
       isError: true,
     });
@@ -329,5 +442,6 @@ describe("createPiTools execution", () => {
     expect(result.isError).toBe(false);
     expect(result.content[0]).toMatchObject({ type: "text" });
     expect(result.content[1]).toMatchObject({ type: "image", mimeType: "image/png" });
+    expect(result).not.toHaveProperty("details");
   });
 });

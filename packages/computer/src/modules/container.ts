@@ -42,6 +42,8 @@ export interface ContainerModuleOptions {
    * under the backend's `maxCapabilityBytes`.
    */
   readonly maxOutputBytes?: number;
+  readonly maxOutputLines?: number;
+  readonly prelude?: string;
 }
 
 /**
@@ -75,6 +77,20 @@ export function createContainerModule(
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
   }
+  const maxOutputLines = options.maxOutputLines;
+  if (maxOutputLines !== undefined && (!Number.isInteger(maxOutputLines) || maxOutputLines <= 0)) {
+    throw new Error("createContainerModule: maxOutputLines must be a positive integer.");
+  }
+  const output =
+    maxOutputLines === undefined
+      ? { maxBytes: maxOutputBytes }
+      : { maxBytes: maxOutputBytes, maxLines: maxOutputLines };
+  const prelude = options.prelude;
+  if (prelude !== undefined && typeof prelude !== "string") {
+    throw new Error("createContainerModule: prelude must be a string.");
+  }
+  const withPrelude = (command: string) =>
+    prelude === undefined || prelude.trim() === "" ? command : `${prelude}\n${command}`;
 
   const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => {
     // The factory runs when the JavaScript backend connects, so a
@@ -105,14 +121,14 @@ export function createContainerModule(
       const timeoutMs = remainingTime(request.timeoutMs, context);
       context.signal.throwIfAborted();
 
-      const handle = await host.runtime.exec(request.command, {
+      const handle = await host.runtime.exec(withPrelude(request.command), {
         backend,
         encoding: "utf8",
         timeoutMs,
         // The runtime keeps only the end of long output in memory and
         // saves the rest to a file, so a noisy command cannot exhaust
         // the Durable Object.
-        output: { maxBytes: maxOutputBytes },
+        output,
         ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
         ...(request.env === undefined ? {} : { env: request.env }),
         ...(request.stdin === undefined ? {} : { stdin: request.stdin }),

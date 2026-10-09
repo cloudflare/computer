@@ -43,9 +43,21 @@
       "types": "./dist/modules/artifacts.d.ts",
       "import": "./dist/modules/artifacts.js"
     },
+    "./modules/assets": {
+      "types": "./dist/modules/assets.d.ts",
+      "import": "./dist/modules/assets.js"
+    },
+    "./modules/tools": {
+      "types": "./dist/modules/tools.d.ts",
+      "import": "./dist/modules/tools.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
+    },
+    "./tools/core": {
+      "types": "./dist/tools/core.d.ts",
+      "import": "./dist/tools/core.js"
     },
     "./tools/pi-ai": {
       "types": "./dist/tools/pi-ai.d.ts",

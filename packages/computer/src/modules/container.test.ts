@@ -15,7 +15,7 @@ interface ExecOptions {
   readonly env?: Record<string, string>;
   readonly stdin?: string;
   readonly timeoutMs: number;
-  readonly output?: { readonly maxBytes: number };
+  readonly output?: { readonly maxBytes: number; readonly maxLines?: number };
 }
 
 interface Run {
@@ -137,6 +137,36 @@ describe("createContainerModule", () => {
     expect(runs[0]?.options.backend).toBe("linux");
   });
 
+  it("runs the prelude on its own line before each command", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "set -o pipefail\nexport CI=1" });
+
+    await container.exec(["# comment\nnpm test | tee log"], callContext());
+    expect(runs[0]?.command).toBe("set -o pipefail\nexport CI=1\n# comment\nnpm test | tee log");
+  });
+
+  it("leaves the command alone with a blank prelude", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "  " });
+
+    await container.exec(["ls"], callContext());
+    expect(runs[0]?.command).toBe("ls");
+  });
+
+  it("checks the command before adding the prelude", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { prelude: "set -e" });
+
+    await expect(container.exec([" "], callContext())).rejects.toThrow(/non-empty string/);
+    expect(runs).toHaveLength(0);
+  });
+
+  it("rejects a prelude that is not a string", () => {
+    expect(() => createContainerModule({ prelude: 1 as never })).toThrow(
+      /prelude must be a string/,
+    );
+  });
+
   it("refuses to run on a read-only backend", async () => {
     const { runtime, runs } = fakeRuntime({});
     const container = build(runtime);
@@ -217,6 +247,18 @@ describe("createContainerModule", () => {
       stderr: "🙂\n\n[truncated, 4 more bytes]",
       sync: { status: "complete", skipped: [], skippedCount: 0 },
     });
+  });
+
+  it("asks the runtime to keep at most the configured lines", async () => {
+    const { runtime, runs } = fakeRuntime({});
+    const container = build(runtime, { maxOutputBytes: 2048, maxOutputLines: 200 });
+
+    await container.exec(["npm test"], callContext());
+    expect(runs[0]?.options.output).toEqual({ maxBytes: 2048, maxLines: 200 });
+  });
+
+  it.each([0, -1, 1.5])("rejects maxOutputLines %s", (maxOutputLines) => {
+    expect(() => createContainerModule({ maxOutputLines })).toThrow(/maxOutputLines/);
   });
 
   it.each([

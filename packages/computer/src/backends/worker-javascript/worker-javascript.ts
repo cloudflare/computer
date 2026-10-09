@@ -157,10 +157,9 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
   readonly type = "worker-javascript";
   readonly callable = true;
-  /** What this backend tells a model: the source language and every importable module. */
-  readonly description: string;
   readonly id: string;
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
+  readonly #header: string;
 
   constructor(options: WorkerJavaScriptBackendOptions) {
     this.id = options.id ?? "worker-javascript";
@@ -241,13 +240,20 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       compatibilityDate,
       compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],
     };
-    this.description = [
+    this.#header = [
       "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
       "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
       ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
       ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
       "",
       "Modules code can import:",
+    ].join("\n");
+  }
+
+  /** What this backend tells a model: the source language and every importable module. */
+  get description(): string {
+    return [
+      this.#header,
       this.#options.modules.description,
       ...(hasNodeModules(this.#options.compatibilityFlags) ? [NODE_MODULES_DESCRIPTION] : []),
     ].join("\n");
@@ -275,7 +281,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
     for (const [specifier, factory] of options.modules.host) {
-      const built = factory({ git: host.git, artifacts: host.artifacts, runtime: host.runtime });
+      const built = factory({
+        git: host.git,
+        artifacts: host.artifacts,
+        runtime: host.runtime,
+        ...(host.assets === undefined ? {} : { assets: host.assets }),
+      });
       assertHostModuleExports(specifier, built);
       functions.set(specifier, built);
     }

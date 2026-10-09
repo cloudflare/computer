@@ -1074,6 +1074,21 @@ describe("WorkerJavaScriptBackend", () => {
     );
   });
 
+  it("reads a factory's description each time it describes itself", () => {
+    let names = ["read"];
+    const factory = Object.defineProperty(() => ({ run: () => null }), "description", {
+      get: () => `Tools: ${names.join(", ")}.`,
+    });
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: { "ws:tools": factory },
+    });
+
+    expect(backend.description).toContain("- `ws:tools`: Tools: read.");
+    names = ["read", "grep"];
+    expect(backend.description).toContain("- `ws:tools`: Tools: read, grep.");
+  });
+
   it("builds host modules from the Workspace services when it connects", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
@@ -1096,6 +1111,32 @@ describe("WorkerJavaScriptBackend", () => {
       runtime: undefined as never,
     });
     expect(seen).toBe(git);
+  });
+
+  it("hands host modules the Workspace's assets client", async () => {
+    const db = new Database(new SQLiteTestStorage());
+    initializeSchema(db, () => 0);
+    const assets = { marker: "assets" };
+    const seen: unknown[] = [];
+    const backend = new WorkerJavaScriptBackend({
+      loader: throwingLoader("must not load"),
+      modules: {
+        "ws:test": (host) => {
+          seen.push(host.assets);
+          return { run: async () => null };
+        },
+      },
+    });
+    const host = {
+      db,
+      fs: new WorkspaceFilesystem(db),
+      git: undefined as never,
+      artifacts: undefined as never,
+      runtime: undefined as never,
+    };
+    await backend.connect({ ...host, assets: assets as never });
+    await backend.connect(host);
+    expect(seen).toEqual([assets, undefined]);
   });
 
   it("does not dispatch inherited members of a host module", async () => {

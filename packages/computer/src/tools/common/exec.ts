@@ -140,7 +140,7 @@ export interface ExecInput {
   cwd?: string;
   backend?: string;
   env?: Record<string, string>;
-  input?: WorkspaceRuntimeValue;
+  input?: { [key: string]: WorkspaceRuntimeValue };
 }
 
 export interface ExecCallContext {
@@ -151,6 +151,7 @@ export interface ExecCallContext {
 export interface ExecDefinition {
   description: string;
   inputSchema: z.ZodType<ExecInput>;
+  prepareArguments(args: unknown): unknown;
   /**
    * Yields running snapshots while the command streams, then one
    * terminal snapshot. Every snapshot is a complete result, so a
@@ -213,12 +214,13 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       );
   }
   if (callableBackendIds.size > 0) {
-    shape.input = jsonValueSchema
+    shape.input = z
+      .record(z.string(), jsonValueSchema)
       .optional()
       .describe(
         single
-          ? "Structured value handed to the module."
-          : "Structured value handed to a callable backend's module. Other backends reject it.",
+          ? "Input object handed to the module."
+          : "Input object handed to a callable backend's module. Other backends reject it.",
       );
   }
   // SAFETY: Every field in `shape` has the type ExecInput gives it, and the fields left out are optional there.
@@ -227,6 +229,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
   return {
     description,
     inputSchema,
+    prepareArguments: callableBackendIds.size > 0 ? parseInputObject : (args) => args,
     execute: async function* ({ command, cwd, backend, env, input }, { abortSignal } = {}) {
       // With one backend there is nothing to choose. With several the
       // schema requires `backend`; a caller that skips the schema gets
@@ -351,7 +354,7 @@ function outputHint(limits: OutputLimits): string {
 }
 const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
 const CALLABLE_HINT =
-  "Pass `input` to hand the module a structured value, and read its return value back from the `result` field.";
+  "Pass an `input` object to hand the module structured values, and read its return value back from the `result` field.";
 
 interface DescribedBackend {
   readonly id: string;
@@ -436,6 +439,20 @@ function commandHint(backends: readonly DescribedBackend[]): string {
     return "Shell command, e.g. 'npm test' or 'git diff HEAD'.";
   }
   return "Shell command, e.g. 'npm test' or 'git diff HEAD'. For a callable backend this is the module source to run.";
+}
+
+function parseInputObject(args: unknown): unknown {
+  if (args === null || typeof args !== "object" || Array.isArray(args)) return args;
+  const input = (args as { input?: unknown }).input;
+  if (typeof input !== "string" || !input.trimStart().startsWith("{")) return args;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(input);
+  } catch {
+    return args;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return args;
+  return { ...args, input: parsed };
 }
 
 function errorMessage(err: unknown): string {

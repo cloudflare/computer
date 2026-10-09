@@ -50,6 +50,7 @@ export interface WorkspaceModuleHost {
   readonly artifacts: import("../artifacts/index.js").ArtifactClient;
   /** The Workspace runtime, for running commands on other backends. */
   readonly runtime: import("./runtime.js").WorkspaceRuntime;
+  readonly assets?: import("../assets/index.js").AssetsClient;
 }
 
 /**
@@ -296,6 +297,7 @@ export interface WorkspaceModuleBackendHandle {
 export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost & {
   /** The Workspace runtime, handed to host modules. */
   readonly runtime: import("./runtime.js").WorkspaceRuntime;
+  readonly assets?: import("../assets/index.js").AssetsClient;
 };
 
 export interface WorkspaceModuleBackend {

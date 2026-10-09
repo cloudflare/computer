@@ -33,7 +33,12 @@ interface WalkStart {
   path: string;
   prefix: string;
   regex: RegExp | undefined;
-  excludes: RegExp[];
+  excludes: Exclusion[];
+}
+
+interface Exclusion {
+  regex: RegExp;
+  directoryOnly: boolean;
 }
 
 const CHILD_PAGE_SIZE = 128;
@@ -99,7 +104,13 @@ function prepareWalk(
   // An empty exclusion pattern is dropped rather than compiled: like
   // the inclusion glob it would only match the empty relative path,
   // which no candidate ever has.
-  const excludes = (exclude ?? []).filter((glob) => glob !== "").map(compileGlob);
+  const excludes = (exclude ?? [])
+    .filter((glob) => glob !== "")
+    .flatMap((glob): Exclusion[] => {
+      const own = { regex: compileGlob(glob), directoryOnly: false };
+      if (!glob.endsWith("/**") || glob.length <= 3) return [own];
+      return [own, { regex: compileGlob(glob.slice(0, -3)), directoryOnly: true }];
+    });
   return {
     inode: node.inode,
     path: canonical,
@@ -127,7 +138,12 @@ function* walk(
       // Exclusion is decided before inclusion, and before any child
       // query: an excluded directory takes its whole subtree with it,
       // so the walker never reads below it.
-      if (excludes.some((excluded) => excluded.test(relativePath))) {
+      if (
+        excludes.some(
+          (excluded) =>
+            (!excluded.directoryOnly || child.type === "dir") && excluded.regex.test(relativePath),
+        )
+      ) {
         continue;
       }
       if (regex === undefined || regex.test(relativePath)) {
@@ -161,13 +177,27 @@ function readChildren(db: Database, parentInode: number, afterName: string): Chi
 //   *  matches any run of characters except '/'
 //   ** matches any run of characters including '/'
 //   ?  matches one character except '/'
+//   {a,b} matches either alternative; groups nest, and a brace with
+//         no top-level comma or no closing brace is a literal
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
 function compileGlob(pattern: string): RegExp {
+  return new RegExp(`^${globSource(pattern)}$`);
+}
+
+function globSource(pattern: string): string {
   let re = "";
   let i = 0;
   while (i < pattern.length) {
     const ch = pattern[i];
+    if (ch === "{") {
+      const alternatives = braceAlternatives(pattern, i);
+      if (alternatives !== undefined) {
+        re += `(?:${alternatives.parts.map(globSource).join("|")})`;
+        i = alternatives.end + 1;
+        continue;
+      }
+    }
     if (ch === "*") {
       if (pattern[i + 1] === "*") {
         // '**/' matches zero or more path segments. Without the slash, '**'
@@ -197,7 +227,31 @@ function compileGlob(pattern: string): RegExp {
     }
     i += 1;
   }
-  return new RegExp(`^${re}$`);
+  return re;
+}
+
+function braceAlternatives(
+  pattern: string,
+  open: number,
+): { parts: string[]; end: number } | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = open + 1;
+  for (let i = open + 1; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      if (depth === 0) {
+        parts.push(pattern.slice(start, i));
+        return parts.length > 1 ? { parts, end: i } : undefined;
+      }
+      depth -= 1;
+    } else if (ch === "," && depth === 0) {
+      parts.push(pattern.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return undefined;
 }
 
 const REGEX_METACHARS = new Set([".", "+", "?", "^", "$", "(", ")", "[", "]", "{", "}", "|", "\\"]);

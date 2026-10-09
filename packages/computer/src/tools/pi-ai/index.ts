@@ -39,6 +39,7 @@ interface PiToolEntry {
   description: string;
   inputSchema: z.ZodType;
   strictArguments?: boolean;
+  prepareArguments?: (args: unknown) => unknown;
   execute: (input: never, context: ToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
   toModelOutput?: (args: { input: never; output: never }) => ModelOutput;
 }
@@ -73,6 +74,7 @@ export type PiToolResultContent =
 export interface PiToolResult {
   content: PiToolResultContent[];
   isError: boolean;
+  details?: unknown;
 }
 
 export interface CreatePiToolsResult {
@@ -160,6 +162,7 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
       name: "exec",
       description: exec.description,
       inputSchema: exec.inputSchema,
+      prepareArguments: exec.prepareArguments,
       execute: (input, context) => exec.execute(input, context),
     } as PiToolEntry);
   }
@@ -224,7 +227,10 @@ function dispatcher(
       );
     }
 
-    const args = dropPlaceholderNulls(call.arguments ?? {}, nullable.get(entry.name) ?? EMPTY);
+    const prepared = entry.prepareArguments
+      ? entry.prepareArguments(call.arguments ?? {})
+      : (call.arguments ?? {});
+    const args = dropPlaceholderNulls(prepared, nullable.get(entry.name) ?? EMPTY);
     const parsed = entry.inputSchema.safeParse(args);
     if (!parsed.success) {
       return errorResult(`Invalid arguments for ${call.name}: ${formatZodError(parsed.error)}`);
@@ -239,9 +245,11 @@ function dispatcher(
       | undefined;
     try {
       const output = await settle(run(parsed.data, context));
-      return toPiResult(
-        toOutput ? toOutput({ input: parsed.data, output }) : defaultModelOutput(output),
-      );
+      const modelOutput = toOutput
+        ? toOutput({ input: parsed.data, output })
+        : defaultModelOutput(output);
+      const result = toPiResult(modelOutput);
+      return modelOutput.type === "media" ? result : { ...result, details: output };
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
     }
