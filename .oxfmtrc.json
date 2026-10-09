@@ -12,6 +12,18 @@
   "bracketSameLine": false,
   "bracketSpacing": true,
   "sortPackageJson": false,
+  "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "customGroups": [{ "groupName": "protocol", "elementNamePattern": ["cloudflare:**"] }],
+    "groups": [
+      ["protocol", "builtin"],
+      "external",
+      "internal",
+      ["parent", "sibling", "index"],
+      "unknown"
+    ]
+  },
   "overrides": [
     {
       "files": ["**/*.json", "**/*.jsonc"],

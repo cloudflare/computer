@@ -42,8 +42,8 @@ import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
-import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
+import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import {
   DEFAULT_OUTPUT_DIR,
   DEFAULT_OUTPUT_KEEP,
