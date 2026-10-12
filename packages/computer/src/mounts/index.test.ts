@@ -798,17 +798,74 @@ describe("mount versions", () => {
     expect(await ws.fs.readFile("/workspace/ok/a.txt", "utf8")).toBe("ok");
   });
 
-  it("keeps files that existed at the root before the first index", async () => {
+  it("replaces files that existed at the root before the first index", async () => {
     const storage = makeStorage();
     const before = new Workspace({ storage, backends });
-    await before.fs.mkdir("/workspace/m", { recursive: true });
-    await before.fs.writeFile("/workspace/m/existing.txt", utf8("here"));
+    await before.fs.mkdir("/workspace/m/custom", { recursive: true });
+    await before.fs.writeFile("/workspace/m/custom/existing.txt", utf8("here"));
 
     const ws = bootWith(
       storage,
       fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
     );
     await ws.ensureMountsIndexed();
-    expect(await ws.fs.readFile("/workspace/m/existing.txt", "utf8")).toBe("here");
+    expect(await ws.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a");
+    await expect(ws.fs.stat("/workspace/m/custom")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("clears stale files when retrying an interrupted refresh", async () => {
+    const storage = makeStorage();
+    const first = bootWith(
+      storage,
+      fakeMount({
+        version: "v1",
+        files: [
+          { path: "/workspace/m/a.txt", bytes: utf8("a1") },
+          { path: "/workspace/m/removed.txt", bytes: utf8("gone") },
+        ],
+      }),
+    );
+    await first.ensureMountsIndexed();
+    // A refresh marks the row unindexed before touching the files. A
+    // restart at that point leaves the old files and the old version
+    // in place with indexed = 0.
+    first.db.run("UPDATE _vfs_mounts SET indexed = 0 WHERE root = ?", "/workspace/m");
+
+    const retry = bootWith(
+      storage,
+      fakeMount({ version: "v2", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a2") }] }),
+    );
+    await retry.ensureMountsIndexed();
+    expect(await retry.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a2");
+    await expect(retry.fs.readFile("/workspace/m/removed.txt", "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(mountRow(retry)).toEqual({ indexed: 1, mode: "read-only", version: "v2" });
+  });
+
+  it("clears partial output when retrying an interrupted first index", async () => {
+    const storage = makeStorage();
+    const crashed = bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    );
+    // A restart mid-materialize: the row exists with indexed = 0 and a
+    // partial subtree, including a file the finished run won't write.
+    crashed.db.run(
+      "INSERT INTO _vfs_mounts (root, kind, mode, indexed) VALUES (?, 'fake', 'read-write', 0)",
+      "/workspace/m",
+    );
+    await crashed.fs.mkdir("/workspace/m", { recursive: true });
+    await crashed.fs.writeFile("/workspace/m/partial.tmp", utf8("half"));
+
+    const retry = bootWith(
+      storage,
+      fakeMount({ version: "v1", files: [{ path: "/workspace/m/a.txt", bytes: utf8("a") }] }),
+    );
+    await retry.ensureMountsIndexed();
+    expect(await retry.fs.readFile("/workspace/m/a.txt", "utf8")).toBe("a");
+    await expect(retry.fs.readFile("/workspace/m/partial.tmp", "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

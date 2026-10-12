@@ -57,7 +57,6 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
   }
 
   const status = new Map<string, boolean>();
-  const stale = new Set<string>();
   for (const root of mounts.keys()) {
     if (!versions.has(root)) continue;
     const version = versions.get(root);
@@ -67,7 +66,6 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
     );
     const versionMatches = version === undefined || row?.version === version;
     status.set(root, row?.indexed === 1 && versionMatches);
-    if (row?.indexed === 1 && !versionMatches) stale.add(root);
   }
 
   // Run every pending mount in parallel. Per-mount failures clear
@@ -107,14 +105,15 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
         // mid-materialize rolls it back via the existing fs.rm path
         // below.
         //
-        // A stale mount's old copy is removed first so files dropped
-        // from the new version don't linger. Only stale mounts: on a
-        // first index, anything already at the root is left alone, as
-        // it always was. The rm goes through the filesystem, so it is
-        // recorded as changes and reaches the container on the next
-        // push. If materialize() then fails, the rollback below leaves
-        // the root empty rather than restoring the old copy.
-        if (stale.has(root)) await fs.rm(root, { recursive: true, force: true });
+        // A mount owns its root outright, so whatever is there is
+        // removed first: files from a previous version, files a user
+        // created before the mount was registered, and the partial
+        // output of an interrupted run, whatever state that left the
+        // _vfs_mounts row in. Clearing on every pass is what keeps a
+        // retry from leaving stale files behind. The rm goes through
+        // the filesystem, so it is recorded as changes and reaches the
+        // container on the next push.
+        await fs.rm(root, { recursive: true, force: true });
         await fs.mkdir(root, { recursive: true });
         await mount.materialize(api);
         // Stamp every node reachable from the mount root with
