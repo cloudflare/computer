@@ -37,7 +37,7 @@ function rejectNesting(roots: string[]): void {
       // a is an ancestor of b when b starts with `${a}/`. Compare
       // with the trailing slash so /workspace/a is not flagged as
       // an ancestor of /workspace/another.
-      if (b.startsWith(`${a}/`)) {
+      if (b.startsWith(a === "/" ? "/" : `${a}/`)) {
         throw new Error(`mount roots must not nest: ${a} contains ${b}`);
       }
     }

@@ -112,4 +112,15 @@ describe("mount registry", () => {
     const ws = new Workspace({ storage: makeStorage(), backends });
     expect(ws.mounts().size).toBe(0);
   });
+
+  it("rejects the workspace root alongside another mount", () => {
+    expect(
+      () =>
+        new Workspace({
+          storage: makeStorage(),
+          backends,
+          mounts: { "/": eager(), "/workspace/a": eager() },
+        }),
+    ).toThrow(/must not nest: \/ contains \/workspace\/a/);
+  });
 });

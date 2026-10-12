@@ -113,8 +113,9 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
         // retry from leaving stale files behind. The rm goes through
         // the filesystem, so it is recorded as changes and reaches the
         // container on the next push.
-        await fs.rm(root, { recursive: true, force: true });
-        await fs.mkdir(root, { recursive: true });
+        await clearRoot(fs, root);
+        // "/" always exists, and mkdir rejects it even with recursive.
+        if (root !== "/") await fs.mkdir(root, { recursive: true });
         await mount.materialize(api);
         // Stamp every node reachable from the mount root with
         // mount_root = <root>. The dofs guard reads the path → root
@@ -132,7 +133,7 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
         // row is still mode='read-write' at this point, so the rm
         // is not blocked by its own guard.
         try {
-          await fs.rm(root, { recursive: true, force: true });
+          await clearRoot(fs, root);
         } catch {
           // Best effort. If the subtree doesn't exist we still want
           // the original error to surface.
@@ -163,6 +164,19 @@ async function runIndex(opts: IndexerOptions): Promise<void> {
     // Surface the first failure; preserve the original error so
     // tests / callers see the underlying message.
     throw failures[0];
+  }
+}
+
+// Remove everything under a mount root. "/" itself can't be removed
+// (rm rejects it with EPERM), so a mount at the workspace root is
+// cleared one child at a time.
+async function clearRoot(fs: WorkspaceFilesystem, root: string): Promise<void> {
+  if (root !== "/") {
+    await fs.rm(root, { recursive: true, force: true });
+    return;
+  }
+  for (const entry of await fs.readdir("/")) {
+    await fs.rm(`/${entry.name}`, { recursive: true, force: true });
   }
 }
 
@@ -238,8 +252,12 @@ function createWriteAPI(opts: WriteAPIOptions): MountWriteAPI {
   let bytesWritten = 0;
   let entriesWritten = 0;
 
+  // Every path under "/" already starts with "/", so the root itself is
+  // the prefix there rather than "//".
+  const prefix = root === "/" ? "/" : `${root}/`;
+
   function checkPath(absPath: string): void {
-    if (!absPath.startsWith(`${root}/`) && absPath !== root) {
+    if (!absPath.startsWith(prefix) && absPath !== root) {
       throw new Error(`mount ${root}: writeFile/mkdir target ${absPath} is outside the mount root`);
     }
   }

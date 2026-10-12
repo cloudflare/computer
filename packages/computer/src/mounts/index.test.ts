@@ -813,6 +813,27 @@ describe("mount versions", () => {
     await expect(ws.fs.stat("/workspace/m/custom")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("indexes a mount at the workspace root", async () => {
+    const storage = makeStorage();
+    const before = new Workspace({ storage, backends });
+    await before.fs.writeFile("/old.txt", utf8("old"));
+
+    const mount = fakeMount({ version: "v1", files: [{ path: "/a/b.txt", bytes: utf8("b") }] });
+    const ws = new Workspace({ storage, backends, mounts: { "/": mount } });
+    await ws.ensureMountsIndexed();
+    expect(mount.calls).toBe(1);
+    expect(await ws.fs.readFile("/a/b.txt", "utf8")).toBe("b");
+    await expect(ws.fs.readFile("/old.txt", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(ws.fs.writeFile("/new.txt", utf8("x"))).rejects.toMatchObject({ code: "EROFS" });
+  });
+
+  it("indexes an empty mount at the workspace root", async () => {
+    const mount = fakeMount({ files: [] });
+    const ws = new Workspace({ storage: makeStorage(), backends, mounts: { "/": mount } });
+    await ws.ensureMountsIndexed();
+    expect(mount.calls).toBe(1);
+  });
+
   it("clears stale files when retrying an interrupted refresh", async () => {
     const storage = makeStorage();
     const first = bootWith(
