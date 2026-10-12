@@ -48,12 +48,11 @@ A typical `exec()` round-trip:
    (the DO) calls `remote.hasObjects(...)` on the referenced hashes
    and follows up with `remote.pushObjects(missing)` for the subset
    the receiver doesn't already have. After the receiver applies
-   the batch, the DO advances `pushRev` past the rev it just sent
-   — but only when there were no unpushed local writes interleaved
-   in the meantime, so an apply that races a local mutation doesn't
-   strand the local write. This post-apply `pushRev` advancement
-   (introduced in `dc692c0`) is what keeps the container's own apply
-   from bouncing the same entries straight back on the next pull.
+   the batch and echoes its cursor, the DO advances its push cursor
+   to what was acknowledged. In the other direction, a pull that
+   began with nothing to push acknowledges the revs it minted with
+   an empty push, so pulled entries are not bounced straight back
+   (see [Acknowledging pulled versions](#acknowledging-pulled-versions)).
 2. **Hydrate.** Lazy-mount stubs the command might touch are fetched
    from their providers and included in the same push batch. See
    [06. Mount Interface](./06_mount_interface.md).
@@ -349,13 +348,88 @@ per entry kind rather than a blanket property:
 | `file` | `alreadyApplied` compares the manifest hash; identical content is a no-op. |
 | `dir` | Compares mode; a match is a no-op. |
 | `symlink` | Compares mode and target; a match is a no-op. |
-| `delete` | Compares the tombstone's rev against the live inode's. A path recreated **above** the tombstone rev is newer information, so the delete is dropped. |
+| `delete` | On pull, applied when the local version is seen by this backend (at or before the push cursor, or minted earlier in the same apply from a clean start) or is exactly the version the sender removed (`prior` matches). Dropped only when it is both unseen and different. On push, dropped if the receiver already committed it (at or before its fetch cursor). |
 
 The delete case is why replay cannot be assumed idempotent for free. A
-tombstone describes a path as of the rev it was stamped with; replaying
-it against a newer local recreation would destroy data the tombstone
-never described. The recreation is itself a change the next push ships
-upstream, so dropping the stale delete loses no work.
+replayed tombstone must not destroy a path recreated after it, and a
+pulled delete must not destroy local work the remote never saw. Both
+checks stay within one rev space: `entry.rev` is the sender's counter
+and `vfs_nodes.rev` is the receiver's, so they are never compared
+directly. A kept path is itself a change the next push ships upstream,
+so dropping the delete loses no work.
+
+"Seen" is the push cursor, the same one push plans from: a version push
+will not send again is one the backend has. When a backend turns out to
+have lost what we pushed (a restarted computerd), both
+`reconcileWatermarks` and `pullOnce`'s divergence check rewind the push
+cursor itself to 0, so push re-sends the host's files and the guard
+treats them as unseen until it has.
+
+#### Fingerprinted deletes
+
+A tombstone carries `prior`, the fingerprint of the version it
+removed: type, permission bits, and the file's manifest hash or the
+symlink's target. Revs and mtimes are left out, since peers holding
+the same version disagree on both. A pulled delete whose `prior`
+matches the local version applies even when the push cursor does not
+cover it: deleting it loses nothing the backend never had. That covers
+what the cursor cannot: a pull that could not be acknowledged, a
+rewritten name beside an unpushed hardlink, and a delete pulled after
+a divergence reset.
+
+A directory's fingerprint is its mode, and its content is its
+children, so it counts only once the directory is empty. A recursive
+`rm` tombstones every removed path and the directory sorts first, so a
+directory delete held back by unseen descendants is decided again at
+the end of the apply call, after the descendants' own deletes. If the
+directory is empty by then and seen or matching, it goes; anything left
+inside is host work the backend never saw, and the directory stays.
+
+Older peers send no `prior`, and a directory rename writes its
+old-path tombstones without one; those deletes use the cursor rule
+alone. The push side keeps its replay rule and ignores `prior`.
+
+One trade-off is pinned in `replay.test.ts`. A pull block that applied
+a fingerprinted delete and died before its fetch cursor moved is
+replayed; if the host recreated the path with identical bytes and mode
+in between, the replay removes the recreation. Closing it needs the
+pull's apply and its cursor checkpoint to commit together.
+
+#### Acknowledging pulled versions
+
+Applying a pull mints local revs, which on their own look like
+unpushed host work. The puller acknowledges them when three things
+hold:
+
+- the push window was empty as the pull began (`pushWindowIsEmpty`);
+- the backend already confirms our push cursor: the fetch cursor it
+  reported on this pull's fetch is at least ours;
+- every rev minted since came from the pull's applies
+  (`ApplyResult.minted` equals how far `currentRev` moved).
+
+It then sends an empty `push` whose `senderCursor` is the new
+`currentRev`. The receiver advances its fetch cursor, echoes it, and
+only then does the puller advance its push cursor, so the cross-side
+invariant holds throughout. The second condition matters because the
+receiver raises its fetch cursor to whatever it is sent: acknowledging
+to a backend that restarted empty would cover files it never received
+and hide the restart from `reconcileWatermarks`.
+
+Every pull path acknowledges per committed unit: `pullOnce` per batch,
+`pullBlocks` per block in both modes. A pull interrupted after some
+batches keeps those batches acknowledged. Only a failure between a
+batch's commit and its acknowledgment leaves that batch unacknowledged.
+
+Two things follow. The next push does not re-send what was just pulled,
+and a later delete of a pulled file from the same backend applies
+because the version it removes is one the backend has seen.
+
+If the window was not empty, a host write landed during the pull, or
+the acknowledgment failed, nothing is acknowledged. The pulled revs ship
+on the next push like any other change. A fingerprinted delete of a
+pulled file still applies; one without a fingerprint is kept, and the
+next push recreates the file remotely. That is the conservative
+outcome, never a lost host write.
 
 Entries the receiver refuses — most often a container-side write under
 a read-only mount — are reported in `SyncProgress.skipped` **and**
@@ -378,7 +452,7 @@ wire breaks and require lockstep rollout.
 | RPC | Direction | Returns | Notes |
 | --- | --- | --- | --- |
 | `push({ senderRev, changes })` | DO → container | `{ rev, appliedPushCursor }` | Streams a coalesced batch of `ChangeEntry` via the `changes` `ReadableStream`. The sender then calls `hasObjects` on the referenced hashes and follows up with `pushObjects` for the missing subset. See the `senderRev` branches below. |
-| `fetchChanges({ after?, ignore? })` | container → DO | `Promise<{ currentCursor, appliedPushCursor, stream: ReadableStream<ChangeEntry> }>` | Streams one entry per touched path after `after`, ordered by `rev` then `path`. For files, `chunks: (hash, size)[]` (no bytes inline); for dirs, metadata; for deletes, a tombstone. `currentCursor` is `{ rev: currentRev, path: null }` at stream open; the puller writes it after a clean drain. `appliedPushCursor` carries the cross-side invariant check on the pull path. |
+| `fetchChanges({ after?, ignore? })` | container → DO | `Promise<{ currentCursor, appliedPushCursor, stream: ReadableStream<ChangeEntry> }>` | Streams one entry per touched path after `after`, ordered by `rev` then `path`. For files, `chunks: (hash, size)[]` (no bytes inline); for dirs, metadata; for deletes, a tombstone, with `prior` when the sender recorded one. `currentCursor` is `{ rev: currentRev, path: null }` at stream open; the puller writes it after a clean drain. `appliedPushCursor` carries the cross-side invariant check on the pull path. |
 | `hasObjects(hashes[])` | sender probes receiver | `Uint8Array[]` | Returns the subset of the input the receiver already holds. The git `have` line, batched. |
 | `fetchObjects(hashes[])` | container → DO | `ReadableStream<{ hash, bytes }>` | Streams chunk bytes by hash. The git `want`/pack response on the fetch path. |
 | `pushObjects(objects)` | DO → container | `void` | Streams chunk bytes by hash. The push-direction mirror of `fetchObjects`. |

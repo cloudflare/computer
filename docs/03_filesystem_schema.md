@@ -182,10 +182,11 @@ Resolve before the encoding swap lands.
 
 ```sql
 CREATE TABLE vfs_changes (
-  id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  rev  INTEGER NOT NULL,
-  path TEXT    NOT NULL,
-  op   TEXT    NOT NULL CHECK(op IN ('delete'))
+  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  rev   INTEGER NOT NULL,
+  path  TEXT    NOT NULL,
+  op    TEXT    NOT NULL CHECK(op IN ('delete')),
+  prior TEXT
 );
 CREATE INDEX vfs_changes_by_rev ON vfs_changes(rev);
 ```
@@ -194,6 +195,15 @@ Deletes leave no row in `vfs_nodes`, so they're recorded here for
 the incremental push to tell the container "this path is gone". A
 single mutation (e.g. `rm -r`) records one tombstone per removed
 path, all sharing the same `rev` — the bumped value at delete time.
+
+`prior` (schema v9) is the fingerprint of the version the delete
+removed: type, permission bits, and the file's manifest hash or the
+symlink's target (`sync/fingerprint.ts`). It travels on the wire as
+`ChangeEntry.prior` so the receiver can apply a delete of exactly the
+version it holds; see
+[Fingerprinted deletes](./02_sync_protocol.md#fingerprinted-deletes).
+It is NULL for rows written before v9 and for the old-path tombstones
+a directory rename writes in one set-based statement.
 
 **Pruning** *(planned; not yet wired)*. The target behaviour is to
 delete rows with `rev <= pushRev` in the same transaction that
@@ -259,7 +269,7 @@ indexer. See [06. Mount Interface](./06_mount_interface.md).
 - `mode` is what the read-only guard reads to reject writes under the
   root with `EROFS`. The indexer holds the row at `'read-write'` while it
   materializes, then sets the mount's own mode.
-- `version` (added in schema v9) is the content version the mount
+- `version` (added in schema v10) is the content version the mount
   declared at its last successful index. It's `NULL` for mounts that
   don't declare one. When a mount's version changes, the indexer
   replaces its subtree; see

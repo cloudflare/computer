@@ -221,7 +221,22 @@ function v7_to_v8_changes_op_rev_index(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS vfs_changes_by_op_rev ON vfs_changes(op, rev)`);
 }
 
-// v8 → v9 — add `_vfs_mounts.version`, the content version a mount
+// v8 → v9 — record the fingerprint of the version each tombstone
+// removed, so a receiver can apply a delete of exactly the version it
+// holds even before the push cursor covers it. Additive and nullable:
+// existing tombstones keep NULL, which receivers treat like a delete
+// from a peer that sends no fingerprint. The column is duplicated in
+// `sync.ts`'s fresh-install DDL.
+function v8_to_v9_changes_prior(db: Database): void {
+  const hasColumn = db
+    .all<{ name: string }>("PRAGMA table_info(vfs_changes)")
+    .some((column) => column.name === "prior");
+  if (!hasColumn) {
+    db.run("ALTER TABLE vfs_changes ADD COLUMN prior TEXT");
+  }
+}
+
+// v9 → v10 — add `_vfs_mounts.version`, the content version a mount
 // declared when it was last materialized. The workspace indexer
 // compares it with the registered mount's version and re-materializes
 // on a mismatch. Existing rows get NULL, which a versioned mount reads
@@ -230,7 +245,7 @@ function v7_to_v8_changes_op_rev_index(db: Database): void {
 // Nullable and with no default, so the ALTER needs no backfill. The
 // column check keeps the step safe on a database that already has it.
 // The column is duplicated in `sync.ts`'s fresh-install DDL.
-function v8_to_v9_add_mounts_version(db: Database): void {
+function v9_to_v10_add_mounts_version(db: Database): void {
   const hasColumn = db
     .all<{ name: string }>("PRAGMA table_info(_vfs_mounts)")
     .some((column) => column.name === "version");
@@ -247,7 +262,8 @@ export const MIGRATIONS: readonly Migration[] = [
   { from: 5, to: 6, migrator: v5_to_v6_push_cursor },
   { from: 6, to: 7, migrator: v6_to_v7_sync_operations },
   { from: 7, to: 8, migrator: v7_to_v8_changes_op_rev_index },
-  { from: 8, to: 9, migrator: v8_to_v9_add_mounts_version },
+  { from: 8, to: 9, migrator: v8_to_v9_changes_prior },
+  { from: 9, to: 10, migrator: v9_to_v10_add_mounts_version },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

@@ -25,7 +25,6 @@ import {
   stageBlob,
   writeFetchCursor,
   writePushCursor,
-  writeWatermark,
 } from "@cloudflare/dofs";
 
 import type { SyncRPC } from "./interface.js";
@@ -34,7 +33,13 @@ import type { SyncRPC } from "./interface.js";
 // Explicit-cursor block helpers below remain the low-level surface for
 // callers that own their own destination store and checkpoint; the
 // engine is what the Workspace iterables are built on.
-import { captureSyncTarget, pullBlocks, pushBlocks } from "./sync-engine.js";
+import {
+  acknowledgePulledRevs,
+  captureSyncTarget,
+  openPullWindow,
+  pullBlocks,
+  pushBlocks,
+} from "./sync-engine.js";
 
 export type { PullBlocksOptions, PushBlocksOptions, SyncProgress } from "./sync-engine.js";
 export { captureSyncTarget, pullBlocks, pushBlocks };
@@ -58,6 +63,9 @@ function maybeDispose(value: unknown): void {
 // it just buffered, then releases them before reading the next.
 // Peak memory in pullOnce is O(PULL_BATCH_SIZE), not O(stream).
 const PULL_BATCH_SIZE = 256;
+
+// The dofs watermark slot used when a caller names no backend.
+const DEFAULT_BACKEND = "default";
 
 // Pull every entry the remote has produced since the last successful
 // pull, apply locally, advance the fetch cursor. Returns an `ApplyResult`
@@ -165,7 +173,11 @@ async function pullOnceImpl(
         resetFetchCursor: fetchDiverged,
       });
       if (pushDiverged) {
-        writeWatermark(db, "pushRev", 0, backend);
+        // Rewind the push cursor itself, as reconcileWatermarks does.
+        // Push plans from the cursor, so resetting only the pushRev
+        // watermark would leave the host's files unsent to a backend
+        // that lost them.
+        writePushCursor(db, { rev: 0, path: null }, backend);
       }
       if (fetchDiverged) {
         writeFetchCursor(db, { rev: 0, path: null }, backend);
@@ -185,6 +197,9 @@ async function pullOnceImpl(
       return { applied: 0, skipped: [] };
     }
 
+    // What the backend has confirmed of our pushes. Each acknowledged
+    // batch raises it, so the next batch can be acknowledged in turn.
+    let remoteApplied = appliedPushCursor;
     const reader = fetchResult.stream.getReader();
     let totalApplied = 0;
     const totalSkipped: SkippedEntry[] = [];
@@ -244,6 +259,10 @@ async function pullOnceImpl(
           }
         }
 
+        // Acknowledge batch by batch, matching the block path: a batch
+        // is committed and checkpointed on its own, so an interruption
+        // after it must not leave its revs looking like host work.
+        const window = openPullWindow(db, backend ?? DEFAULT_BACKEND, remoteApplied);
         const batchResult = await applyChanges(db, batch, new Map(), {
           source: "upstream",
           backend,
@@ -255,6 +274,14 @@ async function pullOnceImpl(
         // because alreadyApplied() drops entries whose live state
         // already matches.
         writeFetchCursorIfAhead(db, { rev: last.rev, path: last.path }, backend);
+        const acknowledged = await acknowledgePulledRevs(
+          db,
+          remote,
+          backend ?? DEFAULT_BACKEND,
+          window,
+          batchResult.minted ?? 0,
+        );
+        if (acknowledged !== undefined) remoteApplied = acknowledged;
         totalApplied += batchResult.applied;
         if (batchResult.skipped.length > 0) {
           for (const s of batchResult.skipped) totalSkipped.push(s);

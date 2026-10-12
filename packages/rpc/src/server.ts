@@ -142,6 +142,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     this.db.transactionSync(() => {
       applyChangesSync(this.db, entries, new Map(), {
         source: isPeer ? "upstream" : "local",
+        receivedCursor: readFetchCursor(this.db),
       });
       if (isPeer && compareChangeCursors(senderCursor, readFetchCursor(this.db)) > 0) {
         writeFetchCursor(this.db, senderCursor);
@@ -296,6 +297,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
     }
     const result = applyChangesSync(this.db, decoded.entries, new Map(), {
       source: "upstream",
+      receivedCursor: readFetchCursor(this.db),
     });
     // The footer's block cursor is the sender's checkpoint; echo it so
     // the sender advances only through what actually applied here.

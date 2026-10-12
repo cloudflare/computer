@@ -512,6 +512,39 @@ describe("initializeSchema", () => {
     ).toContain("vfs_changes_by_path");
   });
 
+  it("adds vfs_changes.prior on the v8 -> v9 upgrade, preserving tombstones", () => {
+    // Stage a v8-shape database: vfs_changes without the fingerprint
+    // column. Existing tombstones keep a NULL prior, which receivers
+    // treat as a delete from a peer that sends no fingerprint.
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+
+    initializeSchema(db, () => 0);
+    db.run("DROP TABLE vfs_changes");
+    db.run(`CREATE TABLE vfs_changes (
+      id   INTEGER PRIMARY KEY AUTOINCREMENT,
+      rev  INTEGER NOT NULL,
+      path TEXT    NOT NULL,
+      op   TEXT    NOT NULL CHECK(op IN ('delete'))
+    )`);
+    db.run("INSERT INTO vfs_changes (rev, path, op) VALUES (?, ?, 'delete')", 5, "/a.txt");
+    db.run("INSERT INTO vfs_changes (rev, path, op) VALUES (?, ?, 'delete')", 7, "/b.txt");
+    db.run("UPDATE vfs_meta SET v = 8 WHERE k = 'schema_version'");
+
+    initializeSchema(db, () => 0);
+
+    expect(db.one<{ v: number }>("SELECT v FROM vfs_meta WHERE k = 'schema_version'")?.v).toBe(
+      SCHEMA_VERSION,
+    );
+    expect(db.all<{ name: string }>("PRAGMA table_info(vfs_changes)").map((c) => c.name)).toContain(
+      "prior",
+    );
+    expect(db.all("SELECT rev, path, op, prior FROM vfs_changes ORDER BY id")).toEqual([
+      { rev: 5, path: "/a.txt", op: "delete", prior: null },
+      { rev: 7, path: "/b.txt", op: "delete", prior: null },
+    ]);
+  });
+
   it("upgrades a v6 database with the sync operation tables", () => {
     const storage = new SQLiteTestStorage();
     const db = new Database(storage);
@@ -587,11 +620,11 @@ describe("initializeSchema", () => {
     ]);
   });
 
-  it("upgrades a v8 database with _vfs_mounts.version", () => {
+  it("upgrades a v9 database with _vfs_mounts.version", () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
     db.run("ALTER TABLE _vfs_mounts DROP COLUMN version");
-    db.run("UPDATE vfs_meta SET v = ? WHERE k = ?", 8, "schema_version");
+    db.run("UPDATE vfs_meta SET v = ? WHERE k = ?", 9, "schema_version");
     db.run(
       "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, 'read-only')",
       "/m1",

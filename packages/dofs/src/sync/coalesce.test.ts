@@ -57,7 +57,12 @@ describe("coalesceChanges", () => {
       rm(db, "/gone.txt", {});
       const entries = await drain(coalesceChanges(db, 0));
       const gone = entries.find((e) => e.path === "/gone.txt");
-      expect(gone).toEqual({ kind: "delete", rev: expect.any(Number), path: "/gone.txt" });
+      expect(gone).toEqual({
+        kind: "delete",
+        rev: expect.any(Number),
+        path: "/gone.txt",
+        prior: expect.any(String),
+      });
     });
   });
 
@@ -74,12 +79,9 @@ describe("coalesceChanges", () => {
         kind: "delete",
         rev: expect.any(Number),
         path: "/real/file.txt",
+        prior: expect.any(String),
       });
-      expect(entries).not.toContainEqual({
-        kind: "delete",
-        rev: expect.any(Number),
-        path: "/link/file.txt",
-      });
+      expect(entries.some((e) => e.path === "/link/file.txt")).toBe(false);
     });
   });
 

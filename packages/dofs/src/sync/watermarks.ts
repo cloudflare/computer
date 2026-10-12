@@ -157,3 +157,18 @@ export function compareChangeCursors(a: ChangeCursor, b: ChangeCursor): number {
 export function currentRev(db: Database): number {
   return db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
 }
+
+// True when push has nothing to send this backend: no live node and no
+// tombstone sits past its push cursor. A pull that starts from here
+// mints revs that hold only what the backend sent, which is what lets
+// those revs be acknowledged (or, within one apply call, treated as
+// seen). A cursor partway through a rev is conservatively not empty.
+export function pushWindowIsEmpty(db: Database, backend: string = DEFAULT_BACKEND_ID): boolean {
+  const pushed = readPushCursor(db, backend);
+  if (compareChangeCursors(pushed, { rev: currentRev(db), path: null }) >= 0) return true;
+  if (pushed.path !== null) return false;
+  return (
+    db.one("SELECT 1 AS hit FROM vfs_nodes WHERE rev > ? LIMIT 1", pushed.rev) === undefined &&
+    db.one("SELECT 1 AS hit FROM vfs_changes WHERE rev > ? LIMIT 1", pushed.rev) === undefined
+  );
+}

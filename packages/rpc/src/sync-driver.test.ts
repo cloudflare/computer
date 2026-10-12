@@ -5,6 +5,7 @@ import {
   Database,
   initializeSchema,
   readFetchCursor,
+  readPushCursor,
   readWatermark,
   SQLiteWorkspaceProvider,
   stageBlob,
@@ -717,33 +718,25 @@ describe("sync driver — bidirectional convergence", () => {
   });
 
   it("an upstream entry stops circulating within two ticks", async () => {
-    // Before the pushRev-locality fix, the loopback suppression
-    // advanced B's pushRev to currentRev on the apply, so the
-    // immediate pushOnce was a no-op. After the fix, B's pushRev
-    // stays put after the pull, so the first pushOnce after a
-    // pull ships the apply's rev bumps back to A; A's
-    // alreadyApplied() drops them, the push response advances B's
-    // pushRev, and the *next* tick is the no-op. The echo is
-    // bounded at one extra round trip and the system converges
-    // without an unbounded ping-pong.
+    // A pulls B's write. With nothing of its own unpushed, the pull
+    // acknowledges what it applied: the empty acknowledgment push
+    // moves both sides' cursors over it, so the entry is never
+    // shipped back. Before the acknowledgment the first tick echoed
+    // it and the second was the no-op; now there is no echo at all.
     const a = makePeer();
     const b = makePeer();
     try {
       const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
       providerA.writeFileSync("/from-a.txt", "alpha");
 
-      // Tick 1: B pulls A's write. The apply on B bumps B's rev,
-      // so B's coalesce window contains entries; pushed reports
-      // however many entries got coalesced (typically 1 for the
-      // file alone, more if directory entries get touched).
+      // Tick 1: B pulls A's write and acknowledges it, so the push
+      // half of the tick has nothing to send.
       const first = await tick(b.db, a.rpc);
       expect(fileEntries(b.db)).toContain("from-a.txt");
       expect(first.pulled.applied).toBeGreaterThan(0);
-      expect(first.pushed).toBeGreaterThanOrEqual(1);
+      expect(first.pushed).toBe(0);
 
-      // Tick 2: A's alreadyApplied() dropped the redundant entries
-      // shipped in tick 1, and B's pushRev advanced past them. So
-      // tick 2 has nothing to push and nothing to pull.
+      // Tick 2: nothing to push and nothing to pull.
       const second = await tick(b.db, a.rpc);
       expect(second.pulled.applied).toBe(0);
       expect(second.pushed).toBe(0);
@@ -846,11 +839,175 @@ describe("sync driver — cross-side invariant", () => {
       const result = await pullOnce(local, flakyRPC);
       // The retry succeeded: the seeded /seed.txt landed locally.
       expect(result.applied).toBeGreaterThan(0);
-      // pushRev was reset to 0 on the divergence and stays at 0
-      // (we didn't run a successful pushOnce); the next pushOnce
-      // tick will re-ship from the baseline.
-      expect(readWatermark(local, "pushRev")).toBe(0);
+      // pushRev was reset from 42 on the divergence. The retried pull
+      // started with nothing local to push, so it acknowledged what it
+      // pulled: pushRev now covers exactly the local revs that pull
+      // minted. Without the reset it would still read 42.
+      expect(readWatermark(local, "pushRev")).toBe(currentRev(local));
+      expect(currentRev(local)).toBeLessThan(42);
     } finally {
+      remote.close();
+    }
+  });
+
+  it("re-sends host files to a container that restarted empty", async () => {
+    // A restarted computerd has a fresh database: it lost everything the
+    // host pushed. pullOnce sees the divergence and must rewind the push
+    // cursor itself, not just the pushRev watermark, so the next push
+    // re-sends the host's files. It must not acknowledge its pull over
+    // that gap either, or the host files would never be sent again.
+    const local = makePeer();
+    const before = makePeer();
+    const restarted = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      host.writeFileSync("/x.txt", "host file");
+      await pushOnce(local.db, before.rpc);
+      expect(fileEntries(before.db)).toEqual(["x.txt"]);
+
+      const container = new SQLiteWorkspaceProvider(restarted.db, { now: () => 1 });
+      container.writeFileSync("/y.txt", "made after the restart");
+      await pullOnce(local.db, restarted.rpc);
+      expect(fileEntries(local.db)).toEqual(["x.txt", "y.txt"]);
+      expect(readFetchCursor(restarted.db)).toEqual({ rev: 0, path: null });
+
+      await pushOnce(local.db, restarted.rpc);
+      expect(fileEntries(restarted.db)).toEqual(["x.txt", "y.txt"]);
+    } finally {
+      local.close();
+      before.close();
+      restarted.close();
+    }
+  });
+
+  it("acknowledges a clean pull so the next push re-sends nothing", async () => {
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      container.writeFileSync("/a.txt", "a");
+      container.writeFileSync("/b.txt", "b");
+      await pullOnce(local.db, remote.rpc);
+      expect(readPushCursor(local.db)).toEqual({ rev: currentRev(local.db), path: null });
+      expect(await pushOnce(local.db, remote.rpc)).toBe(0);
+
+      // A delete of an acknowledged pulled file wins on the next pull.
+      container.unlinkSync("/a.txt");
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).toEqual(["b.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
+  it("does not acknowledge over a host write that lands during the pull", async () => {
+    // The acknowledgment claims every rev minted since the pull began
+    // came from the backend. A host write interleaved with the pull
+    // breaks that, so it must not be covered: it would never be pushed.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      container.writeFileSync("/x.txt", "x");
+      const interleaving = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "hasObjects") {
+            return async (hashes: Uint8Array[]) => {
+              host.writeFileSync("/during.txt", "host write mid-pull");
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      await pullOnce(local.db, interleaving);
+      expect(readPushCursor(local.db).rev).toBeLessThan(currentRev(local.db));
+
+      await pushOnce(local.db, remote.rpc);
+      expect(container.readFileSync("/during.txt", "utf8")).toBe("host write mid-pull");
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
+  it("applies a fingerprinted container delete pulled during a divergence reset", async () => {
+    // The container forgot its cursor but kept its files. The reset
+    // rewinds our push cursor, so /x.txt looks unseen by the cursor
+    // rule; the delete's fingerprint matches what the host holds, so it
+    // applies anyway and nothing is re-sent.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      host.writeFileSync("/x.txt", "x");
+      host.writeFileSync("/keep.txt", "keep");
+      await pushOnce(local.db, remote.rpc);
+
+      container.unlinkSync("/x.txt");
+      writeFetchCursor(remote.db, { rev: 0, path: null });
+
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).toEqual(["keep.txt"]);
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
+  it("falls back to the cursor rule for deletes from a peer that sends no fingerprint", async () => {
+    // An older computerd sends tombstones without `prior`. With host
+    // work unpushed, the pull is not acknowledged, so the pulled copy
+    // looks unseen and its delete is kept: the conservative path, and
+    // the behavior before fingerprints existed.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      const olderPeer = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchChanges") {
+            return async (input: Parameters<SyncRPC["fetchChanges"]>[0]) => {
+              const real = await Reflect.get(target, prop, receiver).call(target, input);
+              const stripped = real.stream.pipeThrough(
+                new TransformStream<ChangeEntry, ChangeEntry>({
+                  transform(entry, controller) {
+                    if (entry.kind === "delete") {
+                      controller.enqueue({ kind: "delete", rev: entry.rev, path: entry.path });
+                    } else {
+                      controller.enqueue(entry);
+                    }
+                  },
+                }),
+              );
+              return { ...real, stream: stripped };
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      host.writeFileSync("/local.txt", "unpushed");
+      container.writeFileSync("/x.txt", "x");
+      await pullOnce(local.db, olderPeer);
+      container.unlinkSync("/x.txt");
+      await pullOnce(local.db, olderPeer);
+      expect(fileEntries(local.db)).toEqual(["local.txt", "x.txt"]);
+
+      // The fetch cursor is past the delete, so nothing re-delivers it;
+      // the next push recreates /x.txt in the container. Visible and
+      // convergent, which is the point of the conservative path.
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).toEqual(["local.txt", "x.txt"]);
+    } finally {
+      local.close();
       remote.close();
     }
   });
@@ -885,7 +1042,9 @@ describe("sync driver — cross-side invariant", () => {
 
       const result = await pullOnce(local, lyingRPC);
       expect(result.applied).toBeGreaterThan(0);
-      expect(readWatermark(local, "pushRev")).toBe(0);
+      // Reset from 42, then the clean retry acknowledged its pull.
+      expect(readWatermark(local, "pushRev")).toBe(currentRev(local));
+      expect(currentRev(local)).toBeLessThan(42);
     } finally {
       remote.close();
     }
@@ -937,6 +1096,50 @@ describe("sync driver — cross-side invariant", () => {
 });
 
 describe("sync driver — streaming pullOnce", () => {
+  it("acknowledges each committed batch, so an interrupted pull keeps what it applied", async () => {
+    // pullOnce commits batch by batch. If it fails after the first batch,
+    // that batch is applied and its fetch cursor checkpointed; it must be
+    // acknowledged too. Otherwise its revs look like unpushed host work,
+    // a container delete of one of those files is dropped, and the next
+    // push recreates the file.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      for (let i = 0; i < 300; i++) {
+        container.writeFileSync(`/f${String(i).padStart(3, "0")}.txt`, `content ${i}`);
+      }
+      let probes = 0;
+      const failsSecondBatch = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "hasObjects") {
+            return async (hashes: Uint8Array[]) => {
+              probes += 1;
+              if (probes === 2) throw new Error("transport lost mid-pull");
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      await expect(pullOnce(local.db, failsSecondBatch)).rejects.toThrow("transport lost");
+      expect(fileEntries(local.db)).toContain("f000.txt");
+      expect(fileEntries(local.db)).not.toContain("f299.txt");
+
+      container.unlinkSync("/f000.txt");
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).not.toContain("f000.txt");
+      expect(fileEntries(local.db)).toContain("f299.txt");
+
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).not.toContain("f000.txt");
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
   it("applies the entry stream in batches rather than buffering it whole", async () => {
     // Source writes more entries than the batch size. The receiver
     // should call hasObjects() more than once — once per batch —

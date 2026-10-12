@@ -15,10 +15,12 @@
 // and `_vfs_sync_skips` landed, carrying the durable half of a
 // restartable pull or push. Bumped to 8 when `vfs_changes` gained
 // `vfs_changes_by_op_rev`, so tombstone scans can restrict on the rev
-// window. Bumped to 9 when `_vfs_mounts` gained `version`, so a mount
-// whose content changed is re-materialized. See `schema/migrations.ts` for the migration list; `sync.ts`
-// carries the fresh-install DDL.
-export const SCHEMA_VERSION = 9;
+// window. Bumped to 9 when `vfs_changes` gained `prior`, the fingerprint
+// of the version each delete removed. Bumped to 10 when `_vfs_mounts`
+// gained `version`, so a mount whose content changed is
+// re-materialized. See `schema/migrations.ts` for the migration list;
+// `sync.ts` carries the fresh-install DDL.
+export const SCHEMA_VERSION = 10;
 export const ROOT_INODE = 1;
 
 export const CORE_STATEMENTS = [
