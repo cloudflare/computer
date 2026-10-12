@@ -14,7 +14,6 @@ const bundleText = sea.getAsset("bundle.mjs", "utf8");
 const dataUrl = `data:text/javascript;base64,${Buffer.from(bundleText, "utf8").toString("base64")}`;
 
 import(dataUrl).catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });
