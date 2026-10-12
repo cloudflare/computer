@@ -157,10 +157,6 @@ R2Bucket(env.SHARED_FILES, {
 
 ### `WorkerBundle(source, options?)`
 
-> [!NOTE]
-> Unlike the rest of this document, this section describes what ships
-> today.
-
 Eager, read-only mount over files that ship inside the Worker itself.
 Use it for files that belong to the deployment, such as skills,
 templates, or reference material.
