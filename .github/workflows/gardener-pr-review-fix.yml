@@ -31,7 +31,7 @@ jobs:
         || github.event_name == 'workflow_dispatch'
       }}
     concurrency:
-      group: gardener-pr-review-fix-${{ github.event.pull_request.number || github.run_id }}
+      group: gardener-pr-review-fix-${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || github.event.inputs.pull_request || github.run_id }}
       cancel-in-progress: false
     permissions:
       checks: read
@@ -41,7 +41,7 @@ jobs:
       issues: read
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8aa3054967ee696be08ff61936c72e199c750ba7
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@4007bf661f62730882de20dd2df36b30c3e4a593
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "pr-review-fix"
@@ -49,4 +49,4 @@ jobs:
       task-source: ".gardener/tasks/pr-review-fix/TASK.md"
       task-bundle-hash: 3aeddea5e0455eff68174b00a072845d3d708acdb40287891987ad6c45fa58af
       plan-timeout-minutes: 40
-      checkout-ref: ${{ github.event.pull_request.head.sha }}
+      pull-request-head: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || github.event.inputs.pull_request || '' }}

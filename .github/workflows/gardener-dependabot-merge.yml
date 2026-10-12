@@ -34,7 +34,7 @@ jobs:
       issues: read
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8aa3054967ee696be08ff61936c72e199c750ba7
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@4007bf661f62730882de20dd2df36b30c3e4a593
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "dependabot-merge"

@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.13. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.15. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -29,7 +29,7 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.13 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.15 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -88,7 +88,7 @@ Unknown keys are errors.
 | `limits` | yes | Run budget. See [Limits](#limits). |
 | `model` | no | Model ID. Defaults to `"@cf/zai-org/glm-5.3"`. Quote IDs starting with `@`. |
 | `draft` | no | `true` makes the task run only by hand. See [Trying a task](#trying-a-task). |
-| `checkout` | no | `pull-request-head` checks out a pull request's head instead of GitHub's merge preview. Implied when `commit.create` may write beyond `gardener/**`. |
+| `checkout` | no | `pull-request-head` checks out a pull request's head instead of GitHub's merge preview, also for comments on a pull request and manual runs naming one. Needs a pull request or issue comment trigger. Implied by `commit.merge_base`, and when `commit.create` may write beyond `gardener/**`. |
 | `reactions` | no | `false` stops the 👀 reaction while the task works on an issue or comment, and the 🚀 or 😕 it leaves after. On by default. |
 
 ## Triggers
@@ -133,6 +133,7 @@ Each trigger is `event:` plus optional filters. A task may use each event at mos
 | `repository.read_file` | Read files in the checkout. |
 | `provider.api.read` | Read-only GitHub API: REST `GET`/`HEAD` and GraphQL queries (labels, other issues, pull request diffs, check runs, ...). |
 | `repository.exec` | Run shell commands in the checkout (edit files, run tests). Unrestricted network access: do not add it unless the user explicitly asks, and say so. |
+| `repository.merge_base` | Write the merge of the pull request's base branch into the checkout, conflicts marked, for `commit.merge_base`. See [Updating open pull requests](#updating-open-pull-requests). |
 
 The event that triggered the run (issue, pull request, comment, ...) is always given to the model.
 Declare only the tools the instructions need.
@@ -147,13 +148,14 @@ instructions ask for an effect that isn't declared, it can't happen.
 | --- | --- |
 | Issues | `issue.comment.create`, `issue.comment.update`, `issue.label.add`, `issue.label.remove`, `issue.assignee.add`, `issue.assignee.remove`, `issue.close`, `issue.reopen`, `issue.create` |
 | Pull requests | `pull_request.comment.create`, `pull_request.comment.update`, `pull_request.review.submit`, `pull_request.reviewer.request`, `pull_request.reviewer.remove`, `pull_request.update`, `pull_request.label.add`, `pull_request.label.remove`, `pull_request.update_branch`, `pull_request.review_comment.reply`, `pull_request.review_thread.resolve`, `pull_request.open`, `pull_request.open_draft`, `pull_request.merge` |
-| Git | `branch.create`, `commit.create` |
+| Git | `branch.create`, `commit.create`, `commit.merge_base` |
 | Discussions | `discussion.comment.create`, `discussion.comment.update`, `discussion.answer.mark`, `discussion.answer.unmark`, `discussion.close`, `discussion.reopen` |
 | Checks | `check.rerun` |
 | Releases | `release.create`, `release.update`, `release.publish`, `release.delete` |
 
 - Family globs (`issue.*`, `pull_request.*`, `git.*`, `discussion.*`, `check.*`, `release.*`) grant
   every kind in the family, including `pull_request.merge` and `release.delete`. Prefer exact kinds.
+  `git.*` includes `commit.merge_base` only for tasks that declare the `repository.merge_base` tool.
 - Labels must already exist in the repository; the model can't create them. Tell it to pick only
   from existing labels (with `provider.api.read` it can list them).
 - `pull_request.open` / `open_draft` with `labels` also needs `pull_request.label.add`.
@@ -164,7 +166,7 @@ instructions ask for an effect that isn't declared, it can't happen.
   `pull_request.open_draft` (or `.open`). The commit is made from files changed in the checkout,
   on a branch created from the checked-out commit. Changes under `.github/workflows/`,
   `.github/actions/`, `.gardener/`, `.git/`, `CODEOWNERS` and `.github/dependabot.yml` are refused.
-- Branch-writing kinds (`branch.create`, `commit.create`, `pull_request.open`,
+- Branch-writing kinds (`branch.create`, `commit.create`, `commit.merge_base`, `pull_request.open`,
   `pull_request.open_draft`) may only use `gardener/**` branches. To allow others, write the kind as
   an entry. The list replaces the default, and patterns never match the default branch unless it is
   named exactly:
@@ -178,6 +180,25 @@ instructions ask for an effect that isn't declared, it can't happen.
   and approve pull requests** turned on in the repository.
 - The model plans every step before any runs. A later step can use an earlier step's output (for
   example a new pull request's URL in a comment); the model is told how.
+
+## Updating open pull requests
+
+A task can bring a pull request's base branch into it with a merge commit, for example when a
+maintainer comments "@handle fix the conflicts" on the pull request.
+
+- Trigger on `github.issue_comment.created` (with `mentions` and the default `authors:
+  maintainers`). The run then checks out the pull request's head; forks and closed pull requests
+  plan on the default branch instead.
+- Declare the `repository.merge_base` tool, `repository.exec`, and `commit.merge_base` with the
+  pull request branches it may push to (`branches:`, as above; never the default branch).
+- In the body: call `repository.merge_base`; edit only the conflicted files it lists to resolve
+  them; run the repository's checks; then propose one `commit.merge_base` with the values the tool
+  returned. Never run `git merge`, `rebase`, `commit` or `push`: a moved head or a changed index
+  fails the run. If the conflicts can't be resolved, explain why in a comment instead.
+- `commit.merge_base` acts only on the pull request that triggered the run and never rewrites
+  history. Protected paths may change only to exactly what the base branch has.
+- Pushes made with the workflow token don't start other workflows, so the pull request's checks
+  don't run on the merge commit until someone pushes again or re-runs them.
 
 ## Network
 
@@ -206,7 +227,7 @@ network:            # tasks with repository.exec
 | `max-tool-calls` | Tool calls (each file read, API call or command counts, plus the final `finish_task`, so the task's own work gets one fewer). | at least 3 |
 | `input-tokens` | Largest single model request. The whole conversation is resent each turn. | any positive |
 | `output-tokens` | Total generated across the run, including reasoning. | at least 16 × `max-turns` |
-| `max-effect-operations` | Optional cap on proposed changes per run. | 1–1,000 |
+| `max-effect-operations` | Optional cap on proposed changes per run. Needs at least one effect. | 1–1,000 |
 | `max-effect-bytes` | Optional cap on the plan's size. | 1,024–50,000,000 |
 
 A run that runs out of any budget fails with `budget-exceeded` and changes nothing. What
