@@ -393,6 +393,16 @@
     {
       "files": ["**/*.bench.ts"],
       "rules": { "vitest/expect-expect": "off" }
+    },
+    {
+      "files": [
+        "packages/rpc/src/client.ts",
+        "packages/computer/src/backends/container/container-backend.ts",
+        "packages/computer/src/backends/container-legacy/cloudflare-container.ts"
+      ],
+      "rules": {
+        "typescript/no-misused-promises": ["error", { "checksVoidReturn": { "arguments": false } }]
+      }
     }
   ]
 }
