@@ -47,7 +47,7 @@ export class CompareRun extends Server<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#started = this.#loadEvents();
-    ctx.blockConcurrencyWhile(() => this.#started);
+    void ctx.blockConcurrencyWhile(() => this.#started);
   }
 
   override async onStart(): Promise<void> {
@@ -95,18 +95,18 @@ export class CompareRun extends Server<Env> {
 
   async stopComparison(): Promise<void> {
     await this.#started;
-    const { workspaceAgent, sandboxAgent } = await getRuntimeAgentHandles({
+    const { workspaceAgent, sandboxAgent } = getRuntimeAgentHandles({
       runId: this.name,
       workspaceNamespace: this.env.WorkspaceThinkAgent,
       sandboxNamespace: this.env.SandboxThinkAgent,
     });
     const agents = await Promise.all([workspaceAgent, sandboxAgent]);
-    await Promise.all(agents.map((agent) => agent.cancelComparison?.()));
+    await Promise.all(agents.map(async (agent) => agent.cancelComparison?.()));
   }
 
   async #startAgents(runId: string): Promise<void> {
     try {
-      const { workspaceAgent, sandboxAgent } = await getRuntimeAgentHandles({
+      const { workspaceAgent, sandboxAgent } = getRuntimeAgentHandles({
         runId,
         workspaceNamespace: this.env.WorkspaceThinkAgent,
         sandboxNamespace: this.env.SandboxThinkAgent,

@@ -111,7 +111,7 @@ export function App() {
         actionLabel={actionLabel}
         disabled={startDisabled}
         error={error}
-        onStart={handleRunAction}
+        onStart={() => void handleRunAction()}
         runId={runId}
         runLabel={runLabel}
       />

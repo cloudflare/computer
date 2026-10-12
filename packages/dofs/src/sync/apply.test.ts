@@ -902,7 +902,7 @@ describe("applyChanges", () => {
 
   it("applies a file over a directory whose subtree hardlinks a file outside it", async () => {
     await withDB(async (db) => {
-      await mkdir(db, "/dir", { mode: 0o755 }, () => 1);
+      mkdir(db, "/dir", { mode: 0o755 }, () => 1);
       await writeFile(db, "/dir/inner", "shared", {}, () => 1);
       // /outside is a second name for /dir/inner; replacing /dir must
       // walk the subtree by name and keep /outside alive.

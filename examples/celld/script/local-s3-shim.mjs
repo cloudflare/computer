@@ -11,13 +11,17 @@ const host = args.get("--host") || process.env.HOST || "127.0.0.1";
 
 await mkdir(root, { recursive: true });
 
-const server = createServer(async (req, res) => {
+async function handle(req, res) {
   try {
     await route(req, res);
   } catch (error) {
     console.error(error);
     sendError(res, 500, "InternalError", error instanceof Error ? error.message : String(error));
   }
+}
+
+const server = createServer((req, res) => {
+  void handle(req, res);
 });
 
 server.listen(port, host, () => {

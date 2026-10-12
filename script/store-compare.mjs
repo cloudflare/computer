@@ -29,12 +29,6 @@ const CACHE_MIB = (process.env.CACHE_MIB ?? "64,256")
   .map((v) => Number(v.trim()))
   .filter((v) => Number.isFinite(v) && v > 0);
 
-function ms(fn) {
-  const started = process.hrtime.bigint();
-  fn();
-  return Number(process.hrtime.bigint() - started) / 1e6;
-}
-
 async function msAsync(fn) {
   const started = process.hrtime.bigint();
   await fn();
@@ -71,14 +65,14 @@ async function measure(label, location, cacheSizeBytes) {
     handle = open(location, cacheSizeBytes);
   }
 
-  const statCold = ms(() => {
-    for (const p of paths) handle.fs.stat(p);
+  const statCold = await msAsync(async () => {
+    for (const p of paths) await handle.fs.stat(p);
   });
-  const statWarm = ms(() => {
-    for (const p of paths) handle.fs.stat(p);
+  const statWarm = await msAsync(async () => {
+    for (const p of paths) await handle.fs.stat(p);
   });
-  const readdir = ms(() => {
-    for (let i = 0; i < 50; i++) handle.fs.ls("/w/pkg");
+  const readdir = await msAsync(async () => {
+    for (let i = 0; i < 50; i++) await handle.fs.ls("/w/pkg");
   });
 
   const sizeBytes = handle.storage.sizeBytes();

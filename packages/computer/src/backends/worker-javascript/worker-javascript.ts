@@ -543,7 +543,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     const finalizations = records.map((record) =>
       record.status === "running"
         ? this.#cancel(record, "Execution cancelled because its Workspace closed.\n")
-        : record.finalization,
+        : (record.finalization ?? Promise.resolve()),
     );
     await Promise.allSettled(finalizations);
     for (const record of records) this.#close(record);

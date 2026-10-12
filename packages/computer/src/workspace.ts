@@ -1099,7 +1099,7 @@ export class Workspace {
         // a `closed` promise (in-process fakes) opt out by omitting
         // it; we only react when it's wired.
         if (handle.closed) {
-          handle.closed
+          void handle.closed
             .catch(() => {})
             .then(() => {
               // Only clear if this handle is still the current one
