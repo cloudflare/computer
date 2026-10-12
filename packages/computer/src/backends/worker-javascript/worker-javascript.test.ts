@@ -1387,7 +1387,7 @@ describe("WorkerJavaScriptBackend", () => {
       async (specifier) => {
         const workspace = new Workspace({
           storage: new SQLiteTestStorage(),
-          backends: [new WorkerJavaScriptBackend({ loader: completingLoader() })],
+          backends: [new WorkerJavaScriptBackend({ loader: { load: completingLoader() } })],
         });
 
         await expect(
@@ -1400,7 +1400,10 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({ loader: completingLoader(), compatibilityFlags: [] }),
+          new WorkerJavaScriptBackend({
+            loader: { load: completingLoader() },
+            compatibilityFlags: [],
+          }),
         ],
       });
 
