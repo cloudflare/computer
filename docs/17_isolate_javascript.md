@@ -315,7 +315,7 @@ export default async function () {
 }
 ```
 
-`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the JavaScript backend fails to connect.
+`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the JavaScript backend fails to connect. Publishing uploads a file and hands out a public link, so `publish` refuses to run on a read-only backend, as the read-only tool set has no `publish` tool.
 
 ### `ws:tools`
 

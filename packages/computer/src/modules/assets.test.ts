@@ -39,7 +39,7 @@ function callContext(
   return {
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
-    access: "read",
+    access: "read-write",
     resolvePath: async (path) => (path.startsWith("/") ? path : `/workspace/${path}`),
     ...overrides,
   };
@@ -119,6 +119,16 @@ describe("createAssetsModule", () => {
     abort.abort();
 
     await expect(publish(["a.txt"], callContext({ signal: abort.signal }))).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to publish on a read-only backend", async () => {
+    const { client, calls } = fakeAssets();
+    const publish = build(client);
+
+    await expect(publish(["a.txt"], callContext({ access: "read" }))).rejects.toThrow(
+      /write access/,
+    );
     expect(calls).toEqual([]);
   });
 

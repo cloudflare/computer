@@ -29,6 +29,12 @@ export function createAssetsModule(options: AssetsModuleOptions = {}): Workspace
     }
     return {
       async publish(args, context) {
+        // Publishing uploads a workspace file and hands out a public
+        // link, so a read-only backend cannot, as the read-only tool
+        // set has no publish tool.
+        if (context.access !== "read-write") {
+          throw new Error("ws:assets publish requires Workspace write access.");
+        }
         if (args.length === 0 || args.length > 2) {
           throw new TypeError(
             "publish(path, options?) takes a path and an optional options object.",
