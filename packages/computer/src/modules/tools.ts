@@ -109,9 +109,27 @@ export function createToolBindings(
     }
     return functions;
   };
-  return Object.assign(create, {
-    description: options.description ?? describe([...exclude]),
-  });
+  return Object.defineProperty(create, "description", {
+    enumerable: true,
+    get: () => options.description ?? describe(exportNames(bindings, exclude), [...exclude]),
+  }) as WorkspaceModuleFactory;
+}
+
+// The names code can import, for the description. A function of tools
+// is called again, so the list is current whenever the backend
+// describes itself. Any other iterable may be single-use, so it is
+// left for the connection to read, and a function that throws leaves
+// the list out rather than the whole description.
+function exportNames(bindings: ToolBindings, exclude: ReadonlySet<string>): string[] | undefined {
+  if (typeof bindings !== "function" && !Array.isArray(bindings)) return undefined;
+  try {
+    const list = typeof bindings === "function" ? bindings() : bindings;
+    return [...list]
+      .filter((binding) => !exclude.has(binding.name))
+      .map((binding) => exportName(binding.name));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -140,11 +158,13 @@ function singleObject(
   return input;
 }
 
-// The description cannot list the tools: the backend reads it when it
-// is constructed, before a function of tools has run.
-function describe(excluded: readonly string[]): string {
-  const base =
+function describe(exported: readonly string[] | undefined, excluded: readonly string[]): string {
+  const intro =
     "The agent's own tools, callable from code. Each is exported under its name made into an identifier: `-`, `.`, and spaces become `_`, and other characters an identifier cannot hold are dropped, so `list-files` becomes `list_files`. Each takes one object of the tool's arguments and returns `{ text, details, isError }`.";
+  const base =
+    exported === undefined || exported.length === 0
+      ? intro
+      : `${intro} It exports ${exported.map((name) => `\`${name}\``).join(", ")}.`;
   if (excluded.length === 0) return base;
   const names = excluded.map((name) => `\`${name}\``);
   return excluded.length === 1

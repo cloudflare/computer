@@ -169,4 +169,43 @@ describe("createToolBindings", () => {
     );
     expect(createToolBindings([], { description: "Custom." }).description).toBe("Custom.");
   });
+
+  it("lists the tools code can import under their export names", () => {
+    const description = createToolBindings([
+      recording("read").binding,
+      recording("list-files").binding,
+      recording("exec").binding,
+    ]).description;
+
+    expect(description).toContain("It exports `read`, `list_files`.");
+    expect(description).toContain("There is no `exec` export");
+  });
+
+  it("lists a function's tools as they are when the backend describes itself", () => {
+    let names = ["read"];
+    const factory = createToolBindings(() => names.map((name) => recording(name).binding));
+
+    expect(factory.description).toContain("It exports `read`.");
+    names = ["read", "grep"];
+    expect(factory.description).toContain("It exports `read`, `grep`.");
+  });
+
+  it("does not read a single-use iterable to describe it", () => {
+    function* tools() {
+      yield recording("read").binding;
+    }
+    const factory = createToolBindings(tools());
+
+    expect(factory.description).not.toContain("It exports");
+    expect(Object.keys(factory(host))).toEqual(["read"]);
+  });
+
+  it("leaves the list out when the function of tools throws", () => {
+    const factory = createToolBindings(() => {
+      throw new Error("not ready");
+    });
+
+    expect(factory.description).toContain("The agent's own tools, callable from code.");
+    expect(factory.description).not.toContain("It exports");
+  });
 });
