@@ -7,11 +7,13 @@ describe("seedWorkspace", () => {
   it("clears stale fixture files before writing a new sample", async () => {
     const calls: string[] = [];
     const workspace = {
-      ready: vi.fn(async () => calls.push("ready")),
+      ready: vi.fn<() => Promise<number>>(async () => calls.push("ready")),
       fs: {
-        rm: vi.fn(async () => calls.push("rm")),
-        mkdir: vi.fn(async () => calls.push("mkdir")),
-        writeFile: vi.fn(async (path: string) => calls.push(`write:${path}`)),
+        rm: vi.fn<() => Promise<number>>(async () => calls.push("rm")),
+        mkdir: vi.fn<() => Promise<number>>(async () => calls.push("mkdir")),
+        writeFile: vi.fn<(path: string) => Promise<number>>(async (path: string) =>
+          calls.push(`write:${path}`),
+        ),
       },
     } as unknown as Workspace;
     const fixture = {

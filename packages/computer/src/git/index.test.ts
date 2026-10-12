@@ -19,16 +19,16 @@ const opaqueProvider = {} as unknown as SQLiteWorkspaceProvider;
 function stubFs(): IsomorphicGitFSClient {
   return {
     promises: {
-      readFile: vi.fn(async () => new Uint8Array()),
+      readFile: vi.fn<() => Promise<Uint8Array>>(async () => new Uint8Array()),
     },
   };
 }
 
 describe("createGitClient", () => {
   it("calls ws.provider() lazily on first use, then caches the FsClient", async () => {
-    const provider = vi.fn(() => opaqueProvider);
+    const provider = vi.fn<() => SQLiteWorkspaceProvider>(() => opaqueProvider);
     const fs = stubFs();
-    const adapter = vi.fn(async () => fs);
+    const adapter = vi.fn<() => Promise<IsomorphicGitFSClient>>(async () => fs);
 
     const client = createGitClient({ adapter })({ ws: { provider } });
 

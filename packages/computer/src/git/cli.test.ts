@@ -2325,7 +2325,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     const failing: GitClient = createGitClient({
       adapter: async () => ({
         promises: {
-          readFile: vi.fn(async () => new Uint8Array()),
+          readFile: vi.fn<() => Promise<Uint8Array>>(async () => new Uint8Array()),
         },
       }),
     })({ ws });

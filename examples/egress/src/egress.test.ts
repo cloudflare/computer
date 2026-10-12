@@ -18,8 +18,8 @@ describe("workspaceEgressPolicy", () => {
   });
 
   it("uses the custom HTTP gateway in custom mode", () => {
-    const fetcher = { fetch: vi.fn() } as unknown as Fetcher;
-    const gateway = vi.fn(() => fetcher);
+    const fetcher = { fetch: vi.fn<Fetcher["fetch"]>() } as unknown as Fetcher;
+    const gateway = vi.fn<() => Fetcher>(() => fetcher);
 
     expect(workspaceEgressPolicy("custom", gateway)).toEqual({
       mode: "http-gateway",

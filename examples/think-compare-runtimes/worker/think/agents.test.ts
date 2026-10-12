@@ -10,8 +10,11 @@ const {
   workspaceOptions,
 } = vi.hoisted(() => ({
   containerBackendOptions: [] as Array<Record<string, unknown>>,
-  getSandbox: vi.fn(),
-  runRealThinkTurn: vi.fn(),
+  getSandbox: vi.fn<(...args: unknown[]) => unknown>(),
+  runRealThinkTurn:
+    vi.fn<
+      (options: Parameters<typeof import("./real-turn").runRealThinkTurn>[0]) => Promise<unknown>
+    >(),
   runtimeOrder: [] as string[],
   warmPoolReleases: [] as string[],
   workerBackendOptions: [] as Array<Record<string, unknown>>,
@@ -86,11 +89,11 @@ vi.mock("@cloudflare/computer/backends/worker-shell", () => ({
 }));
 
 vi.mock("agents", () => ({
-  getAgentByName: vi.fn(),
+  getAgentByName: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
 vi.mock("partyserver", () => ({
-  getServerByName: vi.fn(),
+  getServerByName: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
 vi.mock("./real-turn", () => ({

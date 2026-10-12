@@ -25,7 +25,7 @@ function fakeHost(impl: (input: GitCliInput) => Promise<GitCliResult> | GitCliRe
     calls,
     host: {
       git: {
-        cli: vi.fn(async (input) => {
+        cli: vi.fn<(input: GitCliInput) => Promise<GitCliResult>>(async (input) => {
           calls.push(input);
           return await impl(input);
         }),

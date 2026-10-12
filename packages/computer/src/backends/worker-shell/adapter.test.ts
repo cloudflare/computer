@@ -95,9 +95,9 @@ describe("WorkspaceFsAdapter — reads", () => {
   });
 
   it("keeps expected PATH misses on the host side", async () => {
-    const exists = vi.fn(async () => false);
-    const statOrNull = vi.fn(async () => null);
-    const stat = vi.fn(async () => {
+    const exists = vi.fn<WorkspaceFs["exists"]>(async () => false);
+    const statOrNull = vi.fn<WorkspaceFs["statOrNull"]>(async () => null);
+    const stat = vi.fn<WorkspaceFs["stat"]>(async () => {
       throw Object.assign(new Error("should not cross RPC"), { code: "ENOENT" });
     });
     const pathAdapter = new WorkspaceFsAdapter({
@@ -114,10 +114,10 @@ describe("WorkspaceFsAdapter — reads", () => {
   });
 
   it("stats existing paths in one host call", async () => {
-    const stat = vi.fn(async () => {
+    const stat = vi.fn<WorkspaceFs["stat"]>(async () => {
       throw new Error("stat should not be called by the adapter");
     });
-    const statOrNull = vi.fn(async () => ({
+    const statOrNull = vi.fn<WorkspaceFs["statOrNull"]>(async () => ({
       name: "cat",
       inode: 1,
       mode: 0o755,

@@ -539,9 +539,11 @@ describe("mount indexer", () => {
         return { rpc: { sync, shell }, close: async () => {} };
       },
     };
-    const materializeSpy = vi.fn(async (api: MountWriteAPI) => {
-      await api.writeFile("/workspace/r/hello.txt", streamOf(utf8("hi")));
-    });
+    const materializeSpy = vi.fn<(api: MountWriteAPI) => Promise<void>>(
+      async (api: MountWriteAPI) => {
+        await api.writeFile("/workspace/r/hello.txt", streamOf(utf8("hi")));
+      },
+    );
     const mount: EagerMount = {
       kind: "ready-test",
       mode: "read-only",

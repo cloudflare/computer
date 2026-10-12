@@ -642,7 +642,7 @@ describe("Workspace backend selection", () => {
 
   it("closes a module handle that resolves after Workspace.close", async () => {
     let resolveConnect!: (handle: Awaited<ReturnType<WorkspaceModuleBackend["connect"]>>) => void;
-    const closed = vi.fn(async () => undefined);
+    const closed = vi.fn<() => Promise<undefined>>(async () => undefined);
     const backend: WorkspaceModuleBackend = {
       protocol: "module",
       id: "module",
@@ -709,7 +709,7 @@ describe("Workspace backend selection", () => {
 
   it("closes a command handle that resolves after Workspace.close", async () => {
     let resolveConnect!: (handle: Awaited<ReturnType<WorkspaceBackend["connect"]>>) => void;
-    const closed = vi.fn(async () => undefined);
+    const closed = vi.fn<() => Promise<undefined>>(async () => undefined);
     const backend: WorkspaceBackend = {
       id: "command",
       type: "test-command",

@@ -161,7 +161,7 @@ describe("installContainerMonitor", () => {
   test("records the rejection reason and runs current-generation cleanup", async () => {
     const fake = makeContainer();
     const ctx = makeContext(fake.container);
-    const cleanup = vi.fn(async () => {});
+    const cleanup = vi.fn<() => Promise<void>>(async () => {});
     resetContainerLifecycleForTests(ctx);
     fake.container.start();
     installContainerMonitor(ctx, fake.container, cleanup);
@@ -234,7 +234,7 @@ describe("installContainerMonitor", () => {
     const ctx = makeContext(fake.container);
     resetContainerLifecycleForTests(ctx);
 
-    const staleCleanup = vi.fn(async () => {});
+    const staleCleanup = vi.fn<() => Promise<void>>(async () => {});
     fake.container.start();
     const firstGeneration = fake.current;
     installContainerMonitor(ctx, fake.container, staleCleanup);

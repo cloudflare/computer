@@ -20,7 +20,7 @@ function fakeHost(
   handler: (port: number, input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
 ): IWorkspaceContainerAPI {
   const host: HealthProbeHost = {
-    fetchPort: vi.fn(handler),
+    fetchPort: vi.fn<typeof handler>(handler),
   };
   return host as IWorkspaceContainerAPI;
 }

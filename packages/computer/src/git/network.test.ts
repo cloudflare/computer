@@ -41,28 +41,28 @@ function fakeNetworkGit(): {
     listRemotes: [],
   };
   const git: IsomorphicGitNetworkClient = {
-    fetch: vi.fn(async (args) => {
+    fetch: vi.fn<IsomorphicGitNetworkClient["fetch"]>(async (args) => {
       calls.fetch.push([args]);
       return { defaultBranch: "main", fetchHead: "deadbeef" };
     }),
-    push: vi.fn(async (args) => {
+    push: vi.fn<IsomorphicGitNetworkClient["push"]>(async (args) => {
       calls.push.push([args]);
       return { ok: true, error: null, refs: {} };
     }),
-    pull: vi.fn(async (args) => {
+    pull: vi.fn<IsomorphicGitNetworkClient["pull"]>(async (args) => {
       calls.pull.push([args]);
     }),
-    merge: vi.fn(async (args) => {
+    merge: vi.fn<IsomorphicGitNetworkClient["merge"]>(async (args) => {
       calls.merge.push([args]);
       return { fastForward: true, oid: "f".repeat(40) };
     }),
-    addRemote: vi.fn(async (args) => {
+    addRemote: vi.fn<IsomorphicGitNetworkClient["addRemote"]>(async (args) => {
       calls.addRemote.push([args]);
     }),
-    deleteRemote: vi.fn(async (args) => {
+    deleteRemote: vi.fn<IsomorphicGitNetworkClient["deleteRemote"]>(async (args) => {
       calls.deleteRemote.push([args]);
     }),
-    listRemotes: vi.fn(async (args) => {
+    listRemotes: vi.fn<IsomorphicGitNetworkClient["listRemotes"]>(async (args) => {
       calls.listRemotes.push([args]);
       return [];
     }),
@@ -76,7 +76,7 @@ const fakeHttp = {} as object;
 describe("fetchWith forwarding", () => {
   it("forwards remote, ref, depth, prune, headers, onAuth", async () => {
     const { git, calls } = fakeNetworkGit();
-    const onAuth = vi.fn();
+    const onAuth = vi.fn<NonNullable<Parameters<typeof fetchWith>[0]["onAuth"]>>();
     await fetchWith({
       git,
       fs: fakeFs,

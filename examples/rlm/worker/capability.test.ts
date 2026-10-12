@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createModelCapability } from "./capability";
 
+type Hooks = Parameters<typeof createModelCapability>[1];
+
 const { generateTextMock } = vi.hoisted(() => ({
-  generateTextMock: vi.fn(),
+  generateTextMock:
+    vi.fn<(options: { prompt: string; abortSignal: AbortSignal }) => Promise<unknown>>(),
 }));
 
 vi.mock("ai", () => ({ generateText: generateTextMock }));
@@ -14,9 +17,9 @@ const model = { specificationVersion: "v3" } as unknown as LanguageModel;
 
 function hooks() {
   return {
-    started: vi.fn(),
-    completed: vi.fn(),
-    failed: vi.fn(),
+    started: vi.fn<Hooks["started"]>(),
+    completed: vi.fn<Hooks["completed"]>(),
+    failed: vi.fn<Hooks["failed"]>(),
   };
 }
 
@@ -93,7 +96,7 @@ describe("recursive model batch capability", () => {
 
   it("allows the host to enforce a run-wide child budget", async () => {
     const observed = hooks();
-    const admit = vi.fn(() => false);
+    const admit = vi.fn<NonNullable<Hooks["admit"]>>(() => false);
     const capability = createModelCapability(model, { ...observed, admit });
     const requests = [{ prompt: "classify", input: "evidence" }];
 

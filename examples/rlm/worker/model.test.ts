@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createModel, type ModelEnv } from "./model";
 
 const { createWorkersAIMock, selectModelMock } = vi.hoisted(() => ({
-  createWorkersAIMock: vi.fn(),
-  selectModelMock: vi.fn(() => ({ specificationVersion: "v3" })),
+  createWorkersAIMock: vi.fn<(...args: unknown[]) => unknown>(),
+  selectModelMock: vi.fn<(...args: unknown[]) => { specificationVersion: string }>(() => ({
+    specificationVersion: "v3",
+  })),
 }));
 
 vi.mock("workers-ai-provider", () => ({ createWorkersAI: createWorkersAIMock }));

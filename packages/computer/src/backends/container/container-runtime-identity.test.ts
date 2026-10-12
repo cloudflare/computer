@@ -10,11 +10,13 @@ import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity.js
 
 function storage(initial = new Map<string, unknown>()) {
   return {
-    get: vi.fn(async (key: string) => initial.get(key)),
-    put: vi.fn(async (key: string, value: unknown) => {
-      initial.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => initial.delete(key)),
+    get: vi.fn<(key: string) => Promise<unknown>>(async (key: string) => initial.get(key)),
+    put: vi.fn<(key: string, value: unknown) => Promise<void>>(
+      async (key: string, value: unknown) => {
+        initial.set(key, value);
+      },
+    ),
+    delete: vi.fn<(key: string) => Promise<boolean>>(async (key: string) => initial.delete(key)),
   };
 }
 

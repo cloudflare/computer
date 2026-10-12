@@ -11,7 +11,7 @@ describe("AutoScrollList", () => {
   });
 
   test("scrolls to the bottom when its watch key changes", () => {
-    const scrollTo = vi.fn();
+    const scrollTo = vi.fn<(options: ScrollToOptions) => void>();
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(480);
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
@@ -38,7 +38,7 @@ describe("AutoScrollList", () => {
   });
 
   test("keeps separate lists independently scrollable", () => {
-    const scrollTo = vi.fn();
+    const scrollTo = vi.fn<(options: ScrollToOptions) => void>();
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(320);
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,

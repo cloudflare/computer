@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createRuntimeThinkModel } from "./model";
 
-const createWorkersAI = vi.hoisted(() => vi.fn());
-const modelFactory = vi.hoisted(() => vi.fn());
+const createWorkersAI = vi.hoisted(() => vi.fn<(...args: unknown[]) => unknown>());
+const modelFactory = vi.hoisted(() => vi.fn<(...args: unknown[]) => unknown>());
 
 vi.mock("workers-ai-provider", () => ({
   createWorkersAI,

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { App } from "./App";
 
 vi.mock("partysocket/react", () => ({
-  usePartySocket: vi.fn(),
+  usePartySocket: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
 describe("App", () => {
@@ -43,7 +43,7 @@ describe("App", () => {
   });
 
   test("starts a comparison run without exposing debug run IDs", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn<() => Promise<Response>>(async () =>
       Response.json(
         {
           runId: "run-123",
@@ -77,28 +77,30 @@ describe("App", () => {
   });
 
   test("stops and discards the visible run so a new run can start", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/runs/run-123/stop") {
-        return new Response(null, { status: 204 });
-      }
-      return Response.json(
-        {
-          runId: "run-123",
-          socketPath: "/parties/compare-run/run-123",
-          events: [
-            event({
-              id: "run-123:0",
-              runId: "run-123",
-              sequence: 0,
-              runtime: "both",
-              kind: "run_started",
-              timestamp: new Date().toISOString(),
-            }),
-          ],
-        },
-        { status: 201 },
-      );
-    });
+    const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(
+      async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/runs/run-123/stop") {
+          return new Response(null, { status: 204 });
+        }
+        return Response.json(
+          {
+            runId: "run-123",
+            socketPath: "/parties/compare-run/run-123",
+            events: [
+              event({
+                id: "run-123:0",
+                runId: "run-123",
+                sequence: 0,
+                runtime: "both",
+                kind: "run_started",
+                timestamp: new Date().toISOString(),
+              }),
+            ],
+          },
+          { status: 201 },
+        );
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
@@ -341,7 +343,7 @@ describe("App", () => {
 });
 
 function sessionWithEvents(events: ReturnType<typeof event>[]) {
-  return vi.fn(async () =>
+  return vi.fn<() => Promise<Response>>(async () =>
     Response.json(
       {
         runId: "run-456",

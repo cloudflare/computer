@@ -6,7 +6,7 @@ describe("startHeartbeat", () => {
   it("pings on the configured interval", async () => {
     vi.useFakeTimers();
     try {
-      const ping = vi.fn(async () => {});
+      const ping = vi.fn<() => Promise<void>>(async () => {});
       const stop = startHeartbeat({ intervalMs: 1000, ping, onFailure: () => {} });
       // No call until the first interval elapses — heartbeats are
       // periodic, not eager. A backend that wants an immediate
@@ -26,11 +26,11 @@ describe("startHeartbeat", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
-      const ping = vi.fn(async () => {
+      const ping = vi.fn<() => Promise<never>>(async () => {
         calls++;
         throw new Error("dead peer");
       });
-      const onFailure = vi.fn();
+      const onFailure = vi.fn<(error: Error) => void>();
       const stop = startHeartbeat({ intervalMs: 1000, ping, onFailure });
       await vi.advanceTimersByTimeAsync(1000);
       // Yield once so the rejected promise's then-handler runs.
@@ -50,7 +50,7 @@ describe("startHeartbeat", () => {
   it("stop() prevents future pings", async () => {
     vi.useFakeTimers();
     try {
-      const ping = vi.fn(async () => {});
+      const ping = vi.fn<() => Promise<void>>(async () => {});
       const stop = startHeartbeat({ intervalMs: 1000, ping, onFailure: () => {} });
       await vi.advanceTimersByTimeAsync(1000);
       expect(ping).toHaveBeenCalledTimes(1);

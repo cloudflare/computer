@@ -35,13 +35,13 @@ function fakeHost(
     gitCalls,
     host: {
       artifacts: {
-        cli: vi.fn(async (input) => {
+        cli: vi.fn<(input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult>>(async (input) => {
           calls.push(input);
           return await impl(input);
         }),
       },
       git: {
-        cli: vi.fn(async (input) => {
+        cli: vi.fn<(input: GitCliInput) => Promise<GitCliResult>>(async (input) => {
           gitCalls.push(input);
           return await gitImpl(input);
         }),

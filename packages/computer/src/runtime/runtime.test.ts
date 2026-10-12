@@ -20,11 +20,15 @@ function emptyEnvelope(id: string): ModuleExecutionEnvelope {
 
 function moduleHandleStub(): WorkspaceModuleBackendHandle {
   return {
-    exec: vi.fn(async (input) => emptyEnvelope(input.id ?? "exec")),
-    getExec: vi.fn(async (input) => emptyEnvelope(input.id)),
-    killExec: vi.fn(async () => {}),
-    disposeExec: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
+    exec: vi.fn<WorkspaceModuleBackendHandle["exec"]>(async (input) =>
+      emptyEnvelope(input.id ?? "exec"),
+    ),
+    getExec: vi.fn<WorkspaceModuleBackendHandle["getExec"]>(async (input) =>
+      emptyEnvelope(input.id),
+    ),
+    killExec: vi.fn<WorkspaceModuleBackendHandle["killExec"]>(async () => {}),
+    disposeExec: vi.fn<WorkspaceModuleBackendHandle["disposeExec"]>(async () => {}),
+    close: vi.fn<NonNullable<WorkspaceModuleBackendHandle["close"]>>(async () => {}),
   };
 }
 
@@ -42,11 +46,17 @@ function eventStream(events: WorkspaceRuntimeEvent[]): ReadableStream<WorkspaceR
 // shell wrapper used to own before every backend shared one path.
 function replayBackend(events: WorkspaceRuntimeEvent[]): WorkspaceModuleBackendHandle {
   return {
-    exec: vi.fn(async (input) => ({ id: input.id ?? "exec", events: eventStream(events) })),
-    getExec: vi.fn(async (input) => ({ id: input.id, events: eventStream(events) })),
-    killExec: vi.fn(async () => {}),
-    disposeExec: vi.fn(async () => {}),
-    close: vi.fn(async () => {}),
+    exec: vi.fn<WorkspaceModuleBackendHandle["exec"]>(async (input) => ({
+      id: input.id ?? "exec",
+      events: eventStream(events),
+    })),
+    getExec: vi.fn<WorkspaceModuleBackendHandle["getExec"]>(async (input) => ({
+      id: input.id,
+      events: eventStream(events),
+    })),
+    killExec: vi.fn<WorkspaceModuleBackendHandle["killExec"]>(async () => {}),
+    disposeExec: vi.fn<WorkspaceModuleBackendHandle["disposeExec"]>(async () => {}),
+    close: vi.fn<NonNullable<WorkspaceModuleBackendHandle["close"]>>(async () => {}),
   };
 }
 

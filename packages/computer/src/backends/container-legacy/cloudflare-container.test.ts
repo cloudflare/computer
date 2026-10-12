@@ -269,7 +269,7 @@ describe("LegacyContainerBackend", () => {
     const fake = makeFakeHost({ healthy: false });
     let gatewayRequest: Request | undefined;
     const gateway = {
-      fetch: vi.fn(async (request: Request) => {
+      fetch: vi.fn<(request: Request) => Promise<Response>>(async (request: Request) => {
         gatewayRequest = request;
         return new Response(request.url);
       }),
@@ -304,7 +304,7 @@ describe("LegacyContainerBackend", () => {
   test("rejects tokenized egress callbacks without a valid original URL", async () => {
     const fake = makeFakeHost({ healthy: false });
     const gateway = {
-      fetch: vi.fn(async () => new Response("forwarded")),
+      fetch: vi.fn<() => Promise<Response>>(async () => new Response("forwarded")),
     } as unknown as Fetcher;
     const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -330,7 +330,7 @@ describe("LegacyContainerBackend", () => {
   test("rejects container egress callbacks with the wrong token", async () => {
     const fake = makeFakeHost({ healthy: false });
     const gateway = {
-      fetch: vi.fn(async () => new Response("forwarded")),
+      fetch: vi.fn<() => Promise<Response>>(async () => new Response("forwarded")),
     } as unknown as Fetcher;
     const backend = new LegacyContainerBackend({
       container: () => ({ getWorkspaceContainer: () => fake.host }),
@@ -380,7 +380,9 @@ describe("LegacyContainerBackend", () => {
 
   test("container factory is invoked per connect()", async () => {
     const fake = makeFakeHost({ healthy: false });
-    const factory = vi.fn(() => ({ getWorkspaceContainer: () => fake.host }));
+    const factory = vi.fn<() => { getWorkspaceContainer: () => typeof fake.host }>(() => ({
+      getWorkspaceContainer: () => fake.host,
+    }));
     const backend = new LegacyContainerBackend({
       container: factory,
       workspace: fakeWorkspace,

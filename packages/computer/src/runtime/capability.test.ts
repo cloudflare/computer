@@ -1,22 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "./capability.js";
-import type { WorkspaceRuntimeFilesystem } from "./types.js";
+import type { WorkspaceRuntimeFilesystem, WorkspaceRuntimeStat } from "./types.js";
 
 function fakeFs(): WorkspaceRuntimeFilesystem {
   return {
-    readFile: vi.fn() as unknown as WorkspaceRuntimeFilesystem["readFile"],
-    stat: vi.fn().mockResolvedValue({ size: 0 }),
-    lstat: vi.fn().mockResolvedValue({ isSymbolicLink: false }),
-    readlink: vi.fn(),
-    readdir: vi.fn().mockResolvedValue([]),
-    find: vi.fn().mockResolvedValue([]),
-    ls: vi.fn().mockResolvedValue([]),
-    grep: vi.fn().mockResolvedValue([]),
-    writeFile: vi.fn(),
-    mkdir: vi.fn(),
-    rm: vi.fn(),
-    chmod: vi.fn(),
-    symlink: vi.fn(),
+    // Mock<T> can't carry readFile's overloads.
+    readFile: vi.fn<
+      WorkspaceRuntimeFilesystem["readFile"]
+    >() as unknown as WorkspaceRuntimeFilesystem["readFile"],
+    stat: vi
+      .fn<WorkspaceRuntimeFilesystem["stat"]>()
+      .mockResolvedValue({ size: 0 } as WorkspaceRuntimeStat),
+    lstat: vi
+      .fn<WorkspaceRuntimeFilesystem["lstat"]>()
+      .mockResolvedValue({ isSymbolicLink: false } as WorkspaceRuntimeStat),
+    readlink: vi.fn<WorkspaceRuntimeFilesystem["readlink"]>(),
+    readdir: vi.fn<WorkspaceRuntimeFilesystem["readdir"]>().mockResolvedValue([]),
+    find: vi.fn<WorkspaceRuntimeFilesystem["find"]>().mockResolvedValue([]),
+    ls: vi.fn<WorkspaceRuntimeFilesystem["ls"]>().mockResolvedValue([]),
+    grep: vi.fn<WorkspaceRuntimeFilesystem["grep"]>().mockResolvedValue([]),
+    writeFile: vi.fn<WorkspaceRuntimeFilesystem["writeFile"]>(),
+    mkdir: vi.fn<WorkspaceRuntimeFilesystem["mkdir"]>(),
+    rm: vi.fn<WorkspaceRuntimeFilesystem["rm"]>(),
+    chmod: vi.fn<WorkspaceRuntimeFilesystem["chmod"]>(),
+    symlink: vi.fn<WorkspaceRuntimeFilesystem["symlink"]>(),
   };
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 vi.mock("agents", () => ({
-  getAgentByName: vi.fn(),
+  getAgentByName: vi.fn<(...args: unknown[]) => unknown>(),
 }));
 
 import { getRuntimeAgentHandles } from "./runtime-agent-handles";

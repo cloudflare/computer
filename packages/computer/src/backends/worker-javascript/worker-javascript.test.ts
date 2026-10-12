@@ -2,6 +2,7 @@ import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dof
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
+import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
 import { Workspace } from "../../workspace.js";
 import { WorkerJavaScriptBackend } from "./worker-javascript.js";
 
@@ -44,7 +45,7 @@ async function evaluateResult(
 
 describe("WorkerJavaScriptBackend", () => {
   it("blocks ambient egress by default", async () => {
-    const load = vi.fn(() => ({
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
         return {
           evaluate: (
@@ -69,7 +70,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("omits globalOutbound for direct egress", async () => {
-    const load = vi.fn(() => ({
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
         return {
           evaluate: (
@@ -99,8 +100,8 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("routes ambient egress through an HTTP gateway", async () => {
-    const gateway = { fetch: vi.fn() } as unknown as Fetcher;
-    const load = vi.fn(() => ({
+    const gateway = { fetch: vi.fn<Fetcher["fetch"]>() } as unknown as Fetcher;
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
         return {
           evaluate: (
@@ -158,7 +159,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("includes the configured capability byte limit in generated errors", async () => {
-    const load = vi.fn(() => ({
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
         return {
           evaluate: (
@@ -261,7 +262,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("enforces finite input and result byte ceilings", async () => {
-    const load = vi.fn(() => ({
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
         return {
           evaluate: (
@@ -335,7 +336,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("rejects stdin larger than the configured ceiling", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load }, maxStdinBytes: 8 })],
@@ -348,7 +349,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("rejects env larger than the configured ceiling", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load }, maxEnvBytes: 8 })],
@@ -361,7 +362,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("rejects non-string env values", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load } })],
@@ -376,7 +377,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("checks limits against the complete loader map including the runtime runner", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load }, maxSourceBytes: 128 })],
@@ -419,7 +420,7 @@ describe("WorkerJavaScriptBackend", () => {
 
   it("replays a coherent failure after backend recreation interrupts a run", async () => {
     const storage = new SQLiteTestStorage();
-    const dispose = vi.fn();
+    const dispose = vi.fn<() => void>();
     const loader = {
       load() {
         return {
@@ -922,7 +923,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("rejects cwd and execution ids outside their configured bounds", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load } })],
@@ -1200,7 +1201,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("rejects relative imports that collide with internal Loader modules", async () => {
-    const load = vi.fn();
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: { load }, root: "/" })],
@@ -1268,19 +1269,21 @@ describe("WorkerJavaScriptBackend", () => {
 
   describe("module resolution", () => {
     function completingLoader() {
-      return vi.fn((_code: { modules: Record<string, string | { js?: string }> }) => ({
-        getEntrypoint() {
-          return {
-            evaluate: (
-              _input: unknown,
-              host: {
-                assertResult(value: unknown): Promise<void>;
-                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
-              },
-            ) => evaluateResult(host, null),
-          };
-        },
-      }));
+      return vi.fn<WorkspaceRuntimeLoader["load"]>(
+        (_code: { modules: Record<string, string | { js?: string }> }) => ({
+          getEntrypoint() {
+            return {
+              evaluate: (
+                _input: unknown,
+                host: {
+                  assertResult(value: unknown): Promise<void>;
+                  attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+                },
+              ) => evaluateResult(host, null),
+            };
+          },
+        }),
+      );
     }
 
     function source(module: string | { js?: string } | undefined) {
@@ -1493,7 +1496,7 @@ describe("WorkerJavaScriptBackend", () => {
     });
 
     it("confines absolute imports to the backend root", async () => {
-      const load = vi.fn();
+      const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [new WorkerJavaScriptBackend({ loader: { load } })],
@@ -1509,7 +1512,7 @@ describe("WorkerJavaScriptBackend", () => {
     });
 
     it("rejects an absolute import of the module directory", async () => {
-      const load = vi.fn();
+      const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
@@ -1546,7 +1549,7 @@ describe("WorkerJavaScriptBackend", () => {
         /imports "ws:missing", which is not configured/,
       ],
     ])("rejects a configured module with %s", async (_label, imports, message) => {
-      const load = vi.fn();
+      const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [new WorkerJavaScriptBackend({ loader: { load }, modules: { lib: imports } })],

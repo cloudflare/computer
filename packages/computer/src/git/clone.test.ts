@@ -12,7 +12,12 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { cloneWith, type IsomorphicGitClient } from "./clone.js";
+import {
+  cloneWith,
+  type IsomorphicGitClient,
+  type MessageCallback,
+  type ProgressCallback,
+} from "./clone.js";
 
 type CloneArgs = Parameters<IsomorphicGitClient["clone"]>[0];
 type CheckoutArgs = Parameters<IsomorphicGitClient["checkout"]>[0];
@@ -21,10 +26,10 @@ function fakeGit() {
   const cloneCalls: CloneArgs[] = [];
   const checkoutCalls: CheckoutArgs[] = [];
   const git: IsomorphicGitClient = {
-    clone: vi.fn(async (args: CloneArgs) => {
+    clone: vi.fn<IsomorphicGitClient["clone"]>(async (args: CloneArgs) => {
       cloneCalls.push(args);
     }),
-    checkout: vi.fn(async (args: CheckoutArgs) => {
+    checkout: vi.fn<IsomorphicGitClient["checkout"]>(async (args: CheckoutArgs) => {
       checkoutCalls.push(args);
     }),
   };
@@ -72,8 +77,8 @@ describe("cloneWith option translation", () => {
 
   it("forwards explicit ref, depth, dir, singleBranch, noTags, headers, corsProxy, paths, and hooks", async () => {
     const { git, cloneCalls, checkoutCalls } = fakeGit();
-    const onProgress = vi.fn();
-    const onMessage = vi.fn();
+    const onProgress = vi.fn<ProgressCallback>();
+    const onMessage = vi.fn<MessageCallback>();
 
     await cloneWith({
       git,
@@ -146,10 +151,10 @@ describe("cloneWith option translation", () => {
   it("propagates errors from the clone phase and never runs checkout", async () => {
     const boom = new Error("upload-pack 502");
     const git: IsomorphicGitClient = {
-      clone: vi.fn(async () => {
+      clone: vi.fn<IsomorphicGitClient["clone"]>(async () => {
         throw boom;
       }),
-      checkout: vi.fn(async () => {}),
+      checkout: vi.fn<IsomorphicGitClient["checkout"]>(async () => {}),
     };
 
     await expect(
@@ -208,7 +213,7 @@ describe("cloneWith subset checkout (real isomorphic-git + memfs)", () => {
     // A clone module whose `clone` is a no-op (the repo is already
     // populated above), but whose `checkout` is the real one.
     const fakeClone: IsomorphicGitClient = {
-      clone: vi.fn(async () => {}),
+      clone: vi.fn<IsomorphicGitClient["clone"]>(async () => {}),
       checkout: (args) => git.checkout({ ...args, fs: memfs }) as unknown as Promise<void>,
     };
 
@@ -245,7 +250,7 @@ describe("cloneWith subset checkout (real isomorphic-git + memfs)", () => {
     await memfs.promises.rm(`${DIR}/README.md`);
 
     const fakeClone: IsomorphicGitClient = {
-      clone: vi.fn(async () => {}),
+      clone: vi.fn<IsomorphicGitClient["clone"]>(async () => {}),
       checkout: (args) => git.checkout({ ...args, fs: memfs }) as unknown as Promise<void>,
     };
 
