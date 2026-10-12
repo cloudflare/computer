@@ -264,7 +264,8 @@ export default defineConfig({
 ```
 
 Then import a directory, relative to the Vite root, and pass it to
-`WorkerBundle`:
+`WorkerBundle`. [`examples/vite-bundle`](../examples/vite-bundle) is a
+complete project:
 
 ```ts
 import skills from "computer:bundle/src/skills";

@@ -1,0 +1,25 @@
+{
+  // Example: a Vite-built Worker + Durable Object whose Workspace mounts
+  // a directory from the project, src/skills, through computerBundle()
+  // and WorkerBundle. The shell is just-bash in a Dynamic Worker, the
+  // same as examples/worker-shell.
+  //
+  // There is no find_additional_modules rule here: @cloudflare/vite-plugin
+  // ignores it. The files reach the Worker as code instead, through the
+  // `computer:bundle/src/skills` import in src/index.ts.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-vite-bundle-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat", "experimental"],
+
+  // Worker Loader binding. The WorkerShellBackend calls env.LOADER to
+  // mint the Dynamic Worker that runs each shell command.
+  "worker_loaders": [{ "binding": "LOADER" }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "Agent", "class_name": "Agent" }]
+  },
+
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Agent"] }]
+}
