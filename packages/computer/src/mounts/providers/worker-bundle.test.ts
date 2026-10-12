@@ -560,6 +560,21 @@ describe("WorkerBundle versions with callbacks", () => {
     expect(calls).toEqual(["a.sh", "a.sh"]);
   });
 
+  it("retries a lazy load that failed while hashing", async () => {
+    let attempts = 0;
+    const tree = {
+      "a.txt": async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("module failed to load");
+        return "a";
+      },
+    };
+    const version = WorkerBundle(tree, { filter: () => true }).version as () => Promise<string>;
+    await expect(version()).rejects.toThrow(/module failed to load/);
+    await expect(version()).resolves.toMatch(/^sha256:/);
+    expect(attempts).toBe(2);
+  });
+
   it("rehashes for each mount when callbacks are given", () => {
     const dir = writeTree(tempDir(), { "a.txt": "one" });
     const filter = { filter: () => true };

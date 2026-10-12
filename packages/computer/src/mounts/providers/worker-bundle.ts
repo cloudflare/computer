@@ -385,7 +385,14 @@ function resolveVersion(
   let own: Promise<string> | undefined;
   return () => {
     if (hasCallbacks) {
-      own ??= hashAsync(reader, filter, fileMode);
+      if (own === undefined) {
+        own = hashAsync(reader, filter, fileMode);
+        // Forget a failure so the indexer's next pass loads again,
+        // rather than replaying the same rejection.
+        own.catch(() => {
+          own = undefined;
+        });
+      }
       return own;
     }
     let pending = reader.cache.get("");
