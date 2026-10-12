@@ -344,6 +344,20 @@
     "react/no-array-index-key": "warn",
     "react/no-deriving-state-in-effects": "warn",
     "react/no-object-type-as-default-prop": "warn",
-    "unicorn/prefer-set-has": "warn"
+    "unicorn/prefer-set-has": "warn",
+
+    "typescript/no-array-delete": "error",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-meaningless-void-operator": "error",
+    "typescript/no-unsafe-unary-minus": "error",
+    "typescript/no-generated-empty-object-type": "warn",
+    "typescript/no-unnecessary-boolean-literal-compare": "warn",
+    "typescript/no-mixed-enums": "warn",
+    "typescript/related-getter-setter-pairs": "warn",
+    "typescript/no-unnecessary-qualifier": "warn",
+    "typescript/prefer-find": "warn",
+    "typescript/prefer-reduce-type-parameter": "warn",
+    "typescript/prefer-return-this-type": "warn",
+    "typescript/prefer-string-starts-ends-with": "warn"
   }
 }
