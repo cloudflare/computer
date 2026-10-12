@@ -82,7 +82,9 @@ describe("stashPushWith / stashListWith / stashPopWith", () => {
 
   it("stash push surfaces a non-repo as an error", async () => {
     await memfs.promises.mkdir("/loose", { recursive: true });
-    await expect(stashPushWith({ git: stashClient, fs: memfs, dir: "/loose" })).rejects.toThrow();
+    await expect(stashPushWith({ git: stashClient, fs: memfs, dir: "/loose" })).rejects.toThrow(
+      "not a git repository: /loose",
+    );
   });
 });
 
@@ -174,8 +176,8 @@ describe("cleanWith", () => {
       directories: true,
     });
     expect(removed.sort()).toEqual(["build", "junk.txt"]);
-    await expect(memfs.promises.stat(`${DIR}/junk.txt`)).rejects.toThrow();
-    await expect(memfs.promises.stat(`${DIR}/build`)).rejects.toThrow();
+    await expect(memfs.promises.stat(`${DIR}/junk.txt`)).rejects.toThrow("ENOENT");
+    await expect(memfs.promises.stat(`${DIR}/build`)).rejects.toThrow("ENOENT");
     // Tracked file untouched.
     expect(await memfs.promises.readFile(`${DIR}/tracked.txt`, "utf8")).toBe("t\n");
   });

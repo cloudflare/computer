@@ -23,6 +23,7 @@ export interface IsomorphicGitStashClient {
     message?: string;
     refIdx?: number;
   }): Promise<string | string[] | undefined>;
+  resolveRef(args: { fs: object; dir: string; ref: string; depth?: number }): Promise<string>;
 }
 
 export interface BaseWorktreeOptions {
@@ -45,8 +46,22 @@ export async function stashPushWith(opts: StashPushWithDeps): Promise<void> {
   try {
     await opts.git.stash({ fs: opts.fs, dir, op: "push", message: opts.message });
   } catch (cause) {
-    if (isNotARepositoryCause(cause)) throw new NotARepositoryError(dir, { cause });
+    if (isNotARepositoryCause(cause) || (await headIsMissing(opts, dir))) {
+      throw new NotARepositoryError(dir, { cause });
+    }
     throw new GitError("ESTASHFAIL", `git stash push failed: ${errorMessage(cause)}`, { cause });
+  }
+}
+
+// isomorphic-git checks for an author before it reads the repository, so
+// a push outside a repository fails with MissingNameError instead of a
+// not-found error. Reading HEAD tells the two apart.
+async function headIsMissing(opts: StashPushWithDeps, dir: string): Promise<boolean> {
+  try {
+    await opts.git.resolveRef({ fs: opts.fs, dir, ref: "HEAD", depth: 1 });
+    return false;
+  } catch (cause) {
+    return isNotARepositoryCause(cause);
   }
 }
 
