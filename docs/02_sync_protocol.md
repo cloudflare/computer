@@ -359,21 +359,36 @@ directly. A kept path is itself a change the next push ships upstream,
 so dropping the delete loses no work.
 
 "Seen" is the push cursor, the same one push plans from: a version push
-will not send again is one the backend has. A divergence reset that
-lowers the `pushRev` watermark alone does not change what push sends,
-so it does not change what the guard protects either.
+will not send again is one the backend has. When a backend turns out to
+have lost what we pushed (a restarted computerd), both
+`reconcileWatermarks` and `pullOnce`'s divergence check rewind the push
+cursor itself to 0, so push re-sends the host's files and the guard
+treats them as unseen until it has.
 
 #### Acknowledging pulled versions
 
 Applying a pull mints local revs, which on their own look like
-unpushed host work. When the push window was empty as the pull began
-(`pushWindowIsEmpty`) and every rev minted since came from the pull's
-applies (`ApplyResult.minted` equals how far `currentRev` moved), the
-puller sends an empty `push` whose `senderCursor` is the new
+unpushed host work. The puller acknowledges them when three things
+hold:
+
+- the push window was empty as the pull began (`pushWindowIsEmpty`);
+- the backend already confirms our push cursor: the fetch cursor it
+  reported on this pull's fetch is at least ours;
+- every rev minted since came from the pull's applies
+  (`ApplyResult.minted` equals how far `currentRev` moved).
+
+It then sends an empty `push` whose `senderCursor` is the new
 `currentRev`. The receiver advances its fetch cursor, echoes it, and
 only then does the puller advance its push cursor, so the cross-side
-invariant holds throughout. Every pull path does this: `pullOnce`
-once per pull, and `pullBlocks` once per block in both modes.
+invariant holds throughout. The second condition matters because the
+receiver raises its fetch cursor to whatever it is sent: acknowledging
+to a backend that restarted empty would cover files it never received
+and hide the restart from `reconcileWatermarks`.
+
+Every pull path acknowledges per committed unit: `pullOnce` per batch,
+`pullBlocks` per block in both modes. A pull interrupted after some
+batches keeps those batches acknowledged. Only a failure between a
+batch's commit and its acknowledgment leaves that batch unacknowledged.
 
 Two things follow. The next push does not re-send what was just pulled,
 and a later delete of a pulled file from the same backend applies

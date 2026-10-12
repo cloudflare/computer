@@ -25,7 +25,6 @@ import {
   stageBlob,
   writeFetchCursor,
   writePushCursor,
-  writeWatermark,
 } from "@cloudflare/dofs";
 
 import type { SyncRPC } from "./interface.js";
@@ -174,7 +173,11 @@ async function pullOnceImpl(
         resetFetchCursor: fetchDiverged,
       });
       if (pushDiverged) {
-        writeWatermark(db, "pushRev", 0, backend);
+        // Rewind the push cursor itself, as reconcileWatermarks does.
+        // Push plans from the cursor, so resetting only the pushRev
+        // watermark would leave the host's files unsent to a backend
+        // that lost them.
+        writePushCursor(db, { rev: 0, path: null }, backend);
       }
       if (fetchDiverged) {
         writeFetchCursor(db, { rev: 0, path: null }, backend);
@@ -194,10 +197,9 @@ async function pullOnceImpl(
       return { applied: 0, skipped: [] };
     }
 
-    // Every rev minted from here on should come from this pull's
-    // applies; acknowledgePulledRevs checks that before claiming them.
-    const window = openPullWindow(db, backend ?? DEFAULT_BACKEND);
-    let totalMinted = 0;
+    // What the backend has confirmed of our pushes. Each acknowledged
+    // batch raises it, so the next batch can be acknowledged in turn.
+    let remoteApplied = appliedPushCursor;
     const reader = fetchResult.stream.getReader();
     let totalApplied = 0;
     const totalSkipped: SkippedEntry[] = [];
@@ -257,6 +259,10 @@ async function pullOnceImpl(
           }
         }
 
+        // Acknowledge batch by batch, matching the block path: a batch
+        // is committed and checkpointed on its own, so an interruption
+        // after it must not leave its revs looking like host work.
+        const window = openPullWindow(db, backend ?? DEFAULT_BACKEND, remoteApplied);
         const batchResult = await applyChanges(db, batch, new Map(), {
           source: "upstream",
           backend,
@@ -268,8 +274,15 @@ async function pullOnceImpl(
         // because alreadyApplied() drops entries whose live state
         // already matches.
         writeFetchCursorIfAhead(db, { rev: last.rev, path: last.path }, backend);
+        const acknowledged = await acknowledgePulledRevs(
+          db,
+          remote,
+          backend ?? DEFAULT_BACKEND,
+          window,
+          batchResult.minted ?? 0,
+        );
+        if (acknowledged !== undefined) remoteApplied = acknowledged;
         totalApplied += batchResult.applied;
-        totalMinted += batchResult.minted ?? 0;
         if (batchResult.skipped.length > 0) {
           for (const s of batchResult.skipped) totalSkipped.push(s);
         }
@@ -286,7 +299,6 @@ async function pullOnceImpl(
     // final drain marker cannot skip beyond any per-batch cursor written
     // above.
     writeFetchCursorIfAhead(db, currentCursor, backend);
-    await acknowledgePulledRevs(db, remote, backend ?? DEFAULT_BACKEND, window, totalMinted);
     return { applied: totalApplied, skipped: totalSkipped };
   } finally {
     maybeDispose(fetchResult);

@@ -117,29 +117,43 @@ function entryCursor(entry: ChangeEntry): ChangeCursor {
 // first, so the cross-side invariant (the backend has applied at least
 // our push cursor) holds throughout.
 //
+// The backend must also already confirm our push cursor: `remoteApplied`
+// is the fetch cursor it reported on the fetch this pull used. A
+// backend that restarted empty reports less than we pushed, and an
+// acknowledgment would raise its fetch cursor over files it never got,
+// hiding the restart from reconcileWatermarks for good.
+//
 // Anything else leaves the cursor alone: unpushed work at the start, a
-// host write interleaved with the pull, or a failed acknowledgment.
-// The pulled revs then ship on the next push like any other change.
+// host write interleaved with the pull, a backend that is behind us, or
+// a failed acknowledgment. The pulled revs then ship on the next push
+// like any other change.
 export interface PullWindow {
   readonly startRev: number;
   readonly clean: boolean;
 }
 
-export function openPullWindow(db: Database, backend: string): PullWindow {
-  return { startRev: currentRev(db), clean: pushWindowIsEmpty(db, backend) };
+export function openPullWindow(
+  db: Database,
+  backend: string,
+  remoteApplied: ChangeCursor,
+): PullWindow {
+  const caughtUp = compareChangeCursors(remoteApplied, readPushCursor(db, backend)) >= 0;
+  return { startRev: currentRev(db), clean: caughtUp && pushWindowIsEmpty(db, backend) };
 }
 
+// Returns the acknowledged cursor, which the backend now holds as its
+// fetch cursor, or undefined when nothing was acknowledged.
 export async function acknowledgePulledRevs(
   db: Database,
   remote: SyncRPC,
   backend: string,
   window: PullWindow,
   minted: number,
-): Promise<boolean> {
-  if (!window.clean || minted <= 0) return false;
+): Promise<ChangeCursor | undefined> {
+  if (!window.clean || minted <= 0) return undefined;
   const endRev = currentRev(db);
   // A host write during the pull minted a rev the pull did not.
-  if (endRev - window.startRev !== minted) return false;
+  if (endRev - window.startRev !== minted) return undefined;
   const cursor: ChangeCursor = { rev: endRev, path: null };
   let appliedPushCursor: ChangeCursor;
   try {
@@ -156,13 +170,13 @@ export async function acknowledgePulledRevs(
   } catch {
     // Best effort: the pull itself succeeded, and an unacknowledged
     // window is merely conservative.
-    return false;
+    return undefined;
   }
-  if (compareChangeCursors(appliedPushCursor, cursor) < 0) return false;
+  if (compareChangeCursors(appliedPushCursor, cursor) < 0) return undefined;
   if (compareChangeCursors(readPushCursor(db, backend), cursor) < 0) {
     writePushCursor(db, cursor, backend);
   }
-  return true;
+  return cursor;
 }
 
 // In-isolate join table. Two iterators in the same isolate driving the
@@ -271,7 +285,7 @@ async function runPullPackBlock(
     bytes += payload.byteLength;
   }
 
-  const window = openPullWindow(db, backend);
+  const window = openPullWindow(db, backend, response.appliedPushCursor);
   const result = await applyChanges(db, decoded.entries, new Map(), {
     source: "upstream",
     backend,
@@ -450,6 +464,8 @@ async function runPullBlock(
     through: target,
     ...(options.ignore === undefined ? {} : { ignore: options.ignore }),
   });
+  // Read before the envelope is disposed below.
+  const remoteApplied = fetchResult.appliedPushCursor;
 
   const entries: ChangeEntry[] = [];
   let bytes = 0;
@@ -520,7 +536,7 @@ async function runPullBlock(
 
   // 4. Apply metadata before the cursor moves. Chunk bytes come from
   //    the staged blob store, not from an in-memory map.
-  const window = openPullWindow(db, backend);
+  const window = openPullWindow(db, backend, remoteApplied);
   const result = await applyChanges(db, entries, new Map(), {
     source: "upstream",
     backend,

@@ -2,6 +2,7 @@ import {
   currentRev,
   Database,
   initializeSchema,
+  readFetchCursor,
   readOperation,
   readPushCursor,
   SQLiteWorkspaceProvider,
@@ -11,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SyncRPC } from "./interface.js";
 import { createSyncServer } from "./server.js";
+import { reconcileWatermarks } from "./sync-driver.js";
 import { pullBlocks, pushBlocks, type SyncProgress } from "./sync-engine.js";
 
 // Pack mode is the bulk path. These tests force the mode thresholds
@@ -558,6 +560,38 @@ describe("acknowledging pulled versions", () => {
       } finally {
         local.close();
         remote.close();
+      }
+    });
+
+    // pullBlocks does not check for divergence itself; reconcileWatermarks
+    // does, on connect, by comparing the container's fetch cursor with
+    // ours. An acknowledgment sent to a container that restarted empty
+    // would raise that fetch cursor over files it never received, hiding
+    // the restart for good. It is sent only when the container already
+    // confirms our push cursor.
+    it(`${mode}: an acknowledgment never hides a container that restarted empty`, async () => {
+      const local = makePeer();
+      const before = makePeer();
+      const restarted = makePeer();
+      try {
+        const host = new SQLiteWorkspaceProvider(local.db);
+        host.writeFileSync("/x", "host file");
+        await drain(pushBlocks(local.db, before.rpc, options));
+
+        const container = new SQLiteWorkspaceProvider(restarted.db);
+        container.writeFileSync("/y", "made after the restart");
+        await drain(pullBlocks(local.db, restarted.rpc, options));
+        expect(readFetchCursor(restarted.db)).toEqual({ rev: 0, path: null });
+
+        expect((await reconcileWatermarks(local.db, restarted.rpc, "linux")).pushRevReset).toBe(
+          true,
+        );
+        await drain(pushBlocks(local.db, restarted.rpc, options));
+        expect(names(restarted.db)).toEqual(["x", "y"]);
+      } finally {
+        local.close();
+        before.close();
+        restarted.close();
       }
     });
 
