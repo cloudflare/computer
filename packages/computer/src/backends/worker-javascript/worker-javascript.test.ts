@@ -1409,6 +1409,34 @@ describe("WorkerJavaScriptBackend", () => {
       ).rejects.toThrow('Module "node:path" is not configured');
     });
 
+    it("leaves out a factory that builds no functions, so runs that do not import it still start", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: { "ws:tools": () => ({}), "ws:other": { run: async () => null } },
+          }),
+        ],
+      });
+
+      const execution = await workspace.runtime.exec(
+        `import { run } from "ws:other"; export default run;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(Object.keys(modules).filter((name) => name.includes("ws:"))).toEqual([
+        "__modules__/ws:other",
+      ]);
+
+      await expect(
+        workspace.runtime.exec(`import { read } from "ws:tools"; export default read;`),
+      ).rejects.toThrow(
+        'Module "ws:tools" exports nothing on this backend: its factory built no functions when the backend connected.',
+      );
+    });
+
     it("rejects a module with no default export before loading it", async () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),

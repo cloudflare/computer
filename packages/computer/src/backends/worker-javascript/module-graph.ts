@@ -183,6 +183,8 @@ export interface BuildModuleGraphOptions {
   capability: WorkspaceRuntimeCapability;
   configuredModules: Readonly<Record<string, string>>;
   hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Host modules whose factory built no functions on this connection, so they are left out. */
+  emptyHostModules?: ReadonlySet<string>;
   /** Whether the Dynamic Worker has the Node.js built-ins. */
   nodeModules: boolean;
   maxSourceBytes: number;
@@ -291,6 +293,11 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
       }
       if (specifier === CAPABILITIES_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
+      }
+      if (options.emptyHostModules?.has(specifier)) {
+        throw new Error(
+          `Module ${JSON.stringify(specifier)} exports nothing on this backend: its factory built no functions when the backend connected.`,
+        );
       }
       if (specifier.startsWith("ws:")) {
         throw new Error(

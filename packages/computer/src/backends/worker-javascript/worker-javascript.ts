@@ -262,6 +262,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  readonly #emptyHostModules: ReadonlySet<string>;
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
@@ -274,12 +275,23 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#options = options;
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
+    const empty = new Set<string>();
     for (const [specifier, factory] of options.modules.host) {
       const built = factory({ git: host.git, artifacts: host.artifacts, runtime: host.runtime });
+      // A factory can have nothing to offer on a connection, such as
+      // ws:tools for an agent with no tools. Leaving its module out means
+      // only an import of it fails, not every run. An object of functions
+      // with none is still refused at construction, where it can only be
+      // a mistake.
+      if (Object.keys(built).length === 0) {
+        empty.add(specifier);
+        continue;
+      }
       assertHostModuleExports(specifier, built);
       functions.set(specifier, built);
     }
     this.#hostModuleFunctions = functions;
+    this.#emptyHostModules = empty;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -398,6 +410,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         capability,
         configuredModules: this.#preparedSourceModules(),
         hostModules: this.#hostModuleFunctions,
+        emptyHostModules: this.#emptyHostModules,
         nodeModules: hasNodeModules(this.#options.compatibilityFlags),
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
