@@ -104,6 +104,9 @@ export function createToolBindings(
         if (binding.readOnly !== true && context.access !== "read-write") {
           throw new Error(`ws:tools ${binding.name} requires Workspace write access.`);
         }
+        // A tool may ignore the signal, so a call cancelled while it
+        // waited must not start it.
+        context.signal.throwIfAborted();
         return binding.call(singleObject(binding.name, args), context);
       };
     }

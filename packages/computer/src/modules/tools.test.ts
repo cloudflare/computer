@@ -93,6 +93,17 @@ describe("createToolBindings", () => {
     expect(write.calls).toEqual([]);
   });
 
+  it("does not run a tool whose call was cancelled before it started", async () => {
+    const write = recording("write");
+    const functions = createToolBindings([write.binding])(host);
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    await expect(
+      functions.write?.([{ path: "a.txt" }], callContext({ signal: controller.signal })),
+    ).rejects.toThrow("cancelled");
+    expect(write.calls).toEqual([]);
+  });
+
   it("runs a tool marked readOnly on a read-only backend", async () => {
     const read = recording("read", { readOnly: true });
     const functions = createToolBindings([read.binding])(host);
