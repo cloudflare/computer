@@ -128,44 +128,7 @@ export function writePushCursor(
       cursor.path,
     );
     writeWatermarkValue(db, "pushRev", cursor.rev, backend);
-    // Provenance below the cursor's rev can no longer matter: those
-    // versions have been shipped. Keep the cursor's own rev, which a
-    // partial push may have shipped only in part.
-    db.run("DELETE FROM _vfs_upstream_revs WHERE backend = ? AND rev < ?", backend, cursor.rev);
-    db.run("DELETE FROM _vfs_upstream_paths WHERE backend = ? AND rev < ?", backend, cursor.rev);
   });
-}
-
-// Record local revs in (after, through] as minted by applying a pull
-// from `backend`. See _vfs_upstream_revs.
-export function recordUpstreamRevs(
-  db: Database,
-  after: number,
-  through: number,
-  backend: string = DEFAULT_BACKEND_ID,
-): void {
-  for (let rev = after + 1; rev <= through; rev++) {
-    db.run("INSERT OR IGNORE INTO _vfs_upstream_revs (backend, rev) VALUES (?, ?)", backend, rev);
-  }
-}
-
-// Record local revs in (after, through] as minted by applying a pull
-// from `backend` to `path` alone. See _vfs_upstream_paths.
-export function recordUpstreamPathRevs(
-  db: Database,
-  after: number,
-  through: number,
-  path: string,
-  backend: string = DEFAULT_BACKEND_ID,
-): void {
-  for (let rev = after + 1; rev <= through; rev++) {
-    db.run(
-      "INSERT OR IGNORE INTO _vfs_upstream_paths (backend, rev, path) VALUES (?, ?, ?)",
-      backend,
-      rev,
-      path,
-    );
-  }
 }
 
 export function writeFetchCursor(
@@ -193,4 +156,19 @@ export function compareChangeCursors(a: ChangeCursor, b: ChangeCursor): number {
 // cursor.
 export function currentRev(db: Database): number {
   return db.scalar<number>("SELECT v FROM vfs_meta WHERE k = 'rev'") ?? 0;
+}
+
+// True when push has nothing to send this backend: no live node and no
+// tombstone sits past its push cursor. A pull that starts from here
+// mints revs that hold only what the backend sent, which is what lets
+// those revs be acknowledged (or, within one apply call, treated as
+// seen). A cursor partway through a rev is conservatively not empty.
+export function pushWindowIsEmpty(db: Database, backend: string = DEFAULT_BACKEND_ID): boolean {
+  const pushed = readPushCursor(db, backend);
+  if (compareChangeCursors(pushed, { rev: currentRev(db), path: null }) >= 0) return true;
+  if (pushed.path !== null) return false;
+  return (
+    db.one("SELECT 1 AS hit FROM vfs_nodes WHERE rev > ? LIMIT 1", pushed.rev) === undefined &&
+    db.one("SELECT 1 AS hit FROM vfs_changes WHERE rev > ? LIMIT 1", pushed.rev) === undefined
+  );
 }

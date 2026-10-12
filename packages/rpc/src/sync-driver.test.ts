@@ -5,6 +5,7 @@ import {
   Database,
   initializeSchema,
   readFetchCursor,
+  readPushCursor,
   readWatermark,
   SQLiteWorkspaceProvider,
   stageBlob,
@@ -717,33 +718,25 @@ describe("sync driver — bidirectional convergence", () => {
   });
 
   it("an upstream entry stops circulating within two ticks", async () => {
-    // Before the pushRev-locality fix, the loopback suppression
-    // advanced B's pushRev to currentRev on the apply, so the
-    // immediate pushOnce was a no-op. After the fix, B's pushRev
-    // stays put after the pull, so the first pushOnce after a
-    // pull ships the apply's rev bumps back to A; A's
-    // alreadyApplied() drops them, the push response advances B's
-    // pushRev, and the *next* tick is the no-op. The echo is
-    // bounded at one extra round trip and the system converges
-    // without an unbounded ping-pong.
+    // A pulls B's write. With nothing of its own unpushed, the pull
+    // acknowledges what it applied: the empty acknowledgment push
+    // moves both sides' cursors over it, so the entry is never
+    // shipped back. Before the acknowledgment the first tick echoed
+    // it and the second was the no-op; now there is no echo at all.
     const a = makePeer();
     const b = makePeer();
     try {
       const providerA = new SQLiteWorkspaceProvider(a.db, { now: () => 1 });
       providerA.writeFileSync("/from-a.txt", "alpha");
 
-      // Tick 1: B pulls A's write. The apply on B bumps B's rev,
-      // so B's coalesce window contains entries; pushed reports
-      // however many entries got coalesced (typically 1 for the
-      // file alone, more if directory entries get touched).
+      // Tick 1: B pulls A's write and acknowledges it, so the push
+      // half of the tick has nothing to send.
       const first = await tick(b.db, a.rpc);
       expect(fileEntries(b.db)).toContain("from-a.txt");
       expect(first.pulled.applied).toBeGreaterThan(0);
-      expect(first.pushed).toBeGreaterThanOrEqual(1);
+      expect(first.pushed).toBe(0);
 
-      // Tick 2: A's alreadyApplied() dropped the redundant entries
-      // shipped in tick 1, and B's pushRev advanced past them. So
-      // tick 2 has nothing to push and nothing to pull.
+      // Tick 2: nothing to push and nothing to pull.
       const second = await tick(b.db, a.rpc);
       expect(second.pulled.applied).toBe(0);
       expect(second.pushed).toBe(0);
@@ -846,26 +839,24 @@ describe("sync driver — cross-side invariant", () => {
       const result = await pullOnce(local, flakyRPC);
       // The retry succeeded: the seeded /seed.txt landed locally.
       expect(result.applied).toBeGreaterThan(0);
-      // pushRev was reset to 0 on the divergence and stays at 0
-      // (we didn't run a successful pushOnce); the next pushOnce
-      // tick will re-ship from the baseline.
-      expect(readWatermark(local, "pushRev")).toBe(0);
+      // pushRev was reset from 42 on the divergence. The retried pull
+      // started with nothing local to push, so it acknowledged what it
+      // pulled: pushRev now covers exactly the local revs that pull
+      // minted. Without the reset it would still read 42.
+      expect(readWatermark(local, "pushRev")).toBe(currentRev(local));
+      expect(currentRev(local)).toBeLessThan(42);
     } finally {
       remote.close();
     }
   });
 
-  it("drops a container delete pulled during a pushRev reset (known trade-off)", async () => {
-    // Known gap, pinned so a change to it is deliberate. When the
-    // remote forgets what we pushed (a computerd restart under the
-    // same WebSocket), pullOnce resets pushRev to 0 and retries. With
-    // pushRev at 0, every host-authored version counts as unseen by
-    // the backend, so tombstoneIsStale keeps it and a container delete
-    // pulled in that window is dropped. The fetch cursor still moves
-    // past the delete, so it is never fetched again: the host keeps
-    // the file the container removed. Protecting possibly unpushed
-    // host work wins over delete fidelity here. A fix would need to
-    // re-fetch, or re-check, deletes once pushRev is re-established.
+  it("applies a container delete pulled during a pushRev reset", async () => {
+    // When the remote forgets what we pushed (a computerd restart under
+    // the same WebSocket), pullOnce resets the pushRev watermark and
+    // retries. Push plans from the push cursor, not the bare watermark,
+    // so it will not re-send /x.txt: the backend has seen it. The delete
+    // guard asks the same question, so the container's delete applies
+    // instead of leaving the host with a file the container removed.
     const local = makePeer();
     const remote = makePeer();
     try {
@@ -882,17 +873,67 @@ describe("sync driver — cross-side invariant", () => {
       writeFetchCursor(remote.db, { rev: 0, path: null });
 
       const pulled = await pullOnce(local.db, remote.rpc);
-      expect(readWatermark(local.db, "pushRev")).toBe(0);
-      expect(pulled.applied).toBe(0);
-      expect(fileEntries(local.db)).toEqual(["keep.txt", "x.txt"]);
-      expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+      expect(pulled.applied).toBe(1);
+      expect(fileEntries(local.db)).toEqual(["keep.txt"]);
 
-      // Later syncs do not repair the divergence: the delete is behind
-      // the fetch cursor, and /x.txt has no new local change to push.
       await pushOnce(local.db, remote.rpc);
       await pullOnce(local.db, remote.rpc);
-      expect(fileEntries(local.db)).toEqual(["keep.txt", "x.txt"]);
+      expect(fileEntries(local.db)).toEqual(["keep.txt"]);
       expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
+  it("acknowledges a clean pull so the next push re-sends nothing", async () => {
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      container.writeFileSync("/a.txt", "a");
+      container.writeFileSync("/b.txt", "b");
+      await pullOnce(local.db, remote.rpc);
+      expect(readPushCursor(local.db)).toEqual({ rev: currentRev(local.db), path: null });
+      expect(await pushOnce(local.db, remote.rpc)).toBe(0);
+
+      // A delete of an acknowledged pulled file wins on the next pull.
+      container.unlinkSync("/a.txt");
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).toEqual(["b.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
+  it("does not acknowledge over a host write that lands during the pull", async () => {
+    // The acknowledgment claims every rev minted since the pull began
+    // came from the backend. A host write interleaved with the pull
+    // breaks that, so it must not be covered: it would never be pushed.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      container.writeFileSync("/x.txt", "x");
+      const interleaving = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "hasObjects") {
+            return async (hashes: Uint8Array[]) => {
+              host.writeFileSync("/during.txt", "host write mid-pull");
+              return Reflect.get(target, prop, receiver).call(target, hashes);
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      await pullOnce(local.db, interleaving);
+      expect(readPushCursor(local.db).rev).toBeLessThan(currentRev(local.db));
+
+      await pushOnce(local.db, remote.rpc);
+      expect(container.readFileSync("/during.txt", "utf8")).toBe("host write mid-pull");
     } finally {
       local.close();
       remote.close();
@@ -929,7 +970,9 @@ describe("sync driver — cross-side invariant", () => {
 
       const result = await pullOnce(local, lyingRPC);
       expect(result.applied).toBeGreaterThan(0);
-      expect(readWatermark(local, "pushRev")).toBe(0);
+      // Reset from 42, then the clean retry acknowledged its pull.
+      expect(readWatermark(local, "pushRev")).toBe(currentRev(local));
+      expect(currentRev(local)).toBeLessThan(42);
     } finally {
       remote.close();
     }

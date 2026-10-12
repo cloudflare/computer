@@ -108,6 +108,7 @@ export type { ChangeCursor, WatermarkKey } from "./sync/watermarks.js";
 export {
   compareChangeCursors,
   currentRev,
+  pushWindowIsEmpty,
   readFetchCursor,
   readPushCursor,
   readWatermark,

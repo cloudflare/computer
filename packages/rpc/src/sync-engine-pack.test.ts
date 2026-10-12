@@ -1,7 +1,9 @@
 import {
+  currentRev,
   Database,
   initializeSchema,
   readOperation,
+  readPushCursor,
   SQLiteWorkspaceProvider,
 } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
@@ -518,6 +520,88 @@ describe("deletes across independent peer revision spaces", () => {
       } finally {
         sender.close();
         receiver.close();
+      }
+    });
+  }
+});
+
+// A pull mints local revs for what it applies. When nothing local was
+// unpushed before the pull and nothing local was written during it,
+// those revs hold only what the backend sent. The puller acknowledges
+// them with an empty push, so the push cursor covers them: a later
+// delete from the backend wins, and the next push re-sends nothing.
+describe("acknowledging pulled versions", () => {
+  for (const mode of ["entries", "pack"] as const) {
+    const options = {
+      backend: "linux",
+      thresholdEntries: mode === "pack" ? 1 : 1_000,
+      thresholdBytes: 1024 * 1024 * 1024,
+    };
+
+    it(`${mode}: the next push re-sends nothing after a clean pull`, async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        const container = new SQLiteWorkspaceProvider(remote.db);
+        container.writeFileSync("/a", "a");
+        container.writeFileSync("/b", "b");
+        container.writeFileSync("/c", "c");
+        const pulled = await drain(pullBlocks(local.db, remote.rpc, options));
+        expect(pulled[0].mode).toBe(mode);
+        expect(readPushCursor(local.db, "linux")).toEqual({
+          rev: currentRev(local.db),
+          path: null,
+        });
+
+        const pushed = await drain(pushBlocks(local.db, remote.rpc, options));
+        expect(pushed.reduce((n, p) => n + p.entries, 0)).toBe(0);
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
+    it(`${mode}: unpushed host work blocks the acknowledgment and still ships`, async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        const host = new SQLiteWorkspaceProvider(local.db);
+        const container = new SQLiteWorkspaceProvider(remote.db);
+        host.writeFileSync("/local", "unpushed");
+        container.writeFileSync("/x", "x");
+        await drain(pullBlocks(local.db, remote.rpc, options));
+        expect(readPushCursor(local.db, "linux").rev).toBeLessThan(currentRev(local.db));
+
+        await drain(pushBlocks(local.db, remote.rpc, options));
+        expect(container.readFileSync("/local", "utf8")).toBe("unpushed");
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
+    // Without the acknowledgment the pulled copy looks like unpushed
+    // host work, so the delete is kept and the next push recreates the
+    // file in the container. Deletes carrying the deleted version's
+    // fingerprint close this; until then it is the conservative path.
+    it(`${mode}: without an acknowledgment a pulled file survives its remote delete`, async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        const host = new SQLiteWorkspaceProvider(local.db);
+        const container = new SQLiteWorkspaceProvider(remote.db);
+        host.writeFileSync("/local", "unpushed");
+        container.writeFileSync("/x", "x");
+        await drain(pullBlocks(local.db, remote.rpc, options));
+        container.unlinkSync("/x");
+        await drain(pullBlocks(local.db, remote.rpc, options));
+        expect(names(local.db)).toEqual(["local", "x"]);
+
+        await drain(pushBlocks(local.db, remote.rpc, options));
+        expect(names(remote.db)).toEqual(["local", "x"]);
+      } finally {
+        local.close();
+        remote.close();
       }
     });
   }

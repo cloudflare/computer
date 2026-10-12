@@ -48,12 +48,11 @@ A typical `exec()` round-trip:
    (the DO) calls `remote.hasObjects(...)` on the referenced hashes
    and follows up with `remote.pushObjects(missing)` for the subset
    the receiver doesn't already have. After the receiver applies
-   the batch, the DO advances `pushRev` past the rev it just sent
-   — but only when there were no unpushed local writes interleaved
-   in the meantime, so an apply that races a local mutation doesn't
-   strand the local write. This post-apply `pushRev` advancement
-   (introduced in `dc692c0`) is what keeps the container's own apply
-   from bouncing the same entries straight back on the next pull.
+   the batch and echoes its cursor, the DO advances its push cursor
+   to what was acknowledged. In the other direction, a pull that
+   began with nothing to push acknowledges the revs it minted with
+   an empty push, so pulled entries are not bounced straight back
+   (see [Acknowledging pulled versions](#acknowledging-pulled-versions)).
 2. **Hydrate.** Lazy-mount stubs the command might touch are fetched
    from their providers and included in the same push batch. See
    [06. Mount Interface](./06_mount_interface.md).
@@ -349,7 +348,7 @@ per entry kind rather than a blanket property:
 | `file` | `alreadyApplied` compares the manifest hash; identical content is a no-op. |
 | `dir` | Compares mode; a match is a no-op. |
 | `symlink` | Compares mode and target; a match is a no-op. |
-| `delete` | On pull, dropped only if the doomed subtree holds a local version this backend has not seen: past the push cursor and not minted by an earlier pull from it. On push, dropped if the receiver already committed it (at or before its fetch cursor). |
+| `delete` | On pull, dropped only if the doomed subtree holds a local version this backend has not seen: past the push cursor, and not minted earlier in the same apply from a clean start. On push, dropped if the receiver already committed it (at or before its fetch cursor). |
 
 The delete case is why replay cannot be assumed idempotent for free. A
 replayed tombstone must not destroy a path recreated after it, and a
@@ -359,9 +358,32 @@ and `vfs_nodes.rev` is the receiver's, so they are never compared
 directly. A kept path is itself a change the next push ships upstream,
 so dropping the delete loses no work.
 
-One trade-off: while a divergence reset holds `pushRev` at 0, every
-locally authored version counts as unseen, so a remote delete pulled in
-that window is dropped and the host keeps the file.
+"Seen" is the push cursor, the same one push plans from: a version push
+will not send again is one the backend has. A divergence reset that
+lowers the `pushRev` watermark alone does not change what push sends,
+so it does not change what the guard protects either.
+
+#### Acknowledging pulled versions
+
+Applying a pull mints local revs, which on their own look like
+unpushed host work. When the push window was empty as the pull began
+(`pushWindowIsEmpty`) and every rev minted since came from the pull's
+applies (`ApplyResult.minted` equals how far `currentRev` moved), the
+puller sends an empty `push` whose `senderCursor` is the new
+`currentRev`. The receiver advances its fetch cursor, echoes it, and
+only then does the puller advance its push cursor, so the cross-side
+invariant holds throughout. Every pull path does this: `pullOnce`
+once per pull, and `pullBlocks` once per block in both modes.
+
+Two things follow. The next push does not re-send what was just pulled,
+and a later delete of a pulled file from the same backend applies
+because the version it removes is one the backend has seen.
+
+If the window was not empty, a host write landed during the pull, or
+the acknowledgment failed, nothing is acknowledged. The pulled revs ship
+on the next push like any other change, and a delete of a pulled file
+arriving before then is kept; the next push recreates the file
+remotely. That is the conservative outcome, never a lost host write.
 
 Entries the receiver refuses — most often a container-side write under
 a read-only mount — are reported in `SyncProgress.skipped` **and**

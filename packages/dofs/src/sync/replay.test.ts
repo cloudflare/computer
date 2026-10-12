@@ -196,7 +196,12 @@ describe("block replay idempotency", () => {
       ["async", applyChanges],
       ["sync", applyChangesSync],
     ] as const) {
-      it(`${name}: lets a remote delete win over an unechoed pulled file`, async () => {
+      // Across apply calls, dofs cannot tell a pulled version from host
+      // work: the rpc layer acknowledges a clean pull, which moves the
+      // push cursor over it (see "acknowledging pulled versions" in
+      // rpc). Without that, the pulled copy is kept and the next push
+      // recreates it remotely.
+      it(`${name}: keeps an unacknowledged pulled file from a later delete`, async () => {
         await withDB(async (db) => {
           writeWatermark(db, "pushRev", currentRev(db));
           const file: ChangeEntry = {
@@ -209,25 +214,34 @@ describe("block replay idempotency", () => {
             chunks: [],
           };
           expect((await apply(db, [file], new Map(), { source: "upstream" })).applied).toBe(1);
-          // No echo push yet: the pulled versions sit above pushRev.
           const result = await apply(
             db,
             [{ kind: "delete", rev: 2, path: "/pulled/x" }],
             new Map(),
-            {
-              source: "upstream",
-            },
+            { source: "upstream" },
           );
-          expect(result.applied).toBe(1);
-          expect(resolveInode(db, "/pulled/x", { followSymlinks: false })).toBeNull();
-          // Pulled parents carry upstream provenance too.
-          expect(
-            (
-              await apply(db, [{ kind: "delete", rev: 3, path: "/pulled" }], new Map(), {
-                source: "upstream",
-              })
-            ).applied,
-          ).toBe(1);
+          expect(result.applied).toBe(0);
+          expect(resolveInode(db, "/pulled/x", { followSymlinks: false })).not.toBeNull();
+        });
+      });
+
+      it(`${name}: reports the revs it minted`, async () => {
+        await withDB(async (db) => {
+          const before = currentRev(db);
+          const file: ChangeEntry = {
+            kind: "file",
+            rev: 1,
+            path: "/a/b/x",
+            mode: 0o644,
+            mtime: 1,
+            size: 0,
+            chunks: [],
+          };
+          const result = await apply(db, [file], new Map(), { source: "upstream" });
+          expect(result.minted).toBe(currentRev(db) - before);
+          expect(result.minted).toBeGreaterThan(0);
+          const again = await apply(db, [file], new Map(), { source: "upstream" });
+          expect(again.minted).toBe(0);
         });
       });
 
@@ -343,7 +357,11 @@ describe("block replay idempotency", () => {
         });
       });
 
-      it(`${name}: lets a remote delete remove the rewritten name beside an unpushed hardlink`, async () => {
+      // The pull rewrote /x while /y, a fresh link to the same inode,
+      // was unpushed. The shared inode now holds an unpushed version, so
+      // without a fingerprint on the delete it stays protected: deleting
+      // a name cannot be told apart from discarding the link's version.
+      it(`${name}: keeps a rewritten name beside an unpushed hardlink`, async () => {
         await withDB(async (db) => {
           await writeFile(db, "/x", "content", {}, () => 1);
           writeWatermark(db, "pushRev", currentRev(db));
@@ -357,21 +375,12 @@ describe("block replay idempotency", () => {
             size: 0,
             chunks: [],
           };
-          // A pull rewrites /x, and a later pull deletes /x. The delete
-          // removes only that name, so it must win while /y stays.
-          const first = await apply(db, [update], new Map(), { source: "upstream" });
-          expect(first.applied).toBe(1);
+          expect((await apply(db, [update], new Map(), { source: "upstream" })).applied).toBe(1);
           const second = await apply(db, [{ kind: "delete", rev: 8, path: "/x" }], new Map(), {
             source: "upstream",
           });
-          expect(second.applied).toBe(1);
-          expect(resolveInode(db, "/x", { followSymlinks: false })).toBeNull();
-          expect(resolveInode(db, "/y", { followSymlinks: false })).not.toBeNull();
-          // /y is still unpushed, so its own remote delete stays blocked.
-          const third = await apply(db, [{ kind: "delete", rev: 9, path: "/y" }], new Map(), {
-            source: "upstream",
-          });
-          expect(third.applied).toBe(0);
+          expect(second.applied).toBe(0);
+          expect(resolveInode(db, "/x", { followSymlinks: false })).not.toBeNull();
           expect(resolveInode(db, "/y", { followSymlinks: false })).not.toBeNull();
         });
       });

@@ -34,7 +34,13 @@ import type { SyncRPC } from "./interface.js";
 // Explicit-cursor block helpers below remain the low-level surface for
 // callers that own their own destination store and checkpoint; the
 // engine is what the Workspace iterables are built on.
-import { captureSyncTarget, pullBlocks, pushBlocks } from "./sync-engine.js";
+import {
+  acknowledgePulledRevs,
+  captureSyncTarget,
+  openPullWindow,
+  pullBlocks,
+  pushBlocks,
+} from "./sync-engine.js";
 
 export type { PullBlocksOptions, PushBlocksOptions, SyncProgress } from "./sync-engine.js";
 export { captureSyncTarget, pullBlocks, pushBlocks };
@@ -58,6 +64,9 @@ function maybeDispose(value: unknown): void {
 // it just buffered, then releases them before reading the next.
 // Peak memory in pullOnce is O(PULL_BATCH_SIZE), not O(stream).
 const PULL_BATCH_SIZE = 256;
+
+// The dofs watermark slot used when a caller names no backend.
+const DEFAULT_BACKEND = "default";
 
 // Pull every entry the remote has produced since the last successful
 // pull, apply locally, advance the fetch cursor. Returns an `ApplyResult`
@@ -185,6 +194,10 @@ async function pullOnceImpl(
       return { applied: 0, skipped: [] };
     }
 
+    // Every rev minted from here on should come from this pull's
+    // applies; acknowledgePulledRevs checks that before claiming them.
+    const window = openPullWindow(db, backend ?? DEFAULT_BACKEND);
+    let totalMinted = 0;
     const reader = fetchResult.stream.getReader();
     let totalApplied = 0;
     const totalSkipped: SkippedEntry[] = [];
@@ -256,6 +269,7 @@ async function pullOnceImpl(
         // already matches.
         writeFetchCursorIfAhead(db, { rev: last.rev, path: last.path }, backend);
         totalApplied += batchResult.applied;
+        totalMinted += batchResult.minted ?? 0;
         if (batchResult.skipped.length > 0) {
           for (const s of batchResult.skipped) totalSkipped.push(s);
         }
@@ -272,6 +286,7 @@ async function pullOnceImpl(
     // final drain marker cannot skip beyond any per-batch cursor written
     // above.
     writeFetchCursorIfAhead(db, currentCursor, backend);
+    await acknowledgePulledRevs(db, remote, backend ?? DEFAULT_BACKEND, window, totalMinted);
     return { applied: totalApplied, skipped: totalSkipped };
   } finally {
     maybeDispose(fetchResult);

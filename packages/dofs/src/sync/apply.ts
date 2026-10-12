@@ -18,10 +18,8 @@ import {
   compareChangeCursors,
   currentRev,
   DEFAULT_BACKEND_ID,
+  pushWindowIsEmpty,
   readPushCursor,
-  readWatermark,
-  recordUpstreamPathRevs,
-  recordUpstreamRevs,
 } from "./watermarks.js";
 
 // One container-side change that landed under a read-only mount and
@@ -53,6 +51,11 @@ export interface ApplyResult {
   // Empty when no such mounts are registered or the stream stayed
   // clear of them.
   skipped: SkippedEntry[];
+  // Local revs this call minted. A puller compares it against how far
+  // currentRev moved to tell whether every new rev came from the
+  // entries it applied, which is what lets it acknowledge them to the
+  // backend (see acknowledgePulledRevs in the rpc package).
+  minted?: number;
 }
 
 export interface ApplyOptions {
@@ -65,13 +68,12 @@ export interface ApplyOptions {
   // Where the entries came from. 'local' (default) treats the apply
   // path like any other mutation: writeFile/mkdir/etc bump
   // vfs_meta.rev and the push loop later ships those new revs
-  // upstream. 'upstream' is informational: the apply still bumps
-  // rev so readers see fresh data, and the next pushOnce ships
-  // those rev bumps back to the sender. Loop convergence is the
-  // receiver's job — the apply path on the original sender uses
-  // alreadyApplied() to drop the redundant entries without bumping
-  // rev further, bounding the echo at one extra round trip per
-  // upstream apply.
+  // upstream. 'upstream' still bumps rev so readers see fresh data,
+  // and turns on the already-applied and stale-tombstone guards. The
+  // rev bumps ship back to the sender on the next push unless the
+  // puller acknowledges them first (acknowledgePulledRevs in rpc);
+  // either way the sender's alreadyApplied() drops what it already
+  // has, so an entry never circulates.
   source?: "local" | "upstream";
   // Backend id whose watermark row this apply should touch. The
   // DO hosts independent sync cursors per backend; threading the
@@ -83,8 +85,8 @@ export interface ApplyOptions {
   // Push receivers checkpoint the sender's cursor when committing a
   // batch. Supplying that cursor protects local recreations from an
   // already-committed delete replay; new pushes remain authoritative,
-  // just like incoming writes. Pulls instead protect unpushed local
-  // changes using this backend's local pushRev.
+  // just like incoming writes. Pulls instead protect local versions
+  // this backend has not seen, using its push cursor.
   receivedCursor?: ChangeCursor;
 }
 
@@ -293,6 +295,8 @@ export async function applyChanges(
   let pathsInBatch = 0;
   let applied = 0;
   const skipped: SkippedEntry[] = [];
+  let minted = 0;
+  const pulled = openPullContext(db, options);
   const flush = () => {
     bytesInBatch = 0;
     pathsInBatch = 0;
@@ -300,7 +304,6 @@ export async function applyChanges(
 
   for await (const entry of entries) {
     const revBefore = currentRev(db);
-    const keepsLocalLink = rewritesUnpushedHardlink(db, entry, options);
     try {
       // Idempotent skip: if the entry already matches the local
       // state, drop it on the floor. The check is what stops a
@@ -314,7 +317,7 @@ export async function applyChanges(
       if (
         options.source === "upstream" &&
         entry.kind === "delete" &&
-        tombstoneIsStale(db, entry, options)
+        tombstoneIsStale(db, entry, options, pulled)
       ) {
         continue;
       }
@@ -394,7 +397,7 @@ export async function applyChanges(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      recordPulledRevs(db, entry, options, revBefore, keepsLocalLink);
+      minted += notePulledRevs(db, pulled, revBefore);
     }
   }
 
@@ -409,11 +412,13 @@ export async function applyChanges(
   // swallows the error, leaving every subsequent container-side
   // write invisible to the host until something reconciles.
   //
-  // The bounded "redundant round-trip" the old comment promised is
-  // still bounded, and the receiver's alreadyApplied() check still
-  // suppresses the entries on the next pushOnce. We just pay one
-  // extra push per upstream apply to keep the two sides in lockstep.
-  return { applied, skipped };
+  // The sound version lives in the rpc layer: a puller that started
+  // with nothing to push sends an empty push carrying the new cursor,
+  // and advances its own push cursor only once the receiver echoes it
+  // (acknowledgePulledRevs). `minted` is what lets it check that every
+  // new rev came from this apply. Otherwise the pulled revs ship on the
+  // next push and the receiver's alreadyApplied() absorbs them.
+  return { applied, skipped, minted };
 }
 
 // Synchronous variant of applyChanges. Same semantics; takes an
@@ -437,6 +442,8 @@ export function applyChangesSync(
   let pathsInBatch = 0;
   let applied = 0;
   const skipped: SkippedEntry[] = [];
+  let minted = 0;
+  const pulled = openPullContext(db, options);
   const flush = () => {
     bytesInBatch = 0;
     pathsInBatch = 0;
@@ -444,7 +451,6 @@ export function applyChangesSync(
 
   for (const entry of entries) {
     const revBefore = currentRev(db);
-    const keepsLocalLink = rewritesUnpushedHardlink(db, entry, options);
     try {
       if (options.source === "upstream" && entry.kind !== "delete") {
         if (alreadyApplied(db, entry)) continue;
@@ -454,7 +460,7 @@ export function applyChangesSync(
       if (
         options.source === "upstream" &&
         entry.kind === "delete" &&
-        tombstoneIsStale(db, entry, options)
+        tombstoneIsStale(db, entry, options, pulled)
       ) {
         continue;
       }
@@ -529,16 +535,14 @@ export function applyChangesSync(
       pathsInBatch++;
       if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
     } finally {
-      recordPulledRevs(db, entry, options, revBefore, keepsLocalLink);
+      minted += notePulledRevs(db, pulled, revBefore);
     }
   }
 
-  // See applyChanges() for why pushRev no longer advances locally
-  // on upstream applies. The receiver's alreadyApplied() check
-  // suppresses the redundant entries on the next pushOnce; one
-  // extra push per apply keeps the cross-side invariant intact.
+  // See applyChanges() for why pushRev does not advance here, and
+  // where pulled revs are acknowledged instead.
 
-  return { applied, skipped };
+  return { applied, skipped, minted };
 }
 
 // Link a file entry to staged chunks without loading payload bytes.
@@ -602,16 +606,47 @@ function assertChunkSize(actual: number, declared: number, hash: Uint8Array, pat
   );
 }
 
-// Peer entry.rev and local node.rev are independent counters.
+// Pulled versions this apply call minted, held in memory only.
 //
-// On pull, a delete yields only to local versions this backend has not
-// seen: any node in the doomed subtree (a directory delete removes its
+// A delete is protected when it would destroy a local version the
+// backend has not seen. Across calls, "seen" is the push cursor: the
+// rpc layer acknowledges a clean pull, which moves the cursor over the
+// versions it minted. Within one call those versions are not yet
+// acknowledged, so they are tracked here. That is sound only when
+// nothing local was unpushed as the call began: then every new rev the
+// call mints holds what the backend sent, and a host write interleaved
+// with the call mints a rev that is not in the set.
+interface PullContext {
+  readonly backend: string;
+  readonly clean: boolean;
+  readonly revs: Set<number>;
+}
+
+function openPullContext(db: Database, options: ApplyOptions): PullContext | undefined {
+  if (options.source !== "upstream" || options.receivedCursor !== undefined) return undefined;
+  const backend = options.backend ?? DEFAULT_BACKEND_ID;
+  return { backend, clean: pushWindowIsEmpty(db, backend), revs: new Set() };
+}
+
+// Record the revs one entry minted and return how many there were.
+function notePulledRevs(db: Database, pulled: PullContext | undefined, revBefore: number): number {
+  const revAfter = currentRev(db);
+  if (pulled?.clean === true) {
+    for (let rev = revBefore + 1; rev <= revAfter; rev++) pulled.revs.add(rev);
+  }
+  return revAfter - revBefore;
+}
+
+// Peer entry.rev and local node.rev are independent counters, so the
+// guard never compares them.
+//
+// On pull, a delete yields only to local versions the backend has not
+// seen: a node in the doomed subtree (a directory delete removes its
 // descendants too) that sits beyond the push cursor and was not minted
-// by an earlier pull from the same backend. The cursor's path matters,
-// since a bounded push can ship one rev only in part. A pulled version
-// awaiting its echo push still holds what the remote sent, so the
-// remote's later delete wins. A reset watermark conservatively protects
-// every locally authored version.
+// by this same call from a clean start. The cursor's path matters,
+// since a bounded push can ship one rev only in part. The cursor is
+// the one push plans from, so the guard and push agree on what the
+// backend has: a version push will not send again counts as seen.
 //
 // On push, the receiver's committed sender cursor identifies replays
 // in the sender's own rev space. New pushes are authoritative, while a
@@ -620,14 +655,15 @@ function tombstoneIsStale(
   db: Database,
   entry: ChangeEntry & { kind: "delete" },
   options: ApplyOptions,
+  pulled: PullContext | undefined,
 ): boolean {
   const live = resolveInode(db, entry.path, { followSymlinks: false });
   if (live === null) return false;
   if (options.receivedCursor !== undefined) {
     return compareChangeCursors({ rev: entry.rev, path: entry.path }, options.receivedCursor) <= 0;
   }
-  const backend = options.backend ?? DEFAULT_BACKEND_ID;
-  const pushed = shippedCursor(db, backend);
+  const backend = pulled?.backend ?? options.backend ?? DEFAULT_BACKEND_ID;
+  const pushed = readPushCursor(db, backend);
   const candidates = db.all<{ path: string; rev: number }>(
     `WITH RECURSIVE tree(inode, path) AS (
        SELECT ?, ?
@@ -638,85 +674,13 @@ function tombstoneIsStale(
      )
      SELECT tree.path AS path, n.rev AS rev
        FROM tree JOIN vfs_nodes n ON n.inode = tree.inode
-      WHERE n.rev >= ?
-        AND NOT EXISTS (
-          SELECT 1 FROM _vfs_upstream_revs u WHERE u.backend = ? AND u.rev = n.rev
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM _vfs_upstream_paths p
-           WHERE p.backend = ? AND p.rev = n.rev AND p.path = tree.path
-        )`,
+      WHERE n.rev >= ?`,
     live.inode,
     entry.path,
     pushed.rev,
-    backend,
-    backend,
   );
-  return candidates.some((node) => compareChangeCursors(node, pushed) > 0);
-}
-
-// The push cursor, capped by the pushRev watermark so a watermark
-// reset protects local versions even if the cursor row was left behind.
-function shippedCursor(db: Database, backend: string): ChangeCursor {
-  const watermark = readWatermark(db, "pushRev", backend);
-  const cursor = readPushCursor(db, backend);
-  return cursor.rev > watermark ? { rev: watermark, path: null } : cursor;
-}
-
-// Remember revs minted while applying a pull, so a later delete from
-// the same backend can tell them from local edits. Push receivers
-// (receivedCursor set) guard replays by cursor instead and never prune,
-// so they record nothing. A write that restamps an unpushed hardlink
-// records its revs for the written name only: that name holds what the
-// remote sent, while the inode's other names stay local.
-function recordPulledRevs(
-  db: Database,
-  entry: ChangeEntry,
-  options: ApplyOptions,
-  revBefore: number,
-  keepsLocalLink: boolean,
-): void {
-  if (options.source !== "upstream" || options.receivedCursor !== undefined) return;
-  if (keepsLocalLink) {
-    const { path } = canonicalizePath(entry.path);
-    recordUpstreamPathRevs(db, revBefore, currentRev(db), path, options.backend);
-    return;
-  }
-  recordUpstreamRevs(db, revBefore, currentRev(db), options.backend);
-}
-
-// A pulled write to one name of a hardlinked file restamps the inode
-// every name shares. When that inode holds an unpushed local version,
-// such as a fresh link, the new rev must stay local: recording it as
-// upstream would let a later delete of another name discard that link.
-// recordPulledRevs records it for the written name alone instead.
-function rewritesUnpushedHardlink(
-  db: Database,
-  entry: ChangeEntry,
-  options: ApplyOptions,
-): boolean {
-  if (entry.kind !== "file" || options.source !== "upstream") return false;
-  if (options.receivedCursor !== undefined) return false;
-  const live = resolveInode(db, entry.path, { followSymlinks: false });
-  if (live === null || live.type !== "file") return false;
-  const node = db.one<{ rev: number; links: number }>(
-    `SELECT n.rev AS rev,
-            (SELECT count(*) FROM vfs_dirents d WHERE d.child_inode = n.inode) AS links
-       FROM vfs_nodes n WHERE n.inode = ?`,
-    live.inode,
-  );
-  if (node === undefined || node.links < 2) return false;
-  const backend = options.backend ?? DEFAULT_BACKEND_ID;
-  const pushed = shippedCursor(db, backend);
-  // The names do not share a path, so a partially shipped rev counts
-  // as unpushed.
-  if (node.rev < pushed.rev || (node.rev === pushed.rev && pushed.path === null)) return false;
-  return (
-    db.one(
-      "SELECT 1 AS hit FROM _vfs_upstream_revs WHERE backend = ? AND rev = ?",
-      backend,
-      node.rev,
-    ) === undefined
+  return candidates.some(
+    (node) => compareChangeCursors(node, pushed) > 0 && pulled?.revs.has(node.rev) !== true,
   );
 }
 
