@@ -176,6 +176,7 @@ describe("Hugging Face rows adapter", () => {
       });
 
     const pending = fetchOolongRealRow(30, { fetcher });
+    // oxlint-disable-next-line vitest/valid-expect -- awaited below, after the timers advance
     const rejection = expect(pending).rejects.toThrow("timed out after 10000ms");
     await vi.advanceTimersByTimeAsync(10_000);
     await rejection;

@@ -175,6 +175,7 @@ describe("applyChanges", () => {
             mode: 0o700,
           });
           if (kind === "symlink") {
+            // oxlint-disable-next-line vitest/no-conditional-expect -- only the symlink case has a target
             expect(await readFile(db, "/target/keep.txt", "utf8")).toBe("keep");
           }
         });

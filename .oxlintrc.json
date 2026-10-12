@@ -299,18 +299,6 @@
     "unicorn/no-useless-length-check": "error",
     "unicorn/prefer-set-size": "error",
     "unicorn/prefer-string-starts-ends-with": "error",
-    "vitest/hoisted-apis-on-top": "error",
-    "vitest/no-conditional-tests": "error",
-    "vitest/no-disabled-tests": "error",
-    "vitest/no-focused-tests": "error",
-    "vitest/no-standalone-expect": "error",
-    "vitest/prefer-snapshot-hint": "error",
-    "vitest/require-awaited-expect-poll": "error",
-    "vitest/require-local-test-context-for-concurrent-snapshots": "error",
-    "vitest/valid-describe-callback": "error",
-    "vitest/valid-expect-in-promise": "error",
-    "vitest/valid-title": "error",
-    "vitest/warn-todo": "error",
     "eslint/block-scoped-var": "warn",
     "eslint/no-extend-native": "warn",
     "eslint/no-extra-bind": "warn",
@@ -374,5 +362,36 @@
       "error",
       { "considerDefaultExhaustiveForUnions": true }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.bench.ts"],
+      "rules": {
+        "vitest/expect-expect": [
+          "error",
+          { "assertFunctionNames": ["expect", "assert*", "rejects", "eventually"] }
+        ],
+        "vitest/hoisted-apis-on-top": "error",
+        "vitest/no-commented-out-tests": "error",
+        "vitest/no-conditional-expect": "error",
+        "vitest/no-conditional-tests": "error",
+        "vitest/no-disabled-tests": "error",
+        "vitest/no-focused-tests": "error",
+        "vitest/no-standalone-expect": "error",
+        "vitest/prefer-snapshot-hint": "error",
+        "vitest/require-awaited-expect-poll": "error",
+        "vitest/require-local-test-context-for-concurrent-snapshots": "error",
+        "vitest/require-to-throw-message": "error",
+        "vitest/valid-describe-callback": "error",
+        "vitest/valid-expect": ["error", { "maxArgs": 2 }],
+        "vitest/valid-expect-in-promise": "error",
+        "vitest/valid-title": "error",
+        "vitest/warn-todo": "error"
+      }
+    },
+    {
+      "files": ["**/*.bench.ts"],
+      "rules": { "vitest/expect-expect": "off" }
+    }
+  ]
 }
