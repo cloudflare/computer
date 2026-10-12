@@ -1,0 +1,19 @@
+.changeset/isolate-root-directory.md
+  s_a636b12ef32437::t_21744739cfcbdd 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "177b0428e9c9482f161b49ae3521b129120e3d2e",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

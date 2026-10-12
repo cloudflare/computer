@@ -1,0 +1,31 @@
+.changeset/ai-sdk-tool-bindings.md
+  s_80fab4cbbeef01::t_b05eecd8dc8fa1 1-5
+docs/09_tool_interface.md
+  s_80fab4cbbeef01::t_8c84b36efd47a1 134-135
+docs/17_isolate_javascript.md
+  s_80fab4cbbeef01::t_8a048144fb39de 315-325
+packages/computer/README.md
+  s_80fab4cbbeef01::t_7aa897f985ac83 441
+packages/computer/src/tools/ai-sdk/bindings.test.ts
+  s_80fab4cbbeef01::t_965da66eaf206d 1-113
+packages/computer/src/tools/ai-sdk/bindings.ts
+  s_80fab4cbbeef01::t_645b018c4cda8d 1-69
+packages/computer/src/tools/ai-sdk/index.ts
+  s_80fab4cbbeef01::t_b14ef2d15988fa 16-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "413da9f3e9230e5bd0f9d4f775e14d9f2ed197d7",
+  "prompts": {},
+  "sessions": {
+    "s_80fab4cbbeef01": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11d77-b402-77a1-bfff-639f8e6da640",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
