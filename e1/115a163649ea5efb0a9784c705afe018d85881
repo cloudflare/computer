@@ -1,0 +1,21 @@
+packages/dofs/src/errors.test.ts
+  s_a636b12ef32437::t_17040d92554f6e 1-33
+packages/dofs/src/errors.ts
+  s_a636b12ef32437::t_02586ff08dc04d 27-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e1115a163649ea5efb0a9784c705afe018d85881",
+  "prompts": {},
+  "sessions": {
+    "s_a636b12ef32437": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a116c1-2c95-795e-a541-13637a2b8e62",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+.gardener/gardener.lock.json
+  s_de0b486c128948::t_cae11d7c46af21 12-104
+.github/workflows/gardener-dependabot-merge.yml
+  s_de0b486c128948::t_ca224440a67cc5 1-44
+.gardener/tasks/dependabot-merge/TASK.md
+  s_de0b486c128948::t_283af93f4e5e08 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "423703a92ceb17deca700964d84e45df56f80b62",
+  "prompts": {},
+  "sessions": {
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
