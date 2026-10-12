@@ -131,7 +131,7 @@ createPiTools({ workspace, constrainedSampling: "require" });
 
 pi tool results carry text and images. An image from `read` comes back as an `image` block; a PDF comes back as text saying it cannot be attached. `exec` returns its final snapshot.
 
-`forAISDKTools()` does the same for an AI SDK tool set, such as one `createAITools()` returns or an agent's own. See [`ws:tools`](17_isolate_javascript.md#wstools).
+`forAISDKTools()` does the same for an AI SDK tool set, such as an agent's own. See [`ws:tools`](17_isolate_javascript.md#wstools).
 
 `forPiTools()` serves pi tools to isolate JavaScript as `ws:tools`, through `createToolBindings()`. It takes the result of `createPiTools()` or executable pi tools of your own. See [`ws:tools`](17_isolate_javascript.md#wstools).
 

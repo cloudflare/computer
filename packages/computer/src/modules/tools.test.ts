@@ -121,27 +121,37 @@ describe("createToolBindings", () => {
     expect(read.calls).toEqual([]);
   });
 
-  it("names a tool whose name cannot be an export, and how to leave it out", () => {
-    const factory = createToolBindings([
-      recording("read").binding,
-      recording("list-files").binding,
-    ]);
-    expect(() => factory(host)).toThrow(
-      'Tool "list-files" cannot be exported from ws:tools: export names must be JavaScript identifiers, and not "default" or "then". Leave it out with the exclude option.',
-    );
+  it.each([
+    ["list-files", "list_files"],
+    ["github.search issues", "github_search_issues"],
+    ["mcp:fetch!", "mcpfetch"],
+    ["3d", "_3d"],
+    ["default", "default_"],
+    ["then", "then_"],
+    ["delete", "delete"],
+  ])("exports %s as %s, and calls the tool by its own name", async (toolName, exported) => {
+    const tool = recording(toolName);
+    const functions = createToolBindings([tool.binding])(host);
+    expect(Object.keys(functions)).toEqual([exported]);
+    await expect(call(functions, exported, [{}])).resolves.toMatchObject({
+      text: `${toolName} ran`,
+    });
   });
 
-  it("refuses two tools with the same name", () => {
-    const factory = createToolBindings([recording("read").binding, recording("read").binding]);
-    expect(() => factory(host)).toThrow('Two tools are named "read".');
+  it("refuses two tools that share an export name", () => {
+    const factory = createToolBindings([
+      recording("list-files").binding,
+      recording("list_files").binding,
+    ]);
+    expect(() => factory(host)).toThrow('Two tools are exported as "list_files".');
   });
 
   it("describes the module for a model, saying which tools are left out", () => {
     expect(createToolBindings([]).description).toBe(
-      "The agent's own tools, callable from code, under the same names. Each takes one object of the tool's arguments and returns `{ text, details, isError }`. There is no `exec` export: importing it fails.",
+      "The agent's own tools, callable from code. Each is exported under its name, with characters an identifier cannot hold turned into `_` (`list-files` becomes `list_files`), takes one object of the tool's arguments, and returns `{ text, details, isError }`. There is no `exec` export: importing it fails.",
     );
     expect(createToolBindings([], { exclude: [] }).description).toBe(
-      "The agent's own tools, callable from code, under the same names. Each takes one object of the tool's arguments and returns `{ text, details, isError }`.",
+      "The agent's own tools, callable from code. Each is exported under its name, with characters an identifier cannot hold turned into `_` (`list-files` becomes `list_files`), takes one object of the tool's arguments, and returns `{ text, details, isError }`.",
     );
     expect(createToolBindings([], { description: "Custom." }).description).toBe("Custom.");
   });
