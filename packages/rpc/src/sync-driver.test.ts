@@ -934,6 +934,33 @@ describe("sync driver — cross-side invariant", () => {
     }
   });
 
+  it("applies a fingerprinted container delete pulled during a divergence reset", async () => {
+    // The container forgot its cursor but kept its files. The reset
+    // rewinds our push cursor, so /x.txt looks unseen by the cursor
+    // rule; the delete's fingerprint matches what the host holds, so it
+    // applies anyway and nothing is re-sent.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      host.writeFileSync("/x.txt", "x");
+      host.writeFileSync("/keep.txt", "keep");
+      await pushOnce(local.db, remote.rpc);
+
+      container.unlinkSync("/x.txt");
+      writeFetchCursor(remote.db, { rev: 0, path: null });
+
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).toEqual(["keep.txt"]);
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
   it("falls back to the cursor rule for deletes from a peer that sends no fingerprint", async () => {
     // An older computerd sends tombstones without `prior`. With host
     // work unpushed, the pull is not acknowledged, so the pulled copy
