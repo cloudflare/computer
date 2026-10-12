@@ -68,11 +68,10 @@ export interface WorkerBundleOptions {
   // Compared by the mount indexer with the version recorded at the last
   // index; a mismatch replaces the subtree. Defaults to the source's own
   // version when it has one, and otherwise to a SHA-256 of the included
-  // paths, modes and bytes. For a lazy tree that hash means loading
-  // every file once per isolate. Pass a string, such as a build id, to
-  // avoid that, or when `filter` depends on the session (the cached
-  // hash can't tell such filters apart). Pass false to index once per
-  // store.
+  // paths, modes and bytes, computed once per isolate. With a filter or
+  // fileMode, the hash is computed for each mount instead, and for a lazy
+  // tree that means loading every file. Pass a string, such as a build
+  // id, to skip hashing. Pass false to index once per store.
   version?: string | false;
   maxBytes?: number;
   maxEntries?: number;
@@ -112,11 +111,9 @@ const VITE_DEV_MARKER = "__VITE_WORKER_ENTRY__";
 // is fixed for the deployment, and a tree is a module's export, which
 // Vite replaces with a new object when it reloads the module. So a hash
 // computed once holds for every durable object the isolate hosts.
-// Directories are keyed by path, trees by object identity; inside each,
-// entries are keyed by the source text of filter and fileMode, which
-// change the result. A filter that closes over per-session values gets
-// the same key for different results, so those callers should pass an
-// explicit version.
+// Directories are keyed by path, trees by object identity. Only hashes
+// that depend on nothing but the source are cached here; with a filter
+// or fileMode, each mount computes its own (see resolveVersion).
 const directoryCaches = new Map<string, Map<string, string | Promise<string>>>();
 const treeCaches = new WeakMap<object, Map<string, string | Promise<string>>>();
 
@@ -354,30 +351,50 @@ function resolveVersion(
 ): string | (() => Promise<string>) | undefined {
   if (options.version === false) return undefined;
   if (typeof options.version === "string") return options.version;
-  const key = [options.filter?.toString() ?? "", options.fileMode?.toString() ?? ""].join("\0");
-  // A declared version only describes the files, so fold in the filter
-  // and fileMode, which also change what lands in the workspace.
+
+  // filter and fileMode are closures, and two with the same source can
+  // still select different files or modes (one per session, say), so a
+  // version that depends on them is never shared between mounts.
+  const hasCallbacks = options.filter !== undefined || options.fileMode !== undefined;
+
   if (reader.declaredVersion !== undefined) {
-    if (key === "\0") return reader.declaredVersion;
-    return `sha256:${createHash("sha256").update(`${reader.declaredVersion}\0${key}`).digest("hex")}`;
+    if (!hasCallbacks) return reader.declaredVersion;
+    // A declared version only describes the files. A filter changes
+    // which of them land, and the selected paths are known without
+    // loading anything, so fold those in.
+    if (options.fileMode === undefined) {
+      const hash = createHash("sha256").update(`${reader.declaredVersion}\0`);
+      for (const entry of reader.walk(filter)) hash.update(`${entry.type}\0${entry.path}\0`);
+      return `sha256:${hash.digest("hex")}`;
+    }
+    // fileMode sees each file's bytes, so only a full hash covers it.
   }
-  const cached = reader.cache.get(key);
-  if (typeof cached === "string") return cached;
+
+  if (!hasCallbacks) {
+    const cached = reader.cache.get("");
+    if (typeof cached === "string") return cached;
+  }
   if (!reader.lazy) {
     const version = hashSync(reader, filter, fileMode);
-    reader.cache.set(key, version);
+    if (!hasCallbacks) reader.cache.set("", version);
     return version;
   }
   // A lazy tree can only be hashed by loading every file, which is
-  // async, so hand the indexer a function and load at most once.
+  // async, so hand the indexer a function, and load at most once per
+  // isolate when the result can be shared, or once per mount otherwise.
+  let own: Promise<string> | undefined;
   return () => {
-    let pending = reader.cache.get(key);
+    if (hasCallbacks) {
+      own ??= hashAsync(reader, filter, fileMode);
+      return own;
+    }
+    let pending = reader.cache.get("");
     if (pending === undefined) {
       pending = hashAsync(reader, filter, fileMode);
-      reader.cache.set(key, pending);
+      reader.cache.set("", pending);
       pending.then(
-        (version) => reader.cache.set(key, version),
-        () => reader.cache.delete(key),
+        (version) => reader.cache.set("", version),
+        () => reader.cache.delete(""),
       );
     }
     return Promise.resolve(pending);

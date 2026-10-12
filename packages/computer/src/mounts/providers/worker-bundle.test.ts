@@ -508,3 +508,63 @@ describe("WorkerBundle with a tree", () => {
     });
   });
 });
+
+describe("WorkerBundle versions with callbacks", () => {
+  // The same function source with different captured values, as a mount
+  // factory would create per session.
+  const startsWith = (prefix: string) => ({
+    filter: (entry: { path: string; type: string }) =>
+      entry.type === "dir" || entry.path.startsWith(prefix),
+  });
+  const modeFor = (mode: number) => ({ fileMode: () => mode });
+
+  it("gives directory filters with the same source but different selections different versions", () => {
+    const dir = writeTree(tempDir(), { "en.txt": "hello", "fr.txt": "bonjour" });
+    const en = WorkerBundle(dir, startsWith("en")).version;
+    const fr = WorkerBundle(dir, startsWith("fr")).version;
+    expect(en).not.toBe(fr);
+    expect(WorkerBundle(dir, startsWith("en")).version).toBe(en);
+  });
+
+  it("gives fileMode closures with different results different versions", () => {
+    const dir = writeTree(tempDir(), { "a.sh": "echo a" });
+    expect(WorkerBundle(dir, modeFor(0o700)).version).not.toBe(
+      WorkerBundle(dir, modeFor(0o600)).version,
+    );
+  });
+
+  it("folds the filtered paths into a declared version", () => {
+    const source = { version: "build-1", files: { "en.txt": "hello", "fr.txt": "bonjour" } };
+    const en = WorkerBundle(source, startsWith("en")).version;
+    const fr = WorkerBundle(source, startsWith("fr")).version;
+    expect(en).toMatch(/^sha256:/);
+    expect(en).not.toBe(fr);
+    expect(WorkerBundle(source, startsWith("en")).version).toBe(en);
+  });
+
+  it("hashes a declared source with fileMode from its contents", async () => {
+    const calls: string[] = [];
+    const source = {
+      version: "build-1",
+      files: {
+        "a.sh": async () => {
+          calls.push("a.sh");
+          return "echo a";
+        },
+      },
+    };
+    const low = WorkerBundle(source, modeFor(0o600)).version as () => Promise<string>;
+    const high = WorkerBundle(source, modeFor(0o700)).version as () => Promise<string>;
+    expect(typeof low).toBe("function");
+    expect(await low()).not.toBe(await high());
+    expect(calls).toEqual(["a.sh", "a.sh"]);
+  });
+
+  it("rehashes for each mount when callbacks are given", () => {
+    const dir = writeTree(tempDir(), { "a.txt": "one" });
+    const filter = { filter: () => true };
+    const first = WorkerBundle(dir, filter).version;
+    writeFileSync(join(dir, "a.txt"), "two");
+    expect(WorkerBundle(dir, filter).version).not.toBe(first);
+  });
+});
