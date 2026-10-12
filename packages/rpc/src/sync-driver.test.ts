@@ -934,6 +934,57 @@ describe("sync driver — cross-side invariant", () => {
     }
   });
 
+  it("falls back to the cursor rule for deletes from a peer that sends no fingerprint", async () => {
+    // An older computerd sends tombstones without `prior`. With host
+    // work unpushed, the pull is not acknowledged, so the pulled copy
+    // looks unseen and its delete is kept: the conservative path, and
+    // the behavior before fingerprints existed.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      const olderPeer = new Proxy(remote.rpc as object, {
+        get(target, prop, receiver) {
+          if (prop === "fetchChanges") {
+            return async (input: Parameters<SyncRPC["fetchChanges"]>[0]) => {
+              const real = await Reflect.get(target, prop, receiver).call(target, input);
+              const stripped = real.stream.pipeThrough(
+                new TransformStream<ChangeEntry, ChangeEntry>({
+                  transform(entry, controller) {
+                    if (entry.kind === "delete") {
+                      controller.enqueue({ kind: "delete", rev: entry.rev, path: entry.path });
+                    } else {
+                      controller.enqueue(entry);
+                    }
+                  },
+                }),
+              );
+              return { ...real, stream: stripped };
+            };
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }) as SyncRPC;
+
+      host.writeFileSync("/local.txt", "unpushed");
+      container.writeFileSync("/x.txt", "x");
+      await pullOnce(local.db, olderPeer);
+      container.unlinkSync("/x.txt");
+      await pullOnce(local.db, olderPeer);
+      expect(fileEntries(local.db)).toEqual(["local.txt", "x.txt"]);
+
+      // The fetch cursor is past the delete, so nothing re-delivers it;
+      // the next push recreates /x.txt in the container. Visible and
+      // convergent, which is the point of the conservative path.
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).toEqual(["local.txt", "x.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
   it("pullOnce surfaces an invariant violation that survives the inline retry", async () => {
     // A persistently-lying remote (returns appliedPushRev=0 on
     // every call) trips the assertion after the inline reset.

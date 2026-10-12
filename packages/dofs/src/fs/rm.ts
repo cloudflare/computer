@@ -3,6 +3,7 @@ import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
 import { recordDelete } from "../sync/changes.js";
+import { versionFingerprint } from "../sync/fingerprint.js";
 import { pathOf } from "../sync/paths.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
@@ -157,8 +158,10 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       // by (parent, name) directly rather than re-resolving. The
       // tombstone is recorded at the resolved real path so sync sees
       // the move-aware location.
+      // Fingerprint before unlinking: the last link takes the node row.
+      const prior = versionFingerprint(db, node.inode);
       unlinkDirent(db, parent.inode, name, node.inode, node.type);
-      recordDelete(db, rev, realPath);
+      recordDelete(db, rev, realPath, prior);
       // A single removed entry is a file, symlink, or empty directory:
       // no cached descendants to worry about, so drop it exact.
       invalidateResolveExact(db, realPath);
@@ -171,8 +174,9 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     // than by child inode. The walk carries each node's parent inode
     // and name, so unlinkDirent needs no per-node re-resolve from root.
     for (const entry of walkPostOrder(db, node.inode, realPath, parent.inode, name)) {
+      const prior = versionFingerprint(db, entry.inode);
       unlinkDirent(db, entry.parentInode, entry.name, entry.inode, entry.type);
-      recordDelete(db, rev, entry.path);
+      recordDelete(db, rev, entry.path, prior);
     }
     // The whole subtree under realPath is gone; one subtree drop covers
     // every descendant's cached resolution.

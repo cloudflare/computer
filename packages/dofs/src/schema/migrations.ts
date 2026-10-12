@@ -221,6 +221,21 @@ function v7_to_v8_changes_op_rev_index(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS vfs_changes_by_op_rev ON vfs_changes(op, rev)`);
 }
 
+// v8 → v9 — record the fingerprint of the version each tombstone
+// removed, so a receiver can apply a delete of exactly the version it
+// holds even before the push cursor covers it. Additive and nullable:
+// existing tombstones keep NULL, which receivers treat like a delete
+// from a peer that sends no fingerprint. The column is duplicated in
+// `sync.ts`'s fresh-install DDL.
+function v8_to_v9_changes_prior(db: Database): void {
+  const hasColumn = db
+    .all<{ name: string }>("PRAGMA table_info(vfs_changes)")
+    .some((column) => column.name === "prior");
+  if (!hasColumn) {
+    db.run("ALTER TABLE vfs_changes ADD COLUMN prior TEXT");
+  }
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   { from: 1, to: 2, migrator: v1_to_v2_add_mounts_mode },
   { from: 2, to: 3, migrator: v2_to_v3_add_size_column },
@@ -229,6 +244,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { from: 5, to: 6, migrator: v5_to_v6_push_cursor },
   { from: 6, to: 7, migrator: v6_to_v7_sync_operations },
   { from: 7, to: 8, migrator: v7_to_v8_changes_op_rev_index },
+  { from: 8, to: 9, migrator: v8_to_v9_changes_prior },
 ] as const;
 
 // Apply every migration whose `from` matches the current version,

@@ -66,6 +66,7 @@ describe("materialiseChange", () => {
         kind: "delete",
         rev: expect.any(Number),
         path: "/gone.txt",
+        prior: expect.any(String),
       });
     });
   });

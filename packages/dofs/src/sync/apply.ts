@@ -11,6 +11,7 @@ import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
 import { stageBlob } from "./blobs.js";
 import type { ChangeEntry } from "./changes.js";
+import { versionFingerprint } from "./fingerprint.js";
 import { computeManifestHash } from "./manifests.js";
 import { pathOf } from "./paths.js";
 import {
@@ -297,6 +298,7 @@ export async function applyChanges(
   const skipped: SkippedEntry[] = [];
   let minted = 0;
   const pulled = openPullContext(db, options);
+  const deferredDirs: DeleteEntry[] = [];
   const flush = () => {
     bytesInBatch = 0;
     pathsInBatch = 0;
@@ -319,6 +321,7 @@ export async function applyChanges(
         entry.kind === "delete" &&
         tombstoneIsStale(db, entry, options, pulled)
       ) {
+        deferDirectoryDelete(db, entry, pulled, deferredDirs);
         continue;
       }
       // Read-only mount guard. Entries under a registered read-only
@@ -418,6 +421,11 @@ export async function applyChanges(
   // (acknowledgePulledRevs). `minted` is what lets it check that every
   // new rev came from this apply. Otherwise the pulled revs ship on the
   // next push and the receiver's alreadyApplied() absorbs them.
+  // Deferred directory removals mint revs too; count them, or a puller
+  // would mistake them for a host write and skip its acknowledgment.
+  const revBeforeSettle = currentRev(db);
+  applied += settleDeferredDirectories(db, deferredDirs, options, pulled, skipped);
+  minted += currentRev(db) - revBeforeSettle;
   return { applied, skipped, minted };
 }
 
@@ -444,6 +452,7 @@ export function applyChangesSync(
   const skipped: SkippedEntry[] = [];
   let minted = 0;
   const pulled = openPullContext(db, options);
+  const deferredDirs: DeleteEntry[] = [];
   const flush = () => {
     bytesInBatch = 0;
     pathsInBatch = 0;
@@ -462,6 +471,7 @@ export function applyChangesSync(
         entry.kind === "delete" &&
         tombstoneIsStale(db, entry, options, pulled)
       ) {
+        deferDirectoryDelete(db, entry, pulled, deferredDirs);
         continue;
       }
       const blockingRoot = readOnlyRootFor(db, entry.path);
@@ -542,6 +552,11 @@ export function applyChangesSync(
   // See applyChanges() for why pushRev does not advance here, and
   // where pulled revs are acknowledged instead.
 
+  // Deferred directory removals mint revs too; count them, or a puller
+  // would mistake them for a host write and skip its acknowledgment.
+  const revBeforeSettle = currentRev(db);
+  applied += settleDeferredDirectories(db, deferredDirs, options, pulled, skipped);
+  minted += currentRev(db) - revBeforeSettle;
   return { applied, skipped, minted };
 }
 
@@ -662,6 +677,13 @@ function tombstoneIsStale(
   if (options.receivedCursor !== undefined) {
     return compareChangeCursors({ rev: entry.rev, path: entry.path }, options.receivedCursor) <= 0;
   }
+  // The backend removed exactly the version held here, so deleting it
+  // loses nothing the backend never had. A directory's fingerprint is
+  // its mode, and its content is its children, so it counts only once
+  // the directory is empty: see settleDeferredDirectories.
+  if (entry.prior !== undefined && matchesPrior(db, live.inode, live.type, entry.prior)) {
+    return false;
+  }
   const backend = pulled?.backend ?? options.backend ?? DEFAULT_BACKEND_ID;
   const pushed = readPushCursor(db, backend);
   const candidates = db.all<{ path: string; rev: number }>(
@@ -682,6 +704,75 @@ function tombstoneIsStale(
   return candidates.some(
     (node) => compareChangeCursors(node, pushed) > 0 && pulled?.revs.has(node.rev) !== true,
   );
+}
+
+type DeleteEntry = ChangeEntry & { kind: "delete" };
+
+function matchesPrior(db: Database, inode: number, type: NodeType, prior: string): boolean {
+  if (type === "dir") {
+    const children = db.scalar<number>(
+      "SELECT COUNT(*) FROM vfs_dirents WHERE parent_inode = ?",
+      inode,
+    );
+    if ((children ?? 0) > 0) return false;
+  }
+  return versionFingerprint(db, inode) === prior;
+}
+
+// A recursive rm tombstones every path it removed, and the stream sorts
+// a directory before its descendants. A pulled directory delete held
+// back because the subtree looked unseen may stop being blocked once
+// the descendants' own fingerprinted deletes have run, so it is decided
+// again at the end of the call rather than dropped on the spot.
+function deferDirectoryDelete(
+  db: Database,
+  entry: DeleteEntry,
+  pulled: PullContext | undefined,
+  deferred: DeleteEntry[],
+): void {
+  if (pulled === undefined) return;
+  const live = resolveInode(db, entry.path, { followSymlinks: false });
+  if (live?.type === "dir") deferred.push(entry);
+}
+
+// Remove deferred directories that are now empty and either seen by the
+// backend or exactly the version it removed. Deepest first, so a parent
+// is decided after its children. A directory still holding anything is
+// kept: what remains is host work the backend never saw. Directories
+// emptied in a later block of the same pull stay behind as empty
+// directories; the next push recreates them remotely.
+function settleDeferredDirectories(
+  db: Database,
+  deferred: DeleteEntry[],
+  options: ApplyOptions,
+  pulled: PullContext | undefined,
+  skipped: SkippedEntry[],
+): number {
+  let applied = 0;
+  const ordered = [...deferred].sort((a, b) => b.path.length - a.path.length);
+  for (const entry of ordered) {
+    const live = resolveInode(db, entry.path, { followSymlinks: false });
+    if (live?.type !== "dir") continue;
+    const children = db.scalar<number>(
+      "SELECT COUNT(*) FROM vfs_dirents WHERE parent_inode = ?",
+      live.inode,
+    );
+    if ((children ?? 0) > 0) continue;
+    if (tombstoneIsStale(db, entry, options, pulled)) continue;
+    const blockingRoot = readOnlyRootFor(db, entry.path);
+    if (blockingRoot !== undefined) {
+      skipped.push({
+        path: entry.path,
+        mountRoot: blockingRoot,
+        op: "delete",
+        reason: "read-only",
+      });
+      continue;
+    }
+    rm(db, entry.path, { force: true });
+    applied++;
+  }
+  return applied;
 }
 
 // Compare an entry against the local node graph. Returns true when

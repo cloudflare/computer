@@ -3,6 +3,7 @@ import { canonicalizePath } from "../path.js";
 import { incrementRev } from "../rev.js";
 import type { Database } from "../storage.js";
 import { recordDelete } from "../sync/changes.js";
+import { versionFingerprint } from "../sync/fingerprint.js";
 import { pathOf } from "../sync/paths.js";
 import { assertNotReadOnly } from "./mount-guard.js";
 import { resolveInode } from "./resolve.js";
@@ -148,7 +149,8 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
       stampRenamedSubtree(db, source.inode, oldRealPath, rev);
     } else {
       db.run("UPDATE vfs_nodes SET rev = ? WHERE inode = ?", rev, source.inode);
-      recordDelete(db, rev, oldRealPath);
+      // The old path held the version that now lives at the new one.
+      recordDelete(db, rev, oldRealPath, versionFingerprint(db, source.inode));
     }
 
     // Drop cached resolutions for both endpoints. A directory move

@@ -9,11 +9,16 @@ export const SYNC_STATEMENTS = [
     encoded   BLOB    NOT NULL,
     last_seen INTEGER NOT NULL DEFAULT 0
   )`,
+  // `prior` is the fingerprint of the version the delete removed (see
+  // sync/fingerprint.ts), or NULL when it was not recorded: rows from
+  // before v9, and tombstones a directory rename writes in bulk. The
+  // column is duplicated in the v8 -> v9 migration; keep both in step.
   `CREATE TABLE IF NOT EXISTS vfs_changes (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    rev  INTEGER NOT NULL,
-    path TEXT    NOT NULL,
-    op   TEXT    NOT NULL CHECK(op IN ('delete'))
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    rev   INTEGER NOT NULL,
+    path  TEXT    NOT NULL,
+    op    TEXT    NOT NULL CHECK(op IN ('delete')),
+    prior TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS vfs_changes_by_rev ON vfs_changes(rev)`,
   // changes.ts looks up the latest op for a path via
