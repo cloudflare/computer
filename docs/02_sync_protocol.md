@@ -349,13 +349,19 @@ per entry kind rather than a blanket property:
 | `file` | `alreadyApplied` compares the manifest hash; identical content is a no-op. |
 | `dir` | Compares mode; a match is a no-op. |
 | `symlink` | Compares mode and target; a match is a no-op. |
-| `delete` | Compares the tombstone's rev against the live inode's. A path recreated **above** the tombstone rev is newer information, so the delete is dropped. |
+| `delete` | On pull, dropped only if the doomed subtree holds a local version this backend has not seen: past the push cursor and not minted by an earlier pull from it. On push, dropped if the receiver already committed it (at or before its fetch cursor). |
 
 The delete case is why replay cannot be assumed idempotent for free. A
-tombstone describes a path as of the rev it was stamped with; replaying
-it against a newer local recreation would destroy data the tombstone
-never described. The recreation is itself a change the next push ships
-upstream, so dropping the stale delete loses no work.
+replayed tombstone must not destroy a path recreated after it, and a
+pulled delete must not destroy local work the remote never saw. Both
+checks stay within one rev space: `entry.rev` is the sender's counter
+and `vfs_nodes.rev` is the receiver's, so they are never compared
+directly. A kept path is itself a change the next push ships upstream,
+so dropping the delete loses no work.
+
+One trade-off: while a divergence reset holds `pushRev` at 0, every
+locally authored version counts as unseen, so a remote delete pulled in
+that window is dropped and the host keeps the file.
 
 Entries the receiver refuses — most often a container-side write under
 a read-only mount — are reported in `SyncProgress.skipped` **and**

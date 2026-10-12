@@ -215,8 +215,6 @@ describe("pack mode pull", () => {
     try {
       seed(remote.db, 6);
       await drain(pullBlocks(local.db, remote.rpc, PACK_OPTIONS));
-      // Complete the echo push so the peer has seen our local versions.
-      await drain(pushBlocks(local.db, remote.rpc, PACK_OPTIONS));
 
       const provider = new SQLiteWorkspaceProvider(remote.db);
       provider.unlinkSync("/f000.txt");

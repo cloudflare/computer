@@ -855,6 +855,50 @@ describe("sync driver — cross-side invariant", () => {
     }
   });
 
+  it("drops a container delete pulled during a pushRev reset (known trade-off)", async () => {
+    // Known gap, pinned so a change to it is deliberate. When the
+    // remote forgets what we pushed (a computerd restart under the
+    // same WebSocket), pullOnce resets pushRev to 0 and retries. With
+    // pushRev at 0, every host-authored version counts as unseen by
+    // the backend, so tombstoneIsStale keeps it and a container delete
+    // pulled in that window is dropped. The fetch cursor still moves
+    // past the delete, so it is never fetched again: the host keeps
+    // the file the container removed. Protecting possibly unpushed
+    // host work wins over delete fidelity here. A fix would need to
+    // re-fetch, or re-check, deletes once pushRev is re-established.
+    const local = makePeer();
+    const remote = makePeer();
+    try {
+      const host = new SQLiteWorkspaceProvider(local.db, { now: () => 1 });
+      const container = new SQLiteWorkspaceProvider(remote.db, { now: () => 1 });
+      host.writeFileSync("/x.txt", "x");
+      host.writeFileSync("/keep.txt", "keep");
+      await pushOnce(local.db, remote.rpc);
+      expect(fileEntries(remote.db)).toEqual(["keep.txt", "x.txt"]);
+
+      container.unlinkSync("/x.txt");
+      // The remote forgets what we pushed, which trips the divergence
+      // reset on the next pull.
+      writeFetchCursor(remote.db, { rev: 0, path: null });
+
+      const pulled = await pullOnce(local.db, remote.rpc);
+      expect(readWatermark(local.db, "pushRev")).toBe(0);
+      expect(pulled.applied).toBe(0);
+      expect(fileEntries(local.db)).toEqual(["keep.txt", "x.txt"]);
+      expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+
+      // Later syncs do not repair the divergence: the delete is behind
+      // the fetch cursor, and /x.txt has no new local change to push.
+      await pushOnce(local.db, remote.rpc);
+      await pullOnce(local.db, remote.rpc);
+      expect(fileEntries(local.db)).toEqual(["keep.txt", "x.txt"]);
+      expect(fileEntries(remote.db)).toEqual(["keep.txt"]);
+    } finally {
+      local.close();
+      remote.close();
+    }
+  });
+
   it("pullOnce surfaces an invariant violation that survives the inline retry", async () => {
     // A persistently-lying remote (returns appliedPushRev=0 on
     // every call) trips the assertion after the inline reset.
@@ -1101,8 +1145,6 @@ describe("sync driver — streaming pullOnce", () => {
 
       await pullOnce(b.db, a.rpc);
       expect(providerB.readFileSync("/src/f299.txt", "utf8")).toBe("content 299");
-      // A pull stamps local revs; finish the echo push before remote deletion.
-      await pushOnce(b.db, a.rpc);
 
       providerA.renameSync("/src", "/dst");
       const renameRev = currentRev(a.db);
