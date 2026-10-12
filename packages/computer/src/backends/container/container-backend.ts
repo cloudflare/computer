@@ -709,6 +709,7 @@ export class ContainerBackend implements WorkspaceBackend {
         delay = Math.min(delay * 2, this.#options.healthRetryMaxDelayMs);
       }
     }
+    // oxlint-disable-next-line typescript/only-throw-error -- rethrows a caught value
     throw lastError ?? new Error("computerd health probe timed out");
   }
 

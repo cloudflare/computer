@@ -307,6 +307,7 @@ describe("WireError propagation", () => {
     try {
       const unknown = new Uint8Array(32);
       unknown.fill(0xff);
+      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       const stream = await client.fetchObjects([unknown]);
       const reader = stream.getReader();
       let caught: unknown;

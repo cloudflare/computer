@@ -245,6 +245,7 @@ async function pullOnceImpl(
             // Bare ReadableStream return — no envelope to dispose,
             // capnweb releases the stream stub when the stream itself
             // closes. The reader-loop below drains to completion.
+            // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
             const bytesStream = await remote.fetchObjects(missing);
             const bytesReader = bytesStream.getReader();
             try {

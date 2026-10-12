@@ -517,6 +517,7 @@ async function runPullBlock(
     const localHas = new Set(hasObjects(db, wanted).map(hex));
     const missing = wanted.filter((h) => remoteHas.has(hex(h)) && !localHas.has(hex(h)));
     if (missing.length > 0) {
+      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       const objectStream = await remote.fetchObjects(missing);
       const objectReader = objectStream.getReader();
       try {

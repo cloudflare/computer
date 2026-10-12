@@ -115,6 +115,7 @@ export function createModelCapability(model: LanguageModel, hooks: ChildHooks): 
       await Promise.all(
         Array.from({ length: Math.min(MAX_CONCURRENCY, requests.length) }, () => worker()),
       );
+      // oxlint-disable-next-line typescript/only-throw-error -- rethrows a caught value
       if (firstError !== undefined) throw firstError;
       return results as ChildResult[];
     },

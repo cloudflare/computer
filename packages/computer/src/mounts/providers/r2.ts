@@ -104,6 +104,7 @@ async function runBounded<T>(tasks: Array<() => Promise<T>>, concurrency: number
     );
   }
   await Promise.all(workers);
+  // oxlint-disable-next-line typescript/only-throw-error -- rethrows a caught value
   if (firstError !== undefined) throw firstError;
 }
 

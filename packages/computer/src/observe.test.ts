@@ -86,6 +86,7 @@ describe("withSpan", () => {
     const recorder = makeRecorder();
     await expect(
       withSpan(recorder, "test.op", {}, async () => {
+        // oxlint-disable-next-line typescript/only-throw-error -- the case under test
         throw "plain";
       }),
     ).rejects.toBe("plain");

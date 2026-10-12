@@ -25,6 +25,7 @@ async function eventually(
     }
     await new Promise((resolve) => setTimeout(resolve, TICK_MS));
   }
+  // oxlint-disable-next-line typescript/only-throw-error -- rethrows a caught value
   if (lastError) throw lastError;
   throw new Error("eventually(): condition never became true");
 }

@@ -358,6 +358,21 @@
     "typescript/prefer-find": "warn",
     "typescript/prefer-reduce-type-parameter": "warn",
     "typescript/prefer-return-this-type": "warn",
-    "typescript/prefer-string-starts-ends-with": "warn"
+    "typescript/prefer-string-starts-ends-with": "warn",
+
+    "typescript/await-thenable": "error",
+    "typescript/no-floating-promises": [
+      "error",
+      { "allowForKnownSafeCalls": [{ "from": "package", "name": "test", "package": "node:test" }] }
+    ],
+    "typescript/no-misused-promises": "error",
+    "typescript/only-throw-error": [
+      "error",
+      { "allowThrowingAny": true, "allowThrowingUnknown": true }
+    ],
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      { "considerDefaultExhaustiveForUnions": true }
+    ]
   }
 }

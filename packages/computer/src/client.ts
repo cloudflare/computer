@@ -426,8 +426,11 @@ export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceCl
       () => {
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },
+      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       await stub.useThink,
+      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       await stub.runtime.backends(),
+      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       await stub.hasAssets,
     );
   } catch (error) {
