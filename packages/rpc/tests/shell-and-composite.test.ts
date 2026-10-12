@@ -326,7 +326,7 @@ describe("Composite WorkspaceRPC (sync + shell on one session)", () => {
       // it directly; this should fail without two-step access. Pin
       // that the sync-only client therefore can't see it (documenting
       // the constraint).
-      await expect(syncClient.watermarks()).rejects.toThrow();
+      await expect(syncClient.watermarks()).rejects.toThrow("'watermarks' is not a function");
     } finally {
       await syncClient.close();
     }

@@ -246,7 +246,7 @@ describe("LegacyContainerBackend", () => {
       connectTimeoutMs: 300,
     });
 
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
 
     expect(fake.enableInternet).toBe(false);
   });
@@ -260,7 +260,7 @@ describe("LegacyContainerBackend", () => {
       egress: { mode: "direct" },
     });
 
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
 
     expect(fake.enableInternet).toBe(true);
   });
@@ -280,7 +280,7 @@ describe("LegacyContainerBackend", () => {
       connectTimeoutMs: 300,
       egress: { mode: "http-gateway", gateway },
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
     const request = new Request("https://workspace.internal/api", {
       method: "POST",
       body: "payload",
@@ -312,7 +312,7 @@ describe("LegacyContainerBackend", () => {
       connectTimeoutMs: 300,
       egress: { mode: "http-gateway", gateway },
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
 
     const response = await backend.handleFetch(
       new Request("https://workspace.internal/api", {
@@ -338,7 +338,7 @@ describe("LegacyContainerBackend", () => {
       connectTimeoutMs: 300,
       egress: { mode: "http-gateway", gateway },
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
 
     const response = await backend.handleFetch(
       new Request("https://api.example.test/data", {
@@ -358,7 +358,7 @@ describe("LegacyContainerBackend", () => {
       egressHost: "computerd.local",
       connectTimeoutMs: 300,
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
     expect(fake.interceptedHost).toBe("computerd.local");
   });
 
@@ -370,7 +370,7 @@ describe("LegacyContainerBackend", () => {
       containerEnv: { CUSTOM: "1", PORT: "9000" },
       connectTimeoutMs: 300,
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
     expect(fake.startEnv?.CUSTOM).toBe("1");
     // Caller-supplied value wins over the default.
     expect(fake.startEnv?.PORT).toBe("9000");
@@ -386,8 +386,8 @@ describe("LegacyContainerBackend", () => {
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
     });
-    await expect(backend.connect()).rejects.toThrow();
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
     // Two failed dials → two factory invocations. The cached
     // handle only short-circuits on success.
     expect(factory).toHaveBeenCalledTimes(2);
@@ -403,7 +403,7 @@ describe("LegacyContainerBackend", () => {
       workspace: fakeWorkspace,
       connectTimeoutMs: 300,
     });
-    await expect(backend.connect()).rejects.toThrow();
+    await expect(backend.connect()).rejects.toThrow(/stage=health/);
     expect(fake.calls.map((c) => c.name)).toContain("start");
   });
 

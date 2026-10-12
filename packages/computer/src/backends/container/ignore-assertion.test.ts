@@ -200,38 +200,25 @@ describe("assertIgnoreMatches", () => {
   test("rejects a computerd that does not support patterns", () => {
     // An old image would otherwise look like it is working while quietly
     // syncing a full node_modules.
-    try {
-      assertIgnoreMatches(["**/node_modules"], unsupported);
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(ContainerIgnoreMismatchError);
-      const message = (error as Error).message;
-      expect(message).toMatch(/does not support MOUNT_IGNORE patterns/);
-      expect(message).toMatch(/pulled into the Durable Object/);
-      expect(message).toMatch(/Upgrade the computerd image/);
-    }
+    const check = () => assertIgnoreMatches(["**/node_modules"], unsupported);
+    expect(check).toThrow(ContainerIgnoreMismatchError);
+    expect(check).toThrow(/does not support MOUNT_IGNORE patterns/);
+    expect(check).toThrow(/pulled into the Durable Object/);
+    expect(check).toThrow(/Upgrade the computerd image/);
   });
 
   test("names patterns the container is not applying", () => {
-    try {
+    const check = () =>
       assertIgnoreMatches(["**/node_modules", "/dist"], supported(["**/node_modules"]));
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      const message = (error as Error).message;
-      expect(message).toMatch(/"\/dist"/);
-      expect(message).toMatch(/declared but not applied/);
-    }
+    expect(check).toThrow(/"\/dist"/);
+    expect(check).toThrow(/declared but not applied/);
   });
 
   test("names patterns the container applies that were not declared", () => {
-    try {
+    const check = () =>
       assertIgnoreMatches(["**/node_modules"], supported(["**/node_modules", "/target"]));
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      const message = (error as Error).message;
-      expect(message).toMatch(/"\/target"/);
-      expect(message).toMatch(/applied by the container but not declared/);
-    }
+    expect(check).toThrow(/"\/target"/);
+    expect(check).toThrow(/applied by the container but not declared/);
   });
 
   test("an empty declaration against a configured container is a mismatch", () => {
@@ -242,24 +229,15 @@ describe("assertIgnoreMatches", () => {
   });
 
   test("points at the setting that overrides `ignore`", () => {
-    try {
-      assertIgnoreMatches(["/a"], supported(["/b"]));
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      expect((error as Error).message).toMatch(/MOUNT_IGNORE in `containerEnv`/);
-    }
+    expect(() => assertIgnoreMatches(["/a"], supported(["/b"]))).toThrow(
+      /MOUNT_IGNORE in `containerEnv`/,
+    );
   });
 
   test("carries the declared and actual lists on the error", () => {
     // So a host can log or reconcile them without parsing the message.
-    try {
-      assertIgnoreMatches(["/a"], supported(["/b"]));
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      const mismatch = error as ContainerIgnoreMismatchError;
-      expect(mismatch.declared).toEqual(["/a"]);
-      expect(mismatch.actual).toEqual(["/b"]);
-      expect(mismatch.supported).toBe(true);
-    }
+    expect(() => assertIgnoreMatches(["/a"], supported(["/b"]))).toThrow(
+      expect.objectContaining({ declared: ["/a"], actual: ["/b"], supported: true }),
+    );
   });
 });

@@ -168,7 +168,7 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   // A non-ignored sibling still goes to the VFS as before.
   await fs.mkdir(path.join(mountPoint, "src"), { recursive: true });
   await fs.writeFile(path.join(mountPoint, "src", "main.ts"), "export {}");
-  await expect(fs.stat(path.join(ignoreRoot, "src"))).rejects.toThrow();
+  await expect(fs.stat(path.join(ignoreRoot, "src"))).rejects.toThrow("ENOENT");
 
   // Both layers appear in one listing.
   const entries = await fs.readdir(mountPoint);
@@ -256,12 +256,12 @@ test("MOUNT_IGNORE patterns route node_modules at any depth, with exclusions", a
     await fs.readFile(path.join(mountPoint, "packages/web/node_modules/pkg/index.js"), "utf8"),
   ).toBe("nested");
   expect(await onLocalDisk("packages/web/node_modules/pkg/index.js")).toBe(true);
-  await expect(fs.stat(path.join(ignoreRoot, "packages/app"))).rejects.toThrow();
+  await expect(fs.stat(path.join(ignoreRoot, "packages/app"))).rejects.toThrow("ENOENT");
 
   // rm -rf through the mount removes both sides.
   await fs.rm(path.join(mountPoint, "packages/web"), { recursive: true });
-  await expect(fs.stat(path.join(mountPoint, "packages/web"))).rejects.toThrow();
-  await expect(fs.stat(path.join(ignoreRoot, "packages/web"))).rejects.toThrow();
+  await expect(fs.stat(path.join(mountPoint, "packages/web"))).rejects.toThrow("ENOENT");
+  await expect(fs.stat(path.join(ignoreRoot, "packages/web"))).rejects.toThrow("ENOENT");
 });
 
 test("/api serves a capnweb WorkspaceRPC session", async (_ctx) => {
@@ -1395,7 +1395,7 @@ test("the exec log does not come back after a restart on a file store", async (_
 
   const after = createWorkspaceClient({ url: `ws://127.0.0.1:${secondPort}/api` });
   try {
-    await expect(after.shell.getExec({ id: execId })).rejects.toThrow();
+    await expect(after.shell.getExec({ id: execId })).rejects.toThrow("no exec record for id");
   } finally {
     await after.close();
   }

@@ -39,7 +39,7 @@ describe("hashObjectWith", () => {
     });
     expect(oid).toMatch(/^[0-9a-f]{40}$/);
     // The object should not exist in the store.
-    await expect(git.readBlob({ fs: memfs, dir: DIR, oid })).rejects.toThrow();
+    await expect(git.readBlob({ fs: memfs, dir: DIR, oid })).rejects.toThrow("Could not find");
   });
 
   it("writes the blob when write is true", async () => {

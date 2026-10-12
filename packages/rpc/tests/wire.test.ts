@@ -80,12 +80,7 @@ describe("SyncRPC over a real WebSocket", () => {
         reader.releaseLock();
       }
       const file = entries.find((e) => e.path === "/hello.txt");
-      expect(file).toBeDefined();
-      expect(file?.kind).toBe("file");
-      if (file?.kind === "file") {
-        expect(file.size).toBe(5);
-        expect(file.mtime).toBe(1234);
-      }
+      expect(file).toMatchObject({ kind: "file", size: 5, mtime: 1234 });
     } finally {
       await client.close();
     }
@@ -107,10 +102,7 @@ describe("SyncRPC.readEntry over a real WebSocket", () => {
     const client = createSyncClient({ url: harness.url });
     try {
       const entry = await client.readEntry("/probe.txt");
-      expect(entry).not.toBeNull();
-      expect(entry?.path).toBe("/probe.txt");
-      expect(entry?.kind).toBe("file");
-      if (entry?.kind === "file") expect(entry.size).toBe(4);
+      expect(entry).toMatchObject({ path: "/probe.txt", kind: "file", size: 4 });
     } finally {
       await client.close();
     }
@@ -434,7 +426,7 @@ describe("client lifecycle", () => {
     const client = createSyncClient({ url: harness.url });
     await client.close();
     // Second close() must not throw or hang.
-    await client.close();
+    await expect(client.close()).resolves.toBeUndefined();
   });
 
   it("a call after close() rejects rather than hanging", async () => {

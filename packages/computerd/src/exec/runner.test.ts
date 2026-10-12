@@ -126,12 +126,9 @@ test("reusing a live id throws EEXEC_BUSY", async () => {
   const { runner, dispose } = fixture();
   try {
     const handle = runner.exec("sleep 0.5", { id: "busy" });
-    try {
-      runner.exec("echo nope", { id: "busy" });
-      throw new Error("expected to throw");
-    } catch (err) {
-      expect((err as ExecError).code).toBe("EEXEC_BUSY");
-    }
+    expect(() => runner.exec("echo nope", { id: "busy" })).toThrow(
+      expect.objectContaining({ code: "EEXEC_BUSY" }),
+    );
     await drain(handle.events);
   } finally {
     dispose();
@@ -162,12 +159,7 @@ test("get() replays a completed exec by seq", async () => {
 test("get() throws ENOENT for unknown id", async () => {
   const { runner, dispose } = fixture();
   try {
-    try {
-      runner.get("never");
-      throw new Error("expected to throw");
-    } catch (err) {
-      expect((err as ExecError).code).toBe("ENOENT");
-    }
+    expect(() => runner.get("never")).toThrow(expect.objectContaining({ code: "ENOENT" }));
   } finally {
     dispose();
   }
@@ -249,12 +241,7 @@ test("dispose() removes the log and subsequent get() throws ENOENT", async () =>
     const handle = runner.exec("echo done", { id: "gone" });
     await drain(handle.events);
     runner.dispose("gone");
-    try {
-      runner.get("gone");
-      throw new Error("expected to throw");
-    } catch (err) {
-      expect((err as ExecError).code).toBe("ENOENT");
-    }
+    expect(() => runner.get("gone")).toThrow(expect.objectContaining({ code: "ENOENT" }));
   } finally {
     dispose();
   }
@@ -299,12 +286,7 @@ test("retention sweep evicts records past TTL", async () => {
     // Advance past the TTL window and sweep.
     nowMs += 500;
     runner.sweep();
-    try {
-      runner.get("ttl");
-      throw new Error("expected to throw");
-    } catch (err) {
-      expect((err as ExecError).code).toBe("ENOENT");
-    }
+    expect(() => runner.get("ttl")).toThrow(expect.objectContaining({ code: "ENOENT" }));
   } finally {
     dispose();
   }

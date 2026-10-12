@@ -449,7 +449,9 @@ describe("restartable pull engine", () => {
           },
         }) as SyncRPC;
 
-        await expect(pullOneBlock(local.db, flaky, { profile })).rejects.toThrow();
+        await expect(pullOneBlock(local.db, flaky, { profile })).rejects.toThrow(
+          "transport interrupted",
+        );
 
         const operation = readOperation(local.db, "default", "pull");
         expect(operation?.status).toBe("pending");

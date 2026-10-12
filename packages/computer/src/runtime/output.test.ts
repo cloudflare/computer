@@ -97,7 +97,9 @@ describe("Workspace command output", () => {
     const result = await (await ws.runtime.exec("print", { encoding: "utf8" })).result();
     expect(result.stdout).toBe(lines(10));
     expect(result.truncated).toBeUndefined();
-    await expect(ws.fs.readdir("/.computer/output")).rejects.toThrow();
+    await expect(ws.fs.readdir("/.computer/output")).rejects.toThrow(
+      "no such path: /.computer/output",
+    );
   });
 
   it("keeps the last 2000 lines and saves the full output", async () => {

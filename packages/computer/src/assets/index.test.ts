@@ -241,7 +241,7 @@ describe("createAssets.share", () => {
 
     await expect(
       assets.share("/workspace/does-not-exist.png", { expiresAfter: 30_000 }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("no such path: /workspace/does-not-exist.png");
     expect(puts).toHaveLength(0);
   });
 });

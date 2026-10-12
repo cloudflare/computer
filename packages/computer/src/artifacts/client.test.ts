@@ -26,9 +26,9 @@ describe("createArtifact", () => {
   });
 
   it("validates the session id at construction time", () => {
-    expect(() => createArtifact(binding, "")).toThrow();
-    expect(() => createArtifact(binding, "a/b")).toThrow();
-    expect(() => createArtifact(binding, "a__b")).toThrow();
+    expect(() => createArtifact(binding, "")).toThrow("invalid session id '': must not be empty");
+    expect(() => createArtifact(binding, "a/b")).toThrow("invalid session id 'a/b'");
+    expect(() => createArtifact(binding, "a__b")).toThrow("invalid session id 'a__b'");
   });
 
   describe("without a session id", () => {

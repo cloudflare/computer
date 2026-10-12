@@ -157,7 +157,7 @@ describe("image resolution failures", () => {
     const { ctx, starts } = fakeCtx({ images: {} });
     const api = new WorkspaceContainerAPI(ctx);
 
-    await expect(api.start(spec())).rejects.toThrow();
+    await expect(api.start(spec())).rejects.toThrow("container has no prepared images");
 
     expect(starts).toHaveLength(0);
     expect(await api.status()).toMatchObject({ running: false });

@@ -234,8 +234,9 @@ describe("ContainerBackend ignore check on a full connect", () => {
     // computerd strips the mount prefix from "/workspace/dist" and
     // applies "/dist". The declaration means the same thing.
     const fake = connectingHost({ supported: true, root: "/tmp/workspace", patterns: ["/dist"] });
-    const handle = await backendFor(fake, ["/workspace/dist"]).connect();
-    await handle.close();
+    const connecting = backendFor(fake, ["/workspace/dist"]).connect();
+    await expect(connecting).resolves.toBeDefined();
+    await (await connecting).close();
   });
 
   test("still rejects a real mismatch", async () => {

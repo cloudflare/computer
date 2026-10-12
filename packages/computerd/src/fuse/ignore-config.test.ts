@@ -100,7 +100,9 @@ describe("resolveMountIgnoreConfig: the set", () => {
   test("propagates a bad entry as a startup failure", () => {
     // Failing closed matters: a silently dropped entry sends a full
     // node_modules into the DO, which is the failure #179 is about.
-    expect(() => resolveMountIgnoreConfig({ MOUNT_IGNORE: "/../escape" }, "/workspace")).toThrow();
+    expect(() => resolveMountIgnoreConfig({ MOUNT_IGNORE: "/../escape" }, "/workspace")).toThrow(
+      'MOUNT_IGNORE pattern "/../escape"',
+    );
   });
 });
 

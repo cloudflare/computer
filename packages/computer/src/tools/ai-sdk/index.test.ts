@@ -1930,7 +1930,7 @@ describe("createAITools exec with one backend", () => {
       exec: { container: { description: "Linux." }, shell: { description: "Fast." } },
     });
 
-    expect(() => inputSchema(tools.exec).parse({ command: "ls" })).toThrow();
+    expect(() => inputSchema(tools.exec).parse({ command: "ls" })).toThrow(/"backend"/);
     await expect(executeTool(tools.exec, { command: "ls" })).resolves.toMatchObject({
       error: "Name a backend to run on.",
     });

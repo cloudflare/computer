@@ -227,7 +227,7 @@ describe("cloneWith subset checkout (real isomorphic-git + memfs)", () => {
 
     // The un-requested path stays absent. isomorphic-git's
     // `checkout` writes only the requested filepaths to disk.
-    await expect(memfs.promises.stat(`${DIR}/drop/file.txt`)).rejects.toThrow();
+    await expect(memfs.promises.stat(`${DIR}/drop/file.txt`)).rejects.toThrow("ENOENT");
   });
 
   it("leaves HEAD as a symbolic ref after checkout", async () => {

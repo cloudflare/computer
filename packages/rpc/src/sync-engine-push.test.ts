@@ -186,7 +186,9 @@ describe("restartable push engine", () => {
           },
         }) as SyncRPC;
 
-        await expect(pushOneBlock(local.db, lossy, {})).rejects.toThrow();
+        await expect(pushOneBlock(local.db, lossy, {})).rejects.toThrow(
+          "acknowledgment lost in transit",
+        );
         // The retry re-sends the same block.
         await drainPush(local.db, lossy, {});
 

@@ -54,6 +54,6 @@ describe("initWith (real isomorphic-git + memfs)", () => {
     // Bare repos lay HEAD and refs/ at the top level.
     const head = await memfs.promises.readFile("/bare/HEAD", "utf8");
     expect(head).toContain("refs/heads/main");
-    await expect(memfs.promises.stat("/bare/.git")).rejects.toThrow();
+    await expect(memfs.promises.stat("/bare/.git")).rejects.toThrow("ENOENT");
   });
 });

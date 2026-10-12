@@ -417,7 +417,7 @@ describe("createTanStackTools", () => {
     });
     controller.abort();
 
-    await quiet.killed;
+    await expect(quiet.killed).resolves.toBeUndefined();
     await pending;
     await workspace.close();
   });

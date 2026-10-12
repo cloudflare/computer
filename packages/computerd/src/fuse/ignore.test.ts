@@ -270,13 +270,8 @@ describe("resolveMountIgnore: rejected patterns", () => {
   });
 
   test("reports the index so a long MOUNT_IGNORE is diagnosable", () => {
-    try {
-      set(["/dist", "/ok", "bad"]);
-      expect.unreachable("should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(MountIgnorePathError);
-      expect((error as MountIgnorePathError).index).toBe(2);
-      expect((error as MountIgnorePathError).entry).toBe("bad");
-    }
+    const check = () => set(["/dist", "/ok", "bad"]);
+    expect(check).toThrow(MountIgnorePathError);
+    expect(check).toThrow(expect.objectContaining({ index: 2, entry: "bad" }));
   });
 });

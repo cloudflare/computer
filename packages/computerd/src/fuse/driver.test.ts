@@ -233,7 +233,7 @@ test("FUSE unlink removes a symlink itself rather than its target", async () => 
 
   expect(await status((cb) => ops.unlink("/link.txt", cb))).toBe(0);
 
-  expect(() => vfs.lstatSync("/link.txt")).toThrow();
+  expect(() => vfs.lstatSync("/link.txt")).toThrow("no such path: /link.txt");
   expect(Buffer.from(vfs.readFileSync("/target.txt")).toString("utf8")).toBe("still here");
 });
 
@@ -361,7 +361,7 @@ test("FUSE rename carries the buffered bytes to the new path", async () => {
 
   expect(Buffer.from(vfs.readFileSync("/new.txt")).toString("utf8")).toBe("renamed-content");
   // Old path is gone from both layers.
-  expect(() => vfs.statSync("/old.txt")).toThrow();
+  expect(() => vfs.statSync("/old.txt")).toThrow("no such path: /old.txt");
 });
 
 test("FUSE getattr size matches what readFileSync would return", async () => {

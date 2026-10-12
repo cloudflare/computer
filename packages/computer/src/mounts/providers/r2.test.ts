@@ -146,7 +146,9 @@ describe("R2Bucket provider", () => {
     await ws.ensureMountsIndexed();
     expect(new TextDecoder().decode(await readAll(ws, "/workspace/skills/a.txt"))).toBe("a");
     expect(new TextDecoder().decode(await readAll(ws, "/workspace/skills/b/c.txt"))).toBe("c");
-    await expect(ws.fs.readFile("/workspace/skills/other.txt")).rejects.toThrow();
+    await expect(ws.fs.readFile("/workspace/skills/other.txt")).rejects.toThrow(
+      "no such file: /workspace/skills/other.txt",
+    );
   });
 
   it("read-only mode rejects writes with EROFS without calling the bucket", async () => {

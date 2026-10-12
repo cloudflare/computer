@@ -452,7 +452,7 @@ describe("getWorkspace — backend information", () => {
     });
     const list = client.runtime.backends();
 
-    expect(() => (list as WorkspaceBackendInfo[]).pop()).toThrow();
+    expect(() => (list as WorkspaceBackendInfo[]).pop()).toThrow("Cannot delete property");
     expect(client.runtime.backends()).toHaveLength(1);
   });
 

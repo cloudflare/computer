@@ -52,19 +52,25 @@ describe("parseRuntimeFrame", () => {
   });
 
   it("rejects invalid JSON", () => {
-    expect(() => parseRuntimeFrame("not json")).toThrow();
+    expect(() => parseRuntimeFrame("not json")).toThrow("received an invalid execution frame");
   });
 
   it("rejects an unknown frame name", () => {
-    expect(() => parseRuntimeFrame(`{"name":"other","value":1}`)).toThrow();
+    expect(() => parseRuntimeFrame(`{"name":"other","value":1}`)).toThrow(
+      "received an unknown execution frame",
+    );
   });
 
   it("rejects a malformed stdout frame missing its payload", () => {
-    expect(() => parseRuntimeFrame(`{"name":"stdout"}`)).toThrow();
+    expect(() => parseRuntimeFrame(`{"name":"stdout"}`)).toThrow(
+      "received a malformed output frame",
+    );
   });
 
   it("rejects an exit frame whose value is not an integer", () => {
-    expect(() => parseRuntimeFrame(`{"name":"exit","code":"x"}`)).toThrow();
+    expect(() => parseRuntimeFrame(`{"name":"exit","code":"x"}`)).toThrow(
+      "received a malformed exit frame",
+    );
   });
 });
 
@@ -101,6 +107,8 @@ describe("decodeRuntimeFrames", () => {
   });
 
   it("errors the stream on a malformed frame", async () => {
-    await expect(collect(decodeRuntimeFrames(streamOf(`garbage\n`)))).rejects.toThrow();
+    await expect(collect(decodeRuntimeFrames(streamOf(`garbage\n`)))).rejects.toThrow(
+      "received an invalid execution frame",
+    );
   });
 });

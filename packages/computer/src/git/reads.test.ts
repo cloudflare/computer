@@ -201,9 +201,9 @@ describe("revParseWith", () => {
   it("throws when walking past the root commit", async () => {
     await init();
     await commit("a.txt", "v1\n", "only");
-    await expect(
-      revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD~5" }),
-    ).rejects.toThrow();
+    await expect(revParseWith({ git: isogit, fs: memfs, dir: DIR, ref: "HEAD~5" })).rejects.toThrow(
+      "has no parent",
+    );
   });
 });
 
