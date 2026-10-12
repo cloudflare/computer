@@ -272,7 +272,7 @@ export function openOperation(
 ): OpenedOperation {
   return db.transactionSync(() => {
     const existing = readOperation(db, backend, direction);
-    if (existing !== undefined && existing.status === "pending") {
+    if (existing?.status === "pending") {
       return { operation: existing, joined: true };
     }
     const generation = beginCapture(db, backend, direction, now);

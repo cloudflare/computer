@@ -662,7 +662,7 @@ function applyChunkedInodeUpdate(
     // Stable chunk: existed before with the same logical size and the
     // caller did not flag it as touched. Skip without issuing SQL so
     // its rowid stays put.
-    if (old !== undefined && old.size === intendedSize && !touched) continue;
+    if (old?.size === intendedSize && !touched) continue;
 
     const existingBytes = old !== undefined ? readChunkBytes(db, inode, idx) : new Uint8Array();
     const chunkBytes = buildChunkBytes(idx, start, end, existingBytes);
@@ -957,7 +957,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
 export function flushPendingByPath(db: Database, path: string, now: () => number): boolean {
   const { path: canonical } = canonicalizePath(path);
   const entry = findPendingWriteBuffer(db, canonical);
-  if (entry === undefined || entry.pending === undefined) return false;
+  if (entry?.pending === undefined) return false;
   commitPendingBuffer(db, entry, now);
   return true;
 }
@@ -1261,7 +1261,7 @@ export function writeFileRangesSync(
       const end = Math.min(start + CHUNK_SIZE, bytes.byteLength);
       const size = end - start;
       const oldChunk = oldChunks[idx];
-      if (oldChunk !== undefined && oldChunk.size === size && !rangesOverlap(start, end, ranges)) {
+      if (oldChunk?.size === size && !rangesOverlap(start, end, ranges)) {
         nextChunks.push(oldChunk);
         continue;
       }

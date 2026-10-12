@@ -199,7 +199,7 @@ function Experiment({ sessionId }: { sessionId: string }) {
         stoppedLanes.has(lane) ||
         (states[lane].run?.runId === runId && isTerminal(states[lane].status)),
     ).length ?? 0;
-  const completed = order !== null && finished === order.length;
+  const completed = finished === order?.length;
   const active = order !== null && !completed;
   const baselinesStarted = startedLanes.has("direct") && startedLanes.has("executor");
   const runNotice = active

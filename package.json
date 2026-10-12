@@ -35,6 +35,7 @@
     "esbuild": "^0.28.1",
     "oxfmt": "^0.72.0",
     "oxlint": "^1.87.0",
+    "oxlint-tsgolint": "^7.0.2004",
     "pkg-pr-new": "^0.0.75",
     "postject": "^1.0.0-alpha.6",
     "sherif": "^1.11.1",

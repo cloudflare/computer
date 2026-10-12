@@ -137,7 +137,7 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     const name = parts[parts.length - 1];
     const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
     const parent = resolveInode(db, parentPath);
-    if (parent === null || parent.type !== "dir") {
+    if (parent?.type !== "dir") {
       throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
     }
     const parentReal = pathOf(db, parent.inode);

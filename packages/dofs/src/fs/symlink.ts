@@ -33,7 +33,7 @@ export function symlink(db: Database, target: string, path: string, now: () => n
         "SELECT inode, type FROM vfs_nodes WHERE inode = ?",
         child.child_inode,
       );
-      if (next === undefined || next.type !== "dir") {
+      if (next?.type !== "dir") {
         throw createWorkspaceError(
           "ENOTDIR",
           `parent path segment is not a directory: ${canonical}`,

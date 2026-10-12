@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": { "typeAware": true },
   "plugins": ["eslint", "typescript", "unicorn", "oxc", "react", "jsx-a11y"],
   "categories": {
     "correctness": "off",
@@ -78,6 +79,8 @@
     "unicorn/prefer-date-now": "warn",
     "unicorn/prefer-array-flat-map": "warn",
     "unicorn/prefer-array-index-of": "warn",
+    "typescript/dot-notation": "warn",
+    "typescript/prefer-optional-chain": "warn",
     "eslint/prefer-numeric-literals": "warn",
     "eslint/prefer-regex-literals": "warn",
 
@@ -140,6 +143,7 @@
     "eslint/no-array-constructor": "warn",
     "eslint/prefer-const": ["warn", { "ignoreReadBeforeAssign": true }],
     "eslint/prefer-exponentiation-operator": "warn",
+    "typescript/consistent-type-exports": "warn",
     "typescript/consistent-type-imports": ["warn", { "disallowTypeAnnotations": false }],
     "typescript/prefer-literal-enum-member": ["warn", { "allowBitwiseExpressions": true }],
     "unicorn/prefer-node-protocol": "warn",
