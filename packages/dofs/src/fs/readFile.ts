@@ -44,8 +44,7 @@ export async function readFile(
   optionsOrEncoding?: "utf8" | ReadFileOptions,
 ): Promise<string | ReadableStream<Uint8Array>> {
   const options = typeof optionsOrEncoding === "object" ? optionsOrEncoding : undefined;
-  const wantString =
-    optionsOrEncoding === "utf8" || (options !== undefined && options.encoding === "utf8");
+  const wantString = optionsOrEncoding === "utf8" || options?.encoding === "utf8";
   const byteOffset = options?.byteOffset ?? 0;
   const byteLength = options?.byteLength;
   validateReadWindow(path, byteOffset, byteLength);

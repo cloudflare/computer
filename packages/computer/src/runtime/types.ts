@@ -239,8 +239,9 @@ export interface WorkspaceRuntimeDisposeOptions {
   backend?: string;
 }
 
-export interface WorkspaceRuntimeExecHandle<E extends ExecEncoding = undefined>
-  extends ReadableStream<WorkspaceRuntimeEvent<E>> {
+export interface WorkspaceRuntimeExecHandle<
+  E extends ExecEncoding = undefined,
+> extends ReadableStream<WorkspaceRuntimeEvent<E>> {
   readonly id: string;
   readonly backend: string;
   result(): Promise<WorkspaceRuntimeResult<E>>;

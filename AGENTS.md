@@ -88,11 +88,11 @@ for the privileged Docker setup.
 Run from the repo root:
 
 ```bash
-npm run format        # biome format --write .
-npx biome check .     # biome lint + formatter verification
+npm run format        # oxfmt (rewrites files)
+npm run check         # oxlint + oxfmt --check + sherif
 ```
 
-`biome check` must exit zero. Fix the underlying issue rather than
+`npm run check` must exit zero. Fix the underlying issue rather than
 silencing the rule.
 
 Then run the package-level tests for whatever you touched:

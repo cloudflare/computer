@@ -36,7 +36,4 @@ export {
   type WorkspaceRef,
   withWorkspaceContainer,
 } from "./container-host.js";
-export type {
-  ContainerInstanceSize,
-  ContainerLaunchSpec,
-} from "./container-launch-record.js";
+export type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record.js";

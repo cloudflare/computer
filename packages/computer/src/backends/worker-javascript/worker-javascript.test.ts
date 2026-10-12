@@ -992,7 +992,7 @@ describe("WorkerJavaScriptBackend", () => {
     ],
     [
       "an object with a then export",
-      // biome-ignore lint/suspicious/noThenProperty: The case checks that the backend rejects a `then` export.
+      // oxlint-disable-next-line unicorn/no-thenable -- The case checks that the backend rejects a `then` export.
       { "ws:test": { then: async () => null } },
       /JavaScript identifier/,
     ],

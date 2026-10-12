@@ -303,7 +303,7 @@ export class LegacyWorkspaceContainerAPI extends RpcTarget implements ILegacyWor
 // don't constrain the instance shape because DurableObject's
 // `ctx` is protected — visible inside the mixin's class body via
 // `extends Base`, but not as a public structural property.
-// biome-ignore lint/suspicious/noExplicitAny: mixin constructor shape requires any[]
+// oxlint-disable-next-line typescript/no-explicit-any -- mixin constructor shape requires any[]
 type DOCtor = new (...args: any[]) => object;
 
 // Mixin: add a single `getWorkspaceContainer()` method to a DO
@@ -341,7 +341,7 @@ type DOCtor = new (...args: any[]) => object;
 // classes with method declarations trip its TS transformer).
 export type WithWorkspaceContainerCtor<TBase extends DOCtor> = TBase &
   (new (
-    // biome-ignore lint/suspicious/noExplicitAny: mirror mixin constructor shape
+    // oxlint-disable-next-line typescript/no-explicit-any -- mirror mixin constructor shape
     ...args: any[]
   ) => InstanceType<TBase> & { getWorkspaceContainer(): LegacyWorkspaceContainerAPI });
 

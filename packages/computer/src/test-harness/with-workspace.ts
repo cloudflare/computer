@@ -18,7 +18,7 @@ export async function withWorkspace<T>(
   fn: (ws: Workspace) => T | Promise<T>,
 ): Promise<T> {
   const stub = freshStub();
-  // biome-ignore lint/suspicious/noExplicitAny: cloudflare:test types aren't on the typecheck path
+  // oxlint-disable-next-line typescript/no-explicit-any -- cloudflare:test types aren't on the typecheck path
   return runInDurableObject(stub, async (_instance: any, state: any) => {
     const ws = new Workspace({
       storage: state.storage,

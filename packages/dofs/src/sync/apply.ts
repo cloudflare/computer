@@ -172,7 +172,7 @@ function direntForPath(
   const name = parts[parts.length - 1];
   const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
   const parent = resolveInode(db, parentPath, { followSymlinks: false });
-  if (parent === null || parent.type !== "dir") {
+  if (parent?.type !== "dir") {
     throw new Error(`applyChanges: parent missing for structural replacement ${canonical}`);
   }
   const child = db.scalar<number>(

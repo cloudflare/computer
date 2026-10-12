@@ -1,0 +1,12 @@
+# Mechanical commits for `git blame` to skip. GitHub reads this file
+# automatically. For local git, run once per clone:
+#
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# These SHAs must match the commits as they land on main. If a branch
+# is rebased or squash-merged, update them.
+
+# Format with oxfmt
+1e94c279f07e8ce553df7f6b2ed5629f8bba9871
+# Sort imports with oxfmt
+7a4678461a93cb6cdfec612978dc22f16f6d369f

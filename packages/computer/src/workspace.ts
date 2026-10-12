@@ -42,8 +42,8 @@ import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
-import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
+import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import {
   DEFAULT_OUTPUT_DIR,
   DEFAULT_OUTPUT_KEEP,
@@ -1012,6 +1012,7 @@ export class Workspace {
       );
     }
     const generation = this.#connectionGeneration;
+    // oxlint-disable-next-line eslint/prefer-const -- its callbacks read `promise`
     let promise!: Promise<WorkspaceModuleBackendHandle>;
     promise = withSpan(
       this.#observer,
@@ -1060,6 +1061,7 @@ export class Workspace {
       return Promise.reject(new Error(`Workspace: no backend with id ${JSON.stringify(id)}`));
     }
     const generation = this.#connectionGeneration;
+    // oxlint-disable-next-line eslint/prefer-const -- its callbacks read `promise`
     let promise!: Promise<BackendHandle>;
     promise = (async () => {
       let handle: BackendHandle | undefined;

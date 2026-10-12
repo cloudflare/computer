@@ -115,13 +115,13 @@ export async function createNodeVirtualFileSystem(
   // VirtualFileSystem doesn't expose. We bind directly to the
   // provider — there is no `inner` indirection — so dispatch can't
   // silently fall off if a method name only exists on one side.
-  // biome-ignore lint/suspicious/noExplicitAny: untyped extension surface
+  // oxlint-disable-next-line typescript/no-explicit-any -- untyped extension surface
   const providerAny = provider as any;
   for (const name of EXTRA_VFS_METHODS) {
     const fn = providerAny[name];
     if (typeof fn !== "function") continue;
     Object.defineProperty(vfs, name, {
-      // biome-ignore lint/suspicious/noExplicitAny: untyped extension surface
+      // oxlint-disable-next-line typescript/no-explicit-any -- untyped extension surface
       value: (...args: any[]) => fn.apply(providerAny, args),
       writable: true,
       configurable: true,

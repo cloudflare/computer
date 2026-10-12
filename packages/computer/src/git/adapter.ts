@@ -146,7 +146,7 @@ export async function workspaceIsomorphicGitClient(
   for (const name of FORWARDED_METHODS) {
     Object.defineProperty(SQLiteVirtualProvider.prototype, name, {
       value(this: SQLiteVirtualProvider, ...args: unknown[]): unknown {
-        // biome-ignore lint/suspicious/noExplicitAny: dispatch table
+        // oxlint-disable-next-line typescript/no-explicit-any -- dispatch table
         const inner = this.inner as any;
         const fn = inner[name];
         if (typeof fn !== "function") {

@@ -40,7 +40,7 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
     const oldName = oldParts[oldParts.length - 1];
     const oldParentPath = oldParts.length === 1 ? "/" : `/${oldParts.slice(0, -1).join("/")}`;
     const oldParent = resolveInode(db, oldParentPath);
-    if (oldParent === null || oldParent.type !== "dir") {
+    if (oldParent?.type !== "dir") {
       throw createWorkspaceError("ENOENT", `no such path: ${oldCanonical}`, oldCanonical);
     }
     const oldParentReal = pathOf(db, oldParent.inode);
@@ -55,7 +55,7 @@ export function rename(db: Database, oldPath: string, newPath: string): void {
     const newName = newParts[newParts.length - 1];
     const newParentPath = newParts.length === 1 ? "/" : `/${newParts.slice(0, -1).join("/")}`;
     const newParent = resolveInode(db, newParentPath);
-    if (newParent === null || newParent.type !== "dir") {
+    if (newParent?.type !== "dir") {
       throw createWorkspaceError(
         "ENOENT",
         `parent directory missing: ${newCanonical}`,

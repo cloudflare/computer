@@ -41,7 +41,7 @@ function statShared(db: Database, path: string, followFinal: boolean): Workspace
   // even on the lstat path — a hit here always corresponds to a
   // file mid-open.
   const pending = findPendingWriteBuffer(db, canonical);
-  if (pending !== undefined && pending.pending !== undefined) {
+  if (pending?.pending !== undefined) {
     return {
       name,
       // A pending create has no inode until releaseWriteBufferSync

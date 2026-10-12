@@ -1048,9 +1048,8 @@ describe("Workspace backend selection", () => {
     const storage = makeStorage();
     const ws = new Workspace({ storage, backends: [makeBackend("only", sync)] });
     // Pre-seed local watermarks for the "only" backend.
-    const { readFetchCursor, readWatermark, writeFetchCursor, writeWatermark } = await import(
-      "@cloudflare/dofs"
-    );
+    const { readFetchCursor, readWatermark, writeFetchCursor, writeWatermark } =
+      await import("@cloudflare/dofs");
     writeWatermark(ws.db, "pushRev", 17, "only");
     writeFetchCursor(ws.db, { rev: 42, path: null }, "only");
     // ready() alone no longer dials; ready(id) forces the connect.

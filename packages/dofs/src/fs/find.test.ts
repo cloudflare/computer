@@ -206,7 +206,7 @@ describe("find", () => {
         // for. A pruned directory is never listed.
         const listedParents: unknown[] = [];
         const all = db.all.bind(db);
-        // biome-ignore lint/suspicious/noExplicitAny: test spy over the generic method
+        // oxlint-disable-next-line typescript/no-explicit-any -- test spy over the generic method
         (db as any).all = (query: string, ...bindings: unknown[]) => {
           if (query.includes("FROM vfs_dirents d")) listedParents.push(bindings[0]);
           return all(query, ...bindings);
@@ -214,7 +214,7 @@ describe("find", () => {
         try {
           find(db, "/a", undefined, { exclude: ["build"] });
         } finally {
-          // biome-ignore lint/suspicious/noExplicitAny: restore the spied method
+          // oxlint-disable-next-line typescript/no-explicit-any -- restore the spied method
           (db as any).all = all;
         }
 

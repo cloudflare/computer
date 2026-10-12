@@ -65,7 +65,7 @@ function fakeMount(opts: {
     version: opts.version,
     calls: 0,
     async materialize(api: MountWriteAPI) {
-      // biome-ignore lint/suspicious/noExplicitAny: self-reference for the call counter
+      // oxlint-disable-next-line typescript/no-explicit-any -- self-reference for the call counter
       (this as any).calls += 1;
       opts.onMaterialize?.();
       for (const d of opts.dirs ?? []) {
@@ -350,7 +350,7 @@ describe("mount indexer", () => {
     );
     const chunks = ws.db.all<{ size: number }>(
       "SELECT size FROM vfs_chunks WHERE inode = ? ORDER BY idx",
-      // biome-ignore lint/style/noNonNullAssertion: query must succeed in this test
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- query must succeed in this test
       inodeRow!.inode,
     );
     const sum = chunks.reduce((s, c) => s + c.size, 0);
@@ -590,7 +590,7 @@ describe("mount indexer", () => {
     });
     const a = ws.ensureMountsIndexed();
     const b = ws.ensureMountsIndexed();
-    // biome-ignore lint/style/noNonNullAssertion: release is set inside the gate promise
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- release is set inside the gate promise
     release!();
     await Promise.all([a, b]);
     expect(entered).toBe(1);

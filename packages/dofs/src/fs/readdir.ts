@@ -56,17 +56,15 @@ export function readdir(
 
   let pending = listPendingByParent(db, node.inode)
     .filter((entry) => entry.pending !== undefined)
-    .map(
-      (entry): WorkspaceDirentResult => ({
-        name: entry.pending?.leafName ?? "",
-        parentPath: canonical,
-        size: entry.size,
-        mtime: entry.pending?.mtime ?? 0,
-        isFile: true,
-        isDirectory: false,
-        isSymbolicLink: false,
-      }),
-    );
+    .map((entry): WorkspaceDirentResult => ({
+      name: entry.pending?.leafName ?? "",
+      parentPath: canonical,
+      size: entry.size,
+      mtime: entry.pending?.mtime ?? 0,
+      isFile: true,
+      isDirectory: false,
+      isSymbolicLink: false,
+    }));
 
   // A concurrent apply can commit the same name while a pending-create
   // buffer is still open. Remove those pending duplicates before calculating

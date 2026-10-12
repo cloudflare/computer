@@ -21,8 +21,10 @@ export type ContainerInstanceSize = NonNullable<ContainerStartupOptions["instanc
 // deliberately: the platform makes it mutually exclusive with
 // `containerSnapshot`, and the caller names an image through `name`
 // instead, which the host resolves against ctx.container.images.
-export interface ContainerLaunchSpec
-  extends Omit<ContainerStartupOptions, "env" | "image" | "enableInternet"> {
+export interface ContainerLaunchSpec extends Omit<
+  ContainerStartupOptions,
+  "env" | "image" | "enableInternet"
+> {
   env: Record<string, string>;
   enableInternet: boolean;
   /** Key into `ctx.container.images`, resolved by the container host. */

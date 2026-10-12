@@ -512,9 +512,8 @@ describe("push semantics — external vs sync peer", () => {
 
   it("push with senderRev>0 (sync peer) leaves pushRev for the next push, advances fetchRev to senderRev", async () => {
     harness = await startHarness();
-    const { currentRev, readFetchCursor, readWatermark, writeWatermark } = await import(
-      "@cloudflare/dofs"
-    );
+    const { currentRev, readFetchCursor, readWatermark, writeWatermark } =
+      await import("@cloudflare/dofs");
     const client = createSyncClient({ url: harness.url });
     try {
       // Seed pushRev at the current point so the F1 guard

@@ -59,7 +59,7 @@ export default class TestDriver extends WorkerEntrypoint<Env> {
     const binding = request.headers.get("x-test-binding") ?? "COMPUTERD";
     const id = request.headers.get("x-test-id") ?? "";
     const egressToken = request.headers.get("x-test-egress-token") ?? undefined;
-    // biome-ignore lint/suspicious/noExplicitAny: ctx.exports isn't in @cloudflare/workers-types yet
+    // oxlint-disable-next-line typescript/no-explicit-any -- ctx.exports isn't in @cloudflare/workers-types yet
     const proxy = (this.ctx as any).exports.WorkspaceProxy({
       props: { binding, id, egressToken },
     });

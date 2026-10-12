@@ -1,7 +1,7 @@
 // Test-only observer that records every span its callbacks open and
 // reproduces parent / child nesting via a simple stack. Lives in a
 // non-test source file so the integration tests can share it without
-// tripping Biome's `noExportsInTest` rule.
+// exporting from a test file.
 //
 // Not exported from the package's public entry point (`index.ts`) — it
 // is plumbing for the workspace's own tests and for downstream callers

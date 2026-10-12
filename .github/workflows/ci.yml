@@ -2,7 +2,7 @@
 # regression in (say) computerd's tests doesn't hide a typecheck failure in
 # workspace. Each job is self-contained: install at the repo root,
 # build siblings whose dist/ this package's typecheck depends on,
-# then run biome + typecheck + tests scoped to that package.
+# then run oxlint + oxfmt + typecheck + tests scoped to that package.
 #
 # Runs on every PR and on pushes to the long-lived branches. The release
 # workflow also dispatches CI for the release branch because its GITHUB_TOKEN
@@ -112,8 +112,11 @@ jobs:
         if: matrix.build-computerd-bin
         run: npm run build:bin --workspace @cloudflare/computerd
 
-      - name: Lint + format check
-        run: npx biome check ${{ matrix.path }}
+      - name: Lint
+        run: npx oxlint --format=github ${{ matrix.path }}
+
+      - name: Format check
+        run: npx oxfmt --check ${{ matrix.path }}
 
       - name: Typecheck
         run: npm run typecheck --workspace ${{ matrix.workspace }} --if-present
@@ -188,8 +191,11 @@ jobs:
       - name: Generate worker types
         run: npm run build:types --workspace ${{ matrix.workspace }}
 
-      - name: Lint + format check
-        run: npx biome check ${{ matrix.path }}
+      - name: Lint
+        run: npx oxlint --format=github ${{ matrix.path }}
+
+      - name: Format check
+        run: npx oxfmt --check ${{ matrix.path }}
 
       - name: Typecheck
         run: npm run typecheck --workspace ${{ matrix.workspace }} --if-present

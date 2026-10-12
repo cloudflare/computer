@@ -351,6 +351,7 @@ export class WorkspaceRuntimeExecHandleStub<
       this.#handle as ReadableStream<WorkspaceRuntimeEvent<"utf8" | undefined>>
     ).getReader();
     this.#reader = reader;
+    // oxlint-disable-next-line typescript/no-this-alias -- read in pull(), not an arrow fn
     const owner = this;
     return new ReadableStream<Uint8Array>(
       {

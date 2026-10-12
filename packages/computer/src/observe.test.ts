@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { noopObserver, withSpan } from "./observe.js";
 import { makeRecorder } from "./observe-recorder.js";
+import { noopObserver, withSpan } from "./observe.js";
 
 describe("noopObserver", () => {
   it("returns the callback's promise unchanged", async () => {

@@ -51,7 +51,7 @@ export interface TanStackTool<Input = unknown> {
   description: string;
   inputSchema: z.ZodType<Input>;
   outputSchema?: z.ZodType;
-  // biome-ignore lint/suspicious/noExplicitAny: matches the signature chat() calls
+  // oxlint-disable-next-line typescript/no-explicit-any -- matches the signature chat() calls
   execute: (input: any, context?: TanStackToolExecutionContext) => Promise<unknown>;
   needsApproval?: boolean;
   lazy?: boolean;
@@ -77,8 +77,9 @@ export type TanStackToolsFor<Format extends TanStackToolFormat> = Format extends
   ? TanStackToolSet
   : TanStackToolList;
 
-export interface CreateTanStackToolsOptions<Format extends TanStackToolFormat = "array">
-  extends CreateToolsOptions {
+export interface CreateTanStackToolsOptions<
+  Format extends TanStackToolFormat = "array",
+> extends CreateToolsOptions {
   format?: Format;
   /** Tools that pause for approval. `"mutating"` selects every tool that changes workspace state. */
   approve?: string[] | "mutating";

@@ -46,11 +46,11 @@ When you finish a task:
 
 ## Formatting and linting
 
-Biome handles both formatting and linting. From the repo root:
+oxfmt handles formatting and oxlint handles linting. From the repo root:
 
 ```bash
-npm run format        # biome format --write .
-npm run check         # biome lint + formatter verification
+npm run format        # oxfmt (rewrites files)
+npm run check         # oxlint + oxfmt --check + sherif
 ```
 
 `npm run format` is allowed to rewrite files. `npm run check` must exit zero before you push. If `check` complains, fix the underlying issue rather than silencing the rule. Disabled rules need a real justification.

@@ -386,9 +386,7 @@ describe("ShellWorker", () => {
     it("unknown subcommands exit 1 with a git-shaped stderr line", async () => {
       const worker = new ShellWorker(undefined as never, envFor(stub) as never);
       const events = (await drain(
-        (
-          await worker.exec({ command: "git nope", cwd: "/workspace" })
-        ).events,
+        (await worker.exec({ command: "git nope", cwd: "/workspace" })).events,
       )) as { name: string; value: string | number }[];
       const stderr = events.find((e) => e.name === "stderr");
       const exit = events.find((e) => e.name === "exit");
@@ -425,9 +423,7 @@ describe("ShellWorker", () => {
           } as never,
         );
         const events = (await drain(
-          (
-            await worker.exec({ command: "assets publish out.txt 30s", cwd: "/workspace" })
-          ).events,
+          (await worker.exec({ command: "assets publish out.txt 30s", cwd: "/workspace" })).events,
         )) as { name: string; value: string | number }[];
         const stdout = events.find((e) => e.name === "stdout");
         const exit = events.find((e) => e.name === "exit");
@@ -464,9 +460,7 @@ describe("ShellWorker", () => {
           } as never,
         );
         const events = (await drain(
-          (
-            await worker.exec({ command: "artifacts repo list", cwd: "/workspace" })
-          ).events,
+          (await worker.exec({ command: "artifacts repo list", cwd: "/workspace" })).events,
         )) as { name: string; value: string | number }[];
         const stdout = events.find((e) => e.name === "stdout");
         const exit = events.find((e) => e.name === "exit");

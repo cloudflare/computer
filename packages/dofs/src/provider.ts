@@ -196,7 +196,7 @@ export class SQLiteWorkspaceProvider {
 
   lstatSync(path: string, _options?: { bigint?: boolean }): VirtualStatsLike {
     const pending = findPendingWriteBuffer(this.db, path);
-    if (pending !== undefined && pending.pending !== undefined) {
+    if (pending?.pending !== undefined) {
       return wrapStats({
         mode: pending.mode & 0o7777,
         size: pending.size,

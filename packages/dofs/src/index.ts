@@ -1,16 +1,9 @@
 export type { WorkspaceErrorCode, WorkspaceFsError } from "./errors.js";
 export { createWorkspaceError } from "./errors.js";
 export { chmod } from "./fs/chmod.js";
-export {
-  WorkspaceFilesystem,
-  type WorkspaceFilesystemOptions,
-} from "./fs/filesystem.js";
+export { WorkspaceFilesystem, type WorkspaceFilesystemOptions } from "./fs/filesystem.js";
 export type { FindOptions, WorkspaceFoundEntry } from "./fs/find.js";
-export type {
-  GrepOptions,
-  WorkspaceGrepContextLine,
-  WorkspaceGrepMatch,
-} from "./fs/grep.js";
+export type { GrepOptions, WorkspaceGrepContextLine, WorkspaceGrepMatch } from "./fs/grep.js";
 export { link } from "./fs/link.js";
 export type { MkdirOptions } from "./fs/mkdir.js";
 // Read-only mount enforcement. The workspace-side indexer writes
@@ -120,8 +113,4 @@ export type { ExecutedStatement } from "./testing-recording.js";
 // wraps node:sqlite and must be imported from
 // '@cloudflare/dofs/testing' under node-only call sites.
 export { RecordingStorage } from "./testing-recording.js";
-export type {
-  DurableObjectStorageLike,
-  SQLCursorLike,
-  SQLStorageLike,
-} from "./types.js";
+export type { DurableObjectStorageLike, SQLCursorLike, SQLStorageLike } from "./types.js";

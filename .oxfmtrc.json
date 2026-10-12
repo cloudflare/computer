@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "useTabs": false,
+  "tabWidth": 2,
+  "printWidth": 100,
+  "singleQuote": false,
+  "jsxSingleQuote": false,
+  "quoteProps": "as-needed",
+  "trailingComma": "all",
+  "semi": true,
+  "arrowParens": "always",
+  "bracketSameLine": false,
+  "bracketSpacing": true,
+  "sortPackageJson": false,
+  "sortImports": {
+    "partitionByNewline": true,
+    "newlinesBetween": false,
+    "customGroups": [{ "groupName": "protocol", "elementNamePattern": ["cloudflare:**"] }],
+    "groups": [
+      ["protocol", "builtin"],
+      "external",
+      "internal",
+      ["parent", "sibling", "index"],
+      "unknown"
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["**/*.json", "**/*.jsonc"],
+      "options": { "trailingComma": "none" }
+    }
+  ],
+  "ignorePatterns": [
+    "**/node_modules",
+    "**/node_modules.host-backup.*",
+    "**/dist",
+    "/artifacts",
+    "**/.devbox",
+    "**/.venv",
+    "package-lock.json",
+    ".gardener/gardener.lock.json",
+    "**/worker-configuration.d.ts",
+    "**/*.md",
+    "**/*.mdx",
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.html",
+    "**/*.css",
+    "**/*.scss",
+    "**/*.less",
+    "**/*.toml",
+    "**/*.graphql",
+    "**/*.json5",
+    "**/*.vue"
+  ]
+}

@@ -1,5 +1,67 @@
 # @cloudflare/computer
 
+## 0.5.0
+
+### Minor Changes
+
+- [#210](https://github.com/cloudflare/computer/pull/210) `createAITools` moves to `@cloudflare/computer/tools/ai-sdk`; see [tool wiring documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#wiring-up). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) The `exec` option (now `ExecBackendOptions`) has been refactored to use `runtime.backends()`; see [tool option documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#options). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) The `exec` tool shows the last `maxLines` (2000) lines or `maxBytes` of each stream with a pointer to the full output on disk; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) `ws:git` and `ws:artifacts` are no longer installed by default: add `createGitModule()` and `createArtifactsModule()`; see [`ws:git` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wsgit). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#172](https://github.com/cloudflare/computer/pull/172) Remove `WorkerJavaScriptBackend`'s `maxConcurrentExecutions` option, leaving the platform's own limit on concurrent Dynamic Workers; see [execution limit documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#execution-limits-and-retention). ([`0ecfff4`](https://github.com/cloudflare/computer/commit/0ecfff438c11cdb95b3e623813857fc9c15b729f)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Consolidate `trustedModules` with `modules` in `WorkerJavaScriptBackend`; see [module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#host-modules). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) `runtime.exec` results keep only the last 2000 lines or 64 KiB of each stream and save the full output to a Workspace file, configured with `new Workspace({ output })` or turned off with `output: false`; see [long output documentation](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#long-output). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Fix an issue in `JavaScriptWorkerBackend` where a source module could import a Workspace file; see [source module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#source-modules). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+### Patch Changes
+
+- [#210](https://github.com/cloudflare/computer/pull/210) JavaScriptWorkerBackend now supports absolute imports e.g. `/workspace/lib/util.js`; see [import documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#durable-imports). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Improve `WorkerShellBackend` and `ContainerBackend` tool descriptions including egress information; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Add `runtime.backends()` to `WorkspaceClient` allowing tools to be created from workspace stubs; see [tool wiring documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#wiring-up). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) The `exec` tool now tells the model to put module code in an `export default async function (input)` shape. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#171](https://github.com/cloudflare/computer/pull/171) The `exec` tool only documents `backend` and `input` when needed; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec). ([`c40642e`](https://github.com/cloudflare/computer/commit/c40642e55e1b14374a7d1cb692ea37b192714511)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) A cyclic argument to a `node:fs` or host module call fails with a "must be acyclic" error; see [execution limit documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#execution-limits-and-retention). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) Isolate JavaScript modules now need a default export, and fail before running without one. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) Isolate JavaScript code can now import Node.js built-ins such as `node:path`, `node:crypto`, and `node:zlib`. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) The JavaScript backend now creates its root directory (`/workspace`) if the Workspace doesn't have one. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) The JavaScriptWorkerBackend now strips non-serializable return values matching JSON.stringify(); see [isolate JavaScript documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#isolate-javascript-runtime). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) Isolate JavaScript runs now fail on I/O at module scope or an unhandled rejection, instead of completing silently, with no output. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#172](https://github.com/cloudflare/computer/pull/172) `JavaScriptWorkerBackend` now uses native RPC for `modules` bindings; see [execution limit documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#execution-limits-and-retention). ([`0ecfff4`](https://github.com/cloudflare/computer/commit/0ecfff438c11cdb95b3e623813857fc9c15b729f)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Imports of `ws:*` and other configured modules work when `compatibilityFlags` includes `new_module_registry`; see [module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#modules). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#172](https://github.com/cloudflare/computer/pull/172) Tools built from a remote `getWorkspace()` client of a Workspace without an assets publisher no longer offer a `publish` tool; see [tool wiring documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#wiring-up). ([`0ecfff4`](https://github.com/cloudflare/computer/commit/0ecfff438c11cdb95b3e623813857fc9c15b729f)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Add `workspace.runtime.backends()`, which lists each backend's id, protocol, whether it is callable, and its description for a model, including the modules a `WorkerJavaScriptBackend` can import; see [backend routing documentation](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#backend-routing). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) Each `JavaScriptWorkerBackend` now only stores each module once, so a large bundle counts once; see [module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#modules). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) A DO's `ctx.storage` can now be passed to a Workspace without casting. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#213](https://github.com/cloudflare/computer/pull/213) Workspace filesystem errors no longer repeat the path. ([`3249dce`](https://github.com/cloudflare/computer/commit/3249dce488e2d44727f16483e3fa86eb966b8dac)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#172](https://github.com/cloudflare/computer/pull/172) Add `ws:container` so isolate JavaScript can run shell commands in the Workspace's `ContainerBackend`; see [`ws:container` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wscontainer). ([`0ecfff4`](https://github.com/cloudflare/computer/commit/0ecfff438c11cdb95b3e623813857fc9c15b729f)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#210](https://github.com/cloudflare/computer/pull/210) `ws:git`'s `cli` accepts a leading `-C <path>` as its working directory; see [`ws:git` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wsgit). ([`154ca10`](https://github.com/cloudflare/computer/commit/154ca10b8fa0d7e0e857280ae5e6bd693668d3c2)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.4.1
 
 ### Patch Changes
