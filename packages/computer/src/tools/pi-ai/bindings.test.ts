@@ -10,11 +10,13 @@ import { createPiTools, forPiTools, type PiAgentTool, type PiAgentToolResult } f
 // SAFETY: Tool bindings never touch the host's Git, Artifacts, or runtime.
 const host = {} as WorkspaceModuleHost;
 
-function callContext(): WorkspaceModuleCallContext {
+function callContext(
+  access: WorkspaceModuleCallContext["access"] = "read-write",
+): WorkspaceModuleCallContext {
   return {
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
-    access: "read-write",
+    access,
     resolvePath: async (path) => path,
   };
 }
@@ -152,6 +154,50 @@ describe("forPiTools", () => {
       details: null,
       isError: false,
     });
+  });
+
+  it("marks only the tools named in readOnly as safe on a read-only backend", async () => {
+    const read = agentTool("read", { content: [{ type: "text", text: "contents" }] });
+    const write = agentTool("write", { content: [] });
+    const functions = createToolBindings(
+      forPiTools([read.tool, write.tool], { readOnly: ["read"] }),
+    )(host);
+
+    await expect(functions.read?.([{ path: "a" }], callContext("read"))).resolves.toMatchObject({
+      text: "contents",
+    });
+    await expect(functions.write?.([{ path: "a" }], callContext("read"))).rejects.toThrow(
+      "ws:tools write requires Workspace write access.",
+    );
+    expect(write.seen).toEqual([]);
+  });
+
+  it("lets createPiTools' reading tools run on a read-only backend, and no others", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      now: () => 1_700_000_000_000,
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await workspace.fs.writeFile("/workspace/notes.txt", "remember the milk\n");
+    const functions = createToolBindings(forPiTools(createPiTools({ workspace })))(host);
+    const readOnly = callContext("read");
+
+    const reads: Record<string, Record<string, string>> = {
+      read: { path: "/workspace/notes.txt" },
+      ls: { path: "/workspace" },
+      find: { pattern: "*.txt" },
+      grep: { query: "milk" },
+    };
+    for (const [name, args] of Object.entries(reads)) {
+      const result = await functions[name]?.([args], readOnly);
+      expect({ name, result }).toMatchObject({ name, result: { isError: false } });
+    }
+    for (const name of ["write", "edit", "delete"]) {
+      await expect(functions[name]?.([{ path: "/workspace/notes.txt" }], readOnly)).rejects.toThrow(
+        `ws:tools ${name} requires Workspace write access.`,
+      );
+    }
+    expect(await workspace.fs.readFile("/workspace/notes.txt", "utf8")).toBe("remember the milk\n");
   });
 
   it("serves the tools createPiTools makes over a Workspace", async () => {

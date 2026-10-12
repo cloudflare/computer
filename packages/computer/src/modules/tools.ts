@@ -12,6 +12,11 @@
 // `exec` is left out by default. The code calling these tools is
 // already running inside `exec`, and a run that can start runs has no
 // bound on how deep it goes.
+//
+// A read-only backend gets only the tools marked `readOnly`, the same
+// way `ws:git` and `ws:container` refuse to write there. This module
+// cannot tell what a tool does, so a tool that is not marked is taken
+// to write.
 
 import type {
   WorkspaceModuleCallContext,
@@ -25,6 +30,11 @@ import type {
 /** One tool, as code calls it. */
 export interface ToolBinding {
   readonly name: string;
+  /**
+   * The tool only reads. On a read-only backend, calls to any tool
+   * without it are refused before the tool runs.
+   */
+  readonly readOnly?: boolean;
   /**
    * Run the tool. `input` is the single object the code passed, or `{}`
    * when it passed nothing. Check it as strictly as a model's call.
@@ -89,8 +99,12 @@ export function createToolBindings(
       if (Object.hasOwn(functions, binding.name)) {
         throw new Error(`Two tools are named ${JSON.stringify(binding.name)}.`);
       }
-      functions[binding.name] = async (args, context) =>
-        binding.call(singleObject(binding.name, args), context);
+      functions[binding.name] = async (args, context) => {
+        if (binding.readOnly !== true && context.access !== "read-write") {
+          throw new Error(`ws:tools ${binding.name} requires Workspace write access.`);
+        }
+        return binding.call(singleObject(binding.name, args), context);
+      };
     }
     return functions;
   };

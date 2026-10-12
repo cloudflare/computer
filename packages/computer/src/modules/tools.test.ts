@@ -23,10 +23,11 @@ function callContext(
 }
 
 // A binding that records each call and echoes its input back as details.
-function recording(name: string) {
+function recording(name: string, options: { readOnly?: boolean } = {}) {
   const calls: { input: unknown; context: WorkspaceModuleCallContext }[] = [];
   const binding: ToolBinding = {
     name,
+    ...options,
     call(input, context) {
       calls.push({ input, context });
       return { text: `${name} ran`, details: input, isError: false };
@@ -81,6 +82,23 @@ describe("createToolBindings", () => {
     expect(Object.keys(factory(host))).toEqual(["read"]);
     tools = [recording("read").binding, recording("grep").binding];
     expect(Object.keys(factory(host)).sort()).toEqual(["grep", "read"]);
+  });
+
+  it("refuses a tool that may write on a read-only backend, before running it", async () => {
+    const write = recording("write");
+    const functions = createToolBindings([write.binding])(host);
+    await expect(
+      functions.write?.([{ path: "a.txt", content: "x" }], callContext({ access: "read" })),
+    ).rejects.toThrow("ws:tools write requires Workspace write access.");
+    expect(write.calls).toEqual([]);
+  });
+
+  it("runs a tool marked readOnly on a read-only backend", async () => {
+    const read = recording("read", { readOnly: true });
+    const functions = createToolBindings([read.binding])(host);
+    await expect(
+      functions.read?.([{ path: "a.txt" }], callContext({ access: "read" })),
+    ).resolves.toMatchObject({ text: "read ran" });
   });
 
   it("treats a call with no arguments as an empty object", async () => {

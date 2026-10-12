@@ -14,6 +14,10 @@ import type { ToolBinding, ToolBindingResult } from "../../modules/tools.js";
 import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
 import type { CreatePiToolsResult, PiToolResultContent } from "./index.js";
 
+// The tools createPiTools makes that only read: the ones it keeps when
+// asked for a readonly set.
+const PI_READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "ls", "find", "grep"]);
+
 /**
  * Structurally compatible with `AgentTool` from
  * `@earendil-works/pi-agent-core`, declared locally so pi is not a
@@ -54,6 +58,13 @@ export interface ForPiToolsOptions<T extends PiAgentTool> {
    * the tool unchecked.
    */
   validate?: (tool: T, call: PiToolCallRequest) => unknown;
+  /**
+   * The names of the tools that only read, which may run on a read-only
+   * backend. pi tools do not say whether they write, so every other tool
+   * is refused there. `createPiTools` tools need no list: `read`, `ls`,
+   * `find`, and `grep` are marked already.
+   */
+  readOnly?: readonly string[];
 }
 
 /**
@@ -85,6 +96,7 @@ export function forPiTools<T extends PiAgentTool>(
   return () =>
     declarations.map((declaration) => ({
       name: declaration.name,
+      readOnly: PI_READ_ONLY_TOOLS.has(declaration.name),
       async call(input, context) {
         const result = await execute(
           { id: callId(), name: declaration.name, arguments: input },
@@ -98,6 +110,7 @@ export function forPiTools<T extends PiAgentTool>(
 function agentBinding<T extends PiAgentTool>(tool: T, options: ForPiToolsOptions<T>): ToolBinding {
   return {
     name: tool.name,
+    readOnly: options.readOnly?.includes(tool.name) === true,
     async call(input, context) {
       const id = callId();
       const prepared = tool.prepareArguments ? tool.prepareArguments(input) : input;
