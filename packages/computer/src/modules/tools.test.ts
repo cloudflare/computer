@@ -128,6 +128,8 @@ describe("createToolBindings", () => {
     ["3d", "_3d"],
     ["default", "default_"],
     ["then", "then_"],
+    ["__proto__", "__proto___"],
+    ["__proto__!", "__proto___"],
     ["delete", "delete"],
   ])("exports %s as %s, and calls the tool by its own name", async (toolName, exported) => {
     const tool = recording(toolName);
@@ -135,6 +137,18 @@ describe("createToolBindings", () => {
     expect(Object.keys(functions)).toEqual([exported]);
     await expect(call(functions, exported, [{}])).resolves.toMatchObject({
       text: `${toolName} ran`,
+    });
+  });
+
+  it("keeps a tool that normalizes to __proto__ alongside others", async () => {
+    const functions = createToolBindings([
+      recording("read").binding,
+      recording("__proto__!").binding,
+    ])(host);
+    expect(Object.keys(functions).sort()).toEqual(["__proto___", "read"]);
+    expect(Object.getPrototypeOf(functions)).toBe(Object.prototype);
+    await expect(call(functions, "__proto___", [{}])).resolves.toMatchObject({
+      text: "__proto__! ran",
     });
   });
 
@@ -148,10 +162,10 @@ describe("createToolBindings", () => {
 
   it("describes the module for a model, saying which tools are left out", () => {
     expect(createToolBindings([]).description).toBe(
-      "The agent's own tools, callable from code. Each is exported under its name, with characters an identifier cannot hold turned into `_` (`list-files` becomes `list_files`), takes one object of the tool's arguments, and returns `{ text, details, isError }`. There is no `exec` export: importing it fails.",
+      "The agent's own tools, callable from code. Each is exported under its name made into an identifier: `-`, `.`, and spaces become `_`, and other characters an identifier cannot hold are dropped, so `list-files` becomes `list_files`. Each takes one object of the tool's arguments and returns `{ text, details, isError }`. There is no `exec` export: importing it fails.",
     );
     expect(createToolBindings([], { exclude: [] }).description).toBe(
-      "The agent's own tools, callable from code. Each is exported under its name, with characters an identifier cannot hold turned into `_` (`list-files` becomes `list_files`), takes one object of the tool's arguments, and returns `{ text, details, isError }`.",
+      "The agent's own tools, callable from code. Each is exported under its name made into an identifier: `-`, `.`, and spaces become `_`, and other characters an identifier cannot hold are dropped, so `list-files` becomes `list_files`. Each takes one object of the tool's arguments and returns `{ text, details, isError }`.",
     );
     expect(createToolBindings([], { description: "Custom." }).description).toBe("Custom.");
   });
