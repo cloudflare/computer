@@ -89,6 +89,11 @@ Your reply:
    pull requests without it. The body explains the change and links the comment that asked for it.
 5. Reply with a link to the pull request.
 
+**Separate pull requests.** On a pull request's conversation your checkout includes that pull
+request's changes, so any branch you create would carry them into a new pull request. If asked
+there for a separate pull request, do not open one: say its branch would include this pull
+request's changes, and suggest asking on an issue instead.
+
 **Changing a pull request.** When a comment on a pull request asks you to change it, edit the
 checkout, run the relevant checks, and propose `commit.create` on the pull request's head branch
 with `expectedHeadSha` set to its head. Do not open a separate pull request for it. You can only

@@ -43,8 +43,8 @@ CI configuration, workflows, `.gardener/`, or anything unrelated to a finding.
 Your checkout is the pull request's head commit.
 
 1. **Check the branch.** If the pull request's head branch does not start with `gardener/`, or
-   your checkout is not the pull request's head commit (a manual run checks out the default
-   branch), finish immediately without proposing anything.
+   your checkout is not the pull request's head commit (a manual run without a pull request number
+   checks out the default branch), finish immediately without proposing anything.
 2. **Check the round count.** Read the pull request's conversation comments with the provider API
    (`GET /repos/{owner}/{repo}/issues/{number}/comments?per_page=100`, reading every page until
    one returns fewer than 100). Count only comments written by
