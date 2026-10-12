@@ -234,8 +234,10 @@ so each example can declare its own dependencies and scripts.
   is no shared root config. Per-package `tsconfig.build.json` files
   extend `./tsconfig.json` to configure the build output.
 - **oxlint.** Lints JS and TypeScript, configured in `.oxlintrc.json`
-  at the repo root. The rule set mirrors the Biome recommended set
-  the repo used before. A few rules are type-aware and run through
+  at the repo root. Rules are listed one by one: the Biome
+  recommended set the repo used before, plus every other oxlint
+  correctness, suspicious and perf rule the tree passes. Warnings
+  fail the run. Some rules are type-aware and run through
   `oxlint-tsgolint`, so run `npm run build` first for accurate
   results across packages.
 - **oxfmt.** Formats JS, TypeScript and JSON, configured in
