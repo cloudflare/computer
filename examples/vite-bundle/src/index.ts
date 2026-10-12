@@ -13,7 +13,6 @@
 // commands through POST /c/<name>/exec.
 
 import { DurableObject } from "cloudflare:workers";
-import skills from "computer:bundle/src/skills";
 import {
   getWorkspace,
   WorkerBundle,
@@ -21,6 +20,7 @@ import {
   withWorkspace,
 } from "@cloudflare/computer";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
+import skills from "computer:bundle/src/skills";
 
 // Re-exported so the runtime can wrap it into the loopback binding the
 // WorkerShellBackend hands its Dynamic Worker.
