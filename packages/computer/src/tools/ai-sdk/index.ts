@@ -13,6 +13,8 @@ import {
   createWriteTool,
 } from "./tools.js";
 
+export { forAISDKTools } from "./bindings.js";
+
 /** Options for {@link createAITools}. */
 export type CreateAIToolsOptions = CreateToolsOptions;
 
