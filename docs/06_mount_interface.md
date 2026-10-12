@@ -213,8 +213,14 @@ WorkerBundle(skills, {
   isolate, because the bundled files can't change while it's alive. For
   a lazy tree it means loading every file once, so prefer
   `computerBundle()`, which computes the version at build time, or pass
-  an explicit `version`. Pass one as well when `filter` depends on the
-  session.
+  an explicit `version`.
+- `filter` and `fileMode` are often closures over per-session values, so
+  a version that depends on them is never shared between mounts. With a
+  `filter`, a `{ version, files }` source's version is combined with a
+  hash of the selected paths, which needs no file contents. Otherwise,
+  and whenever `fileMode` is set, each mount hashes its own selection,
+  which costs one hash per durable object start, and for a lazy tree
+  means loading every file. Pass an explicit `version` to avoid that.
 - When a deploy changes the files, the version changes and each
   workspace replaces its copy on its next index. See
   [Versions](#versions).
@@ -387,12 +393,15 @@ same deploy     → versions match, skip
 new deploy      → "sha256:def…" ≠ "sha256:abc…" → rm root, materialize, record "sha256:def…"
 ```
 
-The old subtree is only removed on a refresh. On a first index,
-anything already at the root is left in place. The remove and rewrite
-go through the workspace filesystem, so they're recorded as normal
-changes and reach the container on its next push. If a refresh fails,
-the root is left empty with `indexed = 0`, and the next pass tries
-again.
+A mount owns its root. Every index, including the first, removes
+everything under the root before `materialize()` runs: files from an
+earlier version, files that were there before the mount was registered,
+and anything an interrupted run left behind. So a retry after a crash
+never keeps stale files, whatever state the crash left
+`_vfs_mounts` in. The remove and rewrite go through the workspace
+filesystem, so they're recorded as normal changes and reach the
+container on its next push. If `materialize()` fails, the root is left
+empty with `indexed = 0`, and the next pass tries again.
 
 `WorkerBundle()` sets `version` from a content hash by default, so a
 deploy that changes the bundled files refreshes every workspace on its
