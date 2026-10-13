@@ -118,7 +118,9 @@ describe("createAssetsModule", () => {
     const abort = new AbortController();
     abort.abort();
 
-    await expect(publish(["a.txt"], callContext({ signal: abort.signal }))).rejects.toThrow();
+    await expect(publish(["a.txt"], callContext({ signal: abort.signal }))).rejects.toThrow(
+      /aborted/,
+    );
     expect(calls).toEqual([]);
   });
 

@@ -67,7 +67,7 @@ describe("tools with a root", () => {
     }
     const key = await new Response(await workspace.fs.readFile("/secret/key.txt")).text();
     expect(key).toBe("outside\n");
-    await expect(workspace.fs.stat("/secret/new.txt")).rejects.toThrow();
+    await expect(workspace.fs.stat("/secret/new.txt")).rejects.toThrow(/no such path/);
   });
 
   it("refuses a path through a symbolic link", async () => {
@@ -80,7 +80,7 @@ describe("tools with a root", () => {
     expect(read.isError).toBe(true);
     expect(text(read)).toContain("symbolic link: /workspace/link");
     expect(write.isError).toBe(true);
-    await expect(workspace.fs.stat("/secret/new.txt")).rejects.toThrow();
+    await expect(workspace.fs.stat("/secret/new.txt")).rejects.toThrow(/no such path/);
   });
 
   it("writes a new file under a directory that does not exist yet", async () => {
