@@ -1,5 +1,17 @@
 # @cloudflare/dofs
 
+## 0.5.1
+
+### Patch Changes
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `find` and `grep` globs match brace alternatives such as `**/*.{ts,tsx}`; see [`find` documentation](https://github.com/cloudflare/computer/blob/main/docs/04_filesystem_interface.md#find). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) An exclusion ending in `/**` also prunes the directory it names in `find` and `grep`; see [`find` documentation](https://github.com/cloudflare/computer/blob/main/docs/04_filesystem_interface.md#find). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#230](https://github.com/cloudflare/computer/pull/230) Deletes made in the container now reach the Durable Object, and pushed deletes reach computerd; see [replay and idempotency documentation](https://github.com/cloudflare/computer/blob/main/docs/02_sync_protocol.md#replay-and-idempotency). ([`b663993`](https://github.com/cloudflare/computer/commit/b66399391cbadf55308affc9ed3e6098ccc09a41)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#215](https://github.com/cloudflare/computer/pull/215) Mounts can now declare a `version` to support schema migrations; see [mount version documentation](https://github.com/cloudflare/computer/blob/main/docs/06_mount_interface.md#versions). ([`50a80cc`](https://github.com/cloudflare/computer/commit/50a80cc3847f0b043df7750725d000a31de5147a)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.5.0
 
 ## 0.4.1

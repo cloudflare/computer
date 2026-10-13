@@ -1,5 +1,53 @@
 # @cloudflare/computer
 
+## 0.5.1
+
+### Patch Changes
+
+- [#229](https://github.com/cloudflare/computer/pull/229) Add `forAISDKTools()` in `@cloudflare/computer/tools/ai-sdk` to serve an AI SDK tool set to isolate JavaScript as `ws:tools`; see [`ws:tools` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wstools). ([`8e50de6`](https://github.com/cloudflare/computer/commit/8e50de6e3dd7385750578bb4406a54f9889c11a8)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) The `edit` tool bounds its diff with `maxDiffLines` and `maxDiffBytes` and reports `diffTruncated`; see [`edit` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#edit). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#216](https://github.com/cloudflare/computer/pull/216) Fix issue when creating a host module with no functions in the JavaScriptWorkerBackend; see [host module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#host-modules). ([`c798c11`](https://github.com/cloudflare/computer/commit/c798c1121b7b57200a3ae10d441a5b7ea0d0c688)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) The `exec` tool's `input` is an object rather than any JSON value; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) The `exec` tool parses an `input` object sent as a string of JSON; see [`exec` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#exec). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) Tool sets take `execOutput: { maxLines, maxBytes }` for the `exec` tool's output limits; see [tool option documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#options). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) Host module factories receive the Workspace's assets client as `host.assets`; see [host module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#host-modules). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `WorkerJavaScriptBackend` now lazily reads each host module's description; see [module documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#modules). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#215](https://github.com/cloudflare/computer/pull/215) Mounts can now declare a `version` to support schema migrations; see [mount version documentation](https://github.com/cloudflare/computer/blob/main/docs/06_mount_interface.md#versions). ([`50a80cc`](https://github.com/cloudflare/computer/commit/50a80cc3847f0b043df7750725d000a31de5147a)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `createPiTools` results carry each tool's own output as `details`; see [pi documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#pi). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#216](https://github.com/cloudflare/computer/pull/216) Add `ws:tools` to provide the JavaScript worker backend programmatic access to tools; see [`ws:tools` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wstools). ([`c798c11`](https://github.com/cloudflare/computer/commit/c798c1121b7b57200a3ae10d441a5b7ea0d0c688)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) The `grep` tool's `include` and `exclude`, and the `find` tool's `exclude`, take one glob or a list; see [`grep` tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#grep). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) Add `@cloudflare/computer/tools/core`, which exports `defineExec` without an agent library; see [tool documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#what-ships). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) Tool sets take `root` to confine the file tools to one directory; see [root documentation](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#root). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#215](https://github.com/cloudflare/computer/pull/215) Add `WorkerBundle`, a read-only mount that copies files from the deployed bundle or an imported file tree; see [mount documentation](https://github.com/cloudflare/computer/blob/main/docs/06_mount_interface.md#workerbundlesource-options). ([`50a80cc`](https://github.com/cloudflare/computer/commit/50a80cc3847f0b043df7750725d000a31de5147a)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#215](https://github.com/cloudflare/computer/pull/215) Add `@cloudflare/computer/vite` with a `computerBundle()` plugin that bundles a directory into a Vite-built worker for `WorkerBundle`; see [mount documentation](https://github.com/cloudflare/computer/blob/main/docs/06_mount_interface.md#shipping-the-files-with-vite). ([`50a80cc`](https://github.com/cloudflare/computer/commit/50a80cc3847f0b043df7750725d000a31de5147a)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `ws:artifacts` adds `createToken` and `share` for minting git tokens and clone URLs; see [`ws:artifacts` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wsartifacts). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) Add `ws:assets` so isolate JavaScript can publish a Workspace file to a time-limited URL; see [`ws:assets` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wsassets). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `createContainerModule({ maxOutputLines })` limits each `ws:container` stream by lines as well as bytes; see [`ws:container` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wscontainer). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `createContainerModule({ prelude })` runs shell text such as `set -o pipefail` before each `ws:container` command; see [`ws:container` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wscontainer). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `ws:container` now keeps the end of each stream for a Workspace with `output: false`; see [`ws:container` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wscontainer). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#214](https://github.com/cloudflare/computer/pull/214) `ws:tools` lists the tools code can import in its description; see [`ws:tools` documentation](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#wstools). ([`f1ac4ce`](https://github.com/cloudflare/computer/commit/f1ac4ce9f244cefd81615dabb33a1ca728dba30d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.5.0
 
 ### Minor Changes
