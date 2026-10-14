@@ -1,0 +1,35 @@
+.gardener/gardener.lock.json
+  s_de0b486c128948::t_4f2f34cf636b8c 108,115,261,268
+.gardener/tasks/mention-reply/TASK.md
+  s_0762870d45c11d::t_70a00285c29ff2 92-96
+.gardener/tasks/pr-review-fix/TASK.md
+  s_0762870d45c11d::t_31cfada650d106 46-47
+.github/workflows/gardener-mention-reply.yml
+  s_de0b486c128948::t_73418cd061b442 5,57
+.github/workflows/gardener-pr-review-fix.yml
+  s_de0b486c128948::t_fa0dedd5db0e91 5,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7258c6ef659cde9fffd5446bd0ec5ea160f3dad5",
+  "prompts": {},
+  "sessions": {
+    "s_0762870d45c11d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1304b-1a23-7c07-a8c0-4603135b2f8b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    },
+    "s_de0b486c128948": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a54b-7029-705c-8802-df38dfe75e1f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
