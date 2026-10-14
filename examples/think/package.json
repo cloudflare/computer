@@ -26,6 +26,7 @@
     "agents": "^0.20.0",
     "ai": "^7.0.0",
     "isomorphic-git": "^1.38.3",
+    "just-bash": "^3.0.1",
     "workers-ai-provider": "^4.0.0",
     "zod": "^4.4.3"
   },

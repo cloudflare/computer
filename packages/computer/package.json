@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/computer",
   "version": "0.5.1",
-  "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
+  "description": "Cloudflare Computer \u2014 a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
   "license": "MIT",
   "repository": {
     "directory": "packages/computer",
@@ -164,14 +164,13 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "acorn": "^8.17.0",
-    "capnweb": "^0.10.0",
-    "just-bash": "^3.0.1"
+    "capnweb": "^0.10.0"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
     "@platformatic/vfs": "*",
     "ai": "^6.0.196 || ^7.0.0",
+    "just-bash": "^3.0.1",
     "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "zod": "^4.4.3"
   },
@@ -183,6 +182,9 @@
       "optional": true
     },
     "ai": {
+      "optional": true
+    },
+    "just-bash": {
       "optional": true
     },
     "vite": {
@@ -201,10 +203,12 @@
     "@earendil-works/pi-ai": "^0.99.2",
     "@platformatic/vfs": "^0.4.0",
     "@tanstack/ai": "^0.63.0",
+    "acorn": "^8.17.0",
     "ai": "^7.0.0",
     "diff": "^9.0.0",
     "esbuild": "^0.28.1",
     "isomorphic-git": "^1.38.3",
+    "just-bash": "^3.0.1",
     "memfs": "^4.57.6",
     "rolldown": "^1.0.2",
     "rolldown-plugin-dts": "^0.25.2",

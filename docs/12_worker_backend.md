@@ -13,6 +13,13 @@ the host workspace over Workers RPC, so there is no second store
 and no sync round trip; the host Durable Object's SQLite is the
 only authoritative state.
 
+just-bash is an optional peer dependency of `@cloudflare/computer`.
+Install it alongside the package when you use this backend:
+
+```sh
+npm install @cloudflare/computer just-bash
+```
+
 Import via the sub-path so the bundled just-bash payload tree-shakes
 out of consumers that don't use it:
 

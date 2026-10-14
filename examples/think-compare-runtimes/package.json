@@ -29,6 +29,7 @@
     "@shikijs/themes": "^4.2.0",
     "agents": "^0.20.0",
     "ai": "^7.0.0",
+    "just-bash": "^3.0.1",
     "partyserver": "^0.5.6",
     "partysocket": "^1.1.19",
     "react": "^19.2.7",

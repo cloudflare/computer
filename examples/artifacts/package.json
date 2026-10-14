@@ -11,7 +11,8 @@
     "build:types": "wrangler types"
   },
   "dependencies": {
-    "@cloudflare/computer": "*"
+    "@cloudflare/computer": "*",
+    "just-bash": "^3.0.1"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

@@ -50,7 +50,8 @@ worker-shell and worker-javascript backends additionally need the
 own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
-feature: `zod` for every tools entry point, `ai` for
+feature: `just-bash` for `@cloudflare/computer/backends/worker-shell`,
+`zod` for every tools entry point, `ai` for
 `@cloudflare/computer/tools` and `@cloudflare/computer/tools/ai-sdk`, and
 `@platformatic/vfs` for the Node-side VFS provider. The pi and TanStack
 AI entry points need nothing beyond `zod`; your agent brings its own
@@ -278,7 +279,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 | --- | --- | --- | --- |
 | **Container** | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
 | **Container (legacy)** | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
-| **Worker shell** | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
+| **Worker shell** | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag; the `just-bash` package |
 | **Worker JavaScript** | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding; `experimental` flag |
 
 - **Container** cold-starts more slowly but gives you a real Linux
