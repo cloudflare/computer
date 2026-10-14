@@ -207,6 +207,12 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   timeoutMs?: number;
   sync?: "wait" | "defer";
   /**
+   * What happens to this run if the Durable Object restarts while it
+   * runs, as on a deploy or crash. Overrides the backend's
+   * `onInterrupt`. Backends that can't resume a run ignore it.
+   */
+  onInterrupt?: WorkspaceRuntimeInterruptPolicy;
+  /**
    * How much output `result()` keeps per stream. Output past it is cut
    * to its last lines and saved in full to a Workspace file. Overrides
    * the Workspace's `output` limits for this run; `false` keeps all
@@ -259,7 +265,16 @@ export interface ModuleExecutionInput {
   stdin?: Uint8Array | string;
   timeoutMs?: number;
   sync?: "wait" | "defer";
+  onInterrupt?: WorkspaceRuntimeInterruptPolicy;
 }
+
+/**
+ * What a backend does with a run its Durable Object restarted under.
+ * `fail` settles it as failed. `restart` runs it again from the start.
+ * `replay` runs it again and answers the calls it already made from a
+ * journal, so their effects aren't repeated.
+ */
+export type WorkspaceRuntimeInterruptPolicy = "fail" | "restart" | "replay";
 
 export interface ModuleExecutionEnvelope {
   id: string;
@@ -288,6 +303,9 @@ export interface WorkspaceModuleBackendHandle {
   }): Promise<ModuleExecutionEnvelope>;
   killExec(input: { id: string; signal?: KillSignal; runtimeId?: string }): Promise<void>;
   disposeExec(input: { id: string; runtimeId?: string }): Promise<void>;
+  // Settle the runs a restart interrupted. A backend that recovers
+  // when it connects needs nothing more here.
+  recover?(): Promise<void>;
   // Tear down a backend-owned transport. The command adapter omits
   // it: a command backend's transport is closed through its
   // BackendHandle, not through the adapter the runtime consumes.

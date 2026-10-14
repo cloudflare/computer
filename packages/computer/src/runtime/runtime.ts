@@ -109,6 +109,7 @@ export class WorkspaceRuntime {
       stdin: options.stdin,
       timeoutMs: options.timeoutMs,
       sync: options.sync,
+      onInterrupt: options.onInterrupt,
     });
     return wrapModuleHandle(
       runtime,
@@ -155,6 +156,20 @@ export class WorkspaceRuntime {
       // it falls back to a full replay.
       this.#outputSpools(backend, envelope.id, options.output),
     );
+  }
+
+  /**
+   * Resume or settle the runs a Durable Object restart interrupted.
+   * Backends do this when they first connect, which the next runtime
+   * call or `ready()` triggers. Call this from an alarm to resume runs
+   * without waiting for one.
+   */
+  async recover(): Promise<void> {
+    for (const [id, backend] of this.#options.backends) {
+      if (!isModuleBackend(backend)) continue;
+      const handle = await this.#options.backendHandle(id);
+      await handle.recover?.();
+    }
   }
 
   async killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {
