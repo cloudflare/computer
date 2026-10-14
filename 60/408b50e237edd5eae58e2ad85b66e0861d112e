@@ -1,0 +1,38 @@
+.changeset/durable-javascript.md
+  s_5a33ac7eaed91e::t_0ef8edfdb5bcdf 1-5
+packages/computer/src/backends/worker-javascript/journal.test.ts
+  s_5a33ac7eaed91e::t_b8aa6997d4fb92 1-88
+packages/computer/src/backends/worker-javascript/journal.ts
+  s_5a33ac7eaed91e::t_180a1acd4c5717 1-252,258-402
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_5a33ac7eaed91e::t_d52b92d28012b1 523-530,536,582-584
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5a33ac7eaed91e::t_de7e0d7569b331 1946-2097
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5a33ac7eaed91e::t_d9aae0efbfbd9e 15,20-34,39,85-103,172,240-243,265-266,331,455,461-474,480,484-488,490-515,517-584,626-627,639,678-684,686-704,706-707,710,712-721,733-792,925-930,947-964,1003-1010,1015,1035-1040,1165,1268-1279,1596-1610,1613-1614,1616-1627,1631,1639,1657,1664-1666,1670-1673,1804-1809
+packages/computer/src/runtime/bridge.ts
+  s_5a33ac7eaed91e::t_0af15b213ab908 22,43,57,114-116,127-130,223-240,243,344,348-354,357-369,372-374
+packages/computer/tests/script-runner-worker.ts
+  s_5a33ac7eaed91e::t_865017263f440a 60-71,108-116,232-246,248-266,477-502
+packages/computer/tests/script-runner.test.ts
+  s_5a33ac7eaed91e::t_671c11a51c6265 335,341,973-1056,1082-1126
+docs/17_isolate_javascript.md
+  s_5a33ac7eaed91e::t_ea993dbbf84730 141-162,164-171
+  s_5a33ac7eaed91e::t_0eb4bc94acf590 163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "60408b50e237edd5eae58e2ad85b66e0861d112e",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
