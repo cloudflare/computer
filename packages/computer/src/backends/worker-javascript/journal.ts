@@ -261,6 +261,7 @@ export class ExecutionJournal implements BridgeJournal {
    */
   begin(name: string, args: readonly unknown[]): JournalStep {
     const key = callKey(name, args);
+    const label = describeCall(name, args);
     const entry = this.#entries.find((item) => !this.#consumed.has(item.seq) && item.key === key);
     if (entry !== undefined) {
       this.#consumed.add(entry.seq);
@@ -281,7 +282,7 @@ export class ExecutionJournal implements BridgeJournal {
         kind: "diverge",
         message:
           "The execution took a different path when it resumed after an interruption: " +
-          `it called ${name}, but the next call it made before was ${this.expectedCall()}.`,
+          `it called ${label}, but the next call it made before was ${this.expectedCall()}.`,
       };
     }
     const seq = this.#nextSeq++;
@@ -293,7 +294,7 @@ export class ExecutionJournal implements BridgeJournal {
       this.#id,
       seq,
       key,
-      name,
+      label,
     );
     return { kind: "live", seq };
   }
@@ -322,6 +323,18 @@ export class ExecutionJournal implements BridgeJournal {
     return this.#entries.find((item) => item.state === "applied" && !this.#consumed.has(item.seq))
       ?.label;
   }
+}
+
+/** A short, readable form of a call for messages: its name and arguments. */
+export function describeCall(name: string, args: readonly unknown[]): string {
+  const text = `${name}(${args.map(describeValue).join(", ")})`;
+  return text.length > 160 ? `${text.slice(0, 159)}…` : text;
+}
+
+function describeValue(value: unknown): string {
+  if (value instanceof Uint8Array) return `<${value.byteLength} bytes>`;
+  const text = JSON.stringify(value) ?? "undefined";
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text;
 }
 
 /** A stable identity for a call: its name and its arguments. */

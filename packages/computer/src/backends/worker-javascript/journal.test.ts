@@ -6,6 +6,7 @@ import {
   callKey,
   createDurableTables,
   decodeValue,
+  describeCall,
   encodeValue,
   ExecutionJournal,
 } from "./journal.js";
@@ -28,6 +29,14 @@ describe("callKey", () => {
     expect(callKey("fs.readFile", ["/a", "x"])).not.toBe(key);
     expect(callKey("fs.writeFile", ["/a", "y"])).not.toBe(key);
     expect(callKey("fs.writeFile", ["/a", new TextEncoder().encode("x")])).not.toBe(key);
+  });
+});
+
+describe("describeCall", () => {
+  it("shows arguments, summarizing bytes and cutting long values", () => {
+    expect(describeCall("fs.writeFile", ["/a", new Uint8Array(3), "x".repeat(100)])).toBe(
+      `fs.writeFile("/a", <3 bytes>, "${"x".repeat(46)}…)`,
+    );
   });
 });
 
@@ -56,7 +65,7 @@ describe("ExecutionJournal", () => {
       kind: "replay",
       response: { result: "contents of /b" },
     });
-    expect(replay.expectedCall()).toBe("fs.readFile");
+    expect(replay.expectedCall()).toBe('fs.readFile("/a")');
     expect(replay.begin("fs.readFile", ["/a"])).toMatchObject({
       kind: "replay",
       response: { result: "contents of /a" },
@@ -72,7 +81,9 @@ describe("ExecutionJournal", () => {
     const replay = new ExecutionJournal(db, "js", "run", onDiverge);
     const step = replay.begin("fs.rm", ["/a"]);
     expect(step).toMatchObject({ kind: "diverge" });
-    expect(step.kind === "diverge" && step.message).toContain("it called fs.rm");
+    expect(step.kind === "diverge" && step.message).toContain(
+      'it called fs.rm("/a"), but the next call it made before was fs.readFile("/a").',
+    );
     replay.diverged("diverged");
     expect(onDiverge).toHaveBeenCalledWith("diverged");
   });

@@ -2069,7 +2069,9 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       backend: "worker-javascript",
     });
     await expect(handle.result()).resolves.toMatchObject({ status: "completed", value: 1 });
-    expect(whileRunning).toEqual([{ label: "fs.writeFile", state: "applied" }]);
+    expect(whileRunning).toEqual([
+      { label: 'fs.writeFile("/workspace/out.txt", "x")', state: "applied" },
+    ]);
     const db = new Database(storage);
     for (const table of [
       "workspace_runtime_durable",
