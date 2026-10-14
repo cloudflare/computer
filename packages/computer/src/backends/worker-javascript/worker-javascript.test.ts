@@ -1943,3 +1943,155 @@ describe("WorkerJavaScriptBackend", () => {
     });
   });
 });
+
+describe("WorkerJavaScriptBackend interrupted executions", () => {
+  const hanging = {
+    load() {
+      return {
+        getEntrypoint() {
+          return { evaluate: () => new Promise<void>(() => undefined) };
+        },
+      };
+    },
+  };
+
+  function open(
+    storage: SQLiteTestStorage,
+    options: Partial<ConstructorParameters<typeof WorkerJavaScriptBackend>[0]> = {},
+  ) {
+    return new Workspace({
+      storage,
+      backends: [new WorkerJavaScriptBackend({ loader: hanging, ...options })],
+    });
+  }
+
+  async function interrupt(storage: SQLiteTestStorage, timeoutMs?: number) {
+    const workspace = open(storage);
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await workspace.runtime.exec("export default 1", {
+      backend: "worker-javascript",
+      id: "run",
+      onInterrupt: "replay",
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
+    return workspace;
+  }
+
+  async function settle(workspace: Workspace) {
+    const handle = await workspace.runtime.getExec("run", {
+      backend: "worker-javascript",
+      encoding: "utf8",
+    });
+    return handle.result();
+  }
+
+  it("fails a run after three attempts", async () => {
+    const storage = new SQLiteTestStorage();
+    const workspaces = [await interrupt(storage)];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const workspace = open(storage);
+      await workspace.runtime.recover();
+      workspaces.push(workspace);
+    }
+    const last = open(storage);
+    await expect(settle(last)).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("interrupted 3 times"),
+    });
+    for (const workspace of [...workspaces, last]) await workspace.close();
+  });
+
+  it("fails a run when the runtime changed under it", async () => {
+    const storage = new SQLiteTestStorage();
+    const first = await interrupt(storage);
+    const changed = open(storage, { maxStdioBytes: 2048 });
+    await expect(settle(changed)).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("runtime changed since it started"),
+    });
+    await changed.close();
+    await first.close();
+  });
+
+  it("fails a run whose timeout passed while it was interrupted", async () => {
+    const storage = new SQLiteTestStorage();
+    const first = await interrupt(storage, 1000);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 5000);
+    try {
+      const later = open(storage);
+      await expect(settle(later)).resolves.toMatchObject({
+        status: "failed",
+        stderr: expect.stringContaining("timeout passed"),
+      });
+      await later.close();
+    } finally {
+      clock.mockRestore();
+    }
+    await first.close();
+  });
+
+  it("journals a run's calls and removes them once it settles", async () => {
+    const storage = new SQLiteTestStorage();
+    let whileRunning: unknown[] = [];
+    const workspace = new Workspace({
+      storage,
+      backends: [
+        new WorkerJavaScriptBackend({
+          onInterrupt: "replay",
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return {
+                    async evaluate(
+                      _input: unknown,
+                      host: Parameters<typeof evaluateResult>[0] & {
+                        call(name: string, args: unknown[]): Promise<unknown>;
+                      },
+                    ) {
+                      await host.call("fs.writeFile", ["/workspace/out.txt", "x"]);
+                      whileRunning = new Database(storage).all(
+                        "SELECT label, state FROM workspace_runtime_journal",
+                      );
+                      await evaluateResult(host, 1);
+                    },
+                  };
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const handle = await workspace.runtime.exec("export default 1", {
+      backend: "worker-javascript",
+    });
+    await expect(handle.result()).resolves.toMatchObject({ status: "completed", value: 1 });
+    expect(whileRunning).toEqual([{ label: "fs.writeFile", state: "applied" }]);
+    const db = new Database(storage);
+    for (const table of [
+      "workspace_runtime_durable",
+      "workspace_runtime_durable_chunks",
+      "workspace_runtime_journal",
+    ]) {
+      expect(db.all(`SELECT * FROM ${table}`), table).toEqual([]);
+    }
+    await workspace.close();
+  });
+
+  it("rejects an unknown onInterrupt policy", async () => {
+    expect(
+      () => new WorkerJavaScriptBackend({ loader: hanging, onInterrupt: "maybe" as never }),
+    ).toThrow('onInterrupt must be "fail", "restart" or "replay".');
+    const workspace = open(new SQLiteTestStorage());
+    await expect(
+      workspace.runtime.exec("export default 1", {
+        backend: "worker-javascript",
+        onInterrupt: "maybe" as never,
+      }),
+    ).rejects.toThrow("onInterrupt must be");
+    await workspace.close();
+  });
+});

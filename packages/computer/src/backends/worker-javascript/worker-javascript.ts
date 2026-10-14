@@ -12,14 +12,31 @@ import type {
   WorkspaceModuleFunctions,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeEvent,
+  WorkspaceRuntimeInterruptPolicy,
   WorkspaceRuntimeLoader,
   WorkspaceRuntimeValue,
 } from "../../runtime/types.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
+  clearDurable,
+  createDurableTables,
+  DURABLE_TABLES,
+  ExecutionJournal,
+  fingerprint,
+  fromBase64,
+  INTERRUPT_POLICIES,
+  JOURNAL_VERSION,
+  loadDurable,
+  MAX_INTERRUPT_ATTEMPTS,
+  recordAttempt,
+  saveDurableStart,
+  toBase64,
+} from "./journal.js";
+import {
   assertHostModuleExports,
   buildModuleGraph,
   hasNodeModules,
+  internalModuleSources,
   NODE_MODULES_DESCRIPTION,
   type ParsedModules,
   parseModules,
@@ -65,6 +82,25 @@ export interface WorkerJavaScriptBackendOptions {
    * effect.
    */
   maxCpuMs?: number;
+  /**
+   * What happens to a run if the Durable Object restarts under it, as on
+   * a deploy or crash. A run's own `onInterrupt` overrides it. Defaults
+   * to `"fail"`.
+   *
+   * - `"fail"` settles the run as failed.
+   * - `"restart"` runs it again from the start, once the backend
+   *   reconnects. Its output so far stays, so the run's output repeats.
+   * - `"replay"` runs it again from the start, but answers every
+   *   filesystem and host module call it already made from a journal
+   *   instead of running it again. Output already recorded isn't
+   *   repeated. If the run takes a different path, it fails.
+   *
+   * A run is resumed when the backend reconnects, which the next runtime
+   * call or `ready()` triggers, or `runtime.recover()`. It gets three
+   * attempts and must finish within its original timeout. Network
+   * requests aren't journaled, so a replay makes them again.
+   */
+  onInterrupt?: WorkspaceRuntimeInterruptPolicy;
   /**
    * How often to schedule a timer while any execution is running, in
    * milliseconds. Set it to 0 to turn the timer off. Defaults to 60
@@ -133,6 +169,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "defaultTimeoutMs"
     | "maxTimeoutMs"
     | "maxCpuMs"
+    | "onInterrupt"
     | "keepAliveIntervalMs"
     | "maxSourceBytes"
     | "maxInputBytes"
@@ -163,6 +200,9 @@ interface WorkspaceExecutionContext {
   env: Record<string, string>;
   cwd: string;
   stdin: Uint8Array;
+  // Set for a replayable run: the seed for Math.random, the time the
+  // run's clock starts at, and whether it starts by replaying.
+  durable?: { seed: number; startedAt: number; replaying: boolean };
 }
 
 interface JavaScriptEntrypoint {
@@ -197,6 +237,10 @@ interface ExecutionRecord {
   result?: WorkspaceRuntimeValue;
   hasResult?: boolean;
   exitCode?: number;
+  journal?: ExecutionJournal;
+  // Output bytes a replayed run already recorded, which its frames
+  // repeat and the record skips.
+  skip?: { stdout: number; stderr: number };
 }
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
@@ -218,6 +262,8 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(defaultTimeoutMs, "defaultTimeoutMs");
     const maxCpuMs = options.maxCpuMs ?? maxTimeoutMs;
     assertPositiveFinite(maxCpuMs, "maxCpuMs");
+    const onInterrupt = options.onInterrupt ?? "fail";
+    assertInterruptPolicy(onInterrupt);
     const keepAliveIntervalMs = options.keepAliveIntervalMs ?? 60_000;
     // Pending work protects a Durable Object for at most 15 minutes, so a
     // longer interval would leave gaps.
@@ -282,6 +328,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       defaultTimeoutMs,
       maxTimeoutMs,
       maxCpuMs,
+      onInterrupt,
       keepAliveIntervalMs,
       maxSourceBytes: options.maxSourceBytes ?? 1024 * 1024,
       maxInputBytes: options.maxInputBytes ?? 1024 * 1024,
@@ -405,26 +452,136 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         PRIMARY KEY (backend, execution_id, seq)
       )
     `);
+    createDurableTables(host.db);
     this.#prune();
     const interrupted = host.db.all<{ id: string }>(
       `SELECT id FROM workspace_runtime_executions WHERE backend = ? AND status = 'running'`,
       this.#backendId,
     );
-    for (const { id } of interrupted) {
-      const record = this.#recordFor(id);
-      if (record?.status !== "running") continue;
+    for (const { id } of interrupted) this.#resumeInterrupted(id);
+  }
+
+  // Recovery runs when the backend connects, so there's nothing left to
+  // do by the time the runtime asks.
+  async recover(): Promise<void> {}
+
+  // Start a run the restart interrupted again, if it asked for that and
+  // still can, or settle it as failed.
+  #resumeInterrupted(id: string) {
+    const record = this.#loadRecord(id);
+    if (record?.status !== "running") return;
+    this.#records.set(id, record);
+    const fail = (message: string) =>
       this.#finish(record, "failed", [
         {
           id,
           seq: record.events.length + 1,
           name: "stderr",
-          value: new TextEncoder().encode(
-            "Execution was interrupted when its Workspace runtime restarted.\n",
-          ),
+          value: new TextEncoder().encode(`${message}\n`),
         },
         { id, seq: record.events.length + 2, name: "exit", code: 1 },
       ]);
+    let saved: ReturnType<typeof loadDurable>;
+    try {
+      saved = loadDurable(this.#host.db, this.#backendId, id);
+    } catch {
+      saved = undefined;
     }
+    if (saved === undefined) {
+      fail("Execution was interrupted when its Workspace runtime restarted.");
+      return;
+    }
+    const { policy, attempt, start } = saved;
+    if (attempt >= MAX_INTERRUPT_ATTEMPTS) {
+      fail(`Execution was interrupted ${attempt} times and won't be started again.`);
+      return;
+    }
+    if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint(start)) {
+      fail(
+        "Execution was interrupted and can't resume, because the JavaScript runtime changed since it started.",
+      );
+      return;
+    }
+    const remainingMs = start.startedAt + start.timeoutMs - Date.now();
+    if (remainingMs <= 0) {
+      fail("Execution was interrupted and its timeout passed before it could resume.");
+      return;
+    }
+    try {
+      recordAttempt(this.#host.db, this.#backendId, id, attempt + 1);
+      let journal: ExecutionJournal | undefined;
+      let durable: WorkspaceExecutionContext["durable"];
+      if (policy === "replay") {
+        journal = this.#journalFor(record);
+        durable = { seed: start.seed, startedAt: start.startedAt, replaying: journal.replaying };
+        record.skip = { stdout: 0, stderr: 0 };
+        for (const event of record.events) {
+          if (event.name === "stdout" || event.name === "stderr") {
+            record.skip[event.name] += event.value.byteLength;
+          }
+        }
+      } else {
+        this.#append(record, {
+          id,
+          seq: record.events.length + 1,
+          name: "stderr",
+          value: new TextEncoder().encode(
+            "Execution restarted from the beginning after its Workspace runtime was interrupted.\n",
+          ),
+        });
+      }
+      void this.#launch(record, {
+        capability: this.#capability(),
+        modules: start.modules,
+        entryName: start.entryName,
+        input: start.input,
+        context: {
+          env: start.env,
+          cwd: start.cwd,
+          stdin: fromBase64(start.stdin),
+          ...(durable === undefined ? {} : { durable }),
+        },
+        timeoutMs: remainingMs,
+        cpuMs: start.cpuMs,
+        journal,
+      });
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // The generated code a run depends on. A run resumes only on the same.
+  #fingerprint(start: { entryName: string }): string {
+    return fingerprint([
+      runtimeWorkerModule(start.entryName, this.#options.maxStdioBytes),
+      ...internalModuleSources(this.#options.maxCapabilityBytes),
+      this.#options.compatibilityDate,
+      this.#options.compatibilityFlags.join(","),
+    ]);
+  }
+
+  #journalFor(record: ExecutionRecord): ExecutionJournal {
+    return new ExecutionJournal(this.#host.db, this.#backendId, record.id, (message) =>
+      this.#diverge(record, message),
+    );
+  }
+
+  // A replayed run called something its journal doesn't hold. Stop it
+  // now, before it acts on a state the journal can't account for.
+  #diverge(record: ExecutionRecord, message: string) {
+    if (record.status !== "running" || record.finalization) return;
+    record.control?.cancel();
+    void this.#finalize(record, message);
+  }
+
+  #capability(): WorkspaceRuntimeCapability {
+    return new WorkspaceRuntimeCapability(
+      this.#host.fs,
+      this.#options.root,
+      this.#options.access,
+      this.#options.maxCapabilityBytes,
+      this.#options.maxDirectoryEntries,
+    );
   }
 
   // Parsing a large bundle on every run would be wasteful, so source
@@ -466,6 +623,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       throw new Error(`Workspace runtime stdin exceeds ${this.#options.maxStdinBytes} bytes.`);
     }
     assertEnv(input.env, this.#options.maxEnvBytes);
+    const policy = input.onInterrupt ?? this.#options.onInterrupt;
+    assertInterruptPolicy(policy);
     if (new TextEncoder().encode(input.source).byteLength > this.#options.maxSourceBytes) {
       throw new Error(`Workspace runtime source exceeds ${this.#options.maxSourceBytes} bytes.`);
     }
@@ -477,13 +636,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     try {
       if (this.#options.access === "read-write")
         await ensureDirectory(this.#host.fs, this.#options.root);
-      const capability = new WorkspaceRuntimeCapability(
-        this.#host.fs,
-        this.#options.root,
-        this.#options.access,
-        this.#options.maxCapabilityBytes,
-        this.#options.maxDirectoryEntries,
-      );
+      const capability = this.#capability();
       const graph = await buildModuleGraph({
         source: input.source,
         cwd: input.cwd ?? this.#options.root,
@@ -522,52 +675,50 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         throw error;
       }
       this.#records.set(id, record);
-      this.#markRunning(id, timeoutMs);
+      const context: WorkspaceExecutionContext = {
+        env: input.env ?? {},
+        cwd: input.cwd ?? this.#options.root,
+        stdin: stdinBytes,
+      };
+      const cpuMs = Math.min(timeoutMs, this.#options.maxCpuMs);
+      let journal: ExecutionJournal | undefined;
       try {
-        const bridge = new WorkspaceRuntimeBridge(capability, {
-          hostModules: this.#hostModuleFunctions,
-          maxPayloadBytes: this.#options.maxCapabilityBytes,
-          maxCallDurationMs: this.#options.maxHostCallMs,
-          maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,
-          maxCalls: this.#options.maxCapabilityCalls,
-          maxTotalRequestBytes: this.#options.maxCapabilityRequestBytes,
-          maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
-          maxResultBytes: this.#options.maxResultBytes,
-          onAttachOutput: (readable) => this.#pumpFrames(record, readable),
-        });
-        record.bridge = bridge;
-        record.control = startJavaScriptExecution({
-          loader: this.#options.loader,
-          modules: graph.modules,
-          entryName: graph.entryName,
-          input: inputValue,
-          context: {
-            env: input.env ?? {},
-            cwd: input.cwd ?? this.#options.root,
-            stdin: stdinBytes,
-          },
-          bridge,
-          timeoutMs,
-          cpuMs: Math.min(timeoutMs, this.#options.maxCpuMs),
-          egress: this.#options.egress,
-          compatibilityDate: this.#options.compatibilityDate,
-          compatibilityFlags: this.#options.compatibilityFlags,
-          maxStdioBytes: this.#options.maxStdioBytes,
-          maxSourceBytes: this.#options.maxSourceBytes,
-          onComplete: () => this.#finalize(record),
-          onError: (message) => this.#finalize(record, message),
-        });
-        // The completion promise drives finalize (which writes the
-        // terminal SQL) and is no longer handed to a host lifetime
-        // hook. Observe it so a finalize rejection surfaces as a
-        // swallowed error rather than an unhandled rejection in the
-        // Durable Object.
-        void record.control.completion.catch(() => undefined);
+        if (policy !== "fail") {
+          const startedAt = Date.now();
+          const seed = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+          saveDurableStart(this.#host.db, this.#backendId, id, policy, {
+            version: JOURNAL_VERSION,
+            modules: graph.modules,
+            entryName: graph.entryName,
+            input: inputValue,
+            env: context.env,
+            cwd: context.cwd,
+            stdin: toBase64(stdinBytes),
+            timeoutMs,
+            cpuMs,
+            startedAt,
+            seed,
+            fingerprint: this.#fingerprint(graph),
+          });
+          if (policy === "replay") {
+            journal = this.#journalFor(record);
+            context.durable = { seed, startedAt, replaying: false };
+          }
+        }
       } catch (error) {
-        record.control?.cancel();
-        await record.control?.completion.catch(() => undefined);
         await this.#finalize(record, error instanceof Error ? error.message : String(error));
+        return { id, events: this.#stream(record) };
       }
+      await this.#launch(record, {
+        capability,
+        modules: graph.modules,
+        entryName: graph.entryName,
+        input: inputValue,
+        context,
+        timeoutMs,
+        cpuMs,
+        journal,
+      });
       return { id, events: this.#stream(record) };
     } finally {
       this.#pendingIds.delete(id);
@@ -576,6 +727,66 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         for (const resolve of this.#pendingStartWaiters) resolve();
         this.#pendingStartWaiters.clear();
       }
+    }
+  }
+
+  // Start a run's Dynamic Worker. A failure to start settles the run.
+  async #launch(
+    record: ExecutionRecord,
+    spec: {
+      capability: WorkspaceRuntimeCapability;
+      modules: Record<string, string | { js?: string }>;
+      entryName: string;
+      input: WorkspaceRuntimeValue;
+      context: WorkspaceExecutionContext;
+      timeoutMs: number;
+      cpuMs: number;
+      journal: ExecutionJournal | undefined;
+    },
+  ): Promise<void> {
+    this.#markRunning(record.id, spec.timeoutMs);
+    try {
+      const bridge = new WorkspaceRuntimeBridge(spec.capability, {
+        hostModules: this.#hostModuleFunctions,
+        maxPayloadBytes: this.#options.maxCapabilityBytes,
+        maxCallDurationMs: this.#options.maxHostCallMs,
+        maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,
+        maxCalls: this.#options.maxCapabilityCalls,
+        maxTotalRequestBytes: this.#options.maxCapabilityRequestBytes,
+        maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
+        maxResultBytes: this.#options.maxResultBytes,
+        onAttachOutput: (readable) => this.#pumpFrames(record, readable),
+        ...(spec.journal === undefined ? {} : { journal: spec.journal }),
+      });
+      record.bridge = bridge;
+      record.journal = spec.journal;
+      record.control = startJavaScriptExecution({
+        loader: this.#options.loader,
+        modules: spec.modules,
+        entryName: spec.entryName,
+        input: spec.input,
+        context: spec.context,
+        bridge,
+        timeoutMs: spec.timeoutMs,
+        cpuMs: spec.cpuMs,
+        egress: this.#options.egress,
+        compatibilityDate: this.#options.compatibilityDate,
+        compatibilityFlags: this.#options.compatibilityFlags,
+        maxStdioBytes: this.#options.maxStdioBytes,
+        maxSourceBytes: this.#options.maxSourceBytes,
+        onComplete: () => this.#finalize(record),
+        onError: (message) => this.#finalize(record, message),
+      });
+      // The completion promise drives finalize (which writes the
+      // terminal SQL) and is no longer handed to a host lifetime
+      // hook. Observe it so a finalize rejection surfaces as a
+      // swallowed error rather than an unhandled rejection in the
+      // Durable Object.
+      void record.control.completion.catch(() => undefined);
+    } catch (error) {
+      record.control?.cancel();
+      await record.control?.completion.catch(() => undefined);
+      await this.#finalize(record, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -711,30 +922,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   #recordFor(id: string): ExecutionRecord | undefined {
     const cached = this.#records.get(id);
     if (cached) return cached;
-    const row = this.#host.db.one<{ status: ExecutionRecord["status"] }>(
-      `SELECT status FROM workspace_runtime_executions WHERE backend = ? AND id = ?`,
-      this.#backendId,
-      id,
-    );
-    if (!row) return undefined;
-    const events = this.#host.db
-      .all<{ seq: number; name: WorkspaceRuntimeEvent["name"]; payload: Uint8Array }>(
-        `SELECT seq, name, payload FROM workspace_runtime_events
-         WHERE backend = ? AND execution_id = ? ORDER BY seq`,
-        this.#backendId,
-        id,
-      )
-      .map((event) => decodeEvent(id, event.seq, event.name, event.payload));
-    const record: ExecutionRecord = {
-      id,
-      status: row.status,
-      events,
-      subscribers: new Set(),
-    };
-    if (record.status === "running") {
-      // Every live execution is cached before its Dynamic Worker starts. A
-      // durable running row without a cached record is therefore an orphan
-      // left by restart or a failed terminal transaction.
+    const record = this.#loadRecord(id);
+    if (record?.status === "running") {
+      // Every live execution is cached before its Dynamic Worker starts,
+      // and recovery caches the ones it resumes. A durable running row
+      // without a cached record is therefore an orphan left by a failed
+      // terminal transaction.
       this.#records.set(id, record);
       this.#finish(record, "failed", [
         {
@@ -749,6 +942,24 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       ]);
     }
     return record;
+  }
+
+  #loadRecord(id: string): ExecutionRecord | undefined {
+    const row = this.#host.db.one<{ status: ExecutionRecord["status"] }>(
+      `SELECT status FROM workspace_runtime_executions WHERE backend = ? AND id = ?`,
+      this.#backendId,
+      id,
+    );
+    if (!row) return undefined;
+    const events = this.#host.db
+      .all<{ seq: number; name: WorkspaceRuntimeEvent["name"]; payload: Uint8Array }>(
+        `SELECT seq, name, payload FROM workspace_runtime_events
+         WHERE backend = ? AND execution_id = ? ORDER BY seq`,
+        this.#backendId,
+        id,
+      )
+      .map((event) => decodeEvent(id, event.seq, event.name, event.payload));
+    return { id, status: row.status, events, subscribers: new Set() };
   }
 
   // Drain the runner's framed output stream live, ingesting each frame
@@ -789,11 +1000,19 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   #ingestFrame(record: ExecutionRecord, frame: RuntimeFrame) {
     if (record.status !== "running") return;
     if (frame.name === "stdout" || frame.name === "stderr") {
+      let value = frame.value;
+      const skip = record.skip?.[frame.name] ?? 0;
+      if (skip > 0 && record.skip !== undefined) {
+        const skipped = Math.min(skip, value.byteLength);
+        record.skip[frame.name] -= skipped;
+        value = value.subarray(skipped);
+        if (value.byteLength === 0) return;
+      }
       this.#append(record, {
         id: record.id,
         seq: record.events.length + 1,
         name: frame.name,
-        value: frame.value,
+        value,
       });
     } else {
       record.exitCode = frame.code;
@@ -813,6 +1032,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   }
 
   async #finalizeOnce(record: ExecutionRecord, errorMessage?: string) {
+    const expected = record.journal?.expectedCall();
+    if (errorMessage === undefined && expected !== undefined) {
+      errorMessage =
+        "The execution took a different path when it resumed after an interruption: " +
+        `it finished without calling ${expected} again.`;
+    }
     try {
       await record.bridge?.cancelAndDrain();
     } catch (error) {
@@ -937,6 +1162,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           record.id,
         );
         for (const event of events) this.#persistEvent(record.id, event);
+        clearDurable(this.#host.db, this.#backendId, record.id);
       });
     } catch {
       // The execution must settle even if durable storage is unavailable.
@@ -1039,6 +1265,18 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         this.#backendId,
         cutoff,
       );
+      // Saved start data and journals belong to running executions only.
+      // Anything else was left by a terminal state that wasn't persisted.
+      for (const table of DURABLE_TABLES) {
+        this.#host.db.run(
+          `DELETE FROM ${table}
+           WHERE backend = ? AND execution_id NOT IN (
+             SELECT id FROM workspace_runtime_executions WHERE backend = ? AND status = 'running'
+           )`,
+          this.#backendId,
+          this.#backendId,
+        );
+      }
       const excess = this.#host.db.all<{ id: string }>(
         `SELECT id FROM workspace_runtime_executions
          WHERE backend = ? AND status != 'running'
@@ -1355,6 +1593,84 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           }
           return "";
         };
+        const durable = context && context.durable;
+        if (durable) {
+          // A replay has to make the same choices, so random numbers come
+          // from the run's seed (mulberry32).
+          let state = durable.seed >>> 0;
+          Math.random = () => {
+            state = (state + 0x6d2b79f5) | 0;
+            let t = Math.imul(state ^ (state >>> 15), 1 | state);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+          // The clock is virtual, so a replay reads the same times. It
+          // starts when the run did, moves to the time each journaled
+          // call completed, and moves on by a timer's delay when the
+          // timer fires. Like the Workers clock, it doesn't move while
+          // code computes. While the run replays, timers fire at once,
+          // so a replay doesn't wait out the sleeps it already waited.
+          const RealDate = Date;
+          let virtualNow = durable.startedAt;
+          let replaying = durable.replaying === true;
+          const advance = (time) => {
+            if (typeof time === "number" && time > virtualNow) virtualNow = time;
+          };
+          function DurableDate(...args) {
+            if (!new.target) return new RealDate(virtualNow).toString();
+            return args.length === 0 ? new RealDate(virtualNow) : new RealDate(...args);
+          }
+          DurableDate.prototype = RealDate.prototype;
+          DurableDate.now = () => virtualNow;
+          DurableDate.parse = RealDate.parse;
+          DurableDate.UTC = RealDate.UTC;
+          globalThis.Date = DurableDate;
+          globalThis[Symbol.for("cloudflare.workspace.runtime.clock")] = (at, stillReplaying) => {
+            advance(at);
+            replaying = stillReplaying === true;
+          };
+          // Intervals are chained timeouts, so each tick picks its real
+          // delay afresh once the replay is over.
+          const realSetTimeout = setTimeout;
+          const realClearTimeout = clearTimeout;
+          const timers = new Map();
+          let nextTimer = 1;
+          const schedule = (id, callback, delay, args, repeat) => {
+            const step = Math.max(0, Number(delay) || 0);
+            const due = virtualNow + step;
+            timers.set(
+              id,
+              realSetTimeout(() => {
+                advance(due);
+                if (repeat) schedule(id, callback, delay, args, true);
+                else timers.delete(id);
+                if (typeof callback === "function") callback(...args);
+              }, replaying ? 0 : step),
+            );
+            return id;
+          };
+          const clear = (id) => {
+            const handle = timers.get(id);
+            if (handle === undefined) return;
+            realClearTimeout(handle);
+            timers.delete(id);
+          };
+          globalThis.setTimeout = (callback, delay, ...args) =>
+            schedule(nextTimer++, callback, delay, args, false);
+          globalThis.setInterval = (callback, delay, ...args) =>
+            schedule(nextTimer++, callback, delay, args, true);
+          globalThis.clearTimeout = clear;
+          globalThis.clearInterval = clear;
+          if (globalThis.scheduler && typeof globalThis.scheduler.wait === "function") {
+            const realWait = globalThis.scheduler.wait.bind(globalThis.scheduler);
+            globalThis.scheduler.wait = async (delay, options) => {
+              const step = Math.max(0, Number(delay) || 0);
+              const due = virtualNow + step;
+              await realWait(replaying ? 0 : step, options);
+              advance(due);
+            };
+          }
+        }
         install(host);
         // Hand the readable end to the host, which drains it live while
         // this call stays in flight. Keeping evaluate in flight is what
@@ -1482,6 +1798,12 @@ function assertPositiveFinite(value: number, name: string) {
 function assertPositiveInteger(value: number, name: string) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`WorkerJavaScriptBackend ${name} must be a positive integer.`);
+  }
+}
+
+function assertInterruptPolicy(value: unknown): asserts value is WorkspaceRuntimeInterruptPolicy {
+  if (!INTERRUPT_POLICIES.includes(value as WorkspaceRuntimeInterruptPolicy)) {
+    throw new Error('onInterrupt must be "fail", "restart" or "replay".');
   }
 }
 

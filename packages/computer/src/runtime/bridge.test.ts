@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
+import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
 import type { WorkspaceRuntimeCapability } from "./capability.js";
 
 const encoder = new TextEncoder();
@@ -242,6 +242,58 @@ describe("WorkspaceRuntimeBridge assertResult", () => {
   it("rejects a value that exceeds the result byte ceiling", async () => {
     await expect(resultBridge(8).assertResult("x".repeat(64))).rejects.toThrow(
       /result exceeds 8 bytes/,
+    );
+  });
+});
+
+describe("WorkspaceRuntimeBridge journal", () => {
+  function journaled(steps: ReturnType<BridgeJournal["begin"]>[]) {
+    const commits: number[] = [];
+    const journal: BridgeJournal = {
+      begin: () => steps.shift() ?? { kind: "live", seq: 99 },
+      commit: (seq) => {
+        commits.push(seq);
+        return 1234;
+      },
+      diverged: () => undefined,
+      get replaying() {
+        return steps.some((step) => step.kind === "replay");
+      },
+    };
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxTotalResponseBytes: 4,
+      hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
+      journal,
+    });
+    return { target, commits };
+  }
+
+  it("answers a replayed call from the journal and journals a live one", async () => {
+    const { target, commits } = journaled([
+      { kind: "replay", response: { result: "no" }, at: 5 },
+      { kind: "live", seq: 2 },
+    ]);
+    await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
+      result: "no",
+      at: 5,
+      replaying: false,
+    });
+    await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
+      result: "ok",
+      at: 1234,
+      replaying: false,
+    });
+    expect(commits).toEqual([2]);
+  });
+
+  it("counts replayed responses against the cumulative response budget", async () => {
+    const { target } = journaled([
+      { kind: "replay", response: { result: "abc" }, at: 5 },
+      { kind: "live", seq: 2 },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
+      "responses exceed 4 bytes",
     );
   });
 });

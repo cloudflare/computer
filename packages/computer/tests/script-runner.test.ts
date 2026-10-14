@@ -332,11 +332,13 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value).toEqual([
       "delete",
       "echo",
+      "gate",
       "invalidResult",
       "largeError",
       "marker",
       "slow",
       "sum",
+      "tick",
     ]);
   });
 
@@ -966,5 +968,159 @@ describe.each([
       status: "completed",
       value: { doubled: 6, echoed: { args: [3] } },
     });
+  });
+});
+
+describe("durable executions", () => {
+  const source = `
+    import fs from "node:fs/promises";
+    import { tick, gate } from "ws:test-host";
+    export default async function () {
+      const roll = Math.random();
+      console.log("a");
+      await fs.writeFile("/workspace/roll.txt", String(roll));
+      const first = await tick("work");
+      await gate();
+      console.log("b");
+      const second = await tick("work");
+      return { roll, saved: await fs.readFile("/workspace/roll.txt", "utf8"), first, second };
+    }
+  `;
+
+  async function start(id: string, body: { source: string; onInterrupt?: string }) {
+    const response = await SELF.fetch("https://example.test/durable-start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, ...body }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+  }
+
+  async function result(id: string) {
+    const response = await SELF.fetch(
+      `https://example.test/runtime-get?id=${encodeURIComponent(id)}`,
+    );
+    return (await response.json()) as {
+      status: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      value?: unknown;
+    };
+  }
+
+  async function calls() {
+    return (await (await SELF.fetch("https://example.test/durable-calls")).json()) as Record<
+      string,
+      number
+    >;
+  }
+
+  it("replays a run after a restart without repeating its calls or output", async () => {
+    await start("durable-replay", { source, onInterrupt: "replay" });
+    const settled = await result("durable-replay");
+    expect(settled).toMatchObject({ status: "completed", exitCode: 0, stdout: "a\nb\n" });
+    const value = settled.value as { roll: number; saved: string; first: number; second: number };
+    expect(value.saved).toBe(String(value.roll));
+    expect(value).toMatchObject({ first: 1, second: 2 });
+    // The first tick came from the journal. The gate was in flight, so
+    // it ran again.
+    expect(await calls()).toEqual({ work: 2, gate: 2 });
+  });
+
+  it("replays the clock a run read before it was interrupted", async () => {
+    await start("durable-clock", {
+      source: `
+        import fs from "node:fs/promises";
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          const started = Date.now();
+          await fs.writeFile("/workspace/clock.txt", String(started));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          const slept = new Date().getTime();
+          await tick(slept - started >= 5 ? "slept" : "early");
+          await gate();
+          return { started, slept, later: Date.now() >= slept };
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-clock");
+    expect(settled, settled.stderr).toMatchObject({
+      status: "completed",
+      value: { later: true },
+    });
+    expect(await calls()).toEqual({ slept: 1, gate: 2 });
+  });
+
+  it("doesn't wait out a replayed run's sleeps again", async () => {
+    await start("durable-sleep", {
+      source: `
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          const started = Date.now();
+          for (let index = 0; index < 3; index += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await tick("slept");
+          }
+          await gate();
+          return Date.now() - started;
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const resumed = Date.now();
+    const settled = await result("durable-sleep");
+    expect(Date.now() - resumed).toBeLessThan(1000);
+    // The clock still counts the sleeps.
+    expect(settled).toMatchObject({ status: "completed" });
+    expect(settled.value).toBeGreaterThanOrEqual(3000);
+    expect(await calls()).toEqual({ slept: 3, gate: 2 });
+  });
+
+  it("restarts a run from the beginning", async () => {
+    await start("durable-restart", { source, onInterrupt: "restart" });
+    const settled = await result("durable-restart");
+    expect(settled).toMatchObject({ status: "completed", stdout: "a\na\nb\n" });
+    expect(settled.stderr).toContain("restarted from the beginning");
+    expect(settled.value).toMatchObject({ first: 2, second: 3 });
+    expect(await calls()).toEqual({ work: 3, gate: 2 });
+  });
+
+  it("fails a replay that takes a different path", async () => {
+    await start("durable-diverge", {
+      source: `
+        import fs from "node:fs/promises";
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          await fs.writeFile("/workspace/" + crypto.randomUUID() + ".txt", "x");
+          await gate();
+          await tick("after");
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-diverge");
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain("took a different path");
+    expect(await calls()).toEqual({ gate: 1 });
+  });
+
+  it("fails an interrupted run by default", async () => {
+    await start("durable-fail", { source });
+    const settled = await result("durable-fail");
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain("interrupted when its Workspace runtime restarted");
+  });
+
+  it("resumes runs when the host calls recover", async () => {
+    await start("durable-recover", { source, onInterrupt: "replay" });
+    await SELF.fetch("https://example.test/durable-recover", { method: "POST" });
+    for (let attempt = 0; attempt < 100 && (await calls()).work !== 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(await calls()).toEqual({ work: 2, gate: 2 });
+    expect(await result("durable-recover")).toMatchObject({ status: "completed" });
   });
 });

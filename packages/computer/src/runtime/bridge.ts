@@ -19,6 +19,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxTotalResponseBytes: number;
   readonly #maxResultBytes: number;
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+  readonly #journal?: BridgeJournal;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
@@ -39,6 +40,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxTotalResponseBytes?: number;
       maxResultBytes?: number;
       onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+      journal?: BridgeJournal;
     } = {},
   ) {
     super();
@@ -52,6 +54,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
     this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
     this.#onAttachOutput = integrations.onAttachOutput;
+    this.#journal = integrations.journal;
   }
 
   // Drain the runner's framed output stream. The isolate passes the
@@ -108,6 +111,23 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
     this.#calls += 1;
     this.#requestBytes += requestBytes;
+    // A durable execution answers a call it already made from its
+    // journal, so the operation doesn't run twice.
+    const step = this.#journal?.begin(name, args);
+    if (step?.kind === "replay") {
+      // The first attempt counted this response, and the replay repeats
+      // that attempt, so it counts again.
+      this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+      return Promise.resolve({
+        ...step.response,
+        at: step.at,
+        replaying: this.#journal?.replaying === true,
+      });
+    }
+    if (step?.kind === "diverge") {
+      this.#journal?.diverged(step.message);
+      return reject(step.message);
+    }
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
@@ -200,19 +220,27 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // Errors count against the response budget too. The budget error
     // itself is short and not counted, and `maxCalls` bounds how many
     // the isolate can see.
-    return call.then((response) => {
-      const bytes = "result" in response ? response.bytes : errorBytes(response);
-      if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
-        return boundedError(
-          new Error(
-            `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
-          ),
-          this.#maxPayloadBytes,
-        );
-      }
-      this.#responseBytes += bytes;
-      return "result" in response ? { result: response.result } : response;
-    });
+    return call
+      .then((response) => {
+        const bytes = "result" in response ? response.bytes : errorBytes(response);
+        if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
+          return boundedError(
+            new Error(
+              `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
+            ),
+            this.#maxPayloadBytes,
+          );
+        }
+        this.#responseBytes += bytes;
+        return "result" in response ? { result: response.result } : response;
+      })
+      .then((response) => {
+        // Write before deliver: the journal holds the response before the
+        // isolate can act on it.
+        if (step?.kind !== "live" || this.#journal === undefined) return response;
+        const at = this.#journal.commit(step.seq, response);
+        return { ...response, at, replaying: this.#journal.replaying };
+      });
   }
 
   async cancelAndDrain(): Promise<void> {
@@ -303,12 +331,47 @@ function decodeBytes(value: unknown): string | Uint8Array {
   return value instanceof Uint8Array ? value : String(value);
 }
 
+function replayedBytes(response: BridgeResponse, maxPayloadBytes: number): number {
+  if (!("result" in response)) return errorBytes(response);
+  try {
+    return measureValue(response.result, maxPayloadBytes, "response");
+  } catch {
+    return maxPayloadBytes;
+  }
+}
+
 /** What the bridge sends back for one call: a value, or a bounded error. */
-export type BridgeResponse =
+export type BridgeResponse = (
   | { readonly result: unknown }
   | {
       readonly error: { readonly message: string; readonly code?: string; readonly path?: string };
-    };
+    }
+) & {
+  /**
+   * When a journaled call first completed. A durable execution's clock
+   * reads this, so it reads the same on replay.
+   */
+  readonly at?: number;
+  /** Whether journaled responses are still waiting to be replayed. */
+  readonly replaying?: boolean;
+};
+
+/** Records a durable execution's calls and answers them on replay. */
+export interface BridgeJournal {
+  begin(
+    name: string,
+    args: readonly unknown[],
+  ):
+    | { readonly kind: "replay"; readonly response: BridgeResponse; readonly at: number }
+    | { readonly kind: "live"; readonly seq: number }
+    | { readonly kind: "diverge"; readonly message: string };
+  /** Record a live call's response, and return the time it records. */
+  commit(seq: number, response: BridgeResponse): number;
+  /** Whether journaled responses are still waiting to be replayed. */
+  readonly replaying: boolean;
+  /** Called when a call doesn't match the journal. */
+  diverged(message: string): void;
+}
 
 // A response before the per-execution budget check, carrying its size.
 type MeasuredResponse =

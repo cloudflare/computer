@@ -520,11 +520,20 @@ function isInternalModuleName(name: string) {
   );
 }
 
+/**
+ * The generated modules every graph carries. A durable execution
+ * compares them to tell whether the runtime changed under it.
+ */
+export function internalModuleSources(maxCapabilityBytes: number): string[] {
+  return [capabilitiesModule(maxCapabilityBytes), nodeFsPromisesModule(), nodeFsModule()];
+}
+
 function capabilitiesModule(maxCapabilityBytes: number) {
   const requestTooLargeMessage = `Workspace capability request exceeds ${maxCapabilityBytes} bytes.`;
   return `
     let host;
     const callKey = Symbol.for("cloudflare.workspace.runtime.call");
+    const clockKey = Symbol.for("cloudflare.workspace.runtime.clock");
     const filesystemMethods = new Set([
       "readFile", "readFileBytes", "writeFile", "mkdir", "rm", "chmod",
       "symlink", "readlink", "readdir", "readdirWithFileTypes", "stat", "lstat", "exists"
@@ -570,6 +579,10 @@ function capabilitiesModule(maxCapabilityBytes: number) {
         }
         throw error;
       }
+      // A durable execution's clock moves to the time each journaled
+      // response first arrived, so it reads the same on replay.
+      const clock = globalThis[clockKey];
+      if (typeof clock === "function") clock(payload.at, payload.replaying);
       if (payload.error !== undefined) {
         const error = new Error(payload.error.message);
         if (payload.error.code !== undefined) error.code = payload.error.code;
