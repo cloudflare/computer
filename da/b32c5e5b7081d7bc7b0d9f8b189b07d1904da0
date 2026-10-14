@@ -1,0 +1,21 @@
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5a33ac7eaed91e::t_cf36ba2d0a57c5 1405-1406
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5a33ac7eaed91e::t_e981b4e1d22b0f 81,217-223,225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "dab32c5e5b7081d7bc7b0d9f8b189b07d1904da0",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
