@@ -6,10 +6,10 @@ small, portable working directory and the tools to read, write, and run
 things in it.
 
 > [!IMPORTANT]
-> Most of this package is stable. The container backends, the Worker
-> shell backend, the `ws:container` host module, the sync between the
-> durable object and `computerd`, and `computerd` itself are
-> experimental. See [Status](#status) for the full list.
+> The `@cloudflare/computer` package should be considered suitable for
+> production use. The package contains work-in-progress and experimental
+> components such as the `ContainerBackend`. These should be considered
+> unsuitable for production use. See the [reference below](#status) for more details.
 
 ## Status
 

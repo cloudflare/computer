@@ -26,17 +26,10 @@ Workspace can also be constructed without a backend at all, giving
 callers the filesystem on its own.
 
 > [!IMPORTANT]
-> Most of Cloudflare Computer is stable, meaning suitable for
-> production use: the `Workspace`, its SQLite filesystem
-> (`@cloudflare/dofs`), the Isolate JavaScript backend, mounts, agent
-> tools, Git, Assets, and Artifacts.
->
-> The experimental parts are the container backends, the Worker shell backend, the `ws:container`
-> host module, the sync between the durable object and `computerd`,
-> `computerd` itself, and the RPC package. Their APIs
-> may change in any release, and they are not yet suitable for production
-> use. The [`@cloudflare/computer` status table](packages/computer/README.md#status)
-> has the full list.
+> The `@cloudflare/computer` package should be considered suitable for
+> production use. The package contains work-in-progress and experimental
+> components such as the `ContainerBackend`. These should be considered
+> unsuitable for production use. See the [status reference](packages/computer/README.md#status) for more details.
 >
 > The specification under [`docs/`](docs/) is forward-looking — read it for
 > intent, not as description of the code today.
