@@ -24,6 +24,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #fetch?: (request: Request) => Promise<Response>;
   readonly #callIdPrefix: string;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
+  #fetchesInFlight = 0;
+  #fetchesRunning = 0;
+  readonly #fetchQueue: Array<() => void> = [];
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
   #callTimedOut = false;
@@ -115,7 +118,21 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     } catch (error) {
       return Promise.resolve(boundedError(error, this.#maxPayloadBytes));
     }
-    if (this.#inFlight.size >= this.#maxConcurrentCalls) {
+    // fetch only comes through here in a replayable run, so it keeps the
+    // limits it has anywhere else: none of the capability budgets, and a
+    // queue rather than a refusal when too many are open at once.
+    const isFetch = name === "net.fetch";
+    if (!isFetch) return this.#capabilityCall(name, args, requestBytes, reject);
+    return this.#dispatch(name, args, reject, true);
+  }
+
+  #capabilityCall(
+    name: string,
+    args: unknown[],
+    requestBytes: number,
+    reject: (message: string) => Promise<BridgeResponse>,
+  ): Promise<BridgeResponse> {
+    if (this.#inFlight.size - this.#fetchesInFlight >= this.#maxConcurrentCalls) {
       return reject(
         `Workspace execution exceeds ${this.#maxConcurrentCalls} concurrent capability calls.`,
       );
@@ -130,13 +147,22 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
     this.#calls += 1;
     this.#requestBytes += requestBytes;
+    return this.#dispatch(name, args, reject, false);
+  }
+
+  #dispatch(
+    name: string,
+    args: unknown[],
+    reject: (message: string) => Promise<BridgeResponse>,
+    isFetch: boolean,
+  ): Promise<BridgeResponse> {
     // A durable execution answers a call it already made from its
     // journal, so the operation doesn't run twice.
     const step = this.#journal?.begin(name, args);
     if (step?.kind === "replay") {
       // The first attempt counted this response, and the replay repeats
       // that attempt, so it counts again.
-      this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+      if (!isFetch) this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
       return Promise.resolve({ ...step.response, at: step.at, ordinal: step.ordinal });
     }
     if (step?.kind === "diverge") {
@@ -237,8 +263,10 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // the accepted host operation itself. This prevents a late mutation
     // after an exit event when the underlying API cannot be aborted.
     this.#inFlight.add(operation);
+    if (isFetch) this.#fetchesInFlight += 1;
     void operation.finally(() => {
       this.#inFlight.delete(operation);
+      if (isFetch) this.#fetchesInFlight -= 1;
       this.#abortControllers.delete(abort);
     });
     // Errors count against the response budget too. The budget error
@@ -246,6 +274,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // the isolate can see.
     return call
       .then((response) => {
+        if (isFetch) return "result" in response ? { result: response.result } : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
           return boundedError(
@@ -318,18 +347,33 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // the response comes back buffered.
   async #fetchFor(spec: unknown, signal: AbortSignal) {
     if (this.#fetch === undefined) throw new Error("Workspace code has no network access.");
+    const fetch = this.#fetch;
     const request = parseFetchRequest(spec, signal);
-    const response = await this.#fetch(request);
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      headers: [...response.headers],
-      url: response.url,
-      redirected: response.redirected,
-      body: await readLimited(response, this.#maxPayloadBytes),
-    };
+    // A Worker keeps at most six connections open and queues the rest,
+    // which also bounds how many buffered bodies this object holds.
+    while (this.#fetchesRunning >= MAX_OPEN_FETCHES) {
+      await new Promise<void>((resolve) => this.#fetchQueue.push(resolve));
+    }
+    this.#fetchesRunning += 1;
+    try {
+      signal.throwIfAborted();
+      const response = await fetch(request);
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: [...response.headers],
+        url: response.url,
+        redirected: response.redirected,
+        body: await readLimited(response, this.#maxPayloadBytes),
+      };
+    } finally {
+      this.#fetchesRunning -= 1;
+      this.#fetchQueue.shift()?.();
+    }
   }
 }
+
+const MAX_OPEN_FETCHES = 6;
 
 function parseFetchRequest(spec: unknown, signal: AbortSignal): Request {
   if (spec === null || typeof spec !== "object") throw new Error("fetch takes a request object.");

@@ -360,6 +360,42 @@ describe("WorkspaceRuntimeBridge journal", () => {
 });
 
 describe("WorkspaceRuntimeBridge fetch", () => {
+  it("keeps fetch out of the capability call budgets", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxCalls: 1,
+      maxTotalResponseBytes: 8,
+      hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
+      fetch: async () => new Response("a response well over eight bytes"),
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await expect(message(target.call("net.fetch", [request]))).resolves.toBeUndefined();
+    }
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
+      "exceeds 1 capability calls",
+    );
+  });
+
+  it("queues fetches past six open at once instead of refusing them", async () => {
+    let open = 0;
+    let peak = 0;
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxConcurrentCalls: 2,
+      fetch: async () => {
+        open += 1;
+        peak = Math.max(peak, open);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        open -= 1;
+        return new Response("ok");
+      },
+    });
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => message(target.call("net.fetch", [request]))),
+    );
+    expect(responses).toEqual(Array.from({ length: 10 }, () => undefined));
+    expect(peak).toBe(6);
+  });
+
   const request = {
     url: "https://example.test/a",
     method: "POST",

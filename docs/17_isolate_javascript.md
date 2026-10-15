@@ -193,7 +193,8 @@ Some limits apply:
 - A run resumes only within its original timeout, counted from when it first started.
 - A run resumes only on the same runtime code. A deploy that changes the backend's generated modules, compatibility date or flags fails the runs it interrupted rather than replaying them on different code.
 - After a restart, interrupted runs start four at a time, since a Durable Object runs at most ten Dynamic Workers at once. The rest wait their turn within their timeouts.
-- A `fetch` in flight at the restart is sent again, like a host module call. A replayable run's `fetch` response is buffered rather than streamed, and is subject to the same per-call size limit as any other capability call.
+- A `fetch` in flight at the restart is sent again, like a host module call.
+- A replayable run's `fetch` is buffered rather than streamed: each request and response body must fit within `maxCapabilityBytes`, 1 MiB by default. It doesn't count toward `maxCapabilityCalls` or the capability byte budgets, and at most six are open at once, with the rest waiting their turn, as in any Worker. Every response stays in the journal until the run settles.
 - Some sources of nondeterminism aren't covered: keys from `crypto.subtle.generateKey()`, `node:crypto` randomness, `node:timers`, and TCP sockets from `cloudflare:sockets`. A run that uses them for anything it passes to a call or prints diverges on replay.
 - The journal counts toward the Durable Object's storage while the run lasts: roughly the size of every call's response, plus the saved module graph.
 

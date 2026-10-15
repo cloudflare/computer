@@ -114,6 +114,24 @@ describe("ExecutionJournal", () => {
     expect(replay.commit(c.seq, { result: "c" })).toMatchObject({ ordinal: 3 });
   });
 
+  it("splits a large response across rows", () => {
+    const db = database();
+    const first = new ExecutionJournal(db, "js", "run");
+    const step = first.begin("net.fetch", [{ url: "https://example.test/big" }]);
+    if (step.kind !== "live") throw new Error("expected a live call");
+    const body = new Uint8Array(600 * 1024).map((_, index) => index % 251);
+    first.commit(step.seq, { result: { status: 200, body } });
+    expect(
+      db.one<{ count: number }>("SELECT count(*) AS count FROM workspace_runtime_journal_chunks")
+        ?.count,
+    ).toBeGreaterThan(1);
+    const replay = new ExecutionJournal(db, "js", "run");
+    expect(replay.begin("net.fetch", [{ url: "https://example.test/big" }])).toMatchObject({
+      kind: "replay",
+      response: { result: { status: 200, body } },
+    });
+  });
+
   it("saves the event log in chunks that can arrive out of order", () => {
     const db = database();
     const first = new ExecutionJournal(db, "js", "run");

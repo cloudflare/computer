@@ -39,8 +39,8 @@ export const MAX_INTERRUPT_ATTEMPTS = 3;
  */
 export const MAX_CONCURRENT_RECOVERIES = 4;
 
-// Saved start data is split across rows, since a module graph can be
-// larger than one SQLite value should hold.
+// Saved start data and large responses are split across rows, since a
+// Durable Object's SQLite holds at most 2 MB in a row.
 const CHUNK_CHARACTERS = 256 * 1024;
 
 export interface DurableStart {
@@ -97,6 +97,7 @@ export const DURABLE_TABLES = [
   "workspace_runtime_durable",
   "workspace_runtime_durable_chunks",
   "workspace_runtime_journal",
+  "workspace_runtime_journal_chunks",
   "workspace_runtime_schedule",
 ] as const;
 
@@ -134,6 +135,16 @@ export function createDurableTables(db: Database): void {
       at INTEGER,
       ordinal INTEGER,
       PRIMARY KEY (backend, execution_id, seq)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workspace_runtime_journal_chunks (
+      backend TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      idx INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      PRIMARY KEY (backend, execution_id, seq, idx)
     )
   `);
   db.run(`
@@ -208,7 +219,11 @@ export function recordAttempt(db: Database, backend: string, id: string, attempt
 }
 
 export function clearJournal(db: Database, backend: string, id: string): void {
-  for (const table of ["workspace_runtime_journal", "workspace_runtime_schedule"]) {
+  for (const table of [
+    "workspace_runtime_journal",
+    "workspace_runtime_journal_chunks",
+    "workspace_runtime_schedule",
+  ]) {
     db.run(`DELETE FROM ${table} WHERE backend = ? AND execution_id = ?`, backend, id);
   }
 }
@@ -277,7 +292,8 @@ export class ExecutionJournal implements BridgeJournal {
         key: row.call_key,
         label: row.label,
         state: row.state === "applied" && row.response !== null ? "applied" : "executing",
-        response: row.response,
+        // An empty response marks one stored in chunks.
+        response: row.response === "" ? this.#chunkedResponse(Number(row.seq)) : row.response,
         at: row.at === null ? null : Number(row.at),
         ordinal: row.ordinal === null ? null : Number(row.ordinal),
       }));
@@ -320,6 +336,19 @@ export class ExecutionJournal implements BridgeJournal {
       position as number,
       JSON.stringify(events),
     );
+  }
+
+  #chunkedResponse(seq: number): string {
+    return this.#db
+      .all<{ data: string }>(
+        `SELECT data FROM workspace_runtime_journal_chunks
+         WHERE backend = ? AND execution_id = ? AND seq = ? ORDER BY idx`,
+        this.#backend,
+        this.#id,
+        seq,
+      )
+      .map((chunk) => chunk.data)
+      .join("");
   }
 
   // The log as far as it runs without a gap. A chunk that arrived after
@@ -396,10 +425,26 @@ export class ExecutionJournal implements BridgeJournal {
   commit(seq: number, response: BridgeResponse): { at: number; ordinal: number } {
     const at = Date.now();
     this.#lastOrdinal += 1;
+    const text = encodeValue(response);
+    const chunked = text.length > CHUNK_CHARACTERS;
+    if (chunked) {
+      for (let offset = 0, idx = 0; offset < text.length; offset += CHUNK_CHARACTERS, idx += 1) {
+        this.#db.run(
+          `INSERT OR REPLACE INTO workspace_runtime_journal_chunks
+             (backend, execution_id, seq, idx, data)
+           VALUES (?, ?, ?, ?, ?)`,
+          this.#backend,
+          this.#id,
+          seq,
+          idx,
+          text.slice(offset, offset + CHUNK_CHARACTERS),
+        );
+      }
+    }
     this.#db.run(
       `UPDATE workspace_runtime_journal SET state = 'applied', response = ?, at = ?, ordinal = ?
        WHERE backend = ? AND execution_id = ? AND seq = ?`,
-      encodeValue(response),
+      chunked ? "" : text,
       at,
       this.#lastOrdinal,
       this.#backend,

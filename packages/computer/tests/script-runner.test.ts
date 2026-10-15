@@ -1233,6 +1233,27 @@ describe("durable executions", () => {
     expect(await calls()).toEqual({ fetch: 1, gate: 2 });
   });
 
+  it("doesn't count a replayable run's fetches toward its capability calls", async () => {
+    await start("durable-many-fetches", {
+      source: `
+        import { gate } from "ws:test-host";
+        export default async function () {
+          // More than the default 256 capability calls, a dozen at a time.
+          for (let round = 0; round < 25; round++) {
+            await Promise.all(Array.from({ length: 12 }, () => fetch("https://gateway.test/x")));
+          }
+          await gate();
+          return "done";
+        }
+      `,
+      onInterrupt: "replay",
+      network: true,
+    });
+    const settled = await result("durable-many-fetches", { network: true });
+    expect(settled).toMatchObject({ status: "completed", value: "done" });
+    expect(await calls()).toEqual({ fetch: 300, gate: 2 });
+  });
+
   it("fails a replay that prints different output", async () => {
     await start("durable-output", {
       source: `
