@@ -113,6 +113,7 @@ export type {
   WorkspaceRuntimeTruncation,
   WorkspaceRuntimeValue,
 } from "./runtime/types.js";
+export { unsafeToRepeat } from "./runtime/replay-safety.js";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire.js";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh.js";
 export type { ExecEncoding, ExecSyncResult, KillSignal } from "./shell.js";

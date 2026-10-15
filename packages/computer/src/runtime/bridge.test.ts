@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
 import type { WorkspaceRuntimeCapability } from "./capability.js";
+import { unsafeToRepeat } from "./replay-safety.js";
+import type { WorkspaceModuleCallContext } from "./types.js";
 
 const encoder = new TextEncoder();
 const args = ["value"];
@@ -250,7 +252,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
   function journaled(steps: ReturnType<BridgeJournal["begin"]>[]) {
     const commits: number[] = [];
     const journal: BridgeJournal = {
-      begin: () => steps.shift() ?? { kind: "live", seq: 99 },
+      begin: () => steps.shift() ?? { kind: "live", seq: 99, rerun: false },
       commit: (seq) => {
         commits.push(seq);
         return { at: 1234, ordinal: 7 };
@@ -264,18 +266,31 @@ describe("WorkspaceRuntimeBridge journal", () => {
     };
     const diverged: string[] = [];
     const logs: unknown[] = [];
+    const contexts: WorkspaceModuleCallContext[] = [];
     const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
       maxTotalResponseBytes: 4,
-      hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async (_args: unknown, context: WorkspaceModuleCallContext) => {
+              contexts.push(context);
+              return "ok";
+            },
+            charge: unsafeToRepeat(async () => "c"),
+          },
+        ],
+      ]),
       journal,
+      callIdPrefix: "exec-1",
     });
-    return { target, commits, diverged, logs };
+    return { target, commits, diverged, contexts, logs };
   }
 
   it("answers a replayed call from the journal and journals a live one", async () => {
     const { target, commits } = journaled([
       { kind: "replay", response: { result: "no" }, at: 5, ordinal: 1 },
-      { kind: "live", seq: 2 },
+      { kind: "live", seq: 2, rerun: false },
     ]);
     await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
       result: "no",
@@ -291,12 +306,39 @@ describe("WorkspaceRuntimeBridge journal", () => {
   });
 
   it("saves the event log a call carries before making the call", async () => {
-    const { target, logs } = journaled([{ kind: "live", seq: 1 }]);
+    const { target, logs } = journaled([{ kind: "live", seq: 1, rerun: false }]);
     await target.call("host/ws:test.run", args, { from: 3, events: [4, -1] });
     expect(logs).toEqual([[3, [4, -1]]]);
     await expect(
       message(target.call("host/ws:test.run", args, { from: 5, events: "x" as never })),
     ).resolves.toContain("malformed event log");
+  });
+
+  it("gives a journaled call the same id when it runs again", async () => {
+    const { target, contexts } = journaled([
+      { kind: "live", seq: 7, rerun: false },
+      { kind: "live", seq: 7, rerun: true },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await target.call("host/ws:test.run", args);
+    expect(contexts.map((context) => context.callId)).toEqual(["exec-1:7", "exec-1:7"]);
+  });
+
+  it("refuses to run an unsafe call again after an interruption", async () => {
+    const { target, diverged } = journaled([
+      { kind: "live", seq: 1, rerun: false },
+      { kind: "live", seq: 1, rerun: true },
+      { kind: "live", seq: 2, rerun: true },
+    ]);
+    await expect(target.call("host/ws:test.charge", args)).resolves.toMatchObject({
+      result: "c",
+    });
+    await expect(message(target.call("host/ws:test.charge", args))).resolves.toContain(
+      "interrupted while ws:test.charge was running, which isn't safe to repeat",
+    );
+    expect(diverged).toHaveLength(1);
+    // A function that isn't marked runs again.
+    await expect(target.call("host/ws:test.run", args)).resolves.toMatchObject({ result: "ok" });
   });
 
   it("passes a stalled replay to the journal", () => {

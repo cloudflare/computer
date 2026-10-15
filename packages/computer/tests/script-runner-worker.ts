@@ -7,7 +7,7 @@ import {
 } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
 import type { WorkspaceRuntimeValue, WorkspaceStub } from "../src/index.js";
-import { Workspace } from "../src/index.js";
+import { unsafeToRepeat, Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
@@ -118,6 +118,12 @@ function javascriptBackend(
           if (!gateOpen) await new Promise(() => undefined);
           return "open";
         },
+        // The gate, for a call that mustn't run twice.
+        unsafeGate: unsafeToRepeat(async () => {
+          countCall("gate");
+          if (!gateOpen) await new Promise(() => undefined);
+          return "open";
+        }),
         async invalidResult() {
           // SAFETY: The test hands the bridge a non-JSON value on purpose to check that it rejects it.
           return new Date() as never;

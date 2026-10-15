@@ -79,7 +79,12 @@ export type JournalStep =
       /** Where this response came in the order responses were delivered. */
       readonly ordinal: number;
     }
-  | { readonly kind: "live"; readonly seq: number }
+  | {
+      readonly kind: "live";
+      readonly seq: number;
+      /** The call was in flight when the run was interrupted. */
+      readonly rerun: boolean;
+    }
   | { readonly kind: "diverge"; readonly message: string };
 
 export const DURABLE_TABLES = [
@@ -357,7 +362,7 @@ export class ExecutionJournal implements BridgeJournal {
       }
       // The call was in flight when the execution was interrupted, so its
       // response never reached the code. Run it again.
-      return { kind: "live", seq: entry.seq };
+      return { kind: "live", seq: entry.seq, rerun: true };
     }
     if (this.#unanswered > 0) {
       return {
@@ -378,7 +383,7 @@ export class ExecutionJournal implements BridgeJournal {
       key,
       label,
     );
-    return { kind: "live", seq };
+    return { kind: "live", seq, rerun: false };
   }
 
   /** Record a live call's response, before the isolate sees it. */

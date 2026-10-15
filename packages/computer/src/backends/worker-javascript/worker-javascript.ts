@@ -104,7 +104,8 @@ export interface WorkerJavaScriptBackendOptions {
    * A run is resumed when the backend reconnects, which the next runtime
    * call or `ready()` triggers, or `runtime.recover()`. It gets three
    * attempts and must finish within its original timeout. A call in
-   * flight at the interruption runs again.
+   * flight at the interruption runs again, unless it's marked with
+   * `unsafeToRepeat()`.
    */
   onInterrupt?: WorkspaceRuntimeInterruptPolicy;
   /**
@@ -763,6 +764,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
+        callIdPrefix: record.id,
         ...hostEgressFetch(this.#options.egress),
         ...(spec.journal === undefined ? {} : { journal: spec.journal }),
       });

@@ -2,6 +2,7 @@ import { RpcTarget } from "cloudflare:workers";
 
 import { utf8ByteLength, utf8Prefix } from "../text-truncation.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
+import { isUnsafeToRepeat } from "./replay-safety.js";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFunctions,
@@ -21,6 +22,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
   readonly #journal?: BridgeJournal;
   readonly #fetch?: (request: Request) => Promise<Response>;
+  readonly #callIdPrefix: string;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
@@ -45,6 +47,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       // Makes network requests for the isolate's journaled fetch. Absent
       // when the isolate has no network access.
       fetch?: (request: Request) => Promise<Response>;
+      // Prefix of every call's callId, such as the execution id.
+      callIdPrefix?: string;
     } = {},
   ) {
     super();
@@ -60,6 +64,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#onAttachOutput = integrations.onAttachOutput;
     this.#journal = integrations.journal;
     this.#fetch = integrations.fetch;
+    this.#callIdPrefix = integrations.callIdPrefix ?? crypto.randomUUID();
   }
 
   // Drain the runner's framed output stream. The isolate passes the
@@ -138,6 +143,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#journal?.diverged(step.message);
       return reject(step.message);
     }
+    if (step?.kind === "live" && step.rerun && isUnsafeToRepeat(this.#hostFunction(name))) {
+      const message = `The execution was interrupted while ${name.slice("host/".length)} was running, which isn't safe to repeat.`;
+      this.#journal?.diverged(message);
+      return reject(message);
+    }
+    // Stable across attempts for a journaled call, unique otherwise.
+    const callId = `${this.#callIdPrefix}:${step?.kind === "live" ? step.seq : crypto.randomUUID()}`;
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
@@ -146,6 +158,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         return this.#callHostModule(name, args, {
           signal: abort.signal,
           deadline,
+          callId,
           access: this.#capability.access,
           resolvePath: (path, options) =>
             this.#capability.resolveConfined(path, options?.allowMissing ?? false),
@@ -274,21 +287,30 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // from a specifier such as `ws:a.b`. Own-property checks keep
   // isolate code from reaching `toString` or other inherited members.
   async #callHostModule(name: string, args: unknown[], context: WorkspaceModuleCallContext) {
+    const fn = this.#hostFunction(name);
+    if (fn === undefined) {
+      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
+    }
+    // Called on its module, so a method that uses `this` still works.
+    const result = await fn.call(this.#hostModuleOf(name), hostArguments(args), context);
+    return hostValue(result ?? null);
+  }
+
+  #hostModuleOf(name: string) {
+    if (!name.startsWith("host/")) return undefined;
     const target = name.slice("host/".length);
     const dot = target.lastIndexOf(".");
-    const specifier = dot === -1 ? "" : target.slice(0, dot);
-    const functionName = dot === -1 ? "" : target.slice(dot + 1);
-    const functions = this.#hostModules.get(specifier);
+    return dot === -1 ? undefined : this.#hostModules.get(target.slice(0, dot));
+  }
+
+  #hostFunction(name: string) {
+    const functions = this.#hostModuleOf(name);
+    const functionName = name.slice(name.lastIndexOf(".") + 1);
     const fn =
       functions !== undefined && Object.hasOwn(functions, functionName)
         ? functions[functionName]
         : undefined;
-    if (typeof fn !== "function") {
-      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
-    }
-    // Called on its module, so a method that uses `this` still works.
-    const result = await fn.call(functions, hostArguments(args), context);
-    return hostValue(result ?? null);
+    return typeof fn === "function" ? fn : undefined;
   }
 
   // A fetch the isolate journals goes through here: the request crosses
@@ -455,7 +477,7 @@ export interface BridgeJournal {
         readonly at: number;
         readonly ordinal: number;
       }
-    | { readonly kind: "live"; readonly seq: number }
+    | { readonly kind: "live"; readonly seq: number; readonly rerun: boolean }
     | { readonly kind: "diverge"; readonly message: string };
   /** Record a live call's response, and return its time and ordinal. */
   commit(seq: number, response: BridgeResponse): { at: number; ordinal: number };

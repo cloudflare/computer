@@ -71,7 +71,7 @@ describe("ExecutionJournal", () => {
       response: { result: "contents of /a" },
     });
     expect(replay.expectedCall()).toBeUndefined();
-    expect(replay.begin("fs.readFile", ["/c"])).toEqual({ kind: "live", seq: 3 });
+    expect(replay.begin("fs.readFile", ["/c"])).toEqual({ kind: "live", seq: 3, rerun: false });
   });
 
   it("reports a call the journal doesn't hold while recorded calls remain", () => {
@@ -91,9 +91,9 @@ describe("ExecutionJournal", () => {
   it("runs a call again when it was in flight at the interruption", () => {
     const db = database();
     const first = new ExecutionJournal(db, "js", "run");
-    expect(first.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1 });
+    expect(first.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1, rerun: false });
     const replay = new ExecutionJournal(db, "js", "run");
-    expect(replay.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1 });
+    expect(replay.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1, rerun: true });
     expect(replay.expectedCall()).toBeUndefined();
   });
 

@@ -339,6 +339,7 @@ describe("WorkspaceRuntime", () => {
       "slow",
       "sum",
       "tick",
+      "unsafeGate",
       "wait",
     ]);
   });
@@ -1249,6 +1250,25 @@ describe("durable executions", () => {
     const settled = await result("durable-output", { network: true });
     expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
     expect(settled.stderr).toContain("it wrote different stdout from the first time");
+  });
+
+  it("fails a replay interrupted during a call that isn't safe to repeat", async () => {
+    await start("durable-unsafe", {
+      source: `
+        import { unsafeGate } from "ws:test-host";
+        export default async function () {
+          await unsafeGate();
+        }
+      `,
+      onInterrupt: "replay",
+      network: true,
+    });
+    const settled = await result("durable-unsafe", { network: true });
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain(
+      "interrupted while ws:test-host.unsafeGate was running, which isn't safe to repeat",
+    );
+    expect(await calls()).toEqual({ gate: 1 });
   });
 
   it("fails an interrupted run by default", async () => {

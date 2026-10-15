@@ -22,6 +22,12 @@ export interface WorkspaceModuleCallContext {
    * @returns The confined absolute path.
    */
   resolvePath(path: string, options?: { readonly allowMissing?: boolean }): Promise<string>;
+  /**
+   * Identifies this call. When a replayable run is interrupted while the
+   * call is in flight and runs it again on resume, the second call gets
+   * the same id, so a function can use it as an idempotency key.
+   */
+  readonly callId: string;
 }
 
 /**
