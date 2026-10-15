@@ -333,6 +333,7 @@ describe("WorkspaceRuntime", () => {
       "delete",
       "echo",
       "gate",
+      "hold",
       "invalidResult",
       "largeError",
       "marker",
@@ -1293,6 +1294,34 @@ describe("durable executions", () => {
       "interrupted while ws:test-host.unsafeGate was running, which isn't safe to repeat",
     );
     expect(await calls()).toEqual({ gate: 1 });
+  });
+
+  it("replays a run interrupted a second time during its replay", async () => {
+    await start("durable-twice", {
+      source: `
+        import { gate, hold, tick } from "ws:test-host";
+        export default async function () {
+          console.log("one", await tick("a"));
+          await gate();
+          console.log("two", await tick("b"));
+          await hold("second");
+          console.log("three", await tick("c"));
+          return Math.random();
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    // Resume the run, and wait for it to reach the second hold.
+    await SELF.fetch("https://example.test/durable-recover", { method: "POST" });
+    for (let attempt = 0; attempt < 100 && (await calls()).second !== 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await SELF.fetch("https://example.test/durable-restart?open=second", { method: "POST" });
+    const settled = await result("durable-twice");
+    expect(settled).toMatchObject({ status: "completed", stdout: "one 1\ntwo 1\nthree 1\n" });
+    // Each tick ran once. The gate and the hold were each in flight at an
+    // interruption, so each ran again once.
+    expect(await calls()).toEqual({ a: 1, gate: 2, b: 1, second: 2, c: 1 });
   });
 
   it("fails an interrupted run by default", async () => {

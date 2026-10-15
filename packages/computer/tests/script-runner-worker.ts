@@ -62,6 +62,8 @@ function fakeContainerBackend(): WorkspaceBackend {
 // and holds the gate a run waits on until the object restarts.
 const durableCalls = new Map<string, number>();
 let gateOpen = false;
+// Named gates a run can wait on after the first, for a second restart.
+const opened = new Set<string>();
 
 function countCall(name: string): number {
   const count = (durableCalls.get(name) ?? 0) + 1;
@@ -116,6 +118,13 @@ function javascriptBackend(
         async gate() {
           countCall("gate");
           if (!gateOpen) await new Promise(() => undefined);
+          return "open";
+        },
+        // Never settles before a restart opens it by name.
+        async hold(args) {
+          const name = String(args[0]);
+          countCall(name);
+          if (!opened.has(name)) await new Promise(() => undefined);
           return "open";
         },
         // The gate, for a call that mustn't run twice.
@@ -256,6 +265,7 @@ export class HostDO extends DurableObject<Env> {
     network?: boolean;
   }) {
     gateOpen = false;
+    opened.clear();
     durableCalls.clear();
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
@@ -272,8 +282,9 @@ export class HostDO extends DurableObject<Env> {
   }
 
   // Restart the object, as a deploy or crash would.
-  restart() {
+  restart(open?: string) {
     gateOpen = true;
+    if (open !== undefined) opened.add(open);
     this.ctx.abort("test restart");
   }
 
@@ -524,7 +535,7 @@ export default class extends WorkerEntrypoint<Env> {
       }
 
       if (url.pathname === "/durable-restart") {
-        await stub.restart().catch(() => undefined);
+        await stub.restart(url.searchParams.get("open") ?? undefined).catch(() => undefined);
         return new Response(null, { status: 204 });
       }
 
