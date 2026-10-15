@@ -1,9 +1,13 @@
 import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
 
-export type RuntimeFrame =
+export type RuntimeFrame = (
   | { name: "stdout"; value: Uint8Array }
   | { name: "stderr"; value: Uint8Array }
-  | { name: "exit"; code: number; result?: WorkspaceRuntimeValue };
+  | { name: "exit"; code: number; result?: WorkspaceRuntimeValue }
+) & {
+  // A durable run's events since it last sent any, saved with the frame.
+  log?: { from: unknown; events: unknown };
+};
 
 export function parseRuntimeFrame(line: string): RuntimeFrame {
   let record: Record<string, unknown>;
@@ -12,6 +16,16 @@ export function parseRuntimeFrame(line: string): RuntimeFrame {
   } catch {
     throw new Error("WorkerJavaScriptBackend received an invalid execution frame");
   }
+  const frame = parseFrameBody(record);
+  const log = record.log as { from?: unknown; events?: unknown } | undefined;
+  if (log === undefined) return frame;
+  if (log === null || typeof log !== "object") {
+    throw new Error("WorkerJavaScriptBackend received a malformed event log");
+  }
+  return { ...frame, log: { from: log.from, events: log.events } };
+}
+
+function parseFrameBody(record: Record<string, unknown>): RuntimeFrame {
   const name = record.name;
   if (name === "stdout" || name === "stderr") {
     if (typeof record.b64 !== "string") {

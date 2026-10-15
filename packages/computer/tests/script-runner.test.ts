@@ -332,11 +332,16 @@ describe("WorkspaceRuntime", () => {
     expect(JSON.parse(text).result.value).toEqual([
       "delete",
       "echo",
+      "gate",
+      "hold",
       "invalidResult",
       "largeError",
       "marker",
       "slow",
       "sum",
+      "tick",
+      "unsafeGate",
+      "wait",
     ]);
   });
 
@@ -966,5 +971,373 @@ describe.each([
       status: "completed",
       value: { doubled: 6, echoed: { args: [3] } },
     });
+  });
+});
+
+describe("durable executions", () => {
+  const source = `
+    import fs from "node:fs/promises";
+    import { tick, gate } from "ws:test-host";
+    export default async function () {
+      const roll = Math.random();
+      console.log("a");
+      await fs.writeFile("/workspace/roll.txt", String(roll));
+      const first = await tick("work");
+      await gate();
+      console.log("b");
+      const second = await tick("work");
+      return { roll, saved: await fs.readFile("/workspace/roll.txt", "utf8"), first, second };
+    }
+  `;
+
+  async function start(
+    id: string,
+    body: { source: string; onInterrupt?: string; network?: boolean },
+  ) {
+    const response = await SELF.fetch("https://example.test/durable-start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, ...body }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+  }
+
+  async function result(id: string, options: { network?: boolean } = {}) {
+    const response = await SELF.fetch(
+      `https://example.test/runtime-get?id=${encodeURIComponent(id)}${options.network === true ? "&network" : ""}`,
+    );
+    return (await response.json()) as {
+      status: string;
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      value?: unknown;
+    };
+  }
+
+  async function calls() {
+    return (await (await SELF.fetch("https://example.test/durable-calls")).json()) as Record<
+      string,
+      number
+    >;
+  }
+
+  it("replays a run after a restart without repeating its calls or output", async () => {
+    await start("durable-replay", { source, onInterrupt: "replay" });
+    const settled = await result("durable-replay");
+    expect(settled).toMatchObject({ status: "completed", exitCode: 0, stdout: "a\nb\n" });
+    const value = settled.value as { roll: number; saved: string; first: number; second: number };
+    expect(value.saved).toBe(String(value.roll));
+    expect(value).toMatchObject({ first: 1, second: 2 });
+    // The first tick came from the journal. The gate was in flight, so
+    // it ran again.
+    expect(await calls()).toEqual({ work: 2, gate: 2 });
+  });
+
+  it("replays the clock a run read before it was interrupted", async () => {
+    await start("durable-clock", {
+      source: `
+        import fs from "node:fs/promises";
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          const started = Date.now();
+          await fs.writeFile("/workspace/clock.txt", String(started));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          const slept = new Date().getTime();
+          await tick(slept - started >= 5 ? "slept" : "early");
+          await gate();
+          return { started, slept, later: Date.now() >= slept };
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-clock");
+    expect(settled, settled.stderr).toMatchObject({
+      status: "completed",
+      value: { later: true },
+    });
+    expect(await calls()).toEqual({ slept: 1, gate: 2 });
+  });
+
+  it("doesn't wait out a replayed run's sleeps again", async () => {
+    await start("durable-sleep", {
+      source: `
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          const started = Date.now();
+          for (let index = 0; index < 3; index += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await tick("slept");
+          }
+          await gate();
+          return Date.now() - started;
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const resumed = Date.now();
+    const settled = await result("durable-sleep");
+    expect(Date.now() - resumed).toBeLessThan(1000);
+    // The clock still counts the sleeps.
+    expect(settled).toMatchObject({ status: "completed" });
+    expect(settled.value).toBeGreaterThanOrEqual(3000);
+    expect(await calls()).toEqual({ slept: 3, gate: 2 });
+  });
+
+  it("restarts a run from the beginning", async () => {
+    await start("durable-restart", { source, onInterrupt: "restart" });
+    const settled = await result("durable-restart");
+    expect(settled).toMatchObject({ status: "completed", stdout: "a\na\nb\n" });
+    expect(settled.stderr).toContain("restarted from the beginning");
+    expect(settled.value).toMatchObject({ first: 2, second: 3 });
+    expect(await calls()).toEqual({ work: 3, gate: 2 });
+  });
+
+  it("fails a replay that takes a different path", async () => {
+    await start("durable-diverge", {
+      source: `
+        import fs from "node:fs/promises";
+        import { gate, tick } from "ws:test-host";
+        export default async function () {
+          // Generated keys are the one source of randomness a replay
+          // doesn't repeat.
+          const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+          const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+          await fs.writeFile("/workspace/" + raw.slice(0, 8).join("-") + ".txt", "x");
+          await gate();
+          await tick("after");
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-diverge");
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain("took a different path");
+    expect(await calls()).toEqual({ gate: 1 });
+  });
+
+  it("repeats a run's random numbers when it replays", async () => {
+    await start("durable-random", {
+      source: `
+        import { gate } from "ws:test-host";
+        export default async function () {
+          // Short enough to stay under the test backend's output limit.
+          const values = [
+            Math.random().toFixed(8),
+            crypto.randomUUID().slice(0, 13),
+            crypto.getRandomValues(new Uint8Array(4)).join(","),
+          ];
+          console.log(values.join(" "));
+          await gate();
+          return values;
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-random");
+    // The replay checks the line it prints against the one recorded, and
+    // would fail on a different one.
+    expect(settled).toMatchObject({ status: "completed", exitCode: 0 });
+    expect(settled.stdout).toBe(`${(settled.value as string[]).join(" ")}\n`);
+  });
+
+  it("delivers replayed responses in the order they first arrived", async () => {
+    await start("durable-order", {
+      source: `
+        import { gate, wait } from "ws:test-host";
+        export default async function () {
+          const slow = wait(80, "slow").then(() => "slow");
+          const fast = wait(5, "fast").then(() => "fast");
+          const winner = await Promise.race([slow, fast]);
+          await Promise.all([slow, fast]);
+          console.log(winner);
+          await gate();
+          return winner;
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-order");
+    expect(settled).toMatchObject({ status: "completed", stdout: "fast\n", value: "fast" });
+    expect(await calls()).toEqual({ slow: 1, fast: 1, gate: 2 });
+  });
+
+  it("fires replayed timers in order with replayed responses", async () => {
+    await start("durable-race", {
+      source: `
+        import { gate, wait } from "ws:test-host";
+        // unref() checks the timers hand back the same kind of handle as
+        // the runtime's own.
+        const sleep = (ms, value) =>
+          new Promise((resolve) => setTimeout(() => resolve(value), ms).unref());
+        export default async function () {
+          const long = wait(150, "long");
+          const first = await Promise.race([sleep(20, "timer"), long.then(() => "call")]);
+          await long;
+          const short = wait(5, "short");
+          const second = await Promise.race([sleep(150, "timer"), short.then(() => "call")]);
+          console.log(first, second);
+          await gate();
+          return [first, second];
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-race");
+    expect(settled).toMatchObject({ status: "completed", stdout: "timer call\n" });
+    expect(await calls()).toEqual({ long: 1, short: 1, gate: 2 });
+  });
+
+  it("keeps the live order when the run computes between events", async () => {
+    await start("durable-compute", {
+      source: `
+        import { gate, wait } from "ws:test-host";
+        const sleep = (ms, value) => new Promise((resolve) => setTimeout(resolve, ms));
+        export default async function () {
+          // The clock doesn't move while code computes, so the timer is
+          // due earlier by the clock than it fires in fact.
+          let x = 0;
+          for (let i = 0; i < 1e9; i++) x ^= i;
+          const call = wait(100, "call").then(() => "call");
+          const winner = await Promise.race([sleep(300, "timer"), call]);
+          await call;
+          console.log(winner, x > -1);
+          await gate();
+          return winner;
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-compute");
+    expect(settled).toMatchObject({ status: "completed", stdout: "call true\n", value: "call" });
+  });
+
+  it("journals fetch so a replay doesn't send it again", async () => {
+    await start("durable-fetch", {
+      source: `
+        import { gate } from "ws:test-host";
+        export default async function () {
+          const response = await fetch("https://gateway.test/items", { method: "POST", body: "hi" });
+          const text = await response.text();
+          console.log(response.status, response.headers.get("x-count"), text);
+          await gate();
+          return text;
+        }
+      `,
+      onInterrupt: "replay",
+      network: true,
+    });
+    const settled = await result("durable-fetch", { network: true });
+    expect(settled).toMatchObject({
+      status: "completed",
+      stdout: "200 1 POST /items hi #1\n",
+      value: "POST /items hi #1",
+    });
+    expect(await calls()).toEqual({ fetch: 1, gate: 2 });
+  });
+
+  it("doesn't count a replayable run's fetches toward its capability calls", async () => {
+    await start("durable-many-fetches", {
+      source: `
+        import { gate } from "ws:test-host";
+        export default async function () {
+          // More than the default 256 capability calls, a dozen at a time.
+          for (let round = 0; round < 25; round++) {
+            await Promise.all(Array.from({ length: 12 }, () => fetch("https://gateway.test/x")));
+          }
+          await gate();
+          return "done";
+        }
+      `,
+      onInterrupt: "replay",
+      network: true,
+    });
+    const settled = await result("durable-many-fetches", { network: true });
+    expect(settled).toMatchObject({ status: "completed", value: "done" });
+    expect(await calls()).toEqual({ fetch: 300, gate: 2 });
+  });
+
+  it("fails a replay that prints different output", async () => {
+    await start("durable-output", {
+      source: `
+        import { gate } from "ws:test-host";
+        export default async function () {
+          const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+          console.log(new Uint8Array(await crypto.subtle.exportKey("raw", key)).slice(0, 8).join(","));
+          await gate();
+        }
+      `,
+      onInterrupt: "replay",
+      // This backend's output limit leaves the whole message.
+      network: true,
+    });
+    const settled = await result("durable-output", { network: true });
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain("it wrote different stdout from the first time");
+  });
+
+  it("fails a replay interrupted during a call that isn't safe to repeat", async () => {
+    await start("durable-unsafe", {
+      source: `
+        import { unsafeGate } from "ws:test-host";
+        export default async function () {
+          await unsafeGate();
+        }
+      `,
+      onInterrupt: "replay",
+      network: true,
+    });
+    const settled = await result("durable-unsafe", { network: true });
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain(
+      "interrupted while ws:test-host.unsafeGate was running, which isn't safe to repeat",
+    );
+    expect(await calls()).toEqual({ gate: 1 });
+  });
+
+  it("replays a run interrupted a second time during its replay", async () => {
+    await start("durable-twice", {
+      source: `
+        import { gate, hold, tick } from "ws:test-host";
+        export default async function () {
+          console.log("one", await tick("a"));
+          await gate();
+          console.log("two", await tick("b"));
+          await hold("second");
+          console.log("three", await tick("c"));
+          return Math.random();
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    // Resume the run, and wait for it to reach the second hold.
+    await SELF.fetch("https://example.test/durable-recover", { method: "POST" });
+    for (let attempt = 0; attempt < 100 && (await calls()).second !== 1; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await SELF.fetch("https://example.test/durable-restart?open=second", { method: "POST" });
+    const settled = await result("durable-twice");
+    expect(settled).toMatchObject({ status: "completed", stdout: "one 1\ntwo 1\nthree 1\n" });
+    // Each tick ran once. The gate and the hold were each in flight at an
+    // interruption, so each ran again once.
+    expect(await calls()).toEqual({ a: 1, gate: 2, b: 1, second: 2, c: 1 });
+  });
+
+  it("fails an interrupted run by default", async () => {
+    await start("durable-fail", { source });
+    const settled = await result("durable-fail");
+    expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
+    expect(settled.stderr).toContain("interrupted when its Workspace runtime restarted");
+  });
+
+  it("resumes runs when the host calls recover", async () => {
+    await start("durable-recover", { source, onInterrupt: "replay" });
+    await SELF.fetch("https://example.test/durable-recover", { method: "POST" });
+    for (let attempt = 0; attempt < 100 && (await calls()).work !== 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(await calls()).toEqual({ work: 2, gate: 2 });
+    expect(await result("durable-recover")).toMatchObject({ status: "completed" });
   });
 });

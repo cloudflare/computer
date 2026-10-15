@@ -2,6 +2,7 @@ import { RpcTarget } from "cloudflare:workers";
 
 import { utf8ByteLength, utf8Prefix } from "../text-truncation.js";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability.js";
+import { isUnsafeToRepeat } from "./replay-safety.js";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFunctions,
@@ -19,7 +20,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxTotalResponseBytes: number;
   readonly #maxResultBytes: number;
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+  readonly #journal?: BridgeJournal;
+  readonly #fetch?: (request: Request) => Promise<Response>;
+  readonly #callIdPrefix: string;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
+  #fetchesInFlight = 0;
+  #fetchesRunning = 0;
+  readonly #fetchQueue: Array<() => void> = [];
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
   #callTimedOut = false;
@@ -39,6 +46,12 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxTotalResponseBytes?: number;
       maxResultBytes?: number;
       onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+      journal?: BridgeJournal;
+      // Makes network requests for the isolate's journaled fetch. Absent
+      // when the isolate has no network access.
+      fetch?: (request: Request) => Promise<Response>;
+      // Prefix of every call's callId, such as the execution id.
+      callIdPrefix?: string;
     } = {},
   ) {
     super();
@@ -52,6 +65,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
     this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
     this.#onAttachOutput = integrations.onAttachOutput;
+    this.#journal = integrations.journal;
+    this.#fetch = integrations.fetch;
+    this.#callIdPrefix = integrations.callIdPrefix ?? crypto.randomUUID();
   }
 
   // Drain the runner's framed output stream. The isolate passes the
@@ -80,12 +96,21 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // as real values through Workers RPC; this method is the proxy that
   // keeps the limits on them, so untrusted code cannot overload the
   // Durable Object with calls, concurrency, time, or bytes.
-  call(name: string, args: unknown[]): Promise<BridgeResponse> {
+  call(name: string, args: unknown[], log?: BridgeLogChunk): Promise<BridgeResponse> {
     const reject = (message: string) =>
       Promise.resolve(boundedError(new Error(message), this.#maxPayloadBytes));
     if (this.#cancelled) return reject("Workspace execution is being cancelled.");
     if (typeof name !== "string" || !Array.isArray(args)) {
       return reject("Workspace capability calls take a name and an argument list.");
+    }
+    // A durable run's events since its last call, saved before the call
+    // that may depend on them.
+    if (log !== undefined && log !== null && this.#journal !== undefined) {
+      try {
+        this.#journal.record(log.from, log.events);
+      } catch (error) {
+        return Promise.resolve(boundedError(error, this.#maxPayloadBytes));
+      }
     }
     let requestBytes: number;
     try {
@@ -93,7 +118,21 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     } catch (error) {
       return Promise.resolve(boundedError(error, this.#maxPayloadBytes));
     }
-    if (this.#inFlight.size >= this.#maxConcurrentCalls) {
+    // fetch only comes through here in a replayable run, so it keeps the
+    // limits it has anywhere else: none of the capability budgets, and a
+    // queue rather than a refusal when too many are open at once.
+    const isFetch = name === "net.fetch";
+    if (!isFetch) return this.#capabilityCall(name, args, requestBytes, reject);
+    return this.#dispatch(name, args, reject, true);
+  }
+
+  #capabilityCall(
+    name: string,
+    args: unknown[],
+    requestBytes: number,
+    reject: (message: string) => Promise<BridgeResponse>,
+  ): Promise<BridgeResponse> {
+    if (this.#inFlight.size - this.#fetchesInFlight >= this.#maxConcurrentCalls) {
       return reject(
         `Workspace execution exceeds ${this.#maxConcurrentCalls} concurrent capability calls.`,
       );
@@ -108,6 +147,37 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
     this.#calls += 1;
     this.#requestBytes += requestBytes;
+    return this.#dispatch(name, args, reject, false);
+  }
+
+  #dispatch(
+    name: string,
+    args: unknown[],
+    reject: (message: string) => Promise<BridgeResponse>,
+    isFetch: boolean,
+  ): Promise<BridgeResponse> {
+    // A durable execution answers a call it already made from its
+    // journal, so the operation doesn't run twice.
+    const step = this.#journal?.begin(name, args);
+    if (step?.kind === "replay") {
+      // The first attempt counted this response, and the replay repeats
+      // that attempt, so it counts again. The budget error wasn't counted.
+      if (!isFetch && !this.#isBudgetError(step.response)) {
+        this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+      }
+      return Promise.resolve({ ...step.response, at: step.at, ordinal: step.ordinal });
+    }
+    if (step?.kind === "diverge") {
+      this.#journal?.diverged(step.message);
+      return reject(step.message);
+    }
+    if (step?.kind === "live" && step.rerun && isUnsafeToRepeat(this.#hostFunction(name))) {
+      const message = `The execution was interrupted while ${name.slice("host/".length)} was running, which isn't safe to repeat.`;
+      this.#journal?.diverged(message);
+      return reject(message);
+    }
+    // Stable across attempts for a journaled call, unique otherwise.
+    const callId = `${this.#callIdPrefix}:${step?.kind === "live" ? step.seq : crypto.randomUUID()}`;
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
@@ -116,11 +186,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         return this.#callHostModule(name, args, {
           signal: abort.signal,
           deadline,
+          callId,
           access: this.#capability.access,
           resolvePath: (path, options) =>
             this.#capability.resolveConfined(path, options?.allowMissing ?? false),
         });
       }
+      if (name === "net.fetch") return this.#fetchFor(args[0], abort.signal);
       const operation = name.startsWith("fs.") ? name.slice(3) : name;
       switch (operation) {
         case "readFile":
@@ -193,26 +265,58 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // the accepted host operation itself. This prevents a late mutation
     // after an exit event when the underlying API cannot be aborted.
     this.#inFlight.add(operation);
+    if (isFetch) this.#fetchesInFlight += 1;
     void operation.finally(() => {
       this.#inFlight.delete(operation);
+      if (isFetch) this.#fetchesInFlight -= 1;
       this.#abortControllers.delete(abort);
     });
     // Errors count against the response budget too. The budget error
     // itself is short and not counted, and `maxCalls` bounds how many
     // the isolate can see.
-    return call.then((response) => {
-      const bytes = "result" in response ? response.bytes : errorBytes(response);
-      if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
-        return boundedError(
-          new Error(
-            `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
-          ),
-          this.#maxPayloadBytes,
-        );
-      }
-      this.#responseBytes += bytes;
-      return "result" in response ? { result: response.result } : response;
-    });
+    return call
+      .then((response) => {
+        if (isFetch) return "result" in response ? { result: response.result } : response;
+        const bytes = "result" in response ? response.bytes : errorBytes(response);
+        if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
+          return this.#budgetError();
+        }
+        this.#responseBytes += bytes;
+        return "result" in response ? { result: response.result } : response;
+      })
+      .then((response) => {
+        // Write before deliver: the journal holds the response before the
+        // isolate can act on it. A filesystem change is synchronous SQL on
+        // the same database, with no I/O between it and here, so it and
+        // its entry commit in the same implicit transaction.
+        if (step?.kind !== "live" || this.#journal === undefined) return response;
+        return { ...response, ...this.#journal.commit(step.seq, response) };
+      });
+  }
+
+  #budgetError() {
+    return boundedError(
+      new Error(
+        `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
+      ),
+      this.#maxPayloadBytes,
+    );
+  }
+
+  #isBudgetError(response: BridgeResponse): boolean {
+    return "error" in response && response.error.message === this.#budgetError().error.message;
+  }
+
+  // The isolate is waiting for a journaled call its replay never made.
+  reportStall(): void {
+    this.#journal?.stalled();
+  }
+
+  // Part of a durable run's event log, sent on its own when it grows long
+  // between calls and output.
+  recordLog(log: BridgeLogChunk): void {
+    if (this.#cancelled) return;
+    this.#journal?.record(log?.from, log?.events);
   }
 
   async cancelAndDrain(): Promise<void> {
@@ -231,22 +335,114 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // from a specifier such as `ws:a.b`. Own-property checks keep
   // isolate code from reaching `toString` or other inherited members.
   async #callHostModule(name: string, args: unknown[], context: WorkspaceModuleCallContext) {
+    const fn = this.#hostFunction(name);
+    if (fn === undefined) {
+      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
+    }
+    // Called on its module, so a method that uses `this` still works.
+    const result = await fn.call(this.#hostModuleOf(name), hostArguments(args), context);
+    return hostValue(result ?? null);
+  }
+
+  #hostModuleOf(name: string) {
+    if (!name.startsWith("host/")) return undefined;
     const target = name.slice("host/".length);
     const dot = target.lastIndexOf(".");
-    const specifier = dot === -1 ? "" : target.slice(0, dot);
-    const functionName = dot === -1 ? "" : target.slice(dot + 1);
-    const functions = this.#hostModules.get(specifier);
+    return dot === -1 ? undefined : this.#hostModules.get(target.slice(0, dot));
+  }
+
+  #hostFunction(name: string) {
+    const functions = this.#hostModuleOf(name);
+    const functionName = name.slice(name.lastIndexOf(".") + 1);
     const fn =
       functions !== undefined && Object.hasOwn(functions, functionName)
         ? functions[functionName]
         : undefined;
-    if (typeof fn !== "function") {
-      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
-    }
-    // Called on its module, so a method that uses `this` still works.
-    const result = await fn.call(functions, hostArguments(args), context);
-    return hostValue(result ?? null);
+    return typeof fn === "function" ? fn : undefined;
   }
+
+  // A fetch the isolate journals goes through here: the request crosses
+  // as plain data, the host makes it through the backend's egress, and
+  // the response comes back buffered.
+  async #fetchFor(spec: unknown, signal: AbortSignal) {
+    if (this.#fetch === undefined) throw new Error("Workspace code has no network access.");
+    const fetch = this.#fetch;
+    const request = parseFetchRequest(spec, signal);
+    // A Worker keeps at most six connections open and queues the rest,
+    // which also bounds how many buffered bodies this object holds.
+    while (this.#fetchesRunning >= MAX_OPEN_FETCHES) {
+      await new Promise<void>((resolve) => this.#fetchQueue.push(resolve));
+    }
+    this.#fetchesRunning += 1;
+    try {
+      signal.throwIfAborted();
+      const response = await fetch(request);
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        headers: [...response.headers],
+        url: response.url,
+        redirected: response.redirected,
+        body: await readLimited(response, this.#maxPayloadBytes),
+      };
+    } finally {
+      this.#fetchesRunning -= 1;
+      this.#fetchQueue.shift()?.();
+    }
+  }
+}
+
+const MAX_OPEN_FETCHES = 6;
+
+function parseFetchRequest(spec: unknown, signal: AbortSignal): Request {
+  if (spec === null || typeof spec !== "object") throw new Error("fetch takes a request object.");
+  const { url, method, headers, body, redirect } = spec as Record<string, unknown>;
+  if (typeof url !== "string" || typeof method !== "string") {
+    throw new Error("fetch takes a request with a url and a method.");
+  }
+  if (
+    !Array.isArray(headers) ||
+    !headers.every((pair) => Array.isArray(pair) && pair.length === 2)
+  ) {
+    throw new Error("fetch request headers must be name and value pairs.");
+  }
+  if (body !== null && body !== undefined && !(body instanceof Uint8Array)) {
+    throw new Error("fetch request bodies must be bytes.");
+  }
+  return new Request(url, {
+    method,
+    headers: headers.map(([name, value]): [string, string] => [String(name), String(value)]),
+    body: (body ?? null) as BodyInit | null,
+    // The Request constructor rejects a value it doesn't know.
+    ...(typeof redirect === "string" ? { redirect: redirect as RequestRedirect } : {}),
+    signal,
+  });
+}
+
+// Read a response body, refusing one larger than the call's payload limit
+// before reading all of it.
+async function readLimited(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (response.body === null) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error(`fetch response body exceeds ${maxBytes} bytes.`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function hostArguments(args: unknown[]): WorkspaceRuntimeValue[] {
@@ -303,12 +499,60 @@ function decodeBytes(value: unknown): string | Uint8Array {
   return value instanceof Uint8Array ? value : String(value);
 }
 
+function replayedBytes(response: BridgeResponse, maxPayloadBytes: number): number {
+  if (!("result" in response)) return errorBytes(response);
+  try {
+    return measureValue(response.result, maxPayloadBytes, "response");
+  } catch {
+    return maxPayloadBytes;
+  }
+}
+
 /** What the bridge sends back for one call: a value, or a bounded error. */
-export type BridgeResponse =
+export type BridgeResponse = (
   | { readonly result: unknown }
   | {
       readonly error: { readonly message: string; readonly code?: string; readonly path?: string };
-    };
+    }
+) & {
+  /**
+   * When a journaled call's response was delivered. A durable execution's
+   * clock reads this, so it reads the same on replay.
+   */
+  readonly at?: number;
+  /** Numbers a journaled response in the order responses were committed. */
+  readonly ordinal?: number;
+};
+
+/** Part of a durable run's event log, starting at position `from`. */
+export interface BridgeLogChunk {
+  readonly from: number;
+  readonly events: readonly number[];
+}
+
+/** Records a durable execution's calls and answers them on replay. */
+export interface BridgeJournal {
+  begin(
+    name: string,
+    args: readonly unknown[],
+  ):
+    | {
+        readonly kind: "replay";
+        readonly response: BridgeResponse;
+        readonly at: number;
+        readonly ordinal: number;
+      }
+    | { readonly kind: "live"; readonly seq: number; readonly rerun: boolean }
+    | { readonly kind: "diverge"; readonly message: string };
+  /** Record a live call's response, and return its time and ordinal. */
+  commit(seq: number, response: BridgeResponse): { at: number; ordinal: number };
+  /** Save a chunk of the isolate's event log. Throws on a malformed one. */
+  record(position: unknown, events: unknown): void;
+  /** Called when a call doesn't match the journal. */
+  diverged(message: string): void;
+  /** Called when the isolate waits for a journaled call it never makes. */
+  stalled(): void;
+}
 
 // A response before the per-execution budget check, carrying its size.
 type MeasuredResponse =

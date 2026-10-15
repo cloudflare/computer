@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
+import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
 import type { WorkspaceRuntimeCapability } from "./capability.js";
+import { unsafeToRepeat } from "./replay-safety.js";
+import type { WorkspaceModuleCallContext } from "./types.js";
 
 const encoder = new TextEncoder();
 const args = ["value"];
@@ -242,6 +244,221 @@ describe("WorkspaceRuntimeBridge assertResult", () => {
   it("rejects a value that exceeds the result byte ceiling", async () => {
     await expect(resultBridge(8).assertResult("x".repeat(64))).rejects.toThrow(
       /result exceeds 8 bytes/,
+    );
+  });
+});
+
+describe("WorkspaceRuntimeBridge journal", () => {
+  function journaled(steps: ReturnType<BridgeJournal["begin"]>[]) {
+    const commits: number[] = [];
+    const journal: BridgeJournal = {
+      begin: () => steps.shift() ?? { kind: "live", seq: 99, rerun: false },
+      commit: (seq) => {
+        commits.push(seq);
+        return { at: 1234, ordinal: 7 };
+      },
+      record: (position, events) => {
+        if (!Array.isArray(events)) throw new Error("malformed event log");
+        logs.push([position, events]);
+      },
+      diverged: (message) => diverged.push(message),
+      stalled: () => diverged.push("stalled"),
+    };
+    const diverged: string[] = [];
+    const logs: unknown[] = [];
+    const contexts: WorkspaceModuleCallContext[] = [];
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxTotalResponseBytes: 4,
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async (_args: unknown, context: WorkspaceModuleCallContext) => {
+              contexts.push(context);
+              return "ok";
+            },
+            charge: unsafeToRepeat(async () => "c"),
+          },
+        ],
+      ]),
+      journal,
+      callIdPrefix: "exec-1",
+    });
+    return { target, commits, diverged, contexts, logs };
+  }
+
+  it("answers a replayed call from the journal and journals a live one", async () => {
+    const { target, commits } = journaled([
+      { kind: "replay", response: { result: "no" }, at: 5, ordinal: 1 },
+      { kind: "live", seq: 2, rerun: false },
+    ]);
+    await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
+      result: "no",
+      at: 5,
+      ordinal: 1,
+    });
+    await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
+      result: "ok",
+      at: 1234,
+      ordinal: 7,
+    });
+    expect(commits).toEqual([2]);
+  });
+
+  it("saves the event log a call carries before making the call", async () => {
+    const { target, logs } = journaled([{ kind: "live", seq: 1, rerun: false }]);
+    await target.call("host/ws:test.run", args, { from: 3, events: [4, -1] });
+    expect(logs).toEqual([[3, [4, -1]]]);
+    await expect(
+      message(target.call("host/ws:test.run", args, { from: 5, events: "x" as never })),
+    ).resolves.toContain("malformed event log");
+  });
+
+  it("gives a journaled call the same id when it runs again", async () => {
+    const { target, contexts } = journaled([
+      { kind: "live", seq: 7, rerun: false },
+      { kind: "live", seq: 7, rerun: true },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await target.call("host/ws:test.run", args);
+    expect(contexts.map((context) => context.callId)).toEqual(["exec-1:7", "exec-1:7"]);
+  });
+
+  it("refuses to run an unsafe call again after an interruption", async () => {
+    const { target, diverged } = journaled([
+      { kind: "live", seq: 1, rerun: false },
+      { kind: "live", seq: 1, rerun: true },
+      { kind: "live", seq: 2, rerun: true },
+    ]);
+    await expect(target.call("host/ws:test.charge", args)).resolves.toMatchObject({
+      result: "c",
+    });
+    await expect(message(target.call("host/ws:test.charge", args))).resolves.toContain(
+      "interrupted while ws:test.charge was running, which isn't safe to repeat",
+    );
+    expect(diverged).toHaveLength(1);
+    // A function that isn't marked runs again.
+    await expect(target.call("host/ws:test.run", args)).resolves.toMatchObject({ result: "ok" });
+  });
+
+  it("saves an event log sent on its own", () => {
+    const { target, logs } = journaled([]);
+    target.recordLog({ from: 0, events: [-1, -2] });
+    expect(logs).toEqual([[0, [-1, -2]]]);
+  });
+
+  it("passes a stalled replay to the journal", () => {
+    const { target, diverged } = journaled([]);
+    target.reportStall();
+    expect(diverged).toEqual(["stalled"]);
+  });
+
+  it("counts replayed responses against the cumulative response budget", async () => {
+    const { target } = journaled([
+      { kind: "replay", response: { result: "abc" }, at: 5 },
+      { kind: "live", seq: 2 },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
+      "responses exceed 4 bytes",
+    );
+  });
+
+  it("doesn't count a replayed budget error, as the first attempt didn't", async () => {
+    const { target } = journaled([
+      {
+        kind: "replay",
+        response: {
+          error: { message: "Workspace execution capability responses exceed 4 bytes." },
+        },
+        at: 5,
+      },
+      { kind: "live", seq: 2, rerun: false },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+  });
+});
+
+describe("WorkspaceRuntimeBridge fetch", () => {
+  it("keeps fetch out of the capability call budgets", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxCalls: 1,
+      maxTotalResponseBytes: 8,
+      hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
+      fetch: async () => new Response("a response well over eight bytes"),
+    });
+    for (let index = 0; index < 3; index += 1) {
+      await expect(message(target.call("net.fetch", [request]))).resolves.toBeUndefined();
+    }
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
+      "exceeds 1 capability calls",
+    );
+  });
+
+  it("queues fetches past six open at once instead of refusing them", async () => {
+    let open = 0;
+    let peak = 0;
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxConcurrentCalls: 2,
+      fetch: async () => {
+        open += 1;
+        peak = Math.max(peak, open);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        open -= 1;
+        return new Response("ok");
+      },
+    });
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => message(target.call("net.fetch", [request]))),
+    );
+    expect(responses).toEqual(Array.from({ length: 10 }, () => undefined));
+    expect(peak).toBe(6);
+  });
+
+  const request = {
+    url: "https://example.test/a",
+    method: "POST",
+    redirect: "manual",
+    headers: [["x-a", "1"]],
+    body: encoder.encode("hi"),
+  };
+
+  it("makes the request through the host and buffers the response", async () => {
+    const seen: Request[] = [];
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      fetch: async (incoming) => {
+        seen.push(incoming);
+        return new Response("pong", { status: 201, headers: { "x-b": "2" } });
+      },
+    });
+    const response = await target.call("net.fetch", [request]);
+    expect(response).toMatchObject({
+      result: { status: 201, headers: expect.arrayContaining([["x-b", "2"]]) },
+    });
+    const result = "result" in response ? (response.result as { body: Uint8Array }) : undefined;
+    expect(new TextDecoder().decode(result?.body)).toBe("pong");
+    expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.redirect).toBe("manual");
+    expect(seen[0]?.headers.get("x-a")).toBe("1");
+    expect(await seen[0]?.text()).toBe("hi");
+  });
+
+  it("refuses when the isolate has no network access", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {});
+    await expect(message(target.call("net.fetch", [request]))).resolves.toContain(
+      "no network access",
+    );
+  });
+
+  it("refuses a response body over the payload limit", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxPayloadBytes: 256,
+      fetch: async () => new Response("x".repeat(1024)),
+    });
+    await expect(message(target.call("net.fetch", [request]))).resolves.toContain(
+      "exceeds 256 bytes",
     );
   });
 });

@@ -7,6 +7,7 @@ import type {
   WorkspaceModuleFunctions,
   WorkspaceRuntimeLoader,
 } from "../../runtime/types.js";
+import { DURABLE_MODULE, durableRuntimeModule } from "./durable-runtime.js";
 
 export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
   load(code: { modules: infer Modules }): unknown;
@@ -263,6 +264,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   const entryName = moduleName(entryPath);
   const modules: Record<string, string | { js?: string }> = Object.assign(Object.create(null), {
     [CAPABILITIES_MODULE]: capabilitiesModule(options.maxCapabilityBytes),
+    [DURABLE_MODULE]: durableRuntimeModule(),
   });
   const seen = new Set<string>();
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
@@ -297,7 +299,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         if (node !== specifier) edits.push({ ...site, specifier: node });
         continue;
       }
-      if (specifier === CAPABILITIES_MODULE) {
+      if (specifier === CAPABILITIES_MODULE || specifier === DURABLE_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
       }
       if (options.emptyHostModules?.has(specifier)) {
@@ -510,19 +512,35 @@ function directoryName(name: string) {
 function isInternalModuleName(name: string) {
   return (
     name === CAPABILITIES_MODULE ||
+    name === DURABLE_MODULE ||
     name === RUNNER_MODULE ||
     name === ENTRY_BASENAME ||
     name === MODULES_DIRECTORY ||
     name.startsWith(`${MODULES_DIRECTORY}/`) ||
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
+    name.endsWith(`/${DURABLE_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
     name.split("/").at(-1)?.startsWith("ws:") === true
   );
 }
 
+/**
+ * The generated modules every graph carries. A durable execution
+ * compares them to tell whether the runtime changed under it.
+ */
+export function internalModuleSources(maxCapabilityBytes: number): string[] {
+  return [
+    capabilitiesModule(maxCapabilityBytes),
+    durableRuntimeModule(),
+    nodeFsPromisesModule(),
+    nodeFsModule(),
+  ];
+}
+
 function capabilitiesModule(maxCapabilityBytes: number) {
   const requestTooLargeMessage = `Workspace capability request exceeds ${maxCapabilityBytes} bytes.`;
   return `
+    import { deliver, failed, request, takeLog } from "${DURABLE_MODULE}";
     let host;
     const callKey = Symbol.for("cloudflare.workspace.runtime.call");
     const filesystemMethods = new Set([
@@ -553,9 +571,11 @@ function capabilitiesModule(maxCapabilityBytes: number) {
         throw new Error(${JSON.stringify(requestTooLargeMessage)});
       }
       let payload;
+      request();
       try {
-        payload = await host.call(namespace + "." + method, args);
+        payload = await host.call(namespace + "." + method, args, takeLog());
       } catch (error) {
+        failed();
         // A module is evaluated outside any request, and the runtime
         // refuses I/O there with an error about request handlers, which
         // this code doesn't have. Name the call and the fix instead.
@@ -570,6 +590,8 @@ function capabilitiesModule(maxCapabilityBytes: number) {
         }
         throw error;
       }
+      // A replayable run sees responses in the order it first saw them.
+      payload = await deliver(payload);
       if (payload.error !== undefined) {
         const error = new Error(payload.error.message);
         if (payload.error.code !== undefined) error.code = payload.error.code;

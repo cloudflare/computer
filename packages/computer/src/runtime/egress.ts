@@ -18,3 +18,20 @@ export function dynamicWorkerEgress(policy: WorkspaceEgressPolicy): {
       return { globalOutbound: policy.gateway };
   }
 }
+
+/**
+ * How the host makes a request on an isolate's behalf, under the same
+ * policy the isolate's own `fetch` would follow. Absent for `none`.
+ */
+export function hostEgressFetch(policy: WorkspaceEgressPolicy): {
+  fetch?: (request: Request) => Promise<Response>;
+} {
+  switch (policy.mode) {
+    case "none":
+      return {};
+    case "direct":
+      return { fetch: (request) => fetch(request) };
+    case "http-gateway":
+      return { fetch: (request) => policy.gateway.fetch(request) };
+  }
+}
