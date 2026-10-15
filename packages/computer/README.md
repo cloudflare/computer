@@ -15,7 +15,8 @@ things in it.
 
 Stable means suitable for production use. Experimental APIs are
 provided for feedback: they may change or go away in any release, so
-use them for experiments and prototypes only.
+use them for experiments and prototypes only. Deprecated APIs will be
+removed in a future release; each one names its replacement.
 
 | Component | Entrypoint | Status |
 | --- | --- | --- |
@@ -29,7 +30,7 @@ use them for experiments and prototypes only.
 | Assets and Artifacts | `@cloudflare/computer/assets`, `@cloudflare/computer/artifacts` | Stable |
 | Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
 | `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
-| `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Experimental |
+| `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `ws:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
@@ -312,7 +313,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 | Backend | Status | Import | Runs | Needs |
 | --- | --- | --- | --- | --- |
 | **Container** | Experimental | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
-| **Container (legacy)** | Experimental | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
+| **Container (legacy)** | Deprecated | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
 | **Worker shell** | Experimental | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
 | **Worker JavaScript** | Stable | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
 
@@ -320,7 +321,11 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   environment. The container owns its own SQLite-backed VFS and this
   package syncs the two stores across a capnweb WebSocket. See
   [`docs/07_injected_service.md`](../../docs/07_injected_service.md) for
-  the container image, and [`examples/container-legacy`](../../examples/container-legacy).
+  the container image, and [`examples/container`](../../examples/container).
+- **Container (legacy)** is deprecated. It serves containers the
+  platform schedules from the `containers` block. Move to the container
+  backend, which needs `scheduling_policy: "durable_object"` and an
+  `images` map instead.
 - **Worker shell** is fast and needs no container. Every filesystem
   operation forwards back to the same Durable Object, so there's no
   second store and no sync round trip. See
@@ -500,7 +505,8 @@ on a computerd instance.
 | Entrypoint | Purpose |
 | --- | --- |
 | `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
-| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
@@ -539,7 +545,7 @@ const ws = new Workspace({
   storage: ctx.storage,
   backends: [
     new WorkerShellBackend({ id: "shell", loader: env.LOADER, /* ... */ }),
-    new LegacyContainerBackend({ id: "sandbox", container: () => this, /* ... */ }),
+    new ContainerBackend({ id: "sandbox", container: () => this, /* ... */ }),
   ],
 });
 
@@ -604,8 +610,10 @@ An adapter for the Cloudflare runtime lives at
   No container.
 - [`examples/worker-javascript`](../../examples/worker-javascript) — the
   same shape, running ECMAScript modules instead of shell commands.
-- [`examples/container-legacy`](../../examples/container-legacy) — the container
+- [`examples/container`](../../examples/container) — the container
   backend running `computerd`.
+- [`examples/container-legacy`](../../examples/container-legacy) — the
+  deprecated legacy container backend.
 - [`examples/think`](../../examples/think) — a chat agent that uses the
   workspace as its working directory.
 - [`examples/tutorial`](../../examples/tutorial) — a step-by-step build:

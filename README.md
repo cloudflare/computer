@@ -64,7 +64,8 @@ public surface. Each is a Worker workspace with its own README.
   `scheduling_policy: "durable_object"` moves both out of the config.
 - [`examples/container-legacy`](examples/container-legacy) — the same
   surface against a container the platform schedules and sizes from the
-  `containers` block.
+  `containers` block. Uses the deprecated legacy container backend; new
+  code should follow `examples/container`.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the
   container example, but the shell runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker loaded through `env.LOADER`. No container.

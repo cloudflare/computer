@@ -30,9 +30,10 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 The primary container backend (`@cloudflare/computer/backends/container`)
 gives you a real Linux environment with arbitrary binaries on `$PATH`,
 optional network access, and a full POSIX filesystem. It costs a container
-per session and a real roundtrip on every filesystem operation. Use
-`@cloudflare/computer/backends/container-legacy` instead when the platform
-schedules and sizes the container.
+per session and a real roundtrip on every filesystem operation. The
+deprecated `@cloudflare/computer/backends/container-legacy` serves
+containers the platform schedules and sizes; new code should use the
+primary container backend.
 
 The worker backend trades the real environment for a Workers
 isolate that boots instantly, scales out cheaply, and has no

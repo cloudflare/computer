@@ -1,7 +1,7 @@
 # 07. Injected Service
 
 > [!WARNING]
-> **Experimental.** `computerd` and the container backends may change in any release and
+> **Experimental.** `computerd` and the container backend may change in any release and
 > is not yet suitable for production use. See the
 > [status table](../packages/computer/README.md#status).
 
@@ -132,7 +132,8 @@ an `images` map. Each launch selects an image from
 pass options such as `entrypoint`, `labels`, and snapshot settings to
 `container.start()`.
 
-`LegacyContainerBackend` works with containers that the platform schedules.
+`LegacyContainerBackend` is deprecated; use `ContainerBackend` for new
+code. It works with containers that the platform schedules.
 The containers block chooses the image and instance size, so this backend
 passes only the environment and internet setting when it starts the
 container.

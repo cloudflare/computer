@@ -348,8 +348,9 @@ export type WithWorkspaceContainerCtor<TBase extends DOCtor> = TBase &
 /**
  * Adds the container host surface that `LegacyContainerBackend` dials to a durable object class.
  *
- * Experimental: this API may change in any release and is not yet
- * suitable for production use.
+ * @deprecated Use `withWorkspaceContainer` from
+ * `@cloudflare/computer/backends/container`. This mixin will be removed in
+ * a future release.
  */
 export function withLegacyWorkspaceContainer<TBase extends DOCtor>(
   Base: TBase,

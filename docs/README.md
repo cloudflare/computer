@@ -47,7 +47,7 @@ The package ships several entrypoints:
 | --- | --- |
 | `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`, for a container the durable object schedules (`scheduling_policy: "durable_object"`). Same sync plumbing; the launch names the image and the instance size. |
-| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
+| `@cloudflare/computer/backends/container-legacy` | Deprecated; use `@cloudflare/computer/backends/container`. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |

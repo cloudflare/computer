@@ -1,7 +1,9 @@
 # egress example
 
 > [!IMPORTANT]
-> This example uses experimental parts of Cloudflare Computer: the container and Worker shell backends and `computerd`.
+> This example uses experimental parts of Cloudflare Computer: the Worker
+> shell backend and `computerd`. Its container path uses the deprecated
+> legacy container backend; new code should use `ContainerBackend`.
 > Their APIs may change in any release, and they are not yet suitable
 > for production use. See the
 > [status table](../../packages/computer/README.md#status).

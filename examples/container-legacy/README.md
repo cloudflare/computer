@@ -1,9 +1,11 @@
 # container example
 
-> [!IMPORTANT]
-> This example uses experimental parts of Cloudflare Computer: the legacy container backend and `computerd`.
-> Their APIs may change in any release, and they are not yet suitable
-> for production use. See the
+> [!WARNING]
+> This example uses the legacy container backend, which is deprecated.
+> New code should use `ContainerBackend`, shown in
+> [`examples/container`](../container). It also uses `computerd`, which
+> is experimental: its APIs may change in any release, and it is not yet
+> suitable for production use. See the
 > [status table](../../packages/computer/README.md#status).
 
 A Cloudflare Worker + Durable Object that boots a Container running

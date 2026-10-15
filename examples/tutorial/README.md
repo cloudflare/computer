@@ -1,7 +1,8 @@
 # Tutorial: a PDF recipe card agent
 
 > [!IMPORTANT]
-> This example uses experimental parts of Cloudflare Computer: the legacy container backend and `computerd`.
+> This example uses the deprecated legacy container backend and the
+> experimental `computerd`. New code should use `ContainerBackend`.
 > Their APIs may change in any release, and they are not yet suitable
 > for production use. See the
 > [status table](../../packages/computer/README.md#status).
