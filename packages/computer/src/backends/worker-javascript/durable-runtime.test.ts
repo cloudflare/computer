@@ -36,6 +36,7 @@ function load(
     performance: {},
     AbortSignal: {},
     AbortController,
+    scheduler: { wait: () => undefined },
     DOMException,
     Request,
     Response,
@@ -222,6 +223,24 @@ describe("durable runtime", () => {
     expect(call).toHaveBeenCalledWith("net", "fetch", [
       expect.objectContaining({ url: "https://example.test/a", method: "GET", redirect: "manual" }),
     ]);
+  });
+
+  it("lets a signal cancel scheduler.wait", async () => {
+    const { run } = load([]);
+    run(`
+      globalThis.waits = [];
+      const early = new AbortController();
+      early.abort(new DOMException("early", "AbortError"));
+      scheduler.wait(5, { signal: early.signal }).catch((error) => waits.push(error.message));
+      const later = new AbortController();
+      scheduler.wait(30, { signal: later.signal }).then(
+        () => waits.push("resolved"),
+        (error) => waits.push(error.message),
+      );
+      setTimeout(() => later.abort(new DOMException("later", "AbortError")), 5);
+    `);
+    await settle(60);
+    expect(run("waits")).toEqual(["early", "later"]);
   });
 
   it("keeps Date subclasses working", () => {

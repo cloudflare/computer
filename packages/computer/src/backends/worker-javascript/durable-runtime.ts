@@ -273,8 +273,18 @@ export function durableRuntimeModule(): string {
         globalThis.clearImmediate = cancelTimer;
       }
       if (globalThis.scheduler && typeof globalThis.scheduler.wait === "function") {
-        globalThis.scheduler.wait = (delay) =>
-          new Promise((resolve) => addTimer(resolve, delay, [], false));
+        globalThis.scheduler.wait = (delay, options) =>
+          new Promise((resolve, reject) => {
+            const signal = options && options.signal;
+            if (signal && signal.aborted) return reject(signal.reason);
+            const timer = addTimer(resolve, delay, [], false);
+            if (signal) {
+              signal.addEventListener("abort", () => {
+                cancelTimer(timer);
+                reject(signal.reason);
+              }, { once: true });
+            }
+          });
       }
       Object.defineProperty(AbortSignal, "timeout", {
         configurable: true,
