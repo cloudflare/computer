@@ -300,6 +300,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#journal?.stalled();
   }
 
+  // Part of a durable run's event log, sent on its own when it grows long
+  // between calls and output.
+  recordLog(log: BridgeLogChunk): void {
+    if (this.#cancelled) return;
+    this.#journal?.record(log?.from, log?.events);
+  }
+
   async cancelAndDrain(): Promise<void> {
     this.#cancelled = true;
     for (const controller of this.#abortControllers) {

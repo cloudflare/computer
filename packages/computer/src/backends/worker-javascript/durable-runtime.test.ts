@@ -13,7 +13,7 @@ interface Payload {
 interface DurableExports {
   install(
     durable: { seed: string; startedAt: number; schedule: number[] },
-    host: { reportStall(): unknown },
+    host: { reportStall(): unknown; recordLog(log: unknown): unknown },
     call: (...args: unknown[]) => Promise<unknown>,
   ): void;
   request(): void;
@@ -40,9 +40,14 @@ function load(schedule: number[], seed = "0".repeat(64)) {
     context,
   ) as DurableExports;
   const reportStall = vi.fn<() => void>();
-  durable.install({ seed, startedAt: 1000, schedule }, { reportStall }, async () => null);
+  const recordLog = vi.fn<(log: unknown) => void>();
+  durable.install(
+    { seed, startedAt: 1000, schedule },
+    { reportStall, recordLog },
+    async () => null,
+  );
   const run = <T>(code: string) => vm.runInContext(code, context) as T;
-  return { durable, reportStall, run, context };
+  return { durable, reportStall, recordLog, run, context };
 }
 
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,6 +132,17 @@ describe("durable runtime", () => {
     track(durable, { result: "b", ordinal: 2, at: 1020 }, []);
     await settle();
     expect(durable.takeLog()).toEqual({ from: 1, events: [2] });
+  });
+
+  it("sends a long log on its own rather than holding it for the next call", async () => {
+    const { durable, recordLog, run } = load([]);
+    run("for (let i = 0; i < 5000; i++) setTimeout(() => {}, 0)");
+    await settle(100);
+    expect(recordLog).toHaveBeenCalledOnce();
+    const [chunk] = recordLog.mock.calls[0] as [{ from: number; events: number[] }];
+    expect(chunk.from).toBe(0);
+    expect(chunk.events).toHaveLength(4096);
+    expect(durable.takeLog()).toMatchObject({ from: 4096 });
   });
 
   it("gives timers left after the replay their remaining real delay", async () => {

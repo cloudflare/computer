@@ -341,6 +341,12 @@ describe("WorkspaceRuntimeBridge journal", () => {
     await expect(target.call("host/ws:test.run", args)).resolves.toMatchObject({ result: "ok" });
   });
 
+  it("saves an event log sent on its own", () => {
+    const { target, logs } = journaled([]);
+    target.recordLog({ from: 0, events: [-1, -2] });
+    expect(logs).toEqual([[0, [-1, -2]]]);
+  });
+
   it("passes a stalled replay to the journal", () => {
     const { target, diverged } = journaled([]);
     target.reportStall();

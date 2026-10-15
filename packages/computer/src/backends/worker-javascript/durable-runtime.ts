@@ -41,6 +41,9 @@ export function durableRuntimeModule(): string {
     // Events since the log was last sent, and the position of the first.
     let pending = [];
     let logged = 0;
+    // A run that sets many timers between calls and output sends its log
+    // on its own once this many events are waiting.
+    const LOG_FLUSH = 4096;
     const received = new Map();
     // Responses the schedule doesn't place, released once it's done.
     const held = [];
@@ -79,6 +82,13 @@ export function durableRuntimeModule(): string {
       if (replaying()) schedulePump();
     }
 
+    function logEvent(event) {
+      pending.push(event);
+      if (pending.length >= LOG_FLUSH) {
+        Promise.resolve(host.recordLog(takeLog())).catch(() => {});
+      }
+    }
+
     // The events logged since the last call, for the host to save.
     export function takeLog() {
       if (!active || pending.length === 0) return undefined;
@@ -106,7 +116,7 @@ export function durableRuntimeModule(): string {
         const ordinal = payload.ordinal;
         const release = (replayed) => {
           advance(payload.at);
-          if (!replayed && typeof ordinal === "number") pending.push(ordinal);
+          if (!replayed && typeof ordinal === "number") logEvent(ordinal);
           resolve(payload);
         };
         // Not journaled, such as a limit the bridge refused, so it goes
@@ -202,7 +212,7 @@ export function durableRuntimeModule(): string {
       if (timer === undefined) return;
       timers.delete(id);
       advance(timer.due);
-      if (!replayed) pending.push(-id);
+      if (!replayed) logEvent(-id);
       if (timer.repeat) arm(id, { ...timer, due: timer.due + Math.max(timer.step, 1) });
       if (typeof timer.callback !== "function") return;
       try {
