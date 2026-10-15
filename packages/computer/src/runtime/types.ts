@@ -278,7 +278,8 @@ export interface ModuleExecutionInput {
  * What a backend does with a run its Durable Object restarted under.
  * `fail` settles it as failed. `restart` runs it again from the start.
  * `replay` runs it again and answers the calls it already made from a
- * journal, so their effects aren't repeated.
+ * journal, so their effects aren't repeated. `restart` and `replay` are
+ * experimental and may change in any release.
  */
 export type WorkspaceRuntimeInterruptPolicy = "fail" | "restart" | "replay";
 

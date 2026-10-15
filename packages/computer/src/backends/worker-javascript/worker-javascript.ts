@@ -107,6 +107,9 @@ export interface WorkerJavaScriptBackendOptions {
    * attempts and must finish within its original timeout. A call in
    * flight at the interruption runs again, unless it's marked with
    * `unsafeToRepeat()`.
+   *
+   * `"restart"` and `"replay"` are experimental and may change in any
+   * release.
    */
   onInterrupt?: WorkspaceRuntimeInterruptPolicy;
   /**

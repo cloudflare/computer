@@ -104,6 +104,10 @@ export const DURABLE_TABLES = [
 /** Most events one log chunk may carry. */
 const MAX_LOG_CHUNK = 65536;
 
+// The tables hold state for running executions only. A change to their
+// shape should rename them rather than migrate: every backend creates
+// them on connect, whether or not it uses them, and CREATE TABLE IF NOT
+// EXISTS leaves an older table as it was.
 export function createDurableTables(db: Database): void {
   db.run(`
     CREATE TABLE IF NOT EXISTS workspace_runtime_durable (
