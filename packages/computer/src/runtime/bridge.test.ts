@@ -363,6 +363,21 @@ describe("WorkspaceRuntimeBridge journal", () => {
       "responses exceed 4 bytes",
     );
   });
+
+  it("doesn't count a replayed budget error, as the first attempt didn't", async () => {
+    const { target } = journaled([
+      {
+        kind: "replay",
+        response: {
+          error: { message: "Workspace execution capability responses exceed 4 bytes." },
+        },
+        at: 5,
+      },
+      { kind: "live", seq: 2, rerun: false },
+    ]);
+    await target.call("host/ws:test.run", args);
+    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+  });
 });
 
 describe("WorkspaceRuntimeBridge fetch", () => {

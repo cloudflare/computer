@@ -161,8 +161,10 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const step = this.#journal?.begin(name, args);
     if (step?.kind === "replay") {
       // The first attempt counted this response, and the replay repeats
-      // that attempt, so it counts again.
-      if (!isFetch) this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+      // that attempt, so it counts again. The budget error wasn't counted.
+      if (!isFetch && !this.#isBudgetError(step.response)) {
+        this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+      }
       return Promise.resolve({ ...step.response, at: step.at, ordinal: step.ordinal });
     }
     if (step?.kind === "diverge") {
@@ -277,22 +279,32 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         if (isFetch) return "result" in response ? { result: response.result } : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
-          return boundedError(
-            new Error(
-              `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
-            ),
-            this.#maxPayloadBytes,
-          );
+          return this.#budgetError();
         }
         this.#responseBytes += bytes;
         return "result" in response ? { result: response.result } : response;
       })
       .then((response) => {
         // Write before deliver: the journal holds the response before the
-        // isolate can act on it.
+        // isolate can act on it. A filesystem change is synchronous SQL on
+        // the same database, with no I/O between it and here, so it and
+        // its entry commit in the same implicit transaction.
         if (step?.kind !== "live" || this.#journal === undefined) return response;
         return { ...response, ...this.#journal.commit(step.seq, response) };
       });
+  }
+
+  #budgetError() {
+    return boundedError(
+      new Error(
+        `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
+      ),
+      this.#maxPayloadBytes,
+    );
+  }
+
+  #isBudgetError(response: BridgeResponse): boolean {
+    return "error" in response && response.error.message === this.#budgetError().error.message;
   }
 
   // The isolate is waiting for a journaled call its replay never made.
