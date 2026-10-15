@@ -50,6 +50,10 @@ export function durableRuntimeModule(): string {
     let inFlight = 0;
     const timers = new Map();
     let nextTimerId = 1;
+    // Node's global timers hand back Timeout objects rather than numbers.
+    // When the real ones do, these do too, mapped back to their timer.
+    let nodeHandles = false;
+    const handleIds = new WeakMap();
     let realSetTimeout;
     let realClearTimeout;
     let pumpScheduled = false;
@@ -204,7 +208,27 @@ export function durableRuntimeModule(): string {
       const id = nextTimerId++;
       const step = Math.max(0, Number(delay) || 0);
       arm(id, { callback, args, repeat, step, due: virtualNow + step });
-      return id;
+      if (!nodeHandles) return id;
+      const handle = {
+        ref() { return this; },
+        unref() { return this; },
+        hasRef() { return true; },
+        refresh() {
+          const timer = timers.get(id);
+          if (timer !== undefined) {
+            if (timer.handle !== undefined) realClearTimeout(timer.handle);
+            arm(id, { ...timer, due: virtualNow + timer.step });
+          }
+          return this;
+        },
+        close() {
+          cancelTimer(id);
+          return this;
+        },
+        [Symbol.toPrimitive]: () => id,
+      };
+      handleIds.set(handle, id);
+      return handle;
     }
 
     function fire(id, replayed) {
@@ -225,10 +249,11 @@ export function durableRuntimeModule(): string {
       }
     }
 
-    function cancelTimer(id) {
+    function cancelTimer(handle) {
+      const id = typeof handle === "object" && handle !== null ? handleIds.get(handle) : handle;
       const timer = timers.get(id);
       if (timer === undefined) {
-        if (id !== undefined) realClearTimeout(id);
+        if (handle !== undefined) realClearTimeout(handle);
         return;
       }
       timers.delete(id);
@@ -236,6 +261,9 @@ export function durableRuntimeModule(): string {
     }
 
     function installTimers() {
+      const probe = realSetTimeout(() => {}, 0);
+      realClearTimeout(probe);
+      nodeHandles = typeof probe === "object";
       globalThis.setTimeout = (callback, delay, ...args) => addTimer(callback, delay, args, false);
       globalThis.setInterval = (callback, delay, ...args) => addTimer(callback, delay, args, true);
       globalThis.clearTimeout = cancelTimer;
@@ -267,7 +295,7 @@ export function durableRuntimeModule(): string {
       RealDate = Date;
       function DurableDate(...args) {
         if (!new.target) return new RealDate(virtualNow).toString();
-        return args.length === 0 ? new RealDate(virtualNow) : new RealDate(...args);
+        return Reflect.construct(RealDate, args.length === 0 ? [virtualNow] : args, new.target);
       }
       DurableDate.prototype = RealDate.prototype;
       DurableDate.now = () => virtualNow;
@@ -370,6 +398,7 @@ export function durableRuntimeModule(): string {
         const pending = call("net", "fetch", [{
           url: request.url,
           method: request.method,
+          redirect: request.redirect,
           headers: [...request.headers],
           body,
         }]);

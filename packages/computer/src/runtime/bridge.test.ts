@@ -405,6 +405,7 @@ describe("WorkspaceRuntimeBridge fetch", () => {
   const request = {
     url: "https://example.test/a",
     method: "POST",
+    redirect: "manual",
     headers: [["x-a", "1"]],
     body: encoder.encode("hi"),
   };
@@ -424,6 +425,7 @@ describe("WorkspaceRuntimeBridge fetch", () => {
     const result = "result" in response ? (response.result as { body: Uint8Array }) : undefined;
     expect(new TextDecoder().decode(result?.body)).toBe("pong");
     expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.redirect).toBe("manual");
     expect(seen[0]?.headers.get("x-a")).toBe("1");
     expect(await seen[0]?.text()).toBe("hi");
   });

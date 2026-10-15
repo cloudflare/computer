@@ -1166,7 +1166,10 @@ describe("durable executions", () => {
     await start("durable-race", {
       source: `
         import { gate, wait } from "ws:test-host";
-        const sleep = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+        // unref() checks the timers hand back the same kind of handle as
+        // the runtime's own.
+        const sleep = (ms, value) =>
+          new Promise((resolve) => setTimeout(() => resolve(value), ms).unref());
         export default async function () {
           const long = wait(150, "long");
           const first = await Promise.race([sleep(20, "timer"), long.then(() => "call")]);

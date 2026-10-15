@@ -384,7 +384,7 @@ const MAX_OPEN_FETCHES = 6;
 
 function parseFetchRequest(spec: unknown, signal: AbortSignal): Request {
   if (spec === null || typeof spec !== "object") throw new Error("fetch takes a request object.");
-  const { url, method, headers, body } = spec as Record<string, unknown>;
+  const { url, method, headers, body, redirect } = spec as Record<string, unknown>;
   if (typeof url !== "string" || typeof method !== "string") {
     throw new Error("fetch takes a request with a url and a method.");
   }
@@ -401,6 +401,8 @@ function parseFetchRequest(spec: unknown, signal: AbortSignal): Request {
     method,
     headers: headers.map(([name, value]): [string, string] => [String(name), String(value)]),
     body: (body ?? null) as BodyInit | null,
+    // The Request constructor rejects a value it doesn't know.
+    ...(typeof redirect === "string" ? { redirect: redirect as RequestRedirect } : {}),
     signal,
   });
 }

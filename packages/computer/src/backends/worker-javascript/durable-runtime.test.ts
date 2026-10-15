@@ -24,7 +24,11 @@ interface DurableExports {
 
 // Load the module into its own realm, as the isolate would, so the
 // globals it replaces aren't this process's.
-function load(schedule: number[], seed = "0".repeat(64)) {
+function load(
+  schedule: number[],
+  seed = "0".repeat(64),
+  call: (...args: unknown[]) => Promise<unknown> = async () => null,
+) {
   const context = vm.createContext({
     setTimeout,
     clearTimeout,
@@ -33,6 +37,8 @@ function load(schedule: number[], seed = "0".repeat(64)) {
     AbortSignal: {},
     AbortController,
     DOMException,
+    Request,
+    Response,
   });
   const source = durableRuntimeModule().replace(/export function/g, "function");
   const durable = vm.runInContext(
@@ -41,11 +47,7 @@ function load(schedule: number[], seed = "0".repeat(64)) {
   ) as DurableExports;
   const reportStall = vi.fn<() => void>();
   const recordLog = vi.fn<(log: unknown) => void>();
-  durable.install(
-    { seed, startedAt: 1000, schedule },
-    { reportStall, recordLog },
-    async () => null,
-  );
+  durable.install({ seed, startedAt: 1000, schedule }, { reportStall, recordLog }, call);
   const run = <T>(code: string) => vm.runInContext(code, context) as T;
   return { durable, reportStall, recordLog, run, context };
 }
@@ -186,6 +188,47 @@ describe("durable runtime", () => {
       /^0\.\d+ [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
     expect(load([], "b2".repeat(32)).run("Math.random()")).not.toBe(Number(first.split(" ")[0]));
+  });
+
+  it("hands back Node timer handles when the real timers do", async () => {
+    // Node's own setTimeout returns Timeout objects, as workerd's does
+    // under nodejs_compat.
+    const { run } = load([]);
+    run(`
+      globalThis.fired = [];
+      const cleared = setTimeout(() => fired.push("cleared"), 5);
+      cleared.unref();
+      clearTimeout(cleared);
+      setTimeout(() => fired.push("refreshed"), 5).refresh();
+      globalThis.handle = setTimeout(() => {}, 0);
+    `);
+    await settle();
+    expect(run("fired")).toEqual(["refreshed"]);
+    expect(run("handle.hasRef() && typeof Number(handle)")).toBe("number");
+  });
+
+  it("sends fetch through the host with its redirect mode", async () => {
+    const call = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
+      status: 302,
+      statusText: "Found",
+      headers: [],
+      body: null,
+    }));
+    const { run } = load([], undefined, call);
+    const status = await run<Promise<number>>(
+      "fetch('https://example.test/a', { redirect: 'manual' }).then((response) => response.status)",
+    );
+    expect(status).toBe(302);
+    expect(call).toHaveBeenCalledWith("net", "fetch", [
+      expect.objectContaining({ url: "https://example.test/a", method: "GET", redirect: "manual" }),
+    ]);
+  });
+
+  it("keeps Date subclasses working", () => {
+    const { run } = load([]);
+    expect(
+      run("class Day extends Date {}; const day = new Day(); day instanceof Day && day.getTime()"),
+    ).toBe(1000);
   });
 
   it("measures performance.now from the run's start", async () => {
