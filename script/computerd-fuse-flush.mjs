@@ -73,11 +73,11 @@ async function bootContainer() {
     "debian:stable-slim",
     "bash",
     "-c",
-    // libfuse2 + a long-lived shell so we can `docker exec` into the
+    // libfuse 3 + a long-lived shell so we can `docker exec` into the
     // same mount namespace where computerd mounted FUSE. computerd backgrounds
     // and we tail /tmp/computerd.log for debugging.
     "apt-get update >/dev/null 2>&1 && " +
-      "apt-get install -y --no-install-recommends fuse3 libfuse2t64 >/dev/null 2>&1 && " +
+      "apt-get install -y --no-install-recommends fuse3 >/dev/null 2>&1 && " +
       "mkdir -p /workspace && " +
       "/usr/local/bin/computerd >/tmp/computerd.log 2>&1 & " +
       "COMPUTERD_PID=$!; " +

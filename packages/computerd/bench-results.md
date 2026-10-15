@@ -115,6 +115,14 @@ latency a real host would also save. The full `cloudflare/sandbox-sdk`
 
 ## FUSE mount option benchmarks
 
+> [!NOTE]
+> This section measured the libfuse 2.9 build. The libfuse 3 mount no
+> longer sets `auto_cache` or `kernel_cache`, and the
+> `COMPUTERD_FUSE_AUTO_CACHE` and `COMPUTERD_FUSE_KERNEL_CACHE` switches
+> below are gone. The kernel refuses either cache flag on a passthrough
+> open, so the driver now makes `auto_cache`'s own keep-cache decision per
+> open instead, for synced files only. The numbers are kept as a record.
+
 Numbers from running `script/run-fs-bench.sh` against the linux-x64
 `computerd` binary in a privileged docker container, with the bench's pure
 large-file scenarios. Measurements were taken on Apple Silicon under

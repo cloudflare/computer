@@ -16,6 +16,17 @@
 #   SCENARIOS       comma-separated list of scenarios to run
 #                   (default: express)
 #   FUSE_TRACE      set to "summary" to capture a FUSE op trace per run
+#   TARGETS         label:directory pairs to install into, comma-separated
+#                   (default: native:/tmp/baseline,fuse:/tmp/workspace).
+#                   Add fuse-ignored:/tmp/workspace/ignored to measure
+#                   local-only node_modules.
+#   IGNORE_NODE_MODULES  set to 1 to make each run's node_modules under
+#                   /tmp/workspace/ignored local-only (MOUNT_IGNORE)
+#   COMPUTERD_FUSE_PASSTHROUGH  set to 0 to measure local-only paths
+#                   without kernel passthrough
+#   PLATFORM        docker platform (default: linux/amd64). On an arm64
+#                   machine use linux/arm64 and a computerd-linux-arm64
+#                   binary; emulated timings are not meaningful.
 #
 # Requirements:
 #   docker          available and able to run --privileged containers
@@ -34,6 +45,10 @@ REPS="${REPS:-3}"
 WARMUP="${WARMUP:-1}"
 SCENARIOS="${SCENARIOS:-express}"
 FUSE_TRACE="${FUSE_TRACE:-}"
+TARGETS="${TARGETS:-native:/tmp/baseline,fuse:/tmp/workspace}"
+IGNORE_NODE_MODULES="${IGNORE_NODE_MODULES:-0}"
+COMPUTERD_FUSE_PASSTHROUGH="${COMPUTERD_FUSE_PASSTHROUGH:-}"
+PLATFORM="${PLATFORM:-linux/amd64}"
 
 if [ ! -f "$COMPUTERD_BINARY" ]; then
   echo "computerd binary not found at $COMPUTERD_BINARY"
@@ -43,7 +58,7 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT_JSON")"
 
-docker run --rm --platform linux/amd64 --privileged \
+docker run --rm --platform "$PLATFORM" --privileged \
   --device /dev/fuse --cap-add SYS_ADMIN --cap-add MKNOD \
   -v "$COMPUTERD_BINARY:/usr/local/bin/computerd:ro" \
   -v "$SCRIPT_DIR/npm-bench.sh:/usr/local/bin/npm-bench:ro" \
@@ -54,4 +69,7 @@ docker run --rm --platform linux/amd64 --privileged \
   -e "SCENARIOS=$SCENARIOS" \
   -e "OUTPUT_JSON=/out/$(basename "$OUTPUT_JSON")" \
   -e "COMPUTERD_FUSE_TRACE=${FUSE_TRACE}" \
+  -e "TARGETS=$TARGETS" \
+  -e "IGNORE_NODE_MODULES=$IGNORE_NODE_MODULES" \
+  -e "COMPUTERD_FUSE_PASSTHROUGH=$COMPUTERD_FUSE_PASSTHROUGH" \
   debian:stable-slim bash /run-bench.sh

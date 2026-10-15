@@ -15,10 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const distEntry = path.resolve(here, "../../dist/cli/computerd.cjs");
 const bundleScript = path.resolve(here, "../../scripts/sea/bundle.mjs");
 
-type BundleComputerd = (opts: {
-  outfile: string;
-  target: { libfuseName: string; envVar: string };
-}) => Promise<void>;
+type BundleComputerd = (opts: { outfile: string }) => Promise<void>;
 
 async function loadBundler(ctx: {
   skip: (reason?: string) => void;
@@ -45,10 +42,7 @@ test("COMPUTERD_DEFAULT_PORT stamps into the SEA bundle", async (ctx) => {
   const outfile = path.join(tmp, "computerd.bundle.mjs");
   process.env.COMPUTERD_DEFAULT_PORT = "12345";
 
-  await bundleComputerd({
-    outfile,
-    target: { libfuseName: "libfuse.so.2", envVar: "LD_LIBRARY_PATH" },
-  });
+  await bundleComputerd({ outfile });
 
   const bundle = await fs.readFile(outfile, "utf8");
   // esbuild's `define` produces `const DEFAULT_PORT = 12345 ?? 45678;`
@@ -65,10 +59,7 @@ test("missing COMPUTERD_DEFAULT_PORT keeps the in-source 45678 fallback", async 
   const outfile = path.join(tmp, "computerd.bundle.mjs");
   delete process.env.COMPUTERD_DEFAULT_PORT;
 
-  await bundleComputerd({
-    outfile,
-    target: { libfuseName: "libfuse.so.2", envVar: "LD_LIBRARY_PATH" },
-  });
+  await bundleComputerd({ outfile });
 
   const bundle = await fs.readFile(outfile, "utf8");
   // Fallback literal must survive substitution.
@@ -87,9 +78,6 @@ test("COMPUTERD_DEFAULT_PORT rejects non-integer values", async (ctx) => {
   process.env.COMPUTERD_DEFAULT_PORT = "not-a-port";
 
   await expect(
-    bundleComputerd({
-      outfile: path.join(tmp, "computerd.bundle.mjs"),
-      target: { libfuseName: "libfuse.so.2", envVar: "LD_LIBRARY_PATH" },
-    }),
+    bundleComputerd({ outfile: path.join(tmp, "computerd.bundle.mjs") }),
   ).rejects.toThrow(/COMPUTERD_DEFAULT_PORT/);
 });
