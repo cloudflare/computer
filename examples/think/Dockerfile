@@ -9,7 +9,7 @@
 # surface reads and writes.
 
 
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.5.1 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.6.0 AS computerd
 
 FROM debian:stable-slim
 

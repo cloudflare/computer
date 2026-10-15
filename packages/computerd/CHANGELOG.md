@@ -1,5 +1,13 @@
 # @cloudflare/computerd
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @cloudflare/dofs@0.6.0
+  - @cloudflare/computer-rpc@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes

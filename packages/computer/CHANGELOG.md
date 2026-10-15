@@ -1,5 +1,17 @@
 # @cloudflare/computer
 
+## 0.6.0
+
+### Minor Changes
+
+- [#237](https://github.com/cloudflare/computer/pull/237) `WorkerJavaScriptBackend` keeps its Durable Object alive while executions run, and adds a `maxCpuMs` option. ([`7415a44`](https://github.com/cloudflare/computer/commit/7415a446b394a733b462917cc6660f2ebb2fd027)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#239](https://github.com/cloudflare/computer/pull/239) `just-bash` is now an optional peer dependency and should be installed manually when using `@cloudflare/computer/backends/worker-shell`. ([`5980264`](https://github.com/cloudflare/computer/commit/5980264da104d310a2165b19b599804b589216ec)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+### Patch Changes
+
+- [#241](https://github.com/cloudflare/computer/pull/241) `Workspace`, its filesystem, the worker-javascript backend, mounts, agent tools, Git, Assets, and Artifacts are now stable; `LegacyContainerBackend` is deprecated in favor of `ContainerBackend`; the container and worker-shell backends, `ws:container`, sync, and `computerd` stay experimental. ([`d950ffe`](https://github.com/cloudflare/computer/commit/d950ffee31788fa16c50960f58983a260a22f656)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.5.1
 
 ### Patch Changes
