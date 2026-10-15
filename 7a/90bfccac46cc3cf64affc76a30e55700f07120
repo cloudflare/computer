@@ -1,0 +1,31 @@
+examples/rlm/worker/capability.test.ts
+  s_5a33ac7eaed91e::t_8635f413d25142 42
+packages/computer/src/modules/artifacts.test.ts
+  s_5a33ac7eaed91e::t_26829a6f5906f7 45
+packages/computer/src/modules/assets.test.ts
+  s_5a33ac7eaed91e::t_0dd2aa4340de0b 43
+packages/computer/src/modules/container.test.ts
+  s_5a33ac7eaed91e::t_9e58c3e5a93ead 92
+packages/computer/src/modules/tools.test.ts
+  s_5a33ac7eaed91e::t_c9c89805e6421b 20
+packages/computer/src/tools/ai-sdk/bindings.test.ts
+  s_5a33ac7eaed91e::t_4a4a86119c180b 17
+packages/computer/src/tools/pi-ai/bindings.test.ts
+  s_5a33ac7eaed91e::t_2a82326ade4e7e 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7a90bfccac46cc3cf64affc76a30e55700f07120",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
