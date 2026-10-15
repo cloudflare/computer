@@ -163,16 +163,38 @@ await workspace.runtime.exec(source, { onInterrupt: "fail" });
 
 Nothing changes in the code that runs. The backend recovers interrupted runs when it connects after the restart, which the next runtime call or `workspace.ready()` triggers. A host that wants runs to resume without waiting for traffic can call `workspace.runtime.recover()` from an alarm. The Workspace never sets an alarm itself.
 
-To make this possible, a run under `"restart"` or `"replay"` saves its module graph, input, environment, working directory, standard input and limits when it starts. A replayed run also journals each call: the host writes the call and its response to SQLite before the isolate sees the response, and a call still in flight at the restart runs again. The saved data is deleted when the run settles.
+To make this possible, a run under `"restart"` or `"replay"` saves its module graph, input, environment, working directory, standard input and limits when it starts. A replayed run also journals each call: the host writes the call and its response to SQLite before the isolate sees the response. A filesystem call's change and its journal entry commit in the same transaction, so after a restart either both are there or neither is. The saved data is deleted when the run settles.
 
-A replay has to make the same calls with the same arguments as the first attempt, in any order. A call the journal doesn't hold, while journaled calls are still unanswered, or a run that finishes without making them, fails the run with a message saying it took a different path. To keep a replay on the same path, a replayable run gets a seeded `Math.random` and a virtual clock. `Date.now()` and `new Date()` start at the time the run started, move to the time each journaled call completed, and move on by a timer's delay when the timer fires. Like the Workers clock, the virtual clock doesn't move while code computes. While a run replays, its timers fire at once, so it doesn't wait out sleeps it already waited, and its clock still moves on by their delays. `crypto.getRandomValues()` and `crypto.randomUUID()` stay random, so a run that passes their output to a call diverges on replay.
+A replay shows the code its events in the order it saw them the first time. While a run is live, the isolate logs the order it sees responses arrive and timers fire in, and sends the log with its next call or output, so the host saves it before anything that came of those events. On replay the host answers journaled calls at once, and the isolate holds each response and timer back until the log says it's its turn, so `Promise.race`, first-done-wins and a timer racing a call go the way they went before. Whatever the run did after the last thing it sent, nobody saw, so the replay doesn't have to repeat it. To keep the rest of the run on the same path, a replayable run gets:
+
+- A virtual clock. `Date.now()`, `new Date()` and `performance.now()` start at the time the run started, move to the time each journaled response was committed, and move to a timer's due time when it fires. Like the Workers clock, the virtual clock doesn't move while code computes.
+- Replayable timers. `setTimeout`, `setInterval`, `scheduler.wait()` and `AbortSignal.timeout()` are logged like responses. While a run replays, they fire as soon as their turn comes, so it doesn't wait out sleeps it already waited. When the replay ends, timers still pending wait out the rest of their delay.
+- Seeded random numbers. `Math.random()`, `crypto.getRandomValues()` and `crypto.randomUUID()` draw from a ChaCha20 stream over a 256-bit seed saved with the run, so they repeat on replay and stay unpredictable to anyone without the seed.
+- Journaled `fetch`. The isolate's `fetch` goes through the host, which makes the request through the backend's egress and journals the response, so a replay doesn't send it again.
+
+A replay has to make the same calls with the same arguments as the first attempt, and print the same output. A call the journal doesn't hold, while journaled calls are still unanswered, output that differs from what was recorded, or a run that finishes or stops before making the calls it made before, fails the run with a message saying it took a different path.
+
+A host module call still in flight at the restart never delivered its response, so it runs again on replay. Every call gets a `context.callId` that stays the same when it runs again, so a function can use it as an idempotency key. A function that can't deduplicate and mustn't run twice, such as one that charges a card, can be marked with `unsafeToRepeat()`. An interruption during a marked call fails the run instead:
+
+```ts
+import { unsafeToRepeat } from "@cloudflare/computer";
+
+modules: {
+  "ws:billing": {
+    charge: unsafeToRepeat(async ([order, cents]) => billing.charge(order, cents)),
+    refund: async ([order], { callId }) => billing.refund(order, { idempotencyKey: callId }),
+  },
+}
+```
 
 Some limits apply:
 
 - A run gets three attempts. An interruption after the third fails it.
 - A run resumes only within its original timeout, counted from when it first started.
 - A run resumes only on the same runtime code. A deploy that changes the backend's generated modules, compatibility date or flags fails the runs it interrupted rather than replaying them on different code.
-- Network requests aren't journaled, so a replay makes them again. Host module calls that were in flight at the restart also run again. Make both safe to repeat, or use `"fail"` for runs that can't.
+- After a restart, interrupted runs start four at a time, since a Durable Object runs at most ten Dynamic Workers at once. The rest wait their turn within their timeouts.
+- A `fetch` in flight at the restart is sent again, like a host module call. A replayable run's `fetch` response is buffered rather than streamed, and is subject to the same per-call size limit as any other capability call.
+- Some sources of nondeterminism aren't covered: keys from `crypto.subtle.generateKey()`, `node:crypto` randomness, `node:timers`, and TCP sockets from `cloudflare:sockets`. A run that uses them for anything it passes to a call or prints diverges on replay.
 - The journal counts toward the Durable Object's storage while the run lasts: roughly the size of every call's response, plus the saved module graph.
 
 ## Environment, standard input, and the `process` shim
