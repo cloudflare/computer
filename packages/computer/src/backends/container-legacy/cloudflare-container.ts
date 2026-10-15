@@ -178,6 +178,13 @@ function bearerMatches(header: string | null, expected: string | undefined): boo
   return differences === 0;
 }
 
+/**
+ * Runs shell commands in a platform-scheduled Cloudflare Container through `computerd`.
+ *
+ * @deprecated Use `ContainerBackend` from
+ * `@cloudflare/computer/backends/container`, which serves containers the
+ * durable object schedules. This backend will be removed in a future release.
+ */
 export class LegacyContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
   readonly id: string;

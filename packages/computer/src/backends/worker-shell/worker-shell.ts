@@ -137,6 +137,12 @@ export interface WorkerShellBackendOptions {
 const DEFAULT_COMPAT_DATE = "2026-06-17";
 const DEFAULT_COMPAT_FLAGS = ["nodejs_compat"];
 
+/**
+ * Runs shell commands with just-bash in a Dynamic Worker.
+ *
+ * Experimental: this API may change in any release and is not yet
+ * suitable for production use.
+ */
 export class WorkerShellBackend implements WorkspaceBackend {
   readonly type = "worker-shell";
   /** What this backend tells a model: a fast shell with a fixed command set. */

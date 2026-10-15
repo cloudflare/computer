@@ -1,9 +1,5 @@
 # worker-javascript example
 
-> [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
-
 A Cloudflare Worker + Durable Object that runs a Workspace whose
 runtime evaluates **ECMAScript modules** in a **Dynamic Worker**
 loaded through `env.LOADER`. It mirrors

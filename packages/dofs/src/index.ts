@@ -1,3 +1,8 @@
+// Public surface of @cloudflare/dofs.
+//
+// Status: stable, except the sync protocol building blocks, which
+// serve the experimental sync with computerd.
+
 export type { WorkspaceErrorCode, WorkspaceFsError } from "./errors.js";
 export { createWorkspaceError } from "./errors.js";
 export { chmod } from "./fs/chmod.js";

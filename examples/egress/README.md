@@ -1,8 +1,12 @@
 # egress example
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
+> This example uses experimental parts of Cloudflare Computer: the Worker
+> shell backend and `computerd`. Its container path uses the deprecated
+> legacy container backend; new code should use `ContainerBackend`.
+> Their APIs may change in any release, and they are not yet suitable
+> for production use. See the
+> [status table](../../packages/computer/README.md#status).
 
 This Worker sends one URL through all three Cloudflare Computer execution backends:
 

@@ -1,5 +1,10 @@
 # 08. Capnweb Interface
 
+> [!WARNING]
+> **Experimental.** The capnweb wire protocol and `@cloudflare/computer-rpc` may change in any release and
+> is not yet suitable for production use. See the
+> [status table](../packages/computer/README.md#status).
+
 > [!NOTE]
 > This doc now reflects shipped code in `packages/rpc/`. Items marked
 > **(planned)** are deferred work.

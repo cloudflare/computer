@@ -1,5 +1,10 @@
 # Isolate JavaScript runtime
 
+> [!NOTE]
+> **Stable.** `WorkerJavaScriptBackend` and its host modules are
+> suitable for production use, except `ws:container`, which runs on the
+> experimental container backend. See the [status table](../packages/computer/README.md#status).
+
 `WorkerJavaScriptBackend` runs an ECMAScript module in a fresh Cloudflare Dynamic Worker:
 
 ```ts
@@ -178,7 +183,7 @@ An import that is not built in, configured, one of the allowed Node.js modules, 
 
 The allowed Node.js modules are the ones that work entirely inside the isolate: `node:path`, `node:url`, `node:util`, `node:events`, `node:buffer`, `node:assert`, `node:string_decoder`, `node:querystring`, `node:stream`, `node:crypto`, `node:zlib`, `node:timers`, `node:async_hooks`, and `node:diagnostics_channel`, with their subpaths such as `node:path/posix` and `node:timers/promises`. The runtime provides them, and imports of them are left as written. A bare name such as `path` works too and becomes `node:path`, unless a configured module has that name, in which case the configured module wins. The runtime has more Node.js modules, but they either duplicate what the Workspace provides, as `node:fs` does, reach outside the isolate, or are stubs that throw when called, so they stay unavailable.
 
-Any import that is not a path is resolved by name. The Worker Loader has no `node_modules` lookup and resolves a bare import next to the importing file, so Workspace stores each source and host module once, in a `__modules__` directory of the Worker's bundle, and rewrites every import of one into a relative path to it. Every file that imports `lodash` gets the same instance, however many directories the code spans. An absolute import is rewritten the same way. Relative paths are the only form the Worker Loader's legacy and new module registries resolve alike, so imports work whether or not `compatibilityFlags` includes `new_module_registry`. When a module fails to link, the error names it as the code wrote it.
+Any import that is not a path is resolved by name. The Worker Loader has no `node_modules` lookup and resolves a bare import next to the importing file, so Workspace stores each source and host module once, in a `__modules__` directory of the Worker's bundle, and rewrites every import of one into a relative path to it. Every file that imports `lodash` gets the same instance, however many directories the code spans. An absolute import is rewritten the same way. Relative paths are the only form the Worker Loader's legacy and new module registries resolve alike, so imports work whether or not `compatibilityFlags` includes `new_module_registry`. The Workers runtime still treats `new_module_registry` as experimental, so a Worker that adds it also needs the `experimental` compatibility flag; the default settings need neither. When a module fails to link, the error names it as the code wrote it.
 
 The backend describes its modules for a model in `backend.description`, which `workspace.runtime.backends()` returns and the `exec` tool shows. It is built from the same `modules` option the backend runs with, so it always matches what is installed:
 

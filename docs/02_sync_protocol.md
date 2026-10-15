@@ -1,5 +1,10 @@
 # 02. Sync Protocol
 
+> [!WARNING]
+> **Experimental.** The sync protocol between the durable object and `computerd` may change in any release and
+> is not yet suitable for production use. See the
+> [status table](../packages/computer/README.md#status).
+
 > [!NOTE]
 > This document tracks the shipped wire shape in `packages/dofs/src/sync/*`
 > and `packages/rpc/src/{interface,server,sync-driver}.ts`. A handful of

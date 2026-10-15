@@ -1,5 +1,7 @@
 // Public surface of @cloudflare/computer-rpc.
 //
+// Status: experimental. The wire contract may change in any release.
+//
 // The package is split into four entry points:
 //
 //   - .          — the typed wire interface and error shape.

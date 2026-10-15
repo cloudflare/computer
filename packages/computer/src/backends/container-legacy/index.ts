@@ -26,6 +26,9 @@
 //     LegacyContainerBackend,
 //     withLegacyWorkspaceContainer,
 //   } from "@cloudflare/computer/backends/container-legacy";
+//
+// Status: deprecated. Use @cloudflare/computer/backends/container
+// instead; this entry point will be removed in a future release.
 
 export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export {

@@ -26,11 +26,10 @@ Workspace can also be constructed without a backend at all, giving
 callers the filesystem on its own.
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> The `@cloudflare/computer` package should be considered suitable for
+> production use. The package contains work-in-progress and experimental
+> components such as the `ContainerBackend`. These should be considered
+> unsuitable for production use. See the [status reference](packages/computer/README.md#status) for more details.
 >
 > The specification under [`docs/`](docs/) is forward-looking — read it for
 > intent, not as description of the code today.
@@ -58,7 +57,8 @@ public surface. Each is a Worker workspace with its own README.
   `scheduling_policy: "durable_object"` moves both out of the config.
 - [`examples/container-legacy`](examples/container-legacy) — the same
   surface against a container the platform schedules and sizes from the
-  `containers` block.
+  `containers` block. Uses the deprecated legacy container backend; new
+  code should follow `examples/container`.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the
   container example, but the shell runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker loaded through `env.LOADER`. No container.
@@ -111,18 +111,24 @@ package-specific status and usage notes.
 - [`packages/dofs`](packages/dofs/README.md) (`@cloudflare/dofs`) —
   Durable Object SQLite-backed virtual filesystem, sync protocol
   building blocks, and a `@platformatic/vfs` provider for Node.
+  Stable, except the sync protocol building blocks.
 - [`packages/rpc`](packages/rpc/README.md)
   (`@cloudflare/computer-rpc`) — capnweb wire types and
   server/client helpers shared between the Durable Object and `computerd`.
+  Experimental.
 - [`packages/computerd`](packages/computerd/README.md)
   (`@cloudflare/computerd`) — the `computerd` daemon: a FUSE mount plus
   HTTP/WebSocket RPC server that runs inside the sandbox container.
+  Experimental.
 - [`packages/computer`](packages/computer/README.md)
   (`@cloudflare/computer`) — the top-level Computer package
-  consumed by Durable Objects. Work in progress.
+  consumed by Durable Objects. Stable, except the container and Worker
+  shell backends and the pieces listed as experimental in its
+  [status table](packages/computer/README.md#status).
 - [`packages/computer-computerd-linux-x64`](packages/computer-computerd-linux-x64/README.md)
   — private Docker image context for the prebuilt `computerd` linux-x64
   binary. The image, not an npm package, is the release artifact.
+  Experimental.
 
 ## Performance
 

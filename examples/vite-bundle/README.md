@@ -1,8 +1,10 @@
 # vite-bundle example
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
+> This example uses experimental parts of Cloudflare Computer: the Worker shell backend.
+> Their APIs may change in any release, and they are not yet suitable
+> for production use. See the
+> [status table](../../packages/computer/README.md#status).
 
 A Vite-built Cloudflare Worker + Durable Object whose Workspace ships a
 directory from the project, `src/skills`, into every workspace. It uses

@@ -22,6 +22,9 @@
 //     ContainerBackend,
 //     withWorkspaceContainer,
 //   } from "@cloudflare/computer/backends/container";
+//
+// Status: experimental. This entry point may change in any release
+// and is not yet suitable for production use.
 
 export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export {

@@ -1,11 +1,14 @@
 # `@cloudflare/dofs`
 
-> [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> [!NOTE]
+> **Stable**, meaning suitable for production use, except the sync
+> protocol building blocks, which serve the experimental sync with
+> `computerd` and share its status. This package is not
+> published to npm on its own: it ships bundled inside
+> [`@cloudflare/computer`](../computer/README.md), which re-exports the
+> parts meant for callers. See that package's
+> [status table](../computer/README.md#status) for which components of
+> Cloudflare Computer are stable and which are experimental.
 >
 > The specification under [`docs/`](../../docs/README.md) is forward-looking — read it for
 > intent, not as description of the code today.
@@ -35,7 +38,7 @@ export class WorkspaceDO extends DurableObject {
 }
 ```
 
-> The `src/fs/*` primitives (`mkdir`, `writeFile`, `readFile`, `rm`, `readdir`, `stat`, `find`, `ls`, `grep`, `symlink`, `readlink`, `gc`, `watch`) are not re-exported from the package root yet — they are consumed in-tree by `SQLiteWorkspaceProvider` and by the sync `applyChanges` path. On the node side, instantiate `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) for a familiar node:fs-shaped surface; this is what `@cloudflare/computerd` mounts via FUSE. A higher-level DO-side `Workspace` class with the `fs`/`shell`/`push`/`pull` surface described in [`../../docs/README.md`](../../docs/README.md) is still future work.
+> The `src/fs/*` primitives (`mkdir`, `writeFile`, `readFile`, `rm`, `readdir`, `stat`, `find`, `ls`, `grep`, `symlink`, `readlink`, `gc`, `watch`) are not re-exported from the package root yet — they are consumed in-tree by `SQLiteWorkspaceProvider` and by the sync `applyChanges` path. On the node side, instantiate `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) for a familiar node:fs-shaped surface; this is what `@cloudflare/computerd` mounts via FUSE. The higher-level durable-object-side `Workspace` class described in [`../../docs/README.md`](../../docs/README.md) lives in [`@cloudflare/computer`](../computer/README.md).
 
 ## Implementation status
 

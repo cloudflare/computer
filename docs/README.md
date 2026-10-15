@@ -1,11 +1,10 @@
 # `@cloudflare/computer`
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> The `@cloudflare/computer` package should be considered suitable for
+> production use. The package contains work-in-progress and experimental
+> components such as the `ContainerBackend`. These should be considered
+> unsuitable for production use. See the [status reference](../packages/computer/README.md#status) for more details.
 >
 > The specification in this directory is forward-looking — read it for
 > intent, not as description of the code today.
@@ -44,7 +43,7 @@ The package ships several entrypoints:
 | --- | --- |
 | `@cloudflare/computer` | The Workspace wrapper, first-class `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`, for a container the durable object schedules (`scheduling_policy: "durable_object"`). Same sync plumbing; the launch names the image and the instance size. |
-| `@cloudflare/computer/backends/container-legacy` | `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
+| `@cloudflare/computer/backends/container-legacy` | Deprecated; use `@cloudflare/computer/backends/container`. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`, for a container the platform schedules and sizes from the containers block. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash command runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
@@ -238,27 +237,31 @@ events.addEventListener("exit",   (e) => { console.log("exit", JSON.parse(e.data
 This package is documented as a set of focused topics. Start with the overview
 above, then dive into the area you're working on.
 
-| Document | Topic |
-| --- | --- |
-| [01. VFS](./01_vfs.md) | Layout of the workspace tree, reserved paths, and mount points. |
-| [02. Sync Protocol](./02_sync_protocol.md) | How the DO-backed VFS synchronises with the sandbox container. |
-| [03. Filesystem Schema](./03_filesystem_schema.md) | SQLite schema backing the virtual filesystem. |
-| [04. Filesystem Interface](./04_filesystem_interface.md) | `Workspace.fs` API: `readFile`, `writeFile`, `mkdir`, `grep`, etc. |
-| [05. Runtime Interface](./05_runtime_interface.md) | `Workspace.runtime.exec/getExec/killExec/disposeExec` and backend routing. |
-| [06. Mount Interface](./06_mount_interface.md) | Pre-filling paths from R2, Artifacts, GitHub, and custom sources. **(not yet implemented)** |
-| [07. Injected Service](./07_injected_service.md) | The in-container `computerd` service that backs FUSE and shell. |
-| [08. Capnweb Interface](./08_capnweb_interface.md) | RPC wire protocol between the DO and the sandbox. |
-| [09. Tool Interface (Agents)](./09_tool_interface.md) | Ready-made AI SDK tools for `@cloudflare/agents`. |
-| [10. Project Layout](./10_project_layout.md) | Source tree of this package and how the pieces fit together. |
-| [11. Lifecycle](./11_lifecycle.md) | DO incarnations, container lifetime, capnweb session lifecycle, and hibernation. |
-| [12. Worker backend](./12_worker_backend.md) | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
-| [13. Git interface](./13_git_interface.md) | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
-| [14. Assets interface](./14_assets_interface.md) | `share` a workspace file to R2 and get back a presigned URL. |
-| [15. Artifacts interface](./15_artifacts_interface.md) | `createArtifact` and the `artifacts` CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
-| [16. Execution runtime architecture](./16_code_execution.md) | One runtime entry point over command and module backends. |
-| [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, host modules, and managed lifecycle. |
-| [18. Runtime migration](./18_runtime_migration.md) | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
-| [19. Performance](./19_performance.md) | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
+The status column says whether the API a document describes is stable or
+experimental. Reference documents describe the code or its performance
+rather than an API.
+
+| Document | Status | Topic |
+| --- | --- | --- |
+| [01. VFS](./01_vfs.md) | Stable | Layout of the workspace tree, reserved paths, and mount points. |
+| [02. Sync Protocol](./02_sync_protocol.md) | Experimental | How the DO-backed VFS synchronises with the sandbox container. |
+| [03. Filesystem Schema](./03_filesystem_schema.md) | Stable | SQLite schema backing the virtual filesystem. |
+| [04. Filesystem Interface](./04_filesystem_interface.md) | Stable | `Workspace.fs` API: `readFile`, `writeFile`, `mkdir`, `grep`, etc. |
+| [05. Runtime Interface](./05_runtime_interface.md) | Stable | `Workspace.runtime.exec/getExec/killExec/disposeExec` and backend routing. |
+| [06. Mount Interface](./06_mount_interface.md) | Stable | Pre-filling paths from R2, Artifacts, GitHub, and custom sources. **(not yet implemented)** |
+| [07. Injected Service](./07_injected_service.md) | Experimental | The in-container `computerd` service that backs FUSE and shell. |
+| [08. Capnweb Interface](./08_capnweb_interface.md) | Experimental | RPC wire protocol between the DO and the sandbox. |
+| [09. Tool Interface (Agents)](./09_tool_interface.md) | Stable | Ready-made AI SDK tools for `@cloudflare/agents`. |
+| [10. Project Layout](./10_project_layout.md) | Reference | Source tree of this package and how the pieces fit together. |
+| [11. Lifecycle](./11_lifecycle.md) | Mixed: stub disposal is stable; the container and capnweb lifecycle are experimental | DO incarnations, container lifetime, capnweb session lifecycle, and hibernation. |
+| [12. Worker backend](./12_worker_backend.md) | Experimental | Running the shell as just-bash inside a Dynamic Worker loaded through `env.LOADER`. |
+| [13. Git interface](./13_git_interface.md) | Stable | `workspace.git` and the `git` CLI inside the shell, backed by isomorphic-git. |
+| [14. Assets interface](./14_assets_interface.md) | Stable | `share` a workspace file to R2 and get back a presigned URL. |
+| [15. Artifacts interface](./15_artifacts_interface.md) | Stable | `createArtifact` and the `artifacts` CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
+| [16. Execution runtime architecture](./16_code_execution.md) | Stable | One runtime entry point over command and module backends. |
+| [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | Stable, except `ws:container` | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, host modules, and managed lifecycle. |
+| [18. Runtime migration](./18_runtime_migration.md) | Reference | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
+| [19. Performance](./19_performance.md) | Reference | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
 
 ## High-level API
 
