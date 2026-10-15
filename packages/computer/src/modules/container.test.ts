@@ -89,6 +89,7 @@ function callContext(
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
     access: "read-write",
+    callId: "test-call",
     resolvePath: async (path) => path,
     ...overrides,
   };

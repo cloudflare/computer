@@ -39,6 +39,7 @@ function context(signal = new AbortController().signal): WorkspaceModuleCallCont
     signal,
     deadline: Date.now() + 1_000,
     access: "read",
+    callId: "test-call",
     resolvePath: async (path) => path,
   };
 }
