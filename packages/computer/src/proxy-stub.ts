@@ -15,6 +15,7 @@ import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js
 export interface WorkspaceProxyProps {
   binding: string;
   id: string;
+  name?: string;
 }
 
 export class WorkspaceProxy {
@@ -33,6 +34,7 @@ export class WorkspaceProxy {
 export interface WorkspaceServiceProxyProps {
   binding: string;
   id: string;
+  name?: string;
 }
 
 export class ArtifactsCLITarget {

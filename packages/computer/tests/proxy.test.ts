@@ -82,10 +82,83 @@ describe("WorkspaceProxy", () => {
     expect(await res.text()).toMatch(/NOT_A_BINDING is not a DurableObjectNamespace/);
   });
 
+  // A container outlives its durable object, so computerd reconnecting
+  // through the proxy is often what wakes the object. An instance
+  // woken by idFromString() never gets ctx.id.name, which breaks
+  // anything (agents' Lifecycle) that needs the name. Issue #243.
+  it("/api wakes the DO by name when props carry one", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("http://proxy.test/api", {
+      headers: {
+        "x-test-id": env.COMPUTERD.idFromName(name).toString(),
+        "x-test-name": name,
+        "x-test-report-name": "1",
+      },
+    });
+    expect(await res.json()).toEqual({ name });
+  });
+
+  it("egress callbacks wake the DO by name when props carry one", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("https://api.example.test/anything", {
+      headers: {
+        "x-test-id": env.COMPUTERD.idFromName(name).toString(),
+        "x-test-name": name,
+        "x-test-egress-token": "secret-token",
+        "x-test-report-name": "1",
+      },
+    });
+    expect(await res.json()).toEqual({ name });
+  });
+
+  it("/api falls back to the id when the name does not match it", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("http://proxy.test/api", {
+      headers: {
+        "x-test-id": env.COMPUTERD.idFromName(name).toString(),
+        "x-test-name": `other-${name}`,
+        "x-test-report-name": "1",
+      },
+    });
+    expect(await res.json()).toEqual({ name: null });
+  });
+
+  it("/api without a name still reaches the DO by id", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("http://proxy.test/api", {
+      headers: {
+        "x-test-id": env.COMPUTERD.idFromName(name).toString(),
+        "x-test-report-name": "1",
+      },
+    });
+    expect(await res.json()).toEqual({ name: null });
+  });
+
   it("returns 404 for paths other than /health and /api", async () => {
     const res = await SELF.fetch("http://proxy.test/anything-else", {
       headers: { "x-test-id": freshId() },
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("WorkspaceServiceProxy", () => {
+  it("wakes the DO by name when props carry one", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("http://proxy.test/__service/getWorkspace", {
+      headers: { "x-test-id": env.COMPUTERD.idFromName(name).toString(), "x-test-name": name },
+    });
+    expect(await res.json()).toEqual({ name });
+  });
+
+  it("falls back to the id when the name does not match it", async () => {
+    const name = `named-${crypto.randomUUID()}`;
+    const res = await SELF.fetch("http://proxy.test/__service/getWorkspace", {
+      headers: {
+        "x-test-id": env.COMPUTERD.idFromName(name).toString(),
+        "x-test-name": `other-${name}`,
+      },
+    });
+    expect(await res.json()).toEqual({ name: null });
   });
 });

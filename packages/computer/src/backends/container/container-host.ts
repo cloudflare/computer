@@ -19,6 +19,7 @@
 // an RpcTarget so it works the same in-isolate and across RPC.
 
 import { RpcTarget } from "cloudflare:workers";
+import { withHostName } from "../../durable-object-name.js";
 import { WorkspaceTransportError } from "../../transport-failure.js";
 import { ContainerClientSecret } from "./container-client-secret.js";
 import {
@@ -50,6 +51,11 @@ export interface WorkspaceRef {
   binding: string;
   // Stringified DurableObjectId of the specific Workspace owner.
   id: string;
+  // Name the Workspace owner is addressed by, typically
+  // ctx.id.name. The proxy wakes the owner by name when this yields
+  // `id`, so an owner the container wakes keeps ctx.id.name. Filled
+  // in automatically when the container host is the owner itself.
+  name?: string;
 }
 
 // Driver surface ContainerBackend talks to. Implemented
@@ -323,7 +329,9 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     const exports = (this.#ctx as unknown as { exports: Record<string, unknown> }).exports as {
       WorkspaceProxy: (opts: { props: WorkspaceRef & { egressToken: string } }) => Fetcher;
     };
-    const proxy = exports.WorkspaceProxy({ props: { ...ref, egressToken: token } });
+    const proxy = exports.WorkspaceProxy({
+      props: { ...withHostName(ref, this.#ctx), egressToken: token },
+    });
     await Promise.all([
       this.#container.interceptAllOutboundHttp(proxy),
       this.#container.interceptOutboundHttps("*", proxy),
@@ -340,7 +348,10 @@ export class WorkspaceContainerAPI extends RpcTarget implements IWorkspaceContai
     const exports = (this.#ctx as unknown as { exports: Record<string, unknown> }).exports as {
       WorkspaceProxy: (opts: { props: WorkspaceRef }) => Fetcher;
     };
-    await this.#container.interceptOutboundHttp(host, exports.WorkspaceProxy({ props: ref }));
+    await this.#container.interceptOutboundHttp(
+      host,
+      exports.WorkspaceProxy({ props: withHostName(ref, this.#ctx) }),
+    );
   }
 
   fetchPort(port: number, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

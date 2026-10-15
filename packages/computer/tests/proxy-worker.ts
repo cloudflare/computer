@@ -16,15 +16,24 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
-export { WorkspaceProxy } from "../src/proxy.js";
+export { WorkspaceProxy, WorkspaceServiceProxy } from "../src/proxy.js";
 
 export interface Env {
   COMPUTERD: DurableObjectNamespace;
 }
 
 export class TestStorageDO extends DurableObject<Env> {
+  // What the runtime reports as this instance's name. An instance
+  // first woken through idFromString() never learns it.
+  async __getWorkspaceStub(): Promise<unknown> {
+    return { name: this.ctx.id.name ?? null };
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/api" && request.headers.has("x-test-report-name")) {
+      return Response.json({ name: this.ctx.id.name ?? null });
+    }
     const egressToken = request.headers.get("x-workspace-egress-token");
     if (url.pathname === "/api" && egressToken !== null) {
       return Response.json({
@@ -59,9 +68,15 @@ export default class TestDriver extends WorkerEntrypoint<Env> {
     const binding = request.headers.get("x-test-binding") ?? "COMPUTERD";
     const id = request.headers.get("x-test-id") ?? "";
     const egressToken = request.headers.get("x-test-egress-token") ?? undefined;
+    const name = request.headers.get("x-test-name") ?? undefined;
     // oxlint-disable-next-line typescript/no-explicit-any -- ctx.exports isn't in @cloudflare/workers-types yet
-    const proxy = (this.ctx as any).exports.WorkspaceProxy({
-      props: { binding, id, egressToken },
+    const exports = (this.ctx as any).exports;
+    if (new URL(request.url).pathname === "/__service/getWorkspace") {
+      const service = exports.WorkspaceServiceProxy({ props: { binding, id, name } });
+      return Response.json(await service.getWorkspace());
+    }
+    const proxy = exports.WorkspaceProxy({
+      props: { binding, id, name, egressToken },
     });
     return proxy.fetch(request);
   }

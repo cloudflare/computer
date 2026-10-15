@@ -26,6 +26,9 @@
 //             binding: "COMPUTERD",
 //             // The DO instance the upgrade should route to.
 //             id: ctx.id.toString(),
+//             // Lets the proxy wake the DO by name, so
+//             // ctx.id.name survives a wake the proxy causes.
+//             name: ctx.id.name,
 //           },
 //         }),
 //       });
@@ -51,6 +54,7 @@
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
+import { hostDurableObjectId } from "./durable-object-name.js";
 import { WORKSPACE_EGRESS_TOKEN_HEADER, WORKSPACE_EGRESS_URL_HEADER } from "./runtime/egress.js";
 
 export interface WorkspaceProxyProps {
@@ -60,6 +64,11 @@ export interface WorkspaceProxyProps {
   // Stringified DurableObjectId — typically `ctx.id.toString()`
   // from inside the owning DO's constructor.
   id: string;
+  // The name the DO is addressed by — typically `ctx.id.name`. When
+  // `idFromName(name)` yields `id`, the proxy wakes the DO by name,
+  // so an instance the proxy wakes keeps `ctx.id.name`. Woken by id
+  // alone, it never has one.
+  name?: string;
   egressToken?: string;
 }
 
@@ -108,9 +117,9 @@ export class WorkspaceProxy extends WorkerEntrypoint<unknown, WorkspaceProxyProp
   }
 
   #hostStub(): DurableObjectStub | undefined {
-    const { binding, id } = this.ctx.props;
+    const { binding, id, name } = this.ctx.props;
     const ns = (this.env as Record<string, unknown>)[binding] as DurableObjectNamespace | undefined;
-    return ns?.get(ns.idFromString(id));
+    return ns?.get(hostDurableObjectId(ns, id, name));
   }
 
   #missingBindingResponse(): Response {
@@ -155,7 +164,7 @@ export class ArtifactsCLITarget extends RpcTarget {
 //
 //   // Inside the DO that owns the Workspace:
 //   const host = ctx.exports.WorkspaceServiceProxy({
-//     props: { binding: "ContainerExample", id: ctx.id.toString() },
+//     props: { binding: "ContainerExample", id: ctx.id.toString(), name: ctx.id.name },
 //   });
 //   env.LOADER.get(`shell:${ctx.id}`, () => ({
 //     env: { HOST: host },
@@ -177,6 +186,10 @@ export interface WorkspaceServiceProxyProps {
   // Stringified DurableObjectId — typically ctx.id.toString()
   // from inside the owning DO's constructor.
   id: string;
+  // The name the DO is addressed by — typically ctx.id.name. See
+  // WorkspaceProxyProps.name: without it, a DO this proxy wakes has
+  // no ctx.id.name.
+  name?: string;
 }
 
 export class WorkspaceServiceProxy extends WorkerEntrypoint<unknown, WorkspaceServiceProxyProps> {
@@ -217,13 +230,13 @@ export class WorkspaceServiceProxy extends WorkerEntrypoint<unknown, WorkspaceSe
   }
 
   #hostStub<T extends object>(): Rpc.DurableObjectBranded & T {
-    const { binding, id } = this.ctx.props;
+    const { binding, id, name } = this.ctx.props;
     const ns = (this.env as Record<string, unknown>)[binding] as
       | DurableObjectNamespace<Rpc.DurableObjectBranded & T>
       | undefined;
     if (!ns) {
       throw new Error(`WorkspaceServiceProxy: env.${binding} is not a DurableObjectNamespace`);
     }
-    return ns.get(ns.idFromString(id)) as unknown as Rpc.DurableObjectBranded & T;
+    return ns.get(hostDurableObjectId(ns, id, name)) as unknown as Rpc.DurableObjectBranded & T;
   }
 }
