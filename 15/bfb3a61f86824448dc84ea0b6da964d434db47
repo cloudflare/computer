@@ -1,0 +1,37 @@
+packages/computer/src/backends/worker-javascript/durable-runtime.test.ts
+  s_5a33ac7eaed91e::t_3f380c3b61c553 1-144
+packages/computer/src/backends/worker-javascript/durable-runtime.ts
+  s_5a33ac7eaed91e::t_9b60c8570fead3 1-369
+packages/computer/src/backends/worker-javascript/journal.test.ts
+  s_5a33ac7eaed91e::t_2bfbffd844bcca 99-136
+packages/computer/src/backends/worker-javascript/journal.ts
+  s_5a33ac7eaed91e::t_8c77c86d2a7af3 11-18,51-52,70,78-79,119,223,244,246,258,261-263,266-274,292-293,325,327,331,343-352
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_5a33ac7eaed91e::t_53b81ea85f5fc3 10,267,302,515,521,532-537,543,574,578,593-594
+packages/computer/src/runtime/bridge.test.ts
+  s_5a33ac7eaed91e::t_878395bb095882 258-259,261,267,272,278,287-292,304-348
+packages/computer/src/runtime/bridge.ts
+  s_5a33ac7eaed91e::t_4d305cbb10e09d 23,45-47,62,126,145,243,247-251,284-349,423-424,427-428,437-442,449-450
+packages/computer/src/runtime/egress.ts
+  s_5a33ac7eaed91e::t_215bcad3a52f0e 21-37
+packages/computer/tests/script-runner-worker.ts
+  s_5a33ac7eaed91e::t_ced9a6be80e01b 75,80-83,89,132-136,168-172,230,233,250,256,330-343,500,514
+packages/computer/tests/script-runner.test.ts
+  s_5a33ac7eaed91e::t_8f3b63e6e5ad52 342,991-994,1004,1006,1101-1105,1118-1229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "15bfb3a61f86824448dc84ea0b6da964d434db47",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
