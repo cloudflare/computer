@@ -8,11 +8,15 @@
 // answers its calls from the journal instead of running them, until the
 // journal runs out and the execution carries on live.
 //
-// The replay doesn't have to repeat the first attempt exactly. It has to
-// stay consistent with it: make the same calls with the same arguments.
-// A call the journal doesn't hold, while journaled calls are still
-// unanswered, means the code took a different path, and the execution
-// fails rather than continue on a state the journal can't vouch for.
+// Each response is numbered when it's committed. The isolate logs the
+// order it saw its events in, each response by number and each timer by
+// the order it was set, and sends the log along with its next call or
+// output, so the log is saved before anything that depends on it. When
+// the run replays, the isolate gets the log and sees its events in that
+// order again. A call the journal doesn't hold, while journaled calls are
+// still unanswered, means the code took a different path anyway, and the
+// execution fails rather than continue on a state the journal can't
+// vouch for.
 
 import type { Database } from "@cloudflare/dofs";
 
@@ -45,7 +49,8 @@ export interface DurableStart {
   readonly timeoutMs: number;
   readonly cpuMs: number;
   readonly startedAt: number;
-  readonly seed: number;
+  /** 64 hex digits that seed the run's random numbers. */
+  readonly seed: string;
   /** Identifies the runtime code the execution started on. */
   readonly fingerprint: string;
 }
@@ -63,6 +68,7 @@ interface JournalEntry {
   readonly state: "executing" | "applied";
   readonly response: string | null;
   readonly at: number | null;
+  readonly ordinal: number | null;
 }
 
 export type JournalStep =
@@ -70,6 +76,8 @@ export type JournalStep =
       readonly kind: "replay";
       readonly response: BridgeResponse;
       readonly at: number;
+      /** Where this response came in the order responses were delivered. */
+      readonly ordinal: number;
     }
   | { readonly kind: "live"; readonly seq: number }
   | { readonly kind: "diverge"; readonly message: string };
@@ -78,7 +86,11 @@ export const DURABLE_TABLES = [
   "workspace_runtime_durable",
   "workspace_runtime_durable_chunks",
   "workspace_runtime_journal",
+  "workspace_runtime_schedule",
 ] as const;
+
+/** Most events one log chunk may carry. */
+const MAX_LOG_CHUNK = 65536;
 
 export function createDurableTables(db: Database): void {
   db.run(`
@@ -109,7 +121,17 @@ export function createDurableTables(db: Database): void {
       state TEXT NOT NULL,
       response TEXT,
       at INTEGER,
+      ordinal INTEGER,
       PRIMARY KEY (backend, execution_id, seq)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workspace_runtime_schedule (
+      backend TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      events TEXT NOT NULL,
+      PRIMARY KEY (backend, execution_id, position)
     )
   `);
 }
@@ -175,11 +197,9 @@ export function recordAttempt(db: Database, backend: string, id: string, attempt
 }
 
 export function clearJournal(db: Database, backend: string, id: string): void {
-  db.run(
-    `DELETE FROM workspace_runtime_journal WHERE backend = ? AND execution_id = ?`,
-    backend,
-    id,
-  );
+  for (const table of ["workspace_runtime_journal", "workspace_runtime_schedule"]) {
+    db.run(`DELETE FROM ${table} WHERE backend = ? AND execution_id = ?`, backend, id);
+  }
 }
 
 export function clearDurable(db: Database, backend: string, id: string): void {
@@ -212,7 +232,9 @@ export class ExecutionJournal implements BridgeJournal {
   readonly #consumed = new Set<number>();
   readonly #onDiverge: (message: string) => void;
   #nextSeq: number;
+  #lastOrdinal: number;
   #unanswered: number;
+  readonly #log: number[];
 
   constructor(
     db: Database,
@@ -232,8 +254,9 @@ export class ExecutionJournal implements BridgeJournal {
         state: string;
         response: string | null;
         at: number | null;
+        ordinal: number | null;
       }>(
-        `SELECT seq, call_key, label, state, response, at FROM workspace_runtime_journal
+        `SELECT seq, call_key, label, state, response, at, ordinal FROM workspace_runtime_journal
          WHERE backend = ? AND execution_id = ? ORDER BY seq`,
         backend,
         id,
@@ -245,14 +268,72 @@ export class ExecutionJournal implements BridgeJournal {
         state: row.state === "applied" && row.response !== null ? "applied" : "executing",
         response: row.response,
         at: row.at === null ? null : Number(row.at),
+        ordinal: row.ordinal === null ? null : Number(row.ordinal),
       }));
     this.#nextSeq = (this.#entries.at(-1)?.seq ?? 0) + 1;
-    this.#unanswered = this.#entries.filter((entry) => entry.state === "applied").length;
+    const applied = this.#entries.filter((entry) => entry.state === "applied");
+    this.#unanswered = applied.length;
+    this.#lastOrdinal = applied.reduce((last, entry) => Math.max(last, entry.ordinal ?? 0), 0);
+    this.#log = this.#loadLog();
   }
 
-  /** Whether journaled responses are still waiting to be replayed. */
-  get replaying(): boolean {
-    return this.#unanswered > 0;
+  /**
+   * The order the run saw its events in so far: a positive number is the
+   * response with that ordinal, a negative one the timer set in that
+   * place firing. The isolate replays its events in this order.
+   */
+  schedule(): number[] {
+    return [...this.#log];
+  }
+
+  /**
+   * Save part of the isolate's event log. Chunks can arrive out of order,
+   * since calls and output travel separately, so each says where it goes.
+   */
+  record(position: unknown, events: unknown): void {
+    if (
+      !Number.isSafeInteger(position) ||
+      (position as number) < 0 ||
+      !Array.isArray(events) ||
+      events.length === 0 ||
+      events.length > MAX_LOG_CHUNK ||
+      !events.every((event) => Number.isSafeInteger(event) && event !== 0)
+    ) {
+      throw new Error("Workspace execution sent a malformed event log.");
+    }
+    this.#db.run(
+      `INSERT OR IGNORE INTO workspace_runtime_schedule (backend, execution_id, position, events)
+       VALUES (?, ?, ?, ?)`,
+      this.#backend,
+      this.#id,
+      position as number,
+      JSON.stringify(events),
+    );
+  }
+
+  // The log as far as it runs without a gap. A chunk that arrived after
+  // one lost to the interruption describes events nobody saw, so it's
+  // dropped, and the replay logs those positions afresh.
+  #loadLog(): number[] {
+    const rows = this.#db.all<{ position: number; events: string }>(
+      `SELECT position, events FROM workspace_runtime_schedule
+       WHERE backend = ? AND execution_id = ? ORDER BY position`,
+      this.#backend,
+      this.#id,
+    );
+    const log: number[] = [];
+    for (const row of rows) {
+      if (Number(row.position) !== log.length) break;
+      log.push(...(JSON.parse(row.events) as number[]));
+    }
+    this.#db.run(
+      `DELETE FROM workspace_runtime_schedule
+       WHERE backend = ? AND execution_id = ? AND position >= ?`,
+      this.#backend,
+      this.#id,
+      log.length,
+    );
+    return log;
   }
 
   /**
@@ -270,7 +351,8 @@ export class ExecutionJournal implements BridgeJournal {
         return {
           kind: "replay",
           response: decodeValue(entry.response ?? "null") as BridgeResponse,
-          at: entry.at ?? Date.now(),
+          at: entry.at ?? 0,
+          ordinal: entry.ordinal ?? 0,
         };
       }
       // The call was in flight when the execution was interrupted, so its
@@ -300,22 +382,36 @@ export class ExecutionJournal implements BridgeJournal {
   }
 
   /** Record a live call's response, before the isolate sees it. */
-  commit(seq: number, response: BridgeResponse): number {
+  commit(seq: number, response: BridgeResponse): { at: number; ordinal: number } {
     const at = Date.now();
+    this.#lastOrdinal += 1;
     this.#db.run(
-      `UPDATE workspace_runtime_journal SET state = 'applied', response = ?, at = ?
+      `UPDATE workspace_runtime_journal SET state = 'applied', response = ?, at = ?, ordinal = ?
        WHERE backend = ? AND execution_id = ? AND seq = ?`,
       encodeValue(response),
       at,
+      this.#lastOrdinal,
       this.#backend,
       this.#id,
       seq,
     );
-    return at;
+    return { at, ordinal: this.#lastOrdinal };
   }
 
   diverged(message: string): void {
     this.#onDiverge(message);
+  }
+
+  /** The isolate is waiting for a call the replay never made. */
+  stalled(): void {
+    const expected = this.expectedCall();
+    const where =
+      expected === undefined
+        ? "before reaching the point it was interrupted at"
+        : `before calling ${expected}`;
+    this.#onDiverge(
+      `The execution took a different path when it resumed after an interruption: it stopped ${where}.`,
+    );
   }
 
   /** The first journaled call not answered yet. */

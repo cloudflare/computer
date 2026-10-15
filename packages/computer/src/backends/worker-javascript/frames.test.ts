@@ -51,6 +51,21 @@ describe("parseRuntimeFrame", () => {
     expect(frame).toEqual({ name: "exit", code: 0, result: null });
   });
 
+  it("carries a durable run's event log alongside a frame", () => {
+    expect(
+      parseRuntimeFrame(
+        JSON.stringify({ name: "stdout", b64: "aGk=", log: { from: 2, events: [-1] } }),
+      ),
+    ).toEqual({
+      name: "stdout",
+      value: new TextEncoder().encode("hi"),
+      log: { from: 2, events: [-1] },
+    });
+    expect(() => parseRuntimeFrame(JSON.stringify({ name: "exit", code: 0, log: "x" }))).toThrow(
+      "malformed event log",
+    );
+  });
+
   it("rejects invalid JSON", () => {
     expect(() => parseRuntimeFrame("not json")).toThrow("received an invalid execution frame");
   });

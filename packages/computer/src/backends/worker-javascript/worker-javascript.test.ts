@@ -1985,6 +1985,63 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     return handle.result();
   }
 
+  it("saves the event log an output frame carries along with the output", async () => {
+    const storage = new SQLiteTestStorage();
+    let whileRunning: unknown[] = [];
+    const workspace = new Workspace({
+      storage,
+      backends: [
+        new WorkerJavaScriptBackend({
+          onInterrupt: "replay",
+          loader: {
+            load() {
+              return {
+                getEntrypoint() {
+                  return {
+                    async evaluate(
+                      _input: unknown,
+                      host: { attachOutput(readable: ReadableStream<Uint8Array>): Promise<void> },
+                    ) {
+                      const encoder = new TextEncoder();
+                      let output!: ReadableStreamDefaultController<Uint8Array>;
+                      const drained = host.attachOutput(
+                        new ReadableStream({ start: (controller) => void (output = controller) }),
+                      );
+                      const frame = {
+                        name: "stdout",
+                        b64: btoa("tick\n"),
+                        log: { from: 0, events: [-1] },
+                      };
+                      output.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
+                      await new Promise((resolve) => setTimeout(resolve, 10));
+                      const db = new Database(storage);
+                      whileRunning = [
+                        db.all("SELECT position, events FROM workspace_runtime_schedule"),
+                        db.all("SELECT name FROM workspace_runtime_events"),
+                      ];
+                      output.enqueue(
+                        encoder.encode(`${JSON.stringify({ name: "exit", code: 0 })}\n`),
+                      );
+                      output.close();
+                      await drained;
+                    },
+                  };
+                },
+              };
+            },
+          },
+        }),
+      ],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    const handle = await workspace.runtime.exec("export default 1", {
+      backend: "worker-javascript",
+    });
+    await expect(handle.result()).resolves.toMatchObject({ status: "completed" });
+    expect(whileRunning).toEqual([[{ position: 0, events: "[-1]" }], [{ name: "stdout" }]]);
+    await workspace.close();
+  });
+
   it("fails a run after three attempts", async () => {
     const storage = new SQLiteTestStorage();
     const workspaces = [await interrupt(storage)];

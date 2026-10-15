@@ -1,7 +1,11 @@
 import type { WorkspaceBackendHost } from "../../backend.js";
 import { WorkspaceRuntimeBridge } from "../../runtime/bridge.js";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability.js";
-import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
+import {
+  dynamicWorkerEgress,
+  hostEgressFetch,
+  type WorkspaceEgressPolicy,
+} from "../../runtime/egress.js";
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
@@ -91,14 +95,16 @@ export interface WorkerJavaScriptBackendOptions {
    * - `"restart"` runs it again from the start, once the backend
    *   reconnects. Its output so far stays, so the run's output repeats.
    * - `"replay"` runs it again from the start, but answers every
-   *   filesystem and host module call it already made from a journal
-   *   instead of running it again. Output already recorded isn't
-   *   repeated. If the run takes a different path, it fails.
+   *   filesystem, host module and `fetch` call it already made from a
+   *   journal instead of running it again, in the order the responses
+   *   first arrived. Its clock, timers and random numbers replay too.
+   *   Output already recorded isn't repeated. If the run takes a
+   *   different path, it fails.
    *
    * A run is resumed when the backend reconnects, which the next runtime
    * call or `ready()` triggers, or `runtime.recover()`. It gets three
-   * attempts and must finish within its original timeout. Network
-   * requests aren't journaled, so a replay makes them again.
+   * attempts and must finish within its original timeout. A call in
+   * flight at the interruption runs again.
    */
   onInterrupt?: WorkspaceRuntimeInterruptPolicy;
   /**
@@ -200,9 +206,10 @@ interface WorkspaceExecutionContext {
   env: Record<string, string>;
   cwd: string;
   stdin: Uint8Array;
-  // Set for a replayable run: the seed for Math.random, the time the
-  // run's clock starts at, and whether it starts by replaying.
-  durable?: { seed: number; startedAt: number; replaying: boolean };
+  // Set for a replayable run: the seed for its random numbers, the time
+  // its clock starts at, and the order it saw its events in before it was
+  // interrupted, which is empty on the first attempt.
+  durable?: { seed: string; startedAt: number; schedule: number[] };
 }
 
 interface JavaScriptEntrypoint {
@@ -238,9 +245,9 @@ interface ExecutionRecord {
   hasResult?: boolean;
   exitCode?: number;
   journal?: ExecutionJournal;
-  // Output bytes a replayed run already recorded, which its frames
-  // repeat and the record skips.
-  skip?: { stdout: number; stderr: number };
+  // Output a replayed run already recorded. Its frames must repeat these
+  // bytes, which the record checks and doesn't append again.
+  replayed?: Record<"stdout" | "stderr", { bytes: Uint8Array; offset: number }>;
 }
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
@@ -513,13 +520,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       let durable: WorkspaceExecutionContext["durable"];
       if (policy === "replay") {
         journal = this.#journalFor(record);
-        durable = { seed: start.seed, startedAt: start.startedAt, replaying: journal.replaying };
-        record.skip = { stdout: 0, stderr: 0 };
-        for (const event of record.events) {
-          if (event.name === "stdout" || event.name === "stderr") {
-            record.skip[event.name] += event.value.byteLength;
-          }
-        }
+        durable = { seed: start.seed, startedAt: start.startedAt, schedule: journal.schedule() };
+        record.replayed = {
+          stdout: { bytes: recordedOutput(record.events, "stdout"), offset: 0 },
+          stderr: { bytes: recordedOutput(record.events, "stderr"), offset: 0 },
+        };
       } else {
         this.#append(record, {
           id,
@@ -685,7 +690,9 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       try {
         if (policy !== "fail") {
           const startedAt = Date.now();
-          const seed = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+          const seed = [...crypto.getRandomValues(new Uint8Array(32))]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
           saveDurableStart(this.#host.db, this.#backendId, id, policy, {
             version: JOURNAL_VERSION,
             modules: graph.modules,
@@ -702,7 +709,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           });
           if (policy === "replay") {
             journal = this.#journalFor(record);
-            context.durable = { seed, startedAt, replaying: false };
+            context.durable = { seed, startedAt, schedule: [] };
           }
         }
       } catch (error) {
@@ -756,6 +763,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
+        ...hostEgressFetch(this.#options.egress),
         ...(spec.journal === undefined ? {} : { journal: spec.journal }),
       });
       record.bridge = bridge;
@@ -999,13 +1007,32 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // stream but only settle the terminal state in #finalize.
   #ingestFrame(record: ExecutionRecord, frame: RuntimeFrame) {
     if (record.status !== "running") return;
+    // Saved with the output in one transaction, so output never outlives
+    // the log of the events that led to it.
+    if (frame.log !== undefined) {
+      try {
+        record.journal?.record(frame.log.from, frame.log.events);
+      } catch (error) {
+        this.#diverge(record, error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
     if (frame.name === "stdout" || frame.name === "stderr") {
       let value = frame.value;
-      const skip = record.skip?.[frame.name] ?? 0;
-      if (skip > 0 && record.skip !== undefined) {
-        const skipped = Math.min(skip, value.byteLength);
-        record.skip[frame.name] -= skipped;
-        value = value.subarray(skipped);
+      const replayed = record.replayed?.[frame.name];
+      if (replayed !== undefined && replayed.offset < replayed.bytes.byteLength) {
+        const end = Math.min(replayed.bytes.byteLength, replayed.offset + value.byteLength);
+        const expected = replayed.bytes.subarray(replayed.offset, end);
+        if (!bytesEqual(value.subarray(0, expected.byteLength), expected)) {
+          this.#diverge(
+            record,
+            "The execution took a different path when it resumed after an interruption: " +
+              `it wrote different ${frame.name} from the first time.`,
+          );
+          return;
+        }
+        replayed.offset = end;
+        value = value.subarray(expected.byteLength);
         if (value.byteLength === 0) return;
       }
       this.#append(record, {
@@ -1037,6 +1064,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       errorMessage =
         "The execution took a different path when it resumed after an interruption: " +
         `it finished without calling ${expected} again.`;
+    }
+    const unwritten = (["stdout", "stderr"] as const).find((name) => {
+      const replayed = record.replayed?.[name];
+      return replayed !== undefined && replayed.offset < replayed.bytes.byteLength;
+    });
+    if (errorMessage === undefined && unwritten !== undefined) {
+      errorMessage =
+        "The execution took a different path when it resumed after an interruption: " +
+        `it finished without writing all the ${unwritten} it wrote the first time.`;
     }
     try {
       await record.bridge?.cancelAndDrain();
@@ -1445,7 +1481,8 @@ function startJavaScriptExecution(options: {
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
-    import { install, moduleScopeRefusals } from "workspace-capabilities.js";
+    import { call, install, moduleScopeRefusals } from "workspace-capabilities.js";
+    import { install as installDurable, takeLog } from "workspace-durable.js";
 
     // A promise nobody awaits would otherwise fail without a trace while
     // the run reports success. Track the rejections nothing handled, and
@@ -1524,6 +1561,8 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         // task awaits writeChain before closing.
         let writeChain = Promise.resolve();
         const enqueue = (frame) => {
+          const log = takeLog();
+          if (log !== undefined) frame.log = log;
           const bytes = encoder.encode(JSON.stringify(frame) + "\\n");
           writeChain = writeChain.then(() => writer.write(bytes)).catch(() => {});
         };
@@ -1593,85 +1632,12 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           }
           return "";
         };
-        const durable = context && context.durable;
-        if (durable) {
-          // A replay has to make the same choices, so random numbers come
-          // from the run's seed (mulberry32).
-          let state = durable.seed >>> 0;
-          Math.random = () => {
-            state = (state + 0x6d2b79f5) | 0;
-            let t = Math.imul(state ^ (state >>> 15), 1 | state);
-            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-          };
-          // The clock is virtual, so a replay reads the same times. It
-          // starts when the run did, moves to the time each journaled
-          // call completed, and moves on by a timer's delay when the
-          // timer fires. Like the Workers clock, it doesn't move while
-          // code computes. While the run replays, timers fire at once,
-          // so a replay doesn't wait out the sleeps it already waited.
-          const RealDate = Date;
-          let virtualNow = durable.startedAt;
-          let replaying = durable.replaying === true;
-          const advance = (time) => {
-            if (typeof time === "number" && time > virtualNow) virtualNow = time;
-          };
-          function DurableDate(...args) {
-            if (!new.target) return new RealDate(virtualNow).toString();
-            return args.length === 0 ? new RealDate(virtualNow) : new RealDate(...args);
-          }
-          DurableDate.prototype = RealDate.prototype;
-          DurableDate.now = () => virtualNow;
-          DurableDate.parse = RealDate.parse;
-          DurableDate.UTC = RealDate.UTC;
-          globalThis.Date = DurableDate;
-          globalThis[Symbol.for("cloudflare.workspace.runtime.clock")] = (at, stillReplaying) => {
-            advance(at);
-            replaying = stillReplaying === true;
-          };
-          // Intervals are chained timeouts, so each tick picks its real
-          // delay afresh once the replay is over.
-          const realSetTimeout = setTimeout;
-          const realClearTimeout = clearTimeout;
-          const timers = new Map();
-          let nextTimer = 1;
-          const schedule = (id, callback, delay, args, repeat) => {
-            const step = Math.max(0, Number(delay) || 0);
-            const due = virtualNow + step;
-            timers.set(
-              id,
-              realSetTimeout(() => {
-                advance(due);
-                if (repeat) schedule(id, callback, delay, args, true);
-                else timers.delete(id);
-                if (typeof callback === "function") callback(...args);
-              }, replaying ? 0 : step),
-            );
-            return id;
-          };
-          const clear = (id) => {
-            const handle = timers.get(id);
-            if (handle === undefined) return;
-            realClearTimeout(handle);
-            timers.delete(id);
-          };
-          globalThis.setTimeout = (callback, delay, ...args) =>
-            schedule(nextTimer++, callback, delay, args, false);
-          globalThis.setInterval = (callback, delay, ...args) =>
-            schedule(nextTimer++, callback, delay, args, true);
-          globalThis.clearTimeout = clear;
-          globalThis.clearInterval = clear;
-          if (globalThis.scheduler && typeof globalThis.scheduler.wait === "function") {
-            const realWait = globalThis.scheduler.wait.bind(globalThis.scheduler);
-            globalThis.scheduler.wait = async (delay, options) => {
-              const step = Math.max(0, Number(delay) || 0);
-              const due = virtualNow + step;
-              await realWait(replaying ? 0 : step, options);
-              advance(due);
-            };
-          }
-        }
         install(host);
+        // A replayable run gets a clock, timers, random numbers and fetch
+        // that replay the way they went the first time.
+        // The runner keeps the real timer for itself.
+        const realSetTimeout = globalThis.setTimeout;
+        if (context && context.durable) installDurable(context.durable, host, call);
         // Hand the readable end to the host, which drains it live while
         // this call stays in flight. Keeping evaluate in flight is what
         // holds the host bridge stub alive for the whole run; frames
@@ -1684,7 +1650,7 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
             ? await module.default(input)
             : module.default ?? null;
           // Rejections are reported after the microtask queue drains.
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          await new Promise((resolve) => realSetTimeout(resolve, 0));
           if (moduleScopeRefusals.length > 0) throw moduleScopeRefusals[0];
           for (const reason of unhandled.values()) {
             const message = reason instanceof Error ? reason.message : String(reason);
@@ -1838,4 +1804,24 @@ function disposeQuietly(value: { [Symbol.dispose]?: () => void }) {
   try {
     value[Symbol.dispose]?.();
   } catch {}
+}
+
+function recordedOutput(
+  events: readonly WorkspaceRuntimeEvent[],
+  name: "stdout" | "stderr",
+): Uint8Array {
+  const chunks = events.flatMap((event) => (event.name === name ? [event.value] : []));
+  const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
 }

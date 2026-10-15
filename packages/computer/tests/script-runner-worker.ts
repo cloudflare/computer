@@ -72,17 +72,21 @@ function countCall(name: string): number {
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
+const NETWORK_BACKEND = "worker-javascript-network";
 
 function javascriptBackend(
   env: Env,
   overrides: Partial<
-    Pick<WorkerJavaScriptBackendOptions, "id" | "compatibilityFlags" | "loader">
+    Pick<
+      WorkerJavaScriptBackendOptions,
+      "id" | "compatibilityFlags" | "loader" | "egress" | "maxStdioBytes"
+    >
   > = {},
 ) {
   return new WorkerJavaScriptBackend({
     loader: env.LOADER,
     ...overrides,
-    maxStdioBytes: 64,
+    maxStdioBytes: overrides.maxStdioBytes ?? 64,
     maxCapabilityBytes: 1024,
     maxConcurrentCapabilityCalls: 2,
     modules: {
@@ -125,6 +129,11 @@ function javascriptBackend(
           await new Promise((resolve) => setTimeout(resolve, 20));
           return null;
         },
+        // Settles after args[0] milliseconds and counts the call as args[1].
+        async wait(args) {
+          await new Promise((resolve) => setTimeout(resolve, Number(args[0])));
+          return countCall(String(args[1] ?? "wait"));
+        },
         async marker() {
           return {
             __workspace_codec__: { version: 1, type: "bytes", data: [1] },
@@ -155,6 +164,11 @@ export class HostDO extends DurableObject<Env> {
             load: (code: Parameters<Env["LOADER"]["load"]>[0]) =>
               env.LOADER.load({ ...code, allowExperimental: true }),
           },
+        }),
+        javascriptBackend(env, {
+          id: NETWORK_BACKEND,
+          egress: { mode: "http-gateway", gateway: ctx.exports.TestGateway },
+          maxStdioBytes: 4096,
         }),
         fakeContainerBackend(),
       ],
@@ -213,10 +227,10 @@ export class HostDO extends DurableObject<Env> {
     return handle.id;
   }
 
-  async getRuntime(id: string, resume?: "tail") {
+  async getRuntime(id: string, resume?: "tail", network?: boolean) {
     try {
       const handle = await this.#workspace.runtime.getExec(id, {
-        backend: "worker-javascript",
+        backend: network === true ? NETWORK_BACKEND : "worker-javascript",
         encoding: "utf8",
         resume,
       });
@@ -233,12 +247,13 @@ export class HostDO extends DurableObject<Env> {
     source: string;
     id: string;
     onInterrupt?: "fail" | "restart" | "replay";
+    network?: boolean;
   }) {
     gateOpen = false;
     durableCalls.clear();
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: "worker-javascript",
+      backend: input.network === true ? NETWORK_BACKEND : "worker-javascript",
       id: input.id,
       onInterrupt: input.onInterrupt,
     });
@@ -309,6 +324,20 @@ class StdioProbeBridge extends RpcTarget {
 
   sinkResult(): string {
     return this.#sinkResult;
+  }
+}
+
+// The network a run with egress reaches. It counts each request, so a
+// test can tell whether a replay sent it again.
+export class TestGateway extends WorkerEntrypoint<Env> {
+  override async fetch(request: Request) {
+    const count = countCall("fetch");
+    return new Response(
+      `${request.method} ${new URL(request.url).pathname} ${await request.text()} #${count}`,
+      {
+        headers: { "x-count": String(count) },
+      },
+    );
   }
 }
 
@@ -468,6 +497,7 @@ export default class extends WorkerEntrypoint<Env> {
         const response = await stub.getRuntime(
           url.searchParams.get("id") ?? "missing",
           url.searchParams.get("resume") === "tail" ? "tail" : undefined,
+          url.searchParams.has("network"),
         );
         return response.ok
           ? Response.json(response.result)
@@ -481,6 +511,7 @@ export default class extends WorkerEntrypoint<Env> {
               source: string;
               id: string;
               onInterrupt?: "fail" | "restart" | "replay";
+              network?: boolean;
             },
           ),
         });

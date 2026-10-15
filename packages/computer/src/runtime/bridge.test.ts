@@ -253,37 +253,56 @@ describe("WorkspaceRuntimeBridge journal", () => {
       begin: () => steps.shift() ?? { kind: "live", seq: 99 },
       commit: (seq) => {
         commits.push(seq);
-        return 1234;
+        return { at: 1234, ordinal: 7 };
       },
-      diverged: () => undefined,
-      get replaying() {
-        return steps.some((step) => step.kind === "replay");
+      record: (position, events) => {
+        if (!Array.isArray(events)) throw new Error("malformed event log");
+        logs.push([position, events]);
       },
+      diverged: (message) => diverged.push(message),
+      stalled: () => diverged.push("stalled"),
     };
+    const diverged: string[] = [];
+    const logs: unknown[] = [];
     const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
       maxTotalResponseBytes: 4,
       hostModules: new Map([["ws:test", { run: async () => "ok" }]]),
       journal,
     });
-    return { target, commits };
+    return { target, commits, diverged, logs };
   }
 
   it("answers a replayed call from the journal and journals a live one", async () => {
     const { target, commits } = journaled([
-      { kind: "replay", response: { result: "no" }, at: 5 },
+      { kind: "replay", response: { result: "no" }, at: 5, ordinal: 1 },
       { kind: "live", seq: 2 },
     ]);
     await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
       result: "no",
       at: 5,
-      replaying: false,
+      ordinal: 1,
     });
     await expect(target.call("host/ws:test.run", args)).resolves.toEqual({
       result: "ok",
       at: 1234,
-      replaying: false,
+      ordinal: 7,
     });
     expect(commits).toEqual([2]);
+  });
+
+  it("saves the event log a call carries before making the call", async () => {
+    const { target, logs } = journaled([{ kind: "live", seq: 1 }]);
+    await target.call("host/ws:test.run", args, { from: 3, events: [4, -1] });
+    expect(logs).toEqual([[3, [4, -1]]]);
+    await expect(
+      message(target.call("host/ws:test.run", args, { from: 5, events: "x" as never })),
+    ).resolves.toContain("malformed event log");
+  });
+
+  it("passes a stalled replay to the journal", () => {
+    const { target, diverged } = journaled([]);
+    target.reportStall();
+    expect(diverged).toEqual(["stalled"]);
   });
 
   it("counts replayed responses against the cumulative response budget", async () => {
@@ -294,6 +313,51 @@ describe("WorkspaceRuntimeBridge journal", () => {
     await target.call("host/ws:test.run", args);
     await expect(message(target.call("host/ws:test.run", args))).resolves.toContain(
       "responses exceed 4 bytes",
+    );
+  });
+});
+
+describe("WorkspaceRuntimeBridge fetch", () => {
+  const request = {
+    url: "https://example.test/a",
+    method: "POST",
+    headers: [["x-a", "1"]],
+    body: encoder.encode("hi"),
+  };
+
+  it("makes the request through the host and buffers the response", async () => {
+    const seen: Request[] = [];
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      fetch: async (incoming) => {
+        seen.push(incoming);
+        return new Response("pong", { status: 201, headers: { "x-b": "2" } });
+      },
+    });
+    const response = await target.call("net.fetch", [request]);
+    expect(response).toMatchObject({
+      result: { status: 201, headers: expect.arrayContaining([["x-b", "2"]]) },
+    });
+    const result = "result" in response ? (response.result as { body: Uint8Array }) : undefined;
+    expect(new TextDecoder().decode(result?.body)).toBe("pong");
+    expect(seen[0]?.method).toBe("POST");
+    expect(seen[0]?.headers.get("x-a")).toBe("1");
+    expect(await seen[0]?.text()).toBe("hi");
+  });
+
+  it("refuses when the isolate has no network access", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {});
+    await expect(message(target.call("net.fetch", [request]))).resolves.toContain(
+      "no network access",
+    );
+  });
+
+  it("refuses a response body over the payload limit", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxPayloadBytes: 256,
+      fetch: async () => new Response("x".repeat(1024)),
+    });
+    await expect(message(target.call("net.fetch", [request]))).resolves.toContain(
+      "exceeds 256 bytes",
     );
   });
 });
