@@ -31,6 +31,7 @@ import {
   INTERRUPT_POLICIES,
   JOURNAL_VERSION,
   loadDurable,
+  MAX_CONCURRENT_RECOVERIES,
   MAX_INTERRUPT_ATTEMPTS,
   recordAttempt,
   saveDurableStart,
@@ -396,6 +397,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // Running executions, each with the time after which it stops counting
   // towards the keep-alive.
   readonly #running = new Map<string, number>();
+  readonly #recoveryQueue: Array<() => void> = [];
+  readonly #recovering = new Set<string>();
   #keepAlive: ReturnType<typeof setInterval> | undefined;
   // Zero when the timer is off or can't keep this object in memory.
   readonly #keepAliveIntervalMs: number;
@@ -467,6 +470,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       this.#backendId,
     );
     for (const { id } of interrupted) this.#resumeInterrupted(id);
+    this.#drainRecoveries();
   }
 
   // Recovery runs when the backend connects, so there's nothing left to
@@ -499,7 +503,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       fail("Execution was interrupted when its Workspace runtime restarted.");
       return;
     }
-    const { policy, attempt, start } = saved;
+    const { attempt, start } = saved;
     if (attempt >= MAX_INTERRUPT_ATTEMPTS) {
       fail(`Execution was interrupted ${attempt} times and won't be started again.`);
       return;
@@ -510,6 +514,33 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       );
       return;
     }
+    const resumable = saved;
+    this.#recoveryQueue.push(() => {
+      if (record.status !== "running" || record.finalization) return;
+      this.#recovering.add(id);
+      this.#relaunch(record, resumable, fail);
+    });
+  }
+
+  // A Durable Object can run only so many Dynamic Workers at once, and
+  // new executions need some of them, so interrupted runs start a few at
+  // a time. Each one that settles lets the next start.
+  #drainRecoveries() {
+    while (this.#recovering.size < MAX_CONCURRENT_RECOVERIES) {
+      const next = this.#recoveryQueue.shift();
+      if (next === undefined) return;
+      next();
+    }
+  }
+
+  #relaunch(
+    record: ExecutionRecord,
+    { policy, attempt, start }: NonNullable<ReturnType<typeof loadDurable>>,
+    fail: (message: string) => void,
+  ) {
+    const id = record.id;
+    // A run's timeout counts from when it first started, including the
+    // time it spent interrupted or waiting to resume.
     const remainingMs = start.startedAt + start.timeoutMs - Date.now();
     if (remainingMs <= 0) {
       fail("Execution was interrupted and its timeout passed before it could resume.");
@@ -868,6 +899,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   #markSettled(id: string) {
     this.#running.delete(id);
     this.#syncKeepAlive();
+    if (this.#recovering.delete(id)) this.#drainRecoveries();
   }
 
   // Hold the Durable Object in memory while any execution runs. Scheduling

@@ -2140,6 +2140,37 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await workspace.close();
   });
 
+  it("restarts at most four interrupted runs at once", async () => {
+    const storage = new SQLiteTestStorage();
+    const first = open(storage);
+    await first.fs.mkdir("/workspace", { recursive: true });
+    for (let index = 0; index < 6; index += 1) {
+      await first.runtime.exec("export default 1", {
+        backend: "worker-javascript",
+        id: `run-${index}`,
+        onInterrupt: "replay",
+      });
+    }
+    let launched = 0;
+    const later = open(storage, {
+      loader: {
+        load() {
+          launched += 1;
+          return hanging.load();
+        },
+      },
+    });
+    await later.runtime.recover();
+    await vi.waitFor(() => expect(launched).toBe(4));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(launched).toBe(4);
+    // Each run that settles lets a waiting one start.
+    await later.runtime.killExec("run-0", { backend: "worker-javascript" });
+    await vi.waitFor(() => expect(launched).toBe(5));
+    await later.close();
+    await first.close();
+  });
+
   it("rejects an unknown onInterrupt policy", async () => {
     expect(
       () => new WorkerJavaScriptBackend({ loader: hanging, onInterrupt: "maybe" as never }),

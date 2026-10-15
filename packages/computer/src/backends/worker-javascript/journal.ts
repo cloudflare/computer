@@ -33,6 +33,12 @@ export const JOURNAL_VERSION = 1;
 /** How many attempts an execution gets before an interruption fails it. */
 export const MAX_INTERRUPT_ATTEMPTS = 3;
 
+/**
+ * How many interrupted runs restart at once. A Durable Object runs at
+ * most ten Dynamic Workers at a time, and new executions need some.
+ */
+export const MAX_CONCURRENT_RECOVERIES = 4;
+
 // Saved start data is split across rows, since a module graph can be
 // larger than one SQLite value should hold.
 const CHUNK_CHARACTERS = 256 * 1024;
