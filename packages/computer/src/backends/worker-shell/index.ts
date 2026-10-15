@@ -1,4 +1,7 @@
-// Public surface of @cloudflare/computer/backends/worker.
+// Public surface of @cloudflare/computer/backends/worker-shell.
+//
+// Status: experimental. This entry point may change in any release
+// and is not yet suitable for production use.
 //
 // The worker backend pairs a Workspace with a just-bash shell
 // running in a Dynamic Worker minted through env.LOADER. Every

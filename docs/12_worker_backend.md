@@ -1,5 +1,10 @@
 # 12. Worker backend
 
+> [!WARNING]
+> **Experimental.** The Worker shell backend (`WorkerShellBackend`) may change in any release and
+> is not yet suitable for production use. See the
+> [status table](../packages/computer/README.md#status).
+
 > [!NOTE]
 > This doc reflects shipped code in
 > `packages/computer/src/backends/worker-shell/`. The example deployment

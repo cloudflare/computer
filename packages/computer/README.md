@@ -6,10 +6,43 @@ small, portable working directory and the tools to read, write, and run
 things in it.
 
 > [!IMPORTANT]
-> **PREVIEW ONLY.** This package is provided as a preview for feedback
-> only. APIs are unstable and the design is subject to change. Suitable
-> for experiments, exploration, and prototypes. It is NOT suitable for
-> production use at this time.
+> Most of this package is stable. The container backends, the Worker
+> shell backend, the `ws:container` host module, the sync between the
+> durable object and `computerd`, and `computerd` itself are
+> experimental. See [Status](#status) for the full list.
+
+## Status
+
+Stable means suitable for production use. Experimental APIs are
+provided for feedback: they may change or go away in any release, so
+use them for experiments and prototypes only.
+
+| Component | Entrypoint | Status |
+| --- | --- | --- |
+| `Workspace`, `withWorkspace`, `getWorkspace`, `workspace.fs`, `workspace.runtime`, and the stub types | `@cloudflare/computer` | Stable |
+| The SQLite filesystem layer (`@cloudflare/dofs`, bundled into this package), including `SQLiteWorkspaceProvider` | `@cloudflare/computer` | Stable |
+| `WorkerJavaScriptBackend` | `@cloudflare/computer/backends/worker-javascript` | Stable |
+| Read-only mounts (`R2Bucket`, `WorkerBundle`) and the Vite plugin | `@cloudflare/computer`, `@cloudflare/computer/vite` | Stable |
+| Agent tools | `@cloudflare/computer/tools`, `@cloudflare/computer/tools/*` | Stable |
+| Host modules for isolate JavaScript: `ws:git`, `ws:artifacts`, `ws:assets`, `ws:tools` | `@cloudflare/computer/modules/git`, `modules/artifacts`, `modules/assets`, `modules/tools` | Stable |
+| Git | `@cloudflare/computer/git` | Stable |
+| Assets and Artifacts | `@cloudflare/computer/assets`, `@cloudflare/computer/artifacts` | Stable |
+| Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
+| `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
+| `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Experimental |
+| `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
+| The `ws:container` host module | `@cloudflare/computer/modules/container` | Experimental |
+| `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
+| The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
+| The RPC wire protocol between the durable object and `computerd` (`@cloudflare/computer-rpc`) | Internal | Experimental |
+
+A stable surface that runs work on a backend, such as the agent tools'
+`exec` tool, is only as stable as the backend it runs on.
+
+The sync building blocks inside `@cloudflare/dofs` (`applyChanges`,
+`fetchChanges`, watermarks, and the rest) serve only the sync protocol,
+so they share its experimental status. The rest of `@cloudflare/dofs`
+is stable.
 
 ## What you get
 
@@ -45,8 +78,8 @@ npm install @cloudflare/computer
 ```
 
 Your Worker needs the `nodejs_compat` compatibility flag. The
-worker-shell and worker-javascript backends additionally need the
-`experimental` flag and a Worker Loader binding. Each backend has its
+worker-shell and worker-javascript backends also need a Worker Loader
+binding, and the worker-shell backend needs the `experimental` flag. Each backend has its
 own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
 Optional peer dependencies, installed only if you use the matching
@@ -99,7 +132,9 @@ export default {
 
 To run commands against those files, add an execution backend. The
 worker-shell backend needs no container and no Docker, so it's the
-quickest way to get `exec` working:
+quickest way to get `exec` working. It is experimental; for a stable
+backend, use the worker-javascript backend, shown in
+[`examples/worker-javascript`](../../examples/worker-javascript):
 
 ```ts
 import { withWorkspace, getWorkspace } from "@cloudflare/computer";
@@ -274,12 +309,12 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 
 ### Choosing a backend
 
-| Backend | Import | Runs | Needs |
-| --- | --- | --- | --- |
-| **Container** | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
-| **Container (legacy)** | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
-| **Worker shell** | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
-| **Worker JavaScript** | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding; `experimental` flag |
+| Backend | Status | Import | Runs | Needs |
+| --- | --- | --- | --- | --- |
+| **Container** | Experimental | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
+| **Container (legacy)** | Experimental | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
+| **Worker shell** | Experimental | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag |
+| **Worker JavaScript** | Stable | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
 
 - **Container** cold-starts more slowly but gives you a real Linux
   environment. The container owns its own SQLite-backed VFS and this
@@ -580,6 +615,7 @@ An adapter for the Cloudflare runtime lives at
 ## Documentation
 
 The design specification lives under [`docs/`](../../docs/README.md).
+Its topic index marks each document stable or experimental.
 Start with [01. VFS](../../docs/01_vfs.md),
 [04. Filesystem Interface](../../docs/04_filesystem_interface.md), and
 [05. Runtime Interface](../../docs/05_runtime_interface.md). It is

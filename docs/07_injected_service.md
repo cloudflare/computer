@@ -1,5 +1,10 @@
 # 07. Injected Service
 
+> [!WARNING]
+> **Experimental.** `computerd` and the container backends may change in any release and
+> is not yet suitable for production use. See the
+> [status table](../packages/computer/README.md#status).
+
 > [!NOTE]
 > This doc now reflects shipped code in `packages/computerd/` and
 > `packages/computer/src/backends/`. Items marked **(planned)** are

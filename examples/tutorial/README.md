@@ -1,11 +1,10 @@
 # Tutorial: a PDF recipe card agent
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> This example uses experimental parts of Cloudflare Computer: the legacy container backend and `computerd`.
+> Their APIs may change in any release, and they are not yet suitable
+> for production use. See the
+> [status table](../../packages/computer/README.md#status).
 
 A worker with one endpoint. You post a dish, an agent finds a matching
 recipe on [openstove.org](https://openstove.org/recipes), writes a

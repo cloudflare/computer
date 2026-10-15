@@ -1,11 +1,10 @@
 # container example
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> This example uses experimental parts of Cloudflare Computer: the container backend and `computerd`.
+> Their APIs may change in any release, and they are not yet suitable
+> for production use. See the
+> [status table](../../packages/computer/README.md#status).
 
 A Cloudflare Worker + Durable Object that boots a Container running the
 `computerd` daemon and exposes a minimal `write` / `read` / `exec` HTTP

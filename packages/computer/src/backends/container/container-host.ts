@@ -409,6 +409,12 @@ export type WithWorkspaceContainerCtor<TBase extends DOCtor> = TBase &
     ...args: any[]
   ) => InstanceType<TBase> & { getWorkspaceContainer(): WorkspaceContainerAPI });
 
+/**
+ * Adds the container host surface that `ContainerBackend` dials to a durable object class.
+ *
+ * Experimental: this API may change in any release and is not yet
+ * suitable for production use.
+ */
 export function withWorkspaceContainer<TBase extends DOCtor>(
   Base: TBase,
 ): WithWorkspaceContainerCtor<TBase> {

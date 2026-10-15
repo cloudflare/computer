@@ -26,6 +26,9 @@
 //     LegacyContainerBackend,
 //     withLegacyWorkspaceContainer,
 //   } from "@cloudflare/computer/backends/container-legacy";
+//
+// Status: experimental. This entry point may change in any release
+// and is not yet suitable for production use.
 
 export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
 export {

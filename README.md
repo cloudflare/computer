@@ -26,11 +26,17 @@ Workspace can also be constructed without a backend at all, giving
 callers the filesystem on its own.
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
+> Most of Cloudflare Computer is stable, meaning suitable for
+> production use: the `Workspace`, its SQLite filesystem
+> (`@cloudflare/dofs`), the Isolate JavaScript backend, mounts, agent
+> tools, Git, Assets, and Artifacts.
 >
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> The experimental parts are the container backends, the Worker shell backend, the `ws:container`
+> host module, the sync between the durable object and `computerd`,
+> `computerd` itself, and the RPC package. Their APIs
+> may change in any release, and they are not yet suitable for production
+> use. The [`@cloudflare/computer` status table](packages/computer/README.md#status)
+> has the full list.
 >
 > The specification under [`docs/`](docs/) is forward-looking — read it for
 > intent, not as description of the code today.
@@ -111,18 +117,24 @@ package-specific status and usage notes.
 - [`packages/dofs`](packages/dofs/README.md) (`@cloudflare/dofs`) —
   Durable Object SQLite-backed virtual filesystem, sync protocol
   building blocks, and a `@platformatic/vfs` provider for Node.
+  Stable, except the sync protocol building blocks.
 - [`packages/rpc`](packages/rpc/README.md)
   (`@cloudflare/computer-rpc`) — capnweb wire types and
   server/client helpers shared between the Durable Object and `computerd`.
+  Experimental.
 - [`packages/computerd`](packages/computerd/README.md)
   (`@cloudflare/computerd`) — the `computerd` daemon: a FUSE mount plus
   HTTP/WebSocket RPC server that runs inside the sandbox container.
+  Experimental.
 - [`packages/computer`](packages/computer/README.md)
   (`@cloudflare/computer`) — the top-level Computer package
-  consumed by Durable Objects. Work in progress.
+  consumed by Durable Objects. Stable, except the container and Worker
+  shell backends and the pieces listed as experimental in its
+  [status table](packages/computer/README.md#status).
 - [`packages/computer-computerd-linux-x64`](packages/computer-computerd-linux-x64/README.md)
   — private Docker image context for the prebuilt `computerd` linux-x64
   binary. The image, not an npm package, is the release artifact.
+  Experimental.
 
 ## Performance
 

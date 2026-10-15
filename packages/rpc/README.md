@@ -1,11 +1,11 @@
 # `@cloudflare/computer-rpc`
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration and prototypes. It is NOT suitable
-> for production use at this time.
+> **Experimental.** This package is provided for feedback only. Its APIs
+> may change in any release, and it is not suitable for production use
+> yet. Suitable for experiments, exploration, and prototypes. See the
+> [`@cloudflare/computer` status table](../computer/README.md#status)
+> for which components are stable.
 >
 > The specification under [`docs/`](../../docs/README.md) is forward-looking — read it for
 > intent, not as description of the code today.

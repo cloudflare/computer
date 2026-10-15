@@ -1,11 +1,11 @@
 # @cloudflare/computer-computerd-linux-x64
 
 > [!IMPORTANT]
-> **PREVIEW ONLY** This image is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
->
-> Suitable for experiments, exploration, and prototypes. It is not suitable
-> for production use at this time.
+> **Experimental.** This image is provided for feedback only. Its APIs
+> may change in any release, and it is not suitable for production use
+> yet. Suitable for experiments, exploration, and prototypes. See the
+> [`@cloudflare/computer` status table](../computer/README.md#status)
+> for which components are stable.
 
 Docker image context for the prebuilt `computerd` linux-x64 binary.
 `computerd` is the daemon side of [`@cloudflare/computer`](../computer) —

@@ -178,6 +178,12 @@ function bearerMatches(header: string | null, expected: string | undefined): boo
   return differences === 0;
 }
 
+/**
+ * Runs shell commands in a platform-scheduled Cloudflare Container through `computerd`.
+ *
+ * Experimental: this API may change in any release and is not yet
+ * suitable for production use.
+ */
 export class LegacyContainerBackend implements WorkspaceBackend {
   readonly type = "cloudflare-container";
   readonly id: string;

@@ -1,9 +1,5 @@
 # assets example
 
-> [!IMPORTANT]
-> **PREVIEW ONLY** This package is provided as a preview for feedback only.
-> APIs are unstable and the design is subject to change.
-
 A Cloudflare Worker + Durable Object that turns a text prompt into
 an image and hands back a shareable link. One shot: `POST /prompt`,
 get a URL.
