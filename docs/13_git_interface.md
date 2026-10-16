@@ -189,7 +189,38 @@ If none of the four yields a name and email,
 commit: author identity unknown` with exit code 128. This
 config-after-env order matches real git.
 
-### Auth (`headers` and `onAuth`)
+### Auth (`auth`, `headers`, and `onAuth`)
+
+Give `createGitClient()` an `auth` resolver to hold credentials on the
+host. The client calls it for every HTTPS request a clone, fetch,
+pull, or push makes, with the repository URL and whether the request
+reads (`fetch`) or writes (`push`). Return a `GitAuth` and it goes on
+the request as an `Authorization` header, or return `undefined` to
+send the request without credentials:
+
+```ts
+const ws = new Workspace({
+  storage: ctx.storage,
+  git: createGitClient({
+    auth: async ({ url, operation }) => {
+      if (url.startsWith("https://github.com/acme/")) {
+        return { username: "x-access-token", password: env.GITHUB_TOKEN };
+      }
+      if (url.startsWith("https://gitlab.com/acme/")) {
+        return { username: "oauth2", password: env.GITLAB_TOKEN };
+      }
+      return undefined;
+    },
+  }),
+});
+```
+
+The resolver sits on the HTTP transport, so it covers the typed API,
+`cli()`, the worker-shell `git` command, and `ws:git`. A model can
+run `git clone` or `git push` against a private repository without a
+token in argv, the remote URL, `.git/config`, or the output. Plain
+`http://` requests never get credentials. An `Authorization` header
+passed on a call wins, and the resolver is not asked.
 
 Network commands (`fetch`, `pull`, `push`, `clone`) accept the
 same auth contract `isomorphic-git` exposes:
@@ -206,8 +237,8 @@ same auth contract `isomorphic-git` exposes:
   Return a `GitAuth` (`username` / `password` / `headers`) and
   `isomorphic-git` retries with it.
 
-The CLI does not surface `onAuth` (no clean argv shape for a
-callback); for interactive flows reach for the typed API.
+The CLI does not surface `headers` or `onAuth` (no clean argv shape
+for a callback); use the `auth` resolver instead.
 
 ### Errors
 
