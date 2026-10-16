@@ -1,0 +1,32 @@
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5a33ac7eaed91e::t_cf36ba2d0a57c5 1491-1492
+  s_5a33ac7eaed91e::t_f530204fb22ee0 1414-1450
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5a33ac7eaed91e::t_e981b4e1d22b0f 81,222-228,230
+  s_5a33ac7eaed91e::t_1af1646eb5fd8c 84-87,95-98,345-346,350,656-657,1066-1078
+docs/17_isolate_javascript.md
+  s_5a33ac7eaed91e::t_543ec77203475b 120-129,136,144
+  s_5a33ac7eaed91e::t_1228baca02a5c0 142
+packages/computer/src/index.ts
+  s_5a33ac7eaed91e::t_f49c08f0f6626c 107
+packages/computer/src/runtime/runtime.ts
+  s_5a33ac7eaed91e::t_e23c88494023cd 112,161-174
+packages/computer/src/runtime/types.ts
+  s_5a33ac7eaed91e::t_74bfebd4937e07 209-214,268,271-278,306-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ef321c846239837996395d4513ca084d64572547",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

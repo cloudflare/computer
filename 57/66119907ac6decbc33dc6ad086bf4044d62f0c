@@ -1,0 +1,21 @@
+packages/computer/tests/script-runner-worker.ts
+  s_5a33ac7eaed91e::t_42c2aeefd38a61 65-66,123-129,268,285,287,538
+packages/computer/tests/script-runner.test.ts
+  s_5a33ac7eaed91e::t_ac80355af07996 336,1299-1326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5766119907ac6decbc33dc6ad086bf4044d62f0c",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
