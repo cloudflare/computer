@@ -13,6 +13,13 @@ ultimately hits one of these tables. All tables are prefixed with
 `vfs_` (or `_vfs_` for internal bookkeeping) so they don't
 collide with application-owned tables in the same DO storage.
 
+A Workspace created with a `namespace` uses its own copy of every
+table and index below, named with a `ws_<namespace>_` prefix:
+`vfs_nodes` becomes `ws_scratch_vfs_nodes` for the namespace
+`scratch`. The Workspace runtime's tables (`workspace_runtime_*`,
+`computer_execution_runtime`) get the same prefix. A Workspace
+without a namespace uses the names as written here.
+
 Paths are resolved through an inode-style indirection (`vfs_dirents`
 → `vfs_nodes`), so the local namespace move in a rename is O(1) and
 hardlinks fall out for free. Directory rename sync still walks the

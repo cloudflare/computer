@@ -42,6 +42,7 @@ import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
 import { MountIndex } from "./mounts/index.js";
 import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
 import type { Mount } from "./mounts/types.js";
+import { namespacedStorage } from "./namespace.js";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
 import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
 import {
@@ -81,6 +82,17 @@ export interface WorkspaceOptions {
   // @cloudflare/dofs/testing. The constructor opens a
   // Database against it and runs initializeSchema (idempotent).
   storage: DurableObjectStorageLike;
+
+  // Keeps this Workspace's files apart from other Workspaces on the
+  // same storage. Each namespace gets its own copy of the Workspace
+  // tables, so one Durable Object can hold, say, a scratch area and a
+  // project side by side. 1 to 32 lowercase letters and digits. Omit it
+  // for the default tables, which is where existing data already is.
+  //
+  // Only the files and the runtime's records are separate. A Durable
+  // Object still has one container, so give a container backend to
+  // only one of the Workspaces.
+  namespace?: string;
 
   // Registered execution backends. The first is the default;
   // callers can select another by stable id.
@@ -305,7 +317,11 @@ export class Workspace {
     this.#artifacts = options.artifacts
       ? createArtifact(options.artifacts.binding, artifactsSessionId(options))
       : createDisabledArtifactsClient();
-    this.#db = new Database(options.storage);
+    this.#db = new Database(
+      options.namespace === undefined
+        ? options.storage
+        : namespacedStorage(options.storage, options.namespace),
+    );
     initializeSchema(this.#db, this.#now);
     this.#executionRuntimes = new ExecutionRuntimeTracker(
       1_024,
