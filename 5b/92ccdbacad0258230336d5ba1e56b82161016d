@@ -1,0 +1,27 @@
+.changeset/git-host-auth.md
+  s_10002fdd0dc261::t_4bb2ff5a27f31c 1-5
+docs/13_git_interface.md
+  s_10002fdd0dc261::t_569e3982e69fec 192-223,240-241
+packages/computer/README.md
+  s_10002fdd0dc261::t_b558365fbb7795 379-391
+packages/computer/src/git/auth.test.ts
+  s_10002fdd0dc261::t_d1e085a5a53d83 1-182
+packages/computer/src/git/index.ts
+  s_10002fdd0dc261::t_591687737e2678 27,147,339-363,390-391,416-421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5b92ccdbacad0258230336d5ba1e56b82161016d",
+  "prompts": {},
+  "sessions": {
+    "s_10002fdd0dc261": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a13a7e-c9d6-77c0-a1bf-cc9157d53baa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
