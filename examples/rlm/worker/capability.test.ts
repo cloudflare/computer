@@ -36,10 +36,13 @@ function successfulResult(text = "ok") {
 
 function context(signal = new AbortController().signal): WorkspaceModuleCallContext {
   return {
+    executionId: "test-execution",
     signal,
     deadline: Date.now() + 1_000,
     access: "read",
     resolvePath: async (path) => path,
+    log: () => {},
+    defer: () => {},
   };
 }
 

@@ -57,6 +57,11 @@ function fakeContainerBackend(): WorkspaceBackend {
   };
 }
 
+// Executions whose deferred functions have finished, so a later run can
+// check that they ran before the earlier run's result was published.
+const endedRuns = new Set<string>();
+const trackedRuns = new Set<string>();
+
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
@@ -80,6 +85,37 @@ function javascriptBackend(
       "ws:git": createGitModule(),
       "ws:artifacts": createArtifactsModule(),
       "ws:container": createContainerModule(),
+      "ws:lifecycle": {
+        id(_args, context) {
+          return context.executionId;
+        },
+        log([text], context) {
+          context.log(String(text));
+          return null;
+        },
+        track([label], context) {
+          trackedRuns.add(context.executionId);
+          context.defer(() => context.log(`${String(label)} 1`));
+          context.defer(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            endedRuns.add(context.executionId);
+            context.log(`${String(label)} 2`);
+          });
+          return null;
+        },
+        throwing(_args, context) {
+          context.defer(() => {
+            throw new Error("boom");
+          });
+          return null;
+        },
+        ended([id]) {
+          return endedRuns.has(String(id));
+        },
+        tracked([id]) {
+          return trackedRuns.has(String(id));
+        },
+      },
       "ws:test-host": {
         async echo(args) {
           return { args: [...args] };
