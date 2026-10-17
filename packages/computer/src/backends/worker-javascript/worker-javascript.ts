@@ -16,10 +16,12 @@ import type {
   WorkspaceRuntimeValue,
 } from "../../runtime/types.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
+import type { ModuleCatalog } from "./introspection.js";
 import {
   assertHostModuleExports,
   buildModuleGraph,
   hasNodeModules,
+  moduleCatalog,
   NODE_MODULES_DESCRIPTION,
   type ParsedModules,
   parseModules,
@@ -304,7 +306,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     };
     this.#header = [
       "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
-      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
+      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`. A module with no exports runs as the body of that function instead, so top-level `await`, I/O, and `return` work there.",
       ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
       ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
       "",
@@ -331,6 +333,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
   readonly #emptyHostModules: ReadonlySet<string>;
+  readonly #catalog: ModuleCatalog;
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
@@ -372,6 +375,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
     this.#hostModuleFunctions = functions;
     this.#emptyHostModules = empty;
+    this.#catalog = moduleCatalog({
+      parsed: options.modules,
+      hostModules: functions,
+      emptyHostModules: empty,
+      nodeModules: hasNodeModules(options.compatibilityFlags),
+    });
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -492,6 +501,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         hostModules: this.#hostModuleFunctions,
         emptyHostModules: this.#emptyHostModules,
         nodeModules: hasNodeModules(this.#options.compatibilityFlags),
+        catalog: this.#catalog,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
@@ -540,6 +550,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           loader: this.#options.loader,
           modules: graph.modules,
           entryName: graph.entryName,
+          hostImports: graph.hostImports,
           input: inputValue,
           context: {
             env: input.env ?? {},
@@ -1106,6 +1117,7 @@ function startJavaScriptExecution(options: {
   loader: WorkspaceRuntimeLoader;
   modules: Record<string, string | { js?: string }>;
   entryName: string;
+  hostImports: readonly string[];
   input: WorkspaceRuntimeValue;
   context: WorkspaceExecutionContext;
   bridge: WorkspaceRuntimeBridge;
@@ -1121,7 +1133,11 @@ function startJavaScriptExecution(options: {
 }): ActiveControl {
   const modules = {
     ...options.modules,
-    "workspace-runtime-runner.js": runtimeWorkerModule(options.entryName, options.maxStdioBytes),
+    "workspace-runtime-runner.js": runtimeWorkerModule(
+      options.entryName,
+      options.maxStdioBytes,
+      options.hostImports,
+    ),
   };
   assertLoaderGraph(modules, options.maxSourceBytes);
   const worker = options.loader.load({
@@ -1204,10 +1220,23 @@ function startJavaScriptExecution(options: {
   };
 }
 
-function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
+function runtimeWorkerModule(
+  entryName: string,
+  maxStdioBytes: number,
+  hostImports: readonly string[],
+) {
+  // Calling an export a host module doesn't have fails with a bare
+  // "is not a function". Point at where the real exports are listed.
+  const hint =
+    hostImports.length === 0
+      ? ""
+      : `If that was a call into ${hostImports.join(" or ")}, ${hostImports
+          .map((specifier) => `docs(${JSON.stringify(specifier)})`)
+          .join(" or ")} from cf:computer lists what it exports.`;
   return `
     import { WorkerEntrypoint } from "cloudflare:workers";
     import { install, moduleScopeRefusals } from "workspace-capabilities.js";
+    import { formatConsole, inspect } from "workspace-introspection.js";
 
     // A promise nobody awaits would otherwise fail without a trace while
     // the run reports success. Track the rejections nothing handled, and
@@ -1285,9 +1314,22 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         // surfacing as an unhandled rejection inside the isolate. The
         // task awaits writeChain before closing.
         let writeChain = Promise.resolve();
+        // The entry module evaluates outside any request, where the
+        // runtime refuses the stream write, so output from its top level
+        // is held until the import settles.
+        let held = null;
         const enqueue = (frame) => {
+          if (held !== null) {
+            held.push(frame);
+            return;
+          }
           const bytes = encoder.encode(JSON.stringify(frame) + "\\n");
           writeChain = writeChain.then(() => writer.write(bytes)).catch(() => {});
+        };
+        const release = () => {
+          const frames = held ?? [];
+          held = null;
+          for (const frame of frames) enqueue(frame);
         };
         let stdioBytes = 0;
         let stdioTruncated = false;
@@ -1318,9 +1360,11 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
           }
           stdioTruncated = true;
         };
-        const consoleLine = (stream, args) => record(stream, args.map(String).join(" ") + "\\n");
+        const consoleLine = (stream, args) => record(stream, formatConsole(args) + "\\n");
         console.log = (...args) => consoleLine("stdout", args);
         console.info = (...args) => consoleLine("stdout", args);
+        console.debug = (...args) => consoleLine("stdout", args);
+        console.dir = (value) => record("stdout", inspect(value) + "\\n");
         console.warn = (...args) => consoleLine("stderr", args);
         console.error = (...args) => consoleLine("stderr", args);
         nextProcess.stdout = {
@@ -1363,7 +1407,13 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         const drained = host.attachOutput(output.readable);
         unhandled.clear();
         try {
-          const module = await import(${JSON.stringify(entryName)});
+          held = [];
+          let module;
+          try {
+            module = await import(${JSON.stringify(entryName)});
+          } finally {
+            release();
+          }
           const result = typeof module.default === "function"
             ? await module.default(input)
             : module.default ?? null;
@@ -1380,8 +1430,12 @@ function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {
         } catch (error) {
           // Imports of configured and host modules were rewritten to paths
           // into the module directory. Name them as the code wrote them.
-          const message = (error instanceof Error ? error.message : String(error))
+          let message = (error instanceof Error ? error.message : String(error))
             .replace(/(?:file:\\/\\/\\/bundle\\/|(?:\\.\\.?\\/)+)__modules__\\//g, "");
+          const hint = ${JSON.stringify(hint)};
+          if (hint !== "" && error instanceof TypeError && message.includes("is not a function")) {
+            message += ". " + hint;
+          }
           enqueue({ name: "stderr", b64: toBase64(truncate(message) + "\\n") });
           enqueue({ name: "exit", code: 1 });
         }

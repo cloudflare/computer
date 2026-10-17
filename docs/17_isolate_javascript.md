@@ -56,7 +56,7 @@ const result = await handle.result();
 // result.value = { value: 42, persisted: "42" }
 ```
 
-The source is a real ES module, with static imports and literal dynamic imports. The module needs a default export, or the run fails before it starts. A default-exported function is called with `options.input`, and any other default value is the result. To run code that's already in a file, re-export it with `export { default } from "./main.js"`.
+The source is a real ES module, with static imports and literal dynamic imports. A default-exported function is called with `options.input`, and any other default value is the result. To run code that's already in a file, re-export it with `export { default } from "./main.js"`. A module with named exports but no default fails before it starts.
 
 Put the module's work in that function. Each run loads the module first, then calls its default export, and the Workers runtime doesn't allow I/O while a module loads. So `node:fs` and host module calls only work once the function is running:
 
@@ -72,7 +72,16 @@ export default async function () {
 }
 ```
 
-A call made while the module loads fails the run with an error that names the call, even if the code catches the error, since the work it asked for never happened. The run also fails if a promise rejects and nothing has handled it by the time the function finishes. Top-level `await` is fine for anything that doesn't do I/O.
+A call made while the module loads fails the run with an error that names the call, even if the code catches the error, since the work it asked for never happened. The run also fails if a promise rejects and nothing has handled it by the time the function finishes. Top-level `await` is fine for anything that doesn't do I/O, and `console.log` at the top level is kept and printed once the module has loaded.
+
+A module with no exports at all is a script, and runs as the body of the default export instead. Its imports stay at the top and everything else moves into `export default async function () { ... }`, so top-level `await`, I/O, and `return` work, and line numbers stay as written. A script doesn't receive `options.input`:
+
+```js
+import { readFile } from "node:fs/promises";
+
+const text = await readFile("/workspace/a.txt", "utf8");
+return text.length;
+```
 
 The returned value becomes the result's `value` and must be JSON-compatible plain data. As with `JSON.stringify`, an `undefined` object field is left out, so `{ kept: 1, dropped: undefined }` completes as `{ kept: 1 }`, and returning `undefined` gives `null`. A function, a class instance such as a `Date`, an `undefined` array item, or a cycle fails the run. `options.input` is checked the same way.
 
@@ -180,7 +189,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 
 | Kind | Configured with | Runs in | Example |
 | --- | --- | --- | --- |
-| Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
+| Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises`, `cf:computer` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
 | Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, `ws:tools`, your own |
@@ -219,19 +228,64 @@ The backend describes its modules for a model in `backend.description`, which `w
 
 ```text
 `command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.
-Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from "./main.js"`.
+Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from "./main.js"`. A module with no exports runs as the body of that function instead, so top-level `await`, I/O, and `return` work there.
 Code has no direct network access.
 
 Modules code can import:
 - `node:fs/promises` (also `node:fs`): the workspace's files. ...
 - `tar-stream`: a bundled library.
-- `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
+- `ws:git`: The workspace's Git repository: `status({ dir })`, ...
 - `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
 - `ws:weather`: exports `forecast`.
+- `cf:computer`: `docs(module)` returns a module's TypeScript declarations and examples, ...
 - Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
 A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `ws:tools` does with the agent's tools. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
+
+The description is one line per module, so it stays short in every prompt. The rest is in `cf:computer`, below.
+
+### `cf:computer`
+
+A host module's code runs in the Durable Object, so the isolate only holds stubs that forward each call. `String(fn)` on one shows nothing useful about how to call it. `cf:computer` is built in and gives code each module's TypeScript declarations instead:
+
+```js
+import * as git from "ws:git";
+import { docs, types } from "cf:computer";
+
+export default () => ({
+  modules: docs(),          // every module, one line each
+  git: docs(git),           // ws:git's summary, declarations, and examples, as markdown
+  cli: types(git.cli),      // one export's declaration, with the types it names
+  byName: types("ws:git"),  // a specifier works too, even for a module that failed to import
+});
+```
+
+Printing works the same way. `console.log(git.cli)` prints the export's declaration with a `{ [host code] }` body, as V8 prints a built-in function with `{ [native code] }`, and `console.log(git)` prints the whole module's declaration. `console.log`, `console.info`, `console.debug`, `console.warn`, `console.error`, and `console.dir` format other values the way Node.js does: `{ a: 1, b: 'x' }`, `Map(1) { 'k' => 1 }`, `[Circular]`, and an error's stack.
+
+A factory gives its declarations through a `types` property, keyed by the name each one declares. An entry named after an export declares that export. Any other entry declares a type the exports use, and is shown with each export that names it. `examples` adds short snippets to `docs`:
+
+```ts
+modules: {
+  "ws:weather": Object.assign(
+    () => ({ forecast: ([city]) => lookUpForecast(String(city)) }),
+    {
+      description: "The weather.",
+      types: {
+        Forecast: "interface Forecast { high: number; low: number }",
+        forecast: "/** The forecast for a city. */\nfunction forecast(city: string): Promise<Forecast>;",
+      },
+      examples: ['const { high } = await forecast("Lisbon");'],
+    },
+  ),
+}
+```
+
+Code that guesses wrong is pointed back here. A call to an export a host module doesn't have fails with `is not a function`, and the run adds which `docs(...)` call lists the real ones. An import of a module that isn't configured, such as `node:child_process`, names `docs()`. `ws:git` refuses an option it doesn't take and lists the ones it does.
+
+The prebuilt modules all declare their exports, and `ws:tools` writes each tool's declaration from its description and input schema. An export with no declaration, such as one from a plain object of functions, is shown taking and returning `unknown`. `node:fs` and `node:fs/promises` are declared as the workspace implements them, which differs from Node.js in places: `stat().mtime` is a number, and there are no sync functions. A source module has no declarations, and a Node.js built-in is described as the Node.js API.
+
+The backend reads `types` and `examples` when it connects, with the functions the factory builds, so the two always agree. Like `description`, either can be a getter. Every specifier under `cf:` is reserved: no configured module may use one, and importing any other than `cf:computer` fails before the Worker is created.
 
 ### Built-in filesystem
 
@@ -306,7 +360,7 @@ Specifiers and the export names of an object are checked at construction. A fact
 import { clone, diff, status, log, cli } from "ws:git";
 ```
 
-`createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Every `dir` and `cwd` is confined to the backend root, `clone` and `cli` need a read-write backend, and `cli` treats a leading `-C <path>` as its working directory, confined the same way, while rejecting any other `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
+`createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Each export takes one options object, such as `cli({ argv: ["log", "--oneline"] })`, where `argv` leaves out `"git"`. A call that passes a string, an array, or an `argv` starting with `"git"` rejects with the shape it expects, rather than running git with no arguments. Every `dir` and `cwd` is confined to the backend root, `clone` and `cli` need a read-write backend, and `cli` treats a leading `-C <path>` as its working directory, confined the same way, while rejecting any other `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
 
 ### `ws:artifacts`
 
@@ -404,6 +458,17 @@ Pass a function of tools, rather than a list, when the tools need something that
 On a backend with `access: "read"`, only tools marked `readOnly` run. Every other call is refused before the tool runs, as `ws:git` and `ws:container` refuse to write there. `createToolBindings()` cannot tell what a tool does, so an unmarked tool is taken to write. `forPiTools()` marks `read`, `ls`, `find`, and `grep` from `createPiTools()`. For your own pi tools, name the ones that only read: `forPiTools(tools, { readOnly: ["read", "grep"] })`.
 
 The module's description lists the names code can import. With a function of tools, the function is called again each time the backend describes itself, so the `exec` tool, built after the Workspace, sees the current list. A list is read as given; any other iterable may be single-use, so it is not read for the description, and neither is a function that throws.
+
+A binding may also carry the tool's `description` and its `inputSchema` as JSON Schema, and `forPiTools()` and `forAISDKTools()` fill both in. The module then declares each export for `cf:computer`, so `types(read)` shows the arguments the tool takes:
+
+```ts
+/** Read a file. */
+function read(input: {
+  /** The file's path. */
+  path: string;
+  offset?: number;
+}): Promise<ToolResult>;
+```
 
 ### `ws:container`
 

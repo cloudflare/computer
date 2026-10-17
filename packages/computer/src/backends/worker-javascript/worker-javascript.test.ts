@@ -1049,6 +1049,22 @@ describe("WorkerJavaScriptBackend", () => {
     expect(backend.description).toContain("- `ws:plain`: a host module.");
   });
 
+  it("names cf:computer among its modules", () => {
+    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+
+    expect(backend.description).toContain("- `cf:computer`: how to call every other module.");
+  });
+
+  it.each(["cf:computer", "cf:other"])("refuses a configured module named %s", (specifier) => {
+    expect(
+      () =>
+        new WorkerJavaScriptBackend({
+          loader: throwingLoader("must not load"),
+          modules: { [specifier]: "export const x = 1;" },
+        }),
+    ).toThrow(specifier === "cf:computer" ? /is built in/ : /cf:\* namespace/);
+  });
+
   it("lists the Node.js built-ins code can import", () => {
     const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
 
@@ -1797,15 +1813,27 @@ describe("WorkerJavaScriptBackend", () => {
       );
     });
 
-    it("rejects a module with no default export before loading it", async () => {
+    it("points an import of a module it doesn't have at docs()", async () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
       });
 
-      await expect(workspace.runtime.exec(`const x = 1;`)).rejects.toThrow(
-        'The module has no default export, so there is nothing to run. Put the work in `export default async function (input) { ... }`, or re-export one with `export { default } from "./main.js"`.',
+      await expect(
+        workspace.runtime.exec(
+          `import { execSync } from "node:child_process"; execSync("git status");`,
+        ),
+      ).rejects.toThrow(
+        'Module "node:child_process" is not configured for the worker-javascript backend. `docs()` from cf:computer lists the modules code can import.',
       );
+    });
+
+    it("rejects a module with named exports but no default before loading it", async () => {
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
+      });
+
       await expect(
         workspace.runtime.exec(`export function main() {} export const a = 1, b = 2;`),
       ).rejects.toThrow("The module exports `main`, `a`, and `b` but no default");
@@ -1815,6 +1843,7 @@ describe("WorkerJavaScriptBackend", () => {
       ["a default export", `export default 1;`],
       ["a named default", `function main() {} export { main as default };`],
       ["a re-exported default", `export { default } from "./main.js";`],
+      ["no exports at all, as a script", `const x = 1;`],
     ])("runs a module with %s", async (_label, source) => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
@@ -1825,6 +1854,36 @@ describe("WorkerJavaScriptBackend", () => {
 
       const execution = await workspace.runtime.exec(source);
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+    });
+
+    it("moves a script's code into the default export, keeping its imports on top and its lines in place", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(
+        [
+          'import fs, { readFile as read } from "node:fs/promises";',
+          "import {",
+          "  join, // a comment",
+          '} from "node:path";',
+          'const text = await read(join("/workspace", "a.txt"), "utf8");',
+          "return text;",
+        ].join("\n"),
+      );
+      await execution.result();
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      const entry = modules["workspace/__workspace_entry__.js"];
+      const lines = String(typeof entry === "string" ? entry : entry?.js).split("\n");
+      expect(lines[0]?.trimEnd()).toBe(
+        'import fs, { readFile as read } from "node:fs/promises"; import { join as join } from "node:path"; export default async function () {',
+      );
+      expect(lines[4]).toBe('const text = await read(join("/workspace", "a.txt"), "utf8");');
+      expect(lines[5]).toBe("return text;");
     });
 
     it("rewrites an absolute import to a path relative to its importer", async () => {

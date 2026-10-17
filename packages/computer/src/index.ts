@@ -97,6 +97,7 @@ export type {
   WorkspaceModuleFunction,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
+  WorkspaceModuleTypes,
   WorkspaceRegisteredBackend,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeDisposeOptions,

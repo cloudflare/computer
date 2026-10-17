@@ -11,6 +11,7 @@ import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
+import { createToolBindings } from "../src/modules/tools.js";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
@@ -60,26 +61,43 @@ function fakeContainerBackend(): WorkspaceBackend {
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
+// The other backends cut output at 64 bytes, too little to read what
+// console.log printed.
+const WIDE_OUTPUT_BACKEND = "worker-javascript-wide-output";
 
 function javascriptBackend(
   env: Env,
   overrides: Partial<
-    Pick<WorkerJavaScriptBackendOptions, "id" | "compatibilityFlags" | "loader">
+    Pick<WorkerJavaScriptBackendOptions, "id" | "compatibilityFlags" | "loader" | "maxStdioBytes">
   > = {},
 ) {
   return new WorkerJavaScriptBackend({
     loader: env.LOADER,
-    ...overrides,
     maxStdioBytes: 64,
+    ...overrides,
     maxCapabilityBytes: 1024,
     maxConcurrentCapabilityCalls: 2,
     modules: {
       "math-kit": "export const double = (value) => value * 2;",
       counter: "let count = 0; export const bump = () => ++count;",
       facade: `import { double } from "math-kit"; import { echo } from "ws:test-host"; export const both = async (value) => ({ doubled: double(value), echoed: await echo(value) });`,
+      "docs-kit": `import { docs } from "cf:computer"; export const gitDocs = () => docs("ws:git");`,
       "ws:git": createGitModule(),
       "ws:artifacts": createArtifactsModule(),
       "ws:container": createContainerModule(),
+      "ws:tools": createToolBindings([
+        {
+          name: "get-weather",
+          description: "The weather in a city.",
+          readOnly: true,
+          inputSchema: {
+            type: "object",
+            properties: { city: { type: "string", description: "The city's name." } },
+            required: ["city"],
+          },
+          call: (input) => ({ text: `sunny in ${String(input.city)}`, isError: false }),
+        },
+      ]),
       "ws:test-host": {
         async echo(args) {
           return { args: [...args] };
@@ -135,6 +153,7 @@ export class HostDO extends DurableObject<Env> {
               env.LOADER.load({ ...code, allowExperimental: true }),
           },
         }),
+        javascriptBackend(env, { id: WIDE_OUTPUT_BACKEND, maxStdioBytes: 64 * 1024 }),
         fakeContainerBackend(),
       ],
     });

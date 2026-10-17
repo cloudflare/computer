@@ -4,6 +4,7 @@ import type {
   WorkspaceModuleFactory,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
+  WorkspaceModuleTypes,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
 
@@ -54,8 +55,29 @@ export function createAssetsModule(options: AssetsModuleOptions = {}): Workspace
   return Object.assign(create, {
     description:
       '`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` uploads a workspace file and returns a time-limited public URL. `expiresAfter` is milliseconds or a duration like "30m" or "1d"; the default is one hour and the maximum is seven days. `disposition` is "inline" or "attachment".',
+    types: ASSETS_TYPES,
+    examples: [
+      'const url = await publish("out/report.pdf", { expiresAfter: "1d", disposition: "attachment" });',
+    ],
   });
 }
+
+const ASSETS_TYPES: WorkspaceModuleTypes = {
+  publish: `/**
+ * Upload a workspace file and return a public URL that expires.
+ * \`expiresAfter\` is milliseconds or a duration such as "30m" or "1d". It defaults
+ * to one hour and is at most seven days.
+ */
+function publish(
+  path: string,
+  options?: {
+    expiresAfter?: number | string;
+    filename?: string;
+    disposition?: "inline" | "attachment";
+    contentType?: string;
+  },
+): Promise<string>;`,
+};
 
 function parsePublishOptions(
   value: WorkspaceRuntimeValue | undefined,

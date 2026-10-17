@@ -66,7 +66,34 @@ export interface WorkspaceModuleFactory {
    * tool shows. Objects of functions are listed by their export names.
    */
   readonly description?: string;
+  /**
+   * TypeScript declarations for the module's exports. Code reads them
+   * with `docs` and `types` from `cf:computer`, and by printing an
+   * export. An export with no declaration is shown as taking and
+   * returning `unknown`.
+   */
+  readonly types?: WorkspaceModuleTypes;
+  /** Short snippets of code that call the module, shown by `docs`. */
+  readonly examples?: readonly string[];
 }
+
+/**
+ * TypeScript declarations for a host module, keyed by the name each
+ * one declares.
+ *
+ * An entry named after an export declares that export, usually as a
+ * `function` with JSDoc. Any other entry declares a type the exports
+ * use, such as an `interface`, and is shown alongside each export
+ * whose declaration names it.
+ *
+ * ```ts
+ * types: {
+ *   Forecast: "interface Forecast { high: number; low: number }",
+ *   forecast: "/** The forecast for a city. *\/\nfunction forecast(city: string): Promise<Forecast>;",
+ * }
+ * ```
+ */
+export type WorkspaceModuleTypes = Readonly<Record<string, string>>;
 
 /**
  * A module caller source can import.
