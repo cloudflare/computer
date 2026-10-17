@@ -1,0 +1,31 @@
+docs/17_isolate_javascript.md
+  s_c3d331b2a8ffc0::t_1e9d88fa8acc08 54,70-79,196,249-250
+packages/computer/src/backends/worker-javascript/introspection.ts
+  s_c3d331b2a8ffc0::t_1dddb27bd62ad3 27
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_c3d331b2a8ffc0::t_3594134c308920 96-99,407,431,457,490,496-497,517-581,584,586,588-591,594-595,610
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_c3d331b2a8ffc0::t_bde262d6aab8ea 1055,1503,1509-1514,1516-1523,1533,1546-1575
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_c3d331b2a8ffc0::t_4c289778165788 247,483,998,1013-1017,1100-1112,1194-1197,1199-1202,1206-1210,1287-1293,1310,1312-1315
+packages/computer/src/modules/git.ts
+  s_c3d331b2a8ffc0::t_59dbdeae2e17d2 214-224,230-240,243
+packages/computer/tests/script-runner.test.ts
+  s_c3d331b2a8ffc0::t_cbb97ce012d15b 1145-1191,1224-1227,1230,1237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2f1c0b4d2b3b6a6d253091a7d97e362d5d3dc76b",
+  "prompts": {},
+  "sessions": {
+    "s_c3d331b2a8ffc0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a13a7d-504b-7717-814f-f05692ec8bee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
