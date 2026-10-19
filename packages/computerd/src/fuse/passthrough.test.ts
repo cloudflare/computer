@@ -430,6 +430,107 @@ describe("withLocalPassthrough: directory listing", () => {
   });
 });
 
+describe("withLocalPassthrough: readdir entry types", () => {
+  // libfuse takes d_type, and under use_ino the inode, from the stat given
+  // with each name. Without one every entry is DT_UNKNOWN, which readers
+  // that trust d_type skip: bun's hardlink install walking a cache under a
+  // local-only path linked nothing.
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "computerd-passthrough-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const S_IFMT = 0o170000;
+  type EntryStat = { mode: number; ino: number };
+  // The listing as name -> stat, failing unless every name has one.
+  const list = (ops: FuseOps, path: string) => {
+    let out = { code: -1, names: [] as string[], byName: new Map<string, EntryStat>() };
+    ops.readdir(path, (code, names, stats = []) => {
+      expect(stats).toHaveLength(names.length);
+      out = { code, names, byName: new Map(names.map((name, i) => [name, stats[i] as EntryStat])) };
+    });
+    return out;
+  };
+  const typeOf = (stat: EntryStat | undefined): number | undefined =>
+    stat === undefined ? undefined : stat.mode & S_IFMT;
+
+  test("a local directory reports each entry's lstat type and inode", () => {
+    const { ops } = withLocalPassthrough(recordingOps().ops, {
+      root,
+      ignore: resolveMountIgnore(["**/.cache"], MOUNT),
+      mountPoint: MOUNT,
+    });
+    const dir = join(root, ".cache/bun/react@19");
+    mkdirSync(join(dir, "cjs"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), "{}");
+    symlinkSync("package.json", join(dir, "link.json"));
+
+    const { code, names, byName } = list(ops, "/.cache/bun/react@19");
+    expect(code).toBe(0);
+    expect(typeOf(byName.get("cjs"))).toBe(constants.S_IFDIR);
+    expect(typeOf(byName.get("package.json"))).toBe(constants.S_IFREG);
+    expect(typeOf(byName.get("link.json"))).toBe(constants.S_IFLNK);
+    for (const name of names) {
+      expect(byName.get(name)?.ino, name).toBe(lstatSync(join(dir, name)).ino);
+    }
+  });
+
+  test("a synced directory keeps the VFS stats and adds local children's", () => {
+    const vfsStat = { mode: constants.S_IFREG | 0o644, ino: 42 };
+    const source = recordingOps();
+    const vfsOps = new Proxy(source.ops, {
+      get(target, property: string) {
+        if (property === "readdir") {
+          return (_path: string, cb: (code: number, names: string[], stats?: unknown[]) => void) =>
+            cb(0, ["src.ts"], [vfsStat]);
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    const { ops } = withLocalPassthrough(vfsOps, {
+      root,
+      ignore: resolveMountIgnore(["**/node_modules"], MOUNT),
+      mountPoint: MOUNT,
+    });
+    mkdirSync(join(root, "app/node_modules"), { recursive: true });
+
+    const { code, byName } = list(ops, "/app");
+    expect(code).toBe(0);
+    expect(byName.get("src.ts")).toBe(vfsStat);
+    expect(typeOf(byName.get("node_modules"))).toBe(constants.S_IFDIR);
+    expect(byName.get("node_modules")?.ino).toBe(lstatSync(join(root, "app/node_modules")).ino);
+  });
+
+  test("a local-only child shadows a synced entry of the same name", () => {
+    // getattr routes the name to the local side, so the listing has to
+    // agree with it, including when stale synced content remains.
+    const source = recordingOps();
+    const vfsOps = new Proxy(source.ops, {
+      get(target, property: string) {
+        if (property === "readdir") {
+          return (_path: string, cb: (code: number, names: string[], stats?: unknown[]) => void) =>
+            cb(0, ["node_modules"], [{ mode: constants.S_IFREG | 0o644, ino: 7 }]);
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    const { ops } = withLocalPassthrough(vfsOps, {
+      root,
+      ignore: resolveMountIgnore(["**/node_modules"], MOUNT),
+      mountPoint: MOUNT,
+    });
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+
+    const { names, byName } = list(ops, "/");
+    expect(names).toEqual(["node_modules"]);
+    expect(typeOf(byName.get("node_modules"))).toBe(constants.S_IFDIR);
+  });
+});
+
 describe("withLocalPassthrough: symlinks", () => {
   let root: string;
 

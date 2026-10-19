@@ -232,24 +232,44 @@ export function withLocalPassthrough(
         // A VFS directory may still contain local-only children: the
         // entries live on disk but the parent does not. Merge both
         // sides so `ls` shows what a command inside the container sees.
-        ops.readdir(path, (code, names) => {
+        ops.readdir(path, (code, names, stats) => {
           if (code !== 0) {
-            cb(code, names);
+            cb(code, names, stats);
             return;
           }
           const extra = localChildren(path);
           if (extra.length === 0) {
-            cb(0, names);
+            cb(0, names, stats);
             return;
           }
-          const merged = new Set([...(names ?? []), ...extra]);
-          cb(0, [...merged]);
+          if (stats === undefined || stats.length !== names.length) {
+            const merged = new Set([...(names ?? []), ...extra]);
+            cb(0, [...merged]);
+            return;
+          }
+          // A local-only child shadows a synced entry of the same name,
+          // as getattr does, so its stat is the one reported.
+          const merged = new Map<string, FuseStat>();
+          names.forEach((name, i) => {
+            const stat = stats[i];
+            if (stat !== undefined) merged.set(name, stat);
+          });
+          for (const [name, stat] of statLocalEntries(localPath(path), extra)) {
+            merged.set(name, stat);
+          }
+          cb(0, [...merged.keys()], [...merged.values()]);
         });
         return;
       }
       localOps += 1;
       try {
-        cb(0, fs.readdirSync(localPath(path)));
+        const directory = localPath(path);
+        const entries = statLocalEntries(directory, fs.readdirSync(directory) as string[]);
+        cb(
+          0,
+          entries.map(([name]) => name),
+          entries.map(([, stat]) => stat),
+        );
       } catch (error) {
         cb(toErrno(error), []);
       }
@@ -756,6 +776,21 @@ export function withLocalPassthrough(
     }
     const parent = toRelative(path, mountRoot);
     return names.filter((name) => isLocal(parent === "" ? name : `${parent}/${name}`));
+  }
+
+  // lstat, as getattr does, so the type and inode match what a lookup of
+  // the same name returns. An entry removed between the listing and the
+  // stat is left out.
+  function statLocalEntries(directory: string, names: string[]): Array<[string, FuseStat]> {
+    const entries: Array<[string, FuseStat]> = [];
+    for (const name of names) {
+      try {
+        entries.push([name, statToFuse(fs.lstatSync(join(directory, name)))]);
+      } catch {
+        // Gone since the listing.
+      }
+    }
+    return entries;
   }
 
   function hasLocalContents(path: string): boolean {

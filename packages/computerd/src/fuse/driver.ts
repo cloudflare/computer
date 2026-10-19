@@ -48,12 +48,18 @@ function blocksForSize(size: number): number {
 
 type StatusCallback = (errnoOrBytes: number) => void;
 type ResultCallback<T> = (errno: number, result: T) => void;
+/**
+ * `stats`, when given, is one per name. libfuse takes each entry's type
+ * (d_type) and, under use_ino, its inode number from it; without it every
+ * entry is DT_UNKNOWN.
+ */
+export type ReaddirCallback = (errno: number, names: string[], stats?: FuseStat[]) => void;
 type NotImplementedOperation = (...args: unknown[]) => void;
 
 export interface FuseOps {
   init(cb?: StatusCallback): void;
   error: NotImplementedOperation;
-  readdir(path: string, cb: ResultCallback<string[]>): void;
+  readdir(path: string, cb: ReaddirCallback): void;
   getattr(path: string, cb: ResultCallback<FuseStat | null>): void;
   fgetattr(path: string, fh: number, cb: ResultCallback<FuseStat | null>): void;
   open(path: string, flags: number, cb: ResultCallback<number>): void;
@@ -294,6 +300,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     return parent === "." ? "/" : parent;
   };
   const baseName = (path: string): string => posix.basename(path);
+  const childPath = (parent: string, name: string): string => posix.join(parent, name);
   const isPendingCreate = (path: string): boolean => files.get(path)?.pendingCreate === true;
   const exists = (path: string): boolean => isPendingCreate(path) || vfs.existsSync(toVfs(path));
   const getBufferStats = (): FuseBufferStats => {
@@ -460,6 +467,31 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     };
   };
 
+  function statPath(path: string): FuseStat {
+    const entry = files.get(path);
+    const stat =
+      entry?.pendingCreate === true ? pendingStat(entry) : statNode(vfs.lstatSync(toVfs(path)));
+    // File content lives outside the VFS, so prefer our size. The
+    // buffered size can outrun the persisted inode before a spill,
+    // so recompute block accounting from it to keep st_blocks
+    // coherent with the size the kernel sees.
+    if (entry !== undefined) {
+      stat.size = entry.size;
+      stat.blocks = blocksForSize(entry.size);
+    }
+    const override = meta.get(path);
+    if (override) {
+      if (override.mode !== undefined) {
+        stat.mode = (stat.mode & 0o170000) | (override.mode & 0o7777);
+      }
+      if (override.uid !== undefined) stat.uid = override.uid;
+      if (override.gid !== undefined) stat.gid = override.gid;
+      if (override.atime) stat.atime = override.atime;
+      if (override.mtime) stat.mtime = override.mtime;
+    }
+    return stat;
+  }
+
   return {
     init(cb) {
       cb?.(0);
@@ -476,7 +508,24 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
           if (entry.pendingCreate && parentPath(pendingPath) === path)
             entries.add(baseName(pendingPath));
         }
-        cb(0, [...entries]);
+        // Without a stat per entry, libfuse reports every entry as
+        // DT_UNKNOWN. POSIX allows that, but readers that trust d_type
+        // skip such entries: bun's hardlink install walks its cache that
+        // way and links nothing into node_modules.
+        const names: string[] = [];
+        const stats: FuseStat[] = [];
+        for (const name of entries) {
+          let stat: FuseStat;
+          try {
+            stat = statPath(childPath(path, name));
+          } catch {
+            // Listed but gone by the time it was stat'd.
+            continue;
+          }
+          names.push(name);
+          stats.push(stat);
+        }
+        cb(0, names, stats);
       } catch (error) {
         cb(toErrno(error), []);
       }
@@ -484,28 +533,7 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
 
     getattr(path, cb) {
       try {
-        const entry = files.get(path);
-        const stat =
-          entry?.pendingCreate === true ? pendingStat(entry) : statNode(vfs.lstatSync(toVfs(path)));
-        // File content lives outside the VFS, so prefer our size. The
-        // buffered size can outrun the persisted inode before a spill,
-        // so recompute block accounting from it to keep st_blocks
-        // coherent with the size the kernel sees.
-        if (entry !== undefined) {
-          stat.size = entry.size;
-          stat.blocks = blocksForSize(entry.size);
-        }
-        const override = meta.get(path);
-        if (override) {
-          if (override.mode !== undefined) {
-            stat.mode = (stat.mode & 0o170000) | (override.mode & 0o7777);
-          }
-          if (override.uid !== undefined) stat.uid = override.uid;
-          if (override.gid !== undefined) stat.gid = override.gid;
-          if (override.atime) stat.atime = override.atime;
-          if (override.mtime) stat.mtime = override.mtime;
-        }
-        cb(0, stat);
+        cb(0, statPath(path));
       } catch (error) {
         cb(toErrno(error), null);
       }
