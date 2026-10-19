@@ -197,7 +197,7 @@ modules: {
 
 ### Waiting for an answer
 
-A host module function can pause a replayable run until someone answers, for example to approve an action. The code being run just calls the function and gets its result, however long the answer takes:
+A host module function can pause a replayable run until someone answers, for example to approve an action. Like replay, this is experimental. The code being run just calls the function and gets its result, however long the answer takes:
 
 ```ts
 modules: {

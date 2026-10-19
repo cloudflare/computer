@@ -37,7 +37,7 @@ export interface WorkspaceModuleCallContext {
    * function does before `interrupt()` therefore runs twice, so keep it
    * safe to repeat. Only a run with `onInterrupt: "replay"` can wait;
    * anywhere else this throws. A call can interrupt once, and a second
-   * `interrupt()` throws.
+   * `interrupt()` throws. Experimental: it may change in any release.
    *
    * ```ts
    * postComment: async ([issue, body], ctx) => {

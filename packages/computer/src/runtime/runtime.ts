@@ -177,6 +177,7 @@ export class WorkspaceRuntime {
   /**
    * Host module calls waiting for an answer, from `ctx.interrupt()`,
    * across every backend that supports it, oldest wait first.
+   * Experimental: it may change in any release.
    */
   async pending(): Promise<WorkspaceRuntimePendingCall[]> {
     const calls: WorkspaceRuntimePendingCall[] = [];
@@ -193,7 +194,7 @@ export class WorkspaceRuntime {
    * none of its calls are still waiting, and the call gets `value` as
    * what `interrupt()` returns. Throws `ENOTWAITING` if the call isn't
    * waiting, for example because it was already answered or the run
-   * was killed.
+   * was killed. Experimental: it may change in any release.
    */
   async respond(
     id: string,
