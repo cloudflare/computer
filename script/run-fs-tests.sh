@@ -6,10 +6,13 @@
 # fs-tests' status code.
 set -u
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates curl >/dev/null 2>&1
+apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates curl python3 >/dev/null 2>&1
 
 mkdir -p /tmp/workspace
-PORT=45678 MOUNT_POINT=/tmp/workspace /usr/local/bin/computerd >/tmp/computerd.log 2>&1 &
+# node_modules is local-only, so fs-tests covers that layer as well as the
+# synced one.
+PORT=45678 MOUNT_POINT=/tmp/workspace MOUNT_IGNORE='**/node_modules' \
+  /usr/local/bin/computerd >/tmp/computerd.log 2>&1 &
 COMPUTERD_PID=$!
 
 # Wait for /health

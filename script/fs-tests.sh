@@ -32,6 +32,47 @@ else
 fi
 export STAT_SIZE STAT_MTIME STAT_ATIME STAT_NLINK STAT_INO STAT_MODE
 
+# Print "name=type" for each entry of a directory, using the d_type that
+# readdir(3) returns. Node cannot show this: it lstats an entry whose type
+# is DT_UNKNOWN. bun does not, and skips such entries.
+dirent_types() {
+  python3 - "$1" <<'PY'
+import ctypes, sys
+
+class Dirent(ctypes.Structure):
+    # struct dirent on 64-bit glibc.
+    _fields_ = [
+        ("d_ino", ctypes.c_uint64),
+        ("d_off", ctypes.c_int64),
+        ("d_reclen", ctypes.c_ushort),
+        ("d_type", ctypes.c_ubyte),
+        ("d_name", ctypes.c_char * 256),
+    ]
+
+libc = ctypes.CDLL(None)
+libc.opendir.restype = ctypes.c_void_p
+libc.opendir.argtypes = [ctypes.c_char_p]
+libc.readdir.restype = ctypes.POINTER(Dirent)
+libc.readdir.argtypes = [ctypes.c_void_p]
+libc.closedir.argtypes = [ctypes.c_void_p]
+
+handle = libc.opendir(sys.argv[1].encode())
+if not handle:
+    sys.exit(f"opendir {sys.argv[1]} failed")
+kinds = {4: "dir", 8: "file", 10: "symlink"}
+entries = []
+while True:
+    entry = libc.readdir(handle)
+    if not entry:
+        break
+    name = entry.contents.d_name.decode()
+    if name not in (".", ".."):
+        entries.append(f"{name}={kinds.get(entry.contents.d_type, 'unknown')}")
+libc.closedir(handle)
+print(" ".join(sorted(entries)))
+PY
+}
+
 run() {
   # run NAME -- COMMANDS...
   # Each test executes in its own subdir under $ROOT with set -e.
@@ -218,6 +259,21 @@ run "readdir returns sorted entries" -- '
   listing=$(ls ld | sort | tr "\n" " ")
   [ "$listing" = "a b c " ]
 '
+if command -v python3 >/dev/null 2>&1; then
+  run "readdir reports entry types" -- '
+    mkdir -p ld/sub && touch ld/file && ln -s file ld/link
+    [ "$(dirent_types ld)" = "file=file link=symlink sub=dir" ]
+  '
+  # Local-only when computerd runs with MOUNT_IGNORE=**/node_modules, as
+  # run-fs-tests.sh starts it; synced otherwise.
+  run "readdir reports entry types under node_modules" -- '
+    mkdir -p node_modules/pkg/sub && touch node_modules/pkg/file
+    ln -s file node_modules/pkg/link
+    [ "$(dirent_types node_modules/pkg)" = "file=file link=symlink sub=dir" ]
+  '
+else
+  skip_test "readdir reports entry types" "python3 not installed"
+fi
 run "find -type f"                -- '
   mkdir ld && touch ld/a ld/b ld/c
   [ "$(find ld -type f | wc -l)" = "3" ]
