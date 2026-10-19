@@ -1,0 +1,19 @@
+docs/17_isolate_javascript.md
+  s_9ebf7de3a4350a::t_18398f612e7d55 474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e1e67d3cb617782d52d93b8973badad512d47b56",
+  "prompts": {},
+  "sessions": {
+    "s_9ebf7de3a4350a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541a-6f4d-75b7-a250-e241869a8e0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
