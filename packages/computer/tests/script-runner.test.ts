@@ -330,6 +330,7 @@ describe("WorkspaceRuntime", () => {
     const text = await response.text();
     expect(response.status, text).toBe(200);
     expect(JSON.parse(text).result.value).toEqual([
+      "approve",
       "delete",
       "echo",
       "gate",
@@ -338,6 +339,7 @@ describe("WorkspaceRuntime", () => {
       "largeError",
       "marker",
       "slow",
+      "slowTick",
       "sum",
       "tick",
       "unsafeGate",
@@ -1339,5 +1341,182 @@ describe("durable executions", () => {
     }
     expect(await calls()).toEqual({ work: 2, gate: 2 });
     expect(await result("durable-recover")).toMatchObject({ status: "completed" });
+  });
+});
+
+describe("interrupts", () => {
+  type Pending = { id: string; backend: string; callId: string; payload: unknown; since: number };
+
+  async function start(id: string, source: string, options: Record<string, unknown> = {}) {
+    const response = await SELF.fetch("https://example.test/interrupt-start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, source, ...options }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+  }
+
+  async function pending(id: string): Promise<Pending[]> {
+    const response = await SELF.fetch("https://example.test/interrupt-pending");
+    return ((await response.json()) as Pending[]).filter((call) => call.id === id);
+  }
+
+  // The first of a run's calls to wait, other than `skip`, once one does.
+  async function waitingCall(id: string, skip?: string): Promise<Pending> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const call = (await pending(id)).find((item) => item.callId !== skip);
+      if (call !== undefined) return call;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`no call of ${id} is waiting`);
+  }
+
+  async function respond(id: string, callId: string, value: unknown) {
+    const response = await SELF.fetch("https://example.test/interrupt-respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, callId, value }),
+    });
+    return (await response.json()) as { ok: boolean; code?: string };
+  }
+
+  async function result(id: string) {
+    const response = await SELF.fetch(
+      `https://example.test/runtime-get?id=${encodeURIComponent(id)}`,
+    );
+    return (await response.json()) as {
+      status: string;
+      stdout: string;
+      stderr: string;
+      value?: unknown;
+    };
+  }
+
+  async function calls() {
+    return (await (await SELF.fetch("https://example.test/durable-calls")).json()) as Record<
+      string,
+      number
+    >;
+  }
+
+  const approval = `
+    import { approve, tick } from "ws:test-host";
+    export default async function () {
+      console.log("before", await tick("a"));
+      const answer = await approve("deploy");
+      console.log("after", answer.ok);
+      return answer;
+    }
+  `;
+
+  it("waits for an answer, then resumes where it was", async () => {
+    await start("wait-answer", approval);
+    const call = await waitingCall("wait-answer");
+    expect(call).toMatchObject({
+      backend: "worker-javascript",
+      callId: expect.stringMatching(/^wait-answer:\d+$/),
+      payload: { kind: "approval", action: "deploy" },
+    });
+    await expect(respond("wait-answer", call.callId, { ok: true })).resolves.toEqual({ ok: true });
+    expect(await result("wait-answer")).toMatchObject({
+      status: "completed",
+      stdout: "before 1\nafter true\n",
+      value: { ok: true },
+    });
+    // The function ran again to get its answer; nothing else repeated.
+    expect(await calls()).toEqual({ a: 1, "ask:deploy": 2, "answered:deploy": 1 });
+    expect(await pending("wait-answer")).toEqual([]);
+    await expect(respond("wait-answer", call.callId, { ok: true })).resolves.toEqual({
+      ok: false,
+      code: "ENOTWAITING",
+    });
+  });
+
+  it("keeps waiting across a restart", async () => {
+    await start("wait-restart", approval);
+    await waitingCall("wait-restart");
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+    const call = await waitingCall("wait-restart");
+    expect(call.payload).toEqual({ kind: "approval", action: "deploy" });
+    await respond("wait-restart", call.callId, { ok: false });
+    expect(await result("wait-restart")).toMatchObject({
+      status: "completed",
+      stdout: "before 1\nafter false\n",
+    });
+    expect(await calls()).toEqual({ a: 1, "ask:deploy": 2, "answered:deploy": 1 });
+  });
+
+  it("asks calls made together one after another", async () => {
+    await start(
+      "wait-both",
+      `
+        import { approve } from "ws:test-host";
+        export default async () => (await Promise.all([approve("one"), approve("two")])).map((a) => a.v);
+      `,
+    );
+    // The second call reaches the host once the run is being released,
+    // so it waits until the first is answered and the run resumes.
+    const first = await waitingCall("wait-both");
+    expect(first.payload).toEqual({ kind: "approval", action: "one" });
+    await respond("wait-both", first.callId, { v: "first" });
+    const second = await waitingCall("wait-both", first.callId);
+    expect(second.payload).toEqual({ kind: "approval", action: "two" });
+    await respond("wait-both", second.callId, { v: "second" });
+    expect(await result("wait-both")).toMatchObject({
+      status: "completed",
+      value: ["first", "second"],
+    });
+    expect(await calls()).toEqual({
+      "ask:one": 2,
+      "answered:one": 1,
+      "ask:two": 2,
+      "answered:two": 1,
+    });
+  });
+
+  it("lets other calls in flight finish before it releases the run", async () => {
+    await start(
+      "wait-inflight",
+      `
+        import { approve, slowTick } from "ws:test-host";
+        // slowTick reaches the host first, so it's in flight when approve interrupts.
+        export default async () => Promise.all([slowTick(300, "slow"), approve("x")]);
+      `,
+    );
+    const call = await waitingCall("wait-inflight");
+    await respond("wait-inflight", call.callId, { ok: true });
+    expect(await result("wait-inflight")).toMatchObject({
+      status: "completed",
+      value: [1, { ok: true }],
+    });
+    // Journaled when it finished, so the resumed run didn't start it again.
+    expect(await calls()).toMatchObject({ "start:slow": 1, slow: 1 });
+  });
+
+  it("doesn't count waiting toward the run's timeout", async () => {
+    await start("wait-timeout", approval, { timeoutMs: 1500 });
+    const call = await waitingCall("wait-timeout");
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await respond("wait-timeout", call.callId, { ok: true });
+    expect(await result("wait-timeout")).toMatchObject({ status: "completed" });
+  });
+
+  it("can be killed while it waits", async () => {
+    await start("wait-kill", approval);
+    const call = await waitingCall("wait-kill");
+    await SELF.fetch("https://example.test/runtime-kill?id=wait-kill", { method: "POST" });
+    expect(await result("wait-kill")).toMatchObject({ status: "cancelled" });
+    expect(await pending("wait-kill")).toEqual([]);
+    await expect(respond("wait-kill", call.callId, { ok: true })).resolves.toMatchObject({
+      code: "ENOTWAITING",
+    });
+  });
+
+  it("throws in a run that can't be released", async () => {
+    await start("wait-fail", approval, { onInterrupt: "fail" });
+    const settled = await result("wait-fail");
+    expect(settled.status).toBe("failed");
+    // The test backend keeps 64 bytes of standard error.
+    expect(settled.stderr).toContain("ctx.interrupt() needs a replayable run");
   });
 });

@@ -3,12 +3,14 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  answerCall,
   callKey,
   createDurableTables,
   decodeValue,
   describeCall,
   encodeValue,
   ExecutionJournal,
+  waitingCalls,
 } from "./journal.js";
 
 function database() {
@@ -95,6 +97,41 @@ describe("ExecutionJournal", () => {
     const replay = new ExecutionJournal(db, "js", "run");
     expect(replay.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1, rerun: true });
     expect(replay.expectedCall()).toBeUndefined();
+  });
+
+  it("holds an interrupted call until it's answered, then gives it the answer", () => {
+    const db = database();
+    db.run(
+      `INSERT INTO workspace_runtime_durable (backend, execution_id, policy, attempt)
+       VALUES ('js', 'run', 'replay', 1)`,
+    );
+    const first = new ExecutionJournal(db, "js", "run");
+    const step = first.begin("host/ws:test.approve", ["deploy"]);
+    if (step.kind !== "live") throw new Error("expected a live call");
+    first.interrupt(step.seq, { action: "deploy" });
+    expect(waitingCalls(db, "js")).toEqual([
+      { id: "run", seq: 1, payload: { action: "deploy" }, since: expect.any(Number) },
+    ]);
+    expect(answerCall(db, "js", "run", 2, true)).toBeUndefined();
+    expect(answerCall(db, "js", "run", 1, { ok: true })).toBe(0);
+    expect(answerCall(db, "js", "run", 1, { ok: true })).toBeUndefined();
+    expect(waitingCalls(db, "js")).toEqual([]);
+    const answer = { value: { ok: true } };
+    const resumed = new ExecutionJournal(db, "js", "run");
+    expect(resumed.begin("host/ws:test.approve", ["deploy"])).toEqual({
+      kind: "live",
+      seq: 1,
+      rerun: false,
+      answer,
+    });
+    // Interrupted again while it runs with its answer: a rerun that keeps it.
+    const again = new ExecutionJournal(db, "js", "run");
+    expect(again.begin("host/ws:test.approve", ["deploy"])).toEqual({
+      kind: "live",
+      seq: 1,
+      rerun: true,
+      answer,
+    });
   });
 
   it("numbers responses in the order they were committed", () => {

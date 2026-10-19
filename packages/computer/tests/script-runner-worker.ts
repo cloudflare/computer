@@ -149,6 +149,27 @@ function javascriptBackend(
           await new Promise((resolve) => setTimeout(resolve, Number(args[0])));
           return countCall(String(args[1] ?? "wait"));
         },
+        // Counts when it starts and again when it settles, and stops early
+        // if its call is aborted.
+        async slowTick(args, ctx) {
+          countCall(`start:${String(args[1])}`);
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, Number(args[0]));
+            ctx.signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(ctx.signal.reason);
+            });
+          });
+          return countCall(String(args[1]));
+        },
+        // Waits for an answer, then returns it.
+        async approve(args, ctx) {
+          const action = String(args[0]);
+          countCall(`ask:${action}`);
+          const answer = await ctx.interrupt({ kind: "approval", action });
+          countCall(`answered:${action}`);
+          return answer;
+        },
         async marker() {
           return {
             __workspace_codec__: { version: 1, type: "bytes", data: [1] },
@@ -279,6 +300,36 @@ export class HostDO extends DurableObject<Env> {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     return handle.id;
+  }
+
+  async startWaiting(input: {
+    source: string;
+    id: string;
+    onInterrupt?: "fail" | "restart" | "replay";
+    timeoutMs?: number;
+  }) {
+    durableCalls.clear();
+    const handle = await this.#workspace.runtime.exec(input.source, {
+      backend: "worker-javascript",
+      id: input.id,
+      onInterrupt: input.onInterrupt ?? "replay",
+      timeoutMs: input.timeoutMs,
+    });
+    void handle.result().catch(() => undefined);
+    return handle.id;
+  }
+
+  pending() {
+    return this.#workspace.runtime.pending();
+  }
+
+  async respond(id: string, callId: string, value: WorkspaceRuntimeValue) {
+    try {
+      await this.#workspace.runtime.respond(id, callId, value);
+      return { ok: true as const };
+    } catch (error) {
+      return { ok: false as const, code: (error as { code?: string }).code };
+    }
   }
 
   // Restart the object, as a deploy or crash would.
@@ -542,6 +593,32 @@ export default class extends WorkerEntrypoint<Env> {
       if (url.pathname === "/durable-recover") {
         await stub.recover();
         return new Response(null, { status: 204 });
+      }
+
+      if (url.pathname === "/interrupt-start") {
+        return Response.json({
+          id: await stub.startWaiting(
+            (await request.json()) as {
+              source: string;
+              id: string;
+              onInterrupt?: "fail" | "restart" | "replay";
+              timeoutMs?: number;
+            },
+          ),
+        });
+      }
+
+      if (url.pathname === "/interrupt-pending") {
+        return Response.json(await stub.pending());
+      }
+
+      if (url.pathname === "/interrupt-respond") {
+        const body = (await request.json()) as {
+          id: string;
+          callId: string;
+          value: WorkspaceRuntimeValue;
+        };
+        return Response.json(await stub.respond(body.id, body.callId, body.value));
       }
 
       if (url.pathname === "/durable-calls") {

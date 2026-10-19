@@ -43,6 +43,7 @@ function callContext(access: "read" | "read-write" = "read-write"): WorkspaceMod
     deadline: Date.now() + 60_000,
     access,
     callId: "test-call",
+    interrupt: () => Promise.reject(new Error("not used")),
     resolvePath: async (path) => path,
   };
 }

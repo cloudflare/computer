@@ -28,6 +28,27 @@ export interface WorkspaceModuleCallContext {
    * the same id, so a function can use it as an idempotency key.
    */
   readonly callId: string;
+  /**
+   * Pause the run until a person or another system answers, and return
+   * the answer. The run is released while it waits, survives a deploy,
+   * and resumes once `workspace.runtime.respond()` answers this call:
+   * it replays to this call, and this function runs again with the same
+   * `callId`, this time getting the answer straight away. Anything the
+   * function does before `interrupt()` therefore runs twice, so keep it
+   * safe to repeat. Only a run with `onInterrupt: "replay"` can wait;
+   * anywhere else this throws.
+   *
+   * ```ts
+   * postComment: async ([issue, body], ctx) => {
+   *   const { approved } = await ctx.interrupt({ kind: "approval", issue, body });
+   *   if (!approved) throw new Error("The comment was rejected.");
+   *   return github.comment(issue, body, { idempotencyKey: ctx.callId });
+   * }
+   * ```
+   *
+   * @param payload What the answer is for, as `pending()` lists it.
+   */
+  interrupt<Answer = WorkspaceRuntimeValue>(payload: WorkspaceRuntimeValue): Promise<Answer>;
 }
 
 /**
@@ -283,6 +304,19 @@ export interface ModuleExecutionInput {
  */
 export type WorkspaceRuntimeInterruptPolicy = "fail" | "restart" | "replay";
 
+/** A host module call waiting for an answer, from `ctx.interrupt()`. */
+export interface WorkspaceRuntimePendingCall {
+  /** The execution the call belongs to. */
+  readonly id: string;
+  readonly backend: string;
+  /** Pass this to `respond()` to answer the call. */
+  readonly callId: string;
+  /** What the call passed to `ctx.interrupt()`. */
+  readonly payload: WorkspaceRuntimeValue;
+  /** When the run started waiting, in milliseconds since the epoch. */
+  readonly since: number;
+}
+
 export interface ModuleExecutionEnvelope {
   id: string;
   // Identity of the process-local backend runtime that owns this
@@ -313,6 +347,9 @@ export interface WorkspaceModuleBackendHandle {
   // Settle the runs a restart interrupted. A backend that recovers
   // when it connects needs nothing more here.
   recover?(): Promise<void>;
+  // Calls waiting for an answer, and answering one.
+  pending?(): Promise<Omit<WorkspaceRuntimePendingCall, "backend">[]>;
+  respond?(input: { id: string; callId: string; value: WorkspaceRuntimeValue }): Promise<void>;
   // Tear down a backend-owned transport. The command adapter omits
   // it: a command backend's transport is closed through its
   // BackendHandle, not through the adapter the runtime consumes.

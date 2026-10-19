@@ -14,7 +14,9 @@ import {
   type WorkspaceRuntimeExecOptions,
   type WorkspaceRuntimeGetOptions,
   type WorkspaceRuntimeKillOptions,
+  type WorkspaceRuntimePendingCall,
   type WorkspaceRuntimeResult,
+  type WorkspaceRuntimeValue,
 } from "./types.js";
 
 interface WorkspaceRuntimeRouterOptions {
@@ -170,6 +172,42 @@ export class WorkspaceRuntime {
       const handle = await this.#options.backendHandle(id);
       await handle.recover?.();
     }
+  }
+
+  /**
+   * Host module calls waiting for an answer, from `ctx.interrupt()`,
+   * across every backend that supports it, oldest wait first.
+   */
+  async pending(): Promise<WorkspaceRuntimePendingCall[]> {
+    const calls: WorkspaceRuntimePendingCall[] = [];
+    for (const [id, backend] of this.#options.backends) {
+      if (!isModuleBackend(backend)) continue;
+      const handle = await this.#options.backendHandle(id);
+      for (const call of (await handle.pending?.()) ?? []) calls.push({ ...call, backend: id });
+    }
+    return calls.sort((a, b) => a.since - b.since);
+  }
+
+  /**
+   * Answer a call waiting in `ctx.interrupt()`. The run resumes once
+   * none of its calls are still waiting, and the call gets `value` as
+   * what `interrupt()` returns. Throws `ENOTWAITING` if the call isn't
+   * waiting, for example because it was already answered or the run
+   * was killed.
+   */
+  async respond(
+    id: string,
+    callId: string,
+    value: WorkspaceRuntimeValue,
+    options: { backend?: string } = {},
+  ): Promise<void> {
+    assertExecutionId(id);
+    const backend = this.#backend(options.backend);
+    const handle = await this.#options.backendHandle(backend);
+    if (handle.respond === undefined) {
+      throw new Error(`Backend ${backend} doesn't run calls that wait for an answer.`);
+    }
+    await handle.respond({ id, callId, value });
   }
 
   async killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {

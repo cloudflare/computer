@@ -263,6 +263,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
         if (!Array.isArray(events)) throw new Error("malformed event log");
         logs.push([position, events]);
       },
+      interrupt: () => undefined,
       diverged: (message) => diverged.push(message),
       stalled: () => diverged.push("stalled"),
     };
@@ -347,6 +348,18 @@ describe("WorkspaceRuntimeBridge journal", () => {
     const { target, logs } = journaled([]);
     target.recordLog({ from: 0, events: [-1, -2] });
     expect(logs).toEqual([[0, [-1, -2]]]);
+  });
+
+  it("runs an unsafe call again once answered, but not if it was cut off after", async () => {
+    const { target, diverged } = journaled([
+      { kind: "live", seq: 1, rerun: false, answer: { value: true } },
+      { kind: "live", seq: 1, rerun: true, answer: { value: true } },
+    ]);
+    await expect(target.call("host/ws:test.charge", args)).resolves.toMatchObject({ result: "c" });
+    await expect(message(target.call("host/ws:test.charge", args))).resolves.toContain(
+      "isn't safe to repeat",
+    );
+    expect(diverged).toHaveLength(1);
   });
 
   it("passes a stalled replay to the journal", () => {
