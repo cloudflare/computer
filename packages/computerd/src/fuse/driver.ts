@@ -1,5 +1,7 @@
 import { writeFileSync as nodeWriteFileSync } from "node:fs";
 import { posix } from "node:path";
+
+import type { WorkspaceDirentEntry } from "@cloudflare/dofs";
 import type { FUSEBackend } from "./backend.js";
 import { buildFuseOptionString } from "./options.js";
 import {
@@ -41,6 +43,12 @@ const STAT_BLOCK_SIZE = 512;
 // Match what statfs advertises (bsize: 4096) and what the backing VFS
 // reports so a fabricated stat stays consistent with a persisted one.
 const PREFERRED_IO_BLOCK_SIZE = 4096;
+const DIRENT_TYPE_BITS: Record<WorkspaceDirentEntry["type"], number> = {
+  file: 0o100000,
+  dir: 0o040000,
+  symlink: 0o120000,
+};
+const EPOCH = new Date(0);
 
 function blocksForSize(size: number): number {
   return size <= 0 ? 0 : Math.ceil(size / STAT_BLOCK_SIZE);
@@ -291,6 +299,9 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
   const linkableVfs = vfs as NodeVirtualFileSystem & {
     linkSync?: (existingPath: string, newPath: string) => void;
   };
+  const listingVfs = vfs as NodeVirtualFileSystem & {
+    readdirEntriesSync?: (path: string) => WorkspaceDirentEntry[];
+  };
   const markDirty = (entry: FileEntry, start: number, end: number): void => {
     entry.dirty = true;
     if (start < end) entry.dirtyRanges.push({ start, end });
@@ -492,6 +503,29 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     return stat;
   }
 
+  // A listing entry's stat. libfuse puts only the type and the inode of a
+  // plain readdir entry into getdents(2) and caches none of it as
+  // attributes, so the remaining fields are placeholders. With readdirplus
+  // these would become cached attributes and need statPath's real values.
+  function direntStat(path: string, entry: WorkspaceDirentEntry): FuseStat {
+    let mode = DIRENT_TYPE_BITS[entry.type] | entry.mode;
+    const override = meta.get(path);
+    if (override?.mode !== undefined) mode = (mode & 0o170000) | (override.mode & 0o7777);
+    return {
+      mtime: EPOCH,
+      atime: EPOCH,
+      ctime: EPOCH,
+      size: 0,
+      mode,
+      uid: typeof process.getuid === "function" ? process.getuid() : 0,
+      gid: typeof process.getgid === "function" ? process.getgid() : 0,
+      nlink: 1,
+      ino: entry.inode,
+      blksize: PREFERRED_IO_BLOCK_SIZE,
+      blocks: 0,
+    };
+  }
+
   return {
     init(cb) {
       cb?.(0);
@@ -502,30 +536,34 @@ export function makeFUSEOps(vfs: NodeVirtualFileSystem, mountPoint = "/"): FuseO
     error: notImplemented("error"),
 
     readdir(path, cb) {
+      // Without a stat per entry, libfuse reports every entry as
+      // DT_UNKNOWN. POSIX allows that, but readers that trust d_type
+      // skip such entries: bun's hardlink install walks its cache that
+      // way and links nothing into node_modules.
       try {
-        const entries = new Set(vfs.readdirSync(toVfs(path)));
-        for (const [pendingPath, entry] of files) {
-          if (entry.pendingCreate && parentPath(pendingPath) === path)
-            entries.add(baseName(pendingPath));
-        }
-        // Without a stat per entry, libfuse reports every entry as
-        // DT_UNKNOWN. POSIX allows that, but readers that trust d_type
-        // skip such entries: bun's hardlink install walks its cache that
-        // way and links nothing into node_modules.
-        const names: string[] = [];
-        const stats: FuseStat[] = [];
-        for (const name of entries) {
-          let stat: FuseStat;
-          try {
-            stat = statPath(childPath(path, name));
-          } catch {
-            // Listed but gone by the time it was stat'd.
-            continue;
+        const stats = new Map<string, FuseStat>();
+        const listed = listingVfs.readdirEntriesSync?.(toVfs(path));
+        if (listed !== undefined) {
+          for (const entry of listed) {
+            stats.set(entry.name, direntStat(childPath(path, entry.name), entry));
           }
-          names.push(name);
-          stats.push(stat);
+        } else {
+          for (const name of vfs.readdirSync(toVfs(path)) as string[]) {
+            try {
+              stats.set(name, statPath(childPath(path, name)));
+            } catch {
+              // Listed but gone by the time it was stat'd.
+            }
+          }
         }
-        cb(0, names, stats);
+        // Created through this driver and not yet in the VFS, or staged
+        // over a committed name; either way getattr answers from here.
+        for (const [pendingPath, entry] of files) {
+          if (entry.pendingCreate && parentPath(pendingPath) === path) {
+            stats.set(baseName(pendingPath), statPath(pendingPath));
+          }
+        }
+        cb(0, [...stats.keys()], [...stats.values()]);
       } catch (error) {
         cb(toErrno(error), []);
       }

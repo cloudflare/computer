@@ -22,7 +22,7 @@ export {
   invalidateReadOnlyMountCache,
   readOnlyRootFor,
 } from "./fs/mount-guard.js";
-export type { ReaddirOptions, WorkspaceDirentResult } from "./fs/readdir.js";
+export type { ReaddirOptions, WorkspaceDirentEntry, WorkspaceDirentResult } from "./fs/readdir.js";
 export type { ReadFileOptions } from "./fs/readFile.js";
 export { readlink } from "./fs/readlink.js";
 export { rename } from "./fs/rename.js";

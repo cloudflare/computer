@@ -981,3 +981,41 @@ describe("SQLiteWorkspaceProvider — cached vfs_nodes.size", () => {
     });
   });
 });
+
+describe("SQLiteWorkspaceProvider — readdirEntriesSync", () => {
+  it("reports the type, permission bits and inode lstat gives each entry", async () => {
+    await withProvider((p) => {
+      p.mkdirSync("/dir/sub", { recursive: true });
+      p.writeFileSync("/dir/file.txt", "x");
+      p.chmodSync("/dir/file.txt", 0o755);
+      p.symlinkSync("file.txt", "/dir/link");
+      p.linkSync("/dir/file.txt", "/dir/hard.txt");
+      p.openWriteBufferForCreateSync("/dir/pending.txt", { mode: 0o600 });
+
+      const entries = p.readdirEntriesSync("/dir");
+      expect(entries.map((entry) => entry.name).sort()).toEqual([
+        "file.txt",
+        "hard.txt",
+        "link",
+        "pending.txt",
+        "sub",
+      ]);
+      const typeOf = { file: 0o100000, dir: 0o040000, symlink: 0o120000 };
+      for (const entry of entries) {
+        const stat = p.lstatSync(`/dir/${entry.name}`);
+        expect(typeOf[entry.type] | entry.mode, entry.name).toBe(stat.mode);
+        expect(entry.inode, entry.name).toBe(stat.ino);
+      }
+      const byName = new Map(entries.map((entry) => [entry.name, entry]));
+      expect(byName.get("hard.txt")?.inode).toBe(byName.get("file.txt")?.inode);
+    });
+  });
+
+  it("refuses a missing path and a file", async () => {
+    await withProvider((p) => {
+      p.writeFileSync("/file", "x");
+      expect(() => p.readdirEntriesSync("/missing")).toThrow(/ENOENT|no such path/);
+      expect(() => p.readdirEntriesSync("/file")).toThrow(/ENOTDIR|not a directory/);
+    });
+  });
+});

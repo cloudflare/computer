@@ -23,6 +23,26 @@ interface DirentRow {
   link_target: string | null;
 }
 
+/**
+ * One directory entry with what an `lstat` of it reports for type,
+ * permission bits and inode, read with the listing rather than per entry.
+ */
+export interface WorkspaceDirentEntry {
+  name: string;
+  type: "file" | "dir" | "symlink";
+  /** Permission bits only (`& 0o7777`). */
+  mode: number;
+  /** 0 for a file still in a pending-create buffer, as `lstat` reports it. */
+  inode: number;
+}
+
+interface EntryRow {
+  inode: number;
+  name: string;
+  type: "file" | "dir" | "symlink";
+  mode: number;
+}
+
 export interface ReaddirOptions {
   /** Maximum entries to return. */
   limit?: number;
@@ -173,4 +193,51 @@ function compareByName(a: WorkspaceDirentResult, b: WorkspaceDirentResult): numb
     if (left[index] !== right[index]) return left[index] - right[index];
   }
   return left.byteLength - right.byteLength;
+}
+
+/**
+ * List a directory with each entry's type, permission bits and inode in one
+ * query. `readdir` leaves the inode out and costs a write-buffer lookup per
+ * file for its size; a caller that needs an `lstat` per entry for the type
+ * would otherwise resolve and stat every child.
+ *
+ * A pending-create buffer shadows a committed entry of the same name, as it
+ * does for `lstat`.
+ */
+export function readdirEntries(db: Database, path: string): WorkspaceDirentEntry[] {
+  const { path: canonical } = canonicalizePath(path);
+  const node = resolveInode(db, canonical);
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
+  }
+  if (node.type !== "dir") {
+    throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
+  }
+
+  const rows = db.all<EntryRow>(
+    `SELECT n.inode AS inode,
+            d.name AS name,
+            n.type AS type,
+            n.mode AS mode
+       FROM vfs_dirents d
+       JOIN vfs_nodes n ON n.inode = d.child_inode
+      WHERE d.parent_inode = ?
+      ORDER BY d.name`,
+    node.inode,
+  );
+  const entries = new Map<string, WorkspaceDirentEntry>();
+  for (const row of rows) {
+    entries.set(row.name, {
+      name: row.name,
+      type: row.type,
+      mode: row.mode & 0o7777,
+      inode: row.inode,
+    });
+  }
+  for (const entry of listPendingByParent(db, node.inode)) {
+    const name = entry.pending?.leafName;
+    if (name === undefined) continue;
+    entries.set(name, { name, type: "file", mode: entry.mode & 0o7777, inode: 0 });
+  }
+  return [...entries.values()];
 }

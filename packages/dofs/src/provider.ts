@@ -13,7 +13,7 @@ import { link as linkImpl } from "./fs/link.js";
 import type { MkdirOptions } from "./fs/mkdir.js";
 import { mkdir as mkdirImpl } from "./fs/mkdir.js";
 import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer.js";
-import { readdir as readdirImpl } from "./fs/readdir.js";
+import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir.js";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile.js";
 import { readlink as readlinkImpl } from "./fs/readlink.js";
 import { rename as renameImpl } from "./fs/rename.js";
@@ -243,6 +243,15 @@ export class SQLiteWorkspaceProvider {
       return entries.map((entry) => wrapDirent(entry));
     }
     return entries.map((entry) => entry.name);
+  }
+
+  /**
+   * The directory's entries with the type, permission bits and inode an
+   * `lstat` of each reports, from one query. Not part of the
+   * `@platformatic/vfs` provider surface.
+   */
+  readdirEntriesSync(path: string): WorkspaceDirentEntry[] {
+    return readdirEntries(this.db, path);
   }
 
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {

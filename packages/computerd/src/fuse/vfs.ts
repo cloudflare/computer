@@ -54,6 +54,7 @@ const EXTRA_VFS_METHODS = [
   "openWriteBufferSync",
   "openWriteBufferForCreateSync",
   "releaseWriteBufferSync",
+  "readdirEntriesSync",
 ] as const;
 
 export interface NodeVFSHandle {
