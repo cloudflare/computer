@@ -1493,6 +1493,24 @@ describe("interrupts", () => {
     expect(await calls()).toMatchObject({ "start:slow": 1, slow: 1 });
   });
 
+  it("resumes when the answer arrives before the run is released", async () => {
+    await start(
+      "wait-early",
+      `
+        import { approve, slowTick } from "ws:test-host";
+        export default async () => Promise.all([slowTick(1000, "early"), approve("x")]);
+      `,
+    );
+    const call = await waitingCall("wait-early");
+    await respond("wait-early", call.callId, { ok: true });
+    // slowTick is still running, so the run hadn't been released yet.
+    expect(await calls()).not.toHaveProperty("early");
+    expect(await result("wait-early")).toMatchObject({
+      status: "completed",
+      value: [1, { ok: true }],
+    });
+  });
+
   it("doesn't count waiting toward the run's timeout", async () => {
     await start("wait-timeout", approval, { timeoutMs: 1500 });
     const call = await waitingCall("wait-timeout");
