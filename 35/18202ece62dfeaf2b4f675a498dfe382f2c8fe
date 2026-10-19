@@ -1,0 +1,19 @@
+docs/20_dynamic_javascript.md
+  s_13dab848facb79::t_61ba5ae2a1c51a 83,91,93,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "3518202ece62dfeaf2b4f675a498dfe382f2c8fe",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
