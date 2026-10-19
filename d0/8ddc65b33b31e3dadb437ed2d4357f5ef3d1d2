@@ -1,0 +1,41 @@
+examples/mcp/tsconfig.json
+  s_fc0ad1cb4ef833::t_3644b0ac38f2f1 3,6
+examples/rlm/tsconfig.app.json
+  s_fc0ad1cb4ef833::t_f9a4092af96a3c 4,6
+examples/rlm/tsconfig.node.json
+  s_fc0ad1cb4ef833::t_ac045c1131b7e4 4-5
+examples/rlm/tsconfig.worker.json
+  s_fc0ad1cb4ef833::t_49752208c3a7ec 4-5
+examples/think-compare-runtimes/tsconfig.app.json
+  s_fc0ad1cb4ef833::t_89e59d419e7e1d 4,6
+examples/think-compare-runtimes/tsconfig.node.json
+  s_fc0ad1cb4ef833::t_9a9da1d98d1d11 4-5
+examples/think-compare-runtimes/tsconfig.worker.json
+  s_fc0ad1cb4ef833::t_65da1d3b0b513f 4-5
+packages/computer/src/backends/worker-shell/script/build-bundle.mjs
+  s_fc0ad1cb4ef833::t_dc8a1026dd5149 99
+packages/computer/tsconfig.json
+  s_fc0ad1cb4ef833::t_8c540253685a96 3,6
+packages/computerd/tsconfig.json
+  s_fc0ad1cb4ef833::t_29f45c8a3b912d 3-4
+packages/dofs/tsconfig.json
+  s_fc0ad1cb4ef833::t_0f7aa6db0e8fc5 3,6
+packages/rpc/tsconfig.json
+  s_fc0ad1cb4ef833::t_26cd494408f45a 3,6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d08ddc65b33b31e3dadb437ed2d4357f5ef3d1d2",
+  "prompts": {},
+  "sessions": {
+    "s_fc0ad1cb4ef833": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15442-2585-70e5-968e-84edcf60eabd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

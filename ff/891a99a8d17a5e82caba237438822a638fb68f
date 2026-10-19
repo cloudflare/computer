@@ -1,0 +1,19 @@
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_13dab848facb79::t_8fc3696de427de 24,567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ff891a99a8d17a5e82caba237438822a638fb68f",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

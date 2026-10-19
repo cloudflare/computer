@@ -1,0 +1,699 @@
+docs/10_project_layout.md
+  s_fc0ad1cb4ef833::t_d4fdbf750e3463 248
+examples/egress/src/egress.test.ts
+  s_fc0ad1cb4ef833::t_7fc5c7463cfea9 3
+examples/egress/src/index.ts
+  s_fc0ad1cb4ef833::t_0000916e3c5661 29
+examples/mcp/src/index.ts
+  s_fc0ad1cb4ef833::t_6c95293343b451 14
+examples/pi-ai/src/index.ts
+  s_fc0ad1cb4ef833::t_9e426ced90d83f 15
+examples/think/src/index.ts
+  s_fc0ad1cb4ef833::t_b233961a7e7e3f 21
+packages/computer/src/artifacts/cli.test.ts
+  s_fc0ad1cb4ef833::t_e9b14f7500b6e4 8-10
+packages/computer/src/artifacts/cli.ts
+  s_fc0ad1cb4ef833::t_8ea29eb9aea68d 16-19
+packages/computer/src/artifacts/client.test.ts
+  s_fc0ad1cb4ef833::t_3f2aa63da22e36 12-14
+packages/computer/src/artifacts/client.ts
+  s_fc0ad1cb4ef833::t_23b22cf51b5ea4 30-34
+packages/computer/src/artifacts/duration.test.ts
+  s_fc0ad1cb4ef833::t_0fb061aba7e4e5 4
+packages/computer/src/artifacts/index.ts
+  s_fc0ad1cb4ef833::t_aadc64158b32c8 25-26,32-33,39-40
+packages/computer/src/artifacts/scope.test.ts
+  s_fc0ad1cb4ef833::t_170336abdd66fc 7,16
+packages/computer/src/artifacts/scope.ts
+  s_fc0ad1cb4ef833::t_e490aa7f94a98b 24
+packages/computer/src/assets/base32.test.ts
+  s_fc0ad1cb4ef833::t_48ff4a04ff62fa 3
+packages/computer/src/assets/index.test.ts
+  s_fc0ad1cb4ef833::t_21be2ec5cf1601 4-5
+packages/computer/src/assets/index.ts
+  s_fc0ad1cb4ef833::t_cd5eb917756f0f 23,32,245
+packages/computer/src/assets/mime.test.ts
+  s_fc0ad1cb4ef833::t_4dc74b7b1a72f5 3
+packages/computer/src/assets/sigv4.test.ts
+  s_fc0ad1cb4ef833::t_e3cacac1f21aab 5
+packages/computer/src/assets/upload.test.ts
+  s_fc0ad1cb4ef833::t_7bb42ef27f9da2 3
+packages/computer/src/assets/upload.ts
+  s_fc0ad1cb4ef833::t_3c8e1e08df0a9c 14-15
+packages/computer/src/backend.ts
+  s_fc0ad1cb4ef833::t_6caf55df44a6be 34-35
+packages/computer/src/backends/container-legacy/cloudflare-container.test.ts
+  s_fc0ad1cb4ef833::t_3aebaf1d4168f9 14-16
+packages/computer/src/backends/container-legacy/cloudflare-container.ts
+  s_fc0ad1cb4ef833::t_367cbe8488b09d 50-51,56-59
+packages/computer/src/backends/container-legacy/container-client-secret.test.ts
+  s_fc0ad1cb4ef833::t_112344378b2308 3
+packages/computer/src/backends/container-legacy/container-host-adoption.test.ts
+  s_fc0ad1cb4ef833::t_574f0a3d7496d6 10-11
+packages/computer/src/backends/container-legacy/container-host.ts
+  s_fc0ad1cb4ef833::t_01ec039bd97b58 22-24,31,37-38,40
+packages/computer/src/backends/container-legacy/container-launch-record.test.ts
+  s_fc0ad1cb4ef833::t_1e908562d554b2 8
+packages/computer/src/backends/container-legacy/container-lifecycle.test.ts
+  s_fc0ad1cb4ef833::t_664e9cd5d95ce5 10
+packages/computer/src/backends/container-legacy/container-runtime-identity.test.ts
+  s_fc0ad1cb4ef833::t_5b4726e506f316 3
+packages/computer/src/backends/container-legacy/health-probe.test.ts
+  s_fc0ad1cb4ef833::t_0f1effb1615c0d 3-4
+packages/computer/src/backends/container-legacy/health-probe.ts
+  s_fc0ad1cb4ef833::t_0d04361fe57aa7 17
+packages/computer/src/backends/container-legacy/index.ts
+  s_fc0ad1cb4ef833::t_de6ed65ee2f94b 33-34,41-42
+packages/computer/src/backends/container/container-backend-ignore.test.ts
+  s_fc0ad1cb4ef833::t_1686f228ac7933 10-13
+packages/computer/src/backends/container/container-backend-launch.test.ts
+  s_fc0ad1cb4ef833::t_ecf99638d629c9 16-18
+packages/computer/src/backends/container/container-backend.ts
+  s_fc0ad1cb4ef833::t_f229c8f6bc0cdf 50-51,56-60,66
+packages/computer/src/backends/container/container-client-secret.test.ts
+  s_fc0ad1cb4ef833::t_c9b6af264f2130 9
+packages/computer/src/backends/container/container-host-launch.test.ts
+  s_fc0ad1cb4ef833::t_6aab66ed35fb5a 12-13
+packages/computer/src/backends/container/container-host.ts
+  s_fc0ad1cb4ef833::t_9420f6e828e945 22-24,31,37-38,40
+packages/computer/src/backends/container/container-launch-record.test.ts
+  s_fc0ad1cb4ef833::t_2effd665136d89 8
+packages/computer/src/backends/container/container-lifecycle.test.ts
+  s_fc0ad1cb4ef833::t_b94bf9fb07dd91 16
+packages/computer/src/backends/container/container-runtime-identity.test.ts
+  s_fc0ad1cb4ef833::t_4046fd3e9c89b9 9
+packages/computer/src/backends/container/health-probe.test.ts
+  s_fc0ad1cb4ef833::t_f9c73051885f6d 9-10
+packages/computer/src/backends/container/health-probe.ts
+  s_fc0ad1cb4ef833::t_447e66b8247c21 24
+packages/computer/src/backends/container/ignore-assertion.test.ts
+  s_fc0ad1cb4ef833::t_0db57348a05d1d 9
+packages/computer/src/backends/container/index.ts
+  s_fc0ad1cb4ef833::t_11493e3675678a 29,34,41-42
+packages/computer/src/backends/test.ts
+  s_fc0ad1cb4ef833::t_d1ff3b3389e657 12
+packages/computer/src/backends/worker-javascript/frames.test.ts
+  s_fc0ad1cb4ef833::t_9ce309b6ab170e 3
+packages/computer/src/backends/worker-javascript/frames.ts
+  s_fc0ad1cb4ef833::t_04a06946218f31 1
+packages/computer/src/backends/worker-javascript/index.ts
+  s_fc0ad1cb4ef833::t_9a10fc99ac96f8 8-9
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_fc0ad1cb4ef833::t_6552c6363a70a2 3,9
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_fc0ad1cb4ef833::t_4a8183949f5ed3 5-7
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_fc0ad1cb4ef833::t_b3098d4c8d1e2d 1-4,17-18,27
+packages/computer/src/backends/worker-shell/adapter.test.ts
+  s_fc0ad1cb4ef833::t_6d9a303d94209a 15-18
+packages/computer/src/backends/worker-shell/artifacts-command.test.ts
+  s_fc0ad1cb4ef833::t_9a531bc6c2a754 15-17
+packages/computer/src/backends/worker-shell/artifacts-command.ts
+  s_fc0ad1cb4ef833::t_44ea700209447f 23-24
+packages/computer/src/backends/worker-shell/assets-command.test.ts
+  s_fc0ad1cb4ef833::t_27f0cf19bc982e 3
+packages/computer/src/backends/worker-shell/entrypoint.test.ts
+  s_fc0ad1cb4ef833::t_bbc894adbf62af 19-25,352
+packages/computer/src/backends/worker-shell/entrypoint.ts
+  s_fc0ad1cb4ef833::t_a40ad15e8a4392 23-26,108
+packages/computer/src/backends/worker-shell/git-command.test.ts
+  s_fc0ad1cb4ef833::t_538f122e2a02f1 16-17
+packages/computer/src/backends/worker-shell/git-command.ts
+  s_fc0ad1cb4ef833::t_af351745efaf38 53
+packages/computer/src/backends/worker-shell/index.ts
+  s_fc0ad1cb4ef833::t_abcc5d3c6c479f 32-39,46
+packages/computer/src/backends/worker-shell/shell-modules.test.ts
+  s_fc0ad1cb4ef833::t_a1c6635b574989 25
+packages/computer/src/backends/worker-shell/worker-shell.test.ts
+  s_fc0ad1cb4ef833::t_a84f7672f51b97 24-26
+packages/computer/src/backends/worker-shell/worker-shell.ts
+  s_fc0ad1cb4ef833::t_1592a7cfc45080 22-27
+packages/computer/src/client.test.ts
+  s_fc0ad1cb4ef833::t_3e5591ceb335e4 14-20
+packages/computer/src/client.ts
+  s_fc0ad1cb4ef833::t_dafd59d6605ac9 34,41-46
+packages/computer/src/deferred-sync.test.ts
+  s_fc0ad1cb4ef833::t_877702dfd22863 11-12
+packages/computer/src/durable-object-name.test.ts
+  s_fc0ad1cb4ef833::t_40a112927bdd96 3
+packages/computer/src/exec-wire.test.ts
+  s_fc0ad1cb4ef833::t_73c49b98fbc4cd 10-11
+packages/computer/src/exec-wire.ts
+  s_fc0ad1cb4ef833::t_790f283523b2c6 26
+packages/computer/src/execution-runtime-tracker.test.ts
+  s_fc0ad1cb4ef833::t_eb785cabb57dd5 3
+packages/computer/src/git/cli.test.ts
+  s_fc0ad1cb4ef833::t_4ecfb197f8e9ba 24-28,35-37,50,58,69,78-80,117-121,132,1976
+packages/computer/src/git/cli.ts
+  s_fc0ad1cb4ef833::t_ba80e45ba0204a 22-24
+packages/computer/src/git/clone.test.ts
+  s_fc0ad1cb4ef833::t_59292d764c64e0 20
+packages/computer/src/git/commit.test.ts
+  s_fc0ad1cb4ef833::t_bc0a71ee65d9f5 9-10
+packages/computer/src/git/commit.ts
+  s_fc0ad1cb4ef833::t_ac6766950bf1c3 20
+packages/computer/src/git/diff.test.ts
+  s_fc0ad1cb4ef833::t_c25cfdec79998e 19
+packages/computer/src/git/diff.ts
+  s_fc0ad1cb4ef833::t_ad45343f031415 11-12
+packages/computer/src/git/index.test.ts
+  s_fc0ad1cb4ef833::t_d0a78d73153942 11-12
+packages/computer/src/git/index.ts
+  s_fc0ad1cb4ef833::t_4e1367b3c9494f 26-28,34,43-44,65,79,98,115,123,129,144,146-149,157-158,174,182,193,202-204,211
+packages/computer/src/git/init.test.ts
+  s_fc0ad1cb4ef833::t_fe8b52cb7bda76 9-10
+packages/computer/src/git/init.ts
+  s_fc0ad1cb4ef833::t_315e754f2e7f36 7
+packages/computer/src/git/network.test.ts
+  s_fc0ad1cb4ef833::t_4ad07e2a169d05 18,28
+packages/computer/src/git/network.ts
+  s_fc0ad1cb4ef833::t_ac2155da7c9ad0 20
+packages/computer/src/git/pako-zlib-shim.test.ts
+  s_fc0ad1cb4ef833::t_5da83ebb7c38e0 5
+packages/computer/src/git/plumbing.test.ts
+  s_fc0ad1cb4ef833::t_d67c8799629166 18
+packages/computer/src/git/plumbing.ts
+  s_fc0ad1cb4ef833::t_63adb61cee63b8 10
+packages/computer/src/git/reads.test.ts
+  s_fc0ad1cb4ef833::t_5da213c321d480 11,21
+packages/computer/src/git/reads.ts
+  s_fc0ad1cb4ef833::t_18c33fe4ad0682 7
+packages/computer/src/git/refs.test.ts
+  s_fc0ad1cb4ef833::t_a706a9345fa73a 21
+packages/computer/src/git/refs.ts
+  s_fc0ad1cb4ef833::t_608fc75eb0c551 7
+packages/computer/src/git/staging.test.ts
+  s_fc0ad1cb4ef833::t_1d515d0202eabc 14
+packages/computer/src/git/staging.ts
+  s_fc0ad1cb4ef833::t_551ba9ca74bcf8 13-14
+packages/computer/src/git/status.test.ts
+  s_fc0ad1cb4ef833::t_0e6403bcb7b44d 17
+packages/computer/src/git/status.ts
+  s_fc0ad1cb4ef833::t_2da352fd5e3d5c 22
+packages/computer/src/git/worktree.test.ts
+  s_fc0ad1cb4ef833::t_0ac67cb089f9ab 9,19
+packages/computer/src/git/worktree.ts
+  s_fc0ad1cb4ef833::t_9f8b74ac5e26c9 10-11
+packages/computer/src/heartbeat.test.ts
+  s_fc0ad1cb4ef833::t_3d6e10df2aa758 3
+packages/computer/src/index.ts
+  s_fc0ad1cb4ef833::t_90514dd83d681e 30-31,40-42,50,58,69,76,83-87,114-117,125,131,137
+packages/computer/src/modules/artifacts.test.ts
+  s_fc0ad1cb4ef833::t_b8721c9cd1bf02 3-4
+packages/computer/src/modules/artifacts.ts
+  s_fc0ad1cb4ef833::t_c241b4c64c136a 10-12,19
+packages/computer/src/modules/assets.test.ts
+  s_fc0ad1cb4ef833::t_14cfb4ef884465 3-5
+packages/computer/src/modules/assets.ts
+  s_fc0ad1cb4ef833::t_1baf67938cc7d0 1-2,8
+packages/computer/src/modules/container.test.ts
+  s_fc0ad1cb4ef833::t_03d91872d5f7fe 7-9
+packages/computer/src/modules/container.ts
+  s_fc0ad1cb4ef833::t_3a3c6a2f09d8d4 16,24-26
+packages/computer/src/modules/git.ts
+  s_fc0ad1cb4ef833::t_e57c305edecae7 11,18
+packages/computer/src/modules/tools.test.ts
+  s_fc0ad1cb4ef833::t_68ca1862bbfd89 7-8
+packages/computer/src/modules/tools.ts
+  s_fc0ad1cb4ef833::t_baa59377f1e160 28
+packages/computer/src/mounts/index.test.ts
+  s_fc0ad1cb4ef833::t_8f75d7bd82888c 4-6
+packages/computer/src/mounts/index.ts
+  s_fc0ad1cb4ef833::t_6588c667555560 22
+packages/computer/src/mounts/providers/r2.test.ts
+  s_fc0ad1cb4ef833::t_d9a47af790cabe 4-5
+packages/computer/src/mounts/providers/r2.ts
+  s_fc0ad1cb4ef833::t_eed915d097321a 18
+packages/computer/src/mounts/providers/worker-bundle.test.ts
+  s_fc0ad1cb4ef833::t_5474944c0fb028 9-11
+packages/computer/src/mounts/providers/worker-bundle.ts
+  s_fc0ad1cb4ef833::t_0ef05fcacc30ac 33
+packages/computer/src/mounts/registry.test.ts
+  s_fc0ad1cb4ef833::t_3879bf0cd825c2 4-5
+packages/computer/src/mounts/registry.ts
+  s_fc0ad1cb4ef833::t_f660ce7dc3c945 7
+packages/computer/src/observe-integration.test.ts
+  s_fc0ad1cb4ef833::t_abdd3b3ca85ed2 11-14
+packages/computer/src/observe-recorder.ts
+  s_fc0ad1cb4ef833::t_a3f7a7f9404de7 10
+packages/computer/src/observe.test.ts
+  s_fc0ad1cb4ef833::t_10d3a97b4487ef 2-3
+packages/computer/src/observe/cloudflare.test.ts
+  s_fc0ad1cb4ef833::t_989f4396a99cfb 9
+packages/computer/src/observe/cloudflare.ts
+  s_fc0ad1cb4ef833::t_9d1290238506ba 43
+packages/computer/src/observe/sync-telemetry.test.ts
+  s_fc0ad1cb4ef833::t_f360ba57ae8c78 3
+packages/computer/src/proxy-stub.ts
+  s_fc0ad1cb4ef833::t_6c318e8598b435 13
+packages/computer/src/proxy.ts
+  s_fc0ad1cb4ef833::t_8adafddf3ea280 56-58
+packages/computer/src/runtime/bridge.test.ts
+  s_fc0ad1cb4ef833::t_52d373711d6814 3-4
+packages/computer/src/runtime/bridge.ts
+  s_fc0ad1cb4ef833::t_86932179d9ccdc 3-4,9
+packages/computer/src/runtime/capability.test.ts
+  s_fc0ad1cb4ef833::t_6059d118c0300e 2-3
+packages/computer/src/runtime/capability.ts
+  s_fc0ad1cb4ef833::t_52c74605f728a3 5
+packages/computer/src/runtime/output-files.ts
+  s_fc0ad1cb4ef833::t_33a8b6326b352f 8,10
+packages/computer/src/runtime/output-spool.ts
+  s_fc0ad1cb4ef833::t_7cc91217ad10d9 1
+packages/computer/src/runtime/output.test.ts
+  s_fc0ad1cb4ef833::t_98a47f07b5e0be 4-7,12
+packages/computer/src/runtime/runtime.test.ts
+  s_fc0ad1cb4ef833::t_ae324b109602d1 3,8
+packages/computer/src/runtime/runtime.ts
+  s_fc0ad1cb4ef833::t_6c7e379ccb995f 3-5,18
+packages/computer/src/runtime/types.ts
+  s_fc0ad1cb4ef833::t_e4b98e7be05c80 3-4,48,50,52-53,298,300-301,315
+packages/computer/src/runtime/wire.test.ts
+  s_fc0ad1cb4ef833::t_a29bdcb7bb255d 3-4
+packages/computer/src/runtime/wire.ts
+  s_fc0ad1cb4ef833::t_990c73ad13524f 1-2
+packages/computer/src/sh.test.ts
+  s_fc0ad1cb4ef833::t_d7e98edb6b25fa 3
+packages/computer/src/shell.test.ts
+  s_fc0ad1cb4ef833::t_6407c8a9b41b7e 14
+packages/computer/src/shell.ts
+  s_fc0ad1cb4ef833::t_9100928d7953f8 26-27
+packages/computer/src/stub.test.ts
+  s_fc0ad1cb4ef833::t_53f68fd9272fe1 18-22,29-30
+packages/computer/src/stub.ts
+  s_fc0ad1cb4ef833::t_58df291f000243 67-71,79-81
+packages/computer/src/test-harness/end-to-end.test.ts
+  s_fc0ad1cb4ef833::t_dfbfb99dd45f94 14
+packages/computer/src/test-harness/load.bench.ts
+  s_fc0ad1cb4ef833::t_20af9a4cfe967c 14
+packages/computer/src/test-harness/shell.test.ts
+  s_fc0ad1cb4ef833::t_9dab4d3285c2e5 8
+packages/computer/src/test-harness/with-workspace.ts
+  s_fc0ad1cb4ef833::t_1a76a412e010d1 7-8
+packages/computer/src/text-truncation.test.ts
+  s_fc0ad1cb4ef833::t_0d70133036f0e9 3
+packages/computer/src/tools/ai-sdk/bindings.test.ts
+  s_fc0ad1cb4ef833::t_5f7871fb8b9bbb 7-10
+packages/computer/src/tools/ai-sdk/bindings.ts
+  s_fc0ad1cb4ef833::t_ed619985bac5ab 9-11
+packages/computer/src/tools/ai-sdk/index.test.ts
+  s_fc0ad1cb4ef833::t_de5391cbc7579e 4-7,17-18
+packages/computer/src/tools/ai-sdk/index.ts
+  s_fc0ad1cb4ef833::t_16bfb50557cf30 2-3,14,16,31
+packages/computer/src/tools/ai-sdk/output.ts
+  s_fc0ad1cb4ef833::t_8be84eee731132 2
+packages/computer/src/tools/ai-sdk/tools.ts
+  s_fc0ad1cb4ef833::t_1ad552a9c9bf81 8,14,20,26,32,38,47,53,59-60
+packages/computer/src/tools/common/exec.ts
+  s_fc0ad1cb4ef833::t_233d92bf1e77af 2,9-12
+packages/computer/src/tools/common/fs/confine.test.ts
+  s_fc0ad1cb4ef833::t_24de20417f63b7 4-6
+packages/computer/src/tools/common/fs/delete.test.ts
+  s_fc0ad1cb4ef833::t_5a9f4fcdf3f080 2-3
+packages/computer/src/tools/common/fs/delete.ts
+  s_fc0ad1cb4ef833::t_16fb651582171d 2-3
+packages/computer/src/tools/common/fs/edit-diff.test.ts
+  s_fc0ad1cb4ef833::t_6a9ec55d08af48 2
+packages/computer/src/tools/common/fs/edit.test.ts
+  s_fc0ad1cb4ef833::t_996a7a65d4e1be 3-4
+packages/computer/src/tools/common/fs/edit.ts
+  s_fc0ad1cb4ef833::t_c5e5273f08bcb3 11-13
+packages/computer/src/tools/common/fs/find.ts
+  s_fc0ad1cb4ef833::t_1fff478b0fb545 2
+packages/computer/src/tools/common/fs/grep.test.ts
+  s_fc0ad1cb4ef833::t_09f438692f4f31 4-6
+packages/computer/src/tools/common/fs/grep.ts
+  s_fc0ad1cb4ef833::t_5163ef2a2dcd06 2
+packages/computer/src/tools/common/fs/locks.test.ts
+  s_fc0ad1cb4ef833::t_0bad1a2a829471 2-3
+packages/computer/src/tools/common/fs/locks.ts
+  s_fc0ad1cb4ef833::t_5acb91f7f05ce6 1
+packages/computer/src/tools/common/fs/media.test.ts
+  s_fc0ad1cb4ef833::t_ab0a446dcf065e 3-4
+packages/computer/src/tools/common/fs/media.ts
+  s_fc0ad1cb4ef833::t_340966c17670c0 1
+packages/computer/src/tools/common/fs/read.test.ts
+  s_fc0ad1cb4ef833::t_6cafbcbc8805ea 3-4
+packages/computer/src/tools/common/fs/read.ts
+  s_fc0ad1cb4ef833::t_2f0db7ce302101 2-4
+packages/computer/src/tools/common/fs/store.ts
+  s_fc0ad1cb4ef833::t_b5d6ef1bb154ec 14
+packages/computer/src/tools/common/fs/write.test.ts
+  s_fc0ad1cb4ef833::t_f4fe9182ff2156 3-4
+packages/computer/src/tools/common/fs/write.ts
+  s_fc0ad1cb4ef833::t_40c17d054b0f4b 2-3
+packages/computer/src/tools/common/options.ts
+  s_fc0ad1cb4ef833::t_e6de3093f171c3 1-7
+packages/computer/src/tools/common/publish.ts
+  s_fc0ad1cb4ef833::t_85d217c471ee45 2
+packages/computer/src/tools/core.test.ts
+  s_fc0ad1cb4ef833::t_9e63cce0a7b2d3 3
+packages/computer/src/tools/core.ts
+  s_fc0ad1cb4ef833::t_caeeb307ae4d29 13
+packages/computer/src/tools/index.ts
+  s_fc0ad1cb4ef833::t_de92ff17701028 17,25-35
+packages/computer/src/tools/pi-ai/bindings.test.ts
+  s_fc0ad1cb4ef833::t_6f089f8146e747 5-8
+packages/computer/src/tools/pi-ai/bindings.ts
+  s_fc0ad1cb4ef833::t_ee2d4ef3a2b9a8 13-15
+packages/computer/src/tools/pi-ai/index.test.ts
+  s_fc0ad1cb4ef833::t_b2256e7ec1dbae 5-7
+packages/computer/src/tools/pi-ai/index.ts
+  s_fc0ad1cb4ef833::t_3977f03ff6b165 8-13,21-24,30-31,39
+packages/computer/src/tools/pi-ai/model-output.test.ts
+  s_fc0ad1cb4ef833::t_0cfd7e0e67c907 3-4,8-9
+packages/computer/src/tools/tanstack-ai/index.test.ts
+  s_fc0ad1cb4ef833::t_57bcc10fb5d761 5-7
+packages/computer/src/tools/tanstack-ai/index.ts
+  s_fc0ad1cb4ef833::t_839cc4bf4f47cf 7,13-17,25,31-33,40-41
+packages/computer/src/transport-failure.test.ts
+  s_fc0ad1cb4ef833::t_8e2519c3cfe028 8
+packages/computer/src/vite/index.test.ts
+  s_fc0ad1cb4ef833::t_ffcbb334043ccd 10
+packages/computer/src/with-workspace.ts
+  s_fc0ad1cb4ef833::t_1822153a6f8a48 31,39,71
+packages/computer/src/workspace-sync.test.ts
+  s_fc0ad1cb4ef833::t_666a6e26219b4d 6-8,290
+packages/computer/src/workspace.test.ts
+  s_fc0ad1cb4ef833::t_384f13b58ded8e 4-10,429,491
+packages/computer/src/workspace.ts
+  s_fc0ad1cb4ef833::t_6c4dc3f0c6a0d3 31,37-46,53-55,62-64,70
+packages/computer/tests/proxy-worker.ts
+  s_fc0ad1cb4ef833::t_b536c51878df11 19
+packages/computer/tests/proxy.test.ts
+  s_fc0ad1cb4ef833::t_9a3bec5b293aa1 16
+packages/computer/tests/script-runner-worker.ts
+  s_fc0ad1cb4ef833::t_5497d514cebf40 3,7-13
+packages/computer/tests/stub-soak-worker.ts
+  s_fc0ad1cb4ef833::t_dcdd96a8820a17 23-25
+packages/computer/tests/stub-soak.test.ts
+  s_fc0ad1cb4ef833::t_deeaffa88dd512 13
+packages/computer/tests/utilities/fake-artifacts-binding.ts
+  s_fc0ad1cb4ef833::t_c2bb5a6bbd3bba 17
+packages/computer/tests/worker-backend-worker.ts
+  s_fc0ad1cb4ef833::t_4bfa50bbfce7d6 22-24,26
+packages/computer/tests/worker-backend.test.ts
+  s_fc0ad1cb4ef833::t_8ec58a7e880776 38
+packages/computer/vitest.config.proxy.ts
+  s_fc0ad1cb4ef833::t_e8f40032cefa71 2
+packages/computer/vitest.config.ts
+  s_fc0ad1cb4ef833::t_182b459f27e705 5,16
+packages/computer/vitest.config.worker-backend.ts
+  s_fc0ad1cb4ef833::t_bd4439e8614824 2,11
+packages/computerd/src/cli/computerd.test.ts
+  s_fc0ad1cb4ef833::t_5e1ca24d50a293 11
+packages/computerd/src/cli/computerd.ts
+  s_fc0ad1cb4ef833::t_16f623a575a0aa 14-15,29-31
+packages/computerd/src/cli/logger.test.ts
+  s_fc0ad1cb4ef833::t_7592d3749af740 17
+packages/computerd/src/exec/env.test.ts
+  s_fc0ad1cb4ef833::t_cd23fc5aefd6bf 3
+packages/computerd/src/exec/index.ts
+  s_fc0ad1cb4ef833::t_5a6cf2d4e68f1f 1-3,10
+packages/computerd/src/exec/log.ts
+  s_fc0ad1cb4ef833::t_2be17a342c8c62 21
+packages/computerd/src/exec/runner.test.ts
+  s_fc0ad1cb4ef833::t_250599e0bd6862 7
+packages/computerd/src/exec/runner.ts
+  s_fc0ad1cb4ef833::t_4b0f243b153bed 23-26
+packages/computerd/src/fuse/backend.test.ts
+  s_fc0ad1cb4ef833::t_b1d3208824c8a8 3
+packages/computerd/src/fuse/driver.test.ts
+  s_fc0ad1cb4ef833::t_031e588df139c9 3
+packages/computerd/src/fuse/driver.ts
+  s_fc0ad1cb4ef833::t_818f7ad4d26502 3-4,9-11
+packages/computerd/src/fuse/ignore-config.test.ts
+  s_fc0ad1cb4ef833::t_a387e1b4fb5599 3
+packages/computerd/src/fuse/ignore-config.ts
+  s_fc0ad1cb4ef833::t_3fc1db5c8b7bb8 10
+packages/computerd/src/fuse/ignore.test.ts
+  s_fc0ad1cb4ef833::t_a4403a73ba835f 3
+packages/computerd/src/fuse/index.ts
+  s_fc0ad1cb4ef833::t_7794ac09db0a7b 1-7,13-19
+packages/computerd/src/fuse/options.test.ts
+  s_fc0ad1cb4ef833::t_f09915bb1b3b7f 3
+packages/computerd/src/fuse/passthrough.test.ts
+  s_fc0ad1cb4ef833::t_2043414c26627a 18-20
+packages/computerd/src/fuse/passthrough.ts
+  s_fc0ad1cb4ef833::t_2ce3581be62b2e 51-52
+packages/computerd/src/fuse/store.test.ts
+  s_fc0ad1cb4ef833::t_c993d354d2f831 6
+packages/computerd/src/fuse/tracer.test.ts
+  s_fc0ad1cb4ef833::t_c6e1cd9b91e196 9
+packages/computerd/src/fuse/vfs.test.ts
+  s_fc0ad1cb4ef833::t_a3e8b52c5cc7d4 6
+packages/computerd/src/fuse/vfs.ts
+  s_fc0ad1cb4ef833::t_bcae83206eb68a 10
+packages/computerd/src/shim/index.ts
+  s_fc0ad1cb4ef833::t_81cc11c7f42bfa 1-2
+packages/computerd/src/shim/shim.test.ts
+  s_fc0ad1cb4ef833::t_ce8ca17d601dfa 6-7
+packages/computerd/src/shim/shim.ts
+  s_fc0ad1cb4ef833::t_892743019c1bb8 36
+packages/dofs/src/bench/counting-storage.ts
+  s_fc0ad1cb4ef833::t_26d711b77eca46 22
+packages/dofs/src/bench/fs-ops.bench.ts
+  s_fc0ad1cb4ef833::t_3ad1ceeb3d4b5b 26-36
+packages/dofs/src/bench/sync-blocks.bench.ts
+  s_fc0ad1cb4ef833::t_71ae4c57af840c 27-35
+packages/dofs/src/errors.test.ts
+  s_fc0ad1cb4ef833::t_7b22e371ab7c7b 3-5
+packages/dofs/src/fs/blobCache.test.ts
+  s_fc0ad1cb4ef833::t_4803402d766db1 2-5
+packages/dofs/src/fs/blobCache.ts
+  s_fc0ad1cb4ef833::t_bef6bf67add2b5 23
+packages/dofs/src/fs/chmod.test.ts
+  s_fc0ad1cb4ef833::t_697020562adb8d 3-9
+packages/dofs/src/fs/chmod.ts
+  s_fc0ad1cb4ef833::t_de662bd6c390d1 1-6
+packages/dofs/src/fs/filesystem.test.ts
+  s_fc0ad1cb4ef833::t_e8dd4c9d918bf8 12-13
+packages/dofs/src/fs/filesystem.ts
+  s_fc0ad1cb4ef833::t_e6f607dd6c3991 15,17-29
+packages/dofs/src/fs/find.test.ts
+  s_fc0ad1cb4ef833::t_9933ae1a8ed190 3-7
+packages/dofs/src/fs/find.ts
+  s_fc0ad1cb4ef833::t_f1d666afb0a07b 1-4
+packages/dofs/src/fs/gc.test.ts
+  s_fc0ad1cb4ef833::t_87cc6ee255772a 5-12
+packages/dofs/src/fs/gc.ts
+  s_fc0ad1cb4ef833::t_93b5080c331351 1
+packages/dofs/src/fs/grep.test.ts
+  s_fc0ad1cb4ef833::t_fa1bcbee5f505f 3-6
+packages/dofs/src/fs/grep.ts
+  s_fc0ad1cb4ef833::t_b820e3026a807e 1-6
+packages/dofs/src/fs/link.ts
+  s_fc0ad1cb4ef833::t_f6be21df6560b8 1-8
+packages/dofs/src/fs/ls.test.ts
+  s_fc0ad1cb4ef833::t_e9f62fba8eca94 3-7
+packages/dofs/src/fs/ls.ts
+  s_fc0ad1cb4ef833::t_22dc437d4b9a6a 1-3
+packages/dofs/src/fs/mkdir.test.ts
+  s_fc0ad1cb4ef833::t_c596b0d62e7b1a 3-8
+packages/dofs/src/fs/mkdir.ts
+  s_fc0ad1cb4ef833::t_2952174a892b61 1-7
+packages/dofs/src/fs/mount-guard.test.ts
+  s_fc0ad1cb4ef833::t_ef4b20fc4ffee5 5-8,13-19,31
+packages/dofs/src/fs/mount-guard.ts
+  s_fc0ad1cb4ef833::t_1bdc133c350d44 17-18
+packages/dofs/src/fs/pendingWriteBuffer.ts
+  s_fc0ad1cb4ef833::t_9db049e28d2451 1-3,9
+packages/dofs/src/fs/readFile.test.ts
+  s_fc0ad1cb4ef833::t_251fbbf1939ce1 3-6
+packages/dofs/src/fs/readFile.ts
+  s_fc0ad1cb4ef833::t_1a0ccbadc2818a 1-8
+packages/dofs/src/fs/readRange.test.ts
+  s_fc0ad1cb4ef833::t_d1dfafe3d6bfeb 3-5,12
+packages/dofs/src/fs/readdir.test.ts
+  s_fc0ad1cb4ef833::t_2bd910f5fc6259 3-5,11,217
+packages/dofs/src/fs/readdir.ts
+  s_fc0ad1cb4ef833::t_5cba552184c36e 1-5
+packages/dofs/src/fs/readlink.ts
+  s_fc0ad1cb4ef833::t_9c554346403c71 1-3
+packages/dofs/src/fs/rename.ts
+  s_fc0ad1cb4ef833::t_de2f3143b20185 1-11
+packages/dofs/src/fs/resolve.test.ts
+  s_fc0ad1cb4ef833::t_0b5d2c237b37b9 3-6
+packages/dofs/src/fs/resolve.ts
+  s_fc0ad1cb4ef833::t_703fdb94c2d15f 1-5
+packages/dofs/src/fs/resolveCache.test.ts
+  s_fc0ad1cb4ef833::t_f626407b9509af 2-11
+packages/dofs/src/fs/resolveCache.ts
+  s_fc0ad1cb4ef833::t_ca1c264d826db5 30
+packages/dofs/src/fs/rm.test.ts
+  s_fc0ad1cb4ef833::t_1461942432e60c 3-11
+packages/dofs/src/fs/rm.ts
+  s_fc0ad1cb4ef833::t_1f4336927710e3 1-11
+packages/dofs/src/fs/stat.test.ts
+  s_fc0ad1cb4ef833::t_5e4cda82cabc0e 3-7
+packages/dofs/src/fs/stat.ts
+  s_fc0ad1cb4ef833::t_f91947dc8287c2 1-6
+packages/dofs/src/fs/symlink.test.ts
+  s_fc0ad1cb4ef833::t_960f3243c0263d 3-11
+packages/dofs/src/fs/symlink.ts
+  s_fc0ad1cb4ef833::t_9e4771e4775fea 1-7
+packages/dofs/src/fs/unlink.ts
+  s_fc0ad1cb4ef833::t_e1f6ebd659d9f5 1
+packages/dofs/src/fs/watch.ts
+  s_fc0ad1cb4ef833::t_c96c675e1005b2 21-24
+packages/dofs/src/fs/with-db.ts
+  s_fc0ad1cb4ef833::t_e11912301cea8d 5-7
+packages/dofs/src/fs/with-db.workers.ts
+  s_fc0ad1cb4ef833::t_4201d6b14aac39 7-9
+packages/dofs/src/fs/writeBuffer.test.ts
+  s_fc0ad1cb4ef833::t_06afaae74c7d0c 3-10,19,111,260-261,310,337
+packages/dofs/src/fs/writeBuffer.ts
+  s_fc0ad1cb4ef833::t_206d6fbde2c8e8 13
+packages/dofs/src/fs/writeFile.test.ts
+  s_fc0ad1cb4ef833::t_eeca0f208f77e3 3-9
+packages/dofs/src/fs/writeFile.ts
+  s_fc0ad1cb4ef833::t_a2d4ee85ef23a4 2-14,25
+packages/dofs/src/fs/writeRange.test.ts
+  s_fc0ad1cb4ef833::t_991a8043cb6932 3-9,16
+packages/dofs/src/index.ts
+  s_fc0ad1cb4ef833::t_2d4dd4796084e7 6-13,24-37,41-42,49-50,56,63-72,82,98-100,111-112,116-117
+packages/dofs/src/node-storage.test.ts
+  s_fc0ad1cb4ef833::t_830bad97b4f7f4 6-9,15
+packages/dofs/src/node-storage.ts
+  s_fc0ad1cb4ef833::t_08242fb7431ac3 14
+packages/dofs/src/path.test.ts
+  s_fc0ad1cb4ef833::t_ebc92f9aa2756f 3
+packages/dofs/src/path.ts
+  s_fc0ad1cb4ef833::t_a2084facc83282 1
+packages/dofs/src/provider.fd.test.ts
+  s_fc0ad1cb4ef833::t_95b53339e7756e 7-9
+packages/dofs/src/provider.test.ts
+  s_fc0ad1cb4ef833::t_c634338da4d432 2-7,882,899
+packages/dofs/src/provider.ts
+  s_fc0ad1cb4ef833::t_8293d80745f659 10-23,30-31,44-47
+packages/dofs/src/provider.watch.test.ts
+  s_fc0ad1cb4ef833::t_a1821094f14b5a 3-4
+packages/dofs/src/rev.test.ts
+  s_fc0ad1cb4ef833::t_b974ed427868c1 3-4
+packages/dofs/src/rev.ts
+  s_fc0ad1cb4ef833::t_0d9cb827ab5950 1
+packages/dofs/src/schema/index.test.ts
+  s_fc0ad1cb4ef833::t_9670326f584018 4-7
+packages/dofs/src/schema/index.ts
+  s_fc0ad1cb4ef833::t_bf4112580379d3 1-5,7
+packages/dofs/src/schema/migrations.ts
+  s_fc0ad1cb4ef833::t_793a0727f57c01 20
+packages/dofs/src/storage.ts
+  s_fc0ad1cb4ef833::t_0fb8bfd6075c8a 1
+packages/dofs/src/sync/apply.test.ts
+  s_fc0ad1cb4ef833::t_2c0dd2d89d7ae9 5-21,40,80,1033,1071,1093-1094,1138,1181,1215
+packages/dofs/src/sync/apply.ts
+  s_fc0ad1cb4ef833::t_811c12c0ef7058 1-16,24
+packages/dofs/src/sync/blobs.test.ts
+  s_fc0ad1cb4ef833::t_d06f9a36341eb5 3-7
+packages/dofs/src/sync/blobs.ts
+  s_fc0ad1cb4ef833::t_0032bcab4eb957 1-2
+packages/dofs/src/sync/blocks.test.ts
+  s_fc0ad1cb4ef833::t_0f978b23e61ca4 2-8
+packages/dofs/src/sync/blocks.ts
+  s_fc0ad1cb4ef833::t_f344b081948152 14-18
+packages/dofs/src/sync/change-pack.test.ts
+  s_fc0ad1cb4ef833::t_e1627ecca1c907 3-9,16-18
+packages/dofs/src/sync/change-pack.ts
+  s_fc0ad1cb4ef833::t_e01341f10215b4 25-28
+packages/dofs/src/sync/changes.test.ts
+  s_fc0ad1cb4ef833::t_a807a2ff69b174 2-7
+packages/dofs/src/sync/changes.ts
+  s_fc0ad1cb4ef833::t_c5d911653a5b4b 1-3
+packages/dofs/src/sync/coalesce.test.ts
+  s_fc0ad1cb4ef833::t_7576a94cec3b76 3-11
+packages/dofs/src/sync/coalesce.ts
+  s_fc0ad1cb4ef833::t_c711acdae7e085 1-5
+packages/dofs/src/sync/fetch.test.ts
+  s_fc0ad1cb4ef833::t_8cd24778790287 3-9
+packages/dofs/src/sync/fetch.ts
+  s_fc0ad1cb4ef833::t_f7c973d0011585 1-5
+packages/dofs/src/sync/fingerprint.test.ts
+  s_fc0ad1cb4ef833::t_d0ba52b5fad817 3-14
+packages/dofs/src/sync/fingerprint.ts
+  s_fc0ad1cb4ef833::t_0f933eff22f038 3-4
+packages/dofs/src/sync/ignore.test.ts
+  s_fc0ad1cb4ef833::t_598dbba250fe4d 3
+packages/dofs/src/sync/invariant.test.ts
+  s_fc0ad1cb4ef833::t_a6383f124da904 3
+packages/dofs/src/sync/invariant.ts
+  s_fc0ad1cb4ef833::t_df53cec7700e73 1
+packages/dofs/src/sync/manifests.test.ts
+  s_fc0ad1cb4ef833::t_4c336e580bde5e 3-4
+packages/dofs/src/sync/manifests.ts
+  s_fc0ad1cb4ef833::t_52d555ff8ab715 3
+packages/dofs/src/sync/operations.test.ts
+  s_fc0ad1cb4ef833::t_284182200470d1 3,19
+packages/dofs/src/sync/operations.ts
+  s_fc0ad1cb4ef833::t_3f6a60f0dff529 21-22
+packages/dofs/src/sync/paths.test.ts
+  s_fc0ad1cb4ef833::t_4440b059f62389 3-8
+packages/dofs/src/sync/paths.ts
+  s_fc0ad1cb4ef833::t_bd34cb6abf0f62 1-2
+packages/dofs/src/sync/push.test.ts
+  s_fc0ad1cb4ef833::t_86b868b3e60dcb 2-12
+packages/dofs/src/sync/push.ts
+  s_fc0ad1cb4ef833::t_ebf19f8faca5c9 1-2
+packages/dofs/src/sync/replay.test.ts
+  s_fc0ad1cb4ef833::t_908b0084903cba 3-15
+packages/dofs/src/sync/watermarks.test.ts
+  s_fc0ad1cb4ef833::t_422742145499ad 3-4,14
+packages/dofs/src/sync/watermarks.ts
+  s_fc0ad1cb4ef833::t_125239c67c0c32 1
+packages/dofs/src/testing-recording.ts
+  s_fc0ad1cb4ef833::t_384e70d84f9509 1
+packages/dofs/src/testing.test.ts
+  s_fc0ad1cb4ef833::t_f1a33b7cf2816a 3-5
+packages/dofs/src/testing.ts
+  s_fc0ad1cb4ef833::t_04b5a6bc376676 19,21-22
+packages/dofs/vitest.config.workers.ts
+  s_fc0ad1cb4ef833::t_40da7621310fb2 14,19
+packages/rpc/src/bench/sync-engine.bench.ts
+  s_fc0ad1cb4ef833::t_a09ac09f65182b 30-31
+packages/rpc/src/bench/sync-scale.bench.ts
+  s_fc0ad1cb4ef833::t_3f88aea831b222 35-36
+packages/rpc/src/client.ts
+  s_fc0ad1cb4ef833::t_8526935c91ad91 8
+packages/rpc/src/index.ts
+  s_fc0ad1cb4ef833::t_cecd914a2fddfd 27
+packages/rpc/src/interface.test.ts
+  s_fc0ad1cb4ef833::t_5c140fb9911010 13
+packages/rpc/src/server.ts
+  s_fc0ad1cb4ef833::t_9f8eae91fb551e 28-29
+packages/rpc/src/sync-driver.bench.ts
+  s_fc0ad1cb4ef833::t_b157308fca38b9 26-27
+packages/rpc/src/sync-driver.test.ts
+  s_fc0ad1cb4ef833::t_f99caf835d8ad1 18-20
+packages/rpc/src/sync-driver.ts
+  s_fc0ad1cb4ef833::t_e179d5b2fd447d 30,42,44
+packages/rpc/src/sync-engine-pack.test.ts
+  s_fc0ad1cb4ef833::t_2af61213592842 13-16
+packages/rpc/src/sync-engine-push.test.ts
+  s_fc0ad1cb4ef833::t_89109d377f7268 11-13
+packages/rpc/src/sync-engine.test.ts
+  s_fc0ad1cb4ef833::t_773b76888b2c1a 13-15
+packages/rpc/src/sync-engine.ts
+  s_fc0ad1cb4ef833::t_1bd37e7ee47df1 55
+packages/rpc/tests/debug.test.ts
+  s_fc0ad1cb4ef833::t_951f561a719de3 3
+packages/rpc/tests/shell-and-composite.test.ts
+  s_fc0ad1cb4ef833::t_df1484af2c7509 25-26,32
+packages/rpc/tests/wire.test.ts
+  s_fc0ad1cb4ef833::t_3310264d10edaa 20-21,239,269,390
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "c88cba48ed0ee8be90597cbf65b5a745c6cc4824",
+  "prompts": {},
+  "sessions": {
+    "s_fc0ad1cb4ef833": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15442-2585-70e5-968e-84edcf60eabd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

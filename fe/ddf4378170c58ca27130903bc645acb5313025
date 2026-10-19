@@ -1,0 +1,27 @@
+docs/16_code_execution.md
+  s_13dab848facb79::t_546995bddea1e1 21,89
+docs/17_isolate_javascript.md
+  s_13dab848facb79::t_7c208e2ad221aa 146
+docs/20_dynamic_javascript.md
+  s_13dab848facb79::t_d2fd33f612d894 1-120
+docs/README.md
+  s_13dab848facb79::t_33e8bb192f62e6 265
+packages/computer/README.md
+  s_13dab848facb79::t_254cf70d02695f 34,321,344-348,520
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "feddf4378170c58ca27130903bc645acb5313025",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

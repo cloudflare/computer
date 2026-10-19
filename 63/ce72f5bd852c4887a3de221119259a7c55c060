@@ -1,0 +1,41 @@
+.changeset/dynamic-javascript-backend.md
+  s_13dab848facb79::t_deac3ad81ed396 1-5
+packages/computer/package.json
+  s_13dab848facb79::t_19a59340bdd36c 82-85,162,166
+packages/computer/rolldown.config.ts
+  s_13dab848facb79::t_c9d440b703c309 45
+packages/computer/src/backends/dynamic-javascript/app-modules.test.ts
+  s_13dab848facb79::t_c00bdaadc06502 1-64
+packages/computer/src/backends/dynamic-javascript/app-modules.ts
+  s_13dab848facb79::t_68f6e5708a23e4 1-260
+packages/computer/src/backends/dynamic-javascript/dynamic-javascript.test.ts
+  s_13dab848facb79::t_5bfeb83910a57b 1-46
+packages/computer/src/backends/dynamic-javascript/dynamic-javascript.ts
+  s_13dab848facb79::t_eb5b902929f1cd 1-389
+packages/computer/src/backends/dynamic-javascript/index.ts
+  s_13dab848facb79::t_429d7ea6a4d7b7 1-16
+packages/computer/tests/dynamic-javascript-worker.ts
+  s_13dab848facb79::t_96fcb4bf6416f4 1-87
+packages/computer/tests/dynamic-javascript.test.ts
+  s_13dab848facb79::t_8d3a881bdb5210 1-386
+packages/computer/tests/wrangler.dynamic-javascript.jsonc
+  s_13dab848facb79::t_882e015da13a0d 1-15
+packages/computer/vitest.config.dynamic-javascript.ts
+  s_13dab848facb79::t_64c2835a959d1d 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "63ce72f5bd852c4887a3de221119259a7c55c060",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
