@@ -9,6 +9,7 @@ import { createGitClient } from "../src/git/index.js";
 import type { WorkspaceRuntimeValue, WorkspaceStub } from "../src/index.js";
 import { Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
+import { createBrowserModule, type BrowserSource } from "../src/modules/browser.js";
 import { createContainerModule } from "../src/modules/container.js";
 import { createGitModule } from "../src/modules/git.js";
 
@@ -57,6 +58,30 @@ function fakeContainerBackend(): WorkspaceBackend {
   };
 }
 
+// A browser whose sessions answer send with the method they were sent,
+// and whose second session reports a replaced browser, so a run sees a
+// restart on standard error.
+let browserSessions = 0;
+const fakeBrowser: BrowserSource = {
+  name: "fake",
+  session() {
+    browserSessions += 1;
+    const restarted = browserSessions === 2;
+    return {
+      async send(input) {
+        return { result: { value: (input as { method: string }).method } };
+      },
+      async attachToTarget(input) {
+        return { sessionId: `target:${(input as { targetId: string }).targetId}` };
+      },
+      spec: async () => ({ domains: [] }),
+      getDebugLog: async () => [],
+      clearDebugLog: async () => null,
+      close: async () => ({ restarted, newTabs: [], tabClosed: false, tabShared: false }),
+    };
+  },
+};
+
 // Executions whose deferred functions have finished, so a later run can
 // check that they ran before the earlier run's result was published.
 const endedRuns = new Set<string>();
@@ -65,6 +90,7 @@ const trackedRuns = new Set<string>();
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
+const BROWSER_BACKEND = "worker-javascript-browser";
 
 function javascriptBackend(
   env: Env,
@@ -172,6 +198,13 @@ export class HostDO extends DurableObject<Env> {
           },
         }),
         fakeContainerBackend(),
+        // Its own backend, since the restart notice is longer than the
+        // 64 bytes of standard error the others allow.
+        new WorkerJavaScriptBackend({
+          id: BROWSER_BACKEND,
+          loader: env.LOADER,
+          modules: { "ws:browser": createBrowserModule({ browser: fakeBrowser }) },
+        }),
       ],
     });
   }

@@ -40,6 +40,7 @@ export default defineConfig({
     "modules/artifacts": "src/modules/artifacts.ts",
     "modules/tools": "src/modules/tools.ts",
     "modules/assets": "src/modules/assets.ts",
+    "modules/browser": "src/modules/browser.ts",
     "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
     "backends/container/index": "src/backends/container/index.ts",
     "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",

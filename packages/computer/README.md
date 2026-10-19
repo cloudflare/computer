@@ -33,6 +33,7 @@ removed in a future release; each one names its replacement.
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `ws:container` host module | `@cloudflare/computer/modules/container` | Experimental |
+| The `ws:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
 | The RPC wire protocol between the durable object and `computerd` (`@cloudflare/computer-rpc`) | Internal | Experimental |
@@ -514,6 +515,7 @@ on a computerd instance.
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |
 | `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `ws:assets`: publish a Workspace file from isolate JavaScript. |
+| `@cloudflare/computer/modules/browser` | `createBrowserModule()` for `ws:browser`: drive a persistent browser over the Chrome DevTools Protocol from isolate JavaScript. |
 | `@cloudflare/computer/modules/tools` | `createToolBindings()` for `ws:tools`: an agent's own tools, callable from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |

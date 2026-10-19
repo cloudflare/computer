@@ -434,6 +434,47 @@ On a backend with `access: "read"`, only tools marked `readOnly` run. Every othe
 
 The module's description lists the names code can import. With a function of tools, the function is called again each time the backend describes itself, so the `exec` tool, built after the Workspace, sees the current list. A list is read as given; any other iterable may be single-use, so it is not read for the description, and neither is a function that throws.
 
+### `ws:browser`
+
+> [!NOTE]
+> **Experimental.**
+
+```js
+import { send, attachToTarget, spec, getDebugLog, clearDebugLog } from "ws:browser";
+```
+
+`createBrowserModule({ browser, scope?, maxResultBytes? })` from `@cloudflare/computer/modules/browser` lets JavaScript drive a persistent Chrome browser over the Chrome DevTools Protocol. The browser belongs to the host: the module takes anything with the `BrowserSource` shape, a `name` and a `session({ scope, maxResultBytes })` that starts a session for one run. `Browser` from `agents/browser` has that shape, so an agent passes its own browser, and neither package depends on the other:
+
+```ts
+import { Browser, browserRun } from "agents/browser";
+import { createBrowserModule } from "@cloudflare/computer/modules/browser";
+
+browser = new Browser({ provider: browserRun(this.env.BROWSER) });
+
+new WorkerJavaScriptBackend({
+  loader: this.env.LOADER,
+  modules: { "ws:browser": createBrowserModule({ browser: this.browser }) },
+});
+```
+
+```js
+import { writeFile } from "node:fs/promises";
+import { Buffer } from "node:buffer";
+import { send } from "ws:browser";
+
+export default async function () {
+  await send({ method: "Page.navigate", params: { url: "https://example.com" }, sessionId: "active" });
+  const { data } = await send({ method: "Page.captureScreenshot", sessionId: "active" });
+  await writeFile("/workspace/page.png", Buffer.from(data, "base64"));
+}
+```
+
+`send({ method, params?, sessionId?, timeoutMs? })` returns a command's result without the JSON-RPC envelope. `sessionId: "active"` is the tab the scope is working in. The session remembers it between runs, and opens a new blank tab when the scope has none. `attachToTarget({ targetId })` makes another open tab active and returns a `sessionId` handle that keeps working in later runs. A session id from a raw `Target.attachToTarget` only lasts for one run. `Browser.close` and `Browser.crash` are refused, because the host decides when the browser ends.
+
+A run's first call starts a session, and every call in the run goes to it. When the run ends, the module closes the session, which saves the scope's active tab and closes its connection. The browser stays open. If the session reports that the browser was replaced since the scope last used it, that another scope closed or shares this one's tab, or that the page opened tabs, the module says so on the run's standard error. The CDP rules above (the active tab, attach handles, refused commands, error hints) belong to the session, so `agents/browser`'s direct `createBrowserTool` behaves the same way. The module's description, which the `exec` tool shows, covers the calls and the CDP mistakes models commonly make.
+
+`scope` keeps conversations that share one browser in their own tabs, while cookies and logins stay shared. A `Page.captureScreenshot` result over `maxResultBytes` (1,000,000 by default in `agents/browser`) fails with a note to capture the viewport or use JPEG. Keep it under the backend's `maxCapabilityBytes`.
+
 ### `ws:container`
 
 `createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:

@@ -467,6 +467,36 @@ describe("WorkspaceRuntime", () => {
     expect(result.stderr).toContain("deferred function failed: boom");
   });
 
+  it("drives a browser from ws:browser and reports a restart on standard error", async () => {
+    const source = `
+      import { send } from "ws:browser";
+      export default () => send({ method: "Runtime.evaluate", sessionId: "active" });
+    `;
+    const first = await runtime({
+      source,
+      cwd: "/workspace",
+      backend: "worker-javascript-browser",
+    });
+    const firstText = await first.text();
+    expect(first.status, firstText).toBe(200);
+    expect(JSON.parse(firstText).result).toMatchObject({
+      status: "completed",
+      stderr: "",
+      value: { result: { value: "Runtime.evaluate" } },
+    });
+
+    const second = await runtime({
+      source,
+      cwd: "/workspace",
+      backend: "worker-javascript-browser",
+    });
+    const secondText = await second.text();
+    expect(second.status, secondText).toBe(200);
+    const { result } = JSON.parse(secondText);
+    expect(result.status).toBe("completed");
+    expect(result.stderr).toContain("The browser was restarted");
+  });
+
   it("fails to link an import the host module does not export", async () => {
     const response = await runtime({
       source: `
