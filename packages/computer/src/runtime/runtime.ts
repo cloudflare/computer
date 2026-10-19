@@ -161,8 +161,8 @@ export class WorkspaceRuntime {
   /**
    * Resume or settle the runs a Durable Object restart interrupted.
    * Backends do this when they first connect, which the next runtime
-   * call or `ready()` triggers. Call this from an alarm to resume runs
-   * without waiting for one.
+   * call or `ready({ all: true })` triggers. Call this from an alarm to
+   * resume runs without waiting for one.
    */
   async recover(): Promise<void> {
     for (const [id, backend] of this.#options.backends) {

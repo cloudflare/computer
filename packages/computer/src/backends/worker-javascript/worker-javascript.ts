@@ -102,11 +102,11 @@ export interface WorkerJavaScriptBackendOptions {
    *   Output already recorded isn't repeated. If the run takes a
    *   different path, it fails.
    *
-   * A run is resumed when the backend reconnects, which the next runtime
-   * call or `ready()` triggers, or `runtime.recover()`. It gets three
-   * attempts and must finish within its original timeout. A call in
-   * flight at the interruption runs again, unless it's marked with
-   * `unsafeToRepeat()`.
+   * A run is resumed when the backend reconnects, which the next
+   * runtime call, `ready({ all: true })` or `runtime.recover()`
+   * triggers. It gets three attempts and must finish within its original
+   * timeout. A call in flight at the interruption runs again, unless it's
+   * marked with `unsafeToRepeat()`.
    *
    * `"restart"` and `"replay"` are experimental and may change in any
    * release.

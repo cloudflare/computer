@@ -165,7 +165,7 @@ The code being run doesn't need to change for either. `"restart"` and `"replay"`
 
 ### When a run resumes
 
-Interrupted runs resume when the backend next connects, which the next runtime call or `workspace.ready()` triggers. A caller polling a run or reconnecting to its output does this on its own. Nothing else wakes a Durable Object after a deploy, so a run nobody is waiting on stays interrupted until something calls the object, and fails if its timeout passes first. To resume runs without waiting for traffic, call `workspace.runtime.recover()` from the Durable Object's alarm. The Workspace doesn't set an alarm itself, since a Durable Object only has one.
+Interrupted runs resume when the backend next connects, which the next runtime call such as `exec()` or `getExec()` triggers, as does `workspace.ready({ all: true })`. A caller polling a run or reconnecting to its output does this on its own. Nothing else wakes a Durable Object after a deploy, so a run nobody is waiting on stays interrupted until something calls the object, and fails if its timeout passes first. To resume runs without waiting for traffic, call `workspace.runtime.recover()` from the Durable Object's alarm. The Workspace doesn't set an alarm itself, since a Durable Object only has one.
 
 ### How replay works
 
