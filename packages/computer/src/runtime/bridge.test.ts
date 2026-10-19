@@ -251,10 +251,12 @@ describe("WorkspaceRuntimeBridge assertResult", () => {
 describe("WorkspaceRuntimeBridge journal", () => {
   function journaled(steps: ReturnType<BridgeJournal["begin"]>[]) {
     const commits: number[] = [];
+    const responses: unknown[] = [];
     const journal: BridgeJournal = {
       begin: () => steps.shift() ?? { kind: "live", seq: 99, rerun: false },
-      commit: (seq) => {
+      commit: (seq, response) => {
         commits.push(seq);
+        responses.push(response);
         return { at: 1234, ordinal: 7 };
       },
       record: (position, events) => {
@@ -284,7 +286,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
       journal,
       callIdPrefix: "exec-1",
     });
-    return { target, commits, diverged, contexts, logs };
+    return { target, commits, responses, diverged, contexts, logs };
   }
 
   it("answers a replayed call from the journal and journals a live one", async () => {
@@ -365,18 +367,28 @@ describe("WorkspaceRuntimeBridge journal", () => {
   });
 
   it("doesn't count a replayed budget error, as the first attempt didn't", async () => {
-    const { target } = journaled([
-      {
-        kind: "replay",
-        response: {
-          error: { message: "Workspace execution capability responses exceed 4 bytes." },
-        },
-        at: 5,
-      },
+    const budgetError = { message: "Workspace execution capability responses exceed 4 bytes." };
+    const live = journaled([]);
+    for (let call = 0; call < 3; call += 1) await live.target.call("host/ws:test.run", args);
+    expect(live.responses).toContainEqual({ error: budgetError, uncounted: true });
+
+    const replay = journaled([
+      { kind: "replay", response: { error: budgetError, uncounted: true }, at: 5 },
       { kind: "live", seq: 2, rerun: false },
     ]);
-    await target.call("host/ws:test.run", args);
-    await expect(message(target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+    await replay.target.call("host/ws:test.run", args);
+    await expect(message(replay.target.call("host/ws:test.run", args))).resolves.toBeUndefined();
+
+    // A host function can throw the same message, and the first attempt
+    // counted that.
+    const thrown = journaled([
+      { kind: "replay", response: { error: budgetError }, at: 5 },
+      { kind: "live", seq: 2, rerun: false },
+    ]);
+    await thrown.target.call("host/ws:test.run", args);
+    await expect(message(thrown.target.call("host/ws:test.run", args))).resolves.toContain(
+      "responses exceed 4 bytes",
+    );
   });
 });
 

@@ -162,7 +162,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     if (step?.kind === "replay") {
       // The first attempt counted this response, and the replay repeats
       // that attempt, so it counts again. The budget error wasn't counted.
-      if (!isFetch && !this.#isBudgetError(step.response)) {
+      if (!isFetch && step.response.uncounted !== true) {
         this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
       }
       return Promise.resolve({ ...step.response, at: step.at, ordinal: step.ordinal });
@@ -279,7 +279,15 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         if (isFetch) return "result" in response ? { result: response.result } : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
-          return this.#budgetError();
+          return {
+            ...boundedError(
+              new Error(
+                `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
+              ),
+              this.#maxPayloadBytes,
+            ),
+            uncounted: true as const,
+          };
         }
         this.#responseBytes += bytes;
         return "result" in response ? { result: response.result } : response;
@@ -292,19 +300,6 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         if (step?.kind !== "live" || this.#journal === undefined) return response;
         return { ...response, ...this.#journal.commit(step.seq, response) };
       });
-  }
-
-  #budgetError() {
-    return boundedError(
-      new Error(
-        `Workspace execution capability responses exceed ${this.#maxTotalResponseBytes} bytes.`,
-      ),
-      this.#maxPayloadBytes,
-    );
-  }
-
-  #isBudgetError(response: BridgeResponse): boolean {
-    return "error" in response && response.error.message === this.#budgetError().error.message;
   }
 
   // The isolate is waiting for a journaled call its replay never made.
@@ -522,6 +517,8 @@ export type BridgeResponse = (
   readonly at?: number;
   /** Numbers a journaled response in the order responses were committed. */
   readonly ordinal?: number;
+  /** Set on the budget error, which isn't counted against the budget. */
+  readonly uncounted?: true;
 };
 
 /** Part of a durable run's event log, starting at position `from`. */
