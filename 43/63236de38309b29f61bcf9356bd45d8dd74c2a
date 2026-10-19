@@ -1,0 +1,19 @@
+docs/17_isolate_javascript.md
+  s_5a33ac7eaed91e::t_5065f38a5dd14f 146,150,161-162,164,166,168,170,172,174-185,198,200-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4363236de38309b29f61bcf9356bd45d8dd74c2a",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
