@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import vm from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
@@ -241,6 +242,33 @@ describe("durable runtime", () => {
     `);
     await settle(60);
     expect(run("waits")).toEqual(["early", "later"]);
+  });
+
+  it("detaches abort listeners from waits and requests that finish", async () => {
+    const call = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({
+      status: 200,
+      statusText: "OK",
+      headers: [],
+      body: null,
+    }));
+    const { run } = load([], undefined, call);
+    const signals = run<Record<string, AbortSignal>>(`
+      const signals = {
+        wait: new AbortController().signal,
+        fetch: new AbortController().signal,
+        request: new AbortController().signal,
+      };
+      for (let wait = 0; wait < 3; wait += 1) scheduler.wait(0, { signal: signals.wait });
+      fetch("https://example.test/a", { signal: signals.fetch });
+      // The Request a fetch builds follows its signal, as it would anyway.
+      new Request("https://example.test/a", { signal: signals.request });
+      signals;
+    `);
+    await settle();
+    expect(getEventListeners(signals.wait, "abort")).toHaveLength(0);
+    expect(getEventListeners(signals.fetch, "abort")).toHaveLength(
+      getEventListeners(signals.request, "abort").length,
+    );
   });
 
   it("keeps Date subclasses working", () => {

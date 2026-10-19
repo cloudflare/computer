@@ -276,14 +276,17 @@ export function durableRuntimeModule(): string {
         globalThis.scheduler.wait = (delay, options) =>
           new Promise((resolve, reject) => {
             const signal = options && options.signal;
-            if (signal && signal.aborted) return reject(signal.reason);
-            const timer = addTimer(resolve, delay, [], false);
-            if (signal) {
-              signal.addEventListener("abort", () => {
-                cancelTimer(timer);
-                reject(signal.reason);
-              }, { once: true });
-            }
+            if (!signal) return void addTimer(resolve, delay, [], false);
+            if (signal.aborted) return reject(signal.reason);
+            const abort = () => {
+              cancelTimer(timer);
+              reject(signal.reason);
+            };
+            const timer = addTimer(() => {
+              signal.removeEventListener("abort", abort);
+              resolve();
+            }, delay, [], false);
+            signal.addEventListener("abort", abort, { once: true });
           });
       }
       Object.defineProperty(AbortSignal, "timeout", {
@@ -412,10 +415,12 @@ export function durableRuntimeModule(): string {
           headers: [...request.headers],
           body,
         }]);
+        let abort;
         const result = await (signal
           ? Promise.race([pending, new Promise((_, reject) => {
-              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-            })])
+              abort = () => reject(signal.reason);
+              signal.addEventListener("abort", abort, { once: true });
+            })]).finally(() => signal.removeEventListener("abort", abort))
           : pending);
         const response = new Response(nullBody.has(result.status) ? null : result.body, {
           status: result.status,
