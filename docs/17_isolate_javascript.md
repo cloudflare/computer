@@ -221,6 +221,7 @@ for (const call of await workspace.runtime.pending()) {
 
 Once none of its calls are waiting, the run replays to the call and the function runs again with the same `callId`. This time `interrupt()` returns the answer straight away, and the function carries on. Anything it does before `interrupt()` runs twice, so keep that part safe to repeat. A waiting run survives a deploy like any interrupted run, and `killExec()` ends one.
 
+- A call can interrupt once. A second `interrupt()` in the same call throws.
 - Only a run with `onInterrupt: "replay"` can wait. Anywhere else, `interrupt()` throws, so a Workspace with modules that interrupt should make `"replay"` its backend's default.
 - Calls that interrupt together are answered one after another. A run is released with the calls that were in flight, and a call it makes after that waits once it resumes.
 - `respond()` throws `ENOTWAITING` for a call that isn't waiting, such as one already answered, so answering twice changes nothing.

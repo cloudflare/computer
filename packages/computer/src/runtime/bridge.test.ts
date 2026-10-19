@@ -249,7 +249,7 @@ describe("WorkspaceRuntimeBridge assertResult", () => {
 });
 
 describe("WorkspaceRuntimeBridge journal", () => {
-  function journaled(steps: ReturnType<BridgeJournal["begin"]>[]) {
+  function journaled(steps: ReturnType<BridgeJournal["begin"]>[], maxTotalResponseBytes = 4) {
     const commits: number[] = [];
     const responses: unknown[] = [];
     const journal: BridgeJournal = {
@@ -271,7 +271,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
     const logs: unknown[] = [];
     const contexts: WorkspaceModuleCallContext[] = [];
     const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
-      maxTotalResponseBytes: 4,
+      maxTotalResponseBytes,
       hostModules: new Map([
         [
           "ws:test",
@@ -281,6 +281,10 @@ describe("WorkspaceRuntimeBridge journal", () => {
               return "ok";
             },
             charge: unsafeToRepeat(async () => "c"),
+            twice: async (_args: unknown, context: WorkspaceModuleCallContext) => [
+              await context.interrupt("first"),
+              await context.interrupt("second"),
+            ],
           },
         ],
       ]),
@@ -360,6 +364,16 @@ describe("WorkspaceRuntimeBridge journal", () => {
       "isn't safe to repeat",
     );
     expect(diverged).toHaveLength(1);
+  });
+
+  it("lets a call interrupt only once", async () => {
+    const { target } = journaled(
+      [{ kind: "live", seq: 1, rerun: false, answer: { value: "yes" } }],
+      4096,
+    );
+    await expect(message(target.call("host/ws:test.twice", args))).resolves.toContain(
+      "ctx.interrupt() can only be called once per host module call.",
+    );
   });
 
   it("passes a stalled replay to the journal", () => {

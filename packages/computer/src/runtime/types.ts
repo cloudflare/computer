@@ -36,7 +36,8 @@ export interface WorkspaceModuleCallContext {
    * `callId`, this time getting the answer straight away. Anything the
    * function does before `interrupt()` therefore runs twice, so keep it
    * safe to repeat. Only a run with `onInterrupt: "replay"` can wait;
-   * anywhere else this throws.
+   * anywhere else this throws. A call can interrupt once, and a second
+   * `interrupt()` throws.
    *
    * ```ts
    * postComment: async ([issue, body], ctx) => {
@@ -304,7 +305,10 @@ export interface ModuleExecutionInput {
  */
 export type WorkspaceRuntimeInterruptPolicy = "fail" | "restart" | "replay";
 
-/** A host module call waiting for an answer, from `ctx.interrupt()`. */
+/**
+ * A host module call waiting for an answer, from `ctx.interrupt()`.
+ * Experimental: it may change in any release.
+ */
 export interface WorkspaceRuntimePendingCall {
   /** The execution the call belongs to. */
   readonly id: string;

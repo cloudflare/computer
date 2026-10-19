@@ -194,13 +194,23 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
+    // The journal holds one answer per call, so a call can wait only once.
+    let interrupted = false;
     const operation = respond(async () => {
       if (name.startsWith("host/")) {
         return this.#callHostModule(name, args, {
           signal: abort.signal,
           deadline,
           callId,
-          interrupt: (payload) => this.#interrupt(step, abort, payload),
+          interrupt: (payload) => {
+            if (interrupted) {
+              return Promise.reject(
+                new Error("ctx.interrupt() can only be called once per host module call."),
+              );
+            }
+            interrupted = true;
+            return this.#interrupt(step, abort, payload);
+          },
           access: this.#capability.access,
           resolvePath: (path, options) =>
             this.#capability.resolveConfined(path, options?.allowMissing ?? false),
