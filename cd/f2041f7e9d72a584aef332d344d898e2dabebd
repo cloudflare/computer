@@ -1,0 +1,39 @@
+AGENTS.md
+  s_fc0ad1cb4ef833::t_e1a438aa19c127 68
+docs/10_project_layout.md
+  s_fc0ad1cb4ef833::t_c0e889f82ff0d4 168,173
+packages/computerd/README.md
+  s_fc0ad1cb4ef833::t_793eab19e01f12 382
+packages/computerd/package.json
+  s_fc0ad1cb4ef833::t_f04fafed62452e 7,9
+packages/computerd/scripts/sea/bundle.mjs
+  s_fc0ad1cb4ef833::t_44fd6b4e172411 4,6-7,104
+packages/computerd/src/cli/bundle-port.test.ts
+  s_fc0ad1cb4ef833::t_20d20dfcdc4aac 15,29
+packages/computerd/src/cli/computerd.test.ts
+  s_fc0ad1cb4ef833::t_0cc242e0aa6612 15
+packages/computerd/src/cli/logger.test.ts
+  s_fc0ad1cb4ef833::t_a206ff50c5cd18 124-125,127
+packages/computerd/tsdown.config.ts
+  s_fc0ad1cb4ef833::t_22d1b18d242472 4,8-10
+script/computerd-stub-soak.mjs
+  s_fc0ad1cb4ef833::t_731a0a385cd32f 40
+script/restore-time.mjs
+  s_fc0ad1cb4ef833::t_64b9907de13bf6 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cdf2041f7e9d72a584aef332d344d898e2dabebd",
+  "prompts": {},
+  "sessions": {
+    "s_fc0ad1cb4ef833": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15442-2585-70e5-968e-84edcf60eabd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
