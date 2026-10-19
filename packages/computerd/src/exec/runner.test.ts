@@ -52,6 +52,23 @@ function decode(value: Uint8Array): string {
   return new TextDecoder().decode(value);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Records errors that escape to the process. A throw inside a child
+// stream's `data` listener lands here rather than in the test, and in
+// computerd the same throw reaches the logger's handler and exits the
+// daemon.
+function captureUncaught(): { errors: unknown[]; stop: () => void } {
+  const errors: unknown[] = [];
+  const onError = (error: unknown): void => {
+    errors.push(error);
+  };
+  process.on("uncaughtException", onError);
+  return { errors, stop: () => process.off("uncaughtException", onError) };
+}
+
 test("exec captures stdout and propagates exit code", async () => {
   const { runner, dispose } = fixture();
   try {
@@ -570,5 +587,96 @@ test("rejects a shell that is not an absolute path", () => {
     expect(() => new Runner({ db, shell: "bash" })).toThrow(/absolute path/);
   } finally {
     storage.close?.();
+  }
+});
+
+// A shell that starts a background job hands that job its stdout and
+// stderr. The shell's exit then arrives while the pipes are still open,
+// and the job can write to them at any later time.
+
+test("output from a background job after the shell exits does not escape the runner", async () => {
+  const uncaught = captureUncaught();
+  const { runner, dispose } = fixture();
+  try {
+    const handle = runner.exec("echo start; (sleep 0.6; echo late) & exit 0", { id: "bg" });
+    const events = await drain(handle.events);
+    expect(events.at(-1)?.name).toBe("exit");
+    await sleep(900);
+    expect(uncaught.errors).toEqual([]);
+  } finally {
+    uncaught.stop();
+    dispose();
+  }
+});
+
+test("an exec does not wait for a background job that keeps its output open", async () => {
+  const { runner, dispose } = fixture();
+  try {
+    const start = Date.now();
+    const handle = runner.exec("(sleep 2; echo late) & exit 0", { id: "bg-wait" });
+    const events = await drain(handle.events);
+    expect(events.find((event) => event.name === "exit")?.code).toBe(0);
+    expect(Date.now() - start).toBeLessThan(1_500);
+  } finally {
+    dispose();
+  }
+});
+
+test("output that arrives after exit but before the pipes close is delivered before the exit event", async () => {
+  const uncaught = captureUncaught();
+  const { runner, dispose } = fixture({ exitDrainMs: 2_000 });
+  try {
+    const handle = runner.exec("(sleep 0.1; echo late) & exit 0", { id: "bg-drain" });
+    const events = await drain(handle.events);
+    const stdout = events
+      .filter((event) => event.name === "stdout")
+      .map((event) => decode(event.value as Uint8Array))
+      .join("");
+    expect(stdout).toBe("late\n");
+    expect(events.at(-1)?.name).toBe("exit");
+    expect(uncaught.errors).toEqual([]);
+  } finally {
+    uncaught.stop();
+    dispose();
+  }
+});
+
+test("output held back by a slow reader is delivered in full after the child exits", async () => {
+  // The live stream pauses the child's pipes as soon as its queue is
+  // full, so a reader that starts late leaves output buffered in the
+  // runner when the child exits.
+  const uncaught = captureUncaught();
+  const { runner, dispose } = fixture();
+  try {
+    const size = 256 * 1024;
+    const handle = runner.exec(`head -c ${size} /dev/zero`, { id: "slow-reader" });
+    await sleep(300);
+    const events = await drain(handle.events);
+    const bytes = events
+      .filter((event) => event.name === "stdout")
+      .reduce((total, event) => total + (event.value as Uint8Array).byteLength, 0);
+    expect(bytes).toBe(size);
+    expect(events.at(-1)?.name).toBe("exit");
+    expect(uncaught.errors).toEqual([]);
+  } finally {
+    uncaught.stop();
+    dispose();
+  }
+});
+
+test("output from a background job after dispose() does not escape the runner", async () => {
+  const uncaught = captureUncaught();
+  const { runner, dispose } = fixture();
+  try {
+    const handle = runner.exec("(sleep 0.6; echo late) & exit 0", { id: "bg-dispose" });
+    await drain(handle.events);
+    runner.dispose("bg-dispose");
+    await sleep(900);
+    expect(uncaught.errors).toEqual([]);
+    const next = await drain(runner.exec("echo still-here").events);
+    expect(next.find((event) => event.name === "exit")?.code).toBe(0);
+  } finally {
+    uncaught.stop();
+    dispose();
   }
 });

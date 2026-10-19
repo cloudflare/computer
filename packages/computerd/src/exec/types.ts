@@ -62,6 +62,12 @@ export interface RunnerOptions {
   // Emit a heartbeat event every this many milliseconds while a child
   // process is alive. When unset or zero, no heartbeat events are emitted.
   heartbeatIntervalMs?: number;
+  // How long to wait, after the child exits, for its stdout and stderr to
+  // close before finishing the exec. They normally close right after the
+  // exit. A background job the command started keeps them open, and the
+  // exec finishes after this many milliseconds instead of waiting for the
+  // job. Output the job writes later is dropped. Default 250.
+  exitDrainMs?: number;
   // Absolute path to the interpreter each command runs under. Defaults to
   // /bin/sh, which on a Debian-family image is dash: bash-only syntax a
   // caller may reach for, notably ${PIPESTATUS[@]}, is a parse error there
