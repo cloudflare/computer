@@ -1,0 +1,35 @@
+.changeset/browser-module.md
+  s_e36df67be28814::t_abf542ba8b8094 1-5
+docs/17_isolate_javascript.md
+  s_e36df67be28814::t_8d98401e216a45 437-477
+packages/computer/README.md
+  s_e36df67be28814::t_2f0e9940f0d148 36,518
+packages/computer/package.json
+  s_e36df67be28814::t_661afdbe2a6708 54-57
+packages/computer/rolldown.config.ts
+  s_e36df67be28814::t_08909ef629151c 43
+packages/computer/src/modules/browser.test.ts
+  s_e36df67be28814::t_3b669f2ee546de 1-296
+packages/computer/src/modules/browser.ts
+  s_e36df67be28814::t_4566d4962a1b1b 1-817
+packages/computer/tests/script-runner-worker.ts
+  s_e36df67be28814::t_d387b373b0abb0 12,61-93,102,210-216
+packages/computer/tests/script-runner.test.ts
+  s_e36df67be28814::t_4459d6ae417300 470-499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "f11d1ad98c3cad5bc8acc9a758d9cff86185a136",
+  "prompts": {},
+  "sessions": {
+    "s_e36df67be28814": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a14aeb-b46e-7619-b757-fdeabcf323c1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
