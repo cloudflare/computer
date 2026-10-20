@@ -34,8 +34,10 @@ import {
   JOURNAL_VERSION,
   loadDurable,
   MAX_CONCURRENT_RECOVERIES,
+  journalProgress,
   MAX_INTERRUPT_ATTEMPTS,
   recordAttempt,
+  REPLAY_VERSION,
   saveDurableStart,
   toBase64,
   waitingCalls,
@@ -107,8 +109,8 @@ export interface WorkerJavaScriptBackendOptions {
    *
    * A run is resumed when the backend reconnects, which the next
    * runtime call, `ready({ all: true })` or `runtime.recover()`
-   * triggers. It gets three attempts and must finish within its original
-   * timeout. A call in flight at the interruption runs again, unless it's
+   * triggers. It gets three attempts, counted again each time it
+   * journals a call, and must finish within its original timeout. A call in flight at the interruption runs again, unless it's
    * marked with `unsafeToRepeat()`.
    *
    * `"restart"` and `"replay"` are experimental and may change in any
@@ -499,14 +501,19 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       record.waiting = "released";
       return;
     }
-    if (saved.attempt >= MAX_INTERRUPT_ATTEMPTS) {
+    // Attempts count from the last call the run journaled, so a long run
+    // isn't failed by interruptions spread across it. Its timeout still
+    // bounds how long it can keep going.
+    const progressed = journalProgress(this.#host.db, this.#backendId, id) > saved.progress;
+    const attempt = progressed ? 1 : saved.attempt;
+    if (attempt >= MAX_INTERRUPT_ATTEMPTS) {
       this.#failInterrupted(
         record,
-        `Execution was interrupted ${saved.attempt} times and won't be started again.`,
+        `Execution was interrupted ${attempt} times without making progress and won't be started again.`,
       );
       return;
     }
-    this.#queueRelaunch(record, saved, true);
+    this.#queueRelaunch(record, { ...saved, attempt }, true);
   }
 
   #loadDurable(record: ExecutionRecord) {
@@ -545,7 +552,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     counts: boolean,
   ) {
     const { start } = saved;
-    if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint(start)) {
+    if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint()) {
       this.#failInterrupted(
         record,
         "Execution was interrupted and can't resume, because the JavaScript runtime changed since it started.",
@@ -646,7 +653,14 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
     record.waiting = undefined;
     try {
-      if (counts) recordAttempt(this.#host.db, this.#backendId, id, attempt + 1);
+      // An answer counts as progress, so the run's attempts start again.
+      recordAttempt(
+        this.#host.db,
+        this.#backendId,
+        id,
+        counts ? attempt + 1 : 1,
+        journalProgress(this.#host.db, this.#backendId, id),
+      );
       let journal: ExecutionJournal | undefined;
       let durable: WorkspaceExecutionContext["durable"];
       if (policy === "replay") {
@@ -686,11 +700,14 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
-  // The generated code a run depends on. A run resumes only on the same.
-  #fingerprint(start: { entryName: string }): string {
+  // What a run depends on to replay the same way. A run resumes only on
+  // the same. The runtime's own code is covered by REPLAY_VERSION, so an
+  // upgrade that doesn't change replay doesn't fail interrupted runs.
+  #fingerprint(): string {
     return fingerprint([
-      runtimeWorkerModule(start.entryName, this.#options.maxStdioBytes),
-      ...internalModuleSources(this.#options.maxCapabilityBytes),
+      String(REPLAY_VERSION),
+      String(this.#options.maxStdioBytes),
+      String(this.#options.maxCapabilityBytes),
       this.#options.compatibilityDate,
       this.#options.compatibilityFlags.join(","),
     ]);
@@ -836,7 +853,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             cpuMs,
             startedAt,
             seed,
-            fingerprint: this.#fingerprint(graph),
+            fingerprint: this.#fingerprint(),
           });
           if (policy === "replay") {
             journal = this.#journalFor(record);
@@ -1615,6 +1632,17 @@ function startJavaScriptExecution(options: {
       dispose();
     },
   };
+}
+
+/**
+ * The code the runtime loads into the isolate besides the run's own, for
+ * the test that asks whether REPLAY_VERSION needs a bump.
+ */
+export function runtimeCode(entryName: string, maxStdioBytes: number, maxCapabilityBytes: number) {
+  return [
+    runtimeWorkerModule(entryName, maxStdioBytes),
+    ...internalModuleSources(maxCapabilityBytes),
+  ];
 }
 
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {

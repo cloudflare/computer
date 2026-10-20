@@ -229,8 +229,8 @@ Once none of its calls are waiting, the run replays to the call and the function
 
 ### Limits
 
-- A run gets three attempts, and has to finish within its original timeout, counted from when it first started.
-- A run only resumes on the same runtime. A deploy that changes it, such as an upgrade of this package or a new compatibility date or flags, can fail the runs it interrupted.
+- A run gets three attempts, counted again each time it journals a call, and has to finish within its original timeout, counted from when it first started.
+- A run only resumes on the same runtime. A new compatibility date or flags, or a new `maxStdioBytes` or `maxCapabilityBytes`, fails the runs it interrupted, and so does an upgrade of this package that changes how runs replay.
 - Interrupted runs restart four at a time, since a Durable Object can only run ten Dynamic Workers at once.
 - A replayable run's `fetch` is buffered rather than streamed, and each body has to fit in `maxCapabilityBytes` (1 MiB by default). Requests don't count toward `maxCapabilityCalls`, and at most six are open at once, with the rest waiting. A request in flight at the restart is sent again. Aborting a request stops the code waiting for it, but the host's request runs until it finishes.
 - Keys from `crypto.subtle.generateKey()`, `node:crypto` randomness, `node:timers` and `cloudflare:sockets` aren't replayed. A run that prints their results or passes them to a call fails on replay.

@@ -30,7 +30,18 @@ export const INTERRUPT_POLICIES: readonly InterruptPolicy[] = ["fail", "restart"
 /** Bump when the saved start or journal format changes. */
 export const JOURNAL_VERSION = 1;
 
-/** How many attempts an execution gets before an interruption fails it. */
+/**
+ * Bump when a change to the code the runtime loads into the isolate
+ * would replay a run differently, so that runs started on the old code
+ * fail instead of resuming wrongly. A test notices when that code
+ * changes and asks for this check.
+ */
+export const REPLAY_VERSION = 1;
+
+/**
+ * How many attempts an execution gets, since it last journaled a call,
+ * before an interruption fails it.
+ */
 export const MAX_INTERRUPT_ATTEMPTS = 3;
 
 /**
@@ -57,13 +68,15 @@ export interface DurableStart {
   readonly startedAt: number;
   /** 64 hex digits that seed the run's random numbers. */
   readonly seed: string;
-  /** Identifies the runtime code the execution started on. */
+  /** Identifies the runtime the execution started on. */
   readonly fingerprint: string;
 }
 
 export interface DurableRecord {
   readonly policy: Exclude<InterruptPolicy, "fail">;
   readonly attempt: number;
+  /** Calls journaled when the attempt started. */
+  readonly progress: number;
   readonly start: DurableStart;
   /** When the run's first unanswered interrupt was made, if one is waiting. */
   readonly waitingSince: number | null;
@@ -134,6 +147,7 @@ export function createDurableTables(db: Database): void {
       attempt INTEGER NOT NULL,
       waiting_since INTEGER,
       waited_ms INTEGER NOT NULL DEFAULT 0,
+      progress INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (backend, execution_id)
     )
   `);
@@ -217,10 +231,11 @@ export function loadDurable(db: Database, backend: string, id: string): DurableR
   const row = db.one<{
     policy: string;
     attempt: number;
+    progress: number;
     waiting_since: number | null;
     waited_ms: number;
   }>(
-    `SELECT policy, attempt, waiting_since, waited_ms FROM workspace_runtime_durable
+    `SELECT policy, attempt, progress, waiting_since, waited_ms FROM workspace_runtime_durable
      WHERE backend = ? AND execution_id = ?`,
     backend,
     id,
@@ -237,6 +252,7 @@ export function loadDurable(db: Database, backend: string, id: string): DurableR
     return {
       policy: row.policy,
       attempt: Number(row.attempt),
+      progress: Number(row.progress),
       start,
       waitingSince: row.waiting_since === null ? null : Number(row.waiting_since),
       waitedMs: Number(row.waited_ms),
@@ -246,10 +262,18 @@ export function loadDurable(db: Database, backend: string, id: string): DurableR
   }
 }
 
-export function recordAttempt(db: Database, backend: string, id: string, attempt: number): void {
+export function recordAttempt(
+  db: Database,
+  backend: string,
+  id: string,
+  attempt: number,
+  progress: number,
+): void {
   db.run(
-    `UPDATE workspace_runtime_durable SET attempt = ? WHERE backend = ? AND execution_id = ?`,
+    `UPDATE workspace_runtime_durable SET attempt = ?, progress = ?
+     WHERE backend = ? AND execution_id = ?`,
     attempt,
+    progress,
     backend,
     id,
   );
@@ -316,6 +340,17 @@ export function waitingCalls(db: Database, backend: string): WaitingCall[] {
       payload: decodeValue(row.payload),
       since: Number(row.waiting_since),
     }));
+}
+
+/** How many calls a run has journaled. */
+export function journalProgress(db: Database, backend: string, id: string): number {
+  const row = db.one<{ calls: number }>(
+    `SELECT COUNT(*) AS calls FROM workspace_runtime_journal
+     WHERE backend = ? AND execution_id = ? AND state = 'applied'`,
+    backend,
+    id,
+  );
+  return Number(row?.calls ?? 0);
 }
 
 export function clearJournal(db: Database, backend: string, id: string): void {
