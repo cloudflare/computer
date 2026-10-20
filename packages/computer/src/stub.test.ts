@@ -13,7 +13,7 @@
 
 import { enableStubTracking, stubSnapshot } from "@cloudflare/computer-rpc/debug";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient } from "./git/index.js";
@@ -355,6 +355,17 @@ describe("WorkspaceStub", () => {
     } finally {
       await ws.close();
     }
+  });
+
+  it("passes runtime.pending and runtime.respond through", async () => {
+    await withStub(async (ws) => {
+      const call = { id: "run", backend: "b", callId: "run:1", payload: { kind: "x" }, since: 1 };
+      vi.spyOn(ws.runtime, "pending").mockResolvedValue([call]);
+      const respond = vi.spyOn(ws.runtime, "respond").mockResolvedValue();
+      await expect(ws.stub().runtime.pending()).resolves.toEqual([call]);
+      await ws.stub().runtime.respond("run", "run:1", { ok: true }, { backend: "b" });
+      expect(respond).toHaveBeenCalledWith("run", "run:1", { ok: true }, { backend: "b" });
+    });
   });
 
   it("runtime.exec rejects when a backend ignores the requested id", async () => {

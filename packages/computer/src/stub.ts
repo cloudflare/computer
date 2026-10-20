@@ -75,7 +75,9 @@ import type {
   WorkspaceRuntimeExecOptions,
   WorkspaceRuntimeGetOptions,
   WorkspaceRuntimeKillOptions,
+  WorkspaceRuntimePendingCall,
   WorkspaceRuntimeResult,
+  WorkspaceRuntimeValue,
 } from "./runtime/types.js";
 import { encodeRuntimeEvent } from "./runtime/wire.js";
 import type { Workspace } from "./workspace.js";
@@ -469,6 +471,20 @@ export class WorkspaceRuntimeStub extends RpcTarget {
 
   disposeExec(id: string, options: { backend?: string } = {}): Promise<void> {
     return this.#ws.runtime.disposeExec(id, options);
+  }
+
+  // Plain data both ways, so nothing here needs disposing.
+  pending(): Promise<WorkspaceRuntimePendingCall[]> {
+    return this.#ws.runtime.pending();
+  }
+
+  respond(
+    id: string,
+    callId: string,
+    value: WorkspaceRuntimeValue,
+    options: { backend?: string } = {},
+  ): Promise<void> {
+    return this.#ws.runtime.respond(id, callId, value, options);
   }
 }
 

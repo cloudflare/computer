@@ -219,7 +219,7 @@ for (const call of await workspace.runtime.pending()) {
 }
 ```
 
-To hear about a wait when it starts, for example to message whoever answers, give the backend an `onWait` function. It gets the same fields, at most once per wait, so `pending()` stays the source of truth.
+To hear about a wait when it starts, for example to message whoever answers, give the backend an `onWait` function. It gets the same fields, at most once per wait, so `pending()` stays the source of truth. A Worker that calls the object can reach `pending()` and `respond()` through `workspace.stub().runtime`.
 
 Once none of its calls are waiting, the run replays to the call and the function runs again with the same `callId`. This time `interrupt()` returns the answer straight away, and the function carries on. Anything it does before `interrupt()` runs twice, so keep that part safe to repeat. A waiting run survives a deploy like any interrupted run, and `killExec()` ends one.
 
