@@ -392,24 +392,50 @@ function makeClient(
 // `__getWorkspaceStub`.
 export type WorkspaceHandle = { [WORKSPACE]?: unknown } | WorkspaceStubHost;
 
+// The methods of `T` that return a promise. A lazy client forwards
+// those before it has loaded; plain properties have to wait for it.
+type AsyncMethods<T> = {
+  [K in keyof T as T[K] extends (...args: never[]) => PromiseLike<unknown> ? K : never]: T[K];
+};
+
 /**
  * What `getWorkspace` returns. Use it straight away: the durable object
  * is reached on the first call, and once per client. Await it for the
  * loaded client, which also knows the Workspace's backends and assets.
  */
-export type LazyWorkspaceClient = WorkspaceClient & PromiseLike<WorkspaceClient>;
+export interface LazyWorkspaceClient extends PromiseLike<WorkspaceClient> {
+  readonly fs: AsyncMethods<WorkspaceFilesystem>;
+  /** `backends()` is empty until the client is awaited. */
+  readonly runtime: WorkspaceRuntimeClient;
+  // oxlint-disable-next-line typescript/no-explicit-any -- git type differs local vs remote
+  readonly git: any;
+  // oxlint-disable-next-line typescript/no-explicit-any -- artifacts type differs local vs remote
+  readonly artifacts: any;
+  /** Undefined until the client is awaited. */
+  readonly assets: undefined;
+  [Symbol.dispose](): void;
+}
+
+/**
+ * Where a lazy client finds its Workspace: a handle, or a function that
+ * returns one. A function runs on the first call, and again after a
+ * failed load, so it can use state that is only ready later, such as
+ * an agent's parent.
+ */
+export type WorkspaceSource =
+  | WorkspaceHandle
+  | (() => WorkspaceHandle | PromiseLike<WorkspaceHandle>);
 
 const NO_BACKENDS: readonly WorkspaceBackendInfo[] = Object.freeze([]);
 
-export function getWorkspace(
-  handle: WorkspaceHandle | PromiseLike<WorkspaceHandle>,
-): LazyWorkspaceClient {
+export function getWorkspace(source: WorkspaceSource): LazyWorkspaceClient {
   let loading: Promise<WorkspaceClient> | undefined;
   let disposed = false;
   const load = (): Promise<WorkspaceClient> => {
     if (disposed) return Promise.reject(new Error("workspace client is disposed"));
     // A failed load is dropped, so the next call tries again.
-    loading ??= Promise.resolve(handle)
+    loading ??= Promise.resolve()
+      .then(() => (typeof source === "function" ? source() : source))
       .then(loadWorkspace)
       .catch((error: unknown) => {
         loading = undefined;
@@ -446,7 +472,7 @@ export function getWorkspace(
     backends: () => NO_BACKENDS,
   } as WorkspaceRuntimeClient;
   return {
-    fs: forward("fs") as WorkspaceFilesystem,
+    fs: forward("fs") as AsyncMethods<WorkspaceFilesystem>,
     runtime,
     git: forward("git"),
     assets: undefined,

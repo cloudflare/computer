@@ -185,10 +185,30 @@ describe("getWorkspace — lazy client", () => {
     expect(remote.reached()).toBe(1);
   });
 
-  it("accepts a promise of the handle", async () => {
+  it("looks up a handle from a function on the first call", async () => {
     const remote = countingRemote();
-    const ws = getWorkspace(Promise.resolve(remote.host));
+    let looked = 0;
+    const ws = getWorkspace(async () => {
+      looked += 1;
+      return remote.host;
+    });
+    expect(looked).toBe(0);
     await expect(ws.fs.stat("/a")).resolves.toEqual({ path: "/a" });
+    await ws.fs.stat("/b");
+    expect(looked).toBe(1);
+  });
+
+  it("calls the function again after it fails", async () => {
+    const remote = countingRemote();
+    let looked = 0;
+    const ws = getWorkspace(() => {
+      looked += 1;
+      if (looked === 1) throw new Error("not a facet yet");
+      return remote.host;
+    });
+    await expect(ws.fs.stat("/a")).rejects.toThrow("not a facet yet");
+    await expect(ws.fs.stat("/a")).resolves.toEqual({ path: "/a" });
+    expect(looked).toBe(2);
   });
 
   it("tries again after a failed load", async () => {
