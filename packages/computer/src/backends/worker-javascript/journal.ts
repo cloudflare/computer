@@ -31,10 +31,12 @@ export const INTERRUPT_POLICIES: readonly InterruptPolicy[] = ["fail", "restart"
 export const JOURNAL_VERSION = 1;
 
 /**
- * Bump when a change to the code the runtime loads into the isolate
- * would replay a run differently, so that runs started on the old code
- * fail instead of resuming wrongly. A test notices when that code
- * changes and asks for this check.
+ * Bump when a change would replay a run differently, so that runs
+ * started on the old code fail instead of resuming wrongly. That covers
+ * the code the runtime loads into the isolate, and the host side of
+ * replay too: how the journal matches calls and when the bridge answers
+ * them. A test notices when the isolate's code changes and asks for
+ * this check, but nothing notices a host-side change.
  */
 export const REPLAY_VERSION = 1;
 
