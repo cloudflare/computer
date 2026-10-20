@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
 import { Workspace } from "../../workspace.js";
-import { fingerprint } from "./journal.js";
+import { ExecutionJournal, fingerprint, loadDurable } from "./journal.js";
 import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript.js";
 
 function throwingLoader(message: string) {
@@ -2055,6 +2055,33 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await expect(settle(last)).resolves.toMatchObject({
       status: "failed",
       stderr: expect.stringContaining("interrupted 3 times"),
+    });
+    for (const workspace of [...workspaces, last]) await workspace.close();
+  });
+
+  it("counts attempts from the last call the run journaled", async () => {
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+    const workspaces = [await interrupt(storage)];
+    const recover = async () => {
+      const workspace = open(storage);
+      await workspace.runtime.recover();
+      workspaces.push(workspace);
+      return loadDurable(db, "worker-javascript", "run")?.attempt;
+    };
+    expect(await recover()).toBe(2);
+    expect(await recover()).toBe(3);
+    // The run journals a call, so its next interruption starts the count again.
+    const journal = new ExecutionJournal(db, "worker-javascript", "run");
+    const step = journal.begin("fs.readFile", ["/a"]);
+    if (step.kind !== "live") throw new Error("expected a live call");
+    journal.commit(step.seq, { result: "a" });
+    expect(await recover()).toBe(2);
+    expect(await recover()).toBe(3);
+    const last = open(storage);
+    await expect(settle(last)).resolves.toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining("interrupted 3 times without making progress"),
     });
     for (const workspace of [...workspaces, last]) await workspace.close();
   });

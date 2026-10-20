@@ -32,6 +32,7 @@ import {
   JOURNAL_VERSION,
   loadDurable,
   MAX_CONCURRENT_RECOVERIES,
+  journalProgress,
   MAX_INTERRUPT_ATTEMPTS,
   recordAttempt,
   REPLAY_VERSION,
@@ -105,8 +106,8 @@ export interface WorkerJavaScriptBackendOptions {
    *
    * A run is resumed when the backend reconnects, which the next
    * runtime call, `ready({ all: true })` or `runtime.recover()`
-   * triggers. It gets three attempts and must finish within its original
-   * timeout. A call in flight at the interruption runs again, unless it's
+   * triggers. It gets three attempts, counted again each time it
+   * journals a call, and must finish within its original timeout. A call in flight at the interruption runs again, unless it's
    * marked with `unsafeToRepeat()`.
    *
    * `"restart"` and `"replay"` are experimental and may change in any
@@ -507,18 +508,25 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       fail("Execution was interrupted when its Workspace runtime restarted.");
       return;
     }
-    const { attempt, start } = saved;
+    // Attempts count from the last call the run journaled, so a long run
+    // isn't failed by interruptions spread across it. Its timeout still
+    // bounds how long it can keep going.
+    const progressed = journalProgress(this.#host.db, this.#backendId, id) > saved.progress;
+    const attempt = progressed ? 1 : saved.attempt;
     if (attempt >= MAX_INTERRUPT_ATTEMPTS) {
-      fail(`Execution was interrupted ${attempt} times and won't be started again.`);
+      fail(
+        `Execution was interrupted ${attempt} times without making progress and won't be started again.`,
+      );
       return;
     }
+    const { start } = saved;
     if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint()) {
       fail(
         "Execution was interrupted and can't resume, because the JavaScript runtime changed since it started.",
       );
       return;
     }
-    const resumable = saved;
+    const resumable = { ...saved, attempt };
     this.#recoveryQueue.push(() => {
       if (record.status !== "running" || record.finalization) return;
       this.#recovering.add(id);
@@ -551,7 +559,13 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       return;
     }
     try {
-      recordAttempt(this.#host.db, this.#backendId, id, attempt + 1);
+      recordAttempt(
+        this.#host.db,
+        this.#backendId,
+        id,
+        attempt + 1,
+        journalProgress(this.#host.db, this.#backendId, id),
+      );
       let journal: ExecutionJournal | undefined;
       let durable: WorkspaceExecutionContext["durable"];
       if (policy === "replay") {
