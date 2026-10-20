@@ -340,6 +340,133 @@ describe("WorkspaceRuntime", () => {
     ]);
   });
 
+  it("gives every host call in a run the run's execution id", async () => {
+    const response = await runtime({
+      source: `
+        import { id } from "ws:lifecycle";
+        export default async () => [await id(), await id()];
+      `,
+      cwd: "/workspace",
+      id: "lifecycle-id",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value).toEqual(["lifecycle-id", "lifecycle-id"]);
+  });
+
+  it("writes a host module's log lines to standard error", async () => {
+    const response = await runtime({
+      source: `
+        import { log } from "ws:lifecycle";
+        export default async () => { await log("from host"); return "done"; };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result).toMatchObject({
+      status: "completed",
+      stderr: "from host\n",
+      value: "done",
+    });
+  });
+
+  it("runs deferred functions last first, before the result is published", async () => {
+    const response = await runtime({
+      source: `
+        import { track } from "ws:lifecycle";
+        export default async () => { await track("t"); return "done"; };
+      `,
+      cwd: "/workspace",
+      id: "lifecycle-defer",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result).toMatchObject({
+      status: "completed",
+      stderr: "t 2\nt 1\n",
+      value: "done",
+    });
+
+    const check = await runtime({
+      source: `
+        import { ended } from "ws:lifecycle";
+        export default () => ended("lifecycle-defer");
+      `,
+      cwd: "/workspace",
+    });
+    const checked = await check.text();
+    expect(check.status, checked).toBe(200);
+    expect(JSON.parse(checked).result.value).toBe(true);
+  });
+
+  it("runs deferred functions when the run fails", async () => {
+    const response = await runtime({
+      source: `
+        import { track } from "ws:lifecycle";
+        export default async () => { await track("f"); throw new Error("x"); };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result.status).toBe("failed");
+    expect(result.stderr).toContain("f 2\nf 1\n");
+  });
+
+  it("runs deferred functions when the run is cancelled", async () => {
+    const id = `lifecycle-cancel-${crypto.randomUUID()}`;
+    const start = await SELF.fetch("https://example.test/runtime-start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id,
+        source: `
+          import { track } from "ws:lifecycle";
+          export default async function () {
+            await track("c");
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+          }
+        `,
+      }),
+    });
+    expect(start.status).toBe(200);
+    const probe = (name: string) =>
+      runtime({
+        source: `import { ${name} } from "ws:lifecycle"; export default () => ${name}(${JSON.stringify(id)});`,
+        cwd: "/workspace",
+      }).then(async (response) => JSON.parse(await response.text()).result.value);
+    for (let attempt = 0; attempt < 50 && !(await probe("tracked")); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const killed = await SELF.fetch(
+      `https://example.test/runtime-kill?id=${encodeURIComponent(id)}`,
+      { method: "POST" },
+    );
+    expect(killed.status).toBe(204);
+    const result = await SELF.fetch(
+      `https://example.test/runtime-get?id=${encodeURIComponent(id)}`,
+    );
+    expect(await result.json()).toMatchObject({ status: "cancelled", exitCode: 130 });
+    expect(await probe("ended")).toBe(true);
+  });
+
+  it("reports a deferred function that throws and still settles the run", async () => {
+    const response = await runtime({
+      source: `
+        import { throwing } from "ws:lifecycle";
+        export default async () => { await throwing(); return "done"; };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { result } = JSON.parse(text);
+    expect(result).toMatchObject({ status: "completed", value: "done" });
+    expect(result.stderr).toContain("deferred function failed: boom");
+  });
+
   it("fails to link an import the host module does not export", async () => {
     const response = await runtime({
       source: `

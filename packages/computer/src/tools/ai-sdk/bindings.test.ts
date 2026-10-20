@@ -11,10 +11,13 @@ import { createAITools } from "./index.js";
 
 function callContext(): WorkspaceModuleCallContext {
   return {
+    executionId: "test-execution",
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
     access: "read-write",
     resolvePath: async (path) => path,
+    log: () => {},
+    defer: () => {},
   };
 }
 

@@ -19,6 +19,12 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #maxTotalResponseBytes: number;
   readonly #maxResultBytes: number;
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+  readonly #executionId: string;
+  readonly #onLog?: (text: string) => void;
+  readonly #maxLogBytes: number;
+  readonly #deferred: Array<() => unknown> = [];
+  #logBytes = 0;
+  #ended = false;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
   readonly #abortControllers = new Set<AbortController>();
   #cancelled = false;
@@ -39,6 +45,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxTotalResponseBytes?: number;
       maxResultBytes?: number;
       onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
+      executionId?: string;
+      onLog?: (text: string) => void;
+      maxLogBytes?: number;
     } = {},
   ) {
     super();
@@ -52,6 +61,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
     this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
     this.#onAttachOutput = integrations.onAttachOutput;
+    this.#executionId = integrations.executionId ?? "";
+    this.#onLog = integrations.onLog;
+    this.#maxLogBytes = integrations.maxLogBytes ?? 1024 * 1024;
   }
 
   // Drain the runner's framed output stream. The isolate passes the
@@ -114,11 +126,14 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const operation = respond(async () => {
       if (name.startsWith("host/")) {
         return this.#callHostModule(name, args, {
+          executionId: this.#executionId,
           signal: abort.signal,
           deadline,
           access: this.#capability.access,
           resolvePath: (path, options) =>
             this.#capability.resolveConfined(path, options?.allowMissing ?? false),
+          log: (text) => this.#log(text),
+          defer: (fn) => this.#defer(fn),
         });
       }
       const operation = name.startsWith("fs.") ? name.slice(3) : name;
@@ -213,6 +228,51 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#responseBytes += bytes;
       return "result" in response ? { result: response.result } : response;
     });
+  }
+
+  // Run what host modules deferred, last registered first, once the
+  // execution's calls have drained. A deferred function that throws or
+  // misses the host call deadline is reported on standard error and
+  // doesn't stop the rest. Runs once; later `defer` calls are refused.
+  async runDeferred(): Promise<void> {
+    if (this.#ended) return;
+    while (this.#deferred.length > 0) {
+      const fn = this.#deferred.pop() as () => unknown;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("did not settle before its deadline")),
+          this.#maxCallDurationMs,
+        );
+      });
+      try {
+        await Promise.race([Promise.resolve().then(fn), timeout]);
+      } catch (error) {
+        this.#log(
+          `A host module's deferred function failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    this.#ended = true;
+  }
+
+  #defer(fn: () => unknown): void {
+    if (typeof fn !== "function") throw new TypeError("defer takes a function.");
+    if (this.#ended) throw new Error("The execution has already ended.");
+    this.#deferred.push(fn);
+  }
+
+  #log(text: string): void {
+    if (this.#ended || this.#onLog === undefined) return;
+    const line = String(text).endsWith("\n") ? String(text) : `${String(text)}\n`;
+    const bytes = utf8ByteLength(line);
+    if (this.#logBytes + bytes > this.#maxLogBytes) return;
+    this.#logBytes += bytes;
+    this.#onLog(line);
   }
 
   async cancelAndDrain(): Promise<void> {

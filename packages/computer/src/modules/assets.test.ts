@@ -37,10 +37,13 @@ function callContext(
   overrides: Partial<WorkspaceModuleCallContext> = {},
 ): WorkspaceModuleCallContext {
   return {
+    executionId: "test-execution",
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
     access: "read-write",
     resolvePath: async (path) => (path.startsWith("/") ? path : `/workspace/${path}`),
+    log: () => {},
+    defer: () => {},
     ...overrides,
   };
 }

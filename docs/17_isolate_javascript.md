@@ -291,10 +291,39 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 
 | Field | Meaning |
 | --- | --- |
+| `executionId` | The run making the call. Every call from one run has the same id. |
 | `signal` | Aborts when the call passes its deadline or the execution is cancelled. |
 | `deadline` | Epoch milliseconds after which the isolate stops waiting. |
 | `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
 | `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
+| `log(text)` | Writes a line to the run's standard error. |
+| `defer(fn)` | Runs `fn` once when the run ends. |
+
+A module that holds something for the length of a run, such as a connection, keys it by `executionId` and cleans up in `defer`:
+
+```ts
+const sockets = new Map<string, Socket>();
+
+modules: {
+  "ws:remote": {
+    async send([message], context) {
+      let socket = sockets.get(context.executionId);
+      if (!socket) {
+        socket = await openSocket();
+        sockets.set(context.executionId, socket);
+        context.defer(() => {
+          sockets.delete(context.executionId);
+          socket.close();
+        });
+      }
+      if (socket.reconnected) context.log("The remote end restarted; earlier state is gone.");
+      return socket.send(message);
+    },
+  },
+}
+```
+
+Deferred functions run however the run ends, whether it completes, fails, times out or is cancelled. They run after the code has finished and its host calls have settled, and before the result is published, so the next run sees whatever they saved. They run one at a time, last registered first, and each gets the host call deadline. One that throws or misses its deadline is reported on standard error, and the rest still run. A deferred function can call `log`, which is how a module reports something it only knows at the end of the run. Log lines count toward their own `maxStdioBytes` limit, separate from the code's output. Past it they are dropped, as is any line written after the run settled.
 
 The arguments come from caller code, so parse them before use. A function may return a value or a promise. Arguments and results cross the isolate boundary as real values through Workers RPC, not as encoded text. The result must be JSON-compatible plain data, and the bridge checks it at runtime. As in JSON, an `undefined` result or array item becomes `null` and an `undefined` object field is left out, in arguments and results alike. Byte arrays work for `node:fs` calls but not for host modules. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
 

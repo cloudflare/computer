@@ -245,3 +245,49 @@ describe("WorkspaceRuntimeBridge assertResult", () => {
     );
   });
 });
+
+describe("WorkspaceRuntimeBridge host module lifecycle", () => {
+  it("drops log lines past the byte limit", async () => {
+    const lines: string[] = [];
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxLogBytes: 8,
+      onLog: (text) => lines.push(text),
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async (_values, context) => {
+              context.log("abc");
+              context.log("defghij");
+              context.log("k");
+              return null;
+            },
+          },
+        ],
+      ]),
+    });
+    await expect(message(target.call("host/ws:test.run", []))).resolves.toBeUndefined();
+    expect(lines).toEqual(["abc\n", "k\n"]);
+  });
+
+  it("refuses defer once the execution has ended", async () => {
+    let defer: ((fn: () => unknown) => void) | undefined;
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      executionId: "run-1",
+      hostModules: new Map([
+        [
+          "ws:test",
+          {
+            run: async (_values, context) => {
+              defer = context.defer;
+              return context.executionId;
+            },
+          },
+        ],
+      ]),
+    });
+    await expect(target.call("host/ws:test.run", [])).resolves.toEqual({ result: "run-1" });
+    await target.runDeferred();
+    expect(() => defer?.(() => undefined)).toThrow("already ended");
+  });
+});

@@ -534,6 +534,17 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
           maxResultBytes: this.#options.maxResultBytes,
           onAttachOutput: (readable) => this.#pumpFrames(record, readable),
+          executionId: id,
+          maxLogBytes: this.#options.maxStdioBytes,
+          onLog: (text) => {
+            if (record.status !== "running") return;
+            this.#append(record, {
+              id: record.id,
+              seq: record.events.length + 1,
+              name: "stderr",
+              value: new TextEncoder().encode(text),
+            });
+          },
         });
         record.bridge = bridge;
         record.control = startJavaScriptExecution({
@@ -681,6 +692,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       try {
         await record.bridge?.cancelAndDrain();
       } catch (error) {
+        await record.bridge?.runDeferred();
         this.#finish(record, "failed", [
           {
             id: record.id,
@@ -694,6 +706,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         ]);
         return;
       }
+      await record.bridge?.runDeferred();
       this.#finish(record, "cancelled", [
         {
           id: record.id,
@@ -816,6 +829,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     try {
       await record.bridge?.cancelAndDrain();
     } catch (error) {
+      await record.bridge?.runDeferred();
       this.#finish(record, "failed", [
         {
           id: record.id,
@@ -829,6 +843,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       ]);
       return;
     }
+    await record.bridge?.runDeferred();
     if (errorMessage !== undefined) {
       this.#finish(record, "failed", [
         {

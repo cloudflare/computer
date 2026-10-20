@@ -7,6 +7,11 @@ export type WorkspaceRuntimeAccess = "read" | "read-write";
 
 /** Per-call context the backend passes to every host module function. */
 export interface WorkspaceModuleCallContext {
+  /**
+   * The execution making the call. Every call from one run has the same
+   * id, so a module can keep state for the run, such as a connection.
+   */
+  readonly executionId: string;
   /** Aborts when the call passes its deadline or the execution is cancelled. */
   readonly signal: AbortSignal;
   /** Epoch milliseconds after which the caller stops waiting for this call. */
@@ -22,6 +27,23 @@ export interface WorkspaceModuleCallContext {
    * @returns The confined absolute path.
    */
   resolvePath(path: string, options?: { readonly allowMissing?: boolean }): Promise<string>;
+  /**
+   * Write a line to the execution's standard error, to tell the caller
+   * something the call's result can't carry. A newline is added when
+   * `text` doesn't end with one. Lines past `maxStdioBytes` in total are
+   * dropped, and a line written after the execution settled is ignored.
+   */
+  log(text: string): void;
+  /**
+   * Run `fn` once when the execution ends, however it ends: after its
+   * code has finished and its host calls have settled, and before its
+   * result is published. Use it to close a connection or save state the
+   * run built up. Deferred functions run one at a time, last registered
+   * first, and can still call `log`. Each gets the host call deadline.
+   * One that throws or misses its deadline is reported on standard
+   * error, and the rest still run.
+   */
+  defer(fn: () => unknown): void;
 }
 
 /**

@@ -39,10 +39,13 @@ function build(artifacts: ReturnType<typeof fakeArtifacts>["client"]) {
 
 function callContext(access: "read" | "read-write" = "read-write"): WorkspaceModuleCallContext {
   return {
+    executionId: "test-execution",
     signal: new AbortController().signal,
     deadline: Date.now() + 60_000,
     access,
     resolvePath: async (path) => path,
+    log: () => {},
+    defer: () => {},
   };
 }
 
