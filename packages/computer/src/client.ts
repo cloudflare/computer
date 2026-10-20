@@ -12,7 +12,9 @@
 // with-workspace.ts), which stashes the Workspace under a private
 // symbol and exposes the `__getWorkspaceStub` prototype method.
 //
-// `getWorkspace` dispatches on what it's handed:
+// `getWorkspace` returns a client straight away and loads it on the
+// first call, so it can be assigned to a class field; awaiting it gives
+// the loaded client. Loading dispatches on what it's handed:
 //
 //   - Local host (`this`): the symbol stash holds a `Workspace`.
 //     Detected with `instanceof`, so the decision doesn't depend on
@@ -390,7 +392,82 @@ function makeClient(
 // `__getWorkspaceStub`.
 export type WorkspaceHandle = { [WORKSPACE]?: unknown } | WorkspaceStubHost;
 
-export async function getWorkspace(handle: WorkspaceHandle): Promise<WorkspaceClient> {
+/**
+ * What `getWorkspace` returns. Use it straight away: the durable object
+ * is reached on the first call, and once per client. Await it for the
+ * loaded client, which also knows the Workspace's backends and assets.
+ */
+export type LazyWorkspaceClient = WorkspaceClient & PromiseLike<WorkspaceClient>;
+
+const NO_BACKENDS: readonly WorkspaceBackendInfo[] = Object.freeze([]);
+
+export function getWorkspace(
+  handle: WorkspaceHandle | PromiseLike<WorkspaceHandle>,
+): LazyWorkspaceClient {
+  let loading: Promise<WorkspaceClient> | undefined;
+  let disposed = false;
+  const load = (): Promise<WorkspaceClient> => {
+    if (disposed) return Promise.reject(new Error("workspace client is disposed"));
+    // A failed load is dropped, so the next call tries again.
+    loading ??= Promise.resolve(handle)
+      .then(loadWorkspace)
+      .catch((error: unknown) => {
+        loading = undefined;
+        throw error;
+      });
+    return loading;
+  };
+  // Every member of the surface is an object of async methods, so each
+  // forwards to the loaded client. `then` stays undefined, or awaiting
+  // a member would treat it as a promise.
+  const forward = (member: "fs" | "git" | "artifacts") =>
+    new Proxy(
+      {},
+      {
+        get: (_target, name) =>
+          typeof name === "symbol" || name === "then"
+            ? undefined
+            : (...args: unknown[]) => load().then((client) => client[member][name](...args)),
+      },
+    );
+  const runtime = {
+    exec: (...args: unknown[]) =>
+      // oxlint-disable-next-line typescript/no-explicit-any -- forwards every exec overload unchanged
+      load().then((client) => (client.runtime.exec as (...a: unknown[]) => any)(...args)),
+    getExec: (...args: unknown[]) =>
+      // oxlint-disable-next-line typescript/no-explicit-any -- forwards every getExec overload unchanged
+      load().then((client) => (client.runtime.getExec as (...a: unknown[]) => any)(...args)),
+    killExec: (id: string, options?: RuntimeKillOptions) =>
+      load().then((client) => client.runtime.killExec(id, options)),
+    disposeExec: (id: string, options?: { backend?: string }) =>
+      load().then((client) => client.runtime.disposeExec(id, options)),
+    // Unknown until loaded. Reporting none keeps tool sets built from
+    // this client the same before and after the first call.
+    backends: () => NO_BACKENDS,
+  } as WorkspaceRuntimeClient;
+  return {
+    fs: forward("fs") as WorkspaceFilesystem,
+    runtime,
+    git: forward("git"),
+    assets: undefined,
+    artifacts: forward("artifacts"),
+    [Symbol.dispose]() {
+      disposed = true;
+      void loading?.then(
+        (client) => client[Symbol.dispose](),
+        () => undefined,
+      );
+    },
+    // Thenable on purpose, like an `RpcPromise`: `await getWorkspace(x)`
+    // keeps returning the loaded client it always returned.
+    // oxlint-disable-next-line unicorn/no-thenable -- see above
+    then(onFulfilled, onRejected) {
+      return load().then(onFulfilled, onRejected);
+    },
+  };
+}
+
+async function loadWorkspace(handle: WorkspaceHandle): Promise<WorkspaceClient> {
   const local = (handle as { [WORKSPACE]?: unknown })[WORKSPACE];
   if (local instanceof Workspace) {
     // Local path: delegate straight to the in-isolate Workspace.

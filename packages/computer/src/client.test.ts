@@ -141,6 +141,102 @@ function fakeLocal(): { host: { [WORKSPACE]: Workspace }; calls: ExecCall[] } {
   return { calls, host: { [WORKSPACE]: ws } };
 }
 
+// A remote host that counts how often it is reached and can fail on
+// chosen attempts, for the lazy client tests.
+function countingRemote(failOn: number[] = []) {
+  const { runtime, calls } = fakeRuntime(true);
+  let reached = 0;
+  let disposed = 0;
+  const stub = {
+    fs: { stat: (path: string) => Promise.resolve({ path }) },
+    useThink: false,
+    git: { cli: (input: unknown) => Promise.resolve({ input }) },
+    hasAssets: false,
+    artifacts: { list: () => Promise.resolve(["repo"]) },
+    runtime,
+    [Symbol.dispose]() {
+      disposed += 1;
+    },
+  };
+  const host: WorkspaceStubHost = {
+    __getWorkspaceStub: () => {
+      reached += 1;
+      if (failOn.includes(reached)) return Promise.reject(new Error("owner unavailable"));
+      return Promise.resolve(stub as never);
+    },
+  };
+  return { host, calls, reached: () => reached, disposed: () => disposed };
+}
+
+describe("getWorkspace — lazy client", () => {
+  it("returns a client without reaching the durable object", async () => {
+    const remote = countingRemote();
+    const ws = getWorkspace(remote.host);
+    expect(remote.reached()).toBe(0);
+    await expect(ws.fs.stat("/a")).resolves.toEqual({ path: "/a" });
+    expect(remote.reached()).toBe(1);
+  });
+
+  it("reaches the durable object once across calls", async () => {
+    const remote = countingRemote();
+    const ws = getWorkspace(remote.host);
+    await Promise.all([ws.fs.stat("/a"), ws.git.cli({ args: ["status"] }), ws.artifacts.list()]);
+    await ws.fs.stat("/b");
+    expect(remote.reached()).toBe(1);
+  });
+
+  it("accepts a promise of the handle", async () => {
+    const remote = countingRemote();
+    const ws = getWorkspace(Promise.resolve(remote.host));
+    await expect(ws.fs.stat("/a")).resolves.toEqual({ path: "/a" });
+  });
+
+  it("tries again after a failed load", async () => {
+    const remote = countingRemote([1]);
+    const ws = getWorkspace(remote.host);
+    await expect(ws.fs.stat("/a")).rejects.toThrow("owner unavailable");
+    await expect(ws.fs.stat("/a")).resolves.toEqual({ path: "/a" });
+    expect(remote.reached()).toBe(2);
+  });
+
+  it("runs commands before it has loaded", async () => {
+    const remote = countingRemote();
+    const ws = getWorkspace(remote.host);
+    await ws.runtime.exec`cat ${"my file.txt"}`;
+    expect(remote.calls[0]?.command).toBe("cat 'my file.txt'");
+  });
+
+  it("reports no backends or assets until awaited", async () => {
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [echoBackend()],
+    });
+    const lazy = getWorkspace({ __getWorkspaceStub: () => Promise.resolve(workspace.stub()) });
+    expect(lazy.runtime.backends()).toEqual([]);
+    expect(createAITools({ workspace: lazy }).exec).toBeUndefined();
+
+    const loaded = await lazy;
+    expect(loaded.runtime.backends()).toHaveLength(1);
+    expect(createAITools({ workspace: loaded }).exec).toBeDefined();
+    await workspace.close();
+  });
+
+  it("disposes the remote stub, and refuses calls, once disposed", async () => {
+    const remote = countingRemote();
+    const ws = getWorkspace(remote.host);
+    await ws.fs.stat("/a");
+    ws[Symbol.dispose]();
+    await Promise.resolve();
+    expect(remote.disposed()).toBe(1);
+    await expect(ws.fs.stat("/a")).rejects.toThrow("disposed");
+  });
+
+  it("does not look like a promise through its members", () => {
+    const ws = getWorkspace(countingRemote().host);
+    expect((ws.fs as unknown as { then?: unknown }).then).toBeUndefined();
+  });
+});
+
 describe("getWorkspace — remote dispatch", () => {
   it("calls __getWorkspaceStub and exposes the stub's members", async () => {
     const { host } = fakeRemote();

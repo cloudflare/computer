@@ -479,13 +479,27 @@ export default {
 } satisfies ExportedHandler<Env>;
 ```
 
+You don't have to await it. `getWorkspace` returns a client straight
+away and reaches the Durable Object on the first call, so it fits a
+class field, and it also takes a promise of the stub:
+
+```ts
+class Chat extends Think<Env> {
+  override workspace = getWorkspace(this.parentAgent(Directory));
+}
+```
+
+Until you await it, the client doesn't know the Workspace's backends or
+assets: `runtime.backends()` is empty, so tools built from it have no
+`exec` or `publish`. Awaiting gives you the loaded client, which does.
+
 ### Dispose your stubs
 
 The one gotcha worth internalizing: the RPC layer does not
 garbage-collect remote stubs. On long-lived sessions undisposed stubs
 accumulate on the peer until the session ends. The rules are short:
 
-- `using` the value from `getWorkspace(...)`.
+- `using` the value from `getWorkspace(...)`, awaited or not.
 - `using` the handle from `ws.runtime.exec(...)`.
 - Don't worry about `ws.fs`, `ws.runtime`, or `ws.git` — they ride with
   the parent.

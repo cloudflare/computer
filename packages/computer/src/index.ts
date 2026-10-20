@@ -31,6 +31,7 @@ export type { BackendHandle, WorkspaceBackend } from "./backend.js";
 export { TestBackend, type TestBackendOptions } from "./backends/test.js";
 export {
   getWorkspace,
+  type LazyWorkspaceClient,
   type RuntimeExecOptions,
   type RuntimeGetOptions,
   type RuntimeKillOptions,

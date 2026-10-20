@@ -10,6 +10,8 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+import { getWorkspace } from "../src/client.js";
+
 import type { ComputerdContainer, Env } from "./stub-soak-worker.js";
 
 declare module "cloudflare:test" {
@@ -98,6 +100,23 @@ describe("WorkspaceStub disposal soak (DO ↔ Worker)", () => {
       WorkspaceRuntimeStub: 10,
       WorkspaceRuntimeExecHandleStub: 10,
     });
+  });
+
+  it("a client used without await opens one stub on first call and releases it", async () => {
+    const stub = env.COMPUTERD.get(env.COMPUTERD.idFromName("lazy-client"));
+    const baseline = await stub.stubSnapshot();
+
+    const ws = getWorkspace(stub);
+    expect(diff(baseline, await stub.stubSnapshot())).toMatchObject({ WorkspaceStub: 0 });
+
+    await ws.fs.writeFile("/lazy.txt", "hello");
+    await expect(ws.fs.readFile("/lazy.txt", "utf8")).resolves.toBe("hello");
+    expect(diff(baseline, await stub.stubSnapshot())).toMatchObject({ WorkspaceStub: 1 });
+
+    ws[Symbol.dispose]();
+    await scheduler.wait(50);
+    const growth = diff(baseline, await stub.stubSnapshot());
+    for (const [k, v] of Object.entries(growth)) expect(v, `${k} leaked ${v}`).toBe(0);
   });
 
   it("snapshot reads do not themselves grow counters", async () => {

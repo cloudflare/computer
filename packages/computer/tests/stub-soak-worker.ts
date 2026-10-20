@@ -134,6 +134,11 @@ export class ComputerdContainer extends DurableObject<Env> {
     return ws.stub();
   }
 
+  // What `getWorkspace(stub)` from the package calls.
+  async __getWorkspaceStub(): Promise<WorkspaceStub> {
+    return this.getWorkspace();
+  }
+
   async stubSnapshot(): Promise<Record<string, number>> {
     return stubSnapshot();
   }
