@@ -1,0 +1,15 @@
+{
+  // Test-only worker for the DynamicJavaScriptBackend integration tests.
+  // Not deployed. HOST is a host Durable Object that owns a Workspace
+  // with dynamic-javascript backends, and LOADER is the Worker Loader
+  // binding they load apps and executions through.
+  "name": "computer-dynamic-javascript-tests",
+  "main": "./dynamic-javascript-worker.ts",
+  "compatibility_date": "2026-06-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "durable_objects": {
+    "bindings": [{ "name": "HOST", "class_name": "HostDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostDO"] }]
+}

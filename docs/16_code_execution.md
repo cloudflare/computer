@@ -18,6 +18,7 @@ The selected backend defines how it interprets `source`.
 | `container-shell` | shell command | Full Linux, native binaries, installed packages, processes |
 | `worker-shell` | just-bash command | Fast text tools and Workspace Git without a Container |
 | `worker-javascript` | ECMAScript module | Isolated structured JavaScript with Workspace host modules |
+| `dynamic-javascript` | ECMAScript module | The same, plus long-lived Durable Object apps that code imports and calls (experimental) |
 
 Applications may register additional command or module backends under their own IDs. Backend IDs are part of the execution contract: changing the backend may change the source language.
 
@@ -85,4 +86,4 @@ new WorkerJavaScriptBackend({
 
 The backend argument is never itself authorization.
 
-See [17. Isolate JavaScript](./17_isolate_javascript.md) for module behavior.
+See [17. Isolate JavaScript](./17_isolate_javascript.md) for module behavior, and [20. Dynamic JavaScript](./20_dynamic_javascript.md) for apps.

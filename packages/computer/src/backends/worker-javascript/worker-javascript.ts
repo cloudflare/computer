@@ -18,6 +18,7 @@ import type {
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   assertHostModuleExports,
+  type BuildModuleGraphOptions,
   buildModuleGraph,
   hasNodeModules,
   NODE_MODULES_DESCRIPTION,
@@ -125,7 +126,7 @@ export interface WorkerJavaScriptBackendOptions {
   globalOutbound?: Fetcher | null;
 }
 
-type ResolvedWorkerJavaScriptBackendOptions = Required<
+export type ResolvedWorkerJavaScriptBackendOptions = Required<
   Pick<
     WorkerJavaScriptBackendOptions,
     | "root"
@@ -199,126 +200,155 @@ interface ExecutionRecord {
   exitCode?: number;
 }
 
+/**
+ * Check a JavaScript backend's options and fill in the defaults.
+ *
+ * @param options - The options the backend was constructed with.
+ * @param backend - The backend's class name, for error messages.
+ * @param defaultId - The id to use when `options.id` is omitted.
+ * @returns The options with every default filled in.
+ * @throws When an option is out of range or two options conflict.
+ */
+export function resolveJavaScriptBackendOptions(
+  options: WorkerJavaScriptBackendOptions,
+  backend: string,
+  defaultId: string,
+): ResolvedWorkerJavaScriptBackendOptions {
+  if (options.egress !== undefined && options.globalOutbound !== undefined) {
+    throw new Error(`${backend} cannot use globalOutbound together with egress.`);
+  }
+  const maxTimeoutMs = options.maxTimeoutMs ?? 180_000;
+  const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(60_000, maxTimeoutMs);
+  assertPositiveFinite(maxTimeoutMs, "maxTimeoutMs");
+  assertPositiveFinite(defaultTimeoutMs, "defaultTimeoutMs");
+  const maxCpuMs = options.maxCpuMs ?? maxTimeoutMs;
+  assertPositiveFinite(maxCpuMs, "maxCpuMs");
+  const keepAliveIntervalMs = options.keepAliveIntervalMs ?? 60_000;
+  // Pending work protects a Durable Object for at most 15 minutes, so a
+  // longer interval would leave gaps.
+  if (
+    !Number.isFinite(keepAliveIntervalMs) ||
+    keepAliveIntervalMs < 0 ||
+    keepAliveIntervalMs >= 900_000
+  ) {
+    throw new Error(`${backend} keepAliveIntervalMs must be zero or less than 15 minutes.`);
+  }
+  assertPositiveFinite(options.maxSourceBytes ?? 1024 * 1024, "maxSourceBytes");
+  assertPositiveFinite(options.maxInputBytes ?? 1024 * 1024, "maxInputBytes");
+  assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
+  assertPositiveFinite(options.maxEnvBytes ?? 1024 * 1024, "maxEnvBytes");
+  assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
+  assertPositiveFinite(options.maxStdioBytes ?? 1024 * 1024, "maxStdioBytes");
+  assertPositiveFinite(options.maxCapabilityBytes ?? 1024 * 1024, "maxCapabilityBytes");
+  assertPositiveFinite(options.maxHostCallMs ?? maxTimeoutMs, "maxHostCallMs");
+  assertPositiveInteger(options.maxConcurrentCapabilityCalls ?? 32, "maxConcurrentCapabilityCalls");
+  assertPositiveInteger(options.maxCapabilityCalls ?? 256, "maxCapabilityCalls");
+  assertPositiveFinite(
+    options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
+    "maxCapabilityRequestBytes",
+  );
+  assertPositiveFinite(
+    options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
+    "maxCapabilityResponseBytes",
+  );
+  assertPositiveInteger(options.maxDirectoryEntries ?? 1024, "maxDirectoryEntries");
+  assertPositiveInteger(options.maxExecutionSubscribers ?? 8, "maxExecutionSubscribers");
+  assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
+  assertPositiveInteger(options.maxRetainedExecutions ?? 100, "maxRetainedExecutions");
+  if ((options.maxCapabilityBytes ?? 1024 * 1024) < 256) {
+    throw new Error(`${backend} maxCapabilityBytes must be at least 256 bytes.`);
+  }
+  const compatibilityDate = options.compatibilityDate ?? "2026-05-23";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) {
+    throw new Error(`${backend} compatibilityDate must use YYYY-MM-DD.`);
+  }
+  if (defaultTimeoutMs > maxTimeoutMs) {
+    throw new Error(`${backend} defaultTimeoutMs cannot exceed maxTimeoutMs.`);
+  }
+  const { globalOutbound, egress, ...backendOptions } = options;
+  const resolvedEgress =
+    egress ??
+    (globalOutbound === undefined
+      ? { mode: "none" as const }
+      : globalOutbound === null
+        ? { mode: "none" as const }
+        : { mode: "http-gateway" as const, gateway: globalOutbound });
+  return {
+    ...backendOptions,
+    id: options.id ?? defaultId,
+    egress: resolvedEgress,
+    modules: parseModules(options.modules ?? {}),
+    root: options.root ?? "/workspace",
+    access: options.access ?? "read-write",
+    defaultTimeoutMs,
+    maxTimeoutMs,
+    maxCpuMs,
+    keepAliveIntervalMs,
+    maxSourceBytes: options.maxSourceBytes ?? 1024 * 1024,
+    maxInputBytes: options.maxInputBytes ?? 1024 * 1024,
+    maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
+    maxEnvBytes: options.maxEnvBytes ?? 1024 * 1024,
+    maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
+    maxStdioBytes: options.maxStdioBytes ?? 1024 * 1024,
+    maxCapabilityBytes: options.maxCapabilityBytes ?? 1024 * 1024,
+    maxHostCallMs: options.maxHostCallMs ?? maxTimeoutMs,
+    maxConcurrentCapabilityCalls: options.maxConcurrentCapabilityCalls ?? 32,
+    maxCapabilityCalls: options.maxCapabilityCalls ?? 256,
+    maxCapabilityRequestBytes: options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
+    maxCapabilityResponseBytes: options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
+    maxDirectoryEntries: options.maxDirectoryEntries ?? 1024,
+    maxExecutionSubscribers: options.maxExecutionSubscribers ?? 8,
+    retentionMs: options.retentionMs ?? 60 * 60_000,
+    maxRetainedExecutions: options.maxRetainedExecutions ?? 100,
+    compatibilityDate,
+    compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],
+  };
+}
+
+/**
+ * What a JavaScript backend tells a model: the source language, any
+ * backend-specific text, and every importable module.
+ *
+ * @param options - The backend's resolved options.
+ * @param extra - Paragraphs to add after the source language.
+ * @returns The description the exec tool shows.
+ */
+export function describeJavaScriptBackend(
+  options: ResolvedWorkerJavaScriptBackendOptions,
+  extra: readonly string[] = [],
+): string {
+  return [
+    "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
+    "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
+    ...extra,
+    ...(options.egress.mode === "none" ? ["Code has no direct network access."] : []),
+    ...(options.access === "read" ? ["The workspace is read-only here."] : []),
+    "",
+    "Modules code can import:",
+    options.modules.description,
+    ...(hasNodeModules(options.compatibilityFlags) ? [NODE_MODULES_DESCRIPTION] : []),
+  ].join("\n");
+}
+
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
   readonly type = "worker-javascript";
   readonly callable = true;
   readonly id: string;
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
-  readonly #header: string;
 
   constructor(options: WorkerJavaScriptBackendOptions) {
-    this.id = options.id ?? "worker-javascript";
-    if (options.egress !== undefined && options.globalOutbound !== undefined) {
-      throw new Error("WorkerJavaScriptBackend cannot use globalOutbound together with egress.");
-    }
-    const maxTimeoutMs = options.maxTimeoutMs ?? 180_000;
-    const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(60_000, maxTimeoutMs);
-    assertPositiveFinite(maxTimeoutMs, "maxTimeoutMs");
-    assertPositiveFinite(defaultTimeoutMs, "defaultTimeoutMs");
-    const maxCpuMs = options.maxCpuMs ?? maxTimeoutMs;
-    assertPositiveFinite(maxCpuMs, "maxCpuMs");
-    const keepAliveIntervalMs = options.keepAliveIntervalMs ?? 60_000;
-    // Pending work protects a Durable Object for at most 15 minutes, so a
-    // longer interval would leave gaps.
-    if (
-      !Number.isFinite(keepAliveIntervalMs) ||
-      keepAliveIntervalMs < 0 ||
-      keepAliveIntervalMs >= 900_000
-    ) {
-      throw new Error(
-        "WorkerJavaScriptBackend keepAliveIntervalMs must be zero or less than 15 minutes.",
-      );
-    }
-    assertPositiveFinite(options.maxSourceBytes ?? 1024 * 1024, "maxSourceBytes");
-    assertPositiveFinite(options.maxInputBytes ?? 1024 * 1024, "maxInputBytes");
-    assertPositiveFinite(options.maxStdinBytes ?? 256 * 1024, "maxStdinBytes");
-    assertPositiveFinite(options.maxEnvBytes ?? 1024 * 1024, "maxEnvBytes");
-    assertPositiveFinite(options.maxResultBytes ?? 1024 * 1024, "maxResultBytes");
-    assertPositiveFinite(options.maxStdioBytes ?? 1024 * 1024, "maxStdioBytes");
-    assertPositiveFinite(options.maxCapabilityBytes ?? 1024 * 1024, "maxCapabilityBytes");
-    assertPositiveFinite(options.maxHostCallMs ?? maxTimeoutMs, "maxHostCallMs");
-    assertPositiveInteger(
-      options.maxConcurrentCapabilityCalls ?? 32,
-      "maxConcurrentCapabilityCalls",
+    this.#options = resolveJavaScriptBackendOptions(
+      options,
+      "WorkerJavaScriptBackend",
+      "worker-javascript",
     );
-    assertPositiveInteger(options.maxCapabilityCalls ?? 256, "maxCapabilityCalls");
-    assertPositiveFinite(
-      options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
-      "maxCapabilityRequestBytes",
-    );
-    assertPositiveFinite(
-      options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
-      "maxCapabilityResponseBytes",
-    );
-    assertPositiveInteger(options.maxDirectoryEntries ?? 1024, "maxDirectoryEntries");
-    assertPositiveInteger(options.maxExecutionSubscribers ?? 8, "maxExecutionSubscribers");
-    assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
-    assertPositiveInteger(options.maxRetainedExecutions ?? 100, "maxRetainedExecutions");
-    if ((options.maxCapabilityBytes ?? 1024 * 1024) < 256) {
-      throw new Error("WorkerJavaScriptBackend maxCapabilityBytes must be at least 256 bytes.");
-    }
-    const compatibilityDate = options.compatibilityDate ?? "2026-05-23";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) {
-      throw new Error("WorkerJavaScriptBackend compatibilityDate must use YYYY-MM-DD.");
-    }
-    if (defaultTimeoutMs > maxTimeoutMs) {
-      throw new Error("WorkerJavaScriptBackend defaultTimeoutMs cannot exceed maxTimeoutMs.");
-    }
-    const { globalOutbound, egress, ...backendOptions } = options;
-    const resolvedEgress =
-      egress ??
-      (globalOutbound === undefined
-        ? { mode: "none" as const }
-        : globalOutbound === null
-          ? { mode: "none" as const }
-          : { mode: "http-gateway" as const, gateway: globalOutbound });
-    this.#options = {
-      ...backendOptions,
-      egress: resolvedEgress,
-      modules: parseModules(options.modules ?? {}),
-      root: options.root ?? "/workspace",
-      access: options.access ?? "read-write",
-      defaultTimeoutMs,
-      maxTimeoutMs,
-      maxCpuMs,
-      keepAliveIntervalMs,
-      maxSourceBytes: options.maxSourceBytes ?? 1024 * 1024,
-      maxInputBytes: options.maxInputBytes ?? 1024 * 1024,
-      maxStdinBytes: options.maxStdinBytes ?? 256 * 1024,
-      maxEnvBytes: options.maxEnvBytes ?? 1024 * 1024,
-      maxResultBytes: options.maxResultBytes ?? 1024 * 1024,
-      maxStdioBytes: options.maxStdioBytes ?? 1024 * 1024,
-      maxCapabilityBytes: options.maxCapabilityBytes ?? 1024 * 1024,
-      maxHostCallMs: options.maxHostCallMs ?? maxTimeoutMs,
-      maxConcurrentCapabilityCalls: options.maxConcurrentCapabilityCalls ?? 32,
-      maxCapabilityCalls: options.maxCapabilityCalls ?? 256,
-      maxCapabilityRequestBytes: options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
-      maxCapabilityResponseBytes: options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
-      maxDirectoryEntries: options.maxDirectoryEntries ?? 1024,
-      maxExecutionSubscribers: options.maxExecutionSubscribers ?? 8,
-      retentionMs: options.retentionMs ?? 60 * 60_000,
-      maxRetainedExecutions: options.maxRetainedExecutions ?? 100,
-      compatibilityDate,
-      compatibilityFlags: options.compatibilityFlags ?? ["nodejs_compat"],
-    };
-    this.#header = [
-      "`command` is ECMAScript module source, run in an isolated JavaScript runtime. Relative imports resolve from `cwd` in the workspace.",
-      "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
-      ...(resolvedEgress.mode === "none" ? ["Code has no direct network access."] : []),
-      ...(this.#options.access === "read" ? ["The workspace is read-only here."] : []),
-      "",
-      "Modules code can import:",
-    ].join("\n");
+    this.id = this.#options.id ?? "worker-javascript";
   }
 
   /** What this backend tells a model: the source language and every importable module. */
   get description(): string {
-    return [
-      this.#header,
-      this.#options.modules.description,
-      ...(hasNodeModules(this.#options.compatibilityFlags) ? [NODE_MODULES_DESCRIPTION] : []),
-    ].join("\n");
+    return describeJavaScriptBackend(this.#options);
   }
 
   async connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle> {
@@ -326,11 +356,40 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   }
 }
 
-class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
+/** What a backend built on the JavaScript handle sees when it connects. */
+export interface JavaScriptBackendConnection {
+  /** Host modules isolate code can import, built for this connection. */
+  readonly hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Host modules whose factory built nothing on this connection. */
+  readonly emptyHostModules: ReadonlySet<string>;
+  /** The backend's source modules, prepared for the module directory. */
+  sourceModules(): Readonly<Record<string, string>>;
+}
+
+/**
+ * What a backend built on the JavaScript handle adds to every
+ * execution. Not part of the public API.
+ */
+export interface JavaScriptBackendExtension {
+  /**
+   * Host functions the bridge serves but caller source can't import by
+   * specifier. Only modules that `replaceModule` generates reach them.
+   */
+  readonly bridgeModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Generated modules every execution's bundle holds. See `buildModuleGraph`. */
+  readonly internalModules?: BuildModuleGraphOptions["internalModules"];
+  /** Source to load in place of a Workspace file. See `buildModuleGraph`. */
+  readonly replaceModule?: BuildModuleGraphOptions["replaceModule"];
+}
+
+export class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #options: ResolvedWorkerJavaScriptBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
   readonly #emptyHostModules: ReadonlySet<string>;
+  readonly #bridgeModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  readonly #replaceModule: BuildModuleGraphOptions["replaceModule"];
+  readonly #internalModules: BuildModuleGraphOptions["internalModules"];
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
@@ -345,7 +404,11 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // Zero when the timer is off or can't keep this object in memory.
   readonly #keepAliveIntervalMs: number;
 
-  constructor(options: ResolvedWorkerJavaScriptBackendOptions, host: WorkspaceModuleBackendHost) {
+  constructor(
+    options: ResolvedWorkerJavaScriptBackendOptions,
+    host: WorkspaceModuleBackendHost,
+    extend?: (connection: JavaScriptBackendConnection) => JavaScriptBackendExtension,
+  ) {
     this.#options = options;
     this.#keepAliveIntervalMs = hostKeepsPendingWork() ? options.keepAliveIntervalMs : 0;
     this.#host = host;
@@ -372,6 +435,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
     this.#hostModuleFunctions = functions;
     this.#emptyHostModules = empty;
+    const extension = extend?.({
+      hostModules: functions,
+      emptyHostModules: empty,
+      sourceModules: () => this.#preparedSourceModules(),
+    });
+    this.#bridgeModules =
+      extension === undefined ? functions : new Map([...functions, ...extension.bridgeModules]);
+    this.#replaceModule = extension?.replaceModule;
+    this.#internalModules = extension?.internalModules;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -492,6 +564,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         hostModules: this.#hostModuleFunctions,
         emptyHostModules: this.#emptyHostModules,
         nodeModules: hasNodeModules(this.#options.compatibilityFlags),
+        replaceModule: this.#replaceModule,
+        internalModules: this.#internalModules,
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
@@ -525,7 +599,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       this.#markRunning(id, timeoutMs);
       try {
         const bridge = new WorkspaceRuntimeBridge(capability, {
-          hostModules: this.#hostModuleFunctions,
+          hostModules: this.#bridgeModules,
           maxPayloadBytes: this.#options.maxCapabilityBytes,
           maxCallDurationMs: this.#options.maxHostCallMs,
           maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,
@@ -1408,7 +1482,7 @@ async function ensureDirectory(fs: WorkspaceBackendHost["fs"], path: string): Pr
   }
 }
 
-function assertLoaderGraph(
+export function assertLoaderGraph(
   modules: Record<string, string | { js?: string }>,
   maxSourceBytes: number,
 ) {
@@ -1506,7 +1580,7 @@ function addColumnIfMissing(
   }
 }
 
-function runtimeError(code: string, message: string): Error & { code: string } {
+export function runtimeError(code: string, message: string): Error & { code: string } {
   const error = new Error(message) as Error & { code: string };
   error.code = code;
   return error;

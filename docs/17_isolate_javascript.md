@@ -143,7 +143,7 @@ A run also needs its Durable Object to stay in memory, and that depends on the h
 
 CPU time is limited separately from wall-clock time. Each run's CPU limit is the smaller of its timeout and `maxCpuMs`, which defaults to `maxTimeoutMs`. CPU time adds up over the whole run, however much of it is spent waiting, and Cloudflare currently stops a Dynamic Worker call at about five minutes of CPU whatever the limit. A run that mostly waits on I/O uses little of that and can last hours. A run that computes heavily fails with `Worker exceeded CPU time limit.` once it reaches the cap. Every execution gets a fresh Dynamic Worker and a fresh CPU budget, so heavy work can be split across executions or moved to a container. The platform's subrequest limit, 10,000 by default on the Workers Paid plan, also counts every `fetch` over the whole run. A long run also holds one of the ten Dynamic Workers a Durable Object can have in flight for as long as it lasts.
 
-Nothing keeps a run going across a deploy or a crash. A deploy shuts the old instance down a few minutes later, and a run that was in flight is marked as failed the next time the backend connects.
+Nothing keeps a run going across a deploy or a crash. A deploy shuts the old instance down a few minutes later, and a run that was in flight is marked as failed the next time the backend connects. For state that lasts between runs, `DynamicJavaScriptBackend` runs Durable Object classes from Workspace files as long-lived apps that code can import and call. See [20. Dynamic JavaScript](./20_dynamic_javascript.md).
 
 ## Environment, standard input, and the `process` shim
 

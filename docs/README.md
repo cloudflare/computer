@@ -262,6 +262,7 @@ rather than an API.
 | [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | Stable, except `ws:container` | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, host modules, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Reference | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Reference | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
+| [20. Dynamic JavaScript runtime](./20_dynamic_javascript.md) | Experimental | Durable Object apps in Workspace files, run as facets, and code that imports and calls them. |
 
 ## High-level API
 

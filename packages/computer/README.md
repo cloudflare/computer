@@ -31,6 +31,7 @@ removed in a future release; each one names its replacement.
 | Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
 | `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
+| `DynamicJavaScriptBackend` | `@cloudflare/computer/backends/dynamic-javascript` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `ws:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
@@ -317,6 +318,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 | **Container (legacy)** | Deprecated | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
 | **Worker shell** | Experimental | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag; the `just-bash` package |
 | **Worker JavaScript** | Stable | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
+| **Dynamic JavaScript** | Experimental | `@cloudflare/computer/backends/dynamic-javascript` | The same, plus Durable Object apps from Workspace files that keep running between executions | A Worker Loader binding and the host Durable Object's `ctx.facets` |
 
 - **Container** cold-starts more slowly but gives you a real Linux
   environment. The container owns its own SQLite-backed VFS and this
@@ -339,6 +341,11 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
+- **Dynamic JavaScript** runs code the same way, and adds apps: a
+  Workspace file whose default export extends `DurableObject` runs as a
+  facet of the host Durable Object, with its own storage, and code
+  imports the file and calls methods on its instances. See
+  [`docs/20_dynamic_javascript.md`](../../docs/20_dynamic_javascript.md).
 
 You can register several backends on one Workspace and route each call
 to a named one — see [Multiple backends](#multiple-backends).
@@ -510,6 +517,7 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
+| `@cloudflare/computer/backends/dynamic-javascript` | Experimental. `DynamicJavaScriptBackend`: the worker-javascript backend plus Durable Object apps run as facets. |
 | `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |

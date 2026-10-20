@@ -16,7 +16,12 @@ export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
 
 const ENTRY_BASENAME = "__workspace_entry__.js";
 const RUNNER_MODULE = "workspace-runtime-runner.js";
-const CAPABILITIES_MODULE = "workspace-capabilities.js";
+/** The module that installs a call's bridge and forwards capability calls to it. */
+export const CAPABILITIES_MODULE = "workspace-capabilities.js";
+/** The main module of a Durable Object app's Dynamic Worker. */
+export const APP_MODULE = "workspace-app.js";
+/** The module that defines what code gets when it imports a Durable Object app. */
+export const FACETS_MODULE = "workspace-facets.js";
 // Configured and host modules are stored once, here. The Loader
 // resolves a bare import next to the importing file and has no
 // node_modules lookup, so every import of one of them is rewritten to a
@@ -193,6 +198,35 @@ export interface BuildModuleGraphOptions {
   emptyHostModules?: ReadonlySet<string>;
   /** Whether the Dynamic Worker has the Node.js built-ins. */
   nodeModules: boolean;
+  /**
+   * Modules the Workers runtime provides that code may import as
+   * written, such as `cloudflare:workers` for a Durable Object app.
+   */
+  runtimeModules?: readonly string[];
+  /**
+   * Generated modules to store at the root of the Worker's bundle, by
+   * module name. Each name must be one of the reserved internal names,
+   * so no Workspace file can take it. They can import the capabilities
+   * module as `./workspace-capabilities.js`.
+   */
+  internalModules?: Readonly<Record<string, string>>;
+  /**
+   * Source to load in place of a Workspace file, or undefined to load
+   * the file itself. A replacement is stored as returned and its imports
+   * are not followed, so it may only import the capabilities module and
+   * `internalModules`, through the specifiers `internalImport` gives.
+   *
+   * @param path - The file's absolute Workspace path.
+   * @param source - The file's source.
+   * @param internalImport - Gives the specifier that imports an internal
+   *   module, such as the capabilities module, from where the file is
+   *   stored.
+   */
+  replaceModule?: (
+    path: string,
+    source: string,
+    internalImport: (name: string) => string,
+  ) => string | undefined;
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
@@ -283,6 +317,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
     for (const site of importSites(source, { allowComputed: false })) {
       const specifier = site.specifier;
       if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) continue;
+      if (options.runtimeModules?.includes(specifier)) continue;
       if (
         options.hostModules.has(specifier) ||
         Object.hasOwn(options.configuredModules, specifier)
@@ -336,6 +371,17 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
             `Workspace JavaScript module graph exceeds ${options.maxSourceBytes} source bytes.`,
           );
         }
+        const replacement = options.replaceModule?.(resolved, child, (internal) =>
+          relativeSpecifier(childName, internal),
+        );
+        if (replacement !== undefined) {
+          seen.add(childName);
+          if (seen.size > maxModules) {
+            throw new Error(`Workspace JavaScript module graph exceeds ${maxModules} modules.`);
+          }
+          modules[childName] = replacement;
+          continue;
+        }
         await visit(resolved, child, depth + 1);
         continue;
       }
@@ -351,6 +397,12 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
 
   // node:* specifiers are resolved by name in both registries, so they
   // keep their exact keys.
+  for (const [name, source] of Object.entries(options.internalModules ?? {})) {
+    if (!isInternalModuleName(name) || name.includes("/")) {
+      throw new Error(`Module ${JSON.stringify(name)} is not a reserved internal module name.`);
+    }
+    modules[name] = { js: source };
+  }
   modules["node:fs/promises"] = { js: nodeFsPromisesModule() };
   modules["node:fs"] = { js: nodeFsModule() };
 
@@ -511,6 +563,8 @@ function isInternalModuleName(name: string) {
   return (
     name === CAPABILITIES_MODULE ||
     name === RUNNER_MODULE ||
+    name === APP_MODULE ||
+    name === FACETS_MODULE ||
     name === ENTRY_BASENAME ||
     name === MODULES_DIRECTORY ||
     name.startsWith(`${MODULES_DIRECTORY}/`) ||

@@ -79,6 +79,10 @@
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
     },
+    "./backends/dynamic-javascript": {
+      "types": "./dist/backends/dynamic-javascript/index.d.ts",
+      "import": "./dist/backends/dynamic-javascript/index.js"
+    },
     "./backends/worker-javascript": {
       "types": "./dist/backends/worker-javascript/index.d.ts",
       "import": "./dist/backends/worker-javascript/index.js"
@@ -155,10 +159,11 @@
     "prepare": "npm run build:shell-bundle",
     "build": "rolldown -c",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
-    "test": "vitest run && vitest run --config vitest.config.proxy.ts && vitest run --config vitest.config.worker-backend.ts && vitest run --config vitest.config.script-runner.ts && vitest run --config vitest.config.stub-soak.ts",
+    "test": "vitest run && vitest run --config vitest.config.proxy.ts && vitest run --config vitest.config.worker-backend.ts && vitest run --config vitest.config.script-runner.ts && vitest run --config vitest.config.dynamic-javascript.ts && vitest run --config vitest.config.stub-soak.ts",
     "test:stub-soak": "vitest run --config vitest.config.stub-soak.ts",
     "test:worker-backend": "vitest run --config vitest.config.worker-backend.ts",
     "test:code": "vitest run --config vitest.config.script-runner.ts",
+    "test:dynamic-javascript": "vitest run --config vitest.config.dynamic-javascript.ts",
     "test:harness": "./test-harness/run-harness.sh",
     "bench:harness": "./test-harness/run-harness.sh bench",
     "prepublishOnly": "npm run build && npm test"
