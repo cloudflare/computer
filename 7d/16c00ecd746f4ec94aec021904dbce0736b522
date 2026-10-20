@@ -1,0 +1,25 @@
+packages/computer/README.md
+  s_80fab4cbbeef01::t_57292d5da4d772 484-485,489-490,494-497
+packages/computer/src/client.test.ts
+  s_80fab4cbbeef01::t_3a3eaeb24794ea 188,190-195,197-211
+packages/computer/src/client.ts
+  s_80fab4cbbeef01::t_bacaa32f0d2f1d 395-400,406-427,431,437-438,475
+packages/computer/src/index.ts
+  s_80fab4cbbeef01::t_2f4d08eb1a5665 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7d16c00ecd746f4ec94aec021904dbce0736b522",
+  "prompts": {},
+  "sessions": {
+    "s_80fab4cbbeef01": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11d77-b402-77a1-bfff-639f8e6da640",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}
