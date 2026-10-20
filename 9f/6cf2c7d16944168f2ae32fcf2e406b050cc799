@@ -1,0 +1,31 @@
+docs/17_isolate_javascript.md
+  s_5a33ac7eaed91e::t_8ece47752b558d 222-223
+packages/computer/src/backends/worker-javascript/journal.ts
+  s_5a33ac7eaed91e::t_765df50cc8905e 614-615,624,626-627,632
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_5a33ac7eaed91e::t_2ee3e93cca29ff 121-130,601-618,944-947
+packages/computer/src/runtime/bridge.test.ts
+  s_5a33ac7eaed91e::t_5baa027beb087e 266
+packages/computer/src/runtime/bridge.ts
+  s_5a33ac7eaed91e::t_78c6d28fb996d3 35,63,352,354,359,625
+packages/computer/tests/script-runner-worker.ts
+  s_5a33ac7eaed91e::t_2a74d5a6de22ab 9-13,68-69,99,319,334-337,623-626
+packages/computer/tests/script-runner.test.ts
+  s_5a33ac7eaed91e::t_2c636cd3232d64 1522-1532
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9f6cf2c7d16944168f2ae32fcf2e406b050cc799",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
