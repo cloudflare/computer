@@ -7,7 +7,12 @@ import {
 import { LegacyContainerBackend } from "@cloudflare/computer/backends/container-legacy";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { getSandbox } from "@cloudflare/sandbox";
-import { type ChunkContext, type StepContext, Think } from "@cloudflare/think";
+import {
+  type ChatRecoveryOptions,
+  type ChunkContext,
+  type StepContext,
+  Think,
+} from "@cloudflare/think";
 import type { ToolSet } from "ai";
 import { getServerByName } from "partyserver";
 import type { ExecutionTarget, RunEventKind, RuntimeId } from "../../shared/events";
@@ -118,6 +123,12 @@ abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
 
   override getTools(): ToolSet {
     return this.#preparedTools ?? ({} as ToolSet);
+  }
+
+  // The runtime session lives only in this instance, so a recovered turn
+  // has nothing to run its tools on. Stop the turn instead.
+  protected override async onChatRecovery(): Promise<ChatRecoveryOptions> {
+    return { continue: false };
   }
 
   async invokeThink(prompt: string): Promise<{ text: string }> {
