@@ -177,6 +177,12 @@ function javascriptBackend(
           countCall(`answered:${action}`);
           return answer;
         },
+        // Like approve, but awaits first, as a real lookup would.
+        async approveLater(args, ctx) {
+          const action = String(args[0]);
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return ctx.interrupt({ kind: "approval", action });
+        },
         async marker() {
           return {
             __workspace_codec__: { version: 1, type: "bytes", data: [1] },

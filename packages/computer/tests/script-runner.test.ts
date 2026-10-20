@@ -331,6 +331,7 @@ describe("WorkspaceRuntime", () => {
     expect(response.status, text).toBe(200);
     expect(JSON.parse(text).result.value).toEqual([
       "approve",
+      "approveLater",
       "delete",
       "echo",
       "gate",
@@ -1472,6 +1473,21 @@ describe("interrupts", () => {
       "ask:two": 2,
       "answered:two": 1,
     });
+  });
+
+  it("waits on calls in flight that interrupt after the first", async () => {
+    await start(
+      "wait-later",
+      `
+        import { approveLater } from "ws:test-host";
+        export default async () => Promise.all([approveLater("one"), approveLater("two")]);
+      `,
+    );
+    const first = await waitingCall("wait-later");
+    const second = await waitingCall("wait-later", first.callId);
+    await respond("wait-later", first.callId, 1);
+    await respond("wait-later", second.callId, 2);
+    expect(await result("wait-later")).toMatchObject({ status: "completed", value: [1, 2] });
   });
 
   it("lets other calls in flight finish before it releases the run", async () => {

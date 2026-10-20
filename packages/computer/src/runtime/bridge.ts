@@ -35,6 +35,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #onWait?: (call: { seq: number; payload: unknown; since: number }) => void;
   // Set once a call interrupts: new calls are held, never started.
   #holding = false;
+  // Wakes quiesce() when another call starts waiting.
+  #waited?: () => void;
   #cancelled = false;
   #callTimedOut = false;
   #calls = 0;
@@ -356,6 +358,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         return Promise.reject(error);
       }
       this.#waiting.add(abort);
+      this.#waited?.();
       this.#onWait?.({ seq: step.seq, payload, since });
     }
     // Settles only when the run is released and the call aborted.
@@ -365,14 +368,22 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   }
 
   /**
-   * Hold new calls and wait for the ones in flight to be answered and
-   * journaled, apart from those that interrupted. The run can then be
-   * released without any call running twice when it resumes.
+   * Hold new calls and wait until each one in flight has been answered
+   * and journaled, or is waiting itself. The run can then be released
+   * without any call running twice when it resumes.
    */
   async quiesce(): Promise<void> {
     this.#holding = true;
-    const answering = [...this.#responses].filter(([, abort]) => !this.#waiting.has(abort));
-    await Promise.allSettled(answering.map(([response]) => response));
+    while (true) {
+      const answering = [...this.#responses].filter(([, abort]) => !this.#waiting.has(abort));
+      if (answering.length === 0) return;
+      // Look again once one is answered or starts waiting.
+      await new Promise<void>((resolve) => {
+        this.#waited = resolve;
+        const wake = () => resolve();
+        void Promise.race(answering.map(([response]) => response)).then(wake, wake);
+      });
+    }
   }
 
   // The isolate is waiting for a journaled call its replay never made.

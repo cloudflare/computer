@@ -225,7 +225,7 @@ Once none of its calls are waiting, the run replays to the call and the function
 
 - A call can interrupt once. A second `interrupt()` in the same call throws.
 - Only a run with `onInterrupt: "replay"` can wait. Anywhere else, `interrupt()` throws, so a Workspace with modules that interrupt should make `"replay"` its backend's default.
-- Calls that interrupt together are answered one after another. A run is released with the calls that were in flight, and a call it makes after that waits once it resumes.
+- A run is released once each call in flight has finished or is waiting too, and those waits are answered together. A call the run makes after the first interrupt is held until it resumes, so a call that interrupts straight away can leave the next one to wait for a later round.
 - `respond()` throws `ENOTWAITING` for a call that isn't waiting, such as one already answered, so answering twice changes nothing.
 - Every answer replays the run from the top.
 
