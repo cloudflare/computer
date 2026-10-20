@@ -15,6 +15,7 @@ import type {
   WorkspaceModuleFactory,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
+  WorkspaceModuleTypes,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
 
@@ -96,7 +97,65 @@ export function createArtifactsModule(
   });
   return Object.assign(create, {
     description: `Git repositories stored in Cloudflare Artifacts: \`create(name)\`, \`get(name)\`, \`list()\`, \`importArtifact(name, source)\`, and \`deleteArtifact(name)\`.${allowNetwork ? "" : " Importing from a remote URL is not allowed."} \`createToken(name, scope?, ttl?)\` mints a git token ("read" by default). \`share(name, { scope?, ttl? })\` returns a clone-ready URL with a token embedded; it is a credential, so never print or return it. \`ttl\` is seconds or a duration like "15m".`,
+    types: artifactsTypes(allowNetwork),
+    examples: [
+      'const repo = await create("notes");',
+      'const remote = await share("notes", { scope: "write", ttl: "15m" });',
+    ],
   });
+}
+
+function artifactsTypes(allowNetwork: boolean): WorkspaceModuleTypes {
+  return {
+    ArtifactRepo: `interface ArtifactRepo {
+  id: string;
+  name: string;
+  description: string | null;
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+  lastPushAt: string | null;
+}`,
+    CreatedArtifact: `/** \`token\` is a credential for \`remote\`. Never print or return it. */
+interface CreatedArtifact {
+  id: string;
+  name: string;
+  description: string | null;
+  defaultBranch: string;
+  remote: string;
+  token: string;
+}`,
+    create: `/** Create a git repository. */
+function create(
+  name: string,
+  options?: { readOnly?: boolean; description?: string; setDefaultBranch?: string },
+): Promise<CreatedArtifact>;`,
+    get: `/** A repository's details, including its HTTPS \`remote\`. Rejects when it does not exist. */
+function get(name: string): Promise<ArtifactRepo & { remote: string }>;`,
+    list: "function list(): Promise<ArtifactRepo[]>;",
+    importArtifact: `/** Import an existing git remote as a new repository.${allowNetwork ? "" : " Not allowed here: importing from a remote URL needs network access."} */
+function importArtifact(
+  name: string,
+  source: { url: string; branch?: string; depth?: number },
+  options?: { description?: string; readOnly?: boolean },
+): Promise<CreatedArtifact>;`,
+    deleteArtifact:
+      "/** Resolves false when the repository does not exist. */\nfunction deleteArtifact(name: string): Promise<boolean>;",
+    createToken: `/**
+ * Mint a git token for a repository. \`scope\` defaults to "read". \`ttl\` is
+ * seconds or a duration such as "15m". \`plaintext\` is a credential.
+ */
+function createToken(
+  name: string,
+  scope?: "read" | "write",
+  ttl?: number | string,
+): Promise<{ id: string; plaintext: string; scope: "read" | "write"; expiresAt: string }>;`,
+    share: `/**
+ * The repository's HTTPS remote with a fresh token in it, ready to clone or push.
+ * It is a credential: never print or return it.
+ */
+function share(name: string, options?: { scope?: "read" | "write"; ttl?: number | string }): Promise<string>;`,
+  };
 }
 
 function requireWrite(context: WorkspaceModuleCallContext, operation: string) {

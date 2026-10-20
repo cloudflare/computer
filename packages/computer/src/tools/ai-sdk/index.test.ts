@@ -1830,7 +1830,7 @@ describe("createAITools exec against a real JavaScript backend", () => {
     expect(description).toContain("`node:fs/promises`");
     expect(description).toContain("- `tar-stream`: a bundled library.");
     expect(description).toContain("- `ws:weather`: exports `forecast`.");
-    expect(description).toContain("- `ws:git`: The workspace's Git repository tools");
+    expect(description).toContain("- `ws:git`: The workspace's Git repository: ");
     expect(description).toContain("no direct network access");
     expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
   });

@@ -230,4 +230,14 @@ describe("forPiTools", () => {
     // createPiTools reports a bad call as an error result rather than throwing.
     await expect(functions.read?.([{}], callContext())).resolves.toMatchObject({ isError: true });
   });
+
+  it("gives each binding the tool's description and parameters, so ws:tools can declare it", () => {
+    const { tool } = agentTool("read", { content: [] });
+    const fromTools = bindingFor(forPiTools([tool]), "read");
+    expect(fromTools).toMatchObject({ description: "The read tool.", inputSchema: pathParameters });
+
+    const workspace = new Workspace({ storage: new SQLiteTestStorage() });
+    const types = createToolBindings(forPiTools(createPiTools({ workspace }))).types;
+    expect(types?.read).toMatch(/^\/\*\*[\s\S]*\*\/\nfunction read\(input: \{/);
+  });
 });

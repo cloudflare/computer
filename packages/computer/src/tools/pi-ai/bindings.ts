@@ -96,6 +96,8 @@ export function forPiTools<T extends PiAgentTool>(
   return () =>
     declarations.map((declaration) => ({
       name: declaration.name,
+      description: declaration.description,
+      inputSchema: declaration.parameters,
       readOnly: PI_READ_ONLY_TOOLS.has(declaration.name),
       async call(input, context) {
         const result = await execute(
@@ -110,6 +112,8 @@ export function forPiTools<T extends PiAgentTool>(
 function agentBinding<T extends PiAgentTool>(tool: T, options: ForPiToolsOptions<T>): ToolBinding {
   return {
     name: tool.name,
+    description: tool.description,
+    inputSchema: tool.parameters,
     readOnly: options.readOnly?.includes(tool.name) === true,
     async call(input, context) {
       const id = callId();

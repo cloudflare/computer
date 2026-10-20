@@ -968,3 +968,280 @@ describe.each([
     });
   });
 });
+
+// cloudflare:computer and printed values. A host module's code runs in the
+// Durable Object, so these check what the isolate can learn about it
+// without that code: its declarations, looked up or printed.
+describe.each([
+  ["the legacy module registry", "worker-javascript"],
+  ["the new module registry", "worker-javascript-new-registry"],
+])("module introspection on %s", (_label, backend) => {
+  async function run(source: string) {
+    const response = await runtime({ source, cwd: "/workspace", backend });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    return (JSON.parse(text) as { result: { status: string; value?: unknown; stderr?: string } })
+      .result;
+  }
+
+  it("describes a host module from its namespace, its specifier, or one export", async () => {
+    const result = await run(`
+      import * as git from "ws:git";
+      import { docs, types } from "cloudflare:computer";
+      export default () => ({
+        byNamespace: docs(git),
+        bySpecifier: docs("ws:git"),
+        moduleTypes: types(git),
+        cli: types(git.cli),
+        printed: String(git.cli),
+        name: git.cli.name,
+      });
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    const value = result.value as Record<string, string>;
+    expect(value.byNamespace).toBe(value.bySpecifier);
+    expect(value.byNamespace).toContain("# ws:git");
+    expect(value.byNamespace).toContain('declare module "ws:git" {');
+    expect(value.byNamespace).toContain('await cli({ argv: ["log", "--oneline", "-5"] });');
+    expect(value.moduleTypes).toMatch(/^declare module "ws:git" \{/);
+    expect(value.cli).toContain("interface GitCliResult");
+    expect(value.cli).toContain("function cli(input: { argv: string[]");
+    expect(value.cli).not.toContain("function status");
+    expect(value.printed).toContain("Promise<GitCliResult> { [host code] }");
+    expect(value.name).toBe("cli");
+  });
+
+  it("lists every module, and describes built-in and bundled ones", async () => {
+    const result = await run(`
+      import { docs, types } from "cloudflare:computer";
+      export default () => ({
+        overview: docs(),
+        fs: types("node:fs/promises"),
+        self: types("cloudflare:computer"),
+        bundled: docs("math-kit"),
+        node: docs("path"),
+      });
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    const value = result.value as Record<string, string>;
+    for (const specifier of [
+      "node:fs/promises",
+      "ws:git",
+      "ws:tools",
+      "math-kit",
+      "cloudflare:computer",
+    ]) {
+      expect(value.overview).toContain(`\`${specifier}\``);
+    }
+    expect(value.fs).toContain("function readFile(path: string): Promise<Uint8Array>;");
+    expect(value.self).toContain("function docs(target?: ModuleTarget): string;");
+    expect(value.bundled).toContain('Object.keys(await import("math-kit"))');
+    expect(value.node).toContain("`node:path` is the Node.js built-in");
+  });
+
+  it("declares ws:tools exports from each tool's input schema", async () => {
+    const result = await run(`
+      import { get_weather } from "ws:tools";
+      import { types } from "cloudflare:computer";
+      export default async () => ({ declared: types(get_weather), called: (await get_weather({ city: "Lisbon" })).text });
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    expect(result.value).toMatchObject({ called: "sunny in Lisbon" });
+    const declared = (result.value as { declared: string }).declared;
+    expect(declared).toContain("/** The weather in a city. */");
+    expect(declared).toContain("function get_weather(input: {");
+    expect(declared).toContain("/** The city's name. */");
+    expect(declared).toContain("city: string;");
+    expect(declared).toContain("interface ToolResult");
+  });
+
+  it("shows exports with no declarations as taking unknown", async () => {
+    const result = await run(`
+      import { types } from "cloudflare:computer";
+      export default () => types("ws:test-host");
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: expect.stringContaining("function echo(...args: unknown[]): Promise<unknown>;"),
+    });
+  });
+
+  it("lets a configured module import cloudflare:computer", async () => {
+    const result = await run(`
+      import { gitDocs } from "docs-kit";
+      export default () => gitDocs();
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: expect.stringContaining('declare module "ws:git"'),
+    });
+  });
+
+  // This fixture cuts standard error short, so these read the message
+  // inside the isolate.
+  it("names the modules there are when asked about one that isn't", async () => {
+    const result = await run(`
+      import { docs } from "cloudflare:computer";
+      export default () => { try { docs("ws:nope"); } catch (error) { return error.message; } };
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: expect.stringMatching(/no such module\. Modules code can import: .*ws:git/),
+    });
+  });
+
+  it("refuses a function no host module exports", async () => {
+    const result = await run(`
+      import { docs } from "cloudflare:computer";
+      export default () => { try { docs(() => 1); } catch (error) { return error.message; } };
+    `);
+    expect(result).toMatchObject({
+      status: "completed",
+      value: expect.stringContaining("was passed a function no host module exports"),
+    });
+  });
+
+  it("refuses another cloudflare: module before running", async () => {
+    const response = await runtime({
+      source: `import { x } from "cloudflare:workers"; export default () => x;`,
+      cwd: "/workspace",
+      backend,
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain(
+      'The only cloudflare: module code can import is \\"cloudflare:computer\\"',
+    );
+  });
+});
+
+describe("console output", () => {
+  async function output(source: string) {
+    const response = await runtime({
+      source,
+      cwd: "/workspace",
+      backend: "worker-javascript-wide-output",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    return (JSON.parse(text) as { result: { status: string; stdout: string; stderr: string } })
+      .result;
+  }
+
+  it("formats values the way Node.js does", async () => {
+    const result = await output(`
+      export default () => {
+        const loop = { name: "loop" };
+        loop.self = loop;
+        console.log("text", 1, null, undefined, { a: 1, b: "x", list: [1, "two"] });
+        console.log(loop);
+        console.log(new Map([["k", 1]]), new Set([1]), new Uint8Array([1, 2]));
+        console.log(function named() {}, class Thing {});
+        console.log(Object.assign(new Error("boom"), { code: "EBOOM" }).code);
+      };
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    expect(result.stdout.split("\n")).toEqual([
+      "text 1 null undefined { a: 1, b: 'x', list: [ 1, 'two' ] }",
+      "{ name: 'loop', self: [Circular] }",
+      "Map(1) { 'k' => 1 } Set(1) { 1 } Uint8Array(2) [ 1, 2 ]",
+      "[Function: named] [class Thing]",
+      "EBOOM",
+      "",
+    ]);
+  });
+
+  it("runs a module with no exports as the body of the default export", async () => {
+    const result = await output(`
+      // A comment before the imports.
+      import { writeFile, readFile } from "node:fs/promises";
+      import {
+        status, // what changed
+      } from "ws:git";
+      await writeFile("/workspace/script.txt", "from a script");
+      const text = await readFile("/workspace/script.txt", "utf8");
+      if (typeof status !== "function") throw new Error("no status");
+      throw new Error("ran: " + text);
+    `);
+    expect(result).toMatchObject({ status: "failed" });
+    expect(result.stderr).toContain("ran: from a script");
+
+    const returned = await output(`
+      import { readFile } from "node:fs/promises";
+      return readFile("/workspace/script.txt", "utf8");
+    `);
+    expect(returned).toMatchObject({ status: "completed" });
+  });
+
+  it("runs a module with no exports as a script, for what it prints", async () => {
+    const result = await output(`
+      import * as git from "ws:git";
+      import { docs } from "cloudflare:computer";
+      console.log(git);
+      console.log(docs().split("\\n")[0]);
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    expect(result.stdout).toContain('[Module: ws:git]\ndeclare module "ws:git" {');
+    expect(result.stdout).toContain("Modules code can import.");
+  });
+
+  it("points a call to an export a host module lacks at its docs", async () => {
+    const result = await output(`
+      import * as git from "ws:git";
+      export default () => git.init({ dir: "repo" });
+    `);
+    expect(result).toMatchObject({
+      status: "failed",
+      stderr: expect.stringContaining(
+        'is not a function. If that was a call into ws:git, docs("ws:git") from cloudflare:computer lists what it exports.',
+      ),
+    });
+  });
+
+  it("prints a host module's namespace and exports as their declarations", async () => {
+    const result = await output(`
+      import * as git from "ws:git";
+      import { cli } from "ws:git";
+      export default () => {
+        console.log(git);
+        console.log(cli);
+        console.log({ cli });
+      };
+    `);
+    expect(result.status, result.stderr).toBe("completed");
+    expect(result.stdout).toContain('[Module: ws:git]\ndeclare module "ws:git" {');
+    expect(result.stdout).toContain("Promise<GitCliResult> { [host code] }");
+    expect(result.stdout).toContain("{ cli: [Function: cli] (ws:git) }");
+  });
+});
+
+describe("ws:git arguments", () => {
+  async function run(source: string) {
+    const response = await runtime({ source, cwd: "/workspace" });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    return (JSON.parse(text) as { result: { status: string; value?: unknown; stderr?: string } })
+      .result;
+  }
+
+  it.each([
+    ['cli("status")', 'got ("status")'],
+    ['cli(["status"])', 'got (["status"])'],
+    ["cli({})", "argv must be an array of strings"],
+    ['cli({ argv: ["git", "status"] })', 'argv leaves out "git": pass ["status"]'],
+    ['status("/workspace")', "status takes one options object"],
+    [
+      'log({ cwd: "/workspace", maxCount: 3 })',
+      'has no option "cwd" or "maxCount". Its options are dir, ref, depth.',
+    ],
+  ])("refuses %s with the call's shape", async (call, message) => {
+    const result = await run(`
+      import { cli, log, status } from "ws:git";
+      export default async () => {
+        try { await ${call}; } catch (error) { return error.message; }
+        return "no error";
+      };
+    `);
+    expect(result).toMatchObject({ status: "completed", value: expect.stringContaining(message) });
+    expect(result.value).toMatch(/Call it as|leaves out "git"|Its options are/);
+  });
+});

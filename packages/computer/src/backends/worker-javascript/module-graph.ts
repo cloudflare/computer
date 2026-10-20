@@ -7,6 +7,19 @@ import type {
   WorkspaceModuleFunctions,
   WorkspaceRuntimeLoader,
 } from "../../runtime/types.js";
+import {
+  buildModuleCatalog,
+  COMPUTER_DESCRIPTION,
+  COMPUTER_MODULE,
+  COMPUTER_TYPES,
+  type CatalogEntry,
+  computerModuleSource,
+  INTROSPECTION_MODULE,
+  introspectionModuleSource,
+  type ModuleCatalog,
+  NODE_FS_PROMISES_TYPES,
+  NODE_FS_TYPES,
+} from "./introspection.js";
 
 export type JavaScriptModuleMap = WorkspaceRuntimeLoader extends {
   load(code: { modules: infer Modules }): unknown;
@@ -80,16 +93,28 @@ const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 // `await import(...)`.
 const RESERVED_EXPORT_NAMES = new Set(["default", "then"]);
 
+// Code that reaches for a module it doesn't have, such as
+// node:child_process to run git, needs to learn what it has instead.
+const LIST_MODULES = `\`docs()\` from ${COMPUTER_MODULE} lists the modules code can import.`;
+
 /** The `modules` option, parsed once when the backend is constructed. */
 export interface ParsedModules {
   readonly source: Readonly<Record<string, string>>;
   readonly host: ReadonlyMap<string, WorkspaceModuleFactory>;
   /** One markdown bullet per importable module, for a model. */
   readonly description: string;
+  /**
+   * Each configured module's summary, as its bullet shows it, in the
+   * order it was configured. A factory's description is read again on
+   * every call.
+   */
+  summaries(): ReadonlyArray<{ readonly specifier: string; readonly summary: string }>;
 }
 
-const FILESYSTEM_DESCRIPTION =
-  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, and `access`. Async only.";
+const FILESYSTEM_SUMMARY =
+  "the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, and `access`. Async only.";
+const FILESYSTEM_DESCRIPTION = `- \`node:fs/promises\` (also \`node:fs\`): ${FILESYSTEM_SUMMARY}`;
+const COMPUTER_SUMMARY = COMPUTER_DESCRIPTION.replace(/^- `cloudflare:computer`: /, "");
 
 /**
  * Parse the backend's `modules` option: split it into bundled source
@@ -105,11 +130,19 @@ const FILESYSTEM_DESCRIPTION =
 export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
   const source: Record<string, string> = Object.create(null);
   const host = new Map<string, WorkspaceModuleFactory>();
-  const lines: Array<string | (() => string)> = [FILESYSTEM_DESCRIPTION];
+  const summaries: Array<{ specifier: string; summary: () => string }> = [];
+  const add = (specifier: string, summary: () => string) => summaries.push({ specifier, summary });
   for (const [specifier, module] of Object.entries(modules)) {
-    const name = `\`${specifier}\``;
-    if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) {
+    if (
+      BUILT_IN_MODULES.some((builtIn) => builtIn === specifier) ||
+      specifier === COMPUTER_MODULE
+    ) {
       throw new Error(`Module ${JSON.stringify(specifier)} is built in and cannot be replaced.`);
+    }
+    if (specifier.startsWith("cloudflare:")) {
+      throw new Error(
+        `Module ${JSON.stringify(specifier)} uses the cloudflare:* namespace, which is only for built-in modules.`,
+      );
     }
     if (typeof module === "string") {
       if (specifier.startsWith("ws:")) {
@@ -121,7 +154,7 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
         throw new Error(`Module ${JSON.stringify(specifier)} uses a reserved module name.`);
       }
       source[specifier] = module;
-      lines.push(`- ${name}: a bundled library.`);
+      add(specifier, () => "a bundled library.");
       continue;
     }
     if (!HOST_SPECIFIER.test(specifier)) {
@@ -131,7 +164,7 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     }
     if (typeof module === "function") {
       host.set(specifier, module);
-      lines.push(() => `- ${name}: ${module.description ?? "a host module."}`);
+      add(specifier, () => module.description ?? "a host module.");
       continue;
     }
     if (module === null || typeof module !== "object" || Array.isArray(module)) {
@@ -142,15 +175,115 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     assertHostModuleExports(specifier, module);
     host.set(specifier, () => module);
     const exports = Object.keys(module).map((key) => `\`${key}\``);
-    lines.push(`- ${name}: exports ${exports.join(", ")}.`);
+    add(specifier, () => `exports ${exports.join(", ")}.`);
   }
+  const read = () =>
+    summaries.map((entry) => ({ specifier: entry.specifier, summary: entry.summary() }));
   return {
     source,
     host,
+    summaries: read,
     get description() {
-      return lines.map((line) => (typeof line === "string" ? line : line())).join("\n");
+      return [
+        FILESYSTEM_DESCRIPTION,
+        ...read().map((entry) => `- \`${entry.specifier}\`: ${entry.summary}`),
+        COMPUTER_DESCRIPTION,
+      ].join("\n");
     },
   };
+}
+
+/** What a backend connection knows about its modules, for {@link moduleCatalog}. */
+export interface ModuleCatalogInput {
+  readonly parsed: ParsedModules;
+  /** The functions each host module's factory built on this connection. */
+  readonly hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Host modules whose factory built no functions on this connection. */
+  readonly emptyHostModules: ReadonlySet<string>;
+  /** Whether the Dynamic Worker has the Node.js built-ins. */
+  readonly nodeModules: boolean;
+}
+
+/**
+ * Describe every module code can import on one connection, for
+ * `cloudflare:computer`. Built once when the backend connects, alongside the
+ * host module functions, so the two agree.
+ *
+ * @param input - The parsed modules and what their factories built.
+ * @returns The catalog the isolate reads.
+ */
+export function moduleCatalog(input: ModuleCatalogInput): ModuleCatalog {
+  const configured = input.parsed.summaries();
+  const entries: CatalogEntry[] = [
+    {
+      _tag: "declared",
+      specifier: "node:fs/promises",
+      summary: FILESYSTEM_SUMMARY,
+      types: NODE_FS_PROMISES_TYPES,
+      examples: [
+        'const text = await readFile("notes.md", "utf8");',
+        'for (const entry of await readdir(".", { withFileTypes: true })) if (entry.isFile()) console.log(entry.name);',
+      ],
+    },
+    {
+      _tag: "declared",
+      specifier: "node:fs",
+      summary: `the same functions as \`node:fs/promises\`, also under \`promises\`. There are no sync or callback functions.`,
+      types: NODE_FS_TYPES,
+      examples: ['import { promises as fs } from "node:fs";'],
+    },
+  ];
+  for (const { specifier, summary } of configured) {
+    const functions = input.hostModules.get(specifier);
+    if (functions !== undefined) {
+      const factory = input.parsed.host.get(specifier);
+      entries.push({
+        _tag: "host",
+        specifier,
+        summary,
+        exports: Object.keys(functions),
+        types: factory?.types,
+        examples: factory?.examples,
+      });
+      continue;
+    }
+    entries.push({
+      _tag: "undeclared",
+      specifier,
+      summary,
+      note: input.emptyHostModules.has(specifier)
+        ? `\`${specifier}\` exports nothing on this backend: its factory built no functions when the backend connected.`
+        : `\`${specifier}\` is bundled JavaScript with no declarations. List its exports with \`Object.keys(await import(${JSON.stringify(specifier)}))\`.`,
+    });
+  }
+  entries.push({
+    _tag: "declared",
+    specifier: COMPUTER_MODULE,
+    summary: COMPUTER_SUMMARY,
+    types: COMPUTER_TYPES,
+    examples: [
+      'import * as git from "ws:git";',
+      'import { docs } from "cloudflare:computer";',
+      "console.log(docs(git));",
+    ],
+  });
+  if (input.nodeModules) {
+    for (const name of NODE_MODULES) {
+      entries.push({
+        _tag: "undeclared",
+        specifier: `node:${name}`,
+        summary: "a Node.js built-in.",
+        note: `\`node:${name}\` is the Node.js built-in, with the same API as in Node.js.`,
+      });
+    }
+  }
+  const overview = [
+    "Modules code can import. Pass one to `docs` for its TypeScript declarations and examples.",
+    "",
+    input.parsed.description,
+    ...(input.nodeModules ? [NODE_MODULES_DESCRIPTION] : []),
+  ].join("\n");
+  return buildModuleCatalog(overview, entries);
 }
 
 /**
@@ -193,6 +326,8 @@ export interface BuildModuleGraphOptions {
   emptyHostModules?: ReadonlySet<string>;
   /** Whether the Dynamic Worker has the Node.js built-ins. */
   nodeModules: boolean;
+  /** What `cloudflare:computer` tells code about every module, from {@link moduleCatalog}. */
+  catalog: ModuleCatalog;
   maxSourceBytes: number;
   maxCapabilityBytes: number;
   maxModules?: number;
@@ -232,6 +367,10 @@ export function prepareSourceModules(
     const edits: ImportSite[] = [];
     for (const site of sites) {
       const imported = site.specifier;
+      if (imported === COMPUTER_MODULE) {
+        edits.push({ ...site, specifier: `./${imported}` });
+        continue;
+      }
       if (imported.startsWith("ws:")) {
         if (!hostModules.has(imported)) {
           throw new Error(
@@ -265,6 +404,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
     [CAPABILITIES_MODULE]: capabilitiesModule(options.maxCapabilityBytes),
   });
   const seen = new Set<string>();
+  const hostImports = new Set<string>();
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
   const maxModules = options.maxModules ?? 128;
   const maxDepth = options.maxDepth ?? 32;
@@ -284,9 +424,11 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
       const specifier = site.specifier;
       if (BUILT_IN_MODULES.some((builtIn) => builtIn === specifier)) continue;
       if (
+        specifier === COMPUTER_MODULE ||
         options.hostModules.has(specifier) ||
         Object.hasOwn(options.configuredModules, specifier)
       ) {
+        if (options.hostModules.has(specifier)) hostImports.add(specifier);
         edits.push({ ...site, specifier: relativeSpecifier(name, storedName(specifier)) });
         continue;
       }
@@ -297,8 +439,13 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         if (node !== specifier) edits.push({ ...site, specifier: node });
         continue;
       }
-      if (specifier === CAPABILITIES_MODULE) {
+      if (specifier === CAPABILITIES_MODULE || specifier === INTROSPECTION_MODULE) {
         throw new Error(`Module ${JSON.stringify(specifier)} is reserved for Workspace internals.`);
+      }
+      if (specifier.startsWith("cloudflare:")) {
+        throw new Error(
+          `Module ${JSON.stringify(specifier)} is not available here. The only cloudflare: module code can import is "${COMPUTER_MODULE}".`,
+        );
       }
       if (options.emptyHostModules?.has(specifier)) {
         throw new Error(
@@ -307,7 +454,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
       }
       if (specifier.startsWith("ws:")) {
         throw new Error(
-          `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option.`,
+          `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option. ${LIST_MODULES}`,
         );
       }
       if (specifier.startsWith(".") || specifier.startsWith("/")) {
@@ -340,14 +487,14 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         continue;
       }
       throw new Error(
-        `Module ${JSON.stringify(specifier)} is not configured for the worker-javascript backend.`,
+        `Module ${JSON.stringify(specifier)} is not configured for the worker-javascript backend. ${LIST_MODULES}`,
       );
     }
     modules[name] = rewriteImports(source, edits);
   }
 
-  assertDefaultExport(options.source);
-  await visit(entryPath, options.source, 0);
+  const entry = entrySource(options.source);
+  await visit(entryPath, entry, 0);
 
   // node:* specifiers are resolved by name in both registries, so they
   // keep their exact keys.
@@ -355,32 +502,97 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   modules["node:fs"] = { js: nodeFsModule() };
 
   const toCapabilities = relativeSpecifier(storedName("module"), CAPABILITIES_MODULE);
+  const toIntrospection = relativeSpecifier(storedName("module"), INTROSPECTION_MODULE);
+  modules[INTROSPECTION_MODULE] = { js: introspectionModuleSource(options.catalog) };
+  modules[storedName(COMPUTER_MODULE)] = { js: computerModuleSource(toIntrospection) };
   for (const [specifier, functions] of options.hostModules) {
     modules[storedName(specifier)] = {
-      js: hostModule(toCapabilities, specifier, Object.keys(functions)),
+      js: hostModule(toCapabilities, toIntrospection, specifier, Object.keys(functions)),
     };
   }
   for (const [specifier, source] of Object.entries(options.configuredModules)) {
     modules[storedName(specifier)] = { js: source };
   }
 
-  return { entryName, modules };
+  return { entryName, modules, hostImports: [...hostImports] };
 }
 
-// The run's result comes from the entry module's default export, so a
-// module without one would complete with nothing to show. Fail before
-// loading it, and name any other exports, since a model that writes
-// `export function main` meant one of them.
-function assertDefaultExport(source: string): void {
-  const ast = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+// The run's result comes from the entry module's default export.
+//
+// A module with no exports at all is a script, and runs as the body of
+// the default export: its imports stay at the top, and everything else
+// moves into `export default async function () { ... }`. Top-level
+// `await` and `return` then work, and so does I/O, which the runtime
+// refuses while a module evaluates. The imports join the function's
+// opening on the first line, so a stack trace's line numbers match the
+// code as it was written.
+//
+// A module with named exports but no default would complete with
+// nothing to show, so it fails before loading, naming the exports,
+// since a model that writes `export function main` meant one of them.
+function entrySource(source: string): string {
+  const ast = parse(source, {
+    ecmaVersion: "latest",
+    sourceType: "module",
+    allowReturnOutsideFunction: true,
+  });
+  if (!ast.body.some((node) => node.type.startsWith("Export"))) return asScript(source, ast.body);
+  assertDefaultExport(ast.body);
+  return source;
+}
+
+type ProgramStatement = ReturnType<typeof parse>["body"][number];
+
+function asScript(source: string, body: readonly ProgramStatement[]): string {
+  const imports: string[] = [];
+  let rest = source;
+  for (const node of body) {
+    if (node.type !== "ImportDeclaration") continue;
+    imports.push(importStatement(node));
+    const original = source.slice(node.start, node.end);
+    rest = `${rest.slice(0, node.start)}${original.replace(/[^\n]/g, " ")}${rest.slice(node.end)}`;
+  }
+  return `${imports.join(" ")} export default async function () {${rest}\n}\n`;
+}
+
+// An import rebuilt on one line, without any comments it held.
+function importStatement(node: Extract<ProgramStatement, { type: "ImportDeclaration" }>): string {
+  const from = JSON.stringify(node.source.value);
+  const attributes =
+    node.attributes.length === 0
+      ? ""
+      : ` with { ${node.attributes
+          .map((attribute) => `${nameOf(attribute.key)}: ${JSON.stringify(attribute.value.value)}`)
+          .join(", ")} }`;
+  if (node.specifiers.length === 0) return `import ${from}${attributes};`;
+  const parts: string[] = [];
   const named: string[] = [];
-  for (const node of ast.body) {
+  for (const specifier of node.specifiers) {
+    if (specifier.type === "ImportDefaultSpecifier") parts.push(specifier.local.name);
+    else if (specifier.type === "ImportNamespaceSpecifier")
+      parts.push(`* as ${specifier.local.name}`);
+    else named.push(`${nameOf(specifier.imported)} as ${specifier.local.name}`);
+  }
+  if (named.length > 0) parts.push(`{ ${named.join(", ")} }`);
+  return `import ${parts.join(", ")} from ${from}${attributes};`;
+}
+
+function nameOf(node: { type: string; name?: string; value?: unknown }): string {
+  return node.type === "Identifier" ? String(node.name) : JSON.stringify(node.value);
+}
+
+function assertDefaultExport(body: readonly ProgramStatement[]): void {
+  const named: string[] = [];
+  for (const node of body) {
     if (node.type === "ExportDefaultDeclaration") return;
+    if (node.type === "ExportAllDeclaration") {
+      if (node.exported !== null && node.exported !== undefined) named.push(nameOf(node.exported));
+      continue;
+    }
     if (node.type !== "ExportNamedDeclaration") continue;
     for (const specifier of node.specifiers) {
-      const exported = specifier.exported;
-      const name = exported.type === "Identifier" ? exported.name : String(exported.value);
-      if (name === "default") return;
+      const name = nameOf(specifier.exported);
+      if (name === "default" || name === '"default"') return;
       named.push(name);
     }
     const declaration = node.declaration;
@@ -395,6 +607,7 @@ function assertDefaultExport(source: string): void {
   const shape =
     'Put the work in `export default async function (input) { ... }`, or re-export one with `export { default } from "./main.js"`.';
   if (named.length === 0) {
+    // Only `export * from`, which never re-exports a default.
     throw new Error(`The module has no default export, so there is nothing to run. ${shape}`);
   }
   const list = named.map((name) => `\`${name}\``);
@@ -508,15 +721,19 @@ function directoryName(name: string) {
 }
 
 function isInternalModuleName(name: string) {
+  const basename = name.split("/").at(-1) ?? "";
   return (
     name === CAPABILITIES_MODULE ||
+    name === INTROSPECTION_MODULE ||
     name === RUNNER_MODULE ||
     name === ENTRY_BASENAME ||
     name === MODULES_DIRECTORY ||
     name.startsWith(`${MODULES_DIRECTORY}/`) ||
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
+    name.endsWith(`/${INTROSPECTION_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
-    name.split("/").at(-1)?.startsWith("ws:") === true
+    basename.startsWith("ws:") ||
+    basename.startsWith("cloudflare:")
   );
 }
 
@@ -594,12 +811,20 @@ function capabilitiesModule(maxCapabilityBytes: number) {
 
 // Exports go through `export { local as name }` rather than
 // `export const name`, so a reserved word such as `delete` still works
-// as an export name.
-function hostModule(capabilitiesImport: string, specifier: string, names: readonly string[]) {
+// as an export name. Each stub registers with the introspection
+// module, which names it and makes it print its declaration.
+function hostModule(
+  capabilitiesImport: string,
+  introspectionImport: string,
+  specifier: string,
+  names: readonly string[],
+) {
   const namespace = JSON.stringify(`host/${specifier}`);
+  const module = JSON.stringify(specifier);
   return `
     import { call } from ${JSON.stringify(capabilitiesImport)};
-    ${names.map((name, index) => `const fn${index} = (...args) => call(${namespace}, ${JSON.stringify(name)}, args);`).join("\n")}
+    import { hostExport } from ${JSON.stringify(introspectionImport)};
+    ${names.map((name, index) => `const fn${index} = hostExport(${module}, ${JSON.stringify(name)}, (...args) => call(${namespace}, ${JSON.stringify(name)}, args));`).join("\n")}
     export { ${names.map((name, index) => `fn${index} as ${name}`).join(", ")} };
   `;
 }

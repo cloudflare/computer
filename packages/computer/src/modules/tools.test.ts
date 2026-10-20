@@ -219,4 +219,47 @@ describe("createToolBindings", () => {
     expect(factory.description).toContain("The agent's own tools, callable from code.");
     expect(factory.description).not.toContain("It exports");
   });
+  it("declares each tool from its description and input schema, under its export name", () => {
+    const types = createToolBindings([
+      {
+        ...recording("list-files").binding,
+        description: "List files.",
+        inputSchema: {
+          type: "object",
+          properties: { dir: { type: "string" } },
+          required: ["dir"],
+        },
+      },
+      { ...recording("status").binding, inputSchema: { type: "object", properties: {} } },
+      recording("raw").binding,
+      recording("exec").binding,
+    ]).types;
+
+    expect(types?.list_files).toBe(
+      "/** List files. */\nfunction list_files(input: { dir: string; }): Promise<ToolResult>;",
+    );
+    expect(types?.status).toBe(
+      "function status(input?: Record<string, unknown>): Promise<ToolResult>;",
+    );
+    expect(types?.raw).toBe("function raw(input?: Record<string, unknown>): Promise<ToolResult>;");
+    expect(types?.ToolResult).toContain("interface ToolResult");
+    expect(types).not.toHaveProperty("exec");
+  });
+
+  it("writes a description over several lines as a block comment", () => {
+    const types = createToolBindings([
+      { ...recording("read").binding, description: "Read a file.\n\nText only." },
+    ]).types;
+
+    expect(types?.read).toBe(
+      "/**\n * Read a file.\n *\n * Text only.\n */\nfunction read(input?: Record<string, unknown>): Promise<ToolResult>;",
+    );
+  });
+
+  it("does not read a single-use iterable to declare it", () => {
+    function* tools() {
+      yield recording("read").binding;
+    }
+    expect(createToolBindings(tools()).types).toBeUndefined();
+  });
 });

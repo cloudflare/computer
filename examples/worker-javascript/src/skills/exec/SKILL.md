@@ -49,6 +49,10 @@ export default async function (input) {
   a helper module with one call and import it in the next.
 - There is no `node_modules` lookup and no npm. Beyond the modules
   above, only the ones the host configures are available.
+- `cloudflare:computer` tells you how to call any of them. `docs()` lists every
+  module, and `docs("node:fs/promises")` returns one module's
+  TypeScript declarations and examples. `console.log` of a host
+  module's export prints its declaration too.
 
 ## Limits
 

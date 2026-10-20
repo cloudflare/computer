@@ -166,4 +166,23 @@ describe("forAISDKTools", () => {
     tools = {};
     await expect(binding.call({}, callContext())).rejects.toThrow('No tool named "gone"');
   });
+  it("gives each binding the tool's description and input schema, so ws:tools can declare it", () => {
+    const binding = bindingFor(
+      forAISDKTools({
+        weather: tool({
+          description: "The weather in a city.",
+          inputSchema: z.object({ city: z.string().describe("The city.") }),
+          execute: async () => "sunny",
+        }),
+      }),
+      "weather",
+    );
+
+    expect(binding.description).toBe("The weather in a city.");
+    expect(binding.inputSchema).toMatchObject({
+      type: "object",
+      properties: { city: { type: "string", description: "The city." } },
+      required: ["city"],
+    });
+  });
 });

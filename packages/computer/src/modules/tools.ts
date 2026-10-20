@@ -24,12 +24,22 @@ import type {
   WorkspaceModuleFunction,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
+  WorkspaceModuleTypes,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
+import { acceptsNothing, jsonSchemaType } from "./json-schema-type.js";
 
 /** One tool, as code calls it. */
 export interface ToolBinding {
   readonly name: string;
+  /** What the tool does, as the model reads it. Shown with the export's declaration. */
+  readonly description?: string;
+  /**
+   * The JSON Schema of the tool's one object of arguments. It becomes
+   * the export's TypeScript declaration, which code reads with
+   * `cloudflare:computer`. Without it, the export takes any object.
+   */
+  readonly inputSchema?: object;
   /**
    * The tool only reads. On a read-only backend, calls to any tool
    * without it are refused before the tool runs.
@@ -112,10 +122,79 @@ export function createToolBindings(
     }
     return functions;
   };
-  return Object.defineProperty(create, "description", {
-    enumerable: true,
-    get: () => options.description ?? describe(exportNames(bindings, exclude), [...exclude]),
+  return Object.defineProperties(create, {
+    description: {
+      enumerable: true,
+      get: () => options.description ?? describe(exportNames(bindings, exclude), [...exclude]),
+    },
+    types: { enumerable: true, get: () => declarations(bindings, exclude) },
+    examples: { enumerable: true, get: () => examples(bindings, exclude) },
   }) as WorkspaceModuleFactory;
+}
+
+const RESULT_DECLARATION = `/** What every tool resolves with. A tool that throws rejects instead. */
+interface ToolResult {
+  /** The tool's output, as the model would read it. */
+  text: string;
+  /** Whether the tool reported a failure. */
+  isError: boolean;
+  /** The tool's structured result, or null. */
+  details: unknown;
+  structuredContent?: unknown;
+}`;
+
+// Each export's declaration, from the tool's description and input
+// schema. Read as the export names are, so a list a function returns
+// is current, and a single-use iterable is left for the connection.
+function declarations(
+  bindings: ToolBindings,
+  exclude: ReadonlySet<string>,
+): WorkspaceModuleTypes | undefined {
+  const list = readBindings(bindings, exclude);
+  if (list === undefined) return undefined;
+  const types: Record<string, string> = { ToolResult: RESULT_DECLARATION };
+  for (const binding of list) {
+    const name = exportName(binding.name);
+    const input =
+      binding.inputSchema === undefined
+        ? "Record<string, unknown>"
+        : jsonSchemaType(binding.inputSchema);
+    const optional = binding.inputSchema === undefined || acceptsNothing(binding.inputSchema);
+    const doc = docComment(binding.description);
+    types[name] =
+      `${doc}function ${name}(input${optional ? "?" : ""}: ${input}): Promise<ToolResult>;`;
+  }
+  return types;
+}
+
+function docComment(description: string | undefined): string {
+  const lines = (description ?? "").replace(/\*\//g, "* /").trim().split("\n");
+  if (lines.length === 1 && lines[0] === "") return "";
+  if (lines.length === 1) return `/** ${lines[0]} */\n`;
+  return `/**\n${lines.map((line) => ` * ${line}`.trimEnd()).join("\n")}\n */\n`;
+}
+
+function examples(bindings: ToolBindings, exclude: ReadonlySet<string>): string[] | undefined {
+  const first = readBindings(bindings, exclude)?.[0];
+  if (first === undefined) return undefined;
+  const name = exportName(first.name);
+  return [
+    `const { text, isError, details } = await ${name}({ /* the tool's arguments */ });`,
+    "if (isError) throw new Error(text);",
+  ];
+}
+
+function readBindings(
+  bindings: ToolBindings,
+  exclude: ReadonlySet<string>,
+): ToolBinding[] | undefined {
+  if (typeof bindings !== "function" && !Array.isArray(bindings)) return undefined;
+  try {
+    const list = typeof bindings === "function" ? bindings() : bindings;
+    return [...list].filter((binding) => !exclude.has(binding.name));
+  } catch {
+    return undefined;
+  }
 }
 
 // The names code can import, for the description. A function of tools
@@ -124,15 +203,7 @@ export function createToolBindings(
 // left for the connection to read, and a function that throws leaves
 // the list out rather than the whole description.
 function exportNames(bindings: ToolBindings, exclude: ReadonlySet<string>): string[] | undefined {
-  if (typeof bindings !== "function" && !Array.isArray(bindings)) return undefined;
-  try {
-    const list = typeof bindings === "function" ? bindings() : bindings;
-    return [...list]
-      .filter((binding) => !exclude.has(binding.name))
-      .map((binding) => exportName(binding.name));
-  } catch {
-    return undefined;
-  }
+  return readBindings(bindings, exclude)?.map((binding) => exportName(binding.name));
 }
 
 /**

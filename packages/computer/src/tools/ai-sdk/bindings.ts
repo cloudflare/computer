@@ -38,8 +38,11 @@ export function forAISDKTools(tools: ToolSet | (() => ToolSet)): () => ToolBindi
   return () =>
     Object.entries(current())
       .filter(([, tool]) => runsFromCode(tool))
-      .map(([name]) => ({
+      .map(([name, tool]) => ({
         name,
+        // A description that is a function needs the turn's context, which code does not have.
+        ...(typeof tool.description === "string" ? { description: tool.description } : {}),
+        ...declaredSchema(tool),
         async call(input, context) {
           const tool = current()[name];
           if (!tool?.execute || !runsFromCode(tool)) {
@@ -63,6 +66,19 @@ export function forAISDKTools(tools: ToolSet | (() => ToolSet)): () => ToolBindi
           };
         },
       }));
+}
+
+// The tool's input schema as JSON Schema, for its declaration. A schema
+// that resolves only asynchronously, or fails to convert, leaves the
+// declaration taking any object rather than failing the connection.
+function declaredSchema(tool: Tool): { inputSchema?: object } {
+  try {
+    const schema: unknown = asSchema(tool.inputSchema).jsonSchema;
+    if (schema === null || typeof schema !== "object" || "then" in schema) return {};
+    return { inputSchema: schema };
+  } catch {
+    return {};
+  }
 }
 
 // A schema with no validator, such as `jsonSchema()` without one, lets

@@ -24,6 +24,7 @@ import type {
   WorkspaceModuleFunction,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
+  WorkspaceModuleTypes,
   WorkspaceRuntimeValue,
 } from "../runtime/types.js";
 import type { ExecSyncResult } from "../shell.js";
@@ -173,8 +174,44 @@ export function createContainerModule(
         context.signal.removeEventListener("abort", kill);
       }
     };
-  return Object.assign(create, { description: DESCRIPTION });
+  return Object.assign(create, {
+    description: DESCRIPTION,
+    types: CONTAINER_TYPES,
+    examples: [
+      'const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace" });',
+      'const versions = await exec("node --version && npm --version");',
+    ],
+  });
 }
+
+const CONTAINER_TYPES: WorkspaceModuleTypes = {
+  TruncatedOutput: `/** How a long stream was cut. When "saved", \`path\` is a workspace file with all of it. */
+type TruncatedOutput =
+  | { status: "saved"; path: string; totalBytes: number; totalLines: number; firstLine: number }
+  | { status: "not-saved"; reason: string; totalBytes: number; totalLines: number; firstLine: number };`,
+  ContainerExecResult: `interface ContainerExecResult {
+  /** A non-zero code is returned, not thrown. */
+  exitCode: number;
+  /** The end of the output when it was long; see \`truncated\`. */
+  stdout: string;
+  stderr: string;
+  /** Present when output was cut. */
+  truncated?: { stdout?: TruncatedOutput; stderr?: TruncatedOutput };
+  /**
+   * Whether the container's file changes reached the workspace. "pending"
+   * means they have not yet. \`skipped\` lists up to 100 paths the workspace refused.
+   */
+  sync: { status: "complete" | "pending"; skipped: string[]; skippedCount: number; error?: string };
+}`,
+  exec: `/**
+ * Run a shell command in the container, which shares this workspace's files,
+ * and wait for it to finish. The first call can take a while as the container starts.
+ */
+function exec(
+  command: string,
+  options?: { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number },
+): Promise<ContainerExecResult>;`,
+};
 
 const DESCRIPTION = [
   "Runs shell commands in a full Linux container that shares this workspace's files.",
