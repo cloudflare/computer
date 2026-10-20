@@ -1,5 +1,23 @@
 # @cloudflare/computer
 
+## 0.6.0
+
+### Minor Changes
+
+- [#255](https://github.com/cloudflare/computer/pull/255) `getWorkspace()` now returns a lazy client immediately which resolves on the first call. `useThink` and the Think compatibility methods are removed; `@cloudflare/think` 0.21 and later take a `Workspace` as it is. ([`9cc3119`](https://github.com/cloudflare/computer/commit/9cc31197d82697bd036cc527292ab39d01d4ffdb)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#237](https://github.com/cloudflare/computer/pull/237) `WorkerJavaScriptBackend` keeps its Durable Object alive while executions run, and adds a `maxCpuMs` option. ([`7415a44`](https://github.com/cloudflare/computer/commit/7415a446b394a733b462917cc6660f2ebb2fd027)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#239](https://github.com/cloudflare/computer/pull/239) `just-bash` is now an optional peer dependency and should be installed manually when using `@cloudflare/computer/backends/worker-shell`. ([`5980264`](https://github.com/cloudflare/computer/commit/5980264da104d310a2165b19b599804b589216ec)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+### Patch Changes
+
+- [#257](https://github.com/cloudflare/computer/pull/257) `getWorkspace()` accepts any Durable Object stub whose class has `__getWorkspaceStub()`, without a cast. ([`777097a`](https://github.com/cloudflare/computer/commit/777097a5d2ffdc78d7570c92cea673a58c950e8a)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#244](https://github.com/cloudflare/computer/pull/244) `WorkspaceProxy` and `WorkspaceServiceProxy` wake their host Durable Object by name, so `ctx.id.name` survives a wake caused by a container or Dynamic Worker callback. `WorkspaceRef`, `WorkspaceProxyProps` and `WorkspaceServiceProxyProps` accept an optional `name`, filled in from `ctx.id.name` when the backend runs in the host object itself. ([`b629117`](https://github.com/cloudflare/computer/commit/b629117572315710b22a80c2da2d07d334121b8a)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#241](https://github.com/cloudflare/computer/pull/241) `Workspace`, its filesystem, the worker-javascript backend, mounts, agent tools, Git, Assets, and Artifacts are now stable; `LegacyContainerBackend` is deprecated in favor of `ContainerBackend`; the container and worker-shell backends, `ws:container`, sync, and `computerd` stay experimental. ([`d950ffe`](https://github.com/cloudflare/computer/commit/d950ffee31788fa16c50960f58983a260a22f656)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/computer",
-  "version": "0.5.1",
-  "description": "Cloudflare Computer \u2014 a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
+  "version": "0.6.0",
+  "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
   "license": "MIT",
   "repository": {
     "directory": "packages/computer",
