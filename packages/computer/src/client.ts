@@ -381,9 +381,13 @@ function makeClient(
 }
 
 // What `getWorkspace` accepts: a local host carrying the symbol stash
-// (the durable object `this`), or a remote stub exposing
-// `__getWorkspaceStub`.
-export type WorkspaceHandle = { [WORKSPACE]?: unknown } | WorkspaceStubHost;
+// (the durable object `this`), or anything exposing `__getWorkspaceStub`,
+// such as a Durable Object stub. A stub types the method's result as an
+// RPC stub of `WorkspaceStub`, not `WorkspaceStub` itself, so the result
+// is not checked here.
+export type WorkspaceHandle =
+  | { [WORKSPACE]?: unknown }
+  | { __getWorkspaceStub(): PromiseLike<unknown> };
 
 // The methods of `T` that return a promise. A lazy client forwards
 // those before it has loaded; plain properties have to wait for it.
