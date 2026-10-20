@@ -1,0 +1,35 @@
+.gardener/SKILL.md
+  s_5a33ac7eaed91e::t_7b1e9c7d0b38cd 6,32
+.gardener/gardener.json
+  s_5a33ac7eaed91e::t_29f54f2381e56d 5
+.gardener/gardener.lock.json
+  s_5a33ac7eaed91e::t_791c27b4a2f1d2 6,9
+.github/workflows/gardener-dependabot-merge.yml
+  s_5a33ac7eaed91e::t_e03422c3b465c8 37
+.github/workflows/gardener-mention-reply.yml
+  s_5a33ac7eaed91e::t_067ae09a226f99 51
+.github/workflows/gardener-pr-review-fix.yml
+  s_5a33ac7eaed91e::t_1ff1b4d94a4594 44
+.github/workflows/gardener-sync.yml
+  s_5a33ac7eaed91e::t_04699256d04902 30,40
+.github/workflows/gardener-triage.yml
+  s_5a33ac7eaed91e::t_60e36fba5b5ea7 41
+package.json
+  s_5a33ac7eaed91e::t_50b98bf9f2a5c7 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8152085e6b1d161af558e7dde9688965b7748972",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
