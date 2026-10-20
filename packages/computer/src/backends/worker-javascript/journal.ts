@@ -611,7 +611,8 @@ export class ExecutionJournal implements BridgeJournal {
    * committed: the run is released, and the call runs again once
    * answered.
    */
-  interrupt(seq: number, payload: unknown): void {
+  /** Mark a call waiting, and return when its run started waiting. */
+  interrupt(seq: number, payload: unknown): number {
     this.#db.run(
       `UPDATE workspace_runtime_journal SET state = 'waiting', payload = ?
        WHERE backend = ? AND execution_id = ? AND seq = ?`,
@@ -620,13 +621,15 @@ export class ExecutionJournal implements BridgeJournal {
       this.#id,
       seq,
     );
-    this.#db.run(
+    const [row] = this.#db.all<{ waiting_since: number }>(
       `UPDATE workspace_runtime_durable SET waiting_since = COALESCE(waiting_since, ?)
-       WHERE backend = ? AND execution_id = ?`,
+       WHERE backend = ? AND execution_id = ?
+       RETURNING waiting_since`,
       Date.now(),
       this.#backend,
       this.#id,
     );
+    return Number(row?.waiting_since ?? Date.now());
   }
 
   diverged(message: string): void {

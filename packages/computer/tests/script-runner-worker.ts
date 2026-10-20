@@ -6,7 +6,11 @@ import {
   type WorkerJavaScriptBackendOptions,
 } from "../src/backends/worker-javascript/index.js";
 import { createGitClient } from "../src/git/index.js";
-import type { WorkspaceRuntimeValue, WorkspaceStub } from "../src/index.js";
+import type {
+  WorkspaceRuntimePendingCall,
+  WorkspaceRuntimeValue,
+  WorkspaceStub,
+} from "../src/index.js";
 import { unsafeToRepeat, Workspace } from "../src/index.js";
 import { createArtifactsModule } from "../src/modules/artifacts.js";
 import { createContainerModule } from "../src/modules/container.js";
@@ -61,6 +65,8 @@ function fakeContainerBackend(): WorkspaceBackend {
 // state outlives the object, so it counts host calls across the restart
 // and holds the gate a run waits on until the object restarts.
 const durableCalls = new Map<string, number>();
+// Each call onWait was told about.
+const waits: WorkspaceRuntimePendingCall[] = [];
 let gateOpen = false;
 // Named gates a run can wait on after the first, for a second restart.
 const opened = new Set<string>();
@@ -90,6 +96,7 @@ function javascriptBackend(
     ...overrides,
     maxStdioBytes: overrides.maxStdioBytes ?? 64,
     maxCapabilityBytes: 1024,
+    onWait: (call) => void waits.push(call),
     maxConcurrentCapabilityCalls: 2,
     modules: {
       "math-kit": "export const double = (value) => value * 2;",
@@ -309,6 +316,7 @@ export class HostDO extends DurableObject<Env> {
     timeoutMs?: number;
   }) {
     durableCalls.clear();
+    waits.length = 0;
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: "worker-javascript",
       id: input.id,
@@ -321,6 +329,10 @@ export class HostDO extends DurableObject<Env> {
 
   pending() {
     return this.#workspace.runtime.pending();
+  }
+
+  waits() {
+    return waits;
   }
 
   async respond(id: string, callId: string, value: WorkspaceRuntimeValue) {
@@ -606,6 +618,10 @@ export default class extends WorkerEntrypoint<Env> {
             },
           ),
         });
+      }
+
+      if (url.pathname === "/interrupt-waits") {
+        return Response.json(await stub.waits());
       }
 
       if (url.pathname === "/interrupt-pending") {

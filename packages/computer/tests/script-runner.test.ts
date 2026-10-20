@@ -1519,6 +1519,17 @@ describe("interrupts", () => {
     expect(await result("wait-timeout")).toMatchObject({ status: "completed" });
   });
 
+  it("tells onWait about a wait once, even across a restart and resume", async () => {
+    await start("wait-notify", approval);
+    const call = await waitingCall("wait-notify");
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+    await waitingCall("wait-notify");
+    await respond("wait-notify", call.callId, { ok: true });
+    expect(await result("wait-notify")).toMatchObject({ status: "completed" });
+    const waits = await (await SELF.fetch("https://example.test/interrupt-waits")).json();
+    expect(waits).toEqual([call]);
+  });
+
   it("can be killed while it waits", async () => {
     await start("wait-kill", approval);
     const call = await waitingCall("wait-kill");

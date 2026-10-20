@@ -263,7 +263,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
         if (!Array.isArray(events)) throw new Error("malformed event log");
         logs.push([position, events]);
       },
-      interrupt: () => undefined,
+      interrupt: () => 0,
       diverged: (message) => diverged.push(message),
       stalled: () => diverged.push("stalled"),
     };

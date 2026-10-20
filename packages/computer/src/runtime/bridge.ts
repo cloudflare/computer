@@ -32,7 +32,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #responses = new Map<Promise<BridgeResponse>, AbortController>();
   // Calls that interrupted, by their controller.
   readonly #waiting = new Set<AbortController>();
-  readonly #onWait?: () => void;
+  readonly #onWait?: (call: { seq: number; payload: unknown; since: number }) => void;
   // Set once a call interrupts: new calls are held, never started.
   #holding = false;
   #cancelled = false;
@@ -60,7 +60,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       // Prefix of every call's callId, such as the execution id.
       callIdPrefix?: string;
       // Called when a call interrupts, to release the run.
-      onWait?: () => void;
+      onWait?: (call: { seq: number; payload: unknown; since: number }) => void;
     } = {},
   ) {
     super();
@@ -349,13 +349,14 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     if (this.#cancelled)
       return Promise.reject(new Error("Workspace execution is being cancelled."));
     if (!this.#waiting.has(abort)) {
+      let since: number;
       try {
-        this.#journal.interrupt(step.seq, payload);
+        since = this.#journal.interrupt(step.seq, payload);
       } catch (error) {
         return Promise.reject(error);
       }
       this.#waiting.add(abort);
-      this.#onWait?.();
+      this.#onWait?.({ seq: step.seq, payload, since });
     }
     // Settles only when the run is released and the call aborted.
     return new Promise<never>((_, reject) => {
@@ -621,7 +622,7 @@ export interface BridgeJournal {
   /** Record a live call's response, and return its time and ordinal. */
   commit(seq: number, response: BridgeResponse): { at: number; ordinal: number };
   /** Mark a live call as waiting for an answer. */
-  interrupt(seq: number, payload: unknown): void;
+  interrupt(seq: number, payload: unknown): number;
   /** Save a chunk of the isolate's event log. Throws on a malformed one. */
   record(position: unknown, events: unknown): void;
   /** Called when a call doesn't match the journal. */

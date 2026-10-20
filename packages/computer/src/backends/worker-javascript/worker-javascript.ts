@@ -119,6 +119,16 @@ export interface WorkerJavaScriptBackendOptions {
    */
   onInterrupt?: WorkspaceRuntimeInterruptPolicy;
   /**
+   * Called when a host module call starts waiting in `ctx.interrupt()`,
+   * with the fields `runtime.pending()` lists, for example to ask someone
+   * for the answer. It's called once the wait is saved, and at most once
+   * per wait: a crash in between loses the call. Treat `pending()` as the
+   * source of truth, for example by checking it when the object starts.
+   * What it throws is logged and otherwise ignored. Experimental: it may
+   * change in any release.
+   */
+  onWait?: (call: WorkspaceRuntimePendingCall) => void | Promise<void>;
+  /**
    * How often to schedule a timer while any execution is running, in
    * milliseconds. Set it to 0 to turn the timer off. Defaults to 60
    * seconds.
@@ -588,6 +598,24 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#resumeIfAnswered(record);
   }
 
+  #notifyWait(record: ExecutionRecord, call: { seq: number; payload: unknown; since: number }) {
+    const { onWait } = this.#options;
+    if (onWait === undefined) return;
+    const pending: WorkspaceRuntimePendingCall = {
+      id: record.id,
+      backend: this.#backendId,
+      callId: `${record.id}:${call.seq}`,
+      payload: call.payload as WorkspaceRuntimeValue,
+      since: call.since,
+    };
+    // After the current call, so the hook can't hold up the run's release.
+    void Promise.resolve()
+      .then(() => onWait(pending))
+      .catch((error: unknown) => {
+        console.error({ message: "onWait failed", id: record.id, error: String(error) });
+      });
+  }
+
   #resumeIfAnswered(record: ExecutionRecord) {
     if (record.status !== "running" || record.waiting !== "released") return;
     const saved = this.#loadDurable(record);
@@ -913,7 +941,10 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
         callIdPrefix: record.id,
-        onWait: () => void this.#release(record),
+        onWait: (call) => {
+          this.#notifyWait(record, call);
+          void this.#release(record);
+        },
         ...hostEgressFetch(this.#options.egress),
         ...(spec.journal === undefined ? {} : { journal: spec.journal }),
       });
