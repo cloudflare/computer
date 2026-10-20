@@ -30,6 +30,14 @@ export const INTERRUPT_POLICIES: readonly InterruptPolicy[] = ["fail", "restart"
 /** Bump when the saved start or journal format changes. */
 export const JOURNAL_VERSION = 1;
 
+/**
+ * Bump when a change to the code the runtime loads into the isolate
+ * would replay a run differently, so that runs started on the old code
+ * fail instead of resuming wrongly. A test notices when that code
+ * changes and asks for this check.
+ */
+export const REPLAY_VERSION = 1;
+
 /** How many attempts an execution gets before an interruption fails it. */
 export const MAX_INTERRUPT_ATTEMPTS = 3;
 
@@ -57,7 +65,7 @@ export interface DurableStart {
   readonly startedAt: number;
   /** 64 hex digits that seed the run's random numbers. */
   readonly seed: string;
-  /** Identifies the runtime code the execution started on. */
+  /** Identifies the runtime the execution started on. */
   readonly fingerprint: string;
 }
 

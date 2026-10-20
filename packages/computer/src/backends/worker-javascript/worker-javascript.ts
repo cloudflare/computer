@@ -34,6 +34,7 @@ import {
   MAX_CONCURRENT_RECOVERIES,
   MAX_INTERRUPT_ATTEMPTS,
   recordAttempt,
+  REPLAY_VERSION,
   saveDurableStart,
   toBase64,
 } from "./journal.js";
@@ -511,7 +512,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       fail(`Execution was interrupted ${attempt} times and won't be started again.`);
       return;
     }
-    if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint(start)) {
+    if (start.version !== JOURNAL_VERSION || start.fingerprint !== this.#fingerprint()) {
       fail(
         "Execution was interrupted and can't resume, because the JavaScript runtime changed since it started.",
       );
@@ -590,11 +591,14 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
-  // The generated code a run depends on. A run resumes only on the same.
-  #fingerprint(start: { entryName: string }): string {
+  // What a run depends on to replay the same way. A run resumes only on
+  // the same. The runtime's own code is covered by REPLAY_VERSION, so an
+  // upgrade that doesn't change replay doesn't fail interrupted runs.
+  #fingerprint(): string {
     return fingerprint([
-      runtimeWorkerModule(start.entryName, this.#options.maxStdioBytes),
-      ...internalModuleSources(this.#options.maxCapabilityBytes),
+      String(REPLAY_VERSION),
+      String(this.#options.maxStdioBytes),
+      String(this.#options.maxCapabilityBytes),
       this.#options.compatibilityDate,
       this.#options.compatibilityFlags.join(","),
     ]);
@@ -740,7 +744,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             cpuMs,
             startedAt,
             seed,
-            fingerprint: this.#fingerprint(graph),
+            fingerprint: this.#fingerprint(),
           });
           if (policy === "replay") {
             journal = this.#journalFor(record);
@@ -1513,6 +1517,17 @@ function startJavaScriptExecution(options: {
       dispose();
     },
   };
+}
+
+/**
+ * The code the runtime loads into the isolate besides the run's own, for
+ * the test that asks whether REPLAY_VERSION needs a bump.
+ */
+export function runtimeCode(entryName: string, maxStdioBytes: number, maxCapabilityBytes: number) {
+  return [
+    runtimeWorkerModule(entryName, maxStdioBytes),
+    ...internalModuleSources(maxCapabilityBytes),
+  ];
 }
 
 function runtimeWorkerModule(entryName: string, maxStdioBytes: number) {

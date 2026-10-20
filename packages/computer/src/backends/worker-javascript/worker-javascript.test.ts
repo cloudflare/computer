@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
 import { Workspace } from "../../workspace.js";
-import { WorkerJavaScriptBackend } from "./worker-javascript.js";
+import { fingerprint } from "./journal.js";
+import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript.js";
 
 function throwingLoader(message: string) {
   return {
@@ -2056,6 +2057,13 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       stderr: expect.stringContaining("interrupted 3 times"),
     });
     for (const workspace of [...workspaces, last]) await workspace.close();
+  });
+
+  it("asks for a REPLAY_VERSION check when the runtime's code changes", () => {
+    // The code the runtime loads into the isolate changed. If a run that
+    // started on the old code could replay differently on the new code,
+    // bump REPLAY_VERSION in journal.ts. Either way, update this digest.
+    expect(fingerprint(runtimeCode("main.js", 1024, 1024))).toBe("v1:0fb1pjqz8570ofg1opq2fb:31550");
   });
 
   it("fails a run when the runtime changed under it", async () => {
