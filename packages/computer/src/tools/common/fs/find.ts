@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKSPACE_ROOT } from "../../../workspace-root.js";
 import { globList } from "./globs.js";
 
 interface FoundEntry {
@@ -24,7 +25,7 @@ const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
 export const findInputSchema = z.object({
-  path: z.string().default("/workspace").describe("Absolute directory to search."),
+  path: z.string().default(WORKSPACE_ROOT).describe("Absolute directory to search."),
   pattern: z
     .string()
     .describe('Glob pattern relative to path, for example "**/*.ts" or "src/?.js".'),
@@ -70,7 +71,7 @@ export async function findInWorkspace(
   workspace: FindWorkspaceLike,
   { path, pattern, exclude, limit, offset }: FindInput,
 ): Promise<FindResult> {
-  const directory = path ?? "/workspace";
+  const directory = path ?? WORKSPACE_ROOT;
   try {
     const pageSize = limit ?? DEFAULT_LIMIT;
     const pageOffset = offset ?? 0;

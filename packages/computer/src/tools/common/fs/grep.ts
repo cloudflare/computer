@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKSPACE_ROOT } from "../../../workspace-root.js";
 import { globList, globOne } from "./globs.js";
 
 interface GrepContextLine {
@@ -38,7 +39,7 @@ const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
 export const grepInputSchema = z.object({
-  path: z.string().default("/workspace").describe("Absolute file or directory to search."),
+  path: z.string().default(WORKSPACE_ROOT).describe("Absolute file or directory to search."),
   query: z.string().describe("Literal string or regular expression to search for."),
   include: z
     .union([z.string(), z.array(z.string())])
@@ -95,7 +96,7 @@ export async function grepInWorkspace(
   workspace: GrepWorkspaceLike,
   { path, query, include, exclude, regex, ignoreCase, context, limit, offset }: GrepInput,
 ): Promise<GrepResult> {
-  const target = path ?? "/workspace";
+  const target = path ?? WORKSPACE_ROOT;
   try {
     const pageSize = limit ?? DEFAULT_LIMIT;
     const pageOffset = offset ?? 0;

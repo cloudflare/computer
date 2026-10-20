@@ -15,6 +15,7 @@ import type {
   WorkspaceRuntimeLoader,
   WorkspaceRuntimeValue,
 } from "../../runtime/types.js";
+import { WORKSPACE_ROOT } from "../../workspace-root.js";
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   assertHostModuleExports,
@@ -277,7 +278,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       ...backendOptions,
       egress: resolvedEgress,
       modules: parseModules(options.modules ?? {}),
-      root: options.root ?? "/workspace",
+      root: options.root ?? WORKSPACE_ROOT,
       access: options.access ?? "read-write",
       defaultTimeoutMs,
       maxTimeoutMs,

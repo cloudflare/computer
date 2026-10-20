@@ -131,4 +131,7 @@ export {
   type WorkspaceStubHost,
   withWorkspace,
 } from "./with-workspace.js";
+export { WorkspaceFileStore } from "./tools/common/fs/store.js";
+export type { FileStat, FileStore, MutableFileStore } from "./tools/common/fs/types.js";
 export { Workspace, type WorkspaceGitFactory, type WorkspaceOptions } from "./workspace.js";
+export { WORKSPACE_ROOT } from "./workspace-root.js";

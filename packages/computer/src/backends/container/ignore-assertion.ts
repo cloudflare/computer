@@ -11,6 +11,8 @@
 // Object -- the #179 symptom. A mismatch is a deployment error, and a
 // loud one is cheaper than a slow one.
 
+import { WORKSPACE_ROOT } from "../../workspace-root.js";
+
 /** The `ignore` block computerd reports on /__computerd/info. */
 export interface ComputerdIgnoreReport {
   readonly supported?: boolean;
@@ -88,7 +90,7 @@ export function readIgnoreReport(info: unknown): ResolvedIgnore {
   return {
     patterns,
     root: typeof typed.root === "string" ? typed.root : undefined,
-    mountPoint: typeof mountPoint === "string" && mountPoint !== "" ? mountPoint : "/workspace",
+    mountPoint: typeof mountPoint === "string" && mountPoint !== "" ? mountPoint : WORKSPACE_ROOT,
     supported: true,
   };
 }

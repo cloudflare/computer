@@ -55,6 +55,7 @@ import {
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress.js";
 import { WorkspaceTransportError } from "../../transport-failure.js";
+import { WORKSPACE_ROOT } from "../../workspace-root.js";
 import type { ILegacyWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
 import { probeComputerdHealth } from "./health-probe.js";
 
@@ -249,7 +250,7 @@ export class LegacyContainerBackend implements WorkspaceBackend {
 
     const env = {
       PORT: String(this.#options.containerPort),
-      MOUNT_POINT: "/workspace",
+      MOUNT_POINT: WORKSPACE_ROOT,
       ...this.#options.containerEnv,
     };
     let runtimeId: string;

@@ -422,6 +422,8 @@ interface MutableFileStore extends FileStore {
 
 `WorkspaceFileStore` adapts the corresponding `workspace.fs` methods. Its chunk iterator opens one ranged `readFile` stream, so seeking to a byte continuation neither transfers the preceding content nor issues one RPC invocation per chunk.
 
+Code outside the tools can import `WorkspaceFileStore` from `@cloudflare/computer` without loading a tool library: `readAll` returns `null` for a missing file, and `write` creates parent directories. `WORKSPACE_ROOT` is the `/workspace` directory the backends and tools default to.
+
 ## Conventions for agents
 
 - Tools take absolute paths. Pass `root` to resolve relative paths against a directory and refuse paths outside it, or resolve user input yourself before calling them. See [01. VFS](./01_vfs.md).
