@@ -479,23 +479,6 @@ export default {
 } satisfies ExportedHandler<Env>;
 ```
 
-You don't have to await it. `getWorkspace` returns a client straight
-away and reaches the Durable Object on the first call, so it fits a
-class field. Pass a function when finding the stub has to wait: it runs
-on the first call, and again if it fails.
-
-```ts
-class Chat extends Think<Env> {
-  // parentAgent() only works once the agent has started.
-  override workspace = getWorkspace(() => this.parentAgent(Directory));
-}
-```
-
-Until you await it, the client only has methods that return promises,
-and it doesn't know the Workspace's backends or assets:
-`runtime.backends()` is empty, so tools built from it have no `exec` or
-`publish`. Awaiting gives you the loaded client, which does.
-
 ### Dispose your stubs
 
 The one gotcha worth internalizing: the RPC layer does not
