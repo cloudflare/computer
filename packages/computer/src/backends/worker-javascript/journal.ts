@@ -607,11 +607,10 @@ export class ExecutionJournal implements BridgeJournal {
   }
 
   /**
-   * Mark a live call as waiting for an answer. Its response is never
-   * committed: the run is released, and the call runs again once
-   * answered.
+   * Mark a live call as waiting for an answer, and return when its run
+   * started waiting. Its response is never committed: the run is
+   * released, and the call runs again once answered.
    */
-  /** Mark a call waiting, and return when its run started waiting. */
   interrupt(seq: number, payload: unknown): number {
     this.#db.run(
       `UPDATE workspace_runtime_journal SET state = 'waiting', payload = ?
