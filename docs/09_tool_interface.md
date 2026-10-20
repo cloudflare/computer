@@ -92,7 +92,7 @@ async function runTurn(env: Env, id: DurableObjectId, prompt: string) {
 }
 ```
 
-Tools built from a client match tools built from the Workspace itself. The client answers `runtime.backends()` from a copy taken when it is created, so `exec` offers the same backends with the same descriptions, and `publish` appears only when the Workspace has an assets publisher. Dispose the client after the tools are done with it.
+Tools built from an awaited client match tools built from the Workspace itself. The client answers `runtime.backends()` from a copy taken when it loads, so `exec` offers the same backends with the same descriptions, and `publish` appears only when the Workspace has an assets publisher. A client you have not awaited reports no backends or assets, so tools built from it have no `exec` or `publish`. Dispose the client after the tools are done with it.
 
 ## pi
 

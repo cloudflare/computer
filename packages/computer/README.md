@@ -485,7 +485,7 @@ The one gotcha worth internalizing: the RPC layer does not
 garbage-collect remote stubs. On long-lived sessions undisposed stubs
 accumulate on the peer until the session ends. The rules are short:
 
-- `using` the value from `getWorkspace(...)`, awaited or not.
+- `using` the value from `getWorkspace(...)`.
 - `using` the handle from `ws.runtime.exec(...)`.
 - Don't worry about `ws.fs`, `ws.runtime`, or `ws.git` — they ride with
   the parent.
