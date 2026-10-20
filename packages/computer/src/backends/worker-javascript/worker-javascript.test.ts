@@ -2086,6 +2086,28 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     for (const workspace of [...workspaces, last]) await workspace.close();
   });
 
+  it("starts a run's attempts again once its wait is answered", async () => {
+    const storage = new SQLiteTestStorage();
+    const db = new Database(storage);
+    const workspaces = [await interrupt(storage)];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const workspace = open(storage);
+      await workspace.runtime.recover();
+      workspaces.push(workspace);
+    }
+    expect(loadDurable(db, "worker-javascript", "run")?.attempt).toBe(3);
+    // The run's next call waits for an answer.
+    const journal = new ExecutionJournal(db, "worker-javascript", "run");
+    const step = journal.begin("host/ws:test.approve", []);
+    if (step.kind !== "live") throw new Error("expected a live call");
+    journal.interrupt(step.seq, { kind: "approval" });
+    const answering = open(storage);
+    workspaces.push(answering);
+    await answering.runtime.respond("run", `run:${step.seq}`, true);
+    expect(loadDurable(db, "worker-javascript", "run")?.attempt).toBe(1);
+    for (const workspace of workspaces) await workspace.close();
+  });
+
   it("asks for a REPLAY_VERSION check when the runtime's code changes", () => {
     // The code the runtime loads into the isolate changed. If a run that
     // started on the old code could replay differently on the new code,
