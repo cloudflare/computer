@@ -45,11 +45,7 @@ import { decodeRuntimeEvents } from "./runtime/wire.js";
 import { type ShellValue, sh } from "./sh.js";
 import type { ExecEncoding } from "./shell.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import {
-  createThinkCompatibility,
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-} from "./workspace.js";
+import { Workspace } from "./workspace.js";
 
 // The remote runtime handle stub: a result / stream / kill surface
 // carried across Workers RPC.
@@ -339,7 +335,7 @@ function withExecutionId(
 // `fs`, `git`, `artifacts`, and `assets` are the underlying surface's
 // members, passed through. The filesystem stub mirrors the local
 // filesystem, so it also serves as the common client type.
-export interface WorkspaceClient extends Partial<ThinkWorkspaceCompatibility> {
+export interface WorkspaceClient {
   readonly fs: WorkspaceFilesystem;
   readonly runtime: WorkspaceRuntimeClient;
   // oxlint-disable-next-line typescript/no-explicit-any -- git type differs local vs remote
@@ -356,7 +352,6 @@ function makeClient(
   surface: any,
   rehydrate: (handle: unknown, metadata?: RuntimeHandleMetadata) => unknown,
   dispose: () => void,
-  useThink: boolean,
   backends: readonly WorkspaceBackendInfo[],
   hasAssets: boolean,
 ): WorkspaceClient {
@@ -365,7 +360,7 @@ function makeClient(
     rehydrate as RehydrateRuntimeHandle,
     backends,
   );
-  const client: WorkspaceClient = {
+  return {
     get fs() {
       return surface.fs;
     },
@@ -383,8 +378,6 @@ function makeClient(
     },
     [Symbol.dispose]: dispose,
   };
-  if (useThink) Object.assign(client, createThinkCompatibility(client.fs));
-  return client;
 }
 
 // What `getWorkspace` accepts: a local host carrying the symbol stash
@@ -513,7 +506,6 @@ async function loadWorkspace(handle: WorkspaceHandle): Promise<WorkspaceClient> 
       // Local handle is already a host ExecHandle — pass it through.
       (h) => h,
       () => {},
-      local.useThink,
       local.runtime.backends(),
       local.assets !== undefined,
     );
@@ -529,8 +521,6 @@ async function loadWorkspace(handle: WorkspaceHandle): Promise<WorkspaceClient> 
       () => {
         (stub as { [Symbol.dispose]?: () => void })[Symbol.dispose]?.();
       },
-      // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
-      await stub.useThink,
       // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC
       await stub.runtime.backends(),
       // oxlint-disable-next-line typescript/await-thenable -- a promise over RPC

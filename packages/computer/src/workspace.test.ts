@@ -7,7 +7,7 @@ import type { BackendHandle, WorkspaceBackend } from "./backend.js";
 import { createGitClient } from "./git/index.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { WorkspaceTransportError } from "./transport-failure.js";
-import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
+import { Workspace } from "./workspace.js";
 
 // Drive a sync iterable to completion. push() and pull() are now
 // restartable block iterables, but these tests care about the folded
@@ -28,19 +28,6 @@ async function drainSync(
 
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();
-}
-
-function expectThinkWorkspace(
-  ws: Workspace,
-): asserts ws is Workspace & ThinkWorkspaceCompatibility {
-  expect(ws).toHaveProperty("readFile");
-  expect(ws).toHaveProperty("readFileBytes");
-  expect(ws).toHaveProperty("writeFile");
-  expect(ws).toHaveProperty("readDir");
-  expect(ws).toHaveProperty("glob");
-  expect(ws).toHaveProperty("mkdir");
-  expect(ws).toHaveProperty("rm");
-  expect(ws).toHaveProperty("stat");
 }
 
 // In-process fakes. We never spawn anything from the package
@@ -2272,58 +2259,5 @@ describe("Workspace transport-failure invalidation", () => {
       handleB.result().catch(() => undefined),
       handleC.result().catch(() => undefined),
     ]);
-  });
-});
-describe("Workspace Think compatibility", () => {
-  it("adds Think-compatible filesystem methods when useThink is true", async () => {
-    const ws = new Workspace({
-      storage: makeStorage(),
-      useThink: true,
-      now: () => 1_700_000_000_000,
-    });
-
-    expectThinkWorkspace(ws);
-
-    await ws.mkdir("/workspace/notes", { recursive: true });
-    await ws.writeFile("/workspace/notes/a.txt", "hello");
-    await ws.writeFile("/workspace/notes/b.md", "# title");
-
-    expect(await ws.readFile("/workspace/notes/a.txt")).toBe("hello");
-    expect(await ws.readFile("/workspace/missing.txt")).toBeNull();
-    expect(new TextDecoder().decode(await ws.readFileBytes("/workspace/notes/a.txt"))).toBe(
-      "hello",
-    );
-    expect(await ws.readFileBytes("/workspace/missing.txt")).toBeNull();
-
-    await expect(ws.stat("/workspace/notes/a.txt")).resolves.toMatchObject({
-      path: "/workspace/notes/a.txt",
-      name: "a.txt",
-      type: "file",
-      size: 5,
-    });
-    await expect(ws.stat("/workspace/missing.txt")).resolves.toBeNull();
-
-    await expect(ws.readDir("/workspace/notes", { limit: 1, offset: 1 })).resolves.toEqual([
-      expect.objectContaining({ path: "/workspace/notes/b.md", name: "b.md", type: "file" }),
-    ]);
-    await expect(ws.glob("/workspace/notes/**/*.txt")).resolves.toEqual([
-      expect.objectContaining({ path: "/workspace/notes/a.txt", name: "a.txt", type: "file" }),
-    ]);
-
-    await ws.rm("/workspace/notes/a.txt", { force: true });
-    expect(await ws.readFile("/workspace/notes/a.txt")).toBeNull();
-  });
-
-  it("does not add Think compatibility methods by default", () => {
-    const ws = new Workspace({ storage: makeStorage() });
-
-    expect(ws).not.toHaveProperty("readFile");
-    expect(ws).not.toHaveProperty("readFileBytes");
-    expect(ws).not.toHaveProperty("writeFile");
-    expect(ws).not.toHaveProperty("readDir");
-    expect(ws).not.toHaveProperty("glob");
-    expect(ws).not.toHaveProperty("mkdir");
-    expect(ws).not.toHaveProperty("rm");
-    expect(ws).not.toHaveProperty("stat");
   });
 });

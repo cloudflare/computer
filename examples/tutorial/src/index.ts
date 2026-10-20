@@ -6,7 +6,7 @@
 //   POST /prompt ──► RecipeAgent (Think + Computer)
 //                      │ fetch_url openstove.org           (host)
 //                      │ write     /workspace/card.md      (host)
-//                      │ bash      pandoc card.md -o card.pdf (container)
+//                      │ exec      pandoc card.md -o card.pdf (container)
 //                      ▼
 //                    R2 ──► signed link, good for a day
 //
@@ -17,7 +17,7 @@
 //
 // README.md walks through building this file from an empty directory.
 
-import { type ThinkWorkspaceCompatibility, Workspace, WorkspaceProxy } from "@cloudflare/computer";
+import { Workspace, WorkspaceProxy } from "@cloudflare/computer";
 import { createAssets } from "@cloudflare/computer/assets";
 import {
   LegacyContainerBackend,
@@ -49,8 +49,7 @@ export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
   override workspace = new Workspace({
     storage: this.ctx.storage,
     backends: [this.#backend],
-    useThink: true,
-  }) as Workspace & ThinkWorkspaceCompatibility;
+  });
 
   override getModel() {
     return "@cf/zai-org/glm-5.2";
@@ -69,7 +68,7 @@ export class RecipeAgent extends withLegacyWorkspaceContainer(RecipeBase) {
       "   and numbered Method steps. End with the source page URL spelled out,",
       "   not a markdown link: the card gets printed, and a link prints as its",
       "   text alone.",
-      "3. Convert it with `bash`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
+      "3. Convert it with `exec`: `pandoc /workspace/card.md -o /workspace/card.pdf --pdf-engine=typst`.",
       "4. Reply with one sentence naming the recipe you picked.",
     ].join("\n");
   }

@@ -57,8 +57,6 @@ abstract class RuntimeThinkAgent extends Think<RuntimeThinkAgentEnv> {
   #preparedTools: ToolSet | null = null;
   #thinkingDelta = "";
 
-  override chatRecovery = false;
-
   abstract readonly runtime: RuntimeId;
   abstract readonly runtimeLabel: "Workspace" | "Sandbox";
 

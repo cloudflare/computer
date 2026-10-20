@@ -46,12 +46,12 @@ usage note. There is no other route.
 
 `src/agent.ts` is the whole agent. `Assistant` extends `Think`, which
 supplies the chat protocol, message persistence, resumable streams,
-and the agentic tool loop. The example adds three things: a Workers AI
-model, a Workspace, and the workspace tools.
+the agentic tool loop, and the workspace tools. The example adds two
+things: a Workers AI model and a Workspace.
 
 ## Tools
 
-The tools come from `createAITools()` in
+Think builds the tools with `createAITools()` from
 [`@cloudflare/computer/tools/ai-sdk`][tools]. This example offers the
 file tools and an `exec` tool over both backends, each of which
 describes itself to the model. It does not configure the assets

@@ -20,9 +20,9 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.45",
     "@ai-sdk/tui": "^1.0.43",
-    "@cloudflare/ai-chat": "^0.10.1",
+    "@cloudflare/ai-chat": "^0.12.2",
     "@cloudflare/computer": "*",
-    "agents": "^0.20.0",
+    "agents": "^0.29.0",
     "ai": "^7.0.0",
     "path": "^0.12.7",
     "workers-ai-provider": "^4.0.0"

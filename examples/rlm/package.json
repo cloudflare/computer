@@ -14,10 +14,10 @@
     "build:types": "wrangler types --env-file=.dev.vars.example"
   },
   "dependencies": {
-    "@cloudflare/ai-chat": "^0.10.1",
+    "@cloudflare/ai-chat": "^0.12.2",
     "@cloudflare/computer": "*",
     "@phosphor-icons/react": "^2.1.10",
-    "agents": "^0.20.0",
+    "agents": "^0.29.0",
     "ai": "^7.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

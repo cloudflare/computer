@@ -12,12 +12,12 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript.js";
-import { getWorkspace, type WorkspaceClient } from "./client.js";
+import { getWorkspace } from "./client.js";
 import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
 import type { WorkspaceModuleBackend } from "./runtime/types.js";
 import { createAITools } from "./tools/ai-sdk/index.js";
 import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { type ThinkWorkspaceCompatibility, Workspace } from "./workspace.js";
+import { Workspace } from "./workspace.js";
 
 interface ExecCall {
   command: string;
@@ -95,7 +95,6 @@ function fakeRemote(): {
   let disposed = false;
   const stub = {
     fs: { marker: "fs" },
-    useThink: false,
     git: { marker: "git" },
     assets: undefined,
     artifacts: { marker: "artifacts" },
@@ -118,8 +117,10 @@ function fakeBrokenRemote(): {
 } {
   let disposed = false;
   const stub = {
-    get useThink(): boolean {
-      throw new Error("compatibility lookup failed");
+    runtime: {
+      backends(): never {
+        throw new Error("backend lookup failed");
+      },
     },
     [Symbol.dispose]() {
       disposed = true;
@@ -149,7 +150,6 @@ function countingRemote(failOn: number[] = []) {
   let disposed = 0;
   const stub = {
     fs: { stat: (path: string) => Promise.resolve({ path }) },
-    useThink: false,
     git: { cli: (input: unknown) => Promise.resolve({ input }) },
     hasAssets: false,
     artifacts: { list: () => Promise.resolve(["repo"]) },
@@ -264,7 +264,6 @@ describe("getWorkspace — remote dispatch", () => {
     expect(ws.fs).toEqual({ marker: "fs" });
     expect(ws.git).toEqual({ marker: "git" });
     expect(ws.artifacts).toEqual({ marker: "artifacts" });
-    expect(ws).not.toHaveProperty("readFile");
   });
 
   it("streams through an asynchronous remote stream result", async () => {
@@ -304,25 +303,8 @@ describe("getWorkspace — remote dispatch", () => {
   it("disposes the remote stub when client initialization fails", async () => {
     const { host, disposed } = fakeBrokenRemote();
 
-    await expect(getWorkspace(host)).rejects.toThrow("compatibility lookup failed");
+    await expect(getWorkspace(host)).rejects.toThrow("backend lookup failed");
     expect(disposed()).toBe(true);
-  });
-
-  it("adds Think compatibility when the remote Workspace enables it", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      useThink: true,
-    });
-    await workspace.fs.writeFile("/notes.txt", "hello");
-    const host: WorkspaceStubHost = {
-      __getWorkspaceStub: () => Promise.resolve(workspace.stub()),
-    };
-
-    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
-
-    expect(client).toHaveProperty("readFile");
-    await expect(client.readFile("/notes.txt")).resolves.toBe("hello");
-    await expect(client.readFile("/missing.txt")).resolves.toBeNull();
   });
 });
 
@@ -332,27 +314,12 @@ describe("getWorkspace — local dispatch", () => {
     const ws = await getWorkspace(host);
     await ws.runtime.exec`cat ${"my file.txt"}`;
     expect(calls[0].command).toBe("cat 'my file.txt'");
-    expect(ws).not.toHaveProperty("readFile");
   });
 
   it("does not throw on dispose (the durable object owns the lifecycle)", async () => {
     const { host } = fakeLocal();
     const ws = await getWorkspace(host);
     expect(() => ws[Symbol.dispose]()).not.toThrow();
-  });
-
-  it("adds Think compatibility when the local Workspace enables it", async () => {
-    const workspace = new Workspace({
-      storage: new SQLiteTestStorage(),
-      useThink: true,
-    });
-    const host = { [WORKSPACE]: workspace };
-    const { runtime } = fakeRuntime();
-    Object.defineProperty(workspace, "runtime", { get: () => runtime });
-
-    const client = (await getWorkspace(host)) as WorkspaceClient & ThinkWorkspaceCompatibility;
-
-    expect(client).toHaveProperty("readFile");
   });
 });
 

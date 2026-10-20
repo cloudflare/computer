@@ -46,16 +46,12 @@ Workspace where `fs` works against the local SQLite store but
 `shell` throws.
 
 `WorkspaceOptions` includes the storage handle, optional backends,
-clock, session id, mounts, observer, git identity, assets, artifacts,
-and `useThink`. There is no `root` or `sandbox` field on the host
-wrapper — sandbox wiring lives behind a `WorkspaceBackend`.
+clock, session id, mounts, observer, git identity, assets, and
+artifacts. There is no `root` or `sandbox` field on the host wrapper —
+sandbox wiring lives behind a `WorkspaceBackend`.
 
-Set `useThink: true` when assigning the Workspace to
-`Think.workspace`. This adds Think's string-oriented filesystem
-compatibility methods (`readFile`, `readFileBytes`, `writeFile`,
-`readDir`, `rm`, `glob`, `mkdir`, and `stat`) to that Workspace and to
-clients returned by `getWorkspace()`, while leaving the primary API on
-`workspace.fs`.
+Think (`@cloudflare/think` 0.21 and later) takes a Workspace as it is:
+assign one, or a client from `getWorkspace()`, to `Think.workspace`.
 
 Illustrative layout (nothing below `/` is auto-created beyond
 `ROOT_INODE` itself):

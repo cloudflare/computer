@@ -3,9 +3,9 @@
  * `@cloudflare/computer` VFS.
  *
  * Think gives the Durable Object a streaming chat protocol, message
- * persistence, resumable streams, and the agentic tool loop. This
- * example keeps the surface as small as possible: one agent, one
- * Workspace, the shared `@cloudflare/computer/tools`, and nothing
+ * persistence, resumable streams, the agentic tool loop, and the
+ * `@cloudflare/computer` workspace tools. This example keeps the surface
+ * as small as possible: one agent, one Workspace, and nothing
  * task-specific. You talk to it from a terminal (see `cli/chat.mjs`)
  * and it can read, write, and edit files in its workspace and run
  * shell commands through either workspace backend.
@@ -18,24 +18,15 @@
  *     a ContainerBackend (`"container"`) for full Linux
  *     userland through computerd. This mirrors examples/container while
  *     keeping the chat surface unchanged.
- *   - `useThink: true` adds the string-based compatibility surface
- *     Think expects; the cast promotes it from optional to present.
- *     `workspaceBash` is off because `@cloudflare/computer/tools`
- *     provides the `exec` tool.
+ *   - Think adds the workspace tools (`read`, `write`, `edit`, `exec`,
+ *     ...) and hands out the Workspace stub the worker backend calls
+ *     back through.
  */
 
-import {
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-  WorkspaceProxy,
-  WorkspaceServiceProxy,
-  type WorkspaceStub,
-} from "@cloudflare/computer";
+import { Workspace, WorkspaceProxy, WorkspaceServiceProxy } from "@cloudflare/computer";
 import { ContainerBackend, withWorkspaceContainer } from "@cloudflare/computer/backends/container";
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
-import { createAITools } from "@cloudflare/computer/tools/ai-sdk";
 import { Think } from "@cloudflare/think";
-import type { ToolSet } from "ai";
 import { createWorkersAI } from "workers-ai-provider";
 
 // Re-export so the runtime can build loopback bindings. The
@@ -59,9 +50,6 @@ function workspaceRef(ctx: DurableObjectState) {
 class AssistantBase extends Think<Env> {}
 
 export class Assistant extends withWorkspaceContainer(AssistantBase) {
-  /** We have a dedicated `exec` tool; skip Think's built-in bash. */
-  override workspaceBash = false;
-
   /** Plenty of budget for a chat turn that reads a few files first. */
   override maxSteps = 20;
 
@@ -99,8 +87,7 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
       }),
       this.#containerBackend,
     ],
-    useThink: true,
-  }) as Workspace & ThinkWorkspaceCompatibility;
+  });
 
   /** Forwarded by WorkspaceProxy for computerd's outbound /api upgrade. */
   override async fetch(request: Request): Promise<Response> {
@@ -109,17 +96,6 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
       return this.#containerBackend.handleFetch(request);
     }
     return super.fetch(request);
-  }
-
-  /**
-   * Hand out a typed RPC stub to the workspace. The worker backend's
-   * WorkspaceServiceProxy dispatches to this so the in-isolate shell
-   * can reach back into the host workspace; WorkspaceProxy uses the
-   * same method for the container's capnweb egress path.
-   */
-  async __getWorkspaceStub(): Promise<WorkspaceStub> {
-    await this.workspace.ready();
-    return this.workspace.stub();
   }
 
   override getModel() {
@@ -150,11 +126,5 @@ export class Assistant extends withWorkspaceContainer(AssistantBase) {
       "selected backend lacks a tool, retry on a backend whose",
       "description covers that command.",
     ].join("\n");
-  }
-
-  override getTools(): ToolSet {
-    // Every backend the Workspace has, "shell" first. Both describe
-    // themselves to the model.
-    return createAITools({ workspace: this.workspace });
   }
 }

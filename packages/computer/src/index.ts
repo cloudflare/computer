@@ -131,9 +131,4 @@ export {
   type WorkspaceStubHost,
   withWorkspace,
 } from "./with-workspace.js";
-export {
-  type ThinkWorkspaceCompatibility,
-  Workspace,
-  type WorkspaceGitFactory,
-  type WorkspaceOptions,
-} from "./workspace.js";
+export { Workspace, type WorkspaceGitFactory, type WorkspaceOptions } from "./workspace.js";
