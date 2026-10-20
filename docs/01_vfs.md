@@ -50,9 +50,6 @@ clock, session id, mounts, observer, git identity, assets, and
 artifacts. There is no `root` or `sandbox` field on the host wrapper —
 sandbox wiring lives behind a `WorkspaceBackend`.
 
-Think (`@cloudflare/think` 0.21 and later) takes a Workspace as it is:
-assign one, or a client from `getWorkspace()`, to `Think.workspace`.
-
 Illustrative layout (nothing below `/` is auto-created beyond
 `ROOT_INODE` itself):
 

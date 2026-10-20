@@ -1,5 +1,5 @@
 ---
-"@cloudflare/computer": minor
+"@cloudflare/computer": patch
 ---
 
-`getWorkspace()` now returns a lazy client immediately which resolves on the first call.
+`getWorkspace()` now returns a lazy client immediately which resolves on the first call. `useThink` and the Think compatibility methods are removed; `@cloudflare/think` 0.21 and later take a `Workspace` as it is.

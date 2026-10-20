@@ -178,10 +178,10 @@ hand `/api` to the backend before the base class sees it.
 ## 5. Hook the workspace up to the agent
 
 Think already has file and shell tools. The Computer workspace makes
-those tools use the same filesystem as the container:
-`write` calls Computer's host-side filesystem, while `exec` runs a
-command in the container. Think's fetch tool gets an allowlist of one host, so
-the agent can read openstove.org and nothing else.
+those tools use the same filesystem as the container: `write` calls
+Computer's host-side filesystem, while `exec` runs a command in the
+container. Think's fetch tool gets an allowlist of one host, so the
+agent can read openstove.org and nothing else.
 
 ```ts
 override maxSteps = 10;

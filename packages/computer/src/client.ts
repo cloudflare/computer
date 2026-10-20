@@ -436,37 +436,22 @@ export function getWorkspace(source: WorkspaceSource): LazyWorkspaceClient {
       });
     return loading;
   };
-  // Every member of the surface is an object of async methods, so each
-  // forwards to the loaded client. `then` stays undefined, or awaiting
-  // a member would treat it as a promise.
-  const forward = (member: "fs" | "git" | "artifacts") =>
-    new Proxy(
-      {},
-      {
-        get: (_target, name) =>
-          typeof name === "symbol" || name === "then"
-            ? undefined
-            : (...args: unknown[]) => load().then((client) => client[member][name](...args)),
+  // Each member forwards its methods to the loaded client, apart from
+  // the ones in `own`. `then` stays undefined, or awaiting a member
+  // would treat it as a promise.
+  const forward = (member: "fs" | "runtime" | "git" | "artifacts", own: object = {}) =>
+    new Proxy(own, {
+      get: (target, name) => {
+        if (name in target) return (target as Record<string | symbol, unknown>)[name];
+        if (typeof name === "symbol" || name === "then") return undefined;
+        return (...args: unknown[]) => load().then((client) => client[member][name](...args));
       },
-    );
-  const runtime = {
-    exec: (...args: unknown[]) =>
-      // oxlint-disable-next-line typescript/no-explicit-any -- forwards every exec overload unchanged
-      load().then((client) => (client.runtime.exec as (...a: unknown[]) => any)(...args)),
-    getExec: (...args: unknown[]) =>
-      // oxlint-disable-next-line typescript/no-explicit-any -- forwards every getExec overload unchanged
-      load().then((client) => (client.runtime.getExec as (...a: unknown[]) => any)(...args)),
-    killExec: (id: string, options?: RuntimeKillOptions) =>
-      load().then((client) => client.runtime.killExec(id, options)),
-    disposeExec: (id: string, options?: { backend?: string }) =>
-      load().then((client) => client.runtime.disposeExec(id, options)),
-    // Unknown until loaded. Reporting none keeps tool sets built from
-    // this client the same before and after the first call.
-    backends: () => NO_BACKENDS,
-  } as WorkspaceRuntimeClient;
+    });
   return {
     fs: forward("fs") as AsyncMethods<WorkspaceFilesystem>,
-    runtime,
+    // Backends are unknown until loaded. Reporting none keeps tool sets
+    // built from this client the same before and after the first call.
+    runtime: forward("runtime", { backends: () => NO_BACKENDS }) as WorkspaceRuntimeClient,
     git: forward("git"),
     assets: undefined,
     artifacts: forward("artifacts"),
