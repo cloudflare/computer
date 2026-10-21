@@ -56,7 +56,7 @@ export const MAX_CONCURRENT_RECOVERIES = 4;
 // Durable Object's SQLite holds at most 2 MB in a row.
 const CHUNK_CHARACTERS = 256 * 1024;
 
-export interface DurableStart {
+export interface ResumeStart {
   readonly version: number;
   readonly modules: Record<string, string | { js?: string }>;
   readonly entryName: string;
@@ -74,12 +74,12 @@ export interface DurableStart {
   readonly fingerprint: string;
 }
 
-export interface DurableRecord {
+export interface ResumeState {
   readonly policy: Exclude<InterruptPolicy, "fail">;
   readonly attempt: number;
   /** Calls journaled when the attempt started. */
-  readonly progress: number;
-  readonly start: DurableStart;
+  readonly callsAtAttempt: number;
+  readonly start: ResumeStart;
 }
 
 interface JournalEntry {
@@ -108,12 +108,12 @@ export type JournalStep =
     }
   | { readonly kind: "diverge"; readonly message: string };
 
-export const DURABLE_TABLES = [
-  "workspace_runtime_durable",
-  "workspace_runtime_durable_chunks",
+export const RESUME_TABLES = [
+  "workspace_runtime_resume",
+  "workspace_runtime_resume_start",
   "workspace_runtime_journal",
   "workspace_runtime_journal_chunks",
-  "workspace_runtime_schedule",
+  "workspace_runtime_event_log",
 ] as const;
 
 /** Most events one log chunk may carry. */
@@ -123,19 +123,19 @@ const MAX_LOG_CHUNK = 65536;
 // shape should rename them rather than migrate: every backend creates
 // them on connect, whether or not it uses them, and CREATE TABLE IF NOT
 // EXISTS leaves an older table as it was.
-export function createDurableTables(db: Database): void {
+export function createResumeTables(db: Database): void {
   db.run(`
-    CREATE TABLE IF NOT EXISTS workspace_runtime_durable (
+    CREATE TABLE IF NOT EXISTS workspace_runtime_resume (
       backend TEXT NOT NULL,
       execution_id TEXT NOT NULL,
-      policy TEXT NOT NULL,
+      on_interrupt TEXT NOT NULL,
       attempt INTEGER NOT NULL,
-      progress INTEGER NOT NULL DEFAULT 0,
+      calls_at_attempt INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (backend, execution_id)
     )
   `);
   db.run(`
-    CREATE TABLE IF NOT EXISTS workspace_runtime_durable_chunks (
+    CREATE TABLE IF NOT EXISTS workspace_runtime_resume_start (
       backend TEXT NOT NULL,
       execution_id TEXT NOT NULL,
       idx INTEGER NOT NULL,
@@ -152,8 +152,8 @@ export function createDurableTables(db: Database): void {
       label TEXT NOT NULL,
       state TEXT NOT NULL,
       response TEXT,
-      at INTEGER,
-      ordinal INTEGER,
+      journaled_at INTEGER,
+      journal_order INTEGER,
       PRIMARY KEY (backend, execution_id, seq)
     )
   `);
@@ -168,7 +168,7 @@ export function createDurableTables(db: Database): void {
     )
   `);
   db.run(`
-    CREATE TABLE IF NOT EXISTS workspace_runtime_schedule (
+    CREATE TABLE IF NOT EXISTS workspace_runtime_event_log (
       backend TEXT NOT NULL,
       execution_id TEXT NOT NULL,
       position INTEGER NOT NULL,
@@ -178,18 +178,18 @@ export function createDurableTables(db: Database): void {
   `);
 }
 
-export function saveDurableStart(
+export function saveResume(
   db: Database,
   backend: string,
   id: string,
   policy: Exclude<InterruptPolicy, "fail">,
-  start: DurableStart,
+  start: ResumeStart,
 ): void {
   const text = JSON.stringify(start);
   db.transactionSync(() => {
-    clearDurable(db, backend, id);
+    clearResume(db, backend, id);
     db.run(
-      `INSERT INTO workspace_runtime_durable (backend, execution_id, policy, attempt)
+      `INSERT INTO workspace_runtime_resume (backend, execution_id, on_interrupt, attempt)
        VALUES (?, ?, ?, 1)`,
       backend,
       id,
@@ -197,7 +197,7 @@ export function saveDurableStart(
     );
     for (let offset = 0, idx = 0; offset < text.length; offset += CHUNK_CHARACTERS, idx += 1) {
       db.run(
-        `INSERT INTO workspace_runtime_durable_chunks (backend, execution_id, idx, data)
+        `INSERT INTO workspace_runtime_resume_start (backend, execution_id, idx, data)
          VALUES (?, ?, ?, ?)`,
         backend,
         id,
@@ -208,26 +208,27 @@ export function saveDurableStart(
   });
 }
 
-export function loadDurable(db: Database, backend: string, id: string): DurableRecord | undefined {
-  const row = db.one<{ policy: string; attempt: number; progress: number }>(
-    `SELECT policy, attempt, progress FROM workspace_runtime_durable
+export function loadResume(db: Database, backend: string, id: string): ResumeState | undefined {
+  const row = db.one<{ on_interrupt: string; attempt: number; calls_at_attempt: number }>(
+    `SELECT on_interrupt, attempt, calls_at_attempt FROM workspace_runtime_resume
      WHERE backend = ? AND execution_id = ?`,
     backend,
     id,
   );
-  if (!row || (row.policy !== "restart" && row.policy !== "replay")) return undefined;
+  const policy = row?.on_interrupt;
+  if (!row || (policy !== "restart" && policy !== "replay")) return undefined;
   const chunks = db.all<{ data: string }>(
-    `SELECT data FROM workspace_runtime_durable_chunks
+    `SELECT data FROM workspace_runtime_resume_start
      WHERE backend = ? AND execution_id = ? ORDER BY idx`,
     backend,
     id,
   );
   try {
-    const start = JSON.parse(chunks.map((chunk) => chunk.data).join("")) as DurableStart;
+    const start = JSON.parse(chunks.map((chunk) => chunk.data).join("")) as ResumeStart;
     return {
-      policy: row.policy,
+      policy,
       attempt: Number(row.attempt),
-      progress: Number(row.progress),
+      callsAtAttempt: Number(row.calls_at_attempt),
       start,
     };
   } catch {
@@ -240,20 +241,20 @@ export function recordAttempt(
   backend: string,
   id: string,
   attempt: number,
-  progress: number,
+  callsAtAttempt: number,
 ): void {
   db.run(
-    `UPDATE workspace_runtime_durable SET attempt = ?, progress = ?
+    `UPDATE workspace_runtime_resume SET attempt = ?, calls_at_attempt = ?
      WHERE backend = ? AND execution_id = ?`,
     attempt,
-    progress,
+    callsAtAttempt,
     backend,
     id,
   );
 }
 
 /** How many calls a run has journaled. */
-export function journalProgress(db: Database, backend: string, id: string): number {
+export function journaledCalls(db: Database, backend: string, id: string): number {
   const row = db.one<{ calls: number }>(
     `SELECT COUNT(*) AS calls FROM workspace_runtime_journal
      WHERE backend = ? AND execution_id = ? AND state = 'applied'`,
@@ -267,20 +268,20 @@ export function clearJournal(db: Database, backend: string, id: string): void {
   for (const table of [
     "workspace_runtime_journal",
     "workspace_runtime_journal_chunks",
-    "workspace_runtime_schedule",
+    "workspace_runtime_event_log",
   ]) {
     db.run(`DELETE FROM ${table} WHERE backend = ? AND execution_id = ?`, backend, id);
   }
 }
 
-export function clearDurable(db: Database, backend: string, id: string): void {
+export function clearResume(db: Database, backend: string, id: string): void {
   db.run(
-    `DELETE FROM workspace_runtime_durable WHERE backend = ? AND execution_id = ?`,
+    `DELETE FROM workspace_runtime_resume WHERE backend = ? AND execution_id = ?`,
     backend,
     id,
   );
   db.run(
-    `DELETE FROM workspace_runtime_durable_chunks WHERE backend = ? AND execution_id = ?`,
+    `DELETE FROM workspace_runtime_resume_start WHERE backend = ? AND execution_id = ?`,
     backend,
     id,
   );
@@ -324,10 +325,10 @@ export class ExecutionJournal implements BridgeJournal {
         label: string;
         state: string;
         response: string | null;
-        at: number | null;
-        ordinal: number | null;
+        journaled_at: number | null;
+        journal_order: number | null;
       }>(
-        `SELECT seq, call_key, label, state, response, at, ordinal FROM workspace_runtime_journal
+        `SELECT seq, call_key, label, state, response, journaled_at, journal_order FROM workspace_runtime_journal
          WHERE backend = ? AND execution_id = ? ORDER BY seq`,
         backend,
         id,
@@ -339,8 +340,8 @@ export class ExecutionJournal implements BridgeJournal {
         state: row.state === "applied" && row.response !== null ? "applied" : "executing",
         // An empty response marks one stored in chunks.
         response: row.response === "" ? this.#chunkedResponse(Number(row.seq)) : row.response,
-        at: row.at === null ? null : Number(row.at),
-        ordinal: row.ordinal === null ? null : Number(row.ordinal),
+        at: row.journaled_at === null ? null : Number(row.journaled_at),
+        ordinal: row.journal_order === null ? null : Number(row.journal_order),
       }));
     this.#nextSeq = (this.#entries.at(-1)?.seq ?? 0) + 1;
     const applied = this.#entries.filter((entry) => entry.state === "applied");
@@ -374,7 +375,7 @@ export class ExecutionJournal implements BridgeJournal {
       throw new Error("Workspace execution sent a malformed event log.");
     }
     this.#db.run(
-      `INSERT OR IGNORE INTO workspace_runtime_schedule (backend, execution_id, position, events)
+      `INSERT OR IGNORE INTO workspace_runtime_event_log (backend, execution_id, position, events)
        VALUES (?, ?, ?, ?)`,
       this.#backend,
       this.#id,
@@ -401,7 +402,7 @@ export class ExecutionJournal implements BridgeJournal {
   // dropped, and the replay logs those positions afresh.
   #loadLog(): number[] {
     const rows = this.#db.all<{ position: number; events: string }>(
-      `SELECT position, events FROM workspace_runtime_schedule
+      `SELECT position, events FROM workspace_runtime_event_log
        WHERE backend = ? AND execution_id = ? ORDER BY position`,
       this.#backend,
       this.#id,
@@ -412,7 +413,7 @@ export class ExecutionJournal implements BridgeJournal {
       log.push(...(JSON.parse(row.events) as number[]));
     }
     this.#db.run(
-      `DELETE FROM workspace_runtime_schedule
+      `DELETE FROM workspace_runtime_event_log
        WHERE backend = ? AND execution_id = ? AND position >= ?`,
       this.#backend,
       this.#id,
@@ -455,7 +456,7 @@ export class ExecutionJournal implements BridgeJournal {
     const seq = this.#nextSeq++;
     this.#db.run(
       `INSERT INTO workspace_runtime_journal
-         (backend, execution_id, seq, call_key, label, state, response, at)
+         (backend, execution_id, seq, call_key, label, state, response, journaled_at)
        VALUES (?, ?, ?, ?, ?, 'executing', NULL, NULL)`,
       this.#backend,
       this.#id,
@@ -487,7 +488,7 @@ export class ExecutionJournal implements BridgeJournal {
       }
     }
     this.#db.run(
-      `UPDATE workspace_runtime_journal SET state = 'applied', response = ?, at = ?, ordinal = ?
+      `UPDATE workspace_runtime_journal SET state = 'applied', response = ?, journaled_at = ?, journal_order = ?
        WHERE backend = ? AND execution_id = ? AND seq = ?`,
       chunked ? "" : text,
       at,

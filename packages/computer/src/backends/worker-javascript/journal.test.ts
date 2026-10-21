@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   callKey,
-  createDurableTables,
+  createResumeTables,
   decodeValue,
   describeCall,
   encodeValue,
@@ -13,7 +13,7 @@ import {
 
 function database() {
   const db = new Database(new SQLiteTestStorage());
-  createDurableTables(db);
+  createResumeTables(db);
   return db;
 }
 
