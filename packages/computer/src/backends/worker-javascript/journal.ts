@@ -172,6 +172,7 @@ export function createResumeTables(db: Database): void {
       state TEXT NOT NULL,
       response TEXT,
       interrupt_payload TEXT,
+      waiting_since INTEGER,
       answer TEXT,
       journaled_at INTEGER,
       journal_order INTEGER,
@@ -329,12 +330,10 @@ export function answerCall(
 export function waitingCalls(db: Database, backend: string): WaitingCall[] {
   return db
     .all<{ execution_id: string; seq: number; interrupt_payload: string; waiting_since: number }>(
-      `SELECT j.execution_id, j.seq, j.interrupt_payload, d.waiting_since
-       FROM workspace_runtime_journal j
-       JOIN workspace_runtime_resume d
-         ON d.backend = j.backend AND d.execution_id = j.execution_id
-       WHERE j.backend = ? AND j.state = 'waiting'
-       ORDER BY d.waiting_since, j.execution_id, j.seq`,
+      `SELECT execution_id, seq, interrupt_payload, waiting_since
+       FROM workspace_runtime_journal
+       WHERE backend = ? AND state = 'waiting'
+       ORDER BY waiting_since, execution_id, seq`,
       backend,
     )
     .map((row) => ({
@@ -610,28 +609,31 @@ export class ExecutionJournal implements BridgeJournal {
   }
 
   /**
-   * Mark a live call as waiting for an answer, and return when its run
+   * Mark a live call as waiting for an answer, and return when it
    * started waiting. Its response is never committed: the run is
-   * released, and the call runs again once answered.
+   * released, and the call runs again once answered. The run's own
+   * waiting_since is when its first unanswered call started waiting,
+   * which is what its timeout leaves out.
    */
   interrupt(seq: number, payload: unknown): number {
+    const now = Date.now();
     this.#db.run(
-      `UPDATE workspace_runtime_journal SET state = 'waiting', interrupt_payload = ?
+      `UPDATE workspace_runtime_journal SET state = 'waiting', interrupt_payload = ?, waiting_since = ?
        WHERE backend = ? AND execution_id = ? AND seq = ?`,
       encodeLimited(payload, "payload"),
+      now,
       this.#backend,
       this.#id,
       seq,
     );
-    const [row] = this.#db.all<{ waiting_since: number }>(
+    this.#db.run(
       `UPDATE workspace_runtime_resume SET waiting_since = COALESCE(waiting_since, ?)
-       WHERE backend = ? AND execution_id = ?
-       RETURNING waiting_since`,
-      Date.now(),
+       WHERE backend = ? AND execution_id = ?`,
+      now,
       this.#backend,
       this.#id,
     );
-    return Number(row?.waiting_since ?? Date.now());
+    return now;
   }
 
   diverged(message: string): void {

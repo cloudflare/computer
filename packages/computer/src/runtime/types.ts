@@ -317,7 +317,7 @@ export interface WorkspaceRuntimePendingCall {
   readonly callId: string;
   /** What the call passed to `ctx.interrupt()`. */
   readonly payload: WorkspaceRuntimeValue;
-  /** When the run started waiting, in milliseconds since the epoch. */
+  /** When the call started waiting, in milliseconds since the epoch. */
   readonly since: number;
 }
 

@@ -134,6 +134,31 @@ describe("ExecutionJournal", () => {
     });
   });
 
+  it("keeps when each call started waiting, and the run's first", () => {
+    const db = database();
+    db.run(
+      `INSERT INTO workspace_runtime_resume (backend, execution_id, on_interrupt, attempt)
+       VALUES ('js', 'run', 'replay', 1)`,
+    );
+    const journal = new ExecutionJournal(db, "js", "run");
+    const now = vi.spyOn(Date, "now");
+    for (const [action, at] of [
+      ["one", 1000],
+      ["two", 5000],
+    ] as const) {
+      const step = journal.begin("host/ws:test.approve", [action]);
+      if (step.kind !== "live") throw new Error("expected a live call");
+      now.mockReturnValue(at);
+      expect(journal.interrupt(step.seq, { action })).toBe(at);
+    }
+    now.mockRestore();
+    expect(waitingCalls(db, "js").map((call) => call.since)).toEqual([1000, 5000]);
+    expect(
+      db.one<{ waiting_since: number }>("SELECT waiting_since FROM workspace_runtime_resume")
+        ?.waiting_since,
+    ).toBe(1000);
+  });
+
   it("numbers responses in the order they were committed", () => {
     const db = database();
     const first = new ExecutionJournal(db, "js", "run");

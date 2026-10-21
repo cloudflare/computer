@@ -632,7 +632,7 @@ export interface BridgeJournal {
     | { readonly kind: "diverge"; readonly message: string };
   /** Record a live call's response, and return its time and ordinal. */
   commit(seq: number, response: BridgeResponse): { at: number; ordinal: number };
-  /** Mark a live call as waiting for an answer. */
+  /** Mark a live call as waiting for an answer, and return when it started. */
   interrupt(seq: number, payload: unknown): number;
   /** Save a chunk of the isolate's event log. Throws on a malformed one. */
   record(position: unknown, events: unknown): void;
