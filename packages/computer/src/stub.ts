@@ -481,10 +481,10 @@ export class WorkspaceRuntimeStub extends RpcTarget {
   respond(
     id: string,
     callId: string,
-    value: WorkspaceRuntimeValue,
+    answer: WorkspaceRuntimeValue,
     options: { backend?: string } = {},
   ): Promise<void> {
-    return this.#ws.runtime.respond(id, callId, value, options);
+    return this.#ws.runtime.respond(id, callId, answer, options);
   }
 }
 

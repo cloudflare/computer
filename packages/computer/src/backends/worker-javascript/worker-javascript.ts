@@ -633,16 +633,16 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }));
   }
 
-  async respond(input: { id: string; callId: string; value: WorkspaceRuntimeValue }) {
+  async respond(input: { id: string; callId: string; answer: WorkspaceRuntimeValue }) {
     assertExecutionId(input.id);
-    assertRuntimeValue(input.value);
+    assertRuntimeValue(input.answer);
     const record = this.#recordFor(input.id);
     const prefix = `${input.id}:`;
     const seq = input.callId.startsWith(prefix) ? Number(input.callId.slice(prefix.length)) : NaN;
     const waiting =
       record?.status === "running" && Number.isSafeInteger(seq)
         ? this.#host.db.transactionSync(() =>
-            answerCall(this.#host.db, this.#backendId, input.id, seq, input.value),
+            answerCall(this.#host.db, this.#backendId, input.id, seq, input.answer),
           )
         : undefined;
     if (record === undefined || waiting === undefined) {

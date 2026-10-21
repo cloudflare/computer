@@ -191,7 +191,7 @@ export class WorkspaceRuntime {
 
   /**
    * Answer a call waiting in `ctx.interrupt()`. The run resumes once
-   * none of its calls are still waiting, and the call gets `value` as
+   * none of its calls are still waiting, and the call gets `answer` as
    * what `interrupt()` returns. Throws `ENOTWAITING` if the call isn't
    * waiting, for example because it was already answered or the run
    * was killed. Experimental: it may change in any release.
@@ -199,7 +199,7 @@ export class WorkspaceRuntime {
   async respond(
     id: string,
     callId: string,
-    value: WorkspaceRuntimeValue,
+    answer: WorkspaceRuntimeValue,
     options: { backend?: string } = {},
   ): Promise<void> {
     assertExecutionId(id);
@@ -208,7 +208,7 @@ export class WorkspaceRuntime {
     if (handle.respond === undefined) {
       throw new Error(`Backend ${backend} doesn't run calls that wait for an answer.`);
     }
-    await handle.respond({ id, callId, value });
+    await handle.respond({ id, callId, answer });
   }
 
   async killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {

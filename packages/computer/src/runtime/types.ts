@@ -353,7 +353,7 @@ export interface WorkspaceModuleBackendHandle {
   recover?(): Promise<void>;
   // Calls waiting for an answer, and answering one.
   pending?(): Promise<Omit<WorkspaceRuntimePendingCall, "backend">[]>;
-  respond?(input: { id: string; callId: string; value: WorkspaceRuntimeValue }): Promise<void>;
+  respond?(input: { id: string; callId: string; answer: WorkspaceRuntimeValue }): Promise<void>;
   // Tear down a backend-owned transport. The command adapter omits
   // it: a command backend's transport is closed through its
   // BackendHandle, not through the adapter the runtime consumes.
