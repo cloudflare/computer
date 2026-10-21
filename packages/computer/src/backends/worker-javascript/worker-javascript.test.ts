@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
 import { Workspace } from "../../workspace.js";
-import { ExecutionJournal, fingerprint, loadDurable } from "./journal.js";
+import { ExecutionJournal, fingerprint, loadResume } from "./journal.js";
 import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript.js";
 
 function throwingLoader(message: string) {
@@ -2017,7 +2017,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
                       await new Promise((resolve) => setTimeout(resolve, 10));
                       const db = new Database(storage);
                       whileRunning = [
-                        db.all("SELECT position, events FROM workspace_runtime_schedule"),
+                        db.all("SELECT position, events FROM workspace_runtime_event_log"),
                         db.all("SELECT name FROM workspace_runtime_events"),
                       ];
                       output.enqueue(
@@ -2067,7 +2067,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       const workspace = open(storage);
       await workspace.runtime.recover();
       workspaces.push(workspace);
-      return loadDurable(db, "worker-javascript", "run")?.attempt;
+      return loadResume(db, "worker-javascript", "run")?.attempt;
     };
     expect(await recover()).toBe(2);
     expect(await recover()).toBe(3);
@@ -2095,7 +2095,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       await workspace.runtime.recover();
       workspaces.push(workspace);
     }
-    expect(loadDurable(db, "worker-javascript", "run")?.attempt).toBe(3);
+    expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(3);
     // The run's next call waits for an answer.
     const journal = new ExecutionJournal(db, "worker-javascript", "run");
     const step = journal.begin("host/ws:test.approve", []);
@@ -2104,7 +2104,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     const answering = open(storage);
     workspaces.push(answering);
     await answering.runtime.respond("run", `run:${step.seq}`, true);
-    expect(loadDurable(db, "worker-javascript", "run")?.attempt).toBe(1);
+    expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(1);
     for (const workspace of workspaces) await workspace.close();
   });
 
@@ -2188,8 +2188,8 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     ]);
     const db = new Database(storage);
     for (const table of [
-      "workspace_runtime_durable",
-      "workspace_runtime_durable_chunks",
+      "workspace_runtime_resume",
+      "workspace_runtime_resume_start",
       "workspace_runtime_journal",
     ]) {
       expect(db.all(`SELECT * FROM ${table}`), table).toEqual([]);

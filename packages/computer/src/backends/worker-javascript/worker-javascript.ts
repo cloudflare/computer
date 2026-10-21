@@ -24,21 +24,21 @@ import type {
 import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
 import {
   answerCall,
-  clearDurable,
-  createDurableTables,
-  DURABLE_TABLES,
+  clearResume,
+  createResumeTables,
+  RESUME_TABLES,
   ExecutionJournal,
   fingerprint,
   fromBase64,
   INTERRUPT_POLICIES,
   JOURNAL_VERSION,
-  loadDurable,
+  loadResume,
   MAX_CONCURRENT_RECOVERIES,
-  journalProgress,
+  journaledCalls,
   MAX_INTERRUPT_ATTEMPTS,
   recordAttempt,
   REPLAY_VERSION,
-  saveDurableStart,
+  saveResume,
   toBase64,
   waitingCalls,
 } from "./journal.js";
@@ -485,7 +485,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         PRIMARY KEY (backend, execution_id, seq)
       )
     `);
-    createDurableTables(host.db);
+    createResumeTables(host.db);
     this.#prune();
     const interrupted = host.db.all<{ id: string }>(
       `SELECT id FROM workspace_runtime_executions WHERE backend = ? AND status = 'running'`,
@@ -505,7 +505,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     const record = this.#loadRecord(id);
     if (record?.status !== "running") return;
     this.#records.set(id, record);
-    const saved = this.#loadDurable(record);
+    const saved = this.#loadResume(record);
     if (saved === undefined) return;
     // A run waiting for an answer resumes once it has every one.
     if (saved.waitingSince !== null) {
@@ -515,7 +515,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     // Attempts count from the last call the run journaled, so a long run
     // isn't failed by interruptions spread across it. Its timeout still
     // bounds how long it can keep going.
-    const progressed = journalProgress(this.#host.db, this.#backendId, id) > saved.progress;
+    const progressed = journaledCalls(this.#host.db, this.#backendId, id) > saved.callsAtAttempt;
     const attempt = progressed ? 1 : saved.attempt;
     if (attempt >= MAX_INTERRUPT_ATTEMPTS) {
       this.#failInterrupted(
@@ -527,10 +527,10 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#queueRelaunch(record, { ...saved, attempt }, true);
   }
 
-  #loadDurable(record: ExecutionRecord) {
-    let saved: ReturnType<typeof loadDurable>;
+  #loadResume(record: ExecutionRecord) {
+    let saved: ReturnType<typeof loadResume>;
     try {
-      saved = loadDurable(this.#host.db, this.#backendId, record.id);
+      saved = loadResume(this.#host.db, this.#backendId, record.id);
     } catch {
       saved = undefined;
     }
@@ -559,7 +559,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // Resuming after an answer isn't an attempt.
   #queueRelaunch(
     record: ExecutionRecord,
-    saved: NonNullable<ReturnType<typeof loadDurable>>,
+    saved: NonNullable<ReturnType<typeof loadResume>>,
     counts: boolean,
   ) {
     const { start } = saved;
@@ -618,7 +618,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
   #resumeIfAnswered(record: ExecutionRecord) {
     if (record.status !== "running" || record.waiting !== "released") return;
-    const saved = this.#loadDurable(record);
+    const saved = this.#loadResume(record);
     if (saved === undefined || saved.waitingSince !== null) return;
     this.#queueRelaunch(record, saved, false);
     this.#drainRecoveries();
@@ -667,7 +667,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
 
   #relaunch(
     record: ExecutionRecord,
-    { policy, attempt, start, waitedMs }: NonNullable<ReturnType<typeof loadDurable>>,
+    { policy, attempt, start, waitedMs }: NonNullable<ReturnType<typeof loadResume>>,
     counts: boolean,
   ) {
     const id = record.id;
@@ -688,7 +688,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         this.#backendId,
         id,
         counts ? attempt + 1 : 1,
-        journalProgress(this.#host.db, this.#backendId, id),
+        journaledCalls(this.#host.db, this.#backendId, id),
       );
       let journal: ExecutionJournal | undefined;
       let durable: WorkspaceExecutionContext["durable"];
@@ -870,7 +870,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           const seed = [...crypto.getRandomValues(new Uint8Array(32))]
             .map((byte) => byte.toString(16).padStart(2, "0"))
             .join("");
-          saveDurableStart(this.#host.db, this.#backendId, id, policy, {
+          saveResume(this.#host.db, this.#backendId, id, policy, {
             version: JOURNAL_VERSION,
             modules: graph.modules,
             entryName: graph.entryName,
@@ -1386,7 +1386,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
           record.id,
         );
         for (const event of events) this.#persistEvent(record.id, event);
-        clearDurable(this.#host.db, this.#backendId, record.id);
+        clearResume(this.#host.db, this.#backendId, record.id);
       });
     } catch {
       // The execution must settle even if durable storage is unavailable.
@@ -1491,7 +1491,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       );
       // Saved start data and journals belong to running executions only.
       // Anything else was left by a terminal state that wasn't persisted.
-      for (const table of DURABLE_TABLES) {
+      for (const table of RESUME_TABLES) {
         this.#host.db.run(
           `DELETE FROM ${table}
            WHERE backend = ? AND execution_id NOT IN (

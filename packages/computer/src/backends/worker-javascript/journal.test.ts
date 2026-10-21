@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   answerCall,
   callKey,
-  createDurableTables,
+  createResumeTables,
   decodeValue,
   describeCall,
   encodeValue,
@@ -15,7 +15,7 @@ import {
 
 function database() {
   const db = new Database(new SQLiteTestStorage());
-  createDurableTables(db);
+  createResumeTables(db);
   return db;
 }
 
@@ -102,7 +102,7 @@ describe("ExecutionJournal", () => {
   it("holds an interrupted call until it's answered, then gives it the answer", () => {
     const db = database();
     db.run(
-      `INSERT INTO workspace_runtime_durable (backend, execution_id, policy, attempt)
+      `INSERT INTO workspace_runtime_resume (backend, execution_id, on_interrupt, attempt)
        VALUES ('js', 'run', 'replay', 1)`,
     );
     const first = new ExecutionJournal(db, "js", "run");
