@@ -13,8 +13,9 @@
 // Everything used at runtime is embedded; the resulting artifact has no
 // sidecar files.
 import { execFile } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { chmod, copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -38,8 +39,15 @@ const nodeCacheDir = resolve(repoRoot, ".devbox/node-binaries");
 const nodeVersion = "v22.23.4";
 
 // Subjects of roots the target Node binary must not trust. checkRootStore
-// fails the build when the target's bundled store still contains one.
+// fails the build when a target's bundled store still contains one.
 const distrustedRootSubjects = ["CN=emSign ECC Root CA - G3", "CN=AAA Certificate Services"];
+
+// Node 22.22.3 bundles 145 roots and 22.23.4 bundles 116. The floor leaves room
+// for further removals while failing an extraction that finds no store, or
+// only stray PEM text.
+const minimumBundledRoots = 100;
+const EMBEDDED_PEM_PATTERN =
+  /-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\r\n]+?-----END CERTIFICATE-----/g;
 
 const targets = [
   {
@@ -166,32 +174,38 @@ async function ensureTargetNodeBinary(target) {
   return extractedPath;
 }
 
-// Run the target Node binary and fail if its bundled root store contains a
-// distrusted root. Only a target matching the build host can be executed, so
-// other targets are skipped; they share nodeVersion and so the same store.
+// Fail if the target Node binary's bundled root store contains a distrusted
+// root. Node compiles its root store into the executable as PEM text, so the
+// store is read from the file rather than by running the binary, which lets
+// every target be checked on any build host. A store that cannot be found, or
+// that has fewer than minimumBundledRoots certificates, fails the build too: a
+// change in how Node embeds the store must not pass as a clean store.
 async function checkRootStore(target, nodeBinary) {
-  const runnable =
-    process.arch === "x64" && process.platform === (target.isMac ? "darwin" : "linux");
-  if (!runnable) {
-    console.warn(`[computerd-bin] cannot run ${target.name} Node here; root store not checked`);
-    return;
+  const text = (await readFile(nodeBinary)).toString("latin1");
+  const blocks = text.match(EMBEDDED_PEM_PATTERN) ?? [];
+  const subjects = [];
+  for (const pem of blocks) {
+    try {
+      subjects.push(new X509Certificate(pem).subject.split("\n"));
+    } catch {
+      // PEM-shaped bytes that are not a certificate are not part of the store.
+    }
   }
-  const script = `
-    const { rootCertificates } = require("node:tls");
-    const { X509Certificate } = require("node:crypto");
-    const subjects = rootCertificates.map((pem) => new X509Certificate(pem).subject);
-    process.stdout.write(JSON.stringify(subjects));
-  `;
-  const { stdout } = await execFileP(nodeBinary, ["-e", script]);
-  const subjects = JSON.parse(stdout);
+  if (subjects.length < minimumBundledRoots) {
+    throw new Error(
+      `found ${subjects.length} root certificates in Node ${nodeVersion} for ${target.name}; ` +
+        `expected at least ${minimumBundledRoots}, so its root store could not be checked`,
+    );
+  }
   const found = distrustedRootSubjects.filter((needle) =>
-    subjects.some((subject) => subject.split("\n").includes(needle)),
+    subjects.some((names) => names.includes(needle)),
   );
   if (found.length > 0) {
     throw new Error(
       `Node ${nodeVersion} for ${target.name} still trusts distrusted roots: ${found.join(", ")}`,
     );
   }
+  console.log(`[computerd-bin] ${target.name}: ${subjects.length} bundled roots, none distrusted`);
 }
 
 async function exists(p) {
