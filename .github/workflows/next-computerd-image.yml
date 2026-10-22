@@ -61,11 +61,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends libfuse2t64 fuse3
 
       # build-bin generates the SEA blob with the active Node executable and
-      # injects it into the pinned Node 22.22.3 target binary.
+      # injects it into the pinned Node 22.23.4 target binary.
       - name: Use the target Node version for the binary build
         uses: actions/setup-node@v6
         with:
-          node-version: 22.22.3
+          node-version: 22.23.4
 
       # computerd's binary build bundles the sibling packages, so their dist/
       # directories must exist before build:bin runs.

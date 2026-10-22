@@ -30,7 +30,16 @@ const repoRoot = resolve(computerdRoot, "../..");
 const outputDir = resolve(repoRoot, "artifacts/computerd");
 const seaWorkDir = resolve(computerdRoot, "dist/sea");
 const nodeCacheDir = resolve(repoRoot, ".devbox/node-binaries");
-const nodeVersion = "v22.22.3";
+// v22.23.4 is the first 22.x release whose bundled root store drops the
+// emSign ECC Root CA - G3 and AAA Certificate Services roots, through which
+// eight compromised eMudhra intermediates chain. The SEA binary verifies TLS
+// against this bundled store, so an older target would trust certificates
+// forged with those intermediates' keys.
+const nodeVersion = "v22.23.4";
+
+// Subjects of roots the target Node binary must not trust. checkRootStore
+// fails the build when the target's bundled store still contains one.
+const distrustedRootSubjects = ["CN=emSign ECC Root CA - G3", "CN=AAA Certificate Services"];
 
 const targets = [
   {
@@ -107,6 +116,7 @@ async function buildTarget(target) {
   await execFileP(process.execPath, ["--experimental-sea-config", configPath]);
 
   const nodeBinary = await ensureTargetNodeBinary(target);
+  await checkRootStore(target, nodeBinary);
   await copyFile(nodeBinary, outBin);
   await chmod(outBin, 0o755);
 
@@ -154,6 +164,34 @@ async function ensureTargetNodeBinary(target) {
     throw new Error(`extraction did not produce ${extractedPath}`);
   }
   return extractedPath;
+}
+
+// Run the target Node binary and fail if its bundled root store contains a
+// distrusted root. Only a target matching the build host can be executed, so
+// other targets are skipped; they share nodeVersion and so the same store.
+async function checkRootStore(target, nodeBinary) {
+  const runnable =
+    process.arch === "x64" && process.platform === (target.isMac ? "darwin" : "linux");
+  if (!runnable) {
+    console.warn(`[computerd-bin] cannot run ${target.name} Node here; root store not checked`);
+    return;
+  }
+  const script = `
+    const { rootCertificates } = require("node:tls");
+    const { X509Certificate } = require("node:crypto");
+    const subjects = rootCertificates.map((pem) => new X509Certificate(pem).subject);
+    process.stdout.write(JSON.stringify(subjects));
+  `;
+  const { stdout } = await execFileP(nodeBinary, ["-e", script]);
+  const subjects = JSON.parse(stdout);
+  const found = distrustedRootSubjects.filter((needle) =>
+    subjects.some((subject) => subject.split("\n").includes(needle)),
+  );
+  if (found.length > 0) {
+    throw new Error(
+      `Node ${nodeVersion} for ${target.name} still trusts distrusted roots: ${found.join(", ")}`,
+    );
+  }
 }
 
 async function exists(p) {
