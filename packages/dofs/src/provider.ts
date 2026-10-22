@@ -500,6 +500,9 @@ export class SQLiteWorkspaceProvider {
       rev,
       node.inode,
     );
+    // An open buffer commits its own mode at release; keep it in step.
+    const buffer = getWriteBuffer(this.db, node.inode);
+    if (buffer !== undefined) buffer.mode = mode & 0o7777;
   }
 
   appendFile(

@@ -251,6 +251,21 @@ describe("SQLiteWorkspaceProvider — statement cost", () => {
   });
 });
 
+describe("SQLiteWorkspaceProvider — chmod with an open write buffer", () => {
+  it("keeps a chmod made while the buffer is open", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "old");
+      p.openWriteBufferSync("/f");
+      p.writeRangeSync("/f", "new!", 0);
+      p.chmodSync("/f", 0o755);
+      p.releaseWriteBufferSync("/f");
+      expect(p.lstatSync("/f").mode & 0o7777).toBe(0o755);
+      expect(p.readFileSync("/f", "utf8")).toBe("new!");
+    });
+  });
+});
+
 describe("SQLiteWorkspaceProvider — readdirStatsSync", () => {
   it("matches lstatSync for every entry", async () => {
     await withDB((db) => {
