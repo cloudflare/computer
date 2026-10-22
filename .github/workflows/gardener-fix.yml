@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/fix/TASK.md
 # Task: fix
-# Bundle: sha256:ba225b5b8d9a6f6ca9af30f238be87de8a9f3b0ba03bc7ea519fda21e0ce3933
+# Bundle: sha256:af2dd64e48b8723e19ebb2950c57634895cc239164421a169cb9499d42236d47
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Fix"
@@ -44,7 +44,7 @@ jobs:
       task-id: "fix"
       task-name: "Fix"
       task-source: ".gardener/tasks/fix/TASK.md"
-      task-bundle-hash: ba225b5b8d9a6f6ca9af30f238be87de8a9f3b0ba03bc7ea519fda21e0ce3933
+      task-bundle-hash: af2dd64e48b8723e19ebb2950c57634895cc239164421a169cb9499d42236d47
       plan-timeout-minutes: 35
       reactions: >-
         ${{
