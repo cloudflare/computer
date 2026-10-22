@@ -36,10 +36,6 @@ interface NodeRow {
   link_target: string | null;
 }
 
-interface ChildRow {
-  child_inode: number;
-}
-
 // Cap the total number of symlinks resolved across a single
 // resolveInode() call. Matches Linux's default SYMLOOP_MAX of 40.
 const MAX_SYMLINK_FOLLOWS = 40;
@@ -222,14 +218,15 @@ function resolveParts(
       continue;
     }
 
-    const child = db.one<ChildRow>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+    const next = db.one<NodeRow>(
+      `SELECT n.inode, n.type, n.mode, n.mtime, n.size, n.link_target
+         FROM vfs_dirents d
+         JOIN vfs_nodes n ON n.inode = d.child_inode
+        WHERE d.parent_inode = ? AND d.name = ?`,
       current.inode,
       name,
     );
-    if (child === undefined) return null;
-    const next = readNode(db, child.child_inode);
-    if (next === null) return null;
+    if (next === undefined) return null;
 
     // Intermediate symlinks always get followed; final-segment symlinks
     // are only followed when the caller wants. Keep target components in

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
@@ -92,6 +92,18 @@ describe("resolveInode", () => {
     await withDB((db) => {
       addNode(db, ROOT_INODE, "a", { type: "file" });
       expect(resolveInode(db, "/a/b")).toBeNull();
+    });
+  });
+
+  it("reads each component's dirent and node in one statement", async () => {
+    await withDB((db) => {
+      let parent = ROOT_INODE;
+      for (const name of ["a", "b", "c"]) parent = addNode(db, parent, name, { type: "dir" });
+      addNode(db, parent, "f");
+      const exec = vi.spyOn(db.sql, "exec");
+      expect(resolveInode(db, "/a/b/c/f", { followSymlinks: false })?.type).toBe("file");
+      // The root row, then one statement per component.
+      expect(exec).toHaveBeenCalledTimes(5);
     });
   });
 });
