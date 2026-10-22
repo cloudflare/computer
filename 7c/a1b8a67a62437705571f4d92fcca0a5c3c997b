@@ -1,0 +1,27 @@
+.changeset/browser-module.md
+  s_9ebf7de3a4350a::t_c7db3aa71f69fa 5
+docs/17_isolate_javascript.md
+  s_9ebf7de3a4350a::t_1dbc71b76e6765 446,472,474,476
+packages/computer/src/modules/browser.test.ts
+  s_9ebf7de3a4350a::t_da055d392759fa 11-13,20-23,26-28,31-46,48-59,62-63,70,73-75,79-89,93-94,103,121,123-129,131-143,145-147,150-152,154-160,163-170,173,175-181,183-186,190-193,197-201,204,206-207,214
+packages/computer/src/modules/browser.ts
+  s_9ebf7de3a4350a::t_6dc8c1fb18da16 6-11,19,27-28,30,45-48,50-66,68-72,75-76,78-82,85-95,97-99,101,118,155-164,169-172,178-182,184,186-189,191-192,194,197,200,202,204-208,210,212-216,218,221-222
+packages/computer/tests/script-runner-worker.ts
+  s_9ebf7de3a4350a::t_3fb4bd721f3a02 61-62,64,67-69,71-75,78-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7ca1b8a67a62437705571f4d92fcca0a5c3c997b",
+  "prompts": {},
+  "sessions": {
+    "s_9ebf7de3a4350a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541a-6f4d-75b7-a250-e241869a8e0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

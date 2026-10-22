@@ -1,0 +1,21 @@
+packages/computer/src/backends/worker-javascript/durable-runtime.test.ts
+  s_5a33ac7eaed91e::t_5ae15a8f245e19 39,228-245
+packages/computer/src/backends/worker-javascript/durable-runtime.ts
+  s_5a33ac7eaed91e::t_dd44bfa5b79a97 276-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "7b96e04d118925da294e403d5280066c1ca99405",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

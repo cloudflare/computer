@@ -1,0 +1,27 @@
+.changeset/dynamic-javascript-backend.md
+  s_13dab848facb79::t_e3615970d7bafa 5
+packages/computer/src/backends/dynamic-javascript/app-modules.ts
+  s_13dab848facb79::t_71e9aa351a2c79 3-7,110-115,117,119,121,123,125-126,128,131-139,141-144,146,148-149,152,154-156,167,169-170,173,175-176,179-209,272-273
+packages/computer/src/backends/dynamic-javascript/dynamic-javascript.test.ts
+  s_13dab848facb79::t_55ff79ec05154f 11,43-44
+packages/computer/src/backends/dynamic-javascript/dynamic-javascript.ts
+  s_13dab848facb79::t_eceb944fab9cab 31-32,65,84,150-151,154,203,214-229,261-284
+packages/computer/tests/dynamic-javascript.test.ts
+  s_13dab848facb79::t_0c96d370c1e8c4 136-170,310-316,320-321,324,333-334,336-337
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e36e05a7acd2bc32b8508dc76d7604f93a319921",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

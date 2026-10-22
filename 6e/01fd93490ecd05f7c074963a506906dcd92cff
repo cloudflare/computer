@@ -1,0 +1,19 @@
+packages/computer/src/backends/worker-javascript/journal.ts
+  s_5a33ac7eaed91e::t_8eea0c57dc3821 610-612
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "6e01fd93490ecd05f7c074963a506906dcd92cff",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

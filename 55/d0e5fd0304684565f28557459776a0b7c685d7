@@ -1,0 +1,31 @@
+.changeset/lazy-get-workspace.md
+  s_80fab4cbbeef01::t_2f3a3d8e771edd 1-5
+packages/computer/README.md
+  s_80fab4cbbeef01::t_4253608b3ccb9c 482-495,502
+packages/computer/src/client.test.ts
+  s_80fab4cbbeef01::t_204c983e283e2e 144-239
+packages/computer/src/client.ts
+  s_80fab4cbbeef01::t_ca3625a1eae160 15-17,395-470
+packages/computer/src/index.ts
+  s_80fab4cbbeef01::t_57223ef4be233d 34
+packages/computer/tests/stub-soak-worker.ts
+  s_80fab4cbbeef01::t_36fa216d18165e 137-141
+packages/computer/tests/stub-soak.test.ts
+  s_80fab4cbbeef01::t_6edde781173c16 13-14,105-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "55d0e5fd0304684565f28557459776a0b7c685d7",
+  "prompts": {},
+  "sessions": {
+    "s_80fab4cbbeef01": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11d77-b402-77a1-bfff-639f8e6da640",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

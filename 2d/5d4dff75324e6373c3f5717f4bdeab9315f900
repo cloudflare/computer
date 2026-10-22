@@ -1,0 +1,25 @@
+packages/computer/src/backends/worker-javascript/durable-runtime.test.ts
+  s_5a33ac7eaed91e::t_8b29c10c92f5c5 27-31,40-41,50,193-233
+packages/computer/src/backends/worker-javascript/durable-runtime.ts
+  s_5a33ac7eaed91e::t_6a4746ca881e3e 53-56,211-231,252-253,256,264-266,298,401
+packages/computer/src/runtime/bridge.test.ts
+  s_5a33ac7eaed91e::t_87575e912a5311 408,428
+packages/computer/src/runtime/bridge.ts
+  s_5a33ac7eaed91e::t_8cf5cb48ea179c 387,404-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "2d5d4dff75324e6373c3f5717f4bdeab9315f900",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

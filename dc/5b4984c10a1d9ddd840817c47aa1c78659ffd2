@@ -1,0 +1,45 @@
+.changeset/optional-just-bash-acorn.md
+  s_10002fdd0dc261::t_05c524d2f5aec1 1-5
+docs/12_worker_backend.md
+  s_10002fdd0dc261::t_479a08ad69899d 16-22
+examples/artifacts/package.json
+  s_10002fdd0dc261::t_e5e61fe8230a10 14-15
+examples/egress/package.json
+  s_10002fdd0dc261::t_84cb79e532b2d9 15-16
+examples/mcp/package.json
+  s_10002fdd0dc261::t_0ef29b4e4bcd3a 21
+examples/pi-ai/package.json
+  s_10002fdd0dc261::t_9476ec4d7bcdfd 17
+examples/tanstack-ai/package.json
+  s_10002fdd0dc261::t_6c3d00bcfe8e47 18
+examples/think-compare-runtimes/package.json
+  s_10002fdd0dc261::t_efdedd6522275d 32
+examples/think/package.json
+  s_10002fdd0dc261::t_ecc381885bced9 29
+examples/vite-bundle/package.json
+  s_10002fdd0dc261::t_5b515d9f880c02 16-17
+examples/worker-shell/package.json
+  s_10002fdd0dc261::t_1f9470b5ab6c17 16-17
+package-lock.json
+  s_10002fdd0dc261::t_38fac7993d3cd9 34-35,100-101,119,135,176,200,229,338-339,363-364,15998,16009,16014,16028,16042-16044
+packages/computer/README.md
+  s_10002fdd0dc261::t_68bbef52d7b915 53-54,282
+packages/computer/package.json
+  s_10002fdd0dc261::t_82b57c57868466 4,167,173,187-189,206,211
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "dc5b4984c10a1d9ddd840817c47aa1c78659ffd2",
+  "prompts": {},
+  "sessions": {
+    "s_10002fdd0dc261": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a13a7e-c9d6-77c0-a1bf-cc9157d53baa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

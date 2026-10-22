@@ -1,0 +1,23 @@
+packages/computer/src/backends/worker-javascript/journal.test.ts
+  s_5a33ac7eaed91e::t_07bf90e5280694 9,35-42,68,84-86
+packages/computer/src/backends/worker-javascript/journal.ts
+  s_5a33ac7eaed91e::t_467c82673fdb48 264,285,297,328-339
+packages/computer/src/backends/worker-javascript/worker-javascript.test.ts
+  s_5a33ac7eaed91e::t_dea01ff803817c 1986-1988
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9c57075c2e82e76045d25fef649d2f9c52bd966b",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}

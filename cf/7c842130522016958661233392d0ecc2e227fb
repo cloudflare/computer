@@ -1,0 +1,21 @@
+packages/computer/src/backends/worker-javascript/module-graph.ts
+  s_13dab848facb79::t_147abc823b8048 19-22,199-214,305,359-371,547
+packages/computer/src/backends/worker-javascript/worker-javascript.ts
+  s_13dab848facb79::t_b7d248d7211138 21,129,203-332,341-344,346,351,359-383,388-389,404-408,435-442,563,597,1480,1578
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cf7c842130522016958661233392d0ecc2e227fb",
+  "prompts": {},
+  "sessions": {
+    "s_13dab848facb79": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1541c-44f7-7591-97ce-69b44a87b93c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

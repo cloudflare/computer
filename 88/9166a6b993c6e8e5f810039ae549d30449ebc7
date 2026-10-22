@@ -1,0 +1,19 @@
+examples/think-compare-runtimes/worker/think/agents.ts
+  s_80fab4cbbeef01::t_68dbebd5ad0305 10-15,128-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "889166a6b993c6e8e5f810039ae549d30449ebc7",
+  "prompts": {},
+  "sessions": {
+    "s_80fab4cbbeef01": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11d77-b402-77a1-bfff-639f8e6da640",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Matt Carey <mcarey@cloudflare.com>"
+    }
+  }
+}

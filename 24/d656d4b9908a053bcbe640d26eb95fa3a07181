@@ -1,0 +1,23 @@
+packages/computer/src/index.ts
+  s_5a33ac7eaed91e::t_f49c08f0f6626c 103
+packages/computer/src/runtime/runtime.ts
+  s_5a33ac7eaed91e::t_e23c88494023cd 112,161-174
+packages/computer/src/runtime/types.ts
+  s_5a33ac7eaed91e::t_74bfebd4937e07 209-214,268,271-278,306-308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "24d656d4b9908a053bcbe640d26eb95fa3a07181",
+  "prompts": {},
+  "sessions": {
+    "s_5a33ac7eaed91e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134d2-7b51-7f42-8fe9-03d86fbb25d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
