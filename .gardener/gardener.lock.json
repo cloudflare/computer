@@ -482,7 +482,7 @@
     },
     "triage": {
       "source": "tasks/triage/TASK.md",
-      "bundleHash": "190267bbbaee2ab93e55db41f6ca83896439c3fabf296db82a9983939fdd6893",
+      "bundleHash": "76a95c9bc941a7044d22b1b641721aecbf69c7b540bb3f97e367d6cf8c41502d",
       "workflow": ".github/workflows/gardener-triage.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -495,7 +495,9 @@
             "kind": "github.issue.opened",
             "labelsAll": [],
             "mentions": [],
-            "authors": "any"
+            "authors": [
+              "scuffi"
+            ]
           },
           {
             "kind": "github.workflow_dispatch"

@@ -6,7 +6,7 @@ description: Weighs each new issue's impact against the cost of fixing it, then 
 model: anthropic/claude-sonnet-5-5
 trigger:
   event: github.issue.opened
-  authors: any
+  authors: [scuffi]
 tools:
   - repository.list_files
   - repository.read_file

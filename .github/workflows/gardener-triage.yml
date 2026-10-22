@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/triage/TASK.md
 # Task: triage
-# Bundle: sha256:190267bbbaee2ab93e55db41f6ca83896439c3fabf296db82a9983939fdd6893
+# Bundle: sha256:76a95c9bc941a7044d22b1b641721aecbf69c7b540bb3f97e367d6cf8c41502d
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Triage"
@@ -44,11 +44,11 @@ jobs:
       task-id: "triage"
       task-name: "Triage"
       task-source: ".gardener/tasks/triage/TASK.md"
-      task-bundle-hash: 190267bbbaee2ab93e55db41f6ca83896439c3fabf296db82a9983939fdd6893
+      task-bundle-hash: 76a95c9bc941a7044d22b1b641721aecbf69c7b540bb3f97e367d6cf8c41502d
       plan-timeout-minutes: 20
       reactions: >-
         ${{
-        (github.event_name == 'issues' && github.event.action == 'opened')
+        (github.event_name == 'issues' && github.event.action == 'opened' && github.event.issue.user.login == 'scuffi')
         }}
     secrets:
       chat-webhook: ${{ secrets.GARDENER_CHAT_WEBHOOK }}
