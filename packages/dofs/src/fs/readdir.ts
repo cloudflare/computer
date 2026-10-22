@@ -121,6 +121,96 @@ export function readdir(
   return entries.slice(localOffset, limit === undefined ? undefined : localOffset + limit);
 }
 
+// A directory entry with what lstat would report for it. An adapter
+// that keeps its own tree (a FUSE driver, a VM's filesystem) reads a
+// whole directory with this instead of one lstat per entry.
+export interface WorkspaceDirentStats {
+  name: string;
+  // 0 for a file held in a pending-create buffer, as lstat reports.
+  inode: number;
+  type: "file" | "dir" | "symlink";
+  // Permission bits, as WorkspaceStatResult.mode; the type is `type`.
+  mode: number;
+  size: number;
+  mtime: number;
+  nlink: number;
+  linkTarget?: string;
+}
+
+interface DirentStatsRow {
+  inode: number;
+  name: string;
+  type: "file" | "dir" | "symlink";
+  mode: number;
+  size: number;
+  mtime: number;
+  link_target: string | null;
+  nlink: number;
+}
+
+export function readdirStats(db: Database, path: string): WorkspaceDirentStats[] {
+  const { path: canonical } = canonicalizePath(path);
+  const node = resolveInode(db, canonical);
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
+  }
+  if (node.type !== "dir") {
+    throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
+  }
+
+  const rows = db.all<DirentStatsRow>(
+    `SELECT n.inode AS inode,
+            d.name AS name,
+            n.type AS type,
+            n.mode AS mode,
+            n.size AS size,
+            n.mtime AS mtime,
+            n.link_target AS link_target,
+            (SELECT COUNT(*) FROM vfs_dirents c WHERE c.child_inode = n.inode) AS nlink
+       FROM vfs_dirents d
+       JOIN vfs_nodes n ON n.inode = d.child_inode
+      WHERE d.parent_inode = ?
+      ORDER BY d.name`,
+    node.inode,
+  );
+  const entries = new Map<string, WorkspaceDirentStats>();
+  for (const row of rows) {
+    const buffered = row.type === "file" ? getWriteBuffer(db, row.inode) : undefined;
+    entries.set(row.name, {
+      name: row.name,
+      inode: row.inode,
+      type: row.type,
+      mode: row.mode,
+      size:
+        row.type === "symlink"
+          ? (row.link_target ?? "").length
+          : buffered?.dirty
+            ? buffered.size
+            : row.size,
+      mtime: row.mtime,
+      nlink: row.nlink,
+      ...(row.type === "symlink" ? { linkTarget: row.link_target ?? "" } : {}),
+    });
+  }
+
+  // A pending create replaces a committed entry of the same name, as
+  // lstat serves the pending buffer first.
+  for (const entry of listPendingByParent(db, node.inode)) {
+    if (entry.pending === undefined) continue;
+    const name = entry.pending.leafName;
+    entries.set(name, {
+      name,
+      inode: 0,
+      type: "file",
+      mode: entry.mode & 0o7777,
+      size: entry.size,
+      mtime: entry.pending.mtime,
+      nlink: 1,
+    });
+  }
+  return [...entries.values()].sort(compareByName);
+}
+
 function committedNameExists(db: Database, parentInode: number, name: string): boolean {
   return (
     db.one<{ present: number }>(
@@ -185,7 +275,7 @@ function toResult(db: Database, parentPath: string, row: DirentRow): WorkspaceDi
 
 const filenameEncoder = new TextEncoder();
 
-function compareByName(a: WorkspaceDirentResult, b: WorkspaceDirentResult): number {
+function compareByName(a: { name: string }, b: { name: string }): number {
   const left = filenameEncoder.encode(a.name);
   const right = filenameEncoder.encode(b.name);
   const length = Math.min(left.byteLength, right.byteLength);

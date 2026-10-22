@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { mkdir } from "./mkdir";
-import { readdir } from "./readdir";
+import { readdir, readdirStats } from "./readdir";
 import { withDB } from "./with-db";
 import {
   openWriteBufferForCreateSync,
@@ -233,6 +233,92 @@ describe("readdir", () => {
     await withDB(async (db) => {
       await writeFile(db, "/file.txt", "x", {}, () => 0);
       expect(() => readdir(db, "/file.txt")).toThrowError(
+        expect.objectContaining({ code: "ENOTDIR" }),
+      );
+    });
+  });
+});
+
+describe("readdirStats", () => {
+  it("returns what a stat of each entry would, in name order", async () => {
+    const { chmod } = await import("./chmod");
+    const { link } = await import("./link");
+    const { lstat } = await import("./stat");
+    const { symlink } = await import("./symlink");
+    await withDB(async (db) => {
+      mkdir(db, "/sub", { mode: 0o700 }, () => 5);
+      await writeFile(db, "/file.txt", "hello", {}, () => 7);
+      chmod(db, "/file.txt", 0o640, () => 7);
+      link(db, "/file.txt", "/hard.txt");
+      symlink(db, "file.txt", "/link", () => 9);
+
+      const entries = readdirStats(db, "/");
+      expect(entries.map((entry) => entry.name)).toEqual(["file.txt", "hard.txt", "link", "sub"]);
+      for (const entry of entries) {
+        const stat = lstat(db, `/${entry.name}`);
+        expect(entry).toMatchObject({
+          inode: stat.inode,
+          mode: stat.mode,
+          mtime: stat.mtime,
+          size: stat.size,
+        });
+      }
+      expect(entries[0]).toMatchObject({ type: "file", mode: 0o640, size: 5, nlink: 2 });
+      expect(entries[1].inode).toBe(entries[0].inode);
+      expect(entries[2]).toMatchObject({ type: "symlink", linkTarget: "file.txt", nlink: 1 });
+      expect(entries[3]).toMatchObject({ type: "dir", mode: 0o700, size: 0, nlink: 1 });
+    });
+  });
+
+  it("includes pending files and the size of open write buffers", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a", "old", {}, () => 0);
+      openWriteBufferForCreateSync(db, "/b", { mode: 0o600 }, () => 10);
+      writeRangeSync(db, "/b", new TextEncoder().encode("pending"), 0, {}, () => 11);
+
+      expect(readdirStats(db, "/")).toEqual([
+        expect.objectContaining({ name: "a", type: "file", size: 3 }),
+        { name: "b", inode: 0, type: "file", mode: 0o600, size: 7, mtime: 10, nlink: 1 },
+      ]);
+      releaseWriteBufferSync(db, "/b", () => 12);
+      expect(readdirStats(db, "/")[1]).toMatchObject({ name: "b", mode: 0o600, size: 7 });
+      expect(readdirStats(db, "/")[1].inode).toBeGreaterThan(0);
+    });
+  });
+
+  it("reports a pending file over a committed one of the same name, as lstat does", async () => {
+    const { lstat } = await import("./stat");
+    await withDB(async (db) => {
+      openWriteBufferForCreateSync(db, "/f", { mode: 0o600 }, () => 1);
+      await writeFile(db, "/f", "abc", {}, () => 2);
+
+      const entries = readdirStats(db, "/");
+      expect(entries).toHaveLength(1);
+      const stat = lstat(db, "/f");
+      expect(entries[0]).toMatchObject({
+        inode: stat.inode,
+        mode: stat.mode,
+        mtime: stat.mtime,
+        size: stat.size,
+      });
+    });
+  });
+
+  it("lists a directory in one statement", async () => {
+    await withDB(async (db) => {
+      mkdir(db, "/d", {}, () => 0);
+      for (const name of ["x", "y", "z"]) await writeFile(db, `/d/${name}`, name, {}, () => 0);
+      const exec = vi.spyOn(db.sql, "exec");
+      expect(readdirStats(db, "/d")).toHaveLength(3);
+      // Resolving /d (outside a transaction, one statement), then the listing.
+      expect(exec).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("throws ENOTDIR when called on a file", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/file.txt", "x", {}, () => 0);
+      expect(() => readdirStats(db, "/file.txt")).toThrowError(
         expect.objectContaining({ code: "ENOTDIR" }),
       );
     });

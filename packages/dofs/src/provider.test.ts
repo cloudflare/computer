@@ -251,6 +251,28 @@ describe("SQLiteWorkspaceProvider — statement cost", () => {
   });
 });
 
+describe("SQLiteWorkspaceProvider — readdirStatsSync", () => {
+  it("matches lstatSync for every entry", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.mkdirSync("/d");
+      p.writeFileSync("/d/f", "data");
+      p.chmodSync("/d/f", 0o600);
+      p.symlinkSync("f", "/d/l");
+      p.mkdirSync("/d/sub");
+      for (const entry of p.readdirStatsSync("/d")) {
+        const stat = p.lstatSync(`/d/${entry.name}`);
+        expect(entry.inode).toBe(stat.ino);
+        expect(entry.mode).toBe(stat.mode & 0o7777);
+        expect(entry.size).toBe(stat.size);
+        expect(entry.nlink).toBe(stat.nlink);
+        expect(entry.type === "symlink").toBe(stat.isSymbolicLink());
+        expect(entry.type === "dir").toBe(stat.isDirectory());
+      }
+    });
+  });
+});
+
 describe("SQLiteWorkspaceProvider — renameSync overwrite matrix", () => {
   it("records rename as an old-path delete and new-path live entry", async () => {
     await withProviderAndDB(async (p, db) => {

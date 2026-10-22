@@ -13,7 +13,13 @@ import { link as linkImpl } from "./fs/link";
 import type { MkdirOptions } from "./fs/mkdir";
 import { mkdir as mkdirImpl } from "./fs/mkdir";
 import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer";
-import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir";
+import {
+  readdir as readdirImpl,
+  readdirEntries,
+  readdirStats as readdirStatsImpl,
+  type WorkspaceDirentEntry,
+  type WorkspaceDirentStats,
+} from "./fs/readdir";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile";
 import { readlink as readlinkImpl } from "./fs/readlink";
 import { rename as renameImpl } from "./fs/rename";
@@ -252,6 +258,13 @@ export class SQLiteWorkspaceProvider {
    */
   readdirEntriesSync(path: string): WorkspaceDirentEntry[] {
     return readdirEntries(this.db, path);
+  }
+
+  // Every entry with what lstatSync would report for it, in one
+  // statement. Not part of @platformatic/vfs; for callers that keep
+  // their own tree and would otherwise lstat each name.
+  readdirStatsSync(path: string): WorkspaceDirentStats[] {
+    return readdirStatsImpl(this.db, path);
   }
 
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {
