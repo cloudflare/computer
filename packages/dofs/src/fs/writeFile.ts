@@ -822,7 +822,7 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
     return;
   }
 
-  const mtime = now();
+  const mtime = entry.mtime ?? now();
   const mode = entry.mode & 0o7777;
   const buffered = entry.buf.subarray(0, entry.size);
 
@@ -875,7 +875,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
     throw createWorkspaceError("EIO", "commitPendingBuffer called on non-pending entry");
   }
   const { parentInode, leafName, canonicalPath, pendingInode } = entry.pending;
-  const mtime = now();
+  const mtime = entry.mtime ?? now();
   const mode = entry.mode & 0o7777;
   const buffered = entry.buf.subarray(0, entry.size);
 
@@ -1040,6 +1040,7 @@ export function writeRangeSync(
     if (writeEnd > pending.size) pending.size = writeEnd;
     pending.mode = (options.mode ?? pending.mode) & 0o7777;
     pending.dirty = true;
+    pending.mtime = undefined;
     return bytes.byteLength;
   }
 
@@ -1065,6 +1066,7 @@ export function writeRangeSync(
     if (writeEnd > buffered.size) buffered.size = writeEnd;
     buffered.mode = mode;
     buffered.dirty = true;
+    buffered.mtime = undefined;
     buffered.dirtyPath = canonical;
     buffered.dirtyTargetPath = targetPath;
     return bytes.byteLength;
@@ -1121,6 +1123,7 @@ export function truncateFileSync(
     }
     pending.size = size;
     pending.dirty = true;
+    pending.mtime = undefined;
     return;
   }
 
@@ -1135,6 +1138,7 @@ export function truncateFileSync(
     }
     buffered.size = size;
     buffered.dirty = true;
+    buffered.mtime = undefined;
     buffered.dirtyPath = canonical;
     buffered.dirtyTargetPath = targetPath;
     return;

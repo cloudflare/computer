@@ -34,6 +34,7 @@ export { rename } from "./fs/rename";
 export type { RmOptions } from "./fs/rm";
 export { lstat, stat, type WorkspaceStatResult } from "./fs/stat";
 export { symlink } from "./fs/symlink";
+export { utimes } from "./fs/utimes";
 export type { WriteFileContent, WriteFileOptions } from "./fs/writeFile";
 export type { SQLiteWorkspaceProviderOptions } from "./provider";
 export { SQLiteWorkspaceProvider } from "./provider";

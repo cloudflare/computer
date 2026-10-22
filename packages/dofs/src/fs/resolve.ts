@@ -102,10 +102,10 @@ export function resolveInode(
   return cte.node;
 }
 
-// Resolve a directory component by component, following symlinks, and
-// report whether any were followed. Mutations use this for a parent:
-// when nothing was followed, the canonical path is already the parent's
-// real path and needs no walk back up from the inode.
+// Resolve a path component by component, following symlinks, and
+// report whether any were followed. When nothing was followed, the
+// canonical path is already the node's real path and needs no walk
+// back up from the inode.
 export function resolveFollowing(
   db: Database,
   path: string,

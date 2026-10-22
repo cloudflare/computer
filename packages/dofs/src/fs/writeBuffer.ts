@@ -22,6 +22,9 @@ export interface WriteBufferEntry {
   // buffer is one that the caller opened but never wrote to; release
   // is a no-op in that case so we do not touch the existing chunks.
   dirty: boolean;
+  // Modification time to commit at release, set by utimes. A later
+  // write or truncate clears it, so the commit time wins again.
+  mtime?: number;
   // Open handle count. Each FUSE open/create increments this; each
   // release decrements. The buffer commits and evicts when the count
   // reaches zero.

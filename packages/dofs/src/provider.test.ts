@@ -266,6 +266,42 @@ describe("SQLiteWorkspaceProvider — chmod with an open write buffer", () => {
   });
 });
 
+describe("SQLiteWorkspaceProvider — utimesSync", () => {
+  it("sets the modification time from seconds or a Date", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      p.utimesSync("/f", 0, 1_000_000);
+      expect(p.statSync("/f").mtimeMs).toBe(1_000_000_000);
+      p.utimesSync("/f", 0, new Date(42_000));
+      expect(p.statSync("/f").mtimeMs).toBe(42_000);
+      p.utimesSync("/f", 0, "7");
+      expect(p.statSync("/f").mtimeMs).toBe(7_000);
+    });
+  });
+
+  it("rounds fractional seconds to whole milliseconds", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      p.utimesSync("/f", 0, 1.0004);
+      expect(p.statSync("/f").mtimeMs).toBe(1_000);
+    });
+  });
+
+  it("throws EINVAL for a time that is not a number", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      for (const mtime of ["abc", Number.NaN, Number.POSITIVE_INFINITY, new Date(Number.NaN)]) {
+        expect(() => p.utimesSync("/f", 0, mtime)).toThrowError(
+          expect.objectContaining({ code: "EINVAL" }),
+        );
+      }
+    });
+  });
+});
+
 describe("SQLiteWorkspaceProvider — readdirStatsSync", () => {
   it("matches lstatSync for every entry", async () => {
     await withDB((db) => {

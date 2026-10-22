@@ -27,6 +27,7 @@ import { resolveInode } from "./fs/resolve";
 import { rm as rmImpl } from "./fs/rm";
 import { stat as statImpl } from "./fs/stat";
 import { symlink as symlinkImpl } from "./fs/symlink";
+import { utimes as utimesImpl } from "./fs/utimes";
 import {
   createWatchAsyncIterable,
   createWatcher,
@@ -249,6 +250,22 @@ export class SQLiteWorkspaceProvider {
       return entries.map((entry) => wrapDirent(entry));
     }
     return entries.map((entry) => entry.name);
+  }
+
+  utimes(
+    path: string,
+    atime: number | string | Date,
+    mtime: number | string | Date,
+  ): Promise<void> {
+    this.utimesSync(path, atime, mtime);
+    return Promise.resolve();
+  }
+
+  // Times follow node:fs: a number or numeric string is seconds, a Date
+  // is itself. Only the modification time is stored; dofs keeps no
+  // access time.
+  utimesSync(path: string, _atime: number | string | Date, mtime: number | string | Date): void {
+    utimesImpl(this.db, path, mtime instanceof Date ? mtime.getTime() : Number(mtime) * 1000);
   }
 
   /**
