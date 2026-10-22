@@ -41,7 +41,7 @@ jobs:
       issues: read
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@4007bf661f62730882de20dd2df36b30c3e4a593
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@e927a2a726ef283e60d32ad09efa7c2aea0b47eb
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "pr-review-fix"

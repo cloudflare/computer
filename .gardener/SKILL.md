@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.15. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.18. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -29,7 +29,7 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.15 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.18 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -90,6 +90,7 @@ Unknown keys are errors.
 | `draft` | no | `true` makes the task run only by hand. See [Trying a task](#trying-a-task). |
 | `checkout` | no | `pull-request-head` checks out a pull request's head instead of GitHub's merge preview, also for comments on a pull request and manual runs naming one. Needs a pull request or issue comment trigger. Implied by `commit.merge_base`, and when `commit.create` may write beyond `gardener/**`. |
 | `reactions` | no | `false` stops the 👀 reaction while the task works on an issue or comment, and the 🚀 or 😕 it leaves after. On by default. |
+| `effect-scope` | no | `trigger` confines every run to the issue or pull request that triggered it, even a maintainer's. See [Who a run may act on](#who-a-run-may-act-on). |
 
 ## Triggers
 
@@ -111,7 +112,9 @@ Each trigger is `event:` plus optional filters. A task may use each event at mos
 | `github.schedule` | `cron` (required), five fields, e.g. `0 3 * * 1` |
 | `github.workflow_dispatch` | none |
 
-- `labels-all`: the issue, pull request or discussion must carry **all** of these labels.
+- `labels-all`: the issue, pull request or discussion must carry **all** of these labels. On the
+  `.labeled` triggers the label just added must also be one of them, so a later unrelated label
+  does not start the task again: one listed label runs exactly once, N listed labels up to N times.
 - `mentions`: the text must @mention one of these handles. `self` means the `handle` in
   `.gardener/gardener.json`, and `generate` fails if no handle is set.
 - `authors`: who wrote the triggering text: `maintainers` (owner, members, collaborators, anyone
@@ -180,6 +183,15 @@ instructions ask for an effect that isn't declared, it can't happen.
   and approve pull requests** turned on in the repository.
 - The model plans every step before any runs. A later step can use an earlier step's output (for
   example a new pull request's URL in a comment); the model is told how.
+- `message.send` posts one short message about an issue, pull request or discussion to the chat
+  space in the `GARDENER_CHAT_WEBHOOK` repository secret (a Google Chat or Slack incoming webhook),
+  after every other step applied. Name it exactly (`message.*` is not a glob). At most one per run;
+  the summary is one line, at most 400 characters, without `<`, `>`, `&` or backticks. It can't be
+  combined with `repository.exec`. Tell the model when to post, for example only for urgent issues.
+  The message reads `🐛 repo #123 (@author) - Title`, then the summary; the emoji follows the
+  subject's labels (`regression`, `bug`, `enhancement`, `question`, `documentation`, else 🆕).
+  Nothing is sent if the subject changed since the model read it. On Slack, a rerun after a lost
+  answer can post twice; Google Chat never posts a plan's message twice.
 
 ## Updating open pull requests
 
@@ -229,9 +241,21 @@ network:            # tasks with repository.exec
 | `output-tokens` | Total generated across the run, including reasoning. | at least 16 × `max-turns` |
 | `max-effect-operations` | Optional cap on proposed changes per run. Needs at least one effect. | 1–1,000 |
 | `max-effect-bytes` | Optional cap on the plan's size. | 1,024–50,000,000 |
+| `runs` | Optional cap on this task's runs across everyone, maintainers included, e.g. `50/day`. | `<count>/<minute\|hour\|day\|week\|month>` |
+| `runs-per-author` | Cap on runs started by each non-maintainer. Defaults to `3/day`; `unlimited` turns it off. | as `runs`, or `unlimited` |
 
-A run that runs out of any budget fails with `budget-exceeded` and changes nothing. What
-Gardener's starter tasks use:
+A run that runs out of any budget fails with `budget-exceeded` and changes nothing. A run over `runs` or
+`runs-per-author` completes as a skip without calling the model. A month is 30 days.
+
+### Who a run may act on
+
+Runs started by a maintainer, a schedule, a manual run or a person's push may act anywhere the task's
+effects allow. Runs started by anyone else may only act on the issue or pull request that triggered
+them, or on what the run itself creates; they can't merge or approve a pull request they opened,
+change releases or re-run checks. "Anyone else" includes every bot (a bot's push too) and logins named
+in `authors` who aren't maintainers. Mentioning other issues in text is always fine.
+
+What Gardener's starter tasks use:
 
 | Task | runtime-seconds | max-turns | max-tool-calls | input-tokens | output-tokens |
 | --- | --- | --- | --- | --- | --- |
