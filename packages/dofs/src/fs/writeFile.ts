@@ -964,10 +964,13 @@ export function flushPendingByPath(db: Database, path: string, now: () => number
 
 /** @internal Commits pending files reached through a node before its dirent changes. */
 export function flushPendingUnderNode(db: Database, path: string, now: () => number): void {
+  const pending = listPendingWriteBuffers(db);
+  // Most mutations run with nothing pending; skip resolving the path.
+  if (pending.length === 0) return;
   const node = resolveInode(db, path, { followSymlinks: false });
   if (node === null) return;
 
-  for (const entry of listPendingWriteBuffers(db)) {
+  for (const entry of pending) {
     if (entry.pending?.ancestorInodes.includes(node.inode)) {
       commitPendingBuffer(db, entry, now);
     }

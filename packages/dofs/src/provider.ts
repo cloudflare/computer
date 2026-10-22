@@ -286,20 +286,12 @@ export class SQLiteWorkspaceProvider {
     // through the inode-keyed cache.
     flushPendingUnderNode(this.db, path, this.now);
     flushPendingByPath(this.db, path, this.now);
-    // Capture the target inode before rm runs so we can evict its
-    // write-buffer cache entry if rm removed the last link. Without
-    // this, a release-after-unlink leaves the buffer dangling on a
-    // dead inode and the eventual commit silently affects no rows.
-    const target = resolveInode(this.db, path, { followSymlinks: false });
-    rmImpl(this.db, path, {});
-    if (target !== null) {
-      const stillAlive = this.db.scalar<number>(
-        "SELECT inode FROM vfs_nodes WHERE inode = ?",
-        target.inode,
-      );
-      if (stillAlive === undefined) {
-        deleteWriteBuffer(this.db, target.inode);
-      }
+    // Evict the write-buffer cache entry when rm removed the last link.
+    // Without this, a release-after-unlink leaves the buffer dangling on
+    // a dead inode and the eventual commit silently affects no rows.
+    const removed = rmImpl(this.db, path, {});
+    if (removed?.reaped) {
+      deleteWriteBuffer(this.db, removed.inode);
     }
   }
 

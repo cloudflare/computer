@@ -70,7 +70,7 @@ export function resolveInode(
   //     mid-transaction anyway (rollback safety).
   // Mutations still invalidate the cache; that is independent of this.
   if (!followFinal || db.inTransaction) {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0).node;
   }
 
   // Repeat reads of the same path are served from the per-Database
@@ -96,10 +96,22 @@ export function resolveInode(
   // reasoned about structurally).
   const cte = resolveViaCte(db, parts);
   if (cte.kind === "symlink") {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0).node;
   }
   storeResolveCache(db, canonical, cte.node === null ? null : cte.node.inode);
   return cte.node;
+}
+
+// Resolve a directory component by component, following symlinks, and
+// report whether any were followed. Mutations use this for a parent:
+// when nothing was followed, the canonical path is already the parent's
+// real path and needs no walk back up from the inode.
+export function resolveFollowing(
+  db: Database,
+  path: string,
+): { node: ResolvedInode | null; followedSymlink: boolean } {
+  const { node, follows } = resolveParts(db, canonicalizePath(path).parts, true, 0);
+  return { node, followedSymlink: follows > 0 };
 }
 
 // Resolve a path in one statement without following symlinks in any
@@ -199,10 +211,10 @@ function resolveParts(
   parts: string[],
   followFinal: boolean,
   follows: number,
-): ResolvedInode | null {
+): { node: ResolvedInode | null; follows: number } {
   const root = readNode(db, ROOT_INODE);
   if (root === null) {
-    return null;
+    return { node: null, follows };
   }
 
   const pendingParts = [...parts];
@@ -211,7 +223,7 @@ function resolveParts(
     const name = pendingParts.shift();
     if (name === undefined) continue;
     const current = nodeStack[nodeStack.length - 1];
-    if (current.type !== "dir") return null;
+    if (current.type !== "dir") return { node: null, follows };
     if (name === "" || name === ".") continue;
     if (name === "..") {
       if (nodeStack.length > 1) nodeStack.pop();
@@ -226,7 +238,7 @@ function resolveParts(
       current.inode,
       name,
     );
-    if (next === undefined) return null;
+    if (next === undefined) return { node: null, follows };
 
     // Intermediate symlinks always get followed; final-segment symlinks
     // are only followed when the caller wants. Keep target components in
@@ -244,7 +256,7 @@ function resolveParts(
     nodeStack.push(next);
   }
 
-  return toResolved(nodeStack[nodeStack.length - 1]);
+  return { node: toResolved(nodeStack[nodeStack.length - 1]), follows };
 }
 
 function readNode(db: Database, inode: number): NodeRow | null {

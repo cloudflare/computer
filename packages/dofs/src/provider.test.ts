@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { invalidateReadOnlyMountCache } from "./fs/mount-guard";
 import { withDB } from "./fs/with-db";
 import { SQLiteWorkspaceProvider } from "./provider";
@@ -229,6 +229,24 @@ describe("SQLiteWorkspaceProvider — implemented methods", () => {
       expect(() => p.accessSync("/missing")).toThrowError(
         expect.objectContaining({ code: "ENOENT" }),
       );
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — statement cost", () => {
+  it("unlinks a nested file resolving its path once", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.mkdirSync("/a/b/c", { recursive: true });
+      p.writeFileSync("/a/b/c/f", "x");
+      const exec = vi.spyOn(db.sql, "exec");
+      p.unlinkSync("/a/b/c/f");
+      // Resolve the parent (root and three components), read the entry,
+      // bump the rev, fingerprint it, remove its dirent, chunks and node,
+      // and record the tombstone.
+      expect(exec).toHaveBeenCalledTimes(12);
+      exec.mockRestore();
+      expect(p.existsSync("/a/b/c/f")).toBe(false);
     });
   });
 });
