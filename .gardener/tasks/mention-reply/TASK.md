@@ -7,9 +7,9 @@ model: openai/gpt-6.1-sol
 checkout: pull-request-head
 triggers:
   - event: github.issue_comment.created
-    mentions: [self]
+    mentions: [self, gnome-bot]
   - event: github.discussion_comment.created
-    mentions: [self]
+    mentions: [self, gnome-bot]
 tools:
   - repository.list_files
   - repository.read_file
@@ -74,7 +74,7 @@ Your reply:
 - Links anything this run creates with a placeholder, because it does not exist yet while you
   plan. For a pull request opened in step `open-pr`, write `{{pr}}` in the body and add the
   reference `{"/body": {"placeholders": {"pr": {"step": "open-pr", "output": "pullUrl"}}}}`.
-- Never mentions `@gardener-cf`.
+- Never mentions `@ask-gardener` or `@gnome-bot`.
 
 **Questions.** Read the relevant files, or the provider API, before answering.
 

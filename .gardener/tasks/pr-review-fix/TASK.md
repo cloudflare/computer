@@ -91,6 +91,6 @@ Propose the steps in this order: the commit, the replies, the resolves, the summ
 have at most 40 steps, so answer at most 15 threads in one round, and say in the summary that more
 remain for the next one. Nothing
 happens until the plan is applied, so describe proposals, not finished work, and never mention
-`@gardener-cf`.
+`@ask-gardener` or `@gnome-bot`.
 
 Then finish.

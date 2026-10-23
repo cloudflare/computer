@@ -4,5 +4,5 @@
   "release": {
     "workflowRef": "scuffi/gardener/.github/workflows/gardener-task.yml@e927a2a726ef283e60d32ad09efa7c2aea0b47eb"
   },
-  "handle": "gardener-cf"
+  "handle": "ask-gardener"
 }

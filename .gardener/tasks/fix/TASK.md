@@ -58,7 +58,7 @@ including adding a changeset when a published package changes.
    `{"/expectedHeadSha": {"step": "commit", "output": "commitSha"}}` so it opens on your commit. Its body
    starts with `Fixes #<number>`, then explains the cause (citing `path:line`), the change and why
    it's the best option, the alternatives you considered, and the checks you ran. It ends by noting
-   that commits pushed by this task don't start CI, and that a maintainer can mention @gardener-cf
+   that commits pushed by this task don't start CI, and that a maintainer can mention @ask-gardener
    on the pull request to switch to an alternative or ask for changes.
 6. Comment on the issue linking the pull request: write `{{pr}}` and add the reference
    `{"/body": {"placeholders": {"pr": {"step": "open-pr", "output": "pullUrl"}}}}`.
