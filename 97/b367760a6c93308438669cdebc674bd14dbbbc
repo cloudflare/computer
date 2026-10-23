@@ -1,0 +1,33 @@
+.gardener/gardener.json
+  s_bfd986a475e373::t_b6857fcda10030 7
+.gardener/gardener.lock.json
+  s_bfd986a475e373::t_a1c11802ff12cf 107,114,227,234,240-241,252-253,381,388
+.gardener/tasks/fix/TASK.md
+  s_bfd986a475e373::t_acb6d3ad5c1048 61
+.gardener/tasks/mention-reply/TASK.md
+  s_bfd986a475e373::t_a6eaeadb31e57a 10,12,77
+.gardener/tasks/pr-review-fix/TASK.md
+  s_bfd986a475e373::t_b646609418c1d9 94
+.github/workflows/gardener-fix.yml
+  s_bfd986a475e373::t_3177c6033fa38a 5,47
+.github/workflows/gardener-mention-reply.yml
+  s_bfd986a475e373::t_323c1246cd2238 5,36,38,57
+.github/workflows/gardener-pr-review-fix.yml
+  s_bfd986a475e373::t_873d51d3029420 5,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "97b367760a6c93308438669cdebc674bd14dbbbc",
+  "prompts": {},
+  "sessions": {
+    "s_bfd986a475e373": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a168c9-516b-781d-aa83-d34b10cbc42f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
