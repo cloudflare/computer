@@ -4,7 +4,7 @@ import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dof
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { expect, test } from "vitest";
 
-import { Runner } from "./runner.js";
+import { Runner } from "./runner";
 
 type ExecEvent =
   | { id: string; seq: number; name: "stdout"; value: Uint8Array }

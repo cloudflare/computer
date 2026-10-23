@@ -1,11 +1,11 @@
-import { parseDuration } from "../artifacts/duration.js";
-import type { ShareOptions } from "../assets/index.js";
+import { parseDuration } from "../artifacts/duration";
+import type { ShareOptions } from "../assets/index";
 import type {
   WorkspaceModuleFactory,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
-} from "../runtime/types.js";
+} from "../runtime/types";
 
 export interface AssetsModuleOptions {
   readonly defaultExpiresAfterMs?: number;

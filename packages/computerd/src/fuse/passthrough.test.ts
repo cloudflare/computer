@@ -15,9 +15,9 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
-import type { FuseOps } from "./driver.js";
-import { resolveMountIgnore } from "./ignore.js";
-import { type PassthroughFs, withLocalPassthrough } from "./passthrough.js";
+import type { FuseOps } from "./driver";
+import { resolveMountIgnore } from "./ignore";
+import { type PassthroughFs, withLocalPassthrough } from "./passthrough";
 
 // The real filesystem, as the slice withLocalPassthrough takes. Tests
 // override single calls on top of it.

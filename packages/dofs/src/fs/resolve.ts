@@ -1,8 +1,8 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { lookupResolveCache, storeResolveCache } from "./resolveCache.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { lookupResolveCache, storeResolveCache } from "./resolveCache";
 
 export interface ResolvedInode {
   inode: number;

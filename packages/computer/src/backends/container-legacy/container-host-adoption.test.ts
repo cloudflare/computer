@@ -7,8 +7,8 @@
 // pool that started the container itself and left no record.
 import { describe, expect, test, vi } from "vitest";
 
-import { LegacyWorkspaceContainerAPI } from "./container-host.js";
-import type { ContainerLaunchSpec } from "./container-launch-record.js";
+import { LegacyWorkspaceContainerAPI } from "./container-host";
+import type { ContainerLaunchSpec } from "./container-launch-record";
 
 function fakeCtx(options: { running?: boolean } = {}) {
   const values = new Map<string, unknown>();

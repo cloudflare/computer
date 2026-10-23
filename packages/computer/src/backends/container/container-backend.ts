@@ -47,24 +47,24 @@
 import type { WorkspaceRPC } from "@cloudflare/computer-rpc";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 
-import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
-import { startHeartbeat } from "../../heartbeat.js";
+import type { BackendHandle, WorkspaceBackend } from "../../backend";
+import { startHeartbeat } from "../../heartbeat";
 import {
   WORKSPACE_EGRESS_TOKEN_HEADER,
   WORKSPACE_EGRESS_URL_HEADER,
   type WorkspaceEgressPolicy,
-} from "../../runtime/egress.js";
-import { WorkspaceTransportError } from "../../transport-failure.js";
-import { WORKSPACE_ROOT } from "../../workspace-root.js";
-import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
-import type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record.js";
-import { probeComputerdHealth } from "./health-probe.js";
+} from "../../runtime/egress";
+import { WorkspaceTransportError } from "../../transport-failure";
+import { WORKSPACE_ROOT } from "../../workspace-root";
+import type { IWorkspaceContainerAPI, WorkspaceRef } from "./container-host";
+import type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record";
+import { probeComputerdHealth } from "./health-probe";
 import {
   assertIgnoreMatches,
   checkIgnorePatterns,
   type ResolvedIgnore,
   readIgnoreReport,
-} from "./ignore-assertion.js";
+} from "./ignore-assertion";
 
 // What the backend's `container` factory returns: anything with
 // a getWorkspaceContainer() method — the shape withWorkspaceContainer

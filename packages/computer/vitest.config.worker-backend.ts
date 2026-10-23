@@ -1,5 +1,5 @@
 // Workerd-backed runner for the WorkerShellBackend integration tests.
-// The default vitest config aliases ./proxy.js and cloudflare:workers
+// The default vitest config aliases ./proxy and cloudflare:workers
 // to throwing stubs so the node runner doesn't have to resolve them;
 // the worker backend's real wiring (Worker Loader binding, the
 // bundled ShellWorker, WorkspaceServiceProxy, fs round-trip) only
@@ -8,7 +8,7 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-import { shellModuleAliases } from "./test-helpers/shell-module-aliases.js";
+import { shellModuleAliases } from "./test-helpers/shell-module-aliases";
 
 export default defineConfig({
   plugins: [

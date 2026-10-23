@@ -1,10 +1,10 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
-import { invalidateResolveExact } from "./resolveCache.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
+import { invalidateResolveExact } from "./resolveCache";
 
 export interface MkdirOptions {
   recursive?: boolean;

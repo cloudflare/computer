@@ -5,9 +5,9 @@
 // the exit-code contract (0 ok, 1 op failed, 129 argv-shape error).
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding.js";
-import { credentialURL } from "./cli.js";
-import { createArtifact } from "./client.js";
+import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding";
+import { credentialURL } from "./cli";
+import { createArtifact } from "./client";
 
 function makeClient() {
   const binding = new FakeArtifactsBinding();

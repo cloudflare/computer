@@ -5,7 +5,7 @@
 
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 
-import type { SyncRPC, WorkspaceRPC } from "./interface.js";
+import type { SyncRPC, WorkspaceRPC } from "./interface";
 
 export interface RPCEvent {
   rpc: keyof SyncRPC;

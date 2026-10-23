@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_IGNORE, isIgnored } from "./ignore.js";
+import { DEFAULT_IGNORE, isIgnored } from "./ignore";
 
 describe("isIgnored", () => {
   const list = ["node_modules", ".next", "target"];

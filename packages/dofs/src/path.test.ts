@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalizePath } from "./path.js";
+import { canonicalizePath } from "./path";
 
 describe("canonicalizePath", () => {
   it("requires an absolute path", () => {

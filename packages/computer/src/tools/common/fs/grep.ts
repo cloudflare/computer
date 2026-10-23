@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { WORKSPACE_ROOT } from "../../../workspace-root.js";
-import { globList, globOne } from "./globs.js";
+import { WORKSPACE_ROOT } from "../../../workspace-root";
+import { globList, globOne } from "./globs";
 
 interface GrepContextLine {
   line: number;

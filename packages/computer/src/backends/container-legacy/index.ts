@@ -30,16 +30,13 @@
 // Status: deprecated. Use @cloudflare/computer/backends/container
 // instead; this entry point will be removed in a future release.
 
-export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
-export {
-  LegacyContainerBackend,
-  type LegacyContainerBackendOptions,
-} from "./cloudflare-container.js";
+export type { WorkspaceEgressPolicy } from "../../runtime/egress";
+export { LegacyContainerBackend, type LegacyContainerBackendOptions } from "./cloudflare-container";
 export {
   type ContainerRuntimeInfo,
   type ILegacyWorkspaceContainerAPI,
   LegacyWorkspaceContainerAPI,
   type WorkspaceRef,
   withLegacyWorkspaceContainer,
-} from "./container-host.js";
-export type { ContainerLaunchSpec } from "./container-launch-record.js";
+} from "./container-host";
+export type { ContainerLaunchSpec } from "./container-launch-record";

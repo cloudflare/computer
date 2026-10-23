@@ -2,9 +2,9 @@
 // The workers config aliases this module to ./with-db.workers.ts so the
 // same test source runs against a real Durable Object.
 
-import { initializeSchema } from "../schema/index.js";
-import { Database } from "../storage.js";
-import { SQLiteTestStorage } from "../testing.js";
+import { initializeSchema } from "../schema/index";
+import { Database } from "../storage";
+import { SQLiteTestStorage } from "../testing";
 
 export interface WithDBOptions {
   now?: () => number;

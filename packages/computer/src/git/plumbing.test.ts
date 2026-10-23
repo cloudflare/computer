@@ -15,7 +15,7 @@ import {
   hashObjectWith,
   type IsomorphicGitPlumbingClient,
   updateRefWith,
-} from "./plumbing.js";
+} from "./plumbing";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

@@ -7,16 +7,16 @@
 // `allowNetwork: true`: the request runs from the host, so the
 // isolate's own egress settings do not stop it.
 
-import { credentialURL } from "../artifacts/cli.js";
-import { parseDuration } from "../artifacts/duration.js";
-import type { ArtifactClient, ArtifactScope } from "../artifacts/index.js";
+import { credentialURL } from "../artifacts/cli";
+import { parseDuration } from "../artifacts/duration";
+import type { ArtifactClient, ArtifactScope } from "../artifacts/index";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFactory,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
-} from "../runtime/types.js";
+} from "../runtime/types";
 
 /** Options for {@link createArtifactsModule}. */
 export interface ArtifactsModuleOptions {

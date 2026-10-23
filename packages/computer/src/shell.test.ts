@@ -11,7 +11,7 @@
 import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "@cloudflare/computer-rpc";
 import { describe, expect, it } from "vitest";
 
-import { CommandExecutor, type KillSignal, type Sync } from "./shell.js";
+import { CommandExecutor, type KillSignal, type Sync } from "./shell";
 
 // Inert sync impl. Tests that don't exercise the bracket use a Sync
 // that returns 0 from both halves. Tests that do build their own.

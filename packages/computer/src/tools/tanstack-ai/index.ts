@@ -4,22 +4,17 @@
  */
 
 import type { z } from "zod";
-import { defineExec } from "../common/exec.js";
+import { defineExec } from "../common/exec";
 import {
   deleteDescription,
   deleteFromStore,
   deleteInputSchema,
   deleteOutputSchema,
-} from "../common/fs/delete.js";
-import {
-  editDescription,
-  editInputSchema,
-  editInStore,
-  editOutputSchema,
-} from "../common/fs/edit.js";
-import { findDescription, findInputSchema, findInWorkspace } from "../common/fs/find.js";
-import { grepDescription, grepInputSchema, grepInWorkspace } from "../common/fs/grep.js";
-import { listDescription, listInputSchema, listWorkspace } from "../common/fs/list.js";
+} from "../common/fs/delete";
+import { editDescription, editInputSchema, editInStore, editOutputSchema } from "../common/fs/edit";
+import { findDescription, findInputSchema, findInWorkspace } from "../common/fs/find";
+import { grepDescription, grepInputSchema, grepInWorkspace } from "../common/fs/grep";
+import { listDescription, listInputSchema, listWorkspace } from "../common/fs/list";
 import {
   createReadExecutor,
   type ReadInput,
@@ -27,23 +22,23 @@ import {
   readDescription,
   readInputSchema,
   readModelOutput,
-} from "../common/fs/read.js";
+} from "../common/fs/read";
 import {
   writeDescription,
   writeInputSchema,
   writeOutputSchema,
   writeToStore,
-} from "../common/fs/write.js";
-import { defaultModelOutput, type ModelOutput } from "../common/model-output.js";
-import { type CreateToolsOptions, resolveToolOptions } from "../common/options.js";
+} from "../common/fs/write";
+import { defaultModelOutput, type ModelOutput } from "../common/model-output";
+import { type CreateToolsOptions, resolveToolOptions } from "../common/options";
 import {
   createPublishExecutor,
   type PublishWorkspaceLike,
   publishDescription,
   publishInputSchema,
   publishOutputSchema,
-} from "../common/publish.js";
-import { isAsyncIterable, settle } from "../common/stream.js";
+} from "../common/publish";
+import { isAsyncIterable, settle } from "../common/stream";
 
 /** Structurally compatible with `toolDefinition().server()`, declared locally so `@tanstack/ai` is not a build-time dependency. */
 export interface TanStackTool<Input = unknown> {

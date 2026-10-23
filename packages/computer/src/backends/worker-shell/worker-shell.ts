@@ -19,12 +19,12 @@
 
 import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "@cloudflare/computer-rpc";
 
-import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
-import { withHostName } from "../../durable-object-name.js";
-import type { WorkspaceServiceProxyProps } from "../../proxy.js";
-import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress.js";
-import { SHELL_RUNTIME_MODULES } from "./runtime-modules.js";
-import { assembleShellModules, type ShellModuleGroup } from "./shell-modules.js";
+import type { BackendHandle, WorkspaceBackend } from "../../backend";
+import { withHostName } from "../../durable-object-name";
+import type { WorkspaceServiceProxyProps } from "../../proxy";
+import { dynamicWorkerEgress, type WorkspaceEgressPolicy } from "../../runtime/egress";
+import { SHELL_RUNTIME_MODULES } from "./runtime-modules";
+import { assembleShellModules, type ShellModuleGroup } from "./shell-modules";
 
 // The shape the loaded ShellWorker exposes. The host-side
 // implementation lives in ./entrypoint.ts; the backend consumes

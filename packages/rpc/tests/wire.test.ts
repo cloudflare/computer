@@ -17,8 +17,8 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
 
-import { createSyncClient } from "../src/client.js";
-import { acceptWebSocketSession, createSyncServer } from "../src/server.js";
+import { createSyncClient } from "../src/client";
+import { acceptWebSocketSession, createSyncServer } from "../src/server";
 
 interface Harness {
   url: string;
@@ -236,7 +236,7 @@ describe("SyncRPC pull convergence", () => {
 
     const client = createSyncClient({ url: harness.url });
     try {
-      const { pullOnce } = await import("../src/sync-driver.js");
+      const { pullOnce } = await import("../src/sync-driver");
       const applied = await pullOnce(recvDb, client);
       expect(applied.applied).toBeGreaterThan(0);
       const recvProvider = new SQLiteWorkspaceProvider(recvDb, { now: () => 2500 });
@@ -266,7 +266,7 @@ describe("SyncRPC pull convergence", () => {
 
     const client = createSyncClient({ url: harness.url });
     try {
-      const { pullOnce } = await import("../src/sync-driver.js");
+      const { pullOnce } = await import("../src/sync-driver");
       const applied = await pullOnce(recvDb, client);
       expect(applied.applied).toBeGreaterThan(0);
       const recvProvider = new SQLiteWorkspaceProvider(recvDb, { now: () => 2500 });
@@ -387,7 +387,7 @@ describe("cross-side invariant", () => {
   });
 });
 
-import type { RPCEvent } from "../src/client.js";
+import type { RPCEvent } from "../src/client";
 
 describe("onRPCEvent observability", () => {
   let harness: Harness | undefined;

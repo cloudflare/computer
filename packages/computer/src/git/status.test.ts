@@ -14,7 +14,7 @@ import {
   type StatusEntry,
   type StatusMatrixRow,
   statusWith,
-} from "./status.js";
+} from "./status";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

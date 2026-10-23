@@ -4,7 +4,7 @@
 // IsomorphicGitInitClient. The public `init()` in ./index.ts
 // resolves it from a dynamic import of `isomorphic-git`.
 
-import { AlreadyInitializedError, GitError } from "./errors.js";
+import { AlreadyInitializedError, GitError } from "./errors";
 
 /** Subset of `isomorphic-git`'s API used for `init`. */
 export interface IsomorphicGitInitClient {

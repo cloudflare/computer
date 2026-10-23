@@ -13,10 +13,10 @@
 // first-class surface — `help`, `--help`, `-h`, and per-group
 // `--help` all print agent-readable documentation.
 
-import type { ArtifactClient } from "./client.js";
-import { parseDuration } from "./duration.js";
-import { ARTIFACTS_NOT_CONFIGURED_MESSAGE, ArtifactError } from "./errors.js";
-import type { ArtifactScope } from "./types.js";
+import type { ArtifactClient } from "./client";
+import { parseDuration } from "./duration";
+import { ARTIFACTS_NOT_CONFIGURED_MESSAGE, ArtifactError } from "./errors";
+import type { ArtifactScope } from "./types";
 
 /**
  * Git seam for the `create` shorthand. The artifacts package owns no

@@ -1,4 +1,4 @@
-import type { FileStore } from "./types.js";
+import type { FileStore } from "./types";
 
 export type DetectedMedia =
   | { kind: "image"; mediaType: string }

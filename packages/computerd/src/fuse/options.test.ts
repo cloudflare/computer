@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { buildFuseOptionString, type FuseOptionEnv } from "./options.js";
+import { buildFuseOptionString, type FuseOptionEnv } from "./options";
 
 const empty: FuseOptionEnv = {};
 

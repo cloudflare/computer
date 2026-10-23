@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assertNotTemplate, sh, shellQuote } from "./sh.js";
+import { assertNotTemplate, sh, shellQuote } from "./sh";
 
 describe("shellQuote", () => {
   it("leaves safe values unquoted for readability", () => {

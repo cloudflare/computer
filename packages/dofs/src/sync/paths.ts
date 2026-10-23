@@ -1,5 +1,5 @@
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
 
 // Walk vfs_dirents from `inode` up to ROOT_INODE, gathering the path
 // segments along the way. Returns null when the inode is unreachable.

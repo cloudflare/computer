@@ -28,7 +28,7 @@
 // same way from inside the durable object (`getWorkspace(this)`) and
 // from a Worker (`getWorkspace(env.MyDO.get(id))`).
 
-import { Workspace, type WorkspaceOptions } from "./workspace.js";
+import { Workspace, type WorkspaceOptions } from "./workspace";
 
 // Module-private stash key. Never user-facing; never serialized.
 export const WORKSPACE = Symbol("workspace");
@@ -36,7 +36,7 @@ export const WORKSPACE = Symbol("workspace");
 // The prototype method `getWorkspace(stub)` calls over RPC. Exported
 // so the client and its tests can name the shape.
 export interface WorkspaceStubHost {
-  __getWorkspaceStub(): Promise<import("./stub.js").WorkspaceStub>;
+  __getWorkspaceStub(): Promise<import("./stub").WorkspaceStub>;
 }
 
 // A host that carries the symbol-stashed Workspace. Used by the
@@ -68,7 +68,7 @@ export function withWorkspace<TBase extends DOCtor>(
       (this as unknown as WorkspaceLocalHost)[WORKSPACE] = new Workspace(options(self));
     }
 
-    __getWorkspaceStub(): Promise<import("./stub.js").WorkspaceStub> {
+    __getWorkspaceStub(): Promise<import("./stub").WorkspaceStub> {
       const ws = (this as unknown as WorkspaceLocalHost)[WORKSPACE];
       return (async () => {
         await ws.ready();

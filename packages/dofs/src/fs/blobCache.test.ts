@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { clearBlobCache, getBlobBytes } from "./blobCache.js";
-import { readRangeSync } from "./readFile.js";
-import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFileSync } from "./writeFile.js";
+import { clearBlobCache, getBlobBytes } from "./blobCache";
+import { readRangeSync } from "./readFile";
+import { withDB } from "./with-db";
+import { CHUNK_SIZE, writeFileSync } from "./writeFile";
 
 describe("blobCache", () => {
   it("reuses bytes for the same hash across calls", async () => {

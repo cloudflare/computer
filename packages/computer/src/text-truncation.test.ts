@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { utf8ByteLength } from "./text-truncation.js";
+import { utf8ByteLength } from "./text-truncation";
 
 const encoder = new TextEncoder();
 

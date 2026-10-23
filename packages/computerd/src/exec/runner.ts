@@ -20,10 +20,10 @@ import { randomUUID } from "node:crypto";
 
 import { type Database, stat } from "@cloudflare/dofs";
 
-import { inheritedEnv } from "./env.js";
-import { createLog, type EventLog, openLog } from "./log.js";
-import { clearExecState, initializeExecSchema } from "./schema.js";
-import { ExecError, type ExecEvent, type ExecOptions, type RunnerOptions } from "./types.js";
+import { inheritedEnv } from "./env";
+import { createLog, type EventLog, openLog } from "./log";
+import { clearExecState, initializeExecSchema } from "./schema";
+import { ExecError, type ExecEvent, type ExecOptions, type RunnerOptions } from "./types";
 
 interface ExecRecord {
   id: string;

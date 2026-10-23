@@ -15,7 +15,7 @@
 // first index are not picked up automatically; the workspace must
 // be torn down and rebuilt over a fresh store.
 
-import type { EagerMount, MountWriteAPI } from "../types.js";
+import type { EagerMount, MountWriteAPI } from "../types";
 
 // Duck-typed slice of the workers `R2Bucket` interface so callers
 // can hand us either the real binding or a test fake without

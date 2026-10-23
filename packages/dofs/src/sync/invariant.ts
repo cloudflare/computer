@@ -1,4 +1,4 @@
-import { type ChangeCursor, compareChangeCursors } from "./watermarks.js";
+import { type ChangeCursor, compareChangeCursors } from "./watermarks";
 
 // Cross-side invariant: every fetchChanges and push response carries
 // the receiver's current applied push cursor. The sender asserts that

@@ -23,7 +23,7 @@
 // This adds a serialization pass per chunk. That cost is the price of
 // one faithful Workspace interface on both sides of the wire.
 
-import type { ExecEncoding, WorkspaceExecEvent } from "./shell.js";
+import type { ExecEncoding, WorkspaceExecEvent } from "./shell";
 
 // JSON-friendly frame for one event. Discriminated the same way as
 // WorkspaceExecEvent, plus an `enc` tag on output chunks so the

@@ -1,4 +1,4 @@
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 type NodeType = "file" | "dir" | "symlink";
 

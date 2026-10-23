@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-import { inheritedEnv } from "./env.js";
+import { inheritedEnv } from "./env";
 
 test("forwards the standard variables a shell environment expects", () => {
   const env = inheritedEnv({

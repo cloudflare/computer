@@ -1,5 +1,5 @@
-import type { ExecEncoding } from "../shell.js";
-import type { WorkspaceRuntimeEvent, WorkspaceRuntimeValue } from "./types.js";
+import type { ExecEncoding } from "../shell";
+import type { WorkspaceRuntimeEvent, WorkspaceRuntimeValue } from "./types";
 
 type RuntimeFrame =
   | { id: string; seq: number; name: "stdout" | "stderr"; enc: "utf8"; value: string }

@@ -19,7 +19,7 @@
 // X = index-vs-HEAD, Y = workdir-vs-index. The mapping is
 // covered by tests.
 
-import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
+import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors";
 
 export type StatusMatrixRow = [
   filepath: string,

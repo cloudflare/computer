@@ -7,10 +7,10 @@
 // mount.
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import { ContainerBackend } from "./container-backend.js";
-import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host.js";
-import type { ContainerLaunchSpec } from "./container-launch-record.js";
-import { ContainerIgnoreMismatchError } from "./ignore-assertion.js";
+import { ContainerBackend } from "./container-backend";
+import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host";
+import type { ContainerLaunchSpec } from "./container-launch-record";
+import { ContainerIgnoreMismatchError } from "./ignore-assertion";
 
 interface FakeHostOptions {
   // The `ignore` block /__computerd/info reports. Omitted models a

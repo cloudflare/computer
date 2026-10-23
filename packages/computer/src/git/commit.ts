@@ -17,7 +17,7 @@ import {
   isNotARepositoryCause,
   MissingIdentityError,
   NotARepositoryError,
-} from "./errors.js";
+} from "./errors";
 
 /** Identity matched against isomorphic-git's author/committer arg shape. */
 export interface GitCommitIdentity {

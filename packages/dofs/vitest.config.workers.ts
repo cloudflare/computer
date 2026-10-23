@@ -11,12 +11,12 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    // Match any relative import that lands on src/fs/with-db.js so
+    // Match any relative import that lands on src/fs/with-db so
     // tests under src/fs/, src/, and src/sync/ all resolve to the
     // workerd-backed implementation regardless of their depth.
     alias: [
       {
-        find: /^.*\/with-db\.js$/,
+        find: /^.*\/with-db$/,
         replacement: new URL("./src/fs/with-db.workers.ts", import.meta.url).pathname,
       },
     ],

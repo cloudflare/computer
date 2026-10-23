@@ -1,21 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { mkdir } from "../fs/mkdir.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import type { Database } from "../storage.js";
-import { planBlock } from "./blocks.js";
+import { mkdir } from "../fs/mkdir";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import type { Database } from "../storage";
+import { planBlock } from "./blocks";
 import {
   decodeChangePack,
   encodeChangePack,
   PACK_FORMAT_VERSION,
   PackProtocolError,
   readPackFooter,
-} from "./change-pack.js";
-import { MIN_BLOCK_PROFILE } from "./operations.js";
-import { currentRev } from "./watermarks.js";
+} from "./change-pack";
+import { MIN_BLOCK_PROFILE } from "./operations";
+import { currentRev } from "./watermarks";
 
 // The pack is the bulk transport: one gzip stream carrying an ordered
 // run of change entries interleaved with the unique objects they

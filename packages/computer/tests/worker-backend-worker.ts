@@ -19,11 +19,11 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import curlModules from "@cloudflare/computer/shell/curl";
-import { WorkerShellBackend } from "../src/backends/worker-shell/index.js";
-import type { WorkspaceRuntimeTruncation, WorkspaceStub } from "../src/index.js";
-import { Workspace } from "../src/index.js";
+import { WorkerShellBackend } from "../src/backends/worker-shell/index";
+import type { WorkspaceRuntimeTruncation, WorkspaceStub } from "../src/index";
+import { Workspace } from "../src/index";
 
-export { WorkspaceServiceProxy } from "../src/proxy.js";
+export { WorkspaceServiceProxy } from "../src/proxy";
 
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;

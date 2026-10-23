@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applyChangesSync } from "../sync/apply.js";
-import { link } from "./link.js";
-import { mkdir } from "./mkdir.js";
-import { rename } from "./rename.js";
-import { resolveInode } from "./resolve.js";
-import { invalidateResolveExact } from "./resolveCache.js";
-import { rm } from "./rm.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFileSync } from "./writeFile.js";
+import { applyChangesSync } from "../sync/apply";
+import { link } from "./link";
+import { mkdir } from "./mkdir";
+import { rename } from "./rename";
+import { resolveInode } from "./resolve";
+import { invalidateResolveExact } from "./resolveCache";
+import { rm } from "./rm";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFileSync } from "./writeFile";
 
 const NOW = (): number => 1000;
 

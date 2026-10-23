@@ -10,9 +10,9 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { SyncRPC } from "./interface.js";
-import { createSyncServer } from "./server.js";
-import { pullBlocks, type SyncProgress } from "./sync-engine.js";
+import type { SyncRPC } from "./interface";
+import { createSyncServer } from "./server";
+import { pullBlocks, type SyncProgress } from "./sync-engine";
 
 // The engine's contract is that durability lives in SQLite, not in the
 // iterator object. Every test here either recreates the iterable or

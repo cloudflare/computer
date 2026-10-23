@@ -6,9 +6,9 @@
  */
 
 import { asSchema, type Tool, type ToolSet } from "ai";
-import type { ToolBinding } from "../../modules/tools.js";
-import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
-import { toJSONValue } from "./output.js";
+import type { ToolBinding } from "../../modules/tools";
+import type { WorkspaceRuntimeValue } from "../../runtime/types";
+import { toJSONValue } from "./output";
 
 /**
  * Bindings for `createToolBindings` from an AI SDK tool set.

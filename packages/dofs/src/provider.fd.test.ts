@@ -4,9 +4,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveInode } from "./fs/resolve.js";
-import { withDB } from "./fs/with-db.js";
-import { SQLiteWorkspaceProvider } from "./provider.js";
+import { resolveInode } from "./fs/resolve";
+import { withDB } from "./fs/with-db";
+import { SQLiteWorkspaceProvider } from "./provider";
 
 async function withProvider<T>(fn: (p: SQLiteWorkspaceProvider) => T | Promise<T>): Promise<T> {
   return withDB((db) => fn(new SQLiteWorkspaceProvider(db, { now: () => 1000 })));

@@ -3,16 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { WorkspaceFilesystem } from "./fs/filesystem.js";
-import { NodeSQLiteStorage } from "./node-storage.js";
-import { initializeSchema, ROOT_INODE, SCHEMA_VERSION } from "./schema/index.js";
-import { Database } from "./storage.js";
+import { WorkspaceFilesystem } from "./fs/filesystem";
+import { NodeSQLiteStorage } from "./node-storage";
+import { initializeSchema, ROOT_INODE, SCHEMA_VERSION } from "./schema/index";
+import { Database } from "./storage";
 import {
   readFetchCursor,
   readPushCursor,
   writeFetchCursor,
   writePushCursor,
-} from "./sync/watermarks.js";
+} from "./sync/watermarks";
 
 let dir: string;
 

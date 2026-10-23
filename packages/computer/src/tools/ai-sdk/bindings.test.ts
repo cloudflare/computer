@@ -4,10 +4,10 @@ import { z } from "zod";
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 
-import type { WorkspaceModuleCallContext } from "../../runtime/types.js";
-import { Workspace } from "../../workspace.js";
-import { forAISDKTools } from "./bindings.js";
-import { createAITools } from "./index.js";
+import type { WorkspaceModuleCallContext } from "../../runtime/types";
+import { Workspace } from "../../workspace";
+import { forAISDKTools } from "./bindings";
+import { createAITools } from "./index";
 
 function callContext(): WorkspaceModuleCallContext {
   return {

@@ -19,9 +19,9 @@ import {
   MissingIdentityError,
   NotARepositoryError,
   PathspecNotFoundError,
-} from "./errors.js";
-import type { CommitView, DiffSummaryEntry, GitClient, GitIdentity, StatusEntry } from "./index.js";
-import { formatPorcelainV1, formatPorcelainV2, formatShort } from "./status.js";
+} from "./errors";
+import type { CommitView, DiffSummaryEntry, GitClient, GitIdentity, StatusEntry } from "./index";
+import { formatPorcelainV1, formatPorcelainV2, formatShort } from "./status";
 
 export interface GitCliInput {
   /** Argv as seen by the shell command. `argv[0]` is the subcommand. */

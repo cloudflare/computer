@@ -3,9 +3,9 @@ import { Database, initializeSchema, SQLiteWorkspaceProvider } from "@cloudflare
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { createSyncLogger } from "./observe/sync-telemetry.js";
-import { Workspace } from "./workspace.js";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { createSyncLogger } from "./observe/sync-telemetry";
+import { Workspace } from "./workspace";
 
 // The public surface the plan asks for: two restartable iterables that
 // take no cursors and no budgets. These tests drive them the way an
@@ -287,7 +287,7 @@ describe("sync telemetry", () => {
 describe("sync block iterables and module backends", () => {
   it("completes without work for a backend that has no sync wire", async () => {
     const notWired = () => Promise.reject(new Error("exec not used in this test"));
-    const module: import("./runtime/types.js").WorkspaceModuleBackend = {
+    const module: import("./runtime/types").WorkspaceModuleBackend = {
       protocol: "module",
       id: "module",
       type: "module",

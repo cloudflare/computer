@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { grep } from "./grep.js";
-import { mkdir } from "./mkdir.js";
-import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFile } from "./writeFile.js";
+import { grep } from "./grep";
+import { mkdir } from "./mkdir";
+import { withDB } from "./with-db";
+import { CHUNK_SIZE, writeFile } from "./writeFile";
 
 describe("grep", () => {
   it("returns no matches for an empty file", async () => {

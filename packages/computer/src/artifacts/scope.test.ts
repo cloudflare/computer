@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { InvalidRepoNameError, InvalidSessionIdError } from "./errors.js";
+import { InvalidRepoNameError, InvalidSessionIdError } from "./errors";
 import {
   assertLocalName,
   assertRepoName,
@@ -13,7 +13,7 @@ import {
   scopedName,
   scopePrefix,
   unscopedName,
-} from "./scope.js";
+} from "./scope";
 
 describe("scopedName", () => {
   it("joins session id and local name with a legal double-underscore separator", () => {

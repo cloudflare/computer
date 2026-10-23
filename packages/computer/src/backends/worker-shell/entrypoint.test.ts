@@ -16,13 +16,13 @@
 
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { FakeArtifactsBinding } from "../../../tests/utilities/fake-artifacts-binding.js";
-import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index.js";
-import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
-import { createGitClient } from "../../git/index.js";
-import type { WorkspaceStub } from "../../stub.js";
-import { Workspace } from "../../workspace.js";
-import { ShellWorker } from "./entrypoint.js";
+import { FakeArtifactsBinding } from "../../../tests/utilities/fake-artifacts-binding";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index";
+import type { BackendHandle, WorkspaceBackend } from "../../backend";
+import { createGitClient } from "../../git/index";
+import type { WorkspaceStub } from "../../stub";
+import { Workspace } from "../../workspace";
+import { ShellWorker } from "./entrypoint";
 
 // In-isolate harness. ShellWorker is constructed without going
 // through workerd; the cloudflare-workers-stub aliases handle
@@ -349,7 +349,7 @@ describe("ShellWorker", () => {
       // adapter to avoid spinning up an HTTP server; the same
       // bytes a `git init && git add && git commit` would write
       // land in the workspace's SQLite store.
-      const { workspaceIsomorphicGitClient } = await import("../../git/adapter.js");
+      const { workspaceIsomorphicGitClient } = await import("../../git/adapter");
       const isogit = await import("isomorphic-git");
       const git = (isogit.default ?? isogit) as typeof isogit;
       const fs = await workspaceIsomorphicGitClient(workspace.provider());

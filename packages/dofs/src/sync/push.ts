@@ -1,5 +1,5 @@
-import { createWorkspaceError } from "../errors.js";
-import type { Database } from "../storage.js";
+import { createWorkspaceError } from "../errors";
+import type { Database } from "../storage";
 
 // Stream chunk bytes by hash. The receiver collects these into the
 // keyed map it uses when assembling files from ChangeEntry chunks.

@@ -4,7 +4,7 @@
 // to throw the typed NotARepositoryError when the gitdir is
 // missing.
 
-import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
+import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors";
 
 export interface GitPerson {
   name: string;

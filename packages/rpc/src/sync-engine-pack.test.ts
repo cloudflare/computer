@@ -10,10 +10,10 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { SyncRPC } from "./interface.js";
-import { createSyncServer } from "./server.js";
-import { reconcileWatermarks } from "./sync-driver.js";
-import { pullBlocks, pushBlocks, type SyncProgress } from "./sync-engine.js";
+import type { SyncRPC } from "./interface";
+import { createSyncServer } from "./server";
+import { reconcileWatermarks } from "./sync-driver";
+import { pullBlocks, pushBlocks, type SyncProgress } from "./sync-engine";
 
 // Pack mode is the bulk path. These tests force the mode thresholds
 // down rather than materialising 20,000 files, then assert the two

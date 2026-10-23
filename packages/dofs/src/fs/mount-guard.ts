@@ -14,8 +14,8 @@
 // invalidates the cache via `invalidateReadOnlyMountCache(db)` after
 // it writes _vfs_mounts.
 
-import { createWorkspaceError } from "../errors.js";
-import type { Database } from "../storage.js";
+import { createWorkspaceError } from "../errors";
+import type { Database } from "../storage";
 
 // undefined sentinel = "not loaded yet"; an empty array means
 // "loaded, no read-only mounts registered". The two are not the

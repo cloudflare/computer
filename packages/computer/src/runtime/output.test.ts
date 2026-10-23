@@ -1,15 +1,15 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Workspace } from "../workspace.js";
-import type { WorkspaceOutputOptions } from "./output-files.js";
-import { type CommandOutputFiles, OutputSpool } from "./output-spool.js";
-import { DEFAULT_OUTPUT_MAX_BYTES, takeTail } from "./output-tail.js";
+import { Workspace } from "../workspace";
+import type { WorkspaceOutputOptions } from "./output-files";
+import { type CommandOutputFiles, OutputSpool } from "./output-spool";
+import { DEFAULT_OUTPUT_MAX_BYTES, takeTail } from "./output-tail";
 import type {
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,
   WorkspaceRuntimeEvent,
-} from "./types.js";
+} from "./types";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

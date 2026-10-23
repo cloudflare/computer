@@ -21,20 +21,20 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import git from "isomorphic-git";
 import { describe, expect, it, vi } from "vitest";
-import { Workspace } from "../workspace.js";
-import { runGitCli } from "./cli.js";
-import type { GitCloneOptions } from "./clone.js";
-import type { CommitResult, GitCommitOptions } from "./commit.js";
-import type { GitDiffOptions } from "./diff.js";
+import { Workspace } from "../workspace";
+import { runGitCli } from "./cli";
+import type { GitCloneOptions } from "./clone";
+import type { CommitResult, GitCommitOptions } from "./commit";
+import type { GitDiffOptions } from "./diff";
 import {
   AlreadyInitializedError,
   GitError,
   MissingIdentityError,
   NotARepositoryError,
   PathspecNotFoundError,
-} from "./errors.js";
-import { createGitClient, type GitClient } from "./index.js";
-import type { GitInitOptions } from "./init.js";
+} from "./errors";
+import { createGitClient, type GitClient } from "./index";
+import type { GitInitOptions } from "./init";
 import type {
   FetchResult,
   GitFetchOptions,
@@ -47,7 +47,7 @@ import type {
   MergeResult,
   PushResult,
   RemoteView,
-} from "./network.js";
+} from "./network";
 import type {
   CatFileResult,
   GitCatFileOptions,
@@ -55,7 +55,7 @@ import type {
   GitConfigSetOptions,
   GitHashObjectOptions,
   GitUpdateRefOptions,
-} from "./plumbing.js";
+} from "./plumbing";
 import type {
   CommitView,
   GitCurrentBranchOptions,
@@ -66,7 +66,7 @@ import type {
   GitRevParseOptions,
   GitShowOptions,
   TreeEntryView,
-} from "./reads.js";
+} from "./reads";
 import type {
   GitBranchDeleteOptions,
   GitBranchListOptions,
@@ -75,9 +75,9 @@ import type {
   GitTagDeleteOptions,
   GitTagListOptions,
   GitTagOptions,
-} from "./refs.js";
-import type { GitAddOptions, GitRmOptions } from "./staging.js";
-import type { GitStatusOptions, StatusEntry } from "./status.js";
+} from "./refs";
+import type { GitAddOptions, GitRmOptions } from "./staging";
+import type { GitStatusOptions, StatusEntry } from "./status";
 
 interface FakeCalls {
   clone: GitCloneOptions[];
@@ -114,11 +114,11 @@ interface FakeCalls {
   updateRef: GitUpdateRefOptions[];
   configGet: GitConfigGetOptions[];
   configSet: GitConfigSetOptions[];
-  stashPush: import("./worktree.js").StashPushOptions[];
-  stashList: import("./worktree.js").BaseWorktreeOptions[];
-  stashPop: import("./worktree.js").StashPopOptions[];
-  reset: import("./worktree.js").ResetOptions[];
-  clean: import("./worktree.js").CleanOptions[];
+  stashPush: import("./worktree").StashPushOptions[];
+  stashList: import("./worktree").BaseWorktreeOptions[];
+  stashPop: import("./worktree").StashPopOptions[];
+  reset: import("./worktree").ResetOptions[];
+  clean: import("./worktree").CleanOptions[];
 }
 
 function fakeClient(
@@ -129,7 +129,7 @@ function fakeClient(
     show?: () => CommitView;
     revParse?: () => string;
     repoRoot?: () => string;
-    diffSummary?: () => import("./diff.js").DiffSummaryEntry[];
+    diffSummary?: () => import("./diff").DiffSummaryEntry[];
     currentBranch?: () => string | undefined;
     lsFiles?: () => string[];
     lsTree?: () => TreeEntryView[];
@@ -1973,7 +1973,7 @@ describe("runGitCli — end-to-end against an in-process Workspace", () => {
     // working tree. We drive isomorphic-git directly through the
     // workspace's FsClient adapter to avoid spinning up an HTTP
     // server.
-    const { workspaceIsomorphicGitClient } = await import("./adapter.js");
+    const { workspaceIsomorphicGitClient } = await import("./adapter");
     const fs = await workspaceIsomorphicGitClient(ws.provider());
     const dir = "/";
     await git.init({ fs: fs as unknown as object, dir, defaultBranch: "main" });

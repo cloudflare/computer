@@ -11,8 +11,8 @@ import type { RunnerLike } from "@cloudflare/computer-rpc/server";
 import { acceptWebSocketSession, createWorkspaceServer } from "@cloudflare/computer-rpc/server";
 import type { Database } from "@cloudflare/dofs";
 import { WebSocket, WebSocketServer } from "ws";
-import { Runner } from "../exec/index.js";
-import type { ExecEvent as ComputerdExecEvent } from "../exec/types.js";
+import { Runner } from "../exec/index";
+import type { ExecEvent as ComputerdExecEvent } from "../exec/types";
 import {
   createNodeVirtualFileSystem,
   describeMountIgnore,
@@ -26,9 +26,9 @@ import {
   resolveFuseBackend,
   resolveMountIgnoreConfig,
   resolveStore,
-} from "../fuse/index.js";
-import { mountShim, type ShimMount } from "../shim/index.js";
-import { installLogging } from "./logger.js";
+} from "../fuse/index";
+import { mountShim, type ShimMount } from "../shim/index";
+import { installLogging } from "./logger";
 
 // The compiled-in default port. esbuild's `define` substitutes the
 // real value at SEA bundle time when COMPUTERD_DEFAULT_PORT is set on

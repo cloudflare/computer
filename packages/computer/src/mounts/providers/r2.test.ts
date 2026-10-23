@@ -1,8 +1,8 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Workspace } from "../../workspace.js";
-import { R2Bucket } from "./r2.js";
+import { Workspace } from "../../workspace";
+import { R2Bucket } from "./r2";
 
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();

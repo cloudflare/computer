@@ -1,8 +1,8 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
-import type { ExecEncoding } from "../shell.js";
-import { type CommandOutputFiles, OutputSpool, type SpooledOutput } from "./output-spool.js";
-import { makeOutputLimits, type OutputLimits } from "./output-tail.js";
+import type { ExecEncoding } from "../shell";
+import { type CommandOutputFiles, OutputSpool, type SpooledOutput } from "./output-spool";
+import { makeOutputLimits, type OutputLimits } from "./output-tail";
 import {
   isModuleBackend,
   type ModuleExecutionEnvelope,
@@ -17,7 +17,7 @@ import {
   type WorkspaceRuntimePendingCall,
   type WorkspaceRuntimeResult,
   type WorkspaceRuntimeValue,
-} from "./types.js";
+} from "./types";
 
 interface WorkspaceRuntimeRouterOptions {
   // What each registered backend says about itself.

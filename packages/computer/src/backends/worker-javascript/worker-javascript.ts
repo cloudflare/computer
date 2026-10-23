@@ -1,11 +1,11 @@
-import type { WorkspaceBackendHost } from "../../backend.js";
-import { WorkspaceRuntimeBridge } from "../../runtime/bridge.js";
-import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability.js";
+import type { WorkspaceBackendHost } from "../../backend";
+import { WorkspaceRuntimeBridge } from "../../runtime/bridge";
+import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability";
 import {
   dynamicWorkerEgress,
   hostEgressFetch,
   type WorkspaceEgressPolicy,
-} from "../../runtime/egress.js";
+} from "../../runtime/egress";
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
@@ -20,9 +20,9 @@ import type {
   WorkspaceRuntimeLoader,
   WorkspaceRuntimePendingCall,
   WorkspaceRuntimeValue,
-} from "../../runtime/types.js";
-import { WORKSPACE_ROOT } from "../../workspace-root.js";
-import { decodeRuntimeFrames, type RuntimeFrame } from "./frames.js";
+} from "../../runtime/types";
+import { WORKSPACE_ROOT } from "../../workspace-root";
+import { decodeRuntimeFrames, type RuntimeFrame } from "./frames";
 import {
   answerCall,
   clearResume,
@@ -52,7 +52,7 @@ import {
   type ParsedModules,
   parseModules,
   prepareSourceModules,
-} from "./module-graph.js";
+} from "./module-graph";
 
 export interface WorkerJavaScriptBackendOptions {
   loader: WorkspaceRuntimeLoader;

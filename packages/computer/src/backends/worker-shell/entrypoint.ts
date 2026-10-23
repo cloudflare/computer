@@ -20,11 +20,11 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { Bash, type CustomCommand, type SecureFetch } from "just-bash";
 
-import { WORKSPACE_ROOT } from "../../workspace-root.js";
-import { WorkspaceFsAdapter } from "./adapter.js";
-import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
-import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
-import { defineGitCommand, type GitCommandHost } from "./git-command.js";
+import { WORKSPACE_ROOT } from "../../workspace-root";
+import { WorkspaceFsAdapter } from "./adapter";
+import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command";
+import { type AssetsCommandHost, defineAssetsCommand } from "./assets-command";
+import { defineGitCommand, type GitCommandHost } from "./git-command";
 
 export interface ExecInput {
   command: string;
@@ -106,7 +106,7 @@ export interface ShellHostFetcher {
 // `assets publish`). Workers RPC happens to carry this with
 // [Symbol.dispose]; the shell disposes it after Bash settles.
 export interface HostWorkspaceStub extends GitCommandHost, AssetsCommandHost {
-  fs: import("./adapter.js").WorkspaceFs;
+  fs: import("./adapter").WorkspaceFs;
   artifacts: ArtifactsCommandHost["artifacts"];
   [Symbol.dispose]?: () => void;
 }

@@ -48,8 +48,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { FuseOps, FuseStat } from "./driver.js";
-import type { MountIgnoreSet } from "./ignore.js";
+import type { FuseOps, FuseStat } from "./driver";
+import type { MountIgnoreSet } from "./ignore";
 
 // Mirrors driver.ts. Duplicated rather than exported across modules
 // because these are the kernel's numbers, not ours, and a shared

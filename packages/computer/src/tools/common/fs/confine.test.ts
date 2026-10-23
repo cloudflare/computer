@@ -1,9 +1,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Workspace } from "../../../workspace.js";
-import { createPiTools } from "../../pi-ai/index.js";
-import { normalizeRootedPath } from "./confine.js";
+import { Workspace } from "../../../workspace";
+import { createPiTools } from "../../pi-ai/index";
+import { normalizeRootedPath } from "./confine";
 
 async function setup() {
   const workspace = new Workspace({ storage: new SQLiteTestStorage(), now: () => 0 });

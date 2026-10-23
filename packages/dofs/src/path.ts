@@ -1,4 +1,4 @@
-import { invalidPath } from "./errors.js";
+import { invalidPath } from "./errors";
 
 export interface CanonicalPath {
   path: string;

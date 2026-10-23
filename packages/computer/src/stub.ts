@@ -64,11 +64,11 @@ import type {
   ArtifactScope,
   ArtifactsCLIInput,
   ArtifactsCLIResult,
-} from "./artifacts/index.js";
-import type { ShareOptions } from "./assets/index.js";
-import type { GitCliInput, GitCliResult } from "./git/index.js";
-import { withSpan } from "./observe.js";
-import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
+} from "./artifacts/index";
+import type { ShareOptions } from "./assets/index";
+import type { GitCliInput, GitCliResult } from "./git/index";
+import { withSpan } from "./observe";
+import type { WorkspaceBackendInfo } from "./runtime/runtime";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -78,9 +78,9 @@ import type {
   WorkspaceRuntimePendingCall,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeValue,
-} from "./runtime/types.js";
-import { encodeRuntimeEvent } from "./runtime/wire.js";
-import type { Workspace } from "./workspace.js";
+} from "./runtime/types";
+import { encodeRuntimeEvent } from "./runtime/wire";
+import type { Workspace } from "./workspace";
 
 // Filesystem half. A direct proxy onto Workspace.fs — every
 // public WorkspaceFilesystem method is mirrored verbatim so the

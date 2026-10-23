@@ -11,13 +11,13 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript.js";
-import { getWorkspace } from "./client.js";
-import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
-import type { WorkspaceModuleBackend } from "./runtime/types.js";
-import { createAITools } from "./tools/ai-sdk/index.js";
-import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { Workspace } from "./workspace.js";
+import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript";
+import { getWorkspace } from "./client";
+import type { WorkspaceBackendInfo } from "./runtime/runtime";
+import type { WorkspaceModuleBackend } from "./runtime/types";
+import { createAITools } from "./tools/ai-sdk/index";
+import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace";
+import { Workspace } from "./workspace";
 
 interface ExecCall {
   command: string;

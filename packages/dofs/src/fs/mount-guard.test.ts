@@ -2,21 +2,21 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../storage.js";
-import { stageBlob } from "../sync/blobs.js";
-import { link } from "./link.js";
-import { mkdir } from "./mkdir.js";
+import type { Database } from "../storage";
+import { stageBlob } from "../sync/blobs";
+import { link } from "./link";
+import { mkdir } from "./mkdir";
 import {
   assertNotReadOnly,
   getReadOnlyMountRoots,
   invalidateReadOnlyMountCache,
-} from "./mount-guard.js";
-import { readRangeSync } from "./readFile.js";
-import { rename } from "./rename.js";
-import { resolveInode } from "./resolve.js";
-import { rm } from "./rm.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
+} from "./mount-guard";
+import { readRangeSync } from "./readFile";
+import { rename } from "./rename";
+import { resolveInode } from "./resolve";
+import { rm } from "./rm";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
 import {
   createFileSync,
   linkStagedChunksSync,
@@ -28,7 +28,7 @@ import {
   writeFileRangesSync,
   writeFileSync,
   writeRangeSync,
-} from "./writeFile.js";
+} from "./writeFile";
 
 // Stage a read-only mount the way the workspace-side indexer
 // eventually will: a row in `_vfs_mounts` plus an actual subtree

@@ -16,10 +16,10 @@
 // `import { RecordingStorage } from "@cloudflare/dofs/testing"`
 // call sites keep working under node.
 
-import { NodeSQLiteStorage } from "./node-storage.js";
+import { NodeSQLiteStorage } from "./node-storage";
 
-export type { ExecutedStatement } from "./testing-recording.js";
-export { RecordingStorage } from "./testing-recording.js";
+export type { ExecutedStatement } from "./testing-recording";
+export { RecordingStorage } from "./testing-recording";
 
 // Kept as its own name, and kept taking no arguments, because
 // several hundred call sites construct it that way. Collapsing it

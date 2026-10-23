@@ -53,9 +53,9 @@
 
 import { RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
-import { hostDurableObjectId } from "./durable-object-name.js";
-import { WORKSPACE_EGRESS_TOKEN_HEADER, WORKSPACE_EGRESS_URL_HEADER } from "./runtime/egress.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index";
+import { hostDurableObjectId } from "./durable-object-name";
+import { WORKSPACE_EGRESS_TOKEN_HEADER, WORKSPACE_EGRESS_URL_HEADER } from "./runtime/egress";
 
 export interface WorkspaceProxyProps {
   // Name of a DurableObjectNamespace binding in env. The proxy

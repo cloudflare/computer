@@ -33,7 +33,7 @@ import {
   writeFile as fsWriteFile,
 } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
-import type { NodeVirtualFileSystem } from "../fuse/vfs.js";
+import type { NodeVirtualFileSystem } from "../fuse/vfs";
 
 export interface ShimMount {
   unmount(): Promise<void>;

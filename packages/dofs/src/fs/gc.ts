@@ -1,4 +1,4 @@
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 export interface GcOptions {
   // Wall-clock at the moment GC runs. Defaults to Date.now so callers

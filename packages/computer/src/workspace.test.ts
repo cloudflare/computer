@@ -1,13 +1,13 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import { FakeArtifactsBinding } from "../tests/utilities/fake-artifacts-binding.js";
-import { createArtifact, InvalidSessionIdError } from "./artifacts/index.js";
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { createGitClient } from "./git/index.js";
-import type { WorkspaceModuleBackend } from "./runtime/types.js";
-import { WorkspaceTransportError } from "./transport-failure.js";
-import { Workspace } from "./workspace.js";
+import { FakeArtifactsBinding } from "../tests/utilities/fake-artifacts-binding";
+import { createArtifact, InvalidSessionIdError } from "./artifacts/index";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { createGitClient } from "./git/index";
+import type { WorkspaceModuleBackend } from "./runtime/types";
+import { WorkspaceTransportError } from "./transport-failure";
+import { Workspace } from "./workspace";
 
 // Drive a sync iterable to completion. push() and pull() are now
 // restartable block iterables, but these tests care about the folded
@@ -413,7 +413,7 @@ describe("Workspace backend selection", () => {
 
   it("memoizes module results and enforces single-consumer handles", async () => {
     const sourceEvents = () =>
-      new ReadableStream<import("./runtime/types.js").WorkspaceRuntimeEvent>({
+      new ReadableStream<import("./runtime/types").WorkspaceRuntimeEvent>({
         start(controller) {
           controller.enqueue({
             id: "module-exec",
@@ -475,7 +475,7 @@ describe("Workspace backend selection", () => {
           async exec() {
             return {
               id: "module-exec",
-              events: new ReadableStream<import("./runtime/types.js").WorkspaceRuntimeEvent>({
+              events: new ReadableStream<import("./runtime/types").WorkspaceRuntimeEvent>({
                 start(controller) {
                   controller.enqueue({
                     id: "module-exec",

@@ -4,16 +4,16 @@
   "description": "Computer daemon CLI and FUSE mount. Source-only; the distributable lives at @cloudflare/computer-computerd-linux-x64.",
   "license": "MIT",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "bin": {
-    "computerd": "./dist/cli/computerd.cjs"
+    "computerd": "./dist/cli/computerd.js"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "node ./scripts/build.mjs",
+    "build": "tsdown",
     "build:bin": "node ./scripts/build-bin.mjs",
     "build:docker": "node ./scripts/build-docker.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -27,9 +27,12 @@
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
     "@platformatic/vfs": "^0.4.0",
-    "fuse-native": "^2.2.6"
+    "fuse-native": "^2.2.6",
+    "ws": "^8.20.1"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "tsdown": "^0.23.1",
     "vitest": "^4.1.12"
   }
 }

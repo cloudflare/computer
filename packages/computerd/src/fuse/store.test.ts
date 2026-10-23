@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, onTestFinished, test } from "vitest";
 
-import { parseStoreMode, resolveStore } from "./store.js";
+import { parseStoreMode, resolveStore } from "./store";
 
 // A temp directory that removes itself when the calling test ends.
 function createTempDir(): string {

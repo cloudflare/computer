@@ -1,7 +1,7 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
-import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell.js";
-import type { TruncatedOutput } from "./output-spool.js";
+import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell";
+import type { TruncatedOutput } from "./output-spool";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
@@ -73,12 +73,12 @@ export type WorkspaceModuleFunctions = Readonly<Record<string, WorkspaceModuleFu
 /** Workspace services a host module factory can build its functions from. */
 export interface WorkspaceModuleHost {
   /** The Workspace's Git client. Throws on use when Git is not configured. */
-  readonly git: import("../git/index.js").GitClient;
+  readonly git: import("../git/index").GitClient;
   /** The Workspace's Artifacts client. Throws on use when Artifacts is not configured. */
-  readonly artifacts: import("../artifacts/index.js").ArtifactClient;
+  readonly artifacts: import("../artifacts/index").ArtifactClient;
   /** The Workspace runtime, for running commands on other backends. */
-  readonly runtime: import("./runtime.js").WorkspaceRuntime;
-  readonly assets?: import("../assets/index.js").AssetsClient;
+  readonly runtime: import("./runtime").WorkspaceRuntime;
+  readonly assets?: import("../assets/index").AssetsClient;
 }
 
 /**
@@ -361,10 +361,10 @@ export interface WorkspaceModuleBackendHandle {
 }
 
 /** What a module backend receives when it connects to its Workspace. */
-export type WorkspaceModuleBackendHost = import("../backend.js").WorkspaceBackendHost & {
+export type WorkspaceModuleBackendHost = import("../backend").WorkspaceBackendHost & {
   /** The Workspace runtime, handed to host modules. */
-  readonly runtime: import("./runtime.js").WorkspaceRuntime;
-  readonly assets?: import("../assets/index.js").AssetsClient;
+  readonly runtime: import("./runtime").WorkspaceRuntime;
+  readonly assets?: import("../assets/index").AssetsClient;
 };
 
 export interface WorkspaceModuleBackend {
@@ -378,7 +378,7 @@ export interface WorkspaceModuleBackend {
 }
 
 export type WorkspaceRegisteredBackend =
-  | import("../backend.js").WorkspaceBackend
+  | import("../backend").WorkspaceBackend
   | WorkspaceModuleBackend;
 
 export function isModuleBackend(

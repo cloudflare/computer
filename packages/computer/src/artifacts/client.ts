@@ -27,11 +27,11 @@
 // driven CLI in `cli.ts` dispatches through this same client, so
 // the two surfaces cannot drift.
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./cli.js";
-import { runArtifactsCLI } from "./cli.js";
-import { NotFoundError } from "./errors.js";
-import { normalizeSessionId, scopedName, unscopedName } from "./scope.js";
-import type { ArtifactScope } from "./types.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./cli";
+import { runArtifactsCLI } from "./cli";
+import { NotFoundError } from "./errors";
+import { normalizeSessionId, scopedName, unscopedName } from "./scope";
+import type { ArtifactScope } from "./types";
 
 /** Source spec for `import`. Mirrors the binding's `source` block. */
 export interface ArtifactImportSource {

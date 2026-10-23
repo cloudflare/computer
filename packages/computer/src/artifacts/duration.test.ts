@@ -1,7 +1,7 @@
 // Unit tests for the TTL duration parser. Pure logic, no I/O.
 
 import { describe, expect, it } from "vitest";
-import { parseDuration } from "./duration.js";
+import { parseDuration } from "./duration";
 
 describe("parseDuration", () => {
   it("reads a bare integer as seconds", () => {

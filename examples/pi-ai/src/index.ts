@@ -12,7 +12,7 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
 import { createModels, type Message } from "@earendil-works/pi-ai";
 
-import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai.js";
+import { WORKERS_AI_PROVIDER, workersAI } from "./workers-ai";
 
 // The worker-shell backend reaches back into this durable object by
 // binding name and id, so the shell shares the agent's filesystem.

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge.js";
-import type { WorkspaceRuntimeCapability } from "./capability.js";
-import { unsafeToRepeat } from "./replay-safety.js";
-import type { WorkspaceModuleCallContext } from "./types.js";
+import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge";
+import type { WorkspaceRuntimeCapability } from "./capability";
+import { unsafeToRepeat } from "./replay-safety";
+import type { WorkspaceModuleCallContext } from "./types";
 
 const encoder = new TextEncoder();
 const args = ["value"];

@@ -22,7 +22,7 @@ import sqliteModules from "@cloudflare/computer/shell/sqlite";
 import xanModules from "@cloudflare/computer/shell/xan";
 import yqModules from "@cloudflare/computer/shell/yq";
 import { describe, expect, it } from "vitest";
-import { assembleShellModules, SHELL_CORE_MODULES } from "./shell-modules.js";
+import { assembleShellModules, SHELL_CORE_MODULES } from "./shell-modules";
 
 const OPTIONAL_GROUPS = {
   curl: curlModules,

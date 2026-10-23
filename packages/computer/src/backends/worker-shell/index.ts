@@ -29,22 +29,18 @@
 // factory to WorkerShellBackend instead of `loader` + `workspace` +
 // `ctx`).
 
-export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
-export { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter.js";
-export { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
-export { type AssetsCommandHost, defineAssetsCommand } from "./assets-command.js";
-export { type ExecInput, ShellWorker, type ShellWorkerOptions } from "./entrypoint.js";
-export { defineGitCommand, type GitCommandHost } from "./git-command.js";
-export { SHELL_RUNTIME_MODULES } from "./runtime-modules.js";
-export {
-  assembleShellModules,
-  SHELL_CORE_MODULES,
-  type ShellModuleGroup,
-} from "./shell-modules.js";
+export type { WorkspaceEgressPolicy } from "../../runtime/egress";
+export { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter";
+export { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command";
+export { type AssetsCommandHost, defineAssetsCommand } from "./assets-command";
+export { type ExecInput, ShellWorker, type ShellWorkerOptions } from "./entrypoint";
+export { defineGitCommand, type GitCommandHost } from "./git-command";
+export { SHELL_RUNTIME_MODULES } from "./runtime-modules";
+export { assembleShellModules, SHELL_CORE_MODULES, type ShellModuleGroup } from "./shell-modules";
 export {
   WorkerShellBackend,
   type WorkerShellBackendOptions,
   type WorkerShellLoader,
   type WorkerShellRuntime,
   type WorkerShellSource,
-} from "./worker-shell.js";
+} from "./worker-shell";

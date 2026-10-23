@@ -5,7 +5,7 @@ import {
   CurrentContainerLaunchRecord,
   launchRecordFor,
   sameLaunch,
-} from "./container-launch-record.js";
+} from "./container-launch-record";
 
 function spec(overrides: Partial<ContainerLaunchSpec> = {}): ContainerLaunchSpec {
   return {

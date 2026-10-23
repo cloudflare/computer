@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { editInStore } from "./edit.js";
-import type { FileStore } from "./types.js";
+import { editInStore } from "./edit";
+import type { FileStore } from "./types";
 
 function memoryStore(initial: string) {
   let content = new TextEncoder().encode(initial);

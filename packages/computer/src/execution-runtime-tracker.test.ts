@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  type ExecutionRuntimeStore,
-  ExecutionRuntimeTracker,
-} from "./execution-runtime-tracker.js";
+import { type ExecutionRuntimeStore, ExecutionRuntimeTracker } from "./execution-runtime-tracker";
 
 function durableStore(backing = new Map<string, string>()): ExecutionRuntimeStore {
   return {

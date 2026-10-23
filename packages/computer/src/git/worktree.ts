@@ -7,8 +7,8 @@
 // throws the typed NotARepositoryError when the gitdir is
 // missing.
 
-import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
-import type { StatusMatrixRow } from "./status.js";
+import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors";
+import type { StatusMatrixRow } from "./status";
 
 // ---------------------------------------------------------------
 // stash

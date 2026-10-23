@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { withDB } from "../fs/with-db.js";
-import { chunksOf, createFileSync, writeFile, writeRangeSync } from "../fs/writeFile.js";
-import { Database } from "../storage.js";
-import type { DurableObjectStorageLike, SQLCursorLike } from "../types.js";
-import { stageBlob } from "./blobs.js";
-import { coalesceChanges } from "./coalesce.js";
-import { fetchChanges, fetchObjects, hasObjects } from "./fetch.js";
+import { withDB } from "../fs/with-db";
+import { chunksOf, createFileSync, writeFile, writeRangeSync } from "../fs/writeFile";
+import { Database } from "../storage";
+import type { DurableObjectStorageLike, SQLCursorLike } from "../types";
+import { stageBlob } from "./blobs";
+import { coalesceChanges } from "./coalesce";
+import { fetchChanges, fetchObjects, hasObjects } from "./fetch";
 
 async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];

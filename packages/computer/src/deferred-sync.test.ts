@@ -8,8 +8,8 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { Workspace } from "./workspace.js";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { Workspace } from "./workspace";
 
 // Deferred synchronization used to need a host-supplied retry
 // scheduler: the host persisted an intent, set its own alarm, and

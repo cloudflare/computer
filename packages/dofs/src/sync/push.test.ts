@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { mkdir } from "../fs/mkdir.js";
-import { readFile } from "../fs/readFile.js";
-import { resolveInode } from "../fs/resolve.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { withDB, withTwoDBs } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import type { Database } from "../storage.js";
-import type { ChangeEntry } from "./changes.js";
-import { coalesceChanges } from "./coalesce.js";
-import { pushObjects } from "./push.js";
+import { mkdir } from "../fs/mkdir";
+import { readFile } from "../fs/readFile";
+import { resolveInode } from "../fs/resolve";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { withDB, withTwoDBs } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import type { Database } from "../storage";
+import type { ChangeEntry } from "./changes";
+import { coalesceChanges } from "./coalesce";
+import { pushObjects } from "./push";
 
 // Minimal hand-rolled apply loop. We just need to prove that
 // coalesceChanges + pushObjects together transfer enough information

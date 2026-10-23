@@ -4,9 +4,9 @@ import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFunction,
   WorkspaceModuleHost,
-} from "../runtime/types.js";
-import type { ExecSyncResult } from "../shell.js";
-import { createContainerModule } from "./container.js";
+} from "../runtime/types";
+import type { ExecSyncResult } from "../shell";
+import { createContainerModule } from "./container";
 
 interface ExecOptions {
   readonly backend: string;

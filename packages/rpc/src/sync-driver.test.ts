@@ -15,9 +15,9 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { SyncRPC } from "./interface.js";
-import { createSyncServer } from "./server.js";
-import { pullOnce, pushOnce, reconcileWatermarks, tick } from "./sync-driver.js";
+import type { SyncRPC } from "./interface";
+import { createSyncServer } from "./server";
+import { pullOnce, pushOnce, reconcileWatermarks, tick } from "./sync-driver";
 
 // Two peers wired up as direct in-process SyncRPC stubs. No
 // WebSocket; we already have the real-wire convergence test in

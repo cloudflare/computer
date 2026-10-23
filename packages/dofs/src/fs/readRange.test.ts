@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { readRangeSync } from "./readFile.js";
-import { resolveInode } from "./resolve.js";
-import { withDB } from "./with-db.js";
+import { readRangeSync } from "./readFile";
+import { resolveInode } from "./resolve";
+import { withDB } from "./with-db";
 import {
   CHUNK_SIZE,
   openWriteBufferSync,
   releaseWriteBufferSync,
   writeFileSync,
   writeRangeSync,
-} from "./writeFile.js";
+} from "./writeFile";
 
 describe("readRangeSync", () => {
   it("reads small chunk-backed files at non-zero offset", async () => {

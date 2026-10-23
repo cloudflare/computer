@@ -22,14 +22,14 @@ import { Database, initializeSchema, ROOT_INODE } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
-import { createSyncClient, createWorkspaceClient } from "../src/client.js";
-import type { ExecEvent } from "../src/interface.js";
+import { createSyncClient, createWorkspaceClient } from "../src/client";
+import type { ExecEvent } from "../src/interface";
 import {
   acceptWebSocketSession,
   createShellServer,
   createWorkspaceServer,
   type RunnerLike,
-} from "../src/server.js";
+} from "../src/server";
 
 interface ExecRecord {
   id: string;

@@ -6,7 +6,7 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { NotARepositoryError } from "./errors.js";
+import { NotARepositoryError } from "./errors";
 import {
   cleanWith,
   type IsomorphicGitCleanClient,
@@ -16,7 +16,7 @@ import {
   stashListWith,
   stashPopWith,
   stashPushWith,
-} from "./worktree.js";
+} from "./worktree";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

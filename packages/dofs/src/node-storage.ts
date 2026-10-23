@@ -11,7 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
-import type { DurableObjectStorageLike, SQLCursorLike } from "./types.js";
+import type { DurableObjectStorageLike, SQLCursorLike } from "./types";
 
 export type JournalMode = "wal" | "delete" | "memory";
 export type SynchronousLevel = "off" | "normal" | "full";

@@ -1,10 +1,10 @@
 // Bundle computerd into a single ESM file for Node's native SEA.
 //
 // Strategy:
-//   * esbuild produces an ESM bundle of `dist/cli/computerd.cjs`. ESM is required so
+//   * esbuild produces an ESM bundle of `dist/cli/computerd.js`. ESM is required so
 //     capnweb's top-level await survives without an async-IIFE wrapper. A banner
-//     re-establishes `require`, `__filename`, and `__dirname` for any CJS code
-//     transpiled into the bundle.
+//     re-establishes `require`, `__filename`, and `__dirname` for the CJS
+//     dependencies (fuse-native, ws) transpiled into the bundle.
 //   * fuse-native's `require('node-gyp-build')(__dirname)` call is intercepted
 //     by an esbuild plugin. The shim resolves the .node addon and libfuse
 //     shared library from SEA assets at runtime (via `node:sea`), writes them
@@ -101,7 +101,7 @@ module.exports = { beforeMount: noop, beforeUnmount: noop, configure: noop, unco
   }
 
   await build({
-    entryPoints: [resolve(computerdRoot, "dist/cli/computerd.cjs")],
+    entryPoints: [resolve(computerdRoot, "dist/cli/computerd.js")],
     bundle: true,
     platform: "node",
     target: "node22",
@@ -109,10 +109,6 @@ module.exports = { beforeMount: noop, beforeUnmount: noop, configure: noop, unco
     define: {
       __COMPUTERD_BUILD_DEFAULT_PORT__: buildPort === undefined ? "undefined" : String(buildPort),
     },
-    // computerd is compiled to CJS, so esbuild walks it via the `require`
-    // condition. Add `import` to that list so dofs and computer-rpc
-    // (ESM-only after the SEA migration) still resolve via their exports map.
-    conditions: ["import", "node"],
     outfile,
     banner: {
       js: [

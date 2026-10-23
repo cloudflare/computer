@@ -9,7 +9,7 @@
 
 import { createWorkspaceClient } from "@cloudflare/computer-rpc/client";
 
-import type { BackendHandle, WorkspaceBackend } from "../backend.js";
+import type { BackendHandle, WorkspaceBackend } from "../backend";
 
 export interface TestBackendOptions {
   // URL pointing at the computerd HTTP server. ws://, wss://,

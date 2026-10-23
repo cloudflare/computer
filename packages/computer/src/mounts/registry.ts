@@ -4,7 +4,7 @@
 // the resulting map by mount root. The registry is purely in-memory;
 // _vfs_mounts persistence is the indexer's job (see index.ts).
 
-import type { Mount, MountContext, MountFactory } from "./types.js";
+import type { Mount, MountContext, MountFactory } from "./types";
 
 export type MountValue = Mount | MountFactory;
 

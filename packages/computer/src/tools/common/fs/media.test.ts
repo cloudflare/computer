@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { detectMedia } from "./media.js";
-import type { FileStore } from "./types.js";
+import { detectMedia } from "./media";
+import type { FileStore } from "./types";
 
 const encode = (value: string) => new TextEncoder().encode(value);
 

@@ -7,28 +7,28 @@
 // Subsequent commits fill in the stubs (file descriptors, positional
 // I/O, truncate, symlinks, watch).
 
-import { createWorkspaceError } from "./errors.js";
-import { getBlobBytes } from "./fs/blobCache.js";
-import { link as linkImpl } from "./fs/link.js";
-import type { MkdirOptions } from "./fs/mkdir.js";
-import { mkdir as mkdirImpl } from "./fs/mkdir.js";
-import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer.js";
-import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir.js";
-import { readRangeSync as readRangeSyncImpl } from "./fs/readFile.js";
-import { readlink as readlinkImpl } from "./fs/readlink.js";
-import { rename as renameImpl } from "./fs/rename.js";
-import { resolveInode } from "./fs/resolve.js";
-import { rm as rmImpl } from "./fs/rm.js";
-import { stat as statImpl } from "./fs/stat.js";
-import { symlink as symlinkImpl } from "./fs/symlink.js";
+import { createWorkspaceError } from "./errors";
+import { getBlobBytes } from "./fs/blobCache";
+import { link as linkImpl } from "./fs/link";
+import type { MkdirOptions } from "./fs/mkdir";
+import { mkdir as mkdirImpl } from "./fs/mkdir";
+import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer";
+import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir";
+import { readRangeSync as readRangeSyncImpl } from "./fs/readFile";
+import { readlink as readlinkImpl } from "./fs/readlink";
+import { rename as renameImpl } from "./fs/rename";
+import { resolveInode } from "./fs/resolve";
+import { rm as rmImpl } from "./fs/rm";
+import { stat as statImpl } from "./fs/stat";
+import { symlink as symlinkImpl } from "./fs/symlink";
 import {
   createWatchAsyncIterable,
   createWatcher,
   type WatchEvent,
   type WatchHandle,
   type WatchOptions,
-} from "./fs/watch.js";
-import { deleteWriteBuffer, getWriteBuffer } from "./fs/writeBuffer.js";
+} from "./fs/watch";
+import { deleteWriteBuffer, getWriteBuffer } from "./fs/writeBuffer";
 import {
   createFileSync as createFileSyncImpl,
   flushPendingByPath,
@@ -41,10 +41,10 @@ import {
   writeFileRangesSync as writeFileRangesSyncImpl,
   writeFileSync as writeFileSyncImpl,
   writeRangeSync as writeRangeSyncImpl,
-} from "./fs/writeFile.js";
-import { canonicalizePath } from "./path.js";
-import { incrementRev } from "./rev.js";
-import type { Database } from "./storage.js";
+} from "./fs/writeFile";
+import { canonicalizePath } from "./path";
+import { incrementRev } from "./rev";
+import type { Database } from "./storage";
 
 export interface SQLiteWorkspaceProviderOptions {
   // Wall-clock source. Defaults to Date.now so production callers

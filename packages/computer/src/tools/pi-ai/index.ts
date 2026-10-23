@@ -5,12 +5,12 @@
  */
 
 import { z } from "zod";
-import { defineExec } from "../common/exec.js";
-import { deleteDescription, deleteFromStore, deleteInputSchema } from "../common/fs/delete.js";
-import { editDescription, editInputSchema, editInStore } from "../common/fs/edit.js";
-import { findDescription, findInputSchema, findInWorkspace } from "../common/fs/find.js";
-import { grepDescription, grepInputSchema, grepInWorkspace } from "../common/fs/grep.js";
-import { listDescription, listInputSchema, listWorkspace } from "../common/fs/list.js";
+import { defineExec } from "../common/exec";
+import { deleteDescription, deleteFromStore, deleteInputSchema } from "../common/fs/delete";
+import { editDescription, editInputSchema, editInStore } from "../common/fs/edit";
+import { findDescription, findInputSchema, findInWorkspace } from "../common/fs/find";
+import { grepDescription, grepInputSchema, grepInWorkspace } from "../common/fs/grep";
+import { listDescription, listInputSchema, listWorkspace } from "../common/fs/list";
 import {
   createReadExecutor,
   type ReadInput,
@@ -18,17 +18,17 @@ import {
   readDescription,
   readInputSchema,
   readModelOutput,
-} from "../common/fs/read.js";
-import { writeDescription, writeInputSchema, writeToStore } from "../common/fs/write.js";
-import { defaultModelOutput, type ModelOutput } from "../common/model-output.js";
-import { type CreateToolsOptions, resolveToolOptions } from "../common/options.js";
+} from "../common/fs/read";
+import { writeDescription, writeInputSchema, writeToStore } from "../common/fs/write";
+import { defaultModelOutput, type ModelOutput } from "../common/model-output";
+import { type CreateToolsOptions, resolveToolOptions } from "../common/options";
 import {
   createPublishExecutor,
   type PublishWorkspaceLike,
   publishDescription,
   publishInputSchema,
-} from "../common/publish.js";
-import { settle } from "../common/stream.js";
+} from "../common/publish";
+import { settle } from "../common/stream";
 
 export {
   type ForPiToolsOptions,
@@ -36,7 +36,7 @@ export {
   type PiAgentTool,
   type PiAgentToolResult,
   type PiToolCallRequest,
-} from "./bindings.js";
+} from "./bindings";
 
 export interface ToolCallContext {
   abortSignal?: AbortSignal;

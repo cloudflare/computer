@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defineAssetsCommand } from "./assets-command.js";
+import { defineAssetsCommand } from "./assets-command";
 
 function ctx(cwd = "/workspace") {
   return { fs: {} as never, cwd, env: new Map<string, string>(), stdin: "" };

@@ -6,8 +6,8 @@
 //
 import { describe, expect, test, vi } from "vitest";
 
-import type { IWorkspaceContainerAPI } from "./container-host.js";
-import { probeComputerdHealth } from "./health-probe.js";
+import type { IWorkspaceContainerAPI } from "./container-host";
+import { probeComputerdHealth } from "./health-probe";
 
 // probeComputerdHealth only consumes fetchPort. The helper is typed
 // against the wider IWorkspaceContainerAPI to make ergonomic

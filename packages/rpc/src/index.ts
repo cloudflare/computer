@@ -24,4 +24,4 @@ export type {
   WireError,
   WireErrorCode,
   WorkspaceRPC,
-} from "./interface.js";
+} from "./interface";

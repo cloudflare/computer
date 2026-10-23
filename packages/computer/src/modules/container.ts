@@ -13,11 +13,7 @@
 // pending Workspace writes before the command and pulls the
 // container's changes after it.
 
-import {
-  DEFAULT_OUTPUT_MAX_LINES,
-  type OutputLimits,
-  OutputWindow,
-} from "../runtime/output-tail.js";
+import { DEFAULT_OUTPUT_MAX_LINES, type OutputLimits, OutputWindow } from "../runtime/output-tail";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFactory,
@@ -25,9 +21,9 @@ import type {
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
-} from "../runtime/types.js";
-import type { ExecSyncResult } from "../shell.js";
-import { truncateText } from "../text-truncation.js";
+} from "../runtime/types";
+import type { ExecSyncResult } from "../shell";
+import { truncateText } from "../text-truncation";
 
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;

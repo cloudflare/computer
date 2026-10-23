@@ -1,4 +1,4 @@
-import type { DurableObjectStorageLike, SQLStorageLike } from "./types.js";
+import type { DurableObjectStorageLike, SQLStorageLike } from "./types";
 
 export class Database {
   readonly sql: SQLStorageLike;

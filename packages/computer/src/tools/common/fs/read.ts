@@ -1,7 +1,7 @@
 import { z } from "zod";
-import type { ModelOutput } from "../model-output.js";
-import { detectMedia } from "./media.js";
-import type { FileStore } from "./types.js";
+import type { ModelOutput } from "../model-output";
+import { detectMedia } from "./media";
+import type { FileStore } from "./types";
 
 export type LineTruncation = { bytes: number } | { chars: number };
 

@@ -1,14 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { mkdir } from "./mkdir.js";
-import { readFile } from "./readFile.js";
-import { withDB } from "./with-db.js";
-import {
-  CHUNK_SIZE,
-  openWriteBufferForCreateSync,
-  writeFile,
-  writeRangeSync,
-} from "./writeFile.js";
+import { mkdir } from "./mkdir";
+import { readFile } from "./readFile";
+import { withDB } from "./with-db";
+import { CHUNK_SIZE, openWriteBufferForCreateSync, writeFile, writeRangeSync } from "./writeFile";
 
 async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader();

@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createCloudflareObserver } from "./cloudflare.js";
+import { createCloudflareObserver } from "./cloudflare";
 
 interface RecordedRuntimeSpan {
   name: string;

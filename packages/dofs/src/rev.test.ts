@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { withDB } from "./fs/with-db.js";
-import { incrementRev } from "./rev.js";
+import { withDB } from "./fs/with-db";
+import { incrementRev } from "./rev";
 
 describe("incrementRev", () => {
   it("returns the new rev value and persists it to vfs_meta", async () => {

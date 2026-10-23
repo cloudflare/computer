@@ -13,9 +13,9 @@
 // what the host was asked for, not about reaching a session.
 import { describe, expect, test } from "vitest";
 
-import { ContainerBackend } from "./container-backend.js";
-import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host.js";
-import type { ContainerLaunchSpec } from "./container-launch-record.js";
+import { ContainerBackend } from "./container-backend";
+import type { ContainerRuntimeInfo, IWorkspaceContainerAPI } from "./container-host";
+import type { ContainerLaunchSpec } from "./container-launch-record";
 
 function recordingHost() {
   const specs: { method: "start" | "restart"; spec: ContainerLaunchSpec }[] = [];

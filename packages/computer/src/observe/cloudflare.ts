@@ -40,7 +40,7 @@
 // and it keeps the computer package free of an implicit dependency on
 // the runtime module specifier in tools that do not understand it.
 
-import type { WorkspaceObserver, WorkspaceSpan } from "../observe.js";
+import type { WorkspaceObserver, WorkspaceSpan } from "../observe";
 
 export interface CloudflareObserverOptions {
   /**

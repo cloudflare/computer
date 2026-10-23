@@ -6,9 +6,9 @@ import { applyChanges } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { Workspace } from "../../workspace.js";
-import type { EagerMount } from "../types.js";
-import { createWorkerBundle, WorkerBundle, type WorkerBundleOptions } from "./worker-bundle.js";
+import { Workspace } from "../../workspace";
+import type { EagerMount } from "../types";
+import { createWorkerBundle, WorkerBundle, type WorkerBundleOptions } from "./worker-bundle";
 
 const backends = [
   {

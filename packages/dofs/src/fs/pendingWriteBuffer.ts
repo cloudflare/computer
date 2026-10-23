@@ -1,12 +1,12 @@
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { resolveInode } from "./resolve.js";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { resolveInode } from "./resolve";
 import {
   getPendingWriteBufferByParent,
   getPendingWriteBufferByPath,
   hasPendingWriteBuffers,
   type WriteBufferEntry,
-} from "./writeBuffer.js";
+} from "./writeBuffer";
 
 export function findPendingWriteBuffer(db: Database, path: string): WriteBufferEntry | undefined {
   if (!hasPendingWriteBuffers(db)) return undefined;

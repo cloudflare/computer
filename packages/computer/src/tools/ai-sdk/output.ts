@@ -1,5 +1,5 @@
 import type { JSONValue } from "ai";
-import type { ModelOutput } from "../common/model-output.js";
+import type { ModelOutput } from "../common/model-output";
 
 export function toAISDKOutput(output: ModelOutput) {
   switch (output.type) {

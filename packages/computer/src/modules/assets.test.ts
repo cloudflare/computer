@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { ShareOptions } from "../assets/index.js";
-import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../runtime/types.js";
-import { createAssetsModule } from "./assets.js";
+import type { ShareOptions } from "../assets/index";
+import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../runtime/types";
+import { createAssetsModule } from "./assets";
 
 function fakeAssets() {
   const calls: Array<{ path: string; options: ShareOptions }> = [];

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { link } from "../fs/link.js";
-import { mkdir } from "../fs/mkdir.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import { ROOT_INODE } from "../schema/index.js";
-import { type pathOf, pathsOf, pathsOfMany } from "./paths.js";
+import { link } from "../fs/link";
+import { mkdir } from "../fs/mkdir";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import { ROOT_INODE } from "../schema/index";
+import { type pathOf, pathsOf, pathsOfMany } from "./paths";
 
 // Read back the inode a path currently names. Tests need this to feed
 // pathsOfMany without going through resolveInode's symlink handling.

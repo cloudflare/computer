@@ -23,17 +23,17 @@
 
 import { env, runInDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
-import type { TestBindings } from "../../tests/worker.js";
-import { ls } from "../fs/ls.js";
-import { resolveInode } from "../fs/resolve.js";
-import { clearResolveCache } from "../fs/resolveCache.js";
-import { rm } from "../fs/rm.js";
-import { stat } from "../fs/stat.js";
-import { SQLiteWorkspaceProvider } from "../provider.js";
-import { initializeSchema } from "../schema/index.js";
-import { Database } from "../storage.js";
-import type { DurableObjectStorageLike } from "../types.js";
-import { CountingStorage } from "./counting-storage.js";
+import type { TestBindings } from "../../tests/worker";
+import { ls } from "../fs/ls";
+import { resolveInode } from "../fs/resolve";
+import { clearResolveCache } from "../fs/resolveCache";
+import { rm } from "../fs/rm";
+import { stat } from "../fs/stat";
+import { SQLiteWorkspaceProvider } from "../provider";
+import { initializeSchema } from "../schema/index";
+import { Database } from "../storage";
+import type { DurableObjectStorageLike } from "../types";
+import { CountingStorage } from "./counting-storage";
 
 const NOW = (): number => 1000;
 

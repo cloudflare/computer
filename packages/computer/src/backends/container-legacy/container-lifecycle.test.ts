@@ -7,7 +7,7 @@ import {
   getContainerLifecycle,
   installContainerMonitor,
   resetContainerLifecycleForTests,
-} from "./container-lifecycle.js";
+} from "./container-lifecycle";
 
 // Minimal Container stand-in. The lifecycle module only touches
 // .destroy(), .start(), .running, and .monitor(). A controllable

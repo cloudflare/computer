@@ -19,7 +19,7 @@
   },
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsdown",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "test": "vitest run",
     "test:workers": "vitest run --config vitest.config.workers.ts",
@@ -36,6 +36,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
+    "tsdown": "^0.23.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.12",
     "wrangler": "^4.148.0"

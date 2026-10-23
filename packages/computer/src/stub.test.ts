@@ -15,19 +15,19 @@ import { enableStubTracking, stubSnapshot } from "@cloudflare/computer-rpc/debug
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { createGitClient } from "./git/index.js";
-import type { EagerMount, MountWriteAPI } from "./mounts/types.js";
-import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "./runtime/types.js";
-import { decodeRuntimeEvents } from "./runtime/wire.js";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { createGitClient } from "./git/index";
+import type { EagerMount, MountWriteAPI } from "./mounts/types";
+import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "./runtime/types";
+import { decodeRuntimeEvents } from "./runtime/wire";
 import {
   WorkspaceAssetsStub,
   WorkspaceFilesystemStub,
   WorkspaceGitStub,
   WorkspaceRuntimeExecHandleStub,
   WorkspaceRuntimeStub,
-} from "./stub.js";
-import { Workspace } from "./workspace.js";
+} from "./stub";
+import { Workspace } from "./workspace";
 
 function composite(
   sync: import("@cloudflare/computer-rpc").SyncRPC,

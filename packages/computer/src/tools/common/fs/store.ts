@@ -11,7 +11,7 @@
  * reads use a bounded `readChunks` range and capture those bytes once.
  */
 
-import type { FileStat, MutableFileStore } from "./types.js";
+import type { FileStat, MutableFileStore } from "./types";
 
 /**
  * Structural subset of `@cloudflare/computer.Workspace` the tools

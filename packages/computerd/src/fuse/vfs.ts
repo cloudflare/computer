@@ -7,7 +7,7 @@ import {
 import { NodeSQLiteStorage } from "@cloudflare/dofs/node";
 import { create, type VirtualFileSystem, VirtualProvider } from "@platformatic/vfs";
 
-import type { ResolvedStore } from "./store.js";
+import type { ResolvedStore } from "./store";
 
 export type NodeVirtualFileSystem = VirtualFileSystem;
 

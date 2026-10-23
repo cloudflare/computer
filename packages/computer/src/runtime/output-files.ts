@@ -5,9 +5,9 @@ import {
   type CommandOutputFiles,
   CommandOutputSaveFailed,
   type CommandOutputSaveResult,
-} from "./output-spool.js";
+} from "./output-spool";
 
-import { makeOutputLimits } from "./output-tail.js";
+import { makeOutputLimits } from "./output-tail";
 
 /** How a Workspace cuts command output and where it saves the rest. */
 export interface WorkspaceOutputOptions {

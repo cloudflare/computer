@@ -1,7 +1,7 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { resolveInode } from "./resolve.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { resolveInode } from "./resolve";
 
 export interface WorkspaceFoundEntry {
   path: string;

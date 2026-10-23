@@ -16,7 +16,7 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { diffSummaryWith, diffWith, type IsomorphicGitDiffClient } from "./diff.js";
+import { diffSummaryWith, diffWith, type IsomorphicGitDiffClient } from "./diff";
 
 const DIR = "/repo";
 const AUTHOR = { name: "test", email: "test@example.test" };

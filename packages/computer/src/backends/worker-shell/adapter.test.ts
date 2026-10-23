@@ -12,10 +12,10 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { Bash } from "just-bash";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
-import { WorkspaceFilesystemStub } from "../../stub.js";
-import { Workspace } from "../../workspace.js";
-import { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter.js";
+import type { BackendHandle, WorkspaceBackend } from "../../backend";
+import { WorkspaceFilesystemStub } from "../../stub";
+import { Workspace } from "../../workspace";
+import { type WorkspaceFs, WorkspaceFsAdapter } from "./adapter";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 const fromUtf8 = (b: Uint8Array): string => new TextDecoder("utf-8").decode(b);

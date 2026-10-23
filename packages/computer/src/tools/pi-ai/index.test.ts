@@ -2,9 +2,9 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { validateToolCall } from "@earendil-works/pi-ai";
 import { makeStrictJsonSchema } from "@earendil-works/pi-ai/api/constrained-sampling";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceBackendInfo } from "../../runtime/runtime.js";
-import { Workspace } from "../../workspace.js";
-import { createPiTools, type PiJSONSchema } from "./index.js";
+import type { WorkspaceBackendInfo } from "../../runtime/runtime";
+import { Workspace } from "../../workspace";
+import { createPiTools, type PiJSONSchema } from "./index";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });

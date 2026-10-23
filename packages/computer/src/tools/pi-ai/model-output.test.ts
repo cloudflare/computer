@@ -1,12 +1,12 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
-import { Workspace } from "../../workspace.js";
-import { createPiTools } from "./index.js";
+import { Workspace } from "../../workspace";
+import { createPiTools } from "./index";
 
 // Only read shapes its own model output, so a failing formatter is
 // simulated by replacing it.
-vi.mock("../common/fs/read.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../common/fs/read.js")>();
+vi.mock("../common/fs/read", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../common/fs/read")>();
   return {
     ...actual,
     readModelOutput: () => () => {

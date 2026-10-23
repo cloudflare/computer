@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyEditsToNormalizedContent, fuzzyFindText } from "./edit-diff.js";
+import { applyEditsToNormalizedContent, fuzzyFindText } from "./edit-diff";
 
 const path = "/workspace/notes.md";
 

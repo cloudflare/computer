@@ -25,8 +25,8 @@ import {
 } from "@cloudflare/dofs";
 import { newWebSocketRpcSession, RpcTarget } from "capnweb";
 
-import { trackStub, untrackStub } from "./debug.js";
-import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "./interface.js";
+import { trackStub, untrackStub } from "./debug";
+import type { ExecEvent, ShellRPC, SyncRPC, WorkspaceRPC } from "./interface";
 
 // Subset of computerd's Runner that the shell server needs. Defining
 // the shape here (instead of importing the concrete class) keeps

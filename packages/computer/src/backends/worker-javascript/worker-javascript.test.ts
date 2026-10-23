@@ -2,10 +2,10 @@ import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dof
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import type { WorkspaceRuntimeLoader } from "../../runtime/types.js";
-import { Workspace } from "../../workspace.js";
-import { ExecutionJournal, fingerprint, loadResume } from "./journal.js";
-import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript.js";
+import type { WorkspaceRuntimeLoader } from "../../runtime/types";
+import { Workspace } from "../../workspace";
+import { ExecutionJournal, fingerprint, loadResume } from "./journal";
+import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript";
 
 function throwingLoader(message: string) {
   return {

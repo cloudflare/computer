@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeRuntimeFrames, parseRuntimeFrame, type RuntimeFrame } from "./frames.js";
+import { decodeRuntimeFrames, parseRuntimeFrame, type RuntimeFrame } from "./frames";
 
 function streamOf(...chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();

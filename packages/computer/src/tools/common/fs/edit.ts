@@ -8,9 +8,9 @@ import {
   normalizeToLF,
   restoreLineEndings,
   stripBom,
-} from "./edit-diff.js";
-import { withFileLock } from "./locks.js";
-import type { FileStore } from "./types.js";
+} from "./edit-diff";
+import { withFileLock } from "./locks";
+import type { FileStore } from "./types";
 
 export interface EditToolOptions {
   store: FileStore;

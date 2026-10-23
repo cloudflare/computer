@@ -1,9 +1,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Workspace } from "../../../workspace.js";
-import { findInWorkspace } from "./find.js";
-import { grepInputSchema, grepInWorkspace } from "./grep.js";
+import { Workspace } from "../../../workspace";
+import { findInWorkspace } from "./find";
+import { grepInputSchema, grepInWorkspace } from "./grep";
 
 async function makeWorkspace(): Promise<Workspace> {
   const workspace = new Workspace({ storage: new SQLiteTestStorage(), now: () => 0 });

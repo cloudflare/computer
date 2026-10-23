@@ -30,7 +30,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 
-import type { EagerMount, MountWriteAPI } from "../types.js";
+import type { EagerMount, MountWriteAPI } from "../types";
 
 export interface WorkerBundleEntry {
   // Relative to the bundled directory, forward slashes, no leading slash.

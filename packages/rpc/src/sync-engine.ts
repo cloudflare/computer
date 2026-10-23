@@ -52,7 +52,7 @@ import {
   writePushCursor,
 } from "@cloudflare/dofs";
 
-import type { SyncRPC } from "./interface.js";
+import type { SyncRPC } from "./interface";
 
 export interface SyncProgress {
   readonly operationId: string;

@@ -22,10 +22,10 @@
 // other path shape; a pack is selected purely on the size of the cursor
 // window (see blocks.ts).
 
-import type { Database } from "../storage.js";
-import type { PlannedBlock } from "./blocks.js";
-import type { ChangeEntry } from "./changes.js";
-import type { ChangeCursor } from "./watermarks.js";
+import type { Database } from "../storage";
+import type { PlannedBlock } from "./blocks";
+import type { ChangeEntry } from "./changes";
+import type { ChangeCursor } from "./watermarks";
 
 export const PACK_FORMAT_VERSION = 1;
 

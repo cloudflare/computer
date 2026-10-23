@@ -379,7 +379,7 @@ Tests live next to the source files and are written in TypeScript. Vitest runs t
 npm test --workspace=@cloudflare/computerd
 ```
 
-The test command does not build first. Some suites need build output that is not there in a clean checkout: the tests import the sibling `@cloudflare/dofs` and `@cloudflare/computer-rpc` packages from their `dist/` directories, and `src/cli/computerd.test.ts` spawns the bundled CLI at `dist/cli/computerd.cjs`. Run `npm run build` across the workspace before `npm test`, or those tests fail to resolve the imports or exit early with no bundle to spawn.
+The test command does not build first. Some suites need build output that is not there in a clean checkout: the tests import the sibling `@cloudflare/dofs` and `@cloudflare/computer-rpc` packages from their `dist/` directories, and `src/cli/computerd.test.ts` spawns the bundled CLI at `dist/cli/computerd.js`. Run `npm run build` across the workspace before `npm test`, or those tests fail to resolve the imports or exit early with no bundle to spawn.
 
 This package requires Node.js 22+ because `@platformatic/vfs` does.
 

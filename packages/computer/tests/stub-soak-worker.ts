@@ -20,9 +20,9 @@ import { enableStubTracking, stubSnapshot } from "@cloudflare/computer-rpc/debug
 import type { ChangeEntry } from "@cloudflare/dofs";
 import { Database, initializeSchema } from "@cloudflare/dofs";
 
-import type { BackendHandle, WorkspaceBackend } from "../src/backend.js";
-import type { WorkspaceStub } from "../src/stub.js";
-import { Workspace } from "../src/workspace.js";
+import type { BackendHandle, WorkspaceBackend } from "../src/backend";
+import type { WorkspaceStub } from "../src/stub";
+import { Workspace } from "../src/workspace";
 
 // Workerd doesn't expose wrangler `vars` on process.env or globalThis,
 // so flip the tracker on at module load.

@@ -1,4 +1,4 @@
-import type { FileStore } from "./types.js";
+import type { FileStore } from "./types";
 
 interface LockEntry {
   path: string;

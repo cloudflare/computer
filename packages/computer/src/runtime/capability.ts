@@ -2,7 +2,7 @@ import type {
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeFilesystem,
   WorkspaceRuntimeValue,
-} from "./types.js";
+} from "./types";
 
 export class WorkspaceRuntimeCapability {
   readonly #fs: WorkspaceRuntimeFilesystem;

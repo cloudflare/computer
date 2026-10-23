@@ -21,9 +21,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "../../backend.js";
-import { Workspace } from "../../workspace.js";
-import { WorkerShellBackend } from "./worker-shell.js";
+import type { BackendHandle, WorkspaceBackend } from "../../backend";
+import { Workspace } from "../../workspace";
+import { WorkerShellBackend } from "./worker-shell";
 
 type WireEvent =
   | { id: string; seq: number; name: "stdout"; value: string }

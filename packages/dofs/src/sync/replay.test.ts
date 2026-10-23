@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { chmod } from "../fs/chmod.js";
-import { link } from "../fs/link.js";
-import { mkdir } from "../fs/mkdir.js";
-import { readFile } from "../fs/readFile.js";
-import { rename } from "../fs/rename.js";
-import { resolveInode } from "../fs/resolve.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import { applyChanges, applyChangesSync } from "./apply.js";
-import type { ChangeEntry } from "./changes.js";
-import { fingerprintVersion, versionFingerprint } from "./fingerprint.js";
-import { computeManifestHash } from "./manifests.js";
-import { currentRev, writePushCursor, writeWatermark } from "./watermarks.js";
+import { chmod } from "../fs/chmod";
+import { link } from "../fs/link";
+import { mkdir } from "../fs/mkdir";
+import { readFile } from "../fs/readFile";
+import { rename } from "../fs/rename";
+import { resolveInode } from "../fs/resolve";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import { applyChanges, applyChangesSync } from "./apply";
+import type { ChangeEntry } from "./changes";
+import { fingerprintVersion, versionFingerprint } from "./fingerprint";
+import { computeManifestHash } from "./manifests";
+import { currentRev, writePushCursor, writeWatermark } from "./watermarks";
 
 // The unified sync plan asserts that replaying an unacknowledged block
 // is safe because "revision and cursor semantics already make replay

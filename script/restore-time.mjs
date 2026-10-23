@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const FILES = Number(process.argv[2] ?? 2000);
-const CLI = new URL("../packages/computerd/dist/cli/computerd.cjs", import.meta.url).pathname;
+const CLI = new URL("../packages/computerd/dist/cli/computerd.js", import.meta.url).pathname;
 
 const { Database, initializeSchema, WorkspaceFilesystem } = await import("@cloudflare/dofs");
 const { SQLiteTestStorage } = await import("@cloudflare/dofs/testing");

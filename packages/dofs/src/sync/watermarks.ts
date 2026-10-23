@@ -1,4 +1,4 @@
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 // Watermarks owned by the local database. Keyed by (k, backend) so a
 // single workspace can host more than one backend and each keeps its

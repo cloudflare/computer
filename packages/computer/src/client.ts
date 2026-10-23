@@ -33,19 +33,19 @@
 // over RPC.
 
 import type { WorkspaceFilesystem } from "@cloudflare/dofs";
-import type { WorkspaceBackendInfo } from "./runtime/runtime.js";
+import type { WorkspaceBackendInfo } from "./runtime/runtime";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
   WorkspaceRuntimeOutputOptions,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeValue,
-} from "./runtime/types.js";
-import { decodeRuntimeEvents } from "./runtime/wire.js";
-import { type ShellValue, sh } from "./sh.js";
-import type { ExecEncoding } from "./shell.js";
-import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace.js";
-import { Workspace } from "./workspace.js";
+} from "./runtime/types";
+import { decodeRuntimeEvents } from "./runtime/wire";
+import { type ShellValue, sh } from "./sh";
+import type { ExecEncoding } from "./shell";
+import { WORKSPACE, type WorkspaceStubHost } from "./with-workspace";
+import { Workspace } from "./workspace";
 
 // The remote runtime handle stub: a result / stream / kill surface
 // carried across Workers RPC.

@@ -11,9 +11,9 @@
 
 import { describe, expect, test, vi } from "vitest";
 
-import { WorkspaceTransportError } from "../../transport-failure.js";
-import { LegacyContainerBackend } from "./cloudflare-container.js";
-import type { ILegacyWorkspaceContainerAPI, WorkspaceRef } from "./container-host.js";
+import { WorkspaceTransportError } from "../../transport-failure";
+import { LegacyContainerBackend } from "./cloudflare-container";
+import type { ILegacyWorkspaceContainerAPI, WorkspaceRef } from "./container-host";
 
 interface FakeHostOptions {
   // Status the container returns for an unauthenticated request to a

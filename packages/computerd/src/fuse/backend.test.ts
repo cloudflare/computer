@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-import { parseFuseMountMode, resolveFuseBackend } from "./index.js";
+import { parseFuseMountMode, resolveFuseBackend } from "./index";
 
 function accessFor(paths: string[]) {
   const accessible = new Set(paths);

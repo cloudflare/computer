@@ -1,9 +1,9 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import type { Database } from "../storage.js";
-import { assertNotReadOnly } from "./mount-guard.js";
-import { resolveInode } from "./resolve.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import type { Database } from "../storage";
+import { assertNotReadOnly } from "./mount-guard";
+import { resolveInode } from "./resolve";
 
 // Change the file mode bits of a path. Follows symlinks like POSIX
 // chmod — the change lands on the target, not the link. Bumps rev
