@@ -418,6 +418,19 @@ await ws.git.add({ paths: ["notes.md"] });
 await ws.git.commit({ message: "add notes" });
 ```
 
+To let the model clone and push private repositories without seeing a
+token, give the client an `auth` resolver. The host runs it for every
+HTTPS request, including the shell's `git` command and `ws:git`:
+
+```ts
+createGitClient({
+  auth: ({ url, operation }) =>
+    url.startsWith("https://github.com/acme/")
+      ? { username: "x-access-token", password: env.GITHUB_TOKEN }
+      : undefined,
+});
+```
+
 The git subpath bundles `isomorphic-git` lazily and swaps its `pako`
 dependency for the Workers `node:zlib` implementation, so the default
 package graph stays free of git. There's also an argv entry point

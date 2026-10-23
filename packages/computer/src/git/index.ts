@@ -24,6 +24,7 @@
 import type { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 
 import { type IsomorphicGitFSClient, workspaceIsomorphicGitClient } from "./adapter.js";
+import { type GitAuthResolver, type GitHttpClient, withHostAuth } from "./auth.js";
 import { type GitCliInput, type GitCliResult, runGitCli } from "./cli.js";
 import { cloneWith, type GitCloneOptions, type IsomorphicGitClient } from "./clone.js";
 import {
@@ -143,6 +144,7 @@ import {
   stashPushWith,
 } from "./worktree.js";
 
+export type { GitAuthOperation, GitAuthRequest, GitAuthResolver } from "./auth.js";
 export type { GitCliInput, GitCliResult } from "./cli.js";
 export type { GitCloneOptions, MessageCallback, ProgressCallback } from "./clone.js";
 export type { CommitResult, GitCommitOptions } from "./commit.js";
@@ -334,6 +336,31 @@ export interface CreateGitClientOptions {
    * Production callers do not pass this.
    */
   adapter?: (provider: SQLiteWorkspaceProvider) => Promise<IsomorphicGitFSClient>;
+  /**
+   * Credentials for clone, fetch, pull, and push, held by the host.
+   * Called for every HTTPS request with the repository URL and
+   * whether the request reads (`fetch`) or writes (`push`). Return
+   * a `GitAuth`, or `undefined` to send the request without one.
+   *
+   * This covers the typed client, `cli()`, the worker-shell `git`
+   * command, and `ws:git`, so the model can clone and push private
+   * repositories without a token in the command or the remote URL.
+   * An `Authorization` header passed on a call wins over the resolver.
+   *
+   * @example
+   * createGitClient({
+   *   auth: ({ url }) =>
+   *     url.startsWith("https://github.com/acme/")
+   *       ? { username: "x-access-token", password: env.GITHUB_TOKEN }
+   *       : undefined,
+   * });
+   */
+  auth?: GitAuthResolver;
+  /**
+   * Test seam for substituting the HTTP transport. Production
+   * callers do not pass this.
+   */
+  http?: GitHttpClient;
 }
 
 export type GitClientFactory = (options: WorkspaceGitClientOptions) => GitClient;
@@ -360,6 +387,8 @@ export type GitClientFactory = (options: WorkspaceGitClientOptions) => GitClient
  */
 export function createGitClient({
   adapter = workspaceIsomorphicGitClient,
+  auth,
+  http,
 }: CreateGitClientOptions = {}): GitClientFactory {
   return function createWorkspaceGitClient({
     ws,
@@ -384,7 +413,12 @@ export function createGitClient({
       return gitPromise as Promise<T>;
     };
     const loadHttp = (): Promise<object> => {
-      if (!httpPromise) httpPromise = loadDefaultHTTP();
+      if (!httpPromise) {
+        httpPromise = (http ? Promise.resolve(http) : loadDefaultHTTP()).then((transport) =>
+          // SAFETY: Both sources are isomorphic-git HTTP clients, which have `request()`. The default one is typed `object` only to keep isomorphic-git's types off the public surface.
+          auth ? withHostAuth(transport as GitHttpClient, auth) : transport,
+        );
+      }
       return httpPromise;
     };
     const loadDiffPatch = (): Promise<CreatePatchFn> => {
