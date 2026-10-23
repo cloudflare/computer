@@ -680,3 +680,26 @@ test("output from a background job after dispose() does not escape the runner", 
     dispose();
   }
 });
+
+test("an exec finishes at exitDrainMaxMs when its reader stops reading", async () => {
+  // The reader takes one event and then neither reads nor cancels. The
+  // background job's output fills the live stream's queue, which pauses
+  // the pipes, and the job keeps them open, so "close" never arrives.
+  const uncaught = captureUncaught();
+  const { runner, dispose } = fixture({ exitDrainMaxMs: 500 });
+  try {
+    const handle = runner.exec("echo first; (sleep 0.1; head -c 4000000 /dev/zero) & exit 0", {
+      id: "stalled",
+    });
+    const reader = handle.events.getReader();
+    await reader.read();
+    await sleep(1_500);
+    const replay = await drain(runner.get("stalled", { after: 0 }).events);
+    expect(replay.at(-1)).toMatchObject({ name: "exit", code: 0 });
+    expect(uncaught.errors).toEqual([]);
+    reader.releaseLock();
+  } finally {
+    uncaught.stop();
+    dispose();
+  }
+});

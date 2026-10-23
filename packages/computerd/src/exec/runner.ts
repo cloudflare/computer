@@ -38,6 +38,7 @@ interface ExecRecord {
   killTimer?: NodeJS.Timeout;
   heartbeatTimer?: NodeJS.Timeout;
   drainTimer?: NodeJS.Timeout;
+  drainDeadlineTimer?: NodeJS.Timeout;
 }
 
 interface LiveSubscriber {
@@ -65,6 +66,9 @@ const DEFAULTS = {
   // After the child exits, wait this long for its stdout and stderr to
   // close before finishing the exec. See `RunnerOptions.exitDrainMs`.
   exitDrainMs: 250,
+  // Finish the exec this long after the child exits even if the reader
+  // has stopped reading. See `RunnerOptions.exitDrainMaxMs`.
+  exitDrainMaxMs: 5_000,
   shell: "/bin/sh",
 } as const;
 
@@ -86,6 +90,7 @@ export class Runner {
     defaultTimeoutMs: number;
     heartbeatIntervalMs: number;
     exitDrainMs: number;
+    exitDrainMaxMs: number;
     shell: string;
     now: () => number;
   };
@@ -104,6 +109,7 @@ export class Runner {
       defaultTimeoutMs: init.defaultTimeoutMs ?? DEFAULTS.defaultTimeoutMs,
       heartbeatIntervalMs: init.heartbeatIntervalMs ?? 0,
       exitDrainMs: init.exitDrainMs ?? DEFAULTS.exitDrainMs,
+      exitDrainMaxMs: init.exitDrainMaxMs ?? DEFAULTS.exitDrainMaxMs,
       shell: init.shell ?? DEFAULTS.shell,
       now: init.now ?? Date.now,
     };
@@ -247,6 +253,10 @@ export class Runner {
         clearTimeout(record.drainTimer);
         record.drainTimer = undefined;
       }
+      if (record.drainDeadlineTimer !== undefined) {
+        clearTimeout(record.drainDeadlineTimer);
+        record.drainDeadlineTimer = undefined;
+      }
       // Keep reading whatever a background job still writes, and drop
       // it in onData. Left paused, its pipe fills and the job blocks on
       // its next write. Closing the pipe instead would kill it with
@@ -279,18 +289,34 @@ export class Runner {
     // the pipes open delays "close" for as long as it runs, so "exit"
     // starts a timer that finishes the exec without waiting for it. The
     // timer waits while the subscriber has paused the pipes: their
-    // buffered output is still to come, and the reader is about to ask
-    // for it.
+    // buffered output is still to come, and a reader that is keeping up
+    // will ask for it shortly. A reader that has stopped reading never
+    // will, so a second timer finishes the exec regardless, keeping what
+    // Node has already read from the pipes.
     const drainAfterExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      record.drainTimer = setTimeout(() => {
-        record.drainTimer = undefined;
+      const finish = (): void => {
         if (!record.live) return;
-        if (record.subscriber?.paused === true) {
-          drainAfterExit(code, signal);
-          return;
-        }
+        readBufferedStdio(child);
         finalise(code, signal);
-      }, this.opts.exitDrainMs);
+      };
+      const waitForReader = (): void => {
+        record.drainTimer = setTimeout(() => {
+          record.drainTimer = undefined;
+          if (record.subscriber?.paused === true) {
+            waitForReader();
+            return;
+          }
+          finish();
+        }, this.opts.exitDrainMs);
+      };
+      waitForReader();
+      record.drainDeadlineTimer = setTimeout(
+        () => {
+          record.drainDeadlineTimer = undefined;
+          finish();
+        },
+        Math.max(this.opts.exitDrainMs, this.opts.exitDrainMaxMs),
+      );
     };
     child.once("exit", drainAfterExit);
     child.once("close", finalise);
@@ -494,6 +520,10 @@ export class Runner {
       clearTimeout(record.drainTimer);
       record.drainTimer = undefined;
     }
+    if (record.drainDeadlineTimer !== undefined) {
+      clearTimeout(record.drainDeadlineTimer);
+      record.drainDeadlineTimer = undefined;
+    }
     flowStdio(record.child);
     try {
       if (record.child.exitCode === null && record.child.signalCode === null) {
@@ -555,6 +585,19 @@ export class Runner {
 // metacharacters.
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+// Hand the output Node has already read from the child's pipes to the
+// `data` listeners, which log it and pass it to the live subscriber.
+// `read()` emits `data` for each chunk it returns, paused or not.
+// Output still in the pipes is not waited for.
+function readBufferedStdio(child: ChildProcess): void {
+  for (const stream of [child.stdout, child.stderr]) {
+    if (stream === null) continue;
+    while (stream.read() !== null) {
+      // Each chunk has gone to the listeners.
+    }
+  }
 }
 
 // Resume the child's stdout and stderr after the exec is over, so a

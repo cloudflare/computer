@@ -66,8 +66,16 @@ export interface RunnerOptions {
   // close before finishing the exec. They normally close right after the
   // exit. A background job the command started keeps them open, and the
   // exec finishes after this many milliseconds instead of waiting for the
-  // job. Output the job writes later is dropped. Default 250.
+  // job. Output the job writes later is dropped. The wait is extended
+  // while the reader of the live stream has paused the output, up to
+  // exitDrainMaxMs. Default 250.
   exitDrainMs?: number;
+  // The longest the exec waits after the child exits, however slowly its
+  // reader is reading. At this point it keeps the output Node has already
+  // read, drops the rest, and finishes, so a reader that stops without
+  // cancelling cannot hold the exec open. Never less than exitDrainMs.
+  // Default 5000.
+  exitDrainMaxMs?: number;
   // Absolute path to the interpreter each command runs under. Defaults to
   // /bin/sh, which on a Debian-family image is dash: bash-only syntax a
   // caller may reach for, notably ${PIPESTATUS[@]}, is a parse error there
