@@ -33,6 +33,24 @@ export function lstat(db: Database, path: string): WorkspaceStatResult {
   return statShared(db, path, false);
 }
 
+// The revision a node was last changed at: the value of the database's
+// rev counter when the most recent mutation of this path committed.
+// Revisions only grow, so a larger value means a later change. Does
+// not follow a trailing symlink. A file still being created through an
+// open descriptor has not committed yet and reports 0.
+//
+// Kept out of stat() on purpose: stat sits under every FUSE getattr,
+// and only callers comparing versions of a file need this.
+export function revision(db: Database, path: string): number {
+  const { path: canonical } = canonicalizePath(path);
+  if (findPendingWriteBuffer(db, canonical)?.pending !== undefined) return 0;
+  const node = resolveInode(db, path, { followSymlinks: false });
+  if (node === null) {
+    throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
+  }
+  return db.scalar<number>("SELECT rev FROM vfs_nodes WHERE inode = ?", node.inode) ?? 0;
+}
+
 function statShared(db: Database, path: string, followFinal: boolean): WorkspaceStatResult {
   const { name, path: canonical } = canonicalizePath(path);
   // Pending-create files have no inode yet; serve the buffer state

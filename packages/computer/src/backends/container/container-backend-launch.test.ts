@@ -123,3 +123,40 @@ describe("ContainerBackend description", () => {
     expect(backend.description).toContain(expected);
   });
 });
+
+describe("ContainerBackend with mount: false", () => {
+  test("launches computerd with FUSE_MOUNT=none and no mount point, on every path", async () => {
+    const { host, specs } = recordingHost();
+    const backend = new ContainerBackend({
+      container: () => ({ getWorkspaceContainer: () => host }),
+      workspace: { binding: "SESSIONS", id: "session-1" },
+      mount: false,
+      containerEnv: { MOUNT_POINT: "/srv", FUSE_MOUNT: "fuse", EXTRA: "1" },
+      restartAttempts: 1,
+      connectTimeoutMs: 1_000,
+      healthProbeTimeoutMs: 50,
+      healthRetryInitialDelayMs: 10,
+      healthRetryMaxDelayMs: 20,
+      heartbeatIntervalMs: 0,
+    });
+
+    await backend.connect().catch(() => undefined);
+
+    expect(specs.map((call) => call.method)).toEqual(["start", "restart"]);
+    for (const call of specs) {
+      expect(call.spec.env).toEqual({ PORT: "8080", EXTRA: "1", FUSE_MOUNT: "none" });
+    }
+  });
+
+  test("refuses ignore patterns, which need a mount", () => {
+    expect(
+      () =>
+        new ContainerBackend({
+          container: () => ({ getWorkspaceContainer: () => ({}) }) as never,
+          workspace: { binding: "SESSIONS", id: "session-1" },
+          mount: false,
+          ignore: ["**/node_modules"],
+        }),
+    ).toThrow(/mount: false/);
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { mkdir } from "./mkdir.js";
-import { lstat, stat } from "./stat.js";
+import { lstat, revision, stat } from "./stat.js";
 import { symlink } from "./symlink.js";
 import { withDB } from "./with-db.js";
 import { writeFileSync } from "./writeFile.js";
@@ -98,6 +98,33 @@ describe("lstat", () => {
       const s = lstat(db, "/dangling");
       expect(s.isSymbolicLink).toBe(true);
       expect(s.size).toBe("/nowhere".length);
+    });
+  });
+});
+
+describe("revision", () => {
+  it("grows with each change to a path, and only that path", async () => {
+    await withDB((db) => {
+      writeFileSync(db, "/a.txt", utf8("one"), {}, () => 0);
+      writeFileSync(db, "/b.txt", utf8("b"), {}, () => 0);
+      const first = revision(db, "/a.txt");
+      const other = revision(db, "/b.txt");
+      expect(first).toBeGreaterThan(0);
+      expect(other).toBeGreaterThan(first);
+
+      writeFileSync(db, "/a.txt", utf8("two"), {}, () => 0);
+      const second = revision(db, "/a.txt");
+      expect(second).toBeGreaterThan(other);
+      expect(revision(db, "/b.txt")).toBe(other);
+    });
+  });
+
+  it("does not follow a trailing symlink, and refuses a missing path", async () => {
+    await withDB((db) => {
+      writeFileSync(db, "/target", utf8("t"), {}, () => 0);
+      symlink(db, "/target", "/link", () => 0);
+      expect(revision(db, "/link")).toBeGreaterThan(revision(db, "/target"));
+      expect(() => revision(db, "/missing")).toThrow(/no such path/);
     });
   });
 });

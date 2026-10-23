@@ -436,6 +436,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         git: host.git,
         artifacts: host.artifacts,
         runtime: host.runtime,
+        fs: host.fs,
         ...(host.assets === undefined ? {} : { assets: host.assets }),
       });
       // A factory can have nothing to offer on a connection, such as

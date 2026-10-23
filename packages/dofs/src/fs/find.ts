@@ -181,7 +181,10 @@ function readChildren(db: Database, parentInode: number, afterName: string): Chi
 //         no top-level comma or no closing brace is a literal
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
-function compileGlob(pattern: string): RegExp {
+//
+// Exported so code that walks something other than the VFS, such as
+// computerd reading its own disk, matches patterns exactly as find does.
+export function compileGlob(pattern: string): RegExp {
   return new RegExp(`^${globSource(pattern)}$`);
 }
 

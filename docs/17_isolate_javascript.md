@@ -548,6 +548,60 @@ A few limits follow from `exec` being a host call:
 
 A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the JavaScript backend's.
 
+#### Copying files instead of syncing them
+
+Syncing suits a shell the model drives directly. It costs a build step a lot: every file read in the container goes through FUSE, and every command waits for a sync before and after. `SimpleContainerBackend` from `@cloudflare/computer/backends/simple-container` runs the same container with no mount and no sync. The container works on its own disk at native speed, and code copies files in and out when it chooses to. Pass the backend instance to `createContainerModule`, and `ws:container` exports `push` and `pull` alongside `exec`:
+
+```ts
+import { withWorkspaceContainer } from "@cloudflare/computer/backends/container";
+import { SimpleContainerBackend } from "@cloudflare/computer/backends/simple-container";
+
+class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) {
+  container = new SimpleContainerBackend({
+    container: () => this,
+    workspace: { binding: "Agent", id: this.ctx.id.toString() },
+    egress: { mode: "direct" },
+  });
+  workspace = new Workspace({
+    storage: this.ctx.storage,
+    backends: [
+      new WorkerJavaScriptBackend({
+        loader: this.env.LOADER,
+        access: "read-write",
+        modules: { "ws:container": createContainerModule({ backend: this.container }) },
+      }),
+      this.container,
+    ],
+  });
+}
+```
+
+```js
+import { exec, push, pull } from "ws:container";
+
+export default async function () {
+  await push(["/workspace/package.json", "/workspace/package-lock.json", "/workspace/src"]);
+  const build = await exec("npm ci && npm run build", { cwd: "/workspace" });
+  if (build.exitCode !== 0) return build;
+  return pull(["/workspace/dist"]);
+}
+```
+
+`push(patterns, { exclude, force })` copies Workspace files into the container, and `pull(patterns, { exclude, force })` copies container files into the Workspace. There is no mount point: a path means the same file on both sides, so `/workspace/src/a.ts` in the Workspace is `/workspace/src/a.ts` in the container. A pattern is an absolute glob or path, with the same globs as the `find` tool; a relative one is taken from `/`. A plain path names a file or a whole directory, so `pull(["/workspace/dist"])` fetches everything under it. A pull never reads `/proc`, `/sys` or `/dev`. `exclude` takes the same patterns. A file is left out when it, or any directory above it, matches, so `exclude: ["node_modules"]` keeps a whole tree out. Only regular files are copied; symbolic links are skipped.
+
+Both directions send a manifest first, so only changed files cross the wire. Every file in it carries its Workspace revision, the value of the Workspace's change counter when the file last changed. computerd keeps an in-memory record of each file it pushed or pulled: the revision, and the SHA-256, size and modification time of its copy on disk.
+
+- `push` sends the files the container lacks, or holds at an older revision, and returns `{ pushed, unchanged, bytes }`. A file the container has changed since, but the Workspace hasn't, is left alone: the Workspace has nothing newer to give it.
+- `pull` sends the container files that changed since they were recorded, and returns `{ pulled, bytes, skipped, skippedCount }`. Size and modification time answer that cheaply; when they differ, the content hash decides, so rewriting a file with the same bytes is not a change. A file the container hasn't touched is never sent back, however the Workspace changed it since. After writing, the host reports each file's new revision, so the next pull compares against it. `skipped` lists up to 100 files the Workspace refused, such as files in a read-only mount.
+
+`pull` refuses a file both sides changed: the container's copy differs from the record, and the Workspace's revision is newer than the recorded one. Bringing it back would overwrite the Workspace's change, so the whole pull is refused before any file is written, and `pull` throws a `FileTransferConflictError` naming the files (its `conflicts` list each one with `localRev` and `baseRev`). Pass `force: true` to copy every matching file and overwrite the Workspace copies. In a push, `force` sends every matching file too.
+
+The record lives in computerd's memory, so a restarted computerd has forgotten it. Without a record, a container file at the same size as the Workspace's copy, and no newer, is taken as the same file. One that looks changed against an existing Workspace copy is refused with reason `"untracked"`, since nothing says which side changed. Neither direction deletes anything: a file removed on one side stays on the other.
+
+A pull writes the Workspace, so it needs a read-write backend; a push only reads it. There is no default working directory either: a command starts where computerd does, the image's working directory, so give `exec` a `cwd`. `exec` returns `sync: { status: "complete", skipped: [], skippedCount: 0 }`, because nothing syncs.
+
+The transfer streams files one at a time over computerd's HTTP surface, behind the same client secret as the rest of it. The container image needs a computerd that serves file transfer; an older one fails the first `push` or `pull` with a message saying so.
+
 Two options shape every command:
 
 | Option | Default | Notes |

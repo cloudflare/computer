@@ -75,6 +75,10 @@
       "types": "./dist/tools/ai-sdk.d.ts",
       "import": "./dist/tools/ai-sdk.js"
     },
+    "./backends/simple-container": {
+      "types": "./dist/backends/simple-container/index.d.ts",
+      "import": "./dist/backends/simple-container/index.js"
+    },
     "./backends/container": {
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"

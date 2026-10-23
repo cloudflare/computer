@@ -30,6 +30,7 @@ removed in a future release; each one names its replacement.
 | Assets and Artifacts | `@cloudflare/computer/assets`, `@cloudflare/computer/artifacts` | Stable |
 | Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
 | `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
+| `SimpleContainerBackend` and `ws:container`'s `push` and `pull` | `@cloudflare/computer/backends/simple-container` | Experimental |
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
 | Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
@@ -508,10 +509,11 @@ on a computerd instance.
 | --- | --- |
 | `@cloudflare/computer` | The `Workspace` wrapper, `workspace.runtime`, stub types, the R2 and Worker bundle mounts, and proxy classes. |
 | `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
+| `@cloudflare/computer/backends/simple-container` | `SimpleContainerBackend`: a container with its own disk and no sync. Files move through `ws:container`'s `push` and `pull`. |
 | `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
-| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript, and with a `SimpleContainerBackend`, push and pull files. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |
 | `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `ws:assets`: publish a Workspace file from isolate JavaScript. |

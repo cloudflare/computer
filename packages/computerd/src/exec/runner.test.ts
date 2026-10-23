@@ -374,6 +374,53 @@ test("exec(cwd) with a missing path synthesises a spawn-failed shape", async () 
   }
 });
 
+test("exec(cwd) with cwdCheck disk accepts a directory that exists only on disk", async () => {
+  // Without a mount, working directories live on the container's disk
+  // and are never in the database, so the VFS check would refuse every
+  // one of them.
+  const { runner, dispose } = fixture({ cwdCheck: "disk" });
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const directory = mkdtempSync("/tmp/computerd-disk-cwd-");
+  try {
+    const events = await drain(runner.exec("pwd", { cwd: directory }).events);
+    const stdout = events
+      .filter((e) => e.name === "stdout")
+      .map((e) => decode(e.value as Uint8Array))
+      .join("");
+    expect(stdout.trim()).toBe(directory);
+    expect(events.find((e) => e.name === "exit")?.code).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    dispose();
+  }
+});
+
+test("exec(cwd) with cwdCheck disk refuses a missing path or a file", async () => {
+  const { runner, dispose } = fixture({ cwdCheck: "disk" });
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const directory = mkdtempSync("/tmp/computerd-disk-cwd-");
+  const file = `${directory}/file`;
+  writeFileSync(file, "");
+  try {
+    for (const [cwd, message] of [
+      ["/nope/missing", /no such path/],
+      [file, /not a directory/],
+    ] as const) {
+      const events = await drain(runner.exec("echo unreachable", { cwd }).events);
+      const stderr = events
+        .filter((e) => e.name === "stderr")
+        .map((e) => decode(e.value as Uint8Array))
+        .join("");
+      expect(stderr).toMatch(/^spawn failed: /);
+      expect(stderr).toMatch(message);
+      expect(events.find((e) => e.name === "exit")?.code).toBe(-1);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    dispose();
+  }
+});
+
 test("exec(cwd) quotes path segments with spaces and single quotes", async () => {
   // The shellQuote helper has to survive both spaces and embedded
   // single quotes without giving /bin/sh a chance to misparse. Use

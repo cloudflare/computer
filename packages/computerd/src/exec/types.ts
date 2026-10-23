@@ -44,6 +44,13 @@ export interface ExecOptions {
 export interface RunnerOptions {
   // Default working directory for exec(). Overridden per-call.
   cwd?: string;
+  // Where exec() checks that the working directory exists before it
+  // spawns. "vfs", the default, looks it up in computerd's database,
+  // which is what a FUSE mount serves and the only check that cannot
+  // deadlock against computerd's own FUSE server. "disk" stats the real
+  // filesystem, for a daemon running without a mount, whose working
+  // directories exist on disk and never in the database.
+  cwdCheck?: "vfs" | "disk";
   // Base env merged into every spawned child.
   env?: Record<string, string>;
   // Per-exec log cap. Past this many bytes the log is evicted

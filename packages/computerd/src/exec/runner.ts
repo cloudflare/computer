@@ -18,7 +18,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-import { type Database, stat } from "@cloudflare/dofs";
+import { statSync } from "node:fs";
+import { createWorkspaceError, type Database, stat } from "@cloudflare/dofs";
 
 import { inheritedEnv } from "./env.js";
 import { createLog, type EventLog, openLog } from "./log.js";
@@ -75,6 +76,7 @@ export class Runner {
   private readonly db: Database;
   private readonly opts: {
     cwd: string | undefined;
+    cwdCheck: "vfs" | "disk";
     env: Record<string, string> | undefined;
     logMaxBytes: number;
     retentionMs: number;
@@ -92,6 +94,7 @@ export class Runner {
     this.db = init.db;
     this.opts = {
       cwd: init.cwd,
+      cwdCheck: init.cwdCheck ?? "vfs",
       env: init.env,
       logMaxBytes: init.logMaxBytes ?? DEFAULTS.logMaxBytes,
       retentionMs: init.retentionMs ?? DEFAULTS.retentionMs,
@@ -129,7 +132,8 @@ export class Runner {
     // server.
     if (cwd !== undefined) {
       try {
-        stat(this.db, cwd);
+        if (this.opts.cwdCheck === "disk") checkDirectoryOnDisk(cwd);
+        else stat(this.db, cwd);
       } catch (err) {
         return this.spawnFailed(id, err);
       }
@@ -501,6 +505,18 @@ export class Runner {
 // metacharacters.
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+// The disk counterpart of dofs's stat pre-flight, failing with the same
+// error shape so a caller sees one message whichever check ran.
+function checkDirectoryOnDisk(cwd: string): void {
+  let isDirectory: boolean;
+  try {
+    isDirectory = statSync(cwd).isDirectory();
+  } catch {
+    throw createWorkspaceError("ENOENT", `no such path: ${cwd}`, cwd);
+  }
+  if (!isDirectory) throw createWorkspaceError("ENOTDIR", `not a directory: ${cwd}`, cwd);
 }
 
 function mapExitCode(code: number | null, signal: NodeJS.Signals | null): number {

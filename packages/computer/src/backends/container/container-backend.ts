@@ -106,6 +106,15 @@ export interface ContainerBackendOptions {
   // the defaults (PORT, MOUNT_POINT). Caller-supplied values win.
   containerEnv?: Record<string, string>;
 
+  // Whether computerd mounts the Workspace at /workspace. Defaults to
+  // true. False launches it with FUSE_MOUNT=none and no MOUNT_POINT:
+  // no mount point at all, so nothing syncs, and files move only
+  // through computerd's file transfer routes, with paths relative to
+  // the container's root. SimpleContainerBackend sets this; the
+  // Workspace's sync expects a mount, so a bare ContainerBackend
+  // rarely wants it. Cannot be combined with `ignore`.
+  mount?: boolean;
+
   // Total time the backend waits for: container port to open,
   // /connect POST to return, /api upgrade to arrive. Default 30s.
   connectTimeoutMs?: number;
@@ -260,17 +269,22 @@ export class ContainerBackend implements WorkspaceBackend {
       | "instance"
       | "launch"
       | "ignore"
+      | "mount"
     >
   > &
     Pick<
       ContainerBackendOptions,
       "container" | "workspace" | "containerEnv" | "name" | "instance" | "launch" | "ignore"
     >;
+  readonly #mount: boolean;
   readonly #egress: WorkspaceEgressPolicy;
   readonly #egressToken: string | undefined;
   // Set once start() reports it, before the upgrade slot is armed, so
   // handleFetch can check the dial-back against it.
   #clientSecret: string | undefined;
+  // The container host the last successful connect() drove, kept for
+  // fetchComputerd.
+  #host: IWorkspaceContainerAPI | undefined;
 
   // State for the in-flight /api upgrade. handleFetch() resolves
   // #pendingUpgrade; connect() awaits it.
@@ -286,7 +300,15 @@ export class ContainerBackend implements WorkspaceBackend {
     this.id = options.id ?? "container-shell";
     this.#egress = options.egress ?? { mode: "none" };
     this.#egressToken = this.#egress.mode === "http-gateway" ? crypto.randomUUID() : undefined;
-    if (options.ignore !== undefined) checkIgnorePatterns(options.ignore);
+    this.#mount = options.mount ?? true;
+    if (options.ignore !== undefined) {
+      if (!this.#mount) {
+        throw new TypeError(
+          "ContainerBackend: `ignore` keeps paths out of the mount, and `mount: false` has none.",
+        );
+      }
+      checkIgnorePatterns(options.ignore);
+    }
     this.description = [
       "A shell in a full Linux container: npm, node, python, package managers, test runners, and native binaries.",
       NETWORK_DESCRIPTION[this.#egress.mode],
@@ -327,14 +349,30 @@ export class ContainerBackend implements WorkspaceBackend {
     // is only interesting if the new attempt fails too.
     const priorExit = await host.exitInfo().catch(() => null);
 
-    const env = {
-      PORT: String(this.#options.containerPort),
-      MOUNT_POINT: "/workspace",
-      ...(this.#options.ignore !== undefined
-        ? { MOUNT_IGNORE: this.#options.ignore.join(",") }
-        : {}),
-      ...this.#options.containerEnv,
-    };
+    const env = this.#mount
+      ? {
+          PORT: String(this.#options.containerPort),
+          MOUNT_POINT: "/workspace",
+          ...(this.#options.ignore !== undefined
+            ? { MOUNT_IGNORE: this.#options.ignore.join(",") }
+            : {}),
+          ...this.#options.containerEnv,
+        }
+      : (() => {
+          // No mount point at all: drop one a caller passed, and pin
+          // FUSE_MOUNT, since a mount would hide the paths file transfer
+          // writes to.
+          const {
+            MOUNT_POINT: _mountPoint,
+            MOUNT_IGNORE: _ignore,
+            ...rest
+          } = this.#options.containerEnv ?? {};
+          return {
+            PORT: String(this.#options.containerPort),
+            ...rest,
+            FUSE_MOUNT: "none",
+          };
+        })();
     let runtimeId: string;
     // The container requires this on its HTTP surface. It is durable, so
     // the value is the same across incarnations and across a replaced
@@ -462,6 +500,7 @@ export class ContainerBackend implements WorkspaceBackend {
       closed,
       ignore: resolvedIgnore,
       close: async () => {
+        this.#host = undefined;
         stopHeartbeat?.();
         // Dispose the root stub first. Per capnweb's docs, this is
         // the documented way to shut a session down — it lets the
@@ -482,8 +521,38 @@ export class ContainerBackend implements WorkspaceBackend {
         this.#handle = undefined;
       },
     };
+    this.#host = host;
     this.#handle = handle;
     return handle;
+  }
+
+  /**
+   * Send a request to computerd's HTTP surface in this backend's
+   * container, presenting the client secret it was launched with.
+   * Connects first when there is no live connection, so the container
+   * is running and verified before the request goes out.
+   *
+   * @param path - An absolute path on computerd, such as `/files/diff`.
+   * @param init - The request, without an `authorization` header.
+   */
+  async fetchComputerd(path: string, init: RequestInit = {}): Promise<Response> {
+    if (!path.startsWith("/") || path.startsWith("//")) {
+      throw new TypeError(`fetchComputerd: path must be absolute, got ${JSON.stringify(path)}.`);
+    }
+    await this.connect();
+    const host = this.#host;
+    const secret = this.#clientSecret;
+    if (host === undefined || secret === undefined) {
+      throw new WorkspaceTransportError(`ContainerBackend(${this.id}): not connected.`);
+    }
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${secret}`);
+    // A plain object, like every other request this file makes, so the
+    // init survives the Workers RPC hop to a cross-DO container host.
+    return host.fetchPort(this.#options.containerPort, `http://container${path}`, {
+      ...init,
+      headers: Object.fromEntries(headers),
+    });
   }
 
   // Routes an /api upgrade Request into the in-flight connect().

@@ -23,6 +23,10 @@
     "./debug": {
       "types": "./dist/debug.d.ts",
       "default": "./dist/debug.js"
+    },
+    "./files": {
+      "types": "./dist/files.d.ts",
+      "default": "./dist/files.js"
     }
   },
   "types": "./dist/index.d.ts",

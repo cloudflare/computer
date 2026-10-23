@@ -79,6 +79,12 @@ export interface WorkspaceModuleHost {
   /** The Workspace runtime, for running commands on other backends. */
   readonly runtime: import("./runtime.js").WorkspaceRuntime;
   readonly assets?: import("../assets/index.js").AssetsClient;
+  /**
+   * The Workspace filesystem, unconfined by any backend root. For
+   * modules that move files on the Workspace's behalf, such as
+   * `ws:container`'s push and pull.
+   */
+  readonly fs?: import("@cloudflare/dofs").WorkspaceFilesystem;
 }
 
 /**

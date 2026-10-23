@@ -24,7 +24,7 @@ import { type ReadFileOptions, readFile } from "./readFile.js";
 import { readlink } from "./readlink.js";
 import { rename } from "./rename.js";
 import { type RmOptions, rm } from "./rm.js";
-import { lstat, stat, type WorkspaceStatResult } from "./stat.js";
+import { lstat, revision, stat, type WorkspaceStatResult } from "./stat.js";
 import { symlink } from "./symlink.js";
 import { type WriteFileContent, type WriteFileOptions, writeFile } from "./writeFile.js";
 
@@ -76,6 +76,13 @@ export class WorkspaceFilesystem {
   // routing lstat through to the workspace.
   async lstat(path: string): Promise<WorkspaceStatResult> {
     return lstat(this.db, path);
+  }
+
+  // The revision `path` was last changed at. Revisions come from one
+  // counter that only grows, so comparing two tells which change came
+  // later. Doesn't follow a trailing symlink.
+  async revision(path: string): Promise<number> {
+    return revision(this.db, path);
   }
 
   // Return the stored target of a symlink. EINVAL when path is

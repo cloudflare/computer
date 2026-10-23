@@ -18,7 +18,7 @@ Durable Object SQLite-backed virtual filesystem for Cloudflare Computer.
 This package exposes a JavaScript module, not a CLI. It bundles three layers that can be used independently:
 
 - A `Database` wrapper around Durable Object SQL storage plus `initializeSchema` for the `vfs_*` tables.
-- Filesystem primitives under `src/fs/*` (`mkdir`, `writeFile`, `readFile`, `rm`, `rename`, `readdir`, `stat`, `lstat`, `chmod`, `find`, `ls`, `grep`, `symlink`, `readlink`, `gc`, `watch`) operating on a `Database`.
+- Filesystem primitives under `src/fs/*` (`mkdir`, `writeFile`, `readFile`, `rm`, `rename`, `readdir`, `stat`, `lstat`, `chmod`, `find`, `ls`, `grep`, `symlink`, `readlink`, `gc`, `watch`) operating on a `Database`. `revision(db, path)` (and `WorkspaceFilesystem.revision`) reads the revision a path last changed at, kept out of `stat` so FUSE getattr does not pay for it. `compileGlob` is exported on its own, so code walking something other than the VFS, such as computerd's file transfer reading its disk, matches patterns exactly as `find` does.
 - `SQLiteWorkspaceProvider`, a `@platformatic/vfs` adapter that composes those primitives into a node-shaped filesystem (fd table, positional `readSync`/`writeSync`, `watchSync`, symlinks). This is what `computerd` mounts via FUSE.
 - Sync protocol building blocks operating on the same `Database`: `applyChanges`, `stageBlob`, `materialiseChange`, `coalesceChanges`, `fetchChanges`, `fetchObjects`, `hasObjects`, `pushObjects`, `buildManifest`, `currentRev`, `compareChangeCursors`, `readWatermark`/`writeWatermark`, `assertAppliedPushCursor`, and the opt-in ignore matcher `isIgnored` (the default ignore list is empty). The wire wiring lives in `@cloudflare/computer-rpc`.
 

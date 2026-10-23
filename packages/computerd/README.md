@@ -334,7 +334,7 @@ FUSE_MOUNT=auto    # default: probe /dev/fuse or macFUSE, fall back to the users
 FUSE_MOUNT=fuse    # require the linux kernel FUSE backend (/dev/fuse)
 FUSE_MOUNT=macfuse # require macFUSE on darwin
 FUSE_MOUNT=shim    # force the userspace dev shim (no FUSE)
-FUSE_MOUNT=none    # skip the mount entirely; HTTP and /api still come up
+FUSE_MOUNT=none    # no mount point; files move by file transfer, relative to /
 ```
 
 Additional environment variables:
@@ -350,6 +350,25 @@ COMPUTERD_DB=/var/lib/computerd/state.db  # on-disk store; "memory" or unset kee
 `EXEC_SHELL` must be an absolute path. It exists because `/bin/sh` is `dash` on a Debian-family image, where bash-only syntax is a parse error that aborts the command rather than a missing feature: `${PIPESTATUS[@]}`, arrays, `[[ ... ]]`, and process substitution all fail that way. `PIPESTATUS` is the usual way to recover the real exit status of a pipeline whose output is filtered — a command redacting a credential through `sed`, for instance — so a caller that needs it can select an interpreter that has it without repointing `/bin/sh` for every other script in the image.
 
 `FUSE_MOUNT=auto` is the friendly default: if `/dev/fuse` (or macFUSE) is available `computerd` mounts a real FUSE filesystem, otherwise it transparently falls back to the userspace shim. Pin the value (`fuse` / `macfuse` / `shim` / `none`) when a test needs to assert a specific code path.
+
+## `FUSE_MOUNT=none` — file transfer
+
+With no mount there is no mount point at all. `MOUNT_POINT` is ignored, nothing is created for it, and `/__computerd/info` reports `mountPoint: null`. Commands have no default working directory: they start where `computerd` does, and a `cwd` a caller names is checked on disk rather than in the database. `MOUNT_IGNORE` has nothing to carve paths out of, so `computerd` refuses to start with it. The host copies files in and out of the container's own filesystem over four routes, all behind `RPC_CLIENT_SECRET`:
+
+| Route | Request | Response |
+| --- | --- | --- |
+| `POST /files/diff` | `{ files: [{ path, size, mtime, rev? }] }` | `{ want: [path] }`: the files missing here, held at an older revision, or (with no record) at a different size or mtime |
+| `PUT /files` | A transfer body | `{ written, bytes }` |
+| `POST /files/pull` | `{ patterns, exclude?, have?, force? }` | A transfer body of the matching files the container changed, or `409 { conflicts }` and nothing else when the Workspace changed some of them too |
+| `POST /files/record` | `{ files: [{ path, rev }] }` | `{ recorded }`: after a pull, the revisions the Workspace wrote its files at |
+
+Paths are relative to the container's root: `workspace/src/a.ts` is `/workspace/src/a.ts`. A walk never enters `/proc`, `/sys` or `/dev`, whose files report a size of zero and then produce bytes. A transfer body is a sequence of frames, each a big-endian `u32` header length, a JSON header `{ path, size, mtime, mode, rev? }`, and exactly `size` bytes, ending with a zero length. A body that ends without that terminator is a failed transfer. The format, and the pattern rules both ends share, live in `@cloudflare/computer-rpc/files`.
+
+A received file is written under a temporary name and renamed into place, with its mode and its mtime set from the header.
+
+`computerd` keeps a manifest, in memory, of each file that last matched the Workspace: the Workspace revision, and the SHA-256, size and mtime of the bytes on disk. A push records each file at the `rev` in its header. A pull hashes each file as it streams it, and records it once `/files/record` reports the revision the Workspace wrote it at; a file the host never reports is not recorded. On a pull, a recorded file whose size and mtime still match, or whose content hash does, is unchanged and not sent. A changed one is a conflict when the caller's `rev` for it is newer than the recorded one, and any conflict refuses the whole pull unless `force` is set. A file with no record falls back to size and mtime, and one that looks changed against a copy the caller has is a conflict with reason `untracked`. The manifest does not survive a restart. Only regular files travel; symbolic links are skipped. With a mount, these routes answer `409`, since files reach a mounted directory through sync, and `/__computerd/info` reports `files: null`; without one it reports `files: { root: "/" }`.
+
+`SimpleContainerBackend` in `@cloudflare/computer` is the host side.
 
 ## `FUSE_MOUNT=shim` — userspace dev shim
 

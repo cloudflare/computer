@@ -5,14 +5,24 @@ import { mkdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { isAbsolute } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ExecEvent as RpcExecEvent } from "@cloudflare/computer-rpc";
 import { isStubTrackingEnabled, stubSnapshot } from "@cloudflare/computer-rpc/debug";
+import {
+  FILE_TRANSFER_CONTENT_TYPE,
+  FILE_TRANSFER_ROUTES,
+  type FileManifestEntry,
+  FileTransferError,
+  isRevision,
+} from "@cloudflare/computer-rpc/files";
 import type { RunnerLike } from "@cloudflare/computer-rpc/server";
 import { acceptWebSocketSession, createWorkspaceServer } from "@cloudflare/computer-rpc/server";
 import type { Database } from "@cloudflare/dofs";
 import { WebSocket, WebSocketServer } from "ws";
 import { Runner } from "../exec/index.js";
 import type { ExecEvent as ComputerdExecEvent } from "../exec/types.js";
+import { FileTransfer } from "../files/index.js";
 import {
   createNodeVirtualFileSystem,
   describeMountIgnore,
@@ -151,10 +161,15 @@ function dropHeartbeats(stream: ReadableStream<ComputerdExecEvent>): ReadableStr
 
 interface ComputerdInfo {
   backend: FUSEBackend;
-  mountPoint: string;
+  // Null with FUSE_MOUNT=none, which has no mount point.
+  mountPoint: string | null;
   port: number;
   store: ResolvedStore;
   ignore: MountIgnoreInfo;
+  // Where file transfer reads and writes, or null when it is off. It
+  // is on only without a mount, rooted at the container's "/": with a
+  // mount, files arrive through sync.
+  files: { root: string } | null;
 }
 
 // Snapshot DOFS table sizes and process memory so an external caller
@@ -202,6 +217,7 @@ function createHTTPServer(
   secret: string | undefined,
   getStats?: () => Record<string, unknown>,
   checkpoint?: () => { walFrames: number; sizeBytes: number; durationMs: number },
+  files?: FileTransfer,
 ): HTTPHandle {
   // Holds the current outbound capnweb session opened via /connect.
   // Re-POSTing /connect (e.g. after a DO hibernate + new incarnation)
@@ -278,6 +294,19 @@ function createHTTPServer(
           "content-type": "text/plain; charset=utf-8",
         });
       }
+      return;
+    }
+
+    // /files, /files/diff, /files/pull, /files/record — copy files to
+    // and from the container's disk without the sync protocol. See
+    // FileTransfer.
+    if (
+      path === FILE_TRANSFER_ROUTES.put ||
+      path === FILE_TRANSFER_ROUTES.diff ||
+      path === FILE_TRANSFER_ROUTES.pull ||
+      path === FILE_TRANSFER_ROUTES.record
+    ) {
+      void handleFileTransfer(path, request, response, files);
       return;
     }
 
@@ -489,7 +518,7 @@ async function handleConnect(
 ): Promise<void> {
   let body: ConnectBody;
   try {
-    body = await readJson<ConnectBody>(request);
+    body = await readJSON<ConnectBody>(request);
   } catch (error) {
     send(response, 400, `invalid JSON body: ${(error as Error).message}\n`, {
       "content-type": "text/plain; charset=utf-8",
@@ -575,7 +604,142 @@ async function handleConnect(
   });
 }
 
-async function readJson<T>(request: IncomingMessage): Promise<T> {
+async function handleFileTransfer(
+  path: string,
+  request: IncomingMessage,
+  response: ServerResponse,
+  files: FileTransfer | undefined,
+): Promise<void> {
+  const method = path === FILE_TRANSFER_ROUTES.put ? "PUT" : "POST";
+  if (request.method !== method) {
+    request.resume();
+    send(response, 405, "method not allowed\n", {
+      allow: method,
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  if (files === undefined) {
+    // With a mount, the mount point is the VFS and files reach it
+    // through sync. Writing them to disk under it would put them
+    // somewhere no command can see.
+    request.resume();
+    send(response, 409, "file transfer needs FUSE_MOUNT=none\n", {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  try {
+    if (path === FILE_TRANSFER_ROUTES.diff) {
+      const body = await readJSON<{ files?: unknown }>(request);
+      const want = await files.diff(parseManifest(body.files, "files"));
+      send(response, 200, JSON.stringify({ want }), {
+        "content-type": "application/json; charset=utf-8",
+      });
+      return;
+    }
+    if (path === FILE_TRANSFER_ROUTES.put) {
+      const result = await files.receive(
+        Readable.toWeb(request) as unknown as ReadableStream<Uint8Array>,
+      );
+      send(response, 200, JSON.stringify(result), {
+        "content-type": "application/json; charset=utf-8",
+      });
+      return;
+    }
+    if (path === FILE_TRANSFER_ROUTES.record) {
+      const body = await readJSON<{ files?: unknown }>(request);
+      const recorded = files.record(parseRevisions(body.files));
+      send(response, 200, JSON.stringify({ recorded }), {
+        "content-type": "application/json; charset=utf-8",
+      });
+      return;
+    }
+    const body = await readJSON<{
+      patterns?: unknown;
+      exclude?: unknown;
+      have?: unknown;
+      force?: unknown;
+    }>(request);
+    if (body.force !== undefined && typeof body.force !== "boolean") {
+      throw new TypeError("'force' must be a boolean");
+    }
+    const plan = await files.send({
+      patterns: parseStrings(body.patterns, "patterns"),
+      exclude: body.exclude === undefined ? [] : parseStrings(body.exclude, "exclude"),
+      have: body.have === undefined ? [] : parseManifest(body.have, "have"),
+      force: body.force === true,
+    });
+    if (plan.conflicts !== undefined) {
+      // Refused before any file is read, so the Workspace is untouched.
+      send(response, 409, JSON.stringify({ conflicts: plan.conflicts }), {
+        "content-type": "application/json; charset=utf-8",
+      });
+      return;
+    }
+    const stream = plan.stream;
+    response.writeHead(200, { "content-type": FILE_TRANSFER_CONTENT_TYPE });
+    // A read failure part-way through ends the response without the
+    // transfer's terminator, which the host reports as a cut-short
+    // transfer rather than taking the files it got as everything.
+    await pipeline(
+      Readable.fromWeb(stream as unknown as import("node:stream/web").ReadableStream<Uint8Array>),
+      response,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (response.headersSent) {
+      console.error(`${path} failed after the response started:`, message);
+      response.destroy(error instanceof Error ? error : undefined);
+      return;
+    }
+    const isRequestError =
+      error instanceof FileTransferError ||
+      error instanceof TypeError ||
+      error instanceof RangeError ||
+      error instanceof SyntaxError;
+    if (!isRequestError) console.error(`${path} failed:`, error);
+    // The caller holds the client secret, and a disk error such as
+    // ENOSPC is something it needs to see, so the message goes back.
+    send(response, isRequestError ? 400 : 500, `${message}\n`, {
+      "content-type": "text/plain; charset=utf-8",
+    });
+  }
+}
+
+function parseStrings(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new TypeError(`'${name}' must be an array of strings`);
+  }
+  return value;
+}
+
+function parseManifest(value: unknown, name: string): FileManifestEntry[] {
+  if (!Array.isArray(value)) throw new TypeError(`'${name}' must be an array`);
+  return value.map((entry: unknown) => {
+    const { path, size, mtime, rev } = (entry ?? {}) as Record<string, unknown>;
+    if (typeof path !== "string" || typeof size !== "number" || typeof mtime !== "number") {
+      throw new TypeError(`'${name}' entries need a string path and numeric size and mtime`);
+    }
+    if (rev !== undefined && !isRevision(rev)) {
+      throw new TypeError(`'${name}' entry ${JSON.stringify(path)} has an invalid rev`);
+    }
+    return rev === undefined ? { path, size, mtime } : { path, size, mtime, rev };
+  });
+}
+
+function parseRevisions(value: unknown): Array<{ path: string; rev: number }> {
+  if (!Array.isArray(value)) throw new TypeError("'files' must be an array");
+  return value.map((entry: unknown) => {
+    const { path, rev } = (entry ?? {}) as Record<string, unknown>;
+    if (typeof path !== "string" || !isRevision(rev)) {
+      throw new TypeError("'files' entries need a string path and a non-negative integer rev");
+    }
+    return { path, rev };
+  });
+}
+
+async function readJSON<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(chunk as Buffer);
@@ -625,15 +789,20 @@ async function main(): Promise<void> {
   delete process.env.RPC_CLIENT_SECRET;
 
   const port = parsePort(process.env.PORT);
-  const mountPoint = parseMountPoint(process.env.MOUNT_POINT);
   // FUSE_MOUNT picks the backend. auto (default) probes /dev/fuse
   // or macFUSE and falls back to the userspace shim. fuse / macfuse
   // require their respective real backend. shim forces the userspace
-  // polling shim. none skips the mount entirely; HTTP and /api
-  // still come up so tests and tooling can talk to computerd's RPC surface.
+  // polling shim. none skips the mount entirely: there is no mount
+  // point, MOUNT_POINT is ignored, and file transfer and commands use
+  // the container's own filesystem from its root.
   const fuseMountMode = parseFuseMountMode(process.env.FUSE_MOUNT);
   const backend: FUSEBackend = await resolveFuseBackend(fuseMountMode);
   console.log(`[info] FUSE_MOUNT=${fuseMountMode} resolved to backend=${backend.kind}`);
+  const mounted = backend.kind !== "none";
+  const mountPoint = parseMountPoint(mounted ? process.env.MOUNT_POINT : undefined);
+  if (!mounted && process.env.MOUNT_POINT !== undefined && process.env.MOUNT_POINT !== "") {
+    console.log(`[info] MOUNT_POINT ignored: FUSE_MOUNT=none has no mount point`);
+  }
 
   // Local-only paths (#179). Resolved before the store so a
   // misconfiguration fails the daemon at startup rather than after the
@@ -641,6 +810,14 @@ async function main(): Promise<void> {
   // node_modules into the Durable Object, which is the failure this
   // feature exists to prevent.
   const ignoreConfig = resolveMountIgnoreConfig(process.env, mountPoint);
+  // Local-only paths are carved out of a mount. With none, every path
+  // is already local, and accepting the patterns would report them on
+  // /__computerd/info as if they did something.
+  if (ignoreConfig.enabled && !mounted) {
+    throw new Error(
+      "MOUNT_IGNORE needs a mount, and FUSE_MOUNT=none has none. Unset MOUNT_IGNORE.",
+    );
+  }
   // The shim copies everything under the mount into the VFS, so it has
   // no way to keep a path local. Starting anyway would report the paths
   // as local-only on /__computerd/info while syncing them, and the
@@ -668,7 +845,10 @@ async function main(): Promise<void> {
     }
   }
 
-  const store = resolveStore(parseStoreMode(process.env.COMPUTERD_DB), mountPoint);
+  const store = resolveStore(
+    parseStoreMode(process.env.COMPUTERD_DB),
+    mounted ? mountPoint : undefined,
+  );
   console.log(
     `[info] COMPUTERD_DB resolved to store=${store.kind}${
       store.kind === "file" ? ` path=${store.path} fresh=${store.fresh}` : ""
@@ -682,12 +862,17 @@ async function main(): Promise<void> {
     storeStats,
     close: closeStore,
   } = await createNodeVirtualFileSystem({ store });
+  // Without a mount, the host copies files in and out of the container's
+  // own filesystem, with paths relative to its root: /workspace/a.ts in
+  // the Workspace is /workspace/a.ts here.
+  const files = mounted ? undefined : new FileTransfer("/");
   const info: ComputerdInfo = {
     backend,
-    mountPoint,
+    mountPoint: mounted ? mountPoint : null,
     port,
     store,
     ignore: describeMountIgnore(ignoreConfig),
+    files: files === undefined ? null : { root: files.root },
   };
 
   let fuse: FuseMount | undefined;
@@ -758,7 +943,10 @@ async function main(): Promise<void> {
     db,
     // When we have a mount (real FUSE or the shim) point spawned
     // children at it so writes from exec flow through the VFS.
-    ...(fuse !== undefined ? { cwd: mountPoint } : {}),
+    // Without a mount there is no default working directory: commands
+    // start where computerd does, and a working directory a caller
+    // names is checked on disk, where it exists.
+    ...(fuse !== undefined ? { cwd: mountPoint } : mounted ? {} : { cwdCheck: "disk" as const }),
     ...(logMaxBytesOverride !== undefined ? { logMaxBytes: logMaxBytesOverride } : {}),
     ...(shellOverride !== undefined ? { shell: shellOverride } : {}),
   });
@@ -811,6 +999,7 @@ async function main(): Promise<void> {
       };
     },
     checkpointStore,
+    files,
   );
 
   let shuttingDown = false;

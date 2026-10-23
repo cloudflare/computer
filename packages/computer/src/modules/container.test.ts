@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { FileTransferConflictError } from "@cloudflare/computer-rpc/files";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFunction,
   WorkspaceModuleHost,
 } from "../runtime/types.js";
 import type { ExecSyncResult } from "../shell.js";
+
 import { createContainerModule } from "./container.js";
 
 interface ExecOptions {
@@ -376,5 +378,151 @@ describe("createContainerModule", () => {
 
   it("describes itself for a model", () => {
     expect(createContainerModule().description).toContain("full Linux container");
+  });
+});
+
+describe("createContainerModule with a file transfer backend", () => {
+  // A backend that records what it was asked to copy.
+  function fakeFiles(skipped: Array<{ path: string; error: string }> = []) {
+    const calls: Array<{ direction: string; patterns: readonly string[]; options: unknown }> = [];
+    const files = {
+      id: "linux",
+      async push(_fs: unknown, patterns: readonly string[], options?: unknown) {
+        calls.push({ direction: "push", patterns, options });
+        return { pushed: 2, unchanged: 1, bytes: 10 };
+      },
+      async pull(_fs: unknown, patterns: readonly string[], options?: unknown) {
+        calls.push({ direction: "pull", patterns, options });
+        return { pulled: 1, bytes: 4, skipped };
+      },
+    };
+    return { files, calls };
+  }
+
+  function buildWithFiles(
+    files: ReturnType<typeof fakeFiles>["files"],
+    extra: { fs?: unknown } = { fs: {} },
+  ) {
+    const { runtime, runs } = fakeRuntime({ stdout: "ok" });
+    // SAFETY: The module only calls runtime.exec and hands fs to the fake backend.
+    const host = {
+      runtime,
+      ...extra,
+      git: undefined,
+      artifacts: undefined,
+    } as unknown as WorkspaceModuleHost;
+    const functions = createContainerModule({ backend: files })(host);
+    return { functions, runs };
+  }
+
+  it("exports push and pull, and runs exec on the same backend", async () => {
+    const { files } = fakeFiles();
+    const { functions, runs } = buildWithFiles(files);
+    expect(Object.keys(functions).sort()).toEqual(["exec", "pull", "push"]);
+    await functions.exec?.(["make"], callContext());
+    expect(runs[0]?.options.backend).toBe("linux");
+  });
+
+  it("does not export push or pull for a backend given by id", () => {
+    const { runtime } = fakeRuntime({});
+    const host = { runtime } as unknown as WorkspaceModuleHost;
+    expect(Object.keys(createContainerModule({ backend: "linux" })(host))).toEqual(["exec"]);
+  });
+
+  it("passes patterns and options through, and returns the counts", async () => {
+    const { files, calls } = fakeFiles();
+    const { functions } = buildWithFiles(files, { fs: { marker: true } });
+    const context = callContext();
+
+    await expect(
+      functions.push?.([["**/*.js", "package.json"], { exclude: "node_modules" }], context),
+    ).resolves.toEqual({ pushed: 2, unchanged: 1, bytes: 10 });
+    await expect(functions.pull?.(["./dist", { force: true }], context)).resolves.toEqual({
+      pulled: 1,
+      bytes: 4,
+      skipped: [],
+      skippedCount: 0,
+    });
+    expect(calls).toEqual([
+      {
+        direction: "push",
+        patterns: ["**/*.js", "package.json"],
+        options: { exclude: ["node_modules"], signal: context.signal },
+      },
+      { direction: "pull", patterns: ["./dist"], options: { force: true, signal: context.signal } },
+    ]);
+  });
+
+  it("caps the skipped list a pull returns", async () => {
+    const skipped = Array.from({ length: 500 }, (_, i) => ({ path: `/srv/${i}`, error: "EROFS" }));
+    const { files } = fakeFiles(skipped);
+    const { functions } = buildWithFiles(files);
+    const result = (await functions.pull?.(["dist"], callContext())) as {
+      skipped: unknown[];
+      skippedCount: number;
+    };
+    expect(result.skipped).toHaveLength(100);
+    expect(result.skippedCount).toBe(500);
+  });
+
+  it("lets a read-only backend push but not pull", async () => {
+    const { files, calls } = fakeFiles();
+    const { functions } = buildWithFiles(files);
+    const readOnly = callContext({ access: "read" });
+    await expect(functions.push?.(["src"], readOnly)).resolves.toMatchObject({ pushed: 2 });
+    await expect(functions.pull?.(["dist"], readOnly)).rejects.toThrow(/write access/);
+    expect(calls.map((call) => call.direction)).toEqual(["push"]);
+  });
+
+  it("rejects malformed calls before touching the backend", async () => {
+    const { files, calls } = fakeFiles();
+    const { functions } = buildWithFiles(files);
+    const context = callContext();
+    for (const args of [
+      [],
+      [[]],
+      [""],
+      [42],
+      [["ok", 3]],
+      ["a", { delete: true }],
+      ["a", { force: "yes" }],
+      ["a", {}, {}],
+    ]) {
+      await expect(functions.push?.(args as never, context), JSON.stringify(args)).rejects.toThrow(
+        TypeError,
+      );
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a pull the backend refused for conflicts, with the paths", async () => {
+    const { files } = fakeFiles();
+    files.pull = async () => {
+      throw new FileTransferConflictError([
+        { path: "/srv/src/a.js", reason: "modified", localRev: 9, baseRev: 3 },
+      ]);
+    };
+    const { functions } = buildWithFiles(files);
+    await expect(functions.pull?.(["src"], callContext())).rejects.toThrow(
+      /\/srv\/src\/a\.js.*force: true/,
+    );
+  });
+
+  it("fails clearly on a host with no Workspace filesystem", async () => {
+    const { files } = fakeFiles();
+    const { functions } = buildWithFiles(files, {});
+    await expect(functions.push?.(["src"], callContext())).rejects.toThrow(
+      /no Workspace filesystem/,
+    );
+  });
+
+  it("describes push and pull with absolute paths, and asks for a cwd", () => {
+    const { files } = fakeFiles();
+    const description = createContainerModule({ backend: files }).description ?? "";
+    expect(description).toContain("push(");
+    expect(description).toContain("pull(");
+    expect(description).toContain("same file on both sides");
+    expect(description).toContain("no default working directory");
+    expect(description).not.toContain("sync.status");
   });
 });

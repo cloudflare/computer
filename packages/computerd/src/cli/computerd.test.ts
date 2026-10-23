@@ -755,6 +755,122 @@ test("/connect rejects a body that does not name every part", async (_ctx) => {
   expect(ok.statusCode, "a complete body should reach the health probe").toBe(502);
 });
 
+test("FUSE_MOUNT=none serves file transfer from the container root, with no mount point", async () => {
+  const { encodeFiles, decodeFiles } = await import("@cloudflare/computer-rpc/files");
+  const { createWorkspaceClient } = await import("@cloudflare/computer-rpc/client");
+  const port = await getAvailablePort();
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-transfer-"));
+  // MOUNT_POINT is ignored without a mount: the daemon never creates it.
+  const mountPoint = path.join(parent, "unused-mount");
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+  onTestFinished(() => fs.rm(parent, { recursive: true, force: true }));
+  const base = `http://127.0.0.1:${port}`;
+
+  const info = await (await fetch(`${base}/__computerd/info`)).json();
+  expect(info.files).toEqual({ root: "/" });
+  expect(info.mountPoint).toBeNull();
+  await expect(fs.stat(mountPoint)).rejects.toThrow(/ENOENT/);
+
+  // Transfer paths are relative to the container's root, so a file
+  // under the temporary directory is named by its absolute path less
+  // the leading slash.
+  const dir = path.join(parent, "project");
+  const rel = dir.slice(1);
+
+  const script = new TextEncoder().encode("console.log('built')\n");
+  const header = {
+    path: `${rel}/src/build.js`,
+    size: script.length,
+    mtime: 1_700_000_000_000,
+    mode: 0o644,
+    rev: 5,
+  };
+  const diff = await fetch(`${base}/files/diff`, {
+    method: "POST",
+    body: JSON.stringify({ files: [header] }),
+  });
+  expect(await diff.json()).toEqual({ want: [`${rel}/src/build.js`] });
+
+  const put = await fetch(`${base}/files`, {
+    method: "PUT",
+    body: encodeFiles([{ header, body: async () => script }]),
+    duplex: "half",
+  } as RequestInit);
+  expect(await put.json()).toEqual({ written: 1, bytes: script.length });
+  expect(await fs.readFile(path.join(dir, "src/build.js"), "utf8")).toBe("console.log('built')\n");
+
+  // The same manifest again finds nothing to send.
+  const again = await fetch(`${base}/files/diff`, {
+    method: "POST",
+    body: JSON.stringify({ files: [header] }),
+  });
+  expect(await again.json()).toEqual({ want: [] });
+
+  // A command run in that directory sees the pushed file and writes
+  // output for the pull.
+  const client = createWorkspaceClient({ url: `ws://127.0.0.1:${port}/api` });
+  try {
+    const { events } = await client.shell.exec({
+      source:
+        "mkdir -p dist && cp src/build.js dist/out.js && echo '// edited' >> src/build.js && pwd",
+      cwd: dir,
+    });
+    let stdout = "";
+    let code: number | undefined;
+    for await (const event of events) {
+      if (event.name === "stdout") stdout += new TextDecoder().decode(event.value);
+      if (event.name === "exit") code = event.code;
+    }
+    expect(code).toBe(0);
+    expect(stdout.trim()).toBe(dir);
+  } finally {
+    await client.close();
+  }
+
+  const pull = await fetch(`${base}/files/pull`, {
+    method: "POST",
+    body: JSON.stringify({ patterns: [`/${rel}/dist`] }),
+  });
+  expect(pull.status).toBe(200);
+  const pulled: Record<string, string> = {};
+  for await (const file of decodeFiles(pull.body as ReadableStream<Uint8Array>)) {
+    pulled[file.header.path] = await new Response(file.body).text();
+  }
+  expect(pulled).toEqual({ [`${rel}/dist/out.js`]: "console.log('built')\n" });
+  const record = await fetch(`${base}/files/record`, {
+    method: "POST",
+    body: JSON.stringify({ files: [{ path: `${rel}/dist/out.js`, rev: 8 }] }),
+  });
+  expect(await record.json()).toEqual({ recorded: 1 });
+
+  // The command edited src/build.js, and the Workspace has moved past
+  // the revision it pushed: both sides changed it, so the pull is refused.
+  const conflicted = await fetch(`${base}/files/pull`, {
+    method: "POST",
+    body: JSON.stringify({
+      patterns: [`${rel}/src`],
+      have: [
+        { path: `${rel}/src/build.js`, size: script.length, mtime: 1_700_000_000_000, rev: 6 },
+      ],
+    }),
+  });
+  expect(conflicted.status).toBe(409);
+  expect(await conflicted.json()).toEqual({
+    conflicts: [{ path: `${rel}/src/build.js`, reason: "modified", localRev: 6, baseRev: 5 }],
+  });
+  const forced = await fetch(`${base}/files/pull`, {
+    method: "POST",
+    body: JSON.stringify({ patterns: [`${rel}/src`], have: [], force: true }),
+  });
+  expect(forced.status).toBe(200);
+  await forced.arrayBuffer();
+
+  // Malformed requests are the caller's fault, and wrong methods are refused.
+  const bad = await fetch(`${base}/files/pull`, { method: "POST", body: "{}" });
+  expect(bad.status).toBe(400);
+  expect((await fetch(`${base}/files`, { method: "POST", body: "" })).status).toBe(405);
+});
+
 async function startComputerd({
   port,
   mountPoint,
@@ -1104,7 +1220,9 @@ test("computerd rejects a COMPUTERD_DB path inside the mount point", async () =>
       ...process.env,
       MOUNT_POINT: "/tmp/computerd-mount-not-used",
       PORT: String(port),
-      FUSE_MOUNT: "none",
+      // A mount is what makes the path a loop; FUSE_MOUNT=none has none.
+      // The store is checked before anything mounts, so the shim never starts.
+      FUSE_MOUNT: "shim",
       COMPUTERD_DB: "/tmp/computerd-mount-not-used/state.db",
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -1113,6 +1231,24 @@ test("computerd rejects a COMPUTERD_DB path inside the mount point", async () =>
   const { code, stderr } = await waitForExit(child);
   expect(code).toBe(1);
   expect(stderr).toMatch(/must not sit inside the mount point/);
+});
+
+test("computerd refuses MOUNT_IGNORE when FUSE_MOUNT=none, which has no mount", async () => {
+  const port = await getAvailablePort();
+  const child = spawn(cliPath, {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      FUSE_MOUNT: "none",
+      MOUNT_IGNORE: "**/node_modules",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+
+  const { code, stderr } = await waitForExit(child);
+  expect(code).toBe(1);
+  expect(stderr).toMatch(/MOUNT_IGNORE needs a mount/);
 });
 
 test("POST /__computerd/checkpoint leaves the store readable", async (_ctx) => {

@@ -12,7 +12,21 @@
 // sees the same files as the isolate: the usual sync bracket pushes
 // pending Workspace writes before the command and pulls the
 // container's changes after it.
+//
+// Given a SimpleContainerBackend instead, the container shares no
+// files, and the module also exports push and pull to copy them:
+//
+//   import { exec, push, pull } from "ws:container";
+//   await push(["package.json", "src"]);
+//   await exec("npm ci && npm run build");
+//   await pull(["dist"]);
 
+import type {
+  PullResult,
+  PushResult,
+  TransferFilesystem,
+  TransferOptions,
+} from "../backends/simple-container/file-transfer.js";
 import {
   DEFAULT_OUTPUT_MAX_LINES,
   type OutputLimits,
@@ -32,13 +46,39 @@ import { truncateText } from "../text-truncation.js";
 const DEFAULT_BACKEND = "container-shell";
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024;
 const EXEC_OPTION_KEYS = new Set(["cwd", "env", "stdin", "timeoutMs"]);
+const TRANSFER_OPTION_KEYS = new Set(["exclude", "force"]);
 const MAX_SKIPPED_PATHS = 100;
 const MAX_SYNC_ERROR_BYTES = 1024;
 
+/**
+ * A container backend that copies files instead of syncing them, such
+ * as `SimpleContainerBackend`. Passing one to
+ * {@link createContainerModule} adds `push` and `pull` exports.
+ */
+export interface ContainerFileBackend {
+  /** Id the backend is registered under in the Workspace. */
+  readonly id: string;
+  push(
+    fs: TransferFilesystem,
+    patterns: readonly string[],
+    options?: TransferOptions,
+  ): Promise<PushResult>;
+  pull(
+    fs: TransferFilesystem,
+    patterns: readonly string[],
+    options?: TransferOptions,
+  ): Promise<PullResult>;
+}
+
 /** Options for {@link createContainerModule}. */
 export interface ContainerModuleOptions {
-  /** Id of the container backend. Defaults to `"container-shell"`. */
-  readonly backend?: string;
+  /**
+   * The container backend, by id or as the backend itself. Defaults to
+   * `"container-shell"`. Pass a `SimpleContainerBackend` instance to
+   * export `push` and `pull`; it must also be registered with the
+   * Workspace for `exec`.
+   */
+  readonly backend?: string | ContainerFileBackend;
   /**
    * Largest standard output and standard error returned to the
    * isolate, in bytes per stream. Longer output keeps its last lines
@@ -81,7 +121,9 @@ export interface ContainerModuleOptions {
 export function createContainerModule(
   options: ContainerModuleOptions = {},
 ): WorkspaceModuleFactory {
-  const backend = options.backend ?? DEFAULT_BACKEND;
+  const files = typeof options.backend === "object" ? options.backend : undefined;
+  const backend =
+    typeof options.backend === "string" ? options.backend : (files?.id ?? DEFAULT_BACKEND);
   const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   if (!Number.isInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new Error("createContainerModule: maxOutputBytes must be a positive integer.");
@@ -122,7 +164,12 @@ export function createContainerModule(
         `ws:container: backend ${JSON.stringify(backend)} runs module source, not shell commands.`,
       );
     }
-    return { exec: execOn(host) };
+    if (files === undefined) return { exec: execOn(host) };
+    return {
+      exec: execOn(host),
+      push: transferOn(host, files, "push"),
+      pull: transferOn(host, files, "pull"),
+    };
   };
   const execOn =
     (host: WorkspaceModuleHost): WorkspaceModuleFunction =>
@@ -173,8 +220,57 @@ export function createContainerModule(
         context.signal.removeEventListener("abort", kill);
       }
     };
-  return Object.assign(create, { description: DESCRIPTION });
+  return Object.assign(create, {
+    description: files === undefined ? DESCRIPTION : FILES_DESCRIPTION,
+  });
 }
+
+// push and pull, over a backend that copies files instead of syncing.
+function transferOn(
+  host: WorkspaceModuleHost,
+  files: ContainerFileBackend,
+  direction: "push" | "pull",
+): WorkspaceModuleFunction {
+  return async (args, context) => {
+    // Pushing only reads the Workspace; pulling writes it.
+    if (direction === "pull" && context.access !== "read-write") {
+      throw new Error("ws:container pull requires Workspace write access.");
+    }
+    const fs = host.fs;
+    if (fs === undefined) {
+      throw new Error(
+        `ws:container ${direction}: this backend gives modules no Workspace filesystem.`,
+      );
+    }
+    const request = parseTransferArgs(direction, args);
+    context.signal.throwIfAborted();
+    const options = { ...request.options, signal: context.signal };
+    if (direction === "push") {
+      const result = await files.push(fs, request.patterns, options);
+      return { pushed: result.pushed, unchanged: result.unchanged, bytes: result.bytes };
+    }
+    const result = await files.pull(fs, request.patterns, options);
+    // Capped like exec's skipped paths, so a pull into a read-only
+    // mount still fits the bridge's response limits.
+    return {
+      pulled: result.pulled,
+      bytes: result.bytes,
+      skipped: result.skipped.slice(0, MAX_SKIPPED_PATHS).map((entry) => ({ ...entry })),
+      skippedCount: result.skipped.length,
+    };
+  };
+}
+
+const FILES_DESCRIPTION = [
+  "Runs shell commands in a full Linux container with its own filesystem, and copies files between it and this workspace.",
+  "Use it for npm, node, python, package managers, and native binaries. The container can take a while to start on first use.",
+  "The container does not see workspace files until you push them, and the workspace does not see container files until you pull them. A path is the same file on both sides: /workspace/src/a.ts in the workspace is /workspace/src/a.ts in the container.",
+  '`await push(["/workspace/package.json", "/workspace/src"])` copies workspace files in; `await pull(["/workspace/dist"])` copies container files out. Each takes absolute globs or paths (a relative one is taken from /, and a plain path is a file or a whole directory), and an optional `{ exclude, force }`.',
+  "Only changed files are copied, and nothing is deleted. push returns `{ pushed, unchanged, bytes }`; pull returns `{ pulled, bytes, skipped }`.",
+  "pull throws, writing nothing, when a file it would bring back was also changed in the workspace since it was last pushed or pulled; the error names the files. `{ force: true }` overwrites the workspace copies.",
+  'Call `const { exitCode, stdout, stderr } = await exec("npm run build", { cwd: "/workspace" })`. Pass `cwd`: there is no default working directory. Options are `cwd`, `env`, `stdin`, and `timeoutMs`.',
+  "Output comes back when the command finishes. Long output keeps its last lines; `truncated.stdout.path` (or `truncated.stderr.path`) then names a workspace file holding all of it. A non-zero `exitCode` is returned, not thrown.",
+].join(" ");
 
 const DESCRIPTION = [
   "Runs shell commands in a full Linux container that shares this workspace's files.",
@@ -258,6 +354,57 @@ function parseExecArgs(args: readonly WorkspaceRuntimeValue[]): ExecRequest {
     stdin: optionalString(options.stdin, "stdin"),
     timeoutMs: optionalTimeout(options.timeoutMs),
   };
+}
+
+interface TransferRequest {
+  readonly patterns: string[];
+  readonly options: { exclude?: string[]; force?: boolean };
+}
+
+// push(patterns, options?) and pull(patterns, options?). `patterns` is
+// one string or an array of them, and so is `exclude`.
+function parseTransferArgs(
+  name: "push" | "pull",
+  args: readonly WorkspaceRuntimeValue[],
+): TransferRequest {
+  if (args.length === 0 || args.length > 2) {
+    throw new TypeError(
+      `${name}(patterns, options?) takes patterns and an optional options object.`,
+    );
+  }
+  const [patterns, options] = args;
+  const list = stringList(patterns, `${name}: patterns`);
+  if (list.length === 0) throw new TypeError(`${name}: give at least one pattern.`);
+  if (options === undefined || options === null) return { patterns: list, options: {} };
+  if (typeof options !== "object" || Array.isArray(options)) {
+    throw new TypeError(`${name}: options must be an object.`);
+  }
+  for (const key of Object.keys(options)) {
+    if (!TRANSFER_OPTION_KEYS.has(key)) {
+      throw new TypeError(`${name}: unknown option ${JSON.stringify(key)}. Use exclude or force.`);
+    }
+  }
+  const parsed: { exclude?: string[]; force?: boolean } = {};
+  if (options.exclude !== undefined && options.exclude !== null) {
+    parsed.exclude = stringList(options.exclude, `${name}: exclude`);
+  }
+  if (options.force !== undefined && options.force !== null) {
+    if (typeof options.force !== "boolean")
+      throw new TypeError(`${name}: force must be a boolean.`);
+    parsed.force = options.force;
+  }
+  return { patterns: list, options: parsed };
+}
+
+function stringList(value: WorkspaceRuntimeValue | undefined, name: string): string[] {
+  const list = typeof value === "string" ? [value] : value;
+  if (
+    !Array.isArray(list) ||
+    !list.every((item) => typeof item === "string" && item.trim() !== "")
+  ) {
+    throw new TypeError(`${name} must be a non-empty string or an array of them.`);
+  }
+  return list as string[];
 }
 
 function optionalString(value: WorkspaceRuntimeValue | undefined, name: string) {

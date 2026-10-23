@@ -28,9 +28,11 @@ export function parseStoreMode(value: string | undefined): StoreMode {
   return { kind: "file", path: normalize(trimmed) };
 }
 
-export function resolveStore(mode: StoreMode, mountPoint: string): ResolvedStore {
+// `mountPoint` is undefined when there is no mount (FUSE_MOUNT=none),
+// and then nothing can project the store back onto itself.
+export function resolveStore(mode: StoreMode, mountPoint: string | undefined): ResolvedStore {
   if (mode.kind === "memory") return { kind: "memory" };
-  assertOutsideMountPoint(mode.path, mountPoint);
+  if (mountPoint !== undefined) assertOutsideMountPoint(mode.path, mountPoint);
   return { kind: "file", path: mode.path, fresh: !existsSync(mode.path) };
 }
 
