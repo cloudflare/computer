@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.18. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.19. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -29,7 +29,7 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.18 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.19 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.

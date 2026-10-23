@@ -23,7 +23,7 @@
     "check": "oxlint && oxfmt --check && sherif --fail-on-warnings",
     "check:fix": "oxlint --fix && oxfmt && sherif --fix --select highest",
     "changeset": "changeset",
-    "gardener:generate": "npx --yes @scuffi/gardener@0.1.18 generate"
+    "gardener:generate": "npx --yes @scuffi/gardener@0.1.19 generate"
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.1"

@@ -48,7 +48,7 @@ jobs:
       issues: write
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@e927a2a726ef283e60d32ad09efa7c2aea0b47eb
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@0d02b66f47cc8802ba14a243dd827bf5555b3469
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "mention-reply"
