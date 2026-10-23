@@ -1,5 +1,17 @@
 # @cloudflare/computer
 
+## 0.7.0
+
+### Minor Changes
+
+- [#238](https://github.com/cloudflare/computer/pull/238) Add experimental `onInterrupt: "restart" | "replay"` to `WorkerJavaScriptBackend`, so runs interrupted by a deploy or crash can resume. ([`22368fc`](https://github.com/cloudflare/computer/commit/22368fcde29759630561bf5cd439842f5b5f14ef)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#251](https://github.com/cloudflare/computer/pull/251) Add experimental `ctx.interrupt()` for host module functions, with `runtime.pending()` and `runtime.respond()`, so a replayable run can wait for an answer such as an approval. ([`5db8dd4`](https://github.com/cloudflare/computer/commit/5db8dd4897c08c4aaf5342bfde5e0aa735eb6122)) - Thanks [@scuffi](https://github.com/scuffi)
+
+### Patch Changes
+
+- [#263](https://github.com/cloudflare/computer/pull/263) `WorkspaceFileStore` and `WORKSPACE_ROOT` are exported from `@cloudflare/computer`, so code outside the tools can read and write workspace files without its own helper. ([`a730798`](https://github.com/cloudflare/computer/commit/a730798b4ab93e7c4314225a76fb3f0bd1e3cb74)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
 ## 0.6.0
 
 ### Minor Changes

@@ -1,5 +1,17 @@
 # @cloudflare/computerd
 
+## 0.7.0
+
+### Patch Changes
+
+- [#269](https://github.com/cloudflare/computer/pull/269) Build the computerd binary on Node 22.23.4, whose bundled root store no longer trusts the emSign ECC Root CA - G3 and AAA Certificate Services roots behind the compromised eMudhra intermediates. ([`3186a02`](https://github.com/cloudflare/computer/commit/3186a0268437c9f5406d8b743c262cbc5223884d)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#260](https://github.com/cloudflare/computer/pull/260) `computerd` no longer exits when a command's output arrives after the command has exited. ([`c3d7433`](https://github.com/cloudflare/computer/commit/c3d7433febb4daf5560c81e76bfe7f7bcef8679f)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- Updated dependencies []:
+  - @cloudflare/dofs@0.7.0
+  - @cloudflare/computer-rpc@0.7.0
+
 ## 0.6.0
 
 ### Patch Changes
