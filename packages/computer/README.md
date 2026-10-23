@@ -223,6 +223,22 @@ const hits = await ws.fs.grep("TODO", "/", { ignoreCase: true });
 See [`docs/04_filesystem_interface.md`](../../docs/04_filesystem_interface.md)
 for the full surface.
 
+### Several workspaces in one durable object
+
+Pass a `namespace` to keep a Workspace's files apart from other
+Workspaces on the same storage. Each namespace gets its own tables,
+so a durable object can hold, say, a scratch area and a project:
+
+```ts
+const project = new Workspace({ storage: ctx.storage });
+const scratch = new Workspace({ storage: ctx.storage, namespace: "scratch" });
+```
+
+A namespace is 1 to 32 lowercase letters and digits. Without one, a
+Workspace uses the default tables, where existing data already is. A
+durable object still has one container, so give a container backend
+to only one of the Workspaces.
+
 ### Read-only mounts
 
 Pre-fill part of the tree from an R2 bucket. Files under the mount point
