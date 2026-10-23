@@ -32,6 +32,7 @@
   ],
   "ignorePatterns": [
     "**/node_modules",
+    "**/vendor",
     "**/node_modules.host-backup.*",
     "**/dist",
     "/artifacts",

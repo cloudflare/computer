@@ -66,18 +66,116 @@ the more realistic baseline for general usage.
 
 ## Local-only paths (`MOUNT_IGNORE`)
 
-A path matched by `MOUNT_IGNORE` is served from the container's disk and
-never enters the VFS, the store, the change-pack encoding, or the pull.
+A path matched by `MOUNT_IGNORE` is served from the container's disk
+rather than the VFS.
 
-What this does **not** change is the FUSE round trip: the bytes still
-cross from the kernel into the daemon. Passthrough (`FOPEN_PASSTHROUGH`)
-would remove that too, but computerd mounts through `fuse-native`, which
-binds libfuse 2.9, and passthrough needs the libfuse 3.17 API. So expect
-a local-only `npm install` to track the `computerd FUSE` row above
-rather than the `ext4 disk` row.
+There are two savings, and they are independent.
 
-The saving is the transfer, and for a dependency tree the transfer is
-most of the wall clock.
+The first is in what is skipped. An ignored write does not enter the VFS,
+the SQLite store, the change-pack encoding, or the pull into the Durable
+Object. For a dependency install, that is the difference between
+transferring tens of thousands of files and transferring none, and it
+holds on every host.
+
+The second is FUSE passthrough. On Linux 6.9 or newer, opening a
+local-only file hands the file to the kernel, which then serves its
+reads, writes, and mmap straight from the container's disk. The bytes
+never reach computerd. What still reaches it is metadata: lookups,
+`stat`, directory listings, and each open and close.
+
+So passthrough brings data-heavy work close to raw disk, and leaves
+metadata-heavy work where it was:
+
+| `fs-bench` scenario | synced path | local-only, passthrough off | local-only | raw disk |
+| --- | ---: | ---: | ---: | ---: |
+| write 64 MiB | 50.5 ms | 49.1 ms | 21.4 ms | 16.8 ms |
+| overwrite 64 MiB | 66.8 ms | 51.8 ms | 22.2 ms | 18.9 ms |
+| read 64 MiB | 89.7 ms | 74.4 ms | 22.3 ms | 19.5 ms |
+| pure read 64 MiB | 49.8 ms | 34.0 ms | 6.0 ms | 6.4 ms |
+| copy 64 MiB | 202.9 ms | 172.4 ms | 67.5 ms | 32.5 ms |
+| create 1000 files | 421.1 ms | 314.3 ms | 245.9 ms | 20.6 ms |
+| stat 1000 files | 876.2 ms | 695.0 ms | 712.6 ms | 397.6 ms |
+
+A dependency install sits between the two, because it creates many small
+files. These are medians of `npm install` runs, followed by reading every
+installed file back once:
+
+| Install | synced path | local-only, passthrough off | local-only | raw disk |
+| --- | ---: | ---: | ---: | ---: |
+| `express` (604 files), install | 599 ms | 473 ms | 508 ms | 385 ms |
+| `express`, read back | 193 ms | 114 ms | 118 ms | 6 ms |
+| front-end toolchain (5,412 files, 88 MB), install | 3,676 ms | 2,279 ms | 2,104 ms | 1,329 ms |
+| front-end toolchain, read back | 2,307 ms | 957 ms | 700 ms | 48 ms |
+
+The toolchain is TypeScript, Vite, webpack, ESLint, React, and
+`@types/node`. On an install as small as `express`, the gap between the
+two local-only columns is within run-to-run noise. Expect a local-only
+install to land between raw disk and the synced mount, nearer the disk
+the larger the files are, and expect the larger saving to be the
+transfer that no longer follows it.
+
+> [!NOTE]
+> These numbers come from an arm64 Linux 7.0 virtual machine on a
+> laptop, with Docker's overlayfs as the backing store, not from
+> Cloudflare Containers hardware. Treat the ratios as the result and the
+> absolute times as local. `script/run-fs-bench.sh` (with `LOCAL_ONLY=1`)
+> and `script/run-npm-bench.sh` (with `IGNORE_NODE_MODULES=1`) reproduce
+> them, with `COMPUTERD_FUSE_NATIVE_ROOTS=0`: local-only directories are
+> eligible for native mounts by default where supported (next section).
+
+### Native roots
+
+Passthrough leaves metadata on computerd's event loop. Where supported,
+computerd can bind-mount eligible local-only directories from the
+container's disk, so nothing under a mounted root reaches computerd.
+See
+[`computerd`: Native roots](../packages/computerd/README.md#native-roots).
+
+These runs were all taken on the same machine, one after another. The
+raw-disk column is the median of the baselines measured alongside each
+run, and the local-only columns have passthrough on.
+
+| fs-bench scenario (median, ms) | synced | local-only, passthrough | local-only, native root | raw disk |
+| --- | ---: | ---: | ---: | ---: |
+| create 1000 files | 441.4 | 317.6 | **13.7** | 14.7 |
+| stat 1000 files | 851.1 | 674.5 | **347.9** | 363.2 |
+| rm 1000 files | 600.9 | 320.2 | **20.9** | 22.7 |
+| mkdir tree (10x10x10) | 682.7 | 607.1 | **303.6** | 310.7 |
+| find tree | 674.5 | 554.2 | **304.5** | 305.6 |
+| write 64 MiB | 50.7 | 18.4 | **15.4** | 16.9 |
+| copy 64 MiB | 214.6 | 64.9 | **31.6** | 33.2 |
+| read 64 MiB | 96.6 | 19.6 | **24.0** | 22.7 |
+| pure read 64 MiB | 53.6 | 6.0 | **8.1** | 6.1 |
+| pure copy 64 MiB | 151.9 | 41.9 | **14.9** | 14.1 |
+| overwrite 64 MiB | 67.3 | 17.1 | **16.8** | 16.2 |
+| git init + commit 100 files | 192.5 | 108.4 | **12.5** | 12.4 |
+| git clone (shallow, ~1MB) | 710.8 | 561.7 | **668.2** | 558.3 |
+| npm init + tiny install | 184.3 | 178.3 | **180.5** | 181.8 |
+
+| Install (median, ms) | synced path | local-only, passthrough | local-only, native root | raw disk |
+| --- | ---: | ---: | ---: | ---: |
+| `express` (589 files), install | 550 | 470 | **392** | 379 |
+| `express` (589 files), read back | 176 | 73 | **6** | 6 |
+| front-end toolchain (5,428 files, 91 MB), install | 3,643 | 2,165 | **1,365** | 1,336 |
+| front-end toolchain (5,428 files, 91 MB), read back | 2,114 | 707 | **52** | 50 |
+
+Metadata-heavy local work under a native root approaches raw disk, where
+passthrough alone leaves directory operations on computerd's event loop.
+`git clone` is dominated by the network and varies between runs.
+
+> [!NOTE]
+> Same caveat as above: an arm64 Linux 7.0 virtual machine on a laptop
+> (OrbStack), not Cloudflare Containers. Reproduce with
+> `script/run-fs-bench.sh` (`LOCAL_ONLY=1`) and `script/run-npm-bench.sh`
+> (`IGNORE_NODE_MODULES=1`); add `COMPUTERD_FUSE_NATIVE_ROOTS=0` for the
+> passthrough column. These numbers predate the descriptor-confined mount
+> helper; they measure steady-state file operations, not mount setup time.
+
+Writeback caching would cut metadata round trips further on writes. It
+stays off: libfuse 3 can negotiate it, but it changes write behavior for
+the synced mount as well, which is a separate decision.
+
+The Cloudflare Containers figure is still open:
 
 | Scenario | Install duration | Bytes pulled into the DO |
 |---|---:|---:|
@@ -85,12 +183,11 @@ most of the wall clock.
 | `npm install` to a `MOUNT_IGNORE` path | *(not yet measured)* | 0 by construction |
 
 > [!NOTE]
-> The empty cells are deliberate. Bytes-pulled is the load-bearing
-> number for this feature and it has not been measured yet; the zero in
-> the last cell is a property of the design — an ignored path produces
-> no sync entries — not an observation. Fill the table from the same
+> The empty cells are deliberate. They are for the same
 > `cloudflare/sandbox-sdk` install used above, on the same instance
-> type, before quoting any of it.
+> type, and that has not been run. The zero in the last cell is a
+> property of the design — an ignored path produces no sync entries —
+> not an observation.
 
 ## In-memory store versus on-disk store
 

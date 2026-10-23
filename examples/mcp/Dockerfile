@@ -1,10 +1,10 @@
 FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
 
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl fuse3 git libfuse2 \
+      ca-certificates curl fuse3 git \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd

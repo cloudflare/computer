@@ -14,7 +14,7 @@ Computer daemon CLI and FUSE mount package.
 
 ## `computerd`
 
-`computerd` starts a FUSE-backed virtual filesystem and an HTTP server. The filesystem is backed by `@platformatic/vfs`, while the FUSE mount is provided by `fuse-native`.
+`computerd` starts a FUSE-backed virtual filesystem and an HTTP server. The filesystem is backed by `@platformatic/vfs`, while the FUSE mount is provided by a vendored, patched copy of [`fuse-napi`](vendor/fuse-napi/PATCHES.md), which binds libfuse 3.
 
 The HTTP server listens on the port provided by the `PORT` environment variable, defaulting to `45678`. The FUSE mount point is provided by `MOUNT_POINT`, defaulting to `/workspace`. The backing VFS stores files under the same absolute prefix: VFS `/workspace/repo/a.txt` is visible to container processes as `/workspace/repo/a.txt`, so capnweb reads, shim materialisation, and shell `exec` agree on absolute paths.
 
@@ -25,7 +25,7 @@ PORT=45678 MOUNT_POINT=/tmp/workspace npx -p @cloudflare/computerd computerd
 Current endpoints:
 
 - `GET /health` returns `200 OK` with `ok\n` once the HTTP server is up (it does not currently block on FUSE readiness).
-- `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port.
+- `GET /__computerd/info` returns JSON with the selected FUSE backend, mount point, and bound port, plus an `ignore` block describing local-only paths and whether the kernel is serving them through FUSE passthrough. See [Local-only paths](#local-only-paths-mount_ignore).
 - `GET /__computerd/stats` returns JSON with DOFS table row counts, total inline and blob byte sizes, the orphan-blob subset, process resident memory, and the store's own size and free-page count. Useful for watching how the store grows under load.
 - `POST /__computerd/checkpoint` folds the store's write-ahead log back into the database file and returns `{ walFrames, sizeBytes, durationMs }`. For a host about to take a disk snapshot. Any other method returns `405`.
 - `GET /` returns `200 OK` with an empty JSON object: `{}`.
@@ -42,7 +42,8 @@ check, which is what the container harnesses rely on.
 Current filesystem support:
 
 - `@platformatic/vfs` in-memory filesystem provided by `@cloudflare/dofs`'s node provider.
-- FUSE operation adapter covering the full `fuse-native` operation surface.
+- FUSE operation adapter covering the full operation surface the binding exposes.
+- Local-only paths (`MOUNT_IGNORE`) served from the container's disk and kept out of sync. With the required kernel support and mount permissions, eligible directories can be bind-mounted to bypass computerd; see [Native roots](#native-roots).
 - Unsupported FUSE operations return `ENOSYS` to the kernel; the binding logs a one-shot warning per operation.
 - capnweb RPC over `/api` exposes the workspace database and an `exec` runner to clients.
 - Synchronization is driven by whoever holds the other end of the session. The daemon serves `SyncRPC`; it does not run a sync loop of its own.
@@ -246,17 +247,36 @@ spelling, with the mount point and trailing slashes removed:
     "patterns": ["**/node_modules", "!/vendor/node_modules", "!**/node_modules/.bin"],
     "ineffectiveExclusions": ["!**/node_modules/.bin"],
     "fastPaths": {
-      "passthrough": false,
-      "passthroughReason": "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API",
+      "passthrough": true,
+      "passthroughReason": "active",
+      "passthroughOpens": 1284,
+      "passthroughFallbacks": 0,
       "writebackCache": false
     }
   }
 }
 ```
 
-`fastPaths.passthrough` is `false` on current builds by design. Ignored
-writes skip the VFS and the transfer but still cross FUSE; see
-[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore).
+`fastPaths` is read on every request. `passthrough` is `true` once the
+kernel is serving local-only file data itself, through FUSE passthrough,
+and the two counters say how opens were served. When it is `false`,
+`passthroughReason` names the case, because each has a different fix:
+
+| `passthroughReason` says | What to do |
+| --- | --- |
+| no local-only paths are configured | Nothing; set `MOUNT_IGNORE` to use the feature. |
+| no kernel FUSE mount is running | Expected under `FUSE_MOUNT=shim` or `none`. |
+| turned off with `COMPUTERD_FUSE_PASSTHROUGH` | Unset it. |
+| the kernel did not offer FUSE passthrough | The host needs Linux 6.9 or newer. |
+| refused every backing registration | Give computerd `CAP_SYS_ADMIN`, and keep `MOUNT_IGNORE_PATH` off overlayfs stacked on another overlayfs. |
+| negotiated, but no local-only file has been opened yet | Nothing; it flips on the first open. |
+
+In every one of these cases the local-only paths still work. They are
+served by computerd instead of the kernel, which is slower but otherwise
+the same. computerd also logs the first refused registration per mount
+with the error code. See
+[19. Performance](../../docs/19_performance.md#local-only-paths-mount_ignore)
+for what passthrough changes.
 
 ### Synced directories that hold local-only paths
 
@@ -316,16 +336,137 @@ one transfer but still occupies the container's store. A wrapper that
 injects `ignore` into `fetchChanges` to keep a dependency tree out of the
 Durable Object should be deleted in favor of `MOUNT_IGNORE`.
 
+### Native roots
+
+A local-only path is served from the container's disk, but with FUSE
+passthrough alone every lookup, `stat`, create, and listing under it
+still reaches computerd; only file data goes straight to the kernel.
+For a dependency tree, metadata is most of the work.
+
+So computerd bind-mounts each local-only directory onto the mount from
+the place it already stores it, under `MOUNT_IGNORE_PATH`. Everything
+under it is then served by the kernel from the container's disk and
+never reaches computerd at all. A native root is a local-only directory
+whose parent is synced: `packages/app/node_modules` is one, the
+`node_modules` directories nested inside it are already under it, and a
+file pattern such as `**/*.tsbuildinfo` never is.
+
+The content is the same either way. A mount only changes how fast a path
+is served, so a mount that fails, lands late, or is removed falls back to
+FUSE. The native addon resolves the source and target beneath pinned
+root-directory descriptors, rejects symlinks in every path component,
+clones a private mount, and attaches it to the pinned target. It does not
+pass user-controlled paths to a mount command. If the helper is unavailable
+or rejects a path, it does not attempt a path-based bind. Check
+`/__computerd/stats` for `localPaths.nativeRoots.lastFailure`.
+
+Roots are mounted when they appear, with no watcher:
+
+- When a command creates one. Its parent is synced, so the `mkdir`
+  reaches computerd, which mounts the directory once it has replied.
+  The first few files may be written through FUSE before the mount
+  lands; they end up in the same directory.
+- When something looks one up that exists on disk but is not mounted
+  yet, such as after a container snapshot restore, once the synced
+  parent is back from the host.
+- At startup, for roots already on disk.
+
+Native roots need FUSE passthrough to be negotiated (Linux 6.9 or newer),
+`CAP_SYS_ADMIN`, a kernel with `openat2`, `open_tree`, and `move_mount`, and
+the bundled native helper. Without these, local-only paths are served
+through FUSE as described above. Native roots do not need util-linux
+`mount`; the addon makes the mount system calls itself.
+`COMPUTERD_FUSE_NATIVE_ROOTS=0` turns them off, for ruling them in or out
+while chasing a problem.
+
+#### Removing or renaming a root
+
+`rmdir(2)` and `rename(2)` of a directory that is itself a mount point
+fail with `EBUSY`, and the kernel does not ask FUSE first. For the
+commands computerd runs, a removal guard takes care of it: computerd
+installs a seccomp filter on the thread it spawns commands from, so each
+command and everything it starts pauses on `rmdir`, `unlinkat` with
+`AT_REMOVEDIR`, and the `rename` family. A thread in computerd checks
+the path; if it names a native root, it detaches the mount, then lets
+the call continue, and computerd serves it as it would any local-only
+path. Everything else, file deletions included, is never stopped.
+
+| Command | Through FUSE | Native root, from a computerd command | Native root, from elsewhere |
+| --- | --- | --- | --- |
+| `rm -rf node_modules` | works | works | empties it, then `EBUSY` |
+| `rm -rf packages/app` with a root inside | works | works | `EBUSY` on the root |
+| `rmdir`/`fs.rm`/`shutil.rmtree` of a root | works | works | `EBUSY` |
+| `mv node_modules elsewhere` | `EXDEV`, so `mv` copies | `EXDEV`, so `mv` copies | `EBUSY` |
+| `mv packages/app packages/web` | works | works; the mount moves with it | works |
+
+"Elsewhere" is any process computerd did not start, such as a `docker
+exec` shell. A removed root is mounted again when it is created again.
+Each directory removal or rename a command makes costs a round trip to
+the guard, about 15 µs: `rm -rf` of 5,000 directories took 124 ms
+rather than 50 ms on a laptop VM. File deletions, reads, and writes are
+not affected.
+
+The guard is a convenience, not a security boundary. It needs
+`CAP_SYS_ADMIN` and Linux 5.5 or newer, and starts only with native
+roots. Without it, removing a root from any process gets `EBUSY`, as
+from elsewhere above. To remove one from a process the guard does not
+cover, detach it first:
+
+```sh
+curl -X POST http://127.0.0.1:$PORT/__computerd/native-roots/detach \
+  -d '{"path":"packages/app/node_modules"}'   # or no body for every root
+```
+
+The answer lists what was detached. A detached root is not mounted
+again until it is created again, so the `rm -rf` that follows cannot
+race a remount. Detaching a native root leaves its backing directory in
+place and computerd serves it through FUSE.
+
+#### Other differences
+
+- `st_dev` under a root is the container disk's, not the FUSE mount's,
+  so `find -xdev` and `du -x` stop at it.
+- inotify works under a root.
+- Hardlinks across a root's boundary still return `EXDEV`, as across
+  any local-only boundary.
+
+#### Checking what was applied
+
+`/__computerd/info` reports `ignore.fastPaths.nativeRoots`:
+
+```json
+{ "enabled": true, "reason": "active", "active": 3, "mounts": 4,
+  "failures": 0, "detaches": 1, "transparentRemoval": true,
+  "transparentRemovalReason": "active", "removalDetaches": 1 }
+```
+
+`active` is read from `/proc/self/mountinfo`, which is the only mount
+record. computerd treats every mount below `MOUNT_POINT` as a native root
+and detaches it on startup and shutdown. Do not create unrelated mounts
+under the workspace while native roots are enabled. `reason` explains a disabled state
+(no `MOUNT_IGNORE`, no kernel FUSE mount, turned off, passthrough off or
+not offered) or names the last failure when mounts are being refused.
+`transparentRemoval` says whether the removal guard is on, and
+`transparentRemovalReason` why not when it is off; `removalDetaches`
+counts the roots it detached for a removal or rename.
+`/__computerd/stats` carries the same counters under
+`localPaths.nativeRoots`, along with `lastFailure`.
+
+computerd detaches every native root before it unmounts FUSE on
+`SIGTERM`, and at startup detaches any a previous run left behind
+before mounting again.
+
 ## FUSE prerequisites
 
-Linux hosts/containers need access to `/dev/fuse` and mount permissions.
+Linux hosts and containers need access to `/dev/fuse`, mount permissions, and libfuse 3.17 or newer at runtime. On Debian that is the `fuse3` package from trixie onward. The binary links the system libfuse rather than carrying a copy, and exits with a message naming the package if the library is missing.
 
-### macOS: macFUSE
+Kernel passthrough for local-only paths also needs Linux 6.9 or newer and `CAP_SYS_ADMIN`. Without either, those paths still work and are served through `computerd` instead; `/__computerd/info` says which case applies.
 
-Install macFUSE. On Apple Silicon, macFUSE may require Reduced
-Security / kernel extension approval. FUSE-T is intentionally
-unsupported — the libfuse2 surface our `fuse-native` dependency
-wraps does not work against the FUSE-T userland.
+Building from source needs a C toolchain and the libfuse 3 headers (`build-essential pkg-config libfuse3-dev` on Debian or Ubuntu). Any libfuse 3 compiles; an older one than 3.17 builds without passthrough.
+
+### macOS
+
+No macOS binary is published. The binding supports macFUSE 5.3.1 or newer with its libfuse 3 runtime, and `FUSE_MOUNT=macfuse` still selects it when running from source, but that path has not been tested since the move to libfuse 3. FUSE-T is not supported.
 
 Pick the backend with `FUSE_MOUNT`:
 
@@ -345,7 +486,12 @@ EXEC_SHELL=/usr/bin/bash          # interpreter exec runs commands under (defaul
 RPC_CLIENT_SECRET=<secret>        # require Authorization: Bearer <secret> on every route but /health
 COMPUTER_VAR_NODE_ENV=production  # forwarded into exec as NODE_ENV
 COMPUTERD_DB=/var/lib/computerd/state.db  # on-disk store; "memory" or unset keeps it in memory
+MOUNT_IGNORE=node_modules,dist    # local-only paths, kept on the container's disk and out of sync
+COMPUTERD_FUSE_PASSTHROUGH=0      # serve local-only paths through computerd instead of the kernel
+COMPUTERD_FUSE_NATIVE_ROOTS=0     # serve local-only directories through FUSE instead of bind-mounting them
 ```
+
+`COMPUTERD_FUSE_PASSTHROUGH` is on by default and only matters when `MOUNT_IGNORE` is set. Turning it off is for ruling passthrough in or out while chasing a problem.
 
 `EXEC_SHELL` must be an absolute path. It exists because `/bin/sh` is `dash` on a Debian-family image, where bash-only syntax is a parse error that aborts the command rather than a missing feature: `${PIPESTATUS[@]}`, arrays, `[[ ... ]]`, and process substitution all fail that way. `PIPESTATUS` is the usual way to recover the real exit status of a pipeline whose output is filtered — a command redacting a credential through `sed`, for instance — so a caller that needs it can select an interpreter that has it without repointing `/bin/sh` for every other script in the image.
 
@@ -383,7 +529,7 @@ The test command does not build first. Some suites need build output that is not
 
 This package requires Node.js 22+ because `@platformatic/vfs` does.
 
-The two real-FUSE suites gate themselves differently. `src/cli/computerd.test.ts` runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise auto-detection resolves to the shim and the case skips. The guard is a bare existence check, so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the skip and the mount then fails with `EPERM` — leave the device absent unless the container is privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). `src/exec/runner.fuse.test.ts` is separate: it skips unless both Docker and the prebuilt `computerd` binary are available, and runs `computerd` inside a privileged container, so the host's `/dev/fuse` does not matter. See the [`debugging-computerd-fuse`](../../.agents/skills/debugging-computerd-fuse/SKILL.md) skill for the privileged Docker setup.
+The two real-FUSE suites gate themselves differently. `src/cli/computerd.test.ts` runs its real-FUSE case only when `/dev/fuse` is reachable; otherwise auto-detection resolves to the shim and the case skips. The guard is a bare existence check, so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the skip and the mount then fails with `EPERM` — leave the device absent unless the container is privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). `src/exec/runner.fuse.test.ts` and `src/fuse/passthrough.fuse.test.ts` are separate: they skip unless both Docker and the prebuilt `computerd` binary are available, and run `computerd` inside a privileged container, so the host's `/dev/fuse` does not matter. The passthrough cases also skip on a kernel older than 6.9. See the [`debugging-computerd-fuse`](../../.agents/skills/debugging-computerd-fuse/SKILL.md) skill for the privileged Docker setup.
 
 ## Standalone release artifacts
 
@@ -393,4 +539,6 @@ Standalone binaries are release artifacts, not files published in the npm packag
 npm run build:bin --workspace=@cloudflare/computerd
 ```
 
-The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. macOS targets are stripped and re-signed ad-hoc. `fuse-native` prebuilds and `libfuse` are embedded as SEA assets per target.
+The binary is produced with Node's Single Executable Application (SEA) feature: `scripts/build-bin.mjs` compiles the FUSE addon inside a `node:22-trixie-slim` container for the target platform, bundles the CLI with `esbuild`, generates a SEA blob via `node --experimental-sea-config`, downloads the target's Node binary, and injects the blob with `postject`. The addon is embedded as a SEA asset; libfuse is not, and comes from the system at runtime.
+
+The published target is linux-x64. `COMPUTERD_BIN_TARGETS=linux-arm64` builds an arm64 binary as well, for running natively on an arm64 machine. Building needs Docker; the compiled addon is cached under `dist/sea`, and `COMPUTERD_FUSE_ADDON` points at a prebuilt `fuse.node` to skip the container.

@@ -20,7 +20,7 @@ ARG TYPST_VERSION=0.15.1
 # install would cost. curl is only the download tool for those two.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 libfuse2t64 ca-certificates curl xz-utils \
+      fuse3 ca-certificates curl xz-utils \
  && curl -fsSL -o /tmp/pandoc.deb \
       "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
  && dpkg -i /tmp/pandoc.deb \

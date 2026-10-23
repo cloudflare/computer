@@ -34,31 +34,34 @@ the file directly when the trigger applies:
 A fresh container does not have everything the tests need. The traps
 below cost real time if you discover them one failure at a time.
 
-**Native build tools.** `packages/computerd` depends on `fuse-native`, a
-native addon. Building it needs a C toolchain and the libfuse2 headers.
-On Debian or Ubuntu:
+**Native build tools.** `packages/computerd` depends on a vendored copy
+of `fuse-napi` at `packages/computerd/vendor/fuse-napi`, a native addon
+compiled from source on install. Building it needs a C toolchain and the
+libfuse 3 headers. On Debian or Ubuntu:
 
 ```bash
-apt-get install build-essential libfuse-dev
+apt-get install build-essential pkg-config libfuse3-dev fuse3
 ```
 
-If the `fuse-native` build fails, `npm install` aborts the whole
-install, not just that one package. When you only need the rest of the
-workspace, install with `npm install --ignore-scripts` to skip the
-native build.
+Any libfuse 3 compiles. Kernel passthrough for local-only paths needs
+3.17 or newer (Debian trixie); against an older one the addon builds
+without it and those paths are served by `computerd` instead.
 
-**arm64 hosts.** `fuse-native` ships a prebuilt libfuse for x64 only.
-On a Linux arm64 host or container (including a Linux container on
-Apple Silicon, or arm64 CI) the link fails with `file in wrong
-format`. The path below is Debian or Ubuntu arm64; a native macOS host
-uses macFUSE instead and does not hit this. Replace the bundled library
-with the system one and rebuild:
+If the addon build fails, `npm install` aborts the whole install, not
+just that one package. When you only need the rest of the workspace,
+install with `npm install --ignore-scripts`. That also skips the root
+`postinstall`, so run `npm run build:types` before building the
+examples, and build the addon yourself when you need it:
 
 ```bash
-cp /usr/lib/aarch64-linux-gnu/libfuse.so.2 \
-   node_modules/fuse-shared-library-linux/libfuse/lib/libfuse.so
-cd node_modules/fuse-native && npx node-gyp rebuild
+cd packages/computerd/vendor/fuse-napi && npx node-gyp rebuild
 ```
+
+**The binary build uses Docker.** `npm run build:bin` compiles the addon
+for linux-x64 inside a `node:22-trixie-slim` container, so it works the
+same from an arm64 machine (through emulation, which is slow the first
+time; the result is cached under `packages/computerd/dist/sea`). Set
+`COMPUTERD_FUSE_ADDON` to a prebuilt `fuse.node` to skip that step.
 
 **Build before you test.** The test scripts don't build the sibling
 packages first. Several suites need build output that is absent in
@@ -77,9 +80,10 @@ so a `mknod`'d `/dev/fuse` in an unprivileged container defeats the
 skip and the mount then fails with `EPERM`, turning a clean skip into a
 hard failure. Leave the device absent unless the container is
 privileged (`--privileged`, or `CAP_SYS_ADMIN` with device access). The
-`src/exec/runner.fuse.test.ts` suite is separate: it skips unless both
-Docker and the prebuilt `computerd` binary are available, and runs `computerd`
-inside a privileged container. See the
+`src/exec/runner.fuse.test.ts` and `src/fuse/passthrough.fuse.test.ts`
+suites are separate: they skip unless both Docker and the prebuilt
+`computerd` binary are available, and run `computerd` inside a privileged
+container. See the
 [`debugging-computerd-fuse`](.agents/skills/debugging-computerd-fuse/SKILL.md) skill
 for the privileged Docker setup.
 

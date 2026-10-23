@@ -69,6 +69,14 @@ export function resolveMountIgnoreConfig(
   return { root: normalizedRoot, ignore, enabled: !ignore.isEmpty };
 }
 
+export interface PassthroughStatus {
+  /** Local-only paths exist and COMPUTERD_FUSE_PASSTHROUGH did not turn it off. */
+  readonly requested: boolean;
+  readonly negotiated: boolean;
+  readonly opens: number;
+  readonly fallbacks: number;
+}
+
 /** The `ignore` block reported on /__computerd/info. */
 export interface MountIgnoreInfo {
   readonly supported: true;
@@ -79,22 +87,58 @@ export interface MountIgnoreInfo {
   readonly patterns: readonly string[];
   readonly ineffectiveExclusions: readonly string[];
   readonly fastPaths: {
-    /**
-     * Always false: fuse-native binds libfuse 2.9, passthrough needs the
-     * libfuse 3.17 API. Reported rather than omitted so the reason is
-     * visible without reading the source.
-     */
-    readonly passthrough: false;
+    readonly passthrough: boolean;
     readonly passthroughReason: string;
-    /** Also unavailable: libfuse 2.9 fails the mount on the option. */
+    readonly passthroughOpens: number;
+    readonly passthroughFallbacks: number;
+    /** Possible under libfuse 3, but it would change writes on the synced mount. */
     readonly writebackCache: false;
+    readonly nativeRoots: NativeRootsInfo;
   };
 }
 
-export const PASSTHROUGH_UNAVAILABLE_REASON =
-  "fuse-native binds libfuse 2.9; FOPEN_PASSTHROUGH requires the libfuse 3.17 API";
+/**
+ * Native-root state as `describeMountIgnore` reads it. Undefined when no
+ * kernel FUSE mount is running.
+ */
+export interface NativeRootsStatus {
+  /** COMPUTERD_FUSE_NATIVE_ROOTS did not turn them off. */
+  readonly requested: boolean;
+  readonly active: number;
+  readonly mounts: number;
+  readonly failures: number;
+  readonly detaches: number;
+  readonly removalDetaches: number;
+  readonly lastFailure: string | undefined;
+  /**
+   * The removal guard, which lets commands computerd starts remove or
+   * rename a native root. Undefined when it was never started.
+   */
+  readonly removal?: { readonly active: boolean; readonly reason: string };
+}
 
-export function describeMountIgnore(config: MountIgnoreConfig): MountIgnoreInfo {
+export interface NativeRootsInfo {
+  /** True when local-only directories are being bind-mounted. */
+  readonly enabled: boolean;
+  readonly reason: string;
+  readonly active: number;
+  readonly mounts: number;
+  readonly failures: number;
+  readonly detaches: number;
+  /** Removing or renaming a root works from commands computerd starts. */
+  readonly transparentRemoval: boolean;
+  readonly transparentRemovalReason: string;
+  readonly removalDetaches: number;
+}
+
+/** `status` is undefined when no kernel FUSE mount is running. */
+export function describeMountIgnore(
+  config: MountIgnoreConfig,
+  status?: PassthroughStatus,
+  native?: NativeRootsStatus,
+): MountIgnoreInfo {
+  const inactive = inactivePassthroughReason(config, status);
+  const nativeInactive = inactiveNativeRootsReason(config, status, native);
   return {
     supported: true,
     enabled: config.enabled,
@@ -102,9 +146,87 @@ export function describeMountIgnore(config: MountIgnoreConfig): MountIgnoreInfo 
     patterns: config.ignore.patterns,
     ineffectiveExclusions: config.ignore.ineffectiveExclusions,
     fastPaths: {
-      passthrough: false,
-      passthroughReason: PASSTHROUGH_UNAVAILABLE_REASON,
+      passthrough: inactive === undefined,
+      passthroughReason: inactive ?? activeReason(status?.fallbacks ?? 0),
+      passthroughOpens: status?.opens ?? 0,
+      passthroughFallbacks: status?.fallbacks ?? 0,
       writebackCache: false,
+      nativeRoots: {
+        enabled: nativeInactive === undefined,
+        reason: nativeInactive ?? nativeActiveReason(native),
+        active: native?.active ?? 0,
+        mounts: native?.mounts ?? 0,
+        failures: native?.failures ?? 0,
+        detaches: native?.detaches ?? 0,
+        transparentRemoval: nativeInactive === undefined && native?.removal?.active === true,
+        transparentRemovalReason:
+          nativeInactive === undefined
+            ? (native?.removal?.reason ?? "the removal guard was not started")
+            : "native roots are off",
+        removalDetaches: native?.removalDetaches ?? 0,
+      },
     },
   };
+}
+
+// Native roots ride on passthrough: both need CAP_SYS_ADMIN and a 6.9
+// kernel, and without passthrough a file opened through FUSE before its
+// root was mounted would have a page cache of its own.
+function inactiveNativeRootsReason(
+  config: MountIgnoreConfig,
+  status: PassthroughStatus | undefined,
+  native: NativeRootsStatus | undefined,
+): string | undefined {
+  if (!config.enabled) return "no local-only paths are configured (MOUNT_IGNORE)";
+  if (status === undefined || native === undefined) return "no kernel FUSE mount is running";
+  if (!native.requested) return "turned off with COMPUTERD_FUSE_NATIVE_ROOTS";
+  if (!status.requested) {
+    return "FUSE passthrough is turned off with COMPUTERD_FUSE_PASSTHROUGH, and native roots need it";
+  }
+  if (!status.negotiated) {
+    return "the kernel did not offer FUSE passthrough, and native roots need it (Linux 6.9 or newer)";
+  }
+  return undefined;
+}
+
+function nativeActiveReason(native: NativeRootsStatus | undefined): string {
+  if (native === undefined || native.failures === 0) return "active";
+  if (native.mounts === 0) {
+    return (
+      `active, but every mount so far was refused (${native.failures}; last: ` +
+      `${native.lastFailure ?? "unknown"}); check CAP_SYS_ADMIN, kernel mount support, ` +
+      `and the native helper`
+    );
+  }
+  return `active; ${native.failures} mount(s) failed and those paths are served through FUSE`;
+}
+
+// Each case has a different fix, so each gets its own wording.
+function inactivePassthroughReason(
+  config: MountIgnoreConfig,
+  status: PassthroughStatus | undefined,
+): string | undefined {
+  if (!config.enabled) return "no local-only paths are configured (MOUNT_IGNORE)";
+  if (status === undefined) {
+    return "no kernel FUSE mount is running, so local-only paths are not passed through";
+  }
+  if (!status.requested) return "turned off with COMPUTERD_FUSE_PASSTHROUGH";
+  if (!status.negotiated) {
+    return "the kernel did not offer FUSE passthrough at init; it needs Linux 6.9 or newer";
+  }
+  if (status.opens > 0) return undefined;
+  if (status.fallbacks > 0) {
+    return (
+      `the kernel offered passthrough but refused every backing registration ` +
+      `(${status.fallbacks}); check that computerd has CAP_SYS_ADMIN and that ` +
+      `MOUNT_IGNORE_PATH is not on overlayfs stacked on another overlayfs`
+    );
+  }
+  return "negotiated, but no local-only file has been opened yet";
+}
+
+function activeReason(fallbacks: number): string {
+  return fallbacks === 0
+    ? "active"
+    : `active; ${fallbacks} open(s) fell back to computerd after a refused registration`;
 }

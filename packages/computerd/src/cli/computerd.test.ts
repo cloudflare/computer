@@ -111,8 +111,21 @@ test("computerd exposes file IO through real FUSE when FUSE_MOUNT=fuse", async (
       ineffectiveExclusions: [],
       fastPaths: {
         passthrough: false,
-        passthroughReason: expect.stringContaining("libfuse 2.9"),
+        passthroughReason: expect.stringContaining("MOUNT_IGNORE"),
+        passthroughOpens: 0,
+        passthroughFallbacks: 0,
         writebackCache: false,
+        nativeRoots: {
+          enabled: false,
+          reason: expect.stringContaining("MOUNT_IGNORE"),
+          active: 0,
+          mounts: 0,
+          failures: 0,
+          detaches: 0,
+          transparentRemoval: false,
+          transparentRemovalReason: "native roots are off",
+          removalDetaches: 0,
+        },
       },
     },
   });
@@ -138,6 +151,9 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
     env: {
       FUSE_MOUNT: "fuse",
       MOUNT_IGNORE: "/node_modules,/dist",
+      // These cases are about the passthrough layer; native roots have
+      // their own suite.
+      COMPUTERD_FUSE_NATIVE_ROOTS: "0",
       MOUNT_IGNORE_PATH: ignoreRoot,
     },
   });
@@ -164,6 +180,13 @@ test("MOUNT_IGNORE keeps matching paths on local disk and out of the VFS", async
   expect(await fs.readFile(path.join(ignoreRoot, "node_modules/pkg/index.js"), "utf8")).toBe(
     "module.exports=1",
   );
+
+  // Whether the open used passthrough depends on the host's kernel and
+  // libfuse, so only the sum is pinned.
+  const fastPaths = JSON.parse((await request(`http://127.0.0.1:${port}/__computerd/info`)).body)
+    .ignore.fastPaths;
+  expect(fastPaths.passthroughOpens + fastPaths.passthroughFallbacks).toBeGreaterThan(0);
+  expect(fastPaths.passthroughReason).toEqual(expect.any(String));
 
   // A non-ignored sibling still goes to the VFS as before.
   await fs.mkdir(path.join(mountPoint, "src"), { recursive: true });
@@ -211,6 +234,9 @@ test("MOUNT_IGNORE patterns route node_modules at any depth, with exclusions", a
     env: {
       FUSE_MOUNT: "fuse",
       MOUNT_IGNORE: "**/node_modules,!/vendor/node_modules,!**/node_modules/.bin",
+      // These cases are about the passthrough layer; native roots have
+      // their own suite.
+      COMPUTERD_FUSE_NATIVE_ROOTS: "0",
       MOUNT_IGNORE_PATH: ignoreRoot,
     },
   });
@@ -1163,6 +1189,23 @@ test("/__computerd/checkpoint refuses a GET", async (_ctx) => {
 
   const response = await request(`http://127.0.0.1:${port}/__computerd/checkpoint`);
   expect(response.statusCode).toBe(405);
+});
+
+test("POST /__computerd/native-roots/detach answers with what it detached", async (_ctx) => {
+  // No kernel mount, so there is nothing to detach. The route still
+  // answers, so a host can call it without knowing the backend.
+  const port = await getAvailablePort();
+  const mountPoint = await fs.mkdtemp(path.join(os.tmpdir(), "computerd-mount-"));
+  await startComputerd({ port, mountPoint, env: { FUSE_MOUNT: "none" } });
+
+  const response = await request(`http://127.0.0.1:${port}/__computerd/native-roots/detach`, {
+    method: "POST",
+  });
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body)).toEqual({ detached: [] });
+
+  const refused = await request(`http://127.0.0.1:${port}/__computerd/native-roots/detach`);
+  expect(refused.statusCode).toBe(405);
 });
 
 test("/__computerd/checkpoint requires the shared secret when one is set", async (_ctx) => {

@@ -127,13 +127,138 @@ describe("describeMountIgnore", () => {
     expect(info.root).toBe("/tmp/workspace");
   });
 
-  test("reports passthrough as unavailable, with the reason", () => {
-    // Reported rather than omitted so an operator can see why without
-    // reading the source, and so a future binding upgrade shows up as
-    // a measurable change rather than an assumed one.
-    const info = describeMountIgnore(resolveMountIgnoreConfig({}, "/workspace"));
+  const enabled = resolveMountIgnoreConfig({ MOUNT_IGNORE: "/node_modules" }, "/workspace");
+  const live = { requested: true, negotiated: true, opens: 0, fallbacks: 0 };
+
+  test("reports passthrough active once a local-only file has used it", () => {
+    const info = describeMountIgnore(enabled, { ...live, opens: 1284, fallbacks: 2 });
+    expect(info.fastPaths).toMatchObject({
+      passthrough: true,
+      passthroughOpens: 1284,
+      passthroughFallbacks: 2,
+      writebackCache: false,
+    });
+  });
+
+  test("says so when no kernel FUSE mount is running", () => {
+    const info = describeMountIgnore(enabled);
     expect(info.fastPaths.passthrough).toBe(false);
-    expect(info.fastPaths.passthroughReason).toMatch(/libfuse 2\.9/);
-    expect(info.fastPaths.writebackCache).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/no kernel FUSE mount/);
+  });
+
+  test("says so when no local-only paths are configured", () => {
+    const info = describeMountIgnore(resolveMountIgnoreConfig({}, "/workspace"), live);
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/MOUNT_IGNORE/);
+  });
+
+  test("says so when it was turned off", () => {
+    const info = describeMountIgnore(enabled, { ...live, requested: false, negotiated: false });
+    expect(info.fastPaths.passthroughReason).toMatch(/COMPUTERD_FUSE_PASSTHROUGH/);
+  });
+
+  test("blames the kernel when it never offered the capability", () => {
+    const info = describeMountIgnore(enabled, { ...live, negotiated: false });
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/kernel did not offer/);
+    expect(info.fastPaths.passthroughReason).toMatch(/6\.9/);
+  });
+
+  test("points at privileges and overlayfs when every registration was refused", () => {
+    const info = describeMountIgnore(enabled, { ...live, fallbacks: 3 });
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/refused every/);
+    expect(info.fastPaths.passthroughReason).toMatch(/CAP_SYS_ADMIN/);
+    expect(info.fastPaths.passthroughReason).toMatch(/overlayfs/);
+  });
+
+  test("distinguishes a negotiated mount that has not opened a local-only file yet", () => {
+    const info = describeMountIgnore(enabled, live);
+    expect(info.fastPaths.passthrough).toBe(false);
+    expect(info.fastPaths.passthroughReason).toMatch(/no local-only file has been opened/);
+  });
+});
+
+describe("describeMountIgnore: nativeRoots", () => {
+  const configured = resolveMountIgnoreConfig({ MOUNT_IGNORE: "**/node_modules" }, "/workspace");
+  const live = { requested: true, negotiated: true, opens: 0, fallbacks: 0 };
+  const native = {
+    requested: true,
+    active: 2,
+    mounts: 3,
+    failures: 0,
+    detaches: 1,
+    removalDetaches: 1,
+    lastFailure: undefined,
+    removal: { active: true, reason: "active" },
+  };
+
+  test("is on with MOUNT_IGNORE alone, reporting the counters", () => {
+    expect(describeMountIgnore(configured, live, native).fastPaths.nativeRoots).toEqual({
+      enabled: true,
+      reason: "active",
+      active: 2,
+      mounts: 3,
+      failures: 0,
+      detaches: 1,
+      transparentRemoval: true,
+      transparentRemovalReason: "active",
+      removalDetaches: 1,
+    });
+  });
+
+  test("reports why removal is not transparent", () => {
+    const refused = { ...native, removal: { active: false, reason: "seccomp refused (EACCES)" } };
+    const info = describeMountIgnore(configured, live, refused).fastPaths.nativeRoots;
+    expect(info).toMatchObject({ enabled: true, transparentRemoval: false });
+    expect(info.transparentRemovalReason).toMatch(/EACCES/);
+    const never = describeMountIgnore(configured, live, { ...native, removal: undefined });
+    expect(never.fastPaths.nativeRoots.transparentRemovalReason).toMatch(/not started/);
+    const off = describeMountIgnore(configured, live, { ...native, requested: false });
+    expect(off.fastPaths.nativeRoots).toMatchObject({
+      transparentRemoval: false,
+      transparentRemovalReason: "native roots are off",
+    });
+  });
+
+  test("is off without MOUNT_IGNORE", () => {
+    const info = describeMountIgnore(resolveMountIgnoreConfig({}, "/workspace"), live, native);
+    expect(info.fastPaths.nativeRoots.enabled).toBe(false);
+    expect(info.fastPaths.nativeRoots.reason).toMatch(/MOUNT_IGNORE/);
+  });
+
+  test("says so when turned off", () => {
+    const info = describeMountIgnore(configured, live, { ...native, requested: false });
+    expect(info.fastPaths.nativeRoots.enabled).toBe(false);
+    expect(info.fastPaths.nativeRoots.reason).toMatch(/COMPUTERD_FUSE_NATIVE_ROOTS/);
+  });
+
+  test("needs a kernel mount and negotiated passthrough", () => {
+    expect(describeMountIgnore(configured).fastPaths.nativeRoots.reason).toMatch(/no kernel FUSE/);
+    const off = describeMountIgnore(
+      configured,
+      { ...live, requested: false, negotiated: false },
+      native,
+    );
+    expect(off.fastPaths.nativeRoots.reason).toMatch(/COMPUTERD_FUSE_PASSTHROUGH/);
+    const old = describeMountIgnore(configured, { ...live, negotiated: false }, native);
+    expect(old.fastPaths.nativeRoots).toMatchObject({ enabled: false });
+    expect(old.fastPaths.nativeRoots.reason).toMatch(/6\.9/);
+  });
+
+  test("names the failure when every mount was refused", () => {
+    const refused = {
+      ...native,
+      active: 0,
+      mounts: 0,
+      failures: 4,
+      lastFailure: "a: confined bind failed (-38)",
+    };
+    const info = describeMountIgnore(configured, live, refused).fastPaths.nativeRoots;
+    expect(info.enabled).toBe(true);
+    expect(info.reason).toMatch(/every mount so far was refused/);
+    expect(info.reason).toMatch(/confined bind failed \(-38\)/);
+    expect(info.reason).toMatch(/native helper/);
+    expect(info.reason).not.toMatch(/util-linux/);
   });
 });

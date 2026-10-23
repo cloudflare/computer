@@ -22,7 +22,7 @@ capnweb endpoints from a plain Node script.
 ## When to reach for this
 
 - A user report of "wrote a file via FUSE, RPC reads see 0 bytes."
-- A user report of "exec hangs forever" or "computerd `/health` stops
+- A report of "exec hangs forever" or "computerd `/health` stops
   responding after the first shell call."
 - Adding a new computerd op (FUSE callback, sync RPC, runner feature)
   and you want a smoke test that doesn't depend on Docker-in-DO or
@@ -50,9 +50,12 @@ capnweb endpoints from a plain Node script.
 
 There's already a recipe — `packages/computer/test-harness/run-computerd.sh`.
 It picks a host port, runs the binary with `--privileged
---device /dev/fuse --cap-add SYS_ADMIN --cap-add MKNOD`, installs
-fuse3 + libfuse2t64 from apt, waits for `/health`, prints the URL
-on stdout and the container id on stderr.
+--device /dev/fuse --cap-add SYS_ADMIN --cap-add MKNOD` on Debian
+trixie with fuse3 from apt (computerd links the system libfuse 3 and
+needs 3.17 or newer), waits for `/health`, prints the URL on stdout
+and the container id on stderr. It forwards `MOUNT_IGNORE`,
+`MOUNT_IGNORE_PATH`, and any `COMPUTERD_FUSE_*` variable from your
+environment into the container.
 
 ```bash
 # Start
@@ -63,7 +66,7 @@ COMPUTERD_HARNESS_PORT=18080 bash packages/computer/test-harness/run-computerd.s
 # Verify
 curl -sf http://127.0.0.1:18080/health
 docker logs <CID> | tail
-# should see: computerd listening on 0.0.0.0:8080 mount=/workspace backend=linux
+# should see: computerd listening on 0.0.0.0:8080 mount=/workspace backend=fuse
 
 # Tear down
 docker kill <CID>
@@ -165,7 +168,7 @@ them. Check that:
 - Your absolute paths start with `MOUNT_POINT` (default
   `/workspace`). Writing to `/probe.txt` succeeds at the RPC
   layer but FUSE only serves the `MOUNT_POINT` subtree.
-- computerd actually logs `backend=linux` (not `backend=shim`).
+- computerd actually logs `backend=fuse` (not `backend=shim`).
 - You aren't reading the wrong container — `docker ps` after a
   zombie `docker rm -f` can show stale entries.
 
@@ -179,19 +182,16 @@ running container:
 docker exec <CID> sh -c 'echo container-write > /workspace/r2/hello.txt'
 ```
 
-This is a real FUSE write: kernel → fuse-native → computerd's
-`writeBuf` op → computerd's in-memory buffer for that file → on
+This is a real FUSE write: kernel → fuse-napi → computerd's
+`write` op → computerd's in-memory buffer for that file → on
 `release`/`flush`/`fsync` the buffer spills into the backing VFS
 (commit `68407fc`). On the host side you can then `pullOnce` and
 see the new entry land in `applyChanges`.
 
-**Avoid `client.shell.exec()` while debugging FUSE bugs in this
-environment.** It calls `spawn` with `cwd=MOUNT_POINT` by default,
-which can deadlock under real FUSE (see "Known deadlock patterns"
-below). If you need exec-shaped behaviour from outside the
-container, `docker exec` is closer to what wrangler's container
-runtime would do anyway — computerd isn't the parent of the spawned
-process.
+Use `docker exec` when you need to isolate the FUSE mount from
+computerd's command runner: computerd is not the parent of that
+process. `client.shell.exec()` also works on current binaries; it
+exercises the command runner and its removal guard as well.
 
 ## Known deadlock patterns
 
@@ -215,11 +215,11 @@ buffer-vs-VFS desync.
 
 ### computerd's event loop blocked in spawn
 
-Symptom: `client.shell.exec` against a real-FUSE computerd hangs
-forever. `/health` stops responding. `docker exec <CID> ls
-/workspace` also hangs once the deadlock fires.
+Historical failure: an older `Runner.exec` implementation made
+`client.shell.exec` hang under real FUSE. `/health` stopped responding;
+`docker exec <CID> ls /workspace` then hung too.
 
-Mechanism: `Runner.exec` calls
+Mechanism: it called
 `spawn("/bin/sh", { cwd: "/workspace" })`. libuv's `uv_spawn`
 forks and waits on a status pipe for the child to exec. The
 child, between fork and exec, does `chdir("/workspace")`. The
@@ -230,23 +230,19 @@ read. Deadlock.
 Diagnostic:
 
 ```js
-// against a fresh computerd
-const t = Date.now();
+// Against a fresh computerd, both calls should return.
 await client.shell.exec({ command: "echo hi", cwd: "/tmp", timeoutMs: 5000 });
-// returns in <100ms — control case
 await client.shell.exec({ command: "echo hi", cwd: "/workspace", timeoutMs: 5000 });
-// hangs forever — under real FUSE
 ```
 
 Same computerd, same client, same network — only `cwd` differs. If
-that flips success→hang, you've reproduced the deadlock.
+the second hangs, the old deadlock has regressed.
 
-Fix: do the chdir inside the **shell**, not inside `spawn`'s
-fork-and-exec dance. Prefix the command with `cd ... && exec ...`
-so the chdir runs after the shell is up and computerd's event loop is
-responsive again. Pre-flight existence via dofs's `stat(db, path)`
-(reads SQLite directly, no FUSE callbacks) to preserve the
-existing ENOENT-cwd error contract.
+The runner now changes directory inside the **shell**, not in
+`spawn`'s fork-and-exec path. It prefixes the command with `cd ... &&`
+so FUSE lookups run after the shell starts and computerd's event loop is
+responsive. It checks cwd existence through the VFS before spawning to
+preserve the ENOENT error contract.
 
 ### Other event-loop blockers to suspect
 
@@ -261,9 +257,62 @@ goes through Node's `fs` against the mount point must be async
 
 ## Recipe library
 
+### Is passthrough engaged?
+
+With `MOUNT_IGNORE` set, an open of a local-only file should hand the
+file to the kernel and keep computerd out of the data path. Two ways to
+check, from inside the container:
+
+```bash
+# What the mount negotiated, and how opens were served.
+curl -s localhost:8080/__computerd/info | jq .ignore.fastPaths
+
+# Whether data still reaches the daemon. Boot with
+# COMPUTERD_FUSE_TRACE=summary and COMPUTERD_FUSE_TRACE_FILE=/tmp/trace.json,
+# do the I/O, then dump the counters. read and write should not move
+# for local-only files.
+kill -USR2 1 && jq '.ops[] | select(.op == "read" or .op == "write")' /tmp/trace.json
+```
+
+Keep the trace file outside the mount: a process serving a FUSE mount
+deadlocks if it writes into that mount. `passthroughReason` names the
+likely cause when passthrough is off, and `COMPUTERD_FUSE_PASSTHROUGH=0`
+turns it off on purpose, to rule it in or out of a bug.
+
+### Check native roots
+
+With `MOUNT_IGNORE` configured, eligible local-only directories can be
+mounted from the backing directory onto `/workspace`. Check the live
+state and the kernel's mount table separately:
+
+```bash
+curl -s localhost:8080/__computerd/info | jq .ignore.fastPaths.nativeRoots
+docker exec <CID> sh -c "grep ' /workspace/' /proc/self/mountinfo"
+```
+
+The info response shows `active`, `failures`, and `reason`; stats also
+include `lastFailure`. A refused bind remains available through FUSE.
+A symlink in either source or target path is refused by the native
+helper, not followed by a shell mount command. Disable native roots
+with `COMPUTERD_FUSE_NATIVE_ROOTS=0` when isolating a problem.
+
+To remove a root before `rm -rf`, call the daemon's detach endpoint:
+
+```bash
+curl -X POST localhost:8080/__computerd/native-roots/detach \
+  -H 'content-type: application/json' \
+  -d '{"path":"node_modules"}'
+```
+
+If `RPC_CLIENT_SECRET` is set, include `Authorization: Bearer <secret>`.
+Do not use a pathname-based `umount` on a workspace path that might be a
+symlink. On shutdown and before mounting FUSE at startup, computerd
+lazily detaches everything it finds below the workspace mount; do not
+put unrelated mounts there.
+
 ### Reset between probes
 
-A wedged computerd container can leave fuse-native zombie processes
+A wedged computerd container can leave FUSE zombie processes
 that `docker kill` refuses to reap. The cleanest fix:
 
 ```bash
@@ -341,11 +390,9 @@ writes to that subtree will propagate back via the next
 
 ### Reference: a full M3.5-style probe
 
-A working end-to-end probe that stages the mount, pushes,
-container-writes via `docker exec`, pulls, and asserts the
-expected applied/skipped split lives at
-`script/computerd-mount-probe.mjs` if it's still in the tree. Use it as
-the template for new probes.
+For the FUSE write/pull path, use `script/computerd-fuse-flush.mjs` as
+the starting point for a probe that stages a mount and checks the
+applied/skipped split.
 
 ## What this skill is NOT
 
@@ -369,7 +416,7 @@ your host) so the inspector port is reachable, or `docker run
 through computerd's launch env.
 
 If even that doesn't surface it, the wedge is probably below the
-JS layer — in fuse-native or libuv. At that point reach for
+JS layer — in the fuse-napi binding or libuv. At that point reach for
 `strace -fp <computerd-pid>` inside the container; the FUSE callbacks
 all surface as `read(/dev/fuse, ...)` and the per-call timing
 will show you exactly which op deadlocks.

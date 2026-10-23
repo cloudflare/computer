@@ -6,7 +6,7 @@
 # fs-tests' status code.
 set -u
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends fuse3 libfuse2t64 attr util-linux coreutils findutils git ca-certificates curl python3 >/dev/null 2>&1
+apt-get install -y --no-install-recommends fuse3 attr util-linux coreutils findutils git ca-certificates curl python3 >/dev/null 2>&1
 
 mkdir -p /tmp/workspace
 # node_modules is local-only, so fs-tests covers that layer as well as the

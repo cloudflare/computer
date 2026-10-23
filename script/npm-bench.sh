@@ -11,6 +11,9 @@
 #   express         npm install express --prefer-offline
 #   computer        npm install for the cloudflare/computer monorepo
 #   synthetic       a synthetic package tree with many tiny files
+#   large           a typical front-end toolchain (TypeScript, Vite, webpack,
+#                   ESLint, React): several hundred packages, tens of
+#                   thousands of files, and some large ones
 #
 # Knobs (environment variables):
 #   MOUNT           FUSE mount point (default: /tmp/workspace)
@@ -22,6 +25,11 @@
 #   HEARTBEAT_SEC   heartbeat interval in seconds (default: 10)
 #   COMPUTERD_FUSE_TRACE  set to "summary" to collect a FUSE op trace per run
 #   NPM_CACHE_DIR   npm cache directory (default: /tmp/npm-cache)
+#   TARGETS         comma-separated label:directory pairs to install into
+#                   (default: native:$BASE,fuse:$MOUNT)
+#
+# Each run also reports readMs, the time to read every installed file
+# back once: the data path, where an install itself is mostly metadata.
 set -euo pipefail
 
 MOUNT="${MOUNT:-/tmp/workspace}"
@@ -33,6 +41,8 @@ OUTPUT_JSON="${OUTPUT_JSON:-}"
 HEARTBEAT_SEC="${HEARTBEAT_SEC:-10}"
 COMPUTERD_FUSE_TRACE="${COMPUTERD_FUSE_TRACE:-}"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-/tmp/npm-cache}"
+LARGE_PACKAGES="typescript@5 vite@7 webpack@5 eslint@9 react@19 react-dom@19 @types/node@22"
+TARGETS="${TARGETS:-native:${BASE},fuse:${MOUNT}}"
 
 # Warm the npm cache for express so the FUSE install is not I/O bound.
 warm_npm_cache() {
@@ -63,10 +73,22 @@ warm_npm_cache() {
           >/dev/null 2>&1 || true
       fi
       ;;
+    large)
+      # shellcheck disable=SC2086
+      npm install $LARGE_PACKAGES \
+        --prefix "$warmdir" \
+        --cache "$NPM_CACHE_DIR" \
+        --prefer-offline \
+        --ignore-scripts \
+        --no-audit \
+        --no-fund \
+        >/dev/null 2>&1 || true
+      ;;
     synthetic)
       # Nothing to warm for the synthetic scenario.
       ;;
   esac
+  release_native_roots
   rm -rf "$warmdir"
   echo "[bench] cache warm for $scenario complete"
 }
@@ -94,6 +116,16 @@ stop_heartbeat() {
   fi
 }
 
+# A native root is a mount point, and rmdir of a mount point fails with
+# EBUSY. computerd's removal guard handles that for the commands it runs,
+# but this script is not one of them, so detach them first; COMPUTERD_URL
+# is set when MOUNT_IGNORE is. A detach is always safe.
+release_native_roots() {
+  if [ -n "${COMPUTERD_URL:-}" ]; then
+    curl -fsS -X POST "$COMPUTERD_URL/__computerd/native-roots/detach" >/dev/null 2>&1 || true
+  fi
+}
+
 # Run a single npm install and return timing + stats via echoed JSON fields.
 run_install() {
   local scenario="$1"
@@ -102,6 +134,7 @@ run_install() {
   local run_idx="$4"
 
   local work_dir="${target_dir}/run-${run_idx}"
+  release_native_roots
   rm -rf "$work_dir"
   mkdir -p "$work_dir"
 
@@ -142,6 +175,18 @@ run_install() {
         --loglevel warn \
         >"$npm_log" 2>&1 || exit_code=$?
       ;;
+    large)
+      # shellcheck disable=SC2086
+      npm install $LARGE_PACKAGES \
+        --prefix "$work_dir" \
+        --cache "$NPM_CACHE_DIR" \
+        --prefer-offline \
+        --ignore-scripts \
+        --no-audit \
+        --no-fund \
+        --loglevel warn \
+        >"$npm_log" 2>&1 || exit_code=$?
+      ;;
     synthetic)
       # Generate a small package with many tiny files.
       local pkgdir="${work_dir}/synthetic-pkg"
@@ -170,13 +215,21 @@ run_install() {
   end_ts="$(date +%s%N)"
   local elapsed_ms=$(( (end_ts - start_ts) / 1000000 ))
 
+  local read_start read_end read_ms=0
+  if [ -d "$work_dir/node_modules" ]; then
+    read_start="$(date +%s%N)"
+    find "$work_dir/node_modules" -type f -print0 | xargs -0 -r cat >/dev/null
+    read_end="$(date +%s%N)"
+    read_ms=$(( (read_end - read_start) / 1000000 ))
+  fi
+
   # Count files and directories.
   local file_count dir_count apparent_size
   file_count="$(find "$work_dir" -type f | wc -l || echo 0)"
   dir_count="$(find "$work_dir" -type d | wc -l || echo 0)"
   apparent_size="$(du -sb "$work_dir" 2>/dev/null | awk '{print $1}' || echo 0)"
 
-  echo "{\"scenario\":\"${scenario}\",\"target\":\"${label}\",\"run\":${run_idx},\"elapsedMs\":${elapsed_ms},\"exitCode\":${exit_code},\"files\":${file_count},\"dirs\":${dir_count},\"apparentBytes\":${apparent_size}}"
+  echo "{\"scenario\":\"${scenario}\",\"target\":\"${label}\",\"run\":${run_idx},\"elapsedMs\":${elapsed_ms},\"readMs\":${read_ms},\"exitCode\":${exit_code},\"files\":${file_count},\"dirs\":${dir_count},\"apparentBytes\":${apparent_size}}"
 
   # Keep the last npm log for inspection.
   if [ "$exit_code" -ne 0 ]; then
@@ -195,7 +248,8 @@ for scenario in "${scenario_list[@]}"; do
   echo "[bench] scenario: $scenario"
   warm_npm_cache "$scenario"
 
-  for target_label in "native:${BASE}" "fuse:${MOUNT}"; do
+  IFS=',' read -ra target_list <<< "$TARGETS"
+  for target_label in "${target_list[@]}"; do
     label="${target_label%%:*}"
     target_dir="${target_label#*:}"
     mkdir -p "$target_dir"

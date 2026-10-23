@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { timingSafeEqual } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import { constants as osConstants } from "node:os";
 import { isAbsolute } from "node:path";
 import type { ExecEvent as RpcExecEvent } from "@cloudflare/computer-rpc";
 import { isStubTrackingEnabled, stubSnapshot } from "@cloudflare/computer-rpc/debug";
@@ -14,12 +15,16 @@ import { WebSocket, WebSocketServer } from "ws";
 import { Runner } from "../exec/index.js";
 import type { ExecEvent as ComputerdExecEvent } from "../exec/types.js";
 import {
+  createNativeRoots,
   createNodeVirtualFileSystem,
   describeMountIgnore,
   type FUSEBackend,
   type FuseMount,
   type MountIgnoreInfo,
   mountFuse,
+  type NativeRoots,
+  nativeRootsRequested,
+  type RemovalGuardBinding,
   parseFuseMountMode,
   parseStoreMode,
   type ResolvedStore,
@@ -149,6 +154,47 @@ function dropHeartbeats(stream: ReadableStream<ComputerdExecEvent>): ReadableStr
   );
 }
 
+const NO_NATIVE_ROOT_STATS = {
+  active: 0,
+  mounts: 0,
+  failures: 0,
+  detaches: 0,
+  removalDetaches: 0,
+  lastFailure: undefined,
+} as const;
+
+// Starts the removal guard on this thread, the one every command is
+// spawned from, so each command and everything it starts inherits it.
+function startRemovalGuard(
+  guard: RemovalGuardBinding | undefined,
+  roots: NativeRoots,
+): { active: boolean; reason: string } {
+  if (guard === undefined)
+    return { active: false, reason: "the FUSE binding has no removal guard" };
+  const result = guard.start((target) => roots.guardDetached(target));
+  if (result === 0) {
+    void roots.attachGuard(guard);
+    return { active: true, reason: "active" };
+  }
+  const code = errnoName(-result);
+  const reason =
+    code === "EACCES" || code === "EPERM"
+      ? `the kernel refused the seccomp filter (${code}); computerd needs CAP_SYS_ADMIN`
+      : code === "ENOSYS"
+        ? "not supported on this platform"
+        : `could not start (${code})`;
+  console.warn(
+    `computerd: removal guard off: ${reason}. Removing or renaming a native root ` +
+      `will fail with EBUSY; POST /__computerd/native-roots/detach first.`,
+  );
+  return { active: false, reason };
+}
+
+function errnoName(errno: number): string {
+  const entry = Object.entries(osConstants.errno).find(([, value]) => value === errno);
+  return entry?.[0] ?? `errno ${errno}`;
+}
+
 interface ComputerdInfo {
   backend: FUSEBackend;
   mountPoint: string;
@@ -202,6 +248,7 @@ function createHTTPServer(
   secret: string | undefined,
   getStats?: () => Record<string, unknown>,
   checkpoint?: () => { walFrames: number; sizeBytes: number; durationMs: number },
+  nativeRoots?: Pick<NativeRoots, "detach">,
 ): HTTPHandle {
   // Holds the current outbound capnweb session opened via /connect.
   // Re-POSTing /connect (e.g. after a DO hibernate + new incarnation)
@@ -278,6 +325,21 @@ function createHTTPServer(
           "content-type": "text/plain; charset=utf-8",
         });
       }
+      return;
+    }
+
+    // /__computerd/native-roots/detach — lazily detach one native root,
+    // or all of them, so a caller can remove or rename the directory. A
+    // detach is always safe: the FUSE layer serves the same directory.
+    if (path === "/__computerd/native-roots/detach") {
+      if (request.method !== "POST") {
+        send(response, 405, "method not allowed\n", {
+          allow: "POST",
+          "content-type": "text/plain; charset=utf-8",
+        });
+        return;
+      }
+      void handleNativeRootsDetach(request, response, nativeRoots);
       return;
     }
 
@@ -575,6 +637,35 @@ async function handleConnect(
   });
 }
 
+// POST { path?: string } with a mount-relative path, or no body to detach
+// every native root. Answers 200 with what was detached; a path that is
+// not a native root detaches nothing and is not an error.
+async function handleNativeRootsDetach(
+  request: IncomingMessage,
+  response: ServerResponse,
+  nativeRoots: Pick<NativeRoots, "detach"> | undefined,
+): Promise<void> {
+  let body: { path?: unknown };
+  try {
+    body = await readJson<{ path?: unknown }>(request);
+  } catch (error) {
+    send(response, 400, `invalid JSON body: ${(error as Error).message}\n`, {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  if (body.path !== undefined && typeof body.path !== "string") {
+    send(response, 400, "'path' must be a string when present\n", {
+      "content-type": "text/plain; charset=utf-8",
+    });
+    return;
+  }
+  const detached = nativeRoots === undefined ? [] : await nativeRoots.detach(body.path);
+  send(response, 200, JSON.stringify({ detached }), {
+    "content-type": "application/json; charset=utf-8",
+  });
+}
+
 async function readJson<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
@@ -682,15 +773,45 @@ async function main(): Promise<void> {
     storeStats,
     close: closeStore,
   } = await createNodeVirtualFileSystem({ store });
+  let fuse: FuseMount | undefined;
   const info: ComputerdInfo = {
     backend,
     mountPoint,
     port,
     store,
-    ignore: describeMountIgnore(ignoreConfig),
+    // A getter, so each request reports live passthrough state.
+    get ignore() {
+      const passthrough = fuse?.getPassthroughStatus?.();
+      return describeMountIgnore(
+        ignoreConfig,
+        passthrough,
+        passthrough === undefined
+          ? undefined
+          : {
+              requested: nativeRootsWanted,
+              ...(nativeRoots?.stats() ?? NO_NATIVE_ROOT_STATS),
+              ...(removal === undefined ? {} : { removal }),
+            },
+      );
+    },
   };
 
-  let fuse: FuseMount | undefined;
+  // Native roots: eligible local-only directories can be bind-mounted from
+  // where they are stored. Built before the mount so the passthrough layer can call
+  // into it, and switched on only once the kernel has negotiated FUSE
+  // passthrough: `active` is read on every call.
+  const nativeRootsWanted = nativeRootsRequested(process.env);
+  let removal: { active: boolean; reason: string } | undefined;
+  const nativeRoots: NativeRoots | undefined =
+    ignoreConfig.enabled && nativeRootsWanted && backend.kind !== "none" && backend.kind !== "shim"
+      ? createNativeRoots({
+          root: ignoreConfig.root,
+          mountPoint,
+          ignore: ignoreConfig.ignore,
+          active: () => fuse?.getPassthroughStatus?.().negotiated === true,
+        })
+      : undefined;
+
   // When running on the userspace shim, capture the typed handle
   // so we can wire `flush()` and `reconcileNow()` into the SyncRPC
   // afterApply / beforeFetch hooks below. A real FUSE mount serves
@@ -715,6 +836,9 @@ async function main(): Promise<void> {
       if (ignoreConfig.enabled) {
         await mkdir(ignoreConfig.root, { recursive: true });
       }
+      // Detach binds left by a previous run before remounting FUSE. This
+      // assumes no other subsystem puts mounts below the mount point.
+      await nativeRoots?.detachAll();
       fuse = await mountFuse({
         backend,
         mountPoint,
@@ -725,10 +849,30 @@ async function main(): Promise<void> {
                 root: ignoreConfig.root,
                 ignore: ignoreConfig.ignore,
                 mountPoint,
+                ...(nativeRoots === undefined
+                  ? {}
+                  : {
+                      onLocalDirectory: (path: string, created: boolean) =>
+                        nativeRoots.ensure(path, created),
+                    }),
               },
             }
           : {}),
       });
+      if (nativeRoots !== undefined) {
+        // The kernel answers this only after FUSE_INIT, which is where
+        // passthrough is negotiated. Through the thread pool, never a
+        // synchronous call: this thread serves the request it waits on.
+        await stat(mountPoint).catch(() => {});
+        if (fuse.getPassthroughStatus?.().negotiated === true) {
+          // Before the HTTP server accepts commands, so every command is
+          // forked after the filter is in place.
+          removal = startRemovalGuard(fuse.removalGuard, nativeRoots);
+        }
+        // Roots that survived on disk from before a restart or a snapshot
+        // restore. Not awaited: a mount only makes a path faster.
+        nativeRoots.scan();
+      }
     }
   }
   // EXEC_LOG_MAX_BYTES lets the harness force size-cap eviction
@@ -805,12 +949,20 @@ async function main(): Promise<void> {
       return {
         ...collectDbStats(db),
         ...(fuse?.getBufferStats?.() ?? {}),
-        ...(fuse?.getLocalPathStats === undefined ? {} : { localPaths: fuse.getLocalPathStats() }),
+        ...(fuse?.getLocalPathStats === undefined
+          ? {}
+          : {
+              localPaths: {
+                ...fuse.getLocalPathStats(),
+                ...(nativeRoots === undefined ? {} : { nativeRoots: nativeRoots.stats() }),
+              },
+            }),
         store_size_bytes: sizeBytes,
         store_freelist_count: freelistCount,
       };
     },
     checkpointStore,
+    nativeRoots,
   );
 
   let shuttingDown = false;
@@ -829,6 +981,9 @@ async function main(): Promise<void> {
       console.error(error);
     }
 
+    // Before the FUSE unmount, which fails while anything is mounted
+    // beneath it.
+    await nativeRoots?.detachAll();
     if (fuse !== undefined) {
       await unmount(fuse);
     }
