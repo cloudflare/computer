@@ -17,7 +17,7 @@ import {
   type IsomorphicGitClient,
   type MessageCallback,
   type ProgressCallback,
-} from "./clone.js";
+} from "./clone";
 
 type CloneArgs = Parameters<IsomorphicGitClient["clone"]>[0];
 type CheckoutArgs = Parameters<IsomorphicGitClient["checkout"]>[0];

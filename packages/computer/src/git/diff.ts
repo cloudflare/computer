@@ -8,8 +8,8 @@
 // resolves those from dynamic imports of `isomorphic-git` and
 // `diff` so both stay optional peer deps.
 
-import type { IsomorphicGitFSClient } from "./adapter.js";
-import type { StatusMatrixRow } from "./status.js";
+import type { IsomorphicGitFSClient } from "./adapter";
+import type { StatusMatrixRow } from "./status";
 
 /**
  * Status-matrix row as emitted by isomorphic-git's `statusMatrix`:

@@ -1,10 +1,10 @@
-import { createWorkspaceError } from "../errors.js";
-import type { Database } from "../storage.js";
-import { CORE_STATEMENTS, ROOT_INODE, SCHEMA_VERSION } from "./core.js";
-import { runMigrations } from "./migrations.js";
-import { SYNC_STATEMENTS } from "./sync.js";
+import { createWorkspaceError } from "../errors";
+import type { Database } from "../storage";
+import { CORE_STATEMENTS, ROOT_INODE, SCHEMA_VERSION } from "./core";
+import { runMigrations } from "./migrations";
+import { SYNC_STATEMENTS } from "./sync";
 
-export { ROOT_INODE, SCHEMA_VERSION } from "./core.js";
+export { ROOT_INODE, SCHEMA_VERSION } from "./core";
 
 interface MetaRow {
   v: number;

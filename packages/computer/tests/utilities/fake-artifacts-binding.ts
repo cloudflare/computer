@@ -14,7 +14,7 @@
 // paginates across every repo and omits `remote`, and `revokeToken`
 // flips state.
 
-import type { ArtifactScope } from "../../src/artifacts/types.js";
+import type { ArtifactScope } from "../../src/artifacts/types";
 
 const VALID_BINDING_REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 

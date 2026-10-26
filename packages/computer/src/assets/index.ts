@@ -20,7 +20,7 @@
 // uses UNSIGNED-PAYLOAD, so the file body is read exactly once —
 // streamed from the VFS into `put` — and never buffered.
 
-import { presignUrl } from "./sigv4.js";
+import { presignUrl } from "./sigv4";
 import {
   basename,
   buildKey,
@@ -29,7 +29,7 @@ import {
   putObject,
   type R2PutBucket,
   randomId,
-} from "./upload.js";
+} from "./upload";
 
 // Maximum presigned-URL lifetime AWS / R2 accept: 7 days.
 const MAX_EXPIRES_SECONDS = 7 * 24 * 60 * 60;
@@ -242,4 +242,4 @@ export function createAssets(options: CreateAssetsOptions): AssetsClient {
   };
 }
 
-export type { R2PutBucket } from "./upload.js";
+export type { R2PutBucket } from "./upload";

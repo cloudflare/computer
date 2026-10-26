@@ -9,8 +9,8 @@
 // resources.
 import { describe, expect, test } from "vitest";
 
-import { WorkspaceContainerAPI } from "./container-host.js";
-import type { ContainerLaunchSpec } from "./container-launch-record.js";
+import { WorkspaceContainerAPI } from "./container-host";
+import type { ContainerLaunchSpec } from "./container-launch-record";
 
 type StartOptions = ContainerStartupOptions;
 

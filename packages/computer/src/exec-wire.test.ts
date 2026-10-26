@@ -7,8 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { decodeExecEvents, encodeExecEvents } from "./exec-wire.js";
-import type { WorkspaceExecEvent } from "./shell.js";
+import { decodeExecEvents, encodeExecEvents } from "./exec-wire";
+import type { WorkspaceExecEvent } from "./shell";
 
 function streamOf<T>(items: T[]): ReadableStream<T> {
   return new ReadableStream<T>({

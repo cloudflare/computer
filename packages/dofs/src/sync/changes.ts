@@ -1,6 +1,6 @@
-import { resolveInode } from "../fs/resolve.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
+import { resolveInode } from "../fs/resolve";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
 
 // Record a tombstone for a deleted path so the next push to the
 // container learns the path is gone. Called by fs/rm and fs/rename

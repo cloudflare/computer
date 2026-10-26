@@ -4,8 +4,8 @@ import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
-} from "../runtime/types.js";
-import { createToolBindings, type ToolBinding } from "./tools.js";
+} from "../runtime/types";
+import { createToolBindings, type ToolBinding } from "./tools";
 
 // SAFETY: Tool bindings never touch the host's Git, Artifacts, or runtime.
 const host = {} as WorkspaceModuleHost;

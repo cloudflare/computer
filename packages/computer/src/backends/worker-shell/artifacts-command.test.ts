@@ -12,9 +12,9 @@
 import { encodeUtf8ToBytes as encodeUTF8ToBytes } from "just-bash";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index.js";
-import type { GitCliInput, GitCliResult } from "../../git/index.js";
-import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index";
+import type { GitCliInput, GitCliResult } from "../../git/index";
+import { type ArtifactsCommandHost, defineArtifactsCommand } from "./artifacts-command";
 
 function fakeHost(
   impl: (input: ArtifactsCLIInput) => Promise<ArtifactsCLIResult> | ArtifactsCLIResult,

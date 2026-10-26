@@ -5,37 +5,37 @@ import {
   type ExecInput,
   type ExecToolOptions,
   type ExecToolOutput,
-} from "../common/exec.js";
+} from "../common/exec";
 import {
   type DeleteToolOptions,
   deleteDescription,
   deleteFromStore,
   deleteInputSchema,
-} from "../common/fs/delete.js";
+} from "../common/fs/delete";
 import {
   type EditToolOptions,
   editDescription,
   editInputSchema,
   editInStore,
-} from "../common/fs/edit.js";
+} from "../common/fs/edit";
 import {
   type FindToolOptions,
   findDescription,
   findInputSchema,
   findInWorkspace,
-} from "../common/fs/find.js";
+} from "../common/fs/find";
 import {
   type GrepToolOptions,
   grepDescription,
   grepInputSchema,
   grepInWorkspace,
-} from "../common/fs/grep.js";
+} from "../common/fs/grep";
 import {
   type ListToolOptions,
   listDescription,
   listInputSchema,
   listWorkspace,
-} from "../common/fs/list.js";
+} from "../common/fs/list";
 import {
   createReadExecutor,
   type ReadInput,
@@ -44,20 +44,20 @@ import {
   readDescription,
   readInputSchema,
   readModelOutput,
-} from "../common/fs/read.js";
+} from "../common/fs/read";
 import {
   type WriteToolOptions,
   writeDescription,
   writeInputSchema,
   writeToStore,
-} from "../common/fs/write.js";
+} from "../common/fs/write";
 import {
   createPublishExecutor,
   type PublishToolOptions,
   publishDescription,
   publishInputSchema,
-} from "../common/publish.js";
-import { toAISDKOutput } from "./output.js";
+} from "../common/publish";
+import { toAISDKOutput } from "./output";
 
 export function createReadTool(options: ReadToolOptions): Tool<z.infer<typeof readInputSchema>> {
   const toModelOutput = readModelOutput(options);

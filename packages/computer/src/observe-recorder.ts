@@ -7,7 +7,7 @@
 // is plumbing for the workspace's own tests and for downstream callers
 // who want a recording observer in their own tests against a workspace.
 
-import type { WorkspaceAttributes, WorkspaceObserver, WorkspaceSpan } from "./observe.js";
+import type { WorkspaceAttributes, WorkspaceObserver, WorkspaceSpan } from "./observe";
 
 export interface RecordedSpan {
   name: string;

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { find } from "./find.js";
-import { mkdir } from "./mkdir.js";
-import { resolveInode } from "./resolve.js";
-import { withDB } from "./with-db.js";
-import { writeFile } from "./writeFile.js";
+import { find } from "./find";
+import { mkdir } from "./mkdir";
+import { resolveInode } from "./resolve";
+import { withDB } from "./with-db";
+import { writeFile } from "./writeFile";
 
 describe("find", () => {
   it("returns nothing for an empty directory", async () => {

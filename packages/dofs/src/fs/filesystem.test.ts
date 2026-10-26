@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { WorkspaceFilesystem } from "./filesystem.js";
-import { withDB } from "./with-db.js";
+import { WorkspaceFilesystem } from "./filesystem";
+import { withDB } from "./with-db";
 
 async function withFs<T>(
   fn: (fs: WorkspaceFilesystem) => T | Promise<T>,

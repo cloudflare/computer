@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { withFileLock } from "./locks.js";
-import type { FileStore } from "./types.js";
+import { withFileLock } from "./locks";
+import type { FileStore } from "./types";
 
 function store(lockIdentity?: object): FileStore {
   return {

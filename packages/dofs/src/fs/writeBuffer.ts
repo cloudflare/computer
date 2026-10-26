@@ -10,7 +10,7 @@
 // The cache is keyed by Database so a fresh database (a test, a
 // rebooted DO incarnation) starts with an empty cache.
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 export interface WriteBufferEntry {
   // Growable backing store. byteLength is capacity; logical length

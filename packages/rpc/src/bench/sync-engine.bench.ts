@@ -27,8 +27,8 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { it } from "vitest";
 
-import { createSyncServer } from "../server.js";
-import { pullBlocks } from "../sync-engine.js";
+import { createSyncServer } from "../server";
+import { pullBlocks } from "../sync-engine";
 
 const NOW = (): number => 1000;
 

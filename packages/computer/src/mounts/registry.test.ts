@@ -1,8 +1,8 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import { Workspace } from "../workspace.js";
-import type { Mount, MountContext, MountFactory } from "./types.js";
+import { Workspace } from "../workspace";
+import type { Mount, MountContext, MountFactory } from "./types";
 
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();

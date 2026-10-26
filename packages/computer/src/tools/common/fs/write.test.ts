@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { FileStore } from "./types.js";
-import { writeToStore } from "./write.js";
+import type { FileStore } from "./types";
+import { writeToStore } from "./write";
 
 function store(overrides: Partial<FileStore> = {}): FileStore {
   return {

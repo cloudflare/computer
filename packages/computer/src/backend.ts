@@ -31,8 +31,8 @@ import type { WorkspaceRPC } from "@cloudflare/computer-rpc";
 export interface WorkspaceBackendHost {
   readonly db: import("@cloudflare/dofs").Database;
   readonly fs: import("@cloudflare/dofs").WorkspaceFilesystem;
-  readonly git: import("./git/index.js").GitClient;
-  readonly artifacts: import("./artifacts/index.js").ArtifactClient;
+  readonly git: import("./git/index").GitClient;
+  readonly artifacts: import("./artifacts/index").ArtifactClient;
 }
 
 export interface WorkspaceBackend {

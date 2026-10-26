@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { mkdir } from "./mkdir.js";
-import { resolveInode } from "./resolve.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { CHUNK_SIZE, writeFile, writeFileRangesSync, writeFileSync } from "./writeFile.js";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { mkdir } from "./mkdir";
+import { resolveInode } from "./resolve";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { CHUNK_SIZE, writeFile, writeFileRangesSync, writeFileSync } from "./writeFile";
 
 // Reassemble a file's bytes by stitching its chunk rows together.
 // A deliberately minimal helper so writeFile tests can stand alone

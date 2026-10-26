@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../storage.js";
-import { applyChanges } from "../sync/apply.js";
-import { stageBlob } from "../sync/blobs.js";
-import { gc } from "./gc.js";
-import { readFile } from "./readFile.js";
-import { rm } from "./rm.js";
-import { withDB } from "./with-db.js";
-import { writeFile } from "./writeFile.js";
+import type { Database } from "../storage";
+import { applyChanges } from "../sync/apply";
+import { stageBlob } from "../sync/blobs";
+import { gc } from "./gc";
+import { readFile } from "./readFile";
+import { rm } from "./rm";
+import { withDB } from "./with-db";
+import { writeFile } from "./writeFile";
 
 function blobCount(db: Database): number {
   return db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs") ?? 0;

@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { stageBlob } from "../sync/blobs.js";
-import { buildManifest } from "../sync/manifests.js";
-import { pathOf } from "../sync/paths.js";
-import { getBlobBytes } from "./blobCache.js";
-import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard.js";
-import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
-import { resolveInode } from "./resolve.js";
-import { invalidateResolveExact } from "./resolveCache.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { stageBlob } from "../sync/blobs";
+import { buildManifest } from "../sync/manifests";
+import { pathOf } from "../sync/paths";
+import { getBlobBytes } from "./blobCache";
+import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { resolveInode } from "./resolve";
+import { invalidateResolveExact } from "./resolveCache";
 import {
   allocatePendingInode,
   deleteWriteBuffer,
@@ -22,7 +22,7 @@ import {
   promotePendingToInode,
   setWriteBuffer,
   type WriteBufferEntry,
-} from "./writeBuffer.js";
+} from "./writeBuffer";
 
 // Fixed chunk size. Exported so tests can size inputs precisely
 // without hard-coding the magic number twice.

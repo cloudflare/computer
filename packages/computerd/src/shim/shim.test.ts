@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 
-import { createNodeVirtualFileSystem } from "../fuse/index.js";
-import { mountShim } from "./index.js";
+import { createNodeVirtualFileSystem } from "../fuse/index";
+import { mountShim } from "./index";
 
 // Poll cadence for the assertions below. We pass the same value into
 // the shim so the disk -> VFS reconcile fires this often, and use a

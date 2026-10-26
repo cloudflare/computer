@@ -15,7 +15,7 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MissingIdentityError } from "./errors.js";
+import { MissingIdentityError } from "./errors";
 import {
   fetchWith,
   type IsomorphicGitNetworkClient,
@@ -25,7 +25,7 @@ import {
   remoteAddWith,
   remoteListWith,
   remoteRemoveWith,
-} from "./network.js";
+} from "./network";
 
 function fakeNetworkGit(): {
   git: IsomorphicGitNetworkClient;

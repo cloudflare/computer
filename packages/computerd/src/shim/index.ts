@@ -1,2 +1,2 @@
-export type { ShimMount } from "./shim.js";
-export { mountShim } from "./shim.js";
+export type { ShimMount } from "./shim";
+export { mountShim } from "./shim";

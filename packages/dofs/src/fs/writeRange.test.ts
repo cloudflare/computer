@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../storage.js";
-import { link } from "./link.js";
-import { mkdir } from "./mkdir.js";
-import { readFile } from "./readFile.js";
-import { resolveInode } from "./resolve.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
+import type { Database } from "../storage";
+import { link } from "./link";
+import { mkdir } from "./mkdir";
+import { readFile } from "./readFile";
+import { resolveInode } from "./resolve";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
 import {
   CHUNK_SIZE,
   createFileSync,
   truncateFileSync,
   writeFileSync,
   writeRangeSync,
-} from "./writeFile.js";
+} from "./writeFile";
 
 function bytesOf(text: string): Uint8Array {
   return new TextEncoder().encode(text);

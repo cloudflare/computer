@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertRuntimeValue, WorkspaceRuntimeCapability } from "./capability.js";
-import type { WorkspaceRuntimeFilesystem, WorkspaceRuntimeStat } from "./types.js";
+import { assertRuntimeValue, WorkspaceRuntimeCapability } from "./capability";
+import type { WorkspaceRuntimeFilesystem, WorkspaceRuntimeStat } from "./types";
 
 function fakeFs(): WorkspaceRuntimeFilesystem {
   return {

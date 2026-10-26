@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../storage.js";
-import { mkdir } from "./mkdir.js";
-import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
-import { readRangeSync } from "./readFile.js";
-import { resolveInode } from "./resolve.js";
-import { stat } from "./stat.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
+import type { Database } from "../storage";
+import { mkdir } from "./mkdir";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { readRangeSync } from "./readFile";
+import { resolveInode } from "./resolve";
+import { stat } from "./stat";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
 import {
   CHUNK_SIZE,
   createFileSync,
@@ -16,7 +16,7 @@ import {
   releaseWriteBufferSync,
   truncateFileSync,
   writeRangeSync,
-} from "./writeFile.js";
+} from "./writeFile";
 
 function bytesOf(text: string): Uint8Array {
   return new TextEncoder().encode(text);
@@ -108,7 +108,7 @@ describe("buffered write lifecycle", () => {
       // Both paths point at the same inode. Open under /a.txt, then
       // write under /b.txt: the buffer is keyed by inode so the write
       // lands in the same cache entry.
-      const { link } = await import("./link.js");
+      const { link } = await import("./link");
       link(db, "/a.txt", "/b.txt");
       openWriteBufferSync(db, "/a.txt");
 
@@ -257,8 +257,8 @@ describe("deferred-create lifecycle", () => {
 
   it("surfaces pending files in readdir before release", async () => {
     await withDB(async (db) => {
-      const { readdir } = await import("./readdir.js");
-      const { mkdir } = await import("./mkdir.js");
+      const { readdir } = await import("./readdir");
+      const { mkdir } = await import("./mkdir");
       mkdir(db, "/d", {}, () => 1000);
       openWriteBufferForCreateSync(db, "/d/pending.txt", {}, () => 1001);
 
@@ -307,7 +307,7 @@ describe("deferred-create lifecycle", () => {
   });
 
   it("flushPendingByPath promotes the buffer without consuming the open count", async () => {
-    const { flushPendingByPath } = await import("./writeFile.js");
+    const { flushPendingByPath } = await import("./writeFile");
     await withDB(async (db) => {
       openWriteBufferForCreateSync(db, "/promote.txt", {}, () => 1000);
       writeRangeSync(db, "/promote.txt", bytesOf("before"), 0, {}, () => 1001);
@@ -334,7 +334,7 @@ describe("deferred-create lifecycle", () => {
   });
 
   it("flushPendingByPath returns false when no pending buffer is open", async () => {
-    const { flushPendingByPath } = await import("./writeFile.js");
+    const { flushPendingByPath } = await import("./writeFile");
     await withDB(async (db) => {
       createFileSync(db, "/already.txt", {}, () => 1000);
       expect(flushPendingByPath(db, "/already.txt", () => 1001)).toBe(false);

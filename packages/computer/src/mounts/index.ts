@@ -19,7 +19,7 @@
 import type { Database, WorkspaceFilesystem } from "@cloudflare/dofs";
 import { invalidateReadOnlyMountCache, ROOT_INODE } from "@cloudflare/dofs";
 
-import type { Mount, MountWriteAPI } from "./types.js";
+import type { Mount, MountWriteAPI } from "./types";
 
 export interface IndexerOptions {
   db: Database;

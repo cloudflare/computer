@@ -1,4 +1,4 @@
-import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
+import type { WorkspaceRuntimeValue } from "../../runtime/types";
 
 export type RuntimeFrame = (
   | { name: "stdout"; value: Uint8Array }

@@ -50,7 +50,7 @@ function decodeLatin1ToUtf8(b: string): string {
   }
 }
 
-import type { GitCliInput, GitCliResult } from "../../git/index.js";
+import type { GitCliInput, GitCliResult } from "../../git/index";
 
 /** Structural subset of the host stub the command needs. */
 export interface GitCommandHost {

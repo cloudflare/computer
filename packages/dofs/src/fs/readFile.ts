@@ -1,11 +1,11 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { getBlobBytes } from "./blobCache.js";
-import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
-import { resolveInode } from "./resolve.js";
-import { getWriteBuffer } from "./writeBuffer.js";
-import { CHUNK_SIZE } from "./writeFile.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { getBlobBytes } from "./blobCache";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { resolveInode } from "./resolve";
+import { getWriteBuffer } from "./writeBuffer";
+import { CHUNK_SIZE } from "./writeFile";
 
 export interface ReadFileOptions {
   encoding?: "utf8";

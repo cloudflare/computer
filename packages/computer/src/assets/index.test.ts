@@ -1,8 +1,8 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Workspace } from "../workspace.js";
-import { createAssets, resolveS3 } from "./index.js";
+import { Workspace } from "../workspace";
+import { createAssets, resolveS3 } from "./index";
 
 const fixedLengthReads = new WeakMap<ReadableStream<Uint8Array>, number>();
 

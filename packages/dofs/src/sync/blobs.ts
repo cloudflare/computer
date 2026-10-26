@@ -1,5 +1,5 @@
-import { clearBlobCache } from "../fs/blobCache.js";
-import type { Database } from "../storage.js";
+import { clearBlobCache } from "../fs/blobCache";
+import type { Database } from "../storage";
 
 // Stage a chunk directly into vfs_blobs + vfs_blob_bytes without
 // creating a node or a manifest. The receiver-side push path uses

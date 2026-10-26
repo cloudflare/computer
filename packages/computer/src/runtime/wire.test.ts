@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkspaceRuntimeEvent } from "./types.js";
-import { decodeRuntimeEvents, encodeRuntimeEvent } from "./wire.js";
+import type { WorkspaceRuntimeEvent } from "./types";
+import { decodeRuntimeEvents, encodeRuntimeEvent } from "./wire";
 
 function streamOf(...events: WorkspaceRuntimeEvent[]): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({

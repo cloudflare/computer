@@ -26,7 +26,7 @@ import {
   parseShellFetchResult,
   targetUrl,
   workspaceEgressPolicy,
-} from "./egress.js";
+} from "./egress";
 
 export { WorkspaceProxy, WorkspaceServiceProxy };
 

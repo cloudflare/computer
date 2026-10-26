@@ -2,7 +2,7 @@ import * as zlib from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import pako, { deflate, Inflate, inflate } from "./pako-zlib-shim.js";
+import pako, { deflate, Inflate, inflate } from "./pako-zlib-shim";
 
 function bytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);

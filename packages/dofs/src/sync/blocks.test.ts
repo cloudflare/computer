@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { rm } from "../fs/rm.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import type { Database } from "../storage.js";
-import { PACK_THRESHOLD_BYTES, PACK_THRESHOLD_ENTRIES, planBlock, selectMode } from "./blocks.js";
-import { MIN_BLOCK_PROFILE } from "./operations.js";
-import { currentRev } from "./watermarks.js";
+import { rm } from "../fs/rm";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import type { Database } from "../storage";
+import { PACK_THRESHOLD_BYTES, PACK_THRESHOLD_ENTRIES, planBlock, selectMode } from "./blocks";
+import { MIN_BLOCK_PROFILE } from "./operations";
+import { currentRev } from "./watermarks";
 
 // The planner turns a cursor window into one block: an ordered prefix
 // of the coalesced change stream, bounded by the internal sizing

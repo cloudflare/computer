@@ -19,25 +19,25 @@
 // an RpcTarget so it works the same in-isolate and across RPC.
 
 import { RpcTarget } from "cloudflare:workers";
-import { withHostName } from "../../durable-object-name.js";
-import { WorkspaceTransportError } from "../../transport-failure.js";
-import { ContainerClientSecret } from "./container-client-secret.js";
+import { withHostName } from "../../durable-object-name";
+import { WorkspaceTransportError } from "../../transport-failure";
+import { ContainerClientSecret } from "./container-client-secret";
 import {
   type ContainerLaunchRecord,
   type ContainerLaunchSpec,
   CurrentContainerLaunchRecord,
   launchRecordFor,
   sameLaunch,
-} from "./container-launch-record.js";
+} from "./container-launch-record";
 import {
   type ContainerExitInfo,
   containerExitInfo,
   destroyContainerExpectingExit,
   installContainerMonitor,
-} from "./container-lifecycle.js";
-import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity.js";
+} from "./container-lifecycle";
+import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity";
 
-export type { ContainerExitInfo } from "./container-lifecycle.js";
+export type { ContainerExitInfo } from "./container-lifecycle";
 
 // Identifies the Durable Object that owns the Workspace and answers
 // the /api upgrade. Plain data so it can travel over Workers RPC.

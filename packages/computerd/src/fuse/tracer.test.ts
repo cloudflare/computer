@@ -6,7 +6,7 @@ import {
   type FuseTracerSnapshot,
   summarizeFuseTrace,
   wrapFuseOpsWithTracer,
-} from "./tracer.js";
+} from "./tracer";
 
 describe("summarizeFuseTrace", () => {
   test("returns an empty summary when no ops have been recorded", () => {

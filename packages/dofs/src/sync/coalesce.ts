@@ -1,8 +1,8 @@
-import type { Database } from "../storage.js";
-import { type ChangeEntry, materialiseChange } from "./changes.js";
-import { isIgnored } from "./ignore.js";
-import { pathsOfMany } from "./paths.js";
-import { type ChangeCursor, compareChangeCursors } from "./watermarks.js";
+import type { Database } from "../storage";
+import { type ChangeEntry, materialiseChange } from "./changes";
+import { isIgnored } from "./ignore";
+import { pathsOfMany } from "./paths";
+import { type ChangeCursor, compareChangeCursors } from "./watermarks";
 
 // Yield one ChangeEntry per path touched after `after`. Per-path
 // coalescing: five rewrites of the same path between watermarks

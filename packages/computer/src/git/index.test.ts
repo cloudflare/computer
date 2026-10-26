@@ -8,8 +8,8 @@
 import type { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 import { describe, expect, it, vi } from "vitest";
 
-import type { IsomorphicGitFSClient } from "./adapter.js";
-import { createGitClient } from "./index.js";
+import type { IsomorphicGitFSClient } from "./adapter";
+import { createGitClient } from "./index";
 
 // `createGitClient` only reads `.provider()` and forwards the
 // result to the adapter. A stub provider is enough; the adapter

@@ -20,8 +20,8 @@
 
 import { type CustomCommand, defineCommand } from "just-bash";
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult, RemoteAddFn } from "../../artifacts/index.js";
-import type { GitCommandHost } from "./git-command.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult, RemoteAddFn } from "../../artifacts/index";
+import type { GitCommandHost } from "./git-command";
 
 /**
  * Structural subset of the host the command needs. It owns the

@@ -17,7 +17,7 @@ import {
   isNotARepositoryCause,
   MissingIdentityError,
   NotARepositoryError,
-} from "./errors.js";
+} from "./errors";
 
 /** Shape isomorphic-git accepts for HTTP basic / bearer auth. */
 export interface GitAuth {

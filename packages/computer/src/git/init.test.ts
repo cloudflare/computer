@@ -6,8 +6,8 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { AlreadyInitializedError } from "./errors.js";
-import { type IsomorphicGitInitClient, initWith } from "./init.js";
+import { AlreadyInitializedError } from "./errors";
+import { type IsomorphicGitInitClient, initWith } from "./init";
 
 const isogit = git as unknown as IsomorphicGitInitClient;
 

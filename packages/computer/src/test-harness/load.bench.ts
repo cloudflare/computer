@@ -11,7 +11,7 @@
 import { env } from "cloudflare:test";
 import { bench, describe } from "vitest";
 
-import { withWorkspace } from "./with-workspace.js";
+import { withWorkspace } from "./with-workspace";
 
 interface HarnessEnv {
   COMPUTERD_HARNESS_URL: string;

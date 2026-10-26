@@ -10,8 +10,8 @@ import {
   isNotARepositoryCause,
   NotARepositoryError,
   PathspecNotFoundError,
-} from "./errors.js";
-import type { StatusMatrixRow } from "./status.js";
+} from "./errors";
+import type { StatusMatrixRow } from "./status";
 
 /** Subset of `isomorphic-git`'s API used for `add`. */
 export interface IsomorphicGitAddClient {

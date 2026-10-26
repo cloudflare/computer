@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { mkdir } from "./mkdir.js";
-import { invalidateReadOnlyMountCache } from "./mount-guard.js";
-import { readFile } from "./readFile.js";
-import { readlink } from "./readlink.js";
-import { resolveInode } from "./resolve.js";
-import { stat } from "./stat.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFile } from "./writeFile.js";
+import { mkdir } from "./mkdir";
+import { invalidateReadOnlyMountCache } from "./mount-guard";
+import { readFile } from "./readFile";
+import { readlink } from "./readlink";
+import { resolveInode } from "./resolve";
+import { stat } from "./stat";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFile } from "./writeFile";
 
 describe("symlink", () => {
   it("creates a symlink node with the requested target", async () => {

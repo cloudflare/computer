@@ -6,7 +6,7 @@
 //
 import { describe, expect, test } from "vitest";
 
-import { ContainerClientSecret } from "./container-client-secret.js";
+import { ContainerClientSecret } from "./container-client-secret";
 
 function fakeStorage(initial: Record<string, unknown> = {}) {
   const values = new Map<string, unknown>(Object.entries(initial));

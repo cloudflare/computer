@@ -2,10 +2,10 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
-import { createToolBindings } from "../../modules/tools.js";
-import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../../runtime/types.js";
-import { Workspace } from "../../workspace.js";
-import { createPiTools, forPiTools, type PiAgentTool, type PiAgentToolResult } from "./index.js";
+import { createToolBindings } from "../../modules/tools";
+import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../../runtime/types";
+import { Workspace } from "../../workspace";
+import { createPiTools, forPiTools, type PiAgentTool, type PiAgentToolResult } from "./index";
 
 // SAFETY: Tool bindings never touch the host's Git, Artifacts, or runtime.
 const host = {} as WorkspaceModuleHost;

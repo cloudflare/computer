@@ -18,8 +18,8 @@
 // corruption: the `WHERE generation = ?` clause fails and the caller
 // learns it lost the race from the returned boolean.
 
-import type { Database } from "../storage.js";
-import { type ChangeCursor, DEFAULT_BACKEND_ID } from "./watermarks.js";
+import type { Database } from "../storage";
+import { type ChangeCursor, DEFAULT_BACKEND_ID } from "./watermarks";
 
 export type SyncDirection = "pull" | "push";
 export type SyncMode = "entries" | "pack";

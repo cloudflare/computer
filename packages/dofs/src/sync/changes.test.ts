@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mkdir } from "../fs/mkdir.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import { materialiseChange } from "./changes.js";
+import { mkdir } from "../fs/mkdir";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import { materialiseChange } from "./changes";
 
 describe("materialiseChange", () => {
   it("returns a file entry with chunk hashes for a written file", async () => {

@@ -16,7 +16,7 @@
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
-export { WorkspaceProxy, WorkspaceServiceProxy } from "../src/proxy.js";
+export { WorkspaceProxy, WorkspaceServiceProxy } from "../src/proxy";
 
 export interface Env {
   COMPUTERD: DurableObjectNamespace;

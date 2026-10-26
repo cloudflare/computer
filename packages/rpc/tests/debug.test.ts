@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { enableStubTracking, stubSnapshot, trackStub, untrackStub } from "../src/debug.js";
+import { enableStubTracking, stubSnapshot, trackStub, untrackStub } from "../src/debug";
 
 describe("stub leak tracking", () => {
   it("counts target identities and ignores repeated disposal", () => {

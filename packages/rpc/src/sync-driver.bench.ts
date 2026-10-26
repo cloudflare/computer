@@ -23,8 +23,8 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { bench, describe } from "vitest";
 
-import { createSyncServer } from "./server.js";
-import { pullOnce, pushOnce, tick } from "./sync-driver.js";
+import { createSyncServer } from "./server";
+import { pullOnce, pushOnce, tick } from "./sync-driver";
 
 function makePeer() {
   const storage = new SQLiteTestStorage();

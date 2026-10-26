@@ -1,19 +1,19 @@
-import { mkdir, mkdirForSyncParents } from "../fs/mkdir.js";
-import { readOnlyRootFor } from "../fs/mount-guard.js";
-import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve.js";
-import { invalidateResolveSubtree } from "../fs/resolveCache.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { unlinkDirent } from "../fs/unlink.js";
-import { assertChunkWindows, linkStagedChunksSync } from "../fs/writeFile.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import type { Database } from "../storage.js";
-import { stageBlob } from "./blobs.js";
-import type { ChangeEntry } from "./changes.js";
-import { versionFingerprint } from "./fingerprint.js";
-import { computeManifestHash } from "./manifests.js";
-import { pathOf } from "./paths.js";
+import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
+import { readOnlyRootFor } from "../fs/mount-guard";
+import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
+import { invalidateResolveSubtree } from "../fs/resolveCache";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { unlinkDirent } from "../fs/unlink";
+import { assertChunkWindows, linkStagedChunksSync } from "../fs/writeFile";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import type { Database } from "../storage";
+import { stageBlob } from "./blobs";
+import type { ChangeEntry } from "./changes";
+import { versionFingerprint } from "./fingerprint";
+import { computeManifestHash } from "./manifests";
+import { pathOf } from "./paths";
 import {
   type ChangeCursor,
   compareChangeCursors,
@@ -21,7 +21,7 @@ import {
   DEFAULT_BACKEND_ID,
   pushWindowIsEmpty,
   readPushCursor,
-} from "./watermarks.js";
+} from "./watermarks";
 
 // One container-side change that landed under a read-only mount and
 // was therefore skipped rather than applied. Callers (the workspace

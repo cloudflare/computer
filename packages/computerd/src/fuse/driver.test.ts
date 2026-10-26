@@ -2,7 +2,7 @@ import { constants as fsConstants } from "node:fs";
 
 import { expect, test } from "vitest";
 
-import { createNodeVirtualFileSystem, makeFUSEOps } from "./index.js";
+import { createNodeVirtualFileSystem, makeFUSEOps } from "./index";
 
 const callback = (fn: (cb: (errno: number, result: unknown) => void) => void) =>
   new Promise<{ errno: number; result: unknown }>((resolve) =>

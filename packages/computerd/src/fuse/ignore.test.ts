@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { MountIgnorePathError, parseMountIgnore, resolveMountIgnore } from "./ignore.js";
+import { MountIgnorePathError, parseMountIgnore, resolveMountIgnore } from "./ignore";
 
 describe("parseMountIgnore", () => {
   test("splits MOUNT_IGNORE on commas", () => {

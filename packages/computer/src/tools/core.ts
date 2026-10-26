@@ -10,4 +10,4 @@ export {
   type ExecToolOptions,
   type ExecToolOutput,
   type ExecWorkspaceLike,
-} from "./common/exec.js";
+} from "./common/exec";

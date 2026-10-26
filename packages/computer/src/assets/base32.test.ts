@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeBase32, encodeBase32, randomId } from "./base32.js";
+import { decodeBase32, encodeBase32, randomId } from "./base32";
 
 describe("encodeBase32", () => {
   it("encodes the empty input to the empty string", () => {

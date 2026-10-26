@@ -1,11 +1,11 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { assertNotReadOnly } from "./mount-guard.js";
-import { resolveInode } from "./resolve.js";
-import { invalidateResolveExact } from "./resolveCache.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { assertNotReadOnly } from "./mount-guard";
+import { resolveInode } from "./resolve";
+import { invalidateResolveExact } from "./resolveCache";
 
 function resolveParent(db: Database, parts: string[], canonical: string): number {
   let parentInode = ROOT_INODE;

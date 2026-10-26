@@ -10,7 +10,7 @@
 // working; the constructor throws so any actual instantiation
 // outside workerd surfaces a clear error.
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index.js";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "./artifacts/index";
 
 export interface WorkspaceProxyProps {
   binding: string;

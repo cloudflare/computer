@@ -18,10 +18,10 @@
 
 import { EventEmitter } from "node:events";
 
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { coalesceChanges } from "../sync/coalesce.js";
-import { currentRev } from "../sync/watermarks.js";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { coalesceChanges } from "../sync/coalesce";
+import { currentRev } from "../sync/watermarks";
 
 export interface WatchOptions {
   // Recurse into subdirectories. When false (default) the watcher

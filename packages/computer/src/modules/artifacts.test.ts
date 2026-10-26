@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../runtime/types.js";
-import { createArtifactsModule } from "./artifacts.js";
+import type { WorkspaceModuleCallContext, WorkspaceModuleHost } from "../runtime/types";
+import { createArtifactsModule } from "./artifacts";
 
 function fakeArtifacts() {
   const tokens: Array<{ name: string; scope: string | undefined; ttl: number | undefined }> = [];

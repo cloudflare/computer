@@ -23,8 +23,8 @@
 import type { ExecEvent, ShellRPC } from "@cloudflare/computer-rpc";
 import type { ApplyResult, ChangeCursor, SkippedEntry } from "@cloudflare/dofs";
 
-import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
-import { assertNotTemplate } from "./sh.js";
+import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe";
+import { assertNotTemplate } from "./sh";
 
 export type ExecEncoding = "utf8" | undefined;
 

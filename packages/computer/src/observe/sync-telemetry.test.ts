@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createSyncLogger, syncBlockLog } from "./sync-telemetry.js";
+import { createSyncLogger, syncBlockLog } from "./sync-telemetry";
 
 // Spans are the right shape for tracing, but Workers Logs is what the
 // telemetry query API can aggregate today: structured console.log output

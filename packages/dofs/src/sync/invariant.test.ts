@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { assertAppliedPushCursor } from "./invariant.js";
+import { assertAppliedPushCursor } from "./invariant";
 
 describe("assertAppliedPushCursor", () => {
   it("passes when applied covers pushed", () => {

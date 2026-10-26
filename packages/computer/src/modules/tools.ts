@@ -25,7 +25,7 @@ import type {
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
-} from "../runtime/types.js";
+} from "../runtime/types";
 
 /** One tool, as code calls it. */
 export interface ToolBinding {

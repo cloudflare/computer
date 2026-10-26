@@ -11,9 +11,9 @@ import {
   type PassthroughRegistrar,
   type PassthroughStats,
   withLocalPassthrough,
-} from "./passthrough.js";
-import { createFuseTracer, type FuseTracer, wrapFuseOpsWithTracer } from "./tracer.js";
-import type { NodeVirtualFileSystem } from "./vfs.js";
+} from "./passthrough";
+import { createFuseTracer, type FuseTracer, wrapFuseOpsWithTracer } from "./tracer";
+import type { NodeVirtualFileSystem } from "./vfs";
 
 const ERRNO = {
   ENOENT: -2,

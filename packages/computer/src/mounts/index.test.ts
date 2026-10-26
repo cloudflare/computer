@@ -1,9 +1,9 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "../backend.js";
-import { Workspace } from "../workspace.js";
-import type { EagerMount, MountWriteAPI } from "./types.js";
+import type { BackendHandle, WorkspaceBackend } from "../backend";
+import { Workspace } from "../workspace";
+import type { EagerMount, MountWriteAPI } from "./types";
 
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();

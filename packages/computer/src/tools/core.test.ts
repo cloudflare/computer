@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defineExec, type ExecToolOutput } from "./core.js";
+import { defineExec, type ExecToolOutput } from "./core";
 
 describe("defineExec", () => {
   it("parses an input object sent as text only for a callable backend", () => {

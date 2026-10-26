@@ -17,7 +17,7 @@
 // changes only; they don't touch user data unless the column shape
 // requires it.
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 export interface Migration {
   readonly from: number;

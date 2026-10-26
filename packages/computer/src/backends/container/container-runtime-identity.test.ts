@@ -6,7 +6,7 @@
 //
 import { describe, expect, it, vi } from "vitest";
 
-import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity.js";
+import { CurrentContainerRuntimeIdentity } from "./container-runtime-identity";
 
 function storage(initial = new Map<string, unknown>()) {
   return {

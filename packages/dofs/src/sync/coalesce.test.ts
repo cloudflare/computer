@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { link } from "../fs/link.js";
-import { mkdir } from "../fs/mkdir.js";
-import { rename } from "../fs/rename.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile, writeFileSync } from "../fs/writeFile.js";
-import { coalesceChanges } from "./coalesce.js";
-import { currentRev } from "./watermarks.js";
+import { link } from "../fs/link";
+import { mkdir } from "../fs/mkdir";
+import { rename } from "../fs/rename";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { withDB } from "../fs/with-db";
+import { writeFile, writeFileSync } from "../fs/writeFile";
+import { coalesceChanges } from "./coalesce";
+import { currentRev } from "./watermarks";
 
 // Drain an async iterable into an array. Tests stay synchronous-looking
 // while the production code can stream.

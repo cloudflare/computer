@@ -6,8 +6,8 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { commitWith, type IsomorphicGitCommitClient } from "./commit.js";
-import { MissingIdentityError } from "./errors.js";
+import { commitWith, type IsomorphicGitCommitClient } from "./commit";
+import { MissingIdentityError } from "./errors";
 
 const DIR = "/repo";
 

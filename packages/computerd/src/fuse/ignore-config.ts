@@ -7,7 +7,7 @@
 
 import { isAbsolute, join, resolve } from "node:path";
 
-import { type MountIgnoreSet, parseMountIgnore, resolveMountIgnore } from "./ignore.js";
+import { type MountIgnoreSet, parseMountIgnore, resolveMountIgnore } from "./ignore";
 
 export interface MountIgnoreConfig {
   /** Where local-only paths are stored. Absolute, outside the mount. */

@@ -11,11 +11,11 @@
 // `push()` iterables take no budgets; these bounds exist so one block
 // fits inside a Durable Object's CPU allowance.
 
-import type { Database } from "../storage.js";
-import type { ChangeEntry } from "./changes.js";
-import { coalesceChanges } from "./coalesce.js";
-import type { BlockProfile, SyncMode } from "./operations.js";
-import type { ChangeCursor } from "./watermarks.js";
+import type { Database } from "../storage";
+import type { ChangeEntry } from "./changes";
+import { coalesceChanges } from "./coalesce";
+import type { BlockProfile, SyncMode } from "./operations";
+import type { ChangeCursor } from "./watermarks";
 
 // Above either threshold an operation switches from shipping
 // individual entries to shipping a compressed content-addressed pack.

@@ -32,8 +32,8 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, it } from "vitest";
 
-import { createSyncServer } from "../server.js";
-import { pullBlocks } from "../sync-engine.js";
+import { createSyncServer } from "../server";
+import { pullBlocks } from "../sync-engine";
 
 const NOW = (): number => 1000;
 const ENABLED = process.env.SYNC_SCALE === "1";

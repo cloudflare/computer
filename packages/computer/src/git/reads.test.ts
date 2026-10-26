@@ -8,7 +8,7 @@ import git from "isomorphic-git";
 import { fs as memfs, vol } from "memfs";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { NotARepositoryError } from "./errors.js";
+import { NotARepositoryError } from "./errors";
 import {
   currentBranchWith,
   type IsomorphicGitReadsClient,
@@ -18,7 +18,7 @@ import {
   repoRootWith,
   revParseWith,
   showWith,
-} from "./reads.js";
+} from "./reads";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

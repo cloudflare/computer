@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { withDB } from "../fs/with-db.js";
+import { withDB } from "../fs/with-db";
 import {
   beginCapture,
   clearBlockMarker,
@@ -16,7 +16,7 @@ import {
   readSkips,
   recordSkip,
   shrinkBlockProfile,
-} from "./operations.js";
+} from "./operations";
 
 // The operation row is the durable half of a restartable sync. These
 // tests treat it as a state machine: absent -> capturing -> pending ->

@@ -4,8 +4,8 @@
 
 import { env, runInDurableObject } from "cloudflare:test";
 
-import { TestBackend, Workspace } from "../index.js";
-import type { HarnessBindings } from "../test-harness-worker.js";
+import { TestBackend, Workspace } from "../index";
+import type { HarnessBindings } from "../test-harness-worker";
 
 function freshStub() {
   const bindings = env as unknown as HarnessBindings;

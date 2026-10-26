@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { invalidateReadOnlyMountCache } from "./fs/mount-guard.js";
-import { withDB } from "./fs/with-db.js";
-import { SQLiteWorkspaceProvider } from "./provider.js";
-import type { Database } from "./storage.js";
-import type { ChangeEntry } from "./sync/changes.js";
-import { coalesceChanges } from "./sync/coalesce.js";
+import { invalidateReadOnlyMountCache } from "./fs/mount-guard";
+import { withDB } from "./fs/with-db";
+import { SQLiteWorkspaceProvider } from "./provider";
+import type { Database } from "./storage";
+import type { ChangeEntry } from "./sync/changes";
+import { coalesceChanges } from "./sync/coalesce";
 
 // Each provider test gets a fresh DB via withDB, which the workers
 // runner aliases to a DO-backed implementation. The provider holds
@@ -879,7 +879,7 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
   });
 
   it("unlinkSync drops the inode-keyed buffer when the last link disappears", async () => {
-    const { getWriteBuffer } = await import("./fs/writeBuffer.js");
+    const { getWriteBuffer } = await import("./fs/writeBuffer");
     await withProvider((p) => {
       p.writeFileSync("/a.txt", "hello");
       const inode = p.statSync("/a.txt").ino;
@@ -896,7 +896,7 @@ describe("SQLiteWorkspaceProvider — pending-create flush on rename/link/unlink
   });
 
   it("unlinkSync keeps the buffer alive when a hardlink remains", async () => {
-    const { getWriteBuffer } = await import("./fs/writeBuffer.js");
+    const { getWriteBuffer } = await import("./fs/writeBuffer");
     await withProvider((p) => {
       p.writeFileSync("/a.txt", "shared");
       p.linkSync("/a.txt", "/b.txt");

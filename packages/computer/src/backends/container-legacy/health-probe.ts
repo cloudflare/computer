@@ -14,7 +14,7 @@
 // backoff / budget. No retries here — keeping the helper a single
 // shot lets startup and lease alarms compose it differently.
 
-import type { ILegacyWorkspaceContainerAPI } from "./container-host.js";
+import type { ILegacyWorkspaceContainerAPI } from "./container-host";
 
 export interface ComputerdHealthProbeOptions {
   // TCP port computerd listens on inside the container.

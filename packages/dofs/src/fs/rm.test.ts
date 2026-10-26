@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import type { Database } from "../storage.js";
-import { mkdir } from "./mkdir.js";
-import { readdir } from "./readdir.js";
-import { readFile } from "./readFile.js";
-import { resolveInode } from "./resolve.js";
-import { rm } from "./rm.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFile } from "./writeFile.js";
+import type { Database } from "../storage";
+import { mkdir } from "./mkdir";
+import { readdir } from "./readdir";
+import { readFile } from "./readFile";
+import { resolveInode } from "./resolve";
+import { rm } from "./rm";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFile } from "./writeFile";
 
 interface ChangeRow {
   rev: number;

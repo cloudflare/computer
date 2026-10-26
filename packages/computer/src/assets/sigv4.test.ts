@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { presignUrl, sha256Hex, sha256HexStream, signingKey } from "./sigv4.js";
+import { presignUrl, sha256Hex, sha256HexStream, signingKey } from "./sigv4";
 
 function toHex(bytes: Uint8Array): string {
   let out = "";

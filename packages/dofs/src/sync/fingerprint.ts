@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
-import type { Database } from "../storage.js";
-import { computeManifestHash } from "./manifests.js";
+import type { Database } from "../storage";
+import { computeManifestHash } from "./manifests";
 
 // A version fingerprint names what a delete would destroy: the node's
 // type, its permission bits, and its content (a file's manifest hash,

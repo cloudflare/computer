@@ -13,8 +13,8 @@
 import { encodeUtf8ToBytes } from "just-bash";
 import { describe, expect, it, vi } from "vitest";
 
-import type { GitCliInput, GitCliResult } from "../../git/index.js";
-import { defineGitCommand, type GitCommandHost } from "./git-command.js";
+import type { GitCliInput, GitCliResult } from "../../git/index";
+import { defineGitCommand, type GitCommandHost } from "./git-command";
 
 function fakeHost(impl: (input: GitCliInput) => Promise<GitCliResult> | GitCliResult): {
   host: GitCommandHost;

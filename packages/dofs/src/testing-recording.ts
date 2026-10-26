@@ -1,4 +1,4 @@
-import type { DurableObjectStorageLike, SQLCursorLike } from "./types.js";
+import type { DurableObjectStorageLike, SQLCursorLike } from "./types";
 
 // Pure-JS test fixture. Records every SQL statement the production
 // code emits, lets the test assert against the trace, and serves a

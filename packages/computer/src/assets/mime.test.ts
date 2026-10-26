@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { contentTypeForPath, DEFAULT_CONTENT_TYPE } from "./mime.js";
+import { contentTypeForPath, DEFAULT_CONTENT_TYPE } from "./mime";
 
 describe("contentTypeForPath", () => {
   it("maps known image extensions", () => {

@@ -1,6 +1,6 @@
-import { createWorkspaceError } from "../errors.js";
-import type { Database } from "../storage.js";
-import { resolveInode } from "./resolve.js";
+import { createWorkspaceError } from "../errors";
+import type { Database } from "../storage";
+import { resolveInode } from "./resolve";
 
 // Return the stored target of a symlink. Does not follow the link.
 // Mirrors POSIX semantics: ENOENT for a missing path, EINVAL when

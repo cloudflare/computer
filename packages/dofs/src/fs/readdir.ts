@@ -1,8 +1,8 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { resolveInode } from "./resolve.js";
-import { getWriteBuffer, listPendingByParent } from "./writeBuffer.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { resolveInode } from "./resolve";
+import { getWriteBuffer, listPendingByParent } from "./writeBuffer";
 
 export interface WorkspaceDirentResult {
   name: string;

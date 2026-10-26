@@ -6,7 +6,7 @@ import {
   checkIgnorePatterns,
   type ResolvedIgnore,
   readIgnoreReport,
-} from "./ignore-assertion.js";
+} from "./ignore-assertion";
 
 // The failure guarded here is slow rather than loud: a container that
 // isn't applying the patterns looks exactly like one that is until a

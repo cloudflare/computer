@@ -7,7 +7,7 @@
 // shape and map the underlying NotFoundError-shaped failures
 // to NotARepositoryError through the shared heuristic.
 
-import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
+import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors";
 
 /** The four object types git stores, as `cat-file -t` names them. */
 export type GitObjectType = "blob" | "tree" | "commit" | "tag";

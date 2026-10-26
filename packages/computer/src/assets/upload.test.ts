@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { basename, buildKey, contentDisposition, normalisePrefix } from "./upload.js";
+import { basename, buildKey, contentDisposition, normalisePrefix } from "./upload";
 
 describe("basename", () => {
   it("returns the last path segment", () => {

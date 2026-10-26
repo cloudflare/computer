@@ -1,9 +1,9 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { iterateFoundEntries } from "./find.js";
-import { readFile } from "./readFile.js";
-import { resolveInode } from "./resolve.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { iterateFoundEntries } from "./find";
+import { readFile } from "./readFile";
+import { resolveInode } from "./resolve";
 
 export interface WorkspaceGrepContextLine {
   line: number;

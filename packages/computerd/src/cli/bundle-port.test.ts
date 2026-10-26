@@ -12,7 +12,7 @@ import { expect, onTestFinished, test } from "vitest";
 // integration tests).
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const distEntry = path.resolve(here, "../../dist/cli/computerd.cjs");
+const distEntry = path.resolve(here, "../../dist/cli/computerd.js");
 const bundleScript = path.resolve(here, "../../scripts/sea/bundle.mjs");
 
 type BundleComputerd = (opts: { outfile: string }) => Promise<void>;
@@ -23,7 +23,7 @@ async function loadBundler(ctx: {
   try {
     await fs.access(distEntry);
   } catch {
-    ctx.skip("dist/cli/computerd.cjs not built; run `npm run build` first");
+    ctx.skip("dist/cli/computerd.js not built; run `npm run build` first");
     return undefined;
   }
   const mod = (await import(bundleScript)) as { bundleComputerd: BundleComputerd };

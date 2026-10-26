@@ -1,15 +1,15 @@
 import { z } from "zod";
-import type { TruncatedOutput } from "../../runtime/output-spool.js";
+import type { TruncatedOutput } from "../../runtime/output-spool";
 import {
   DEFAULT_OUTPUT_MAX_BYTES,
   DEFAULT_OUTPUT_MAX_LINES,
   makeOutputLimits,
   type OutputLimits,
   OutputWindow,
-} from "../../runtime/output-tail.js";
-import type { WorkspaceBackendInfo } from "../../runtime/runtime.js";
-import { notCallableMessage } from "../../runtime/runtime.js";
-import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types.js";
+} from "../../runtime/output-tail";
+import type { WorkspaceBackendInfo } from "../../runtime/runtime";
+import { notCallableMessage } from "../../runtime/runtime";
+import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types";
 
 // A finite JSON value: what a callable backend accepts as `input` and
 // returns as `result`. Declared as a concrete recursive schema rather

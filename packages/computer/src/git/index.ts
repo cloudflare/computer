@@ -23,15 +23,15 @@
 
 import type { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
 
-import { type IsomorphicGitFSClient, workspaceIsomorphicGitClient } from "./adapter.js";
-import { type GitCliInput, type GitCliResult, runGitCli } from "./cli.js";
-import { cloneWith, type GitCloneOptions, type IsomorphicGitClient } from "./clone.js";
+import { type IsomorphicGitFSClient, workspaceIsomorphicGitClient } from "./adapter";
+import { type GitCliInput, type GitCliResult, runGitCli } from "./cli";
+import { cloneWith, type GitCloneOptions, type IsomorphicGitClient } from "./clone";
 import {
   type CommitResult,
   commitWith,
   type GitCommitOptions,
   type IsomorphicGitCommitClient,
-} from "./commit.js";
+} from "./commit";
 import {
   type CreatePatchFn,
   type DiffSummaryEntry,
@@ -40,8 +40,8 @@ import {
   type GitDiffOptions,
   type IsomorphicGitDiffClient,
   type ReadFileFn,
-} from "./diff.js";
-import { type GitInitOptions, type IsomorphicGitInitClient, initWith } from "./init.js";
+} from "./diff";
+import { type GitInitOptions, type IsomorphicGitInitClient, initWith } from "./init";
 import {
   type FetchResult,
   fetchWith,
@@ -62,7 +62,7 @@ import {
   remoteAddWith,
   remoteListWith,
   remoteRemoveWith,
-} from "./network.js";
+} from "./network";
 import {
   type CatFileResult,
   catFileWith,
@@ -76,7 +76,7 @@ import {
   hashObjectWith,
   type IsomorphicGitPlumbingClient,
   updateRefWith,
-} from "./plumbing.js";
+} from "./plumbing";
 import {
   type CommitView,
   currentBranchWith,
@@ -95,7 +95,7 @@ import {
   revParseWith,
   showWith,
   type TreeEntryView,
-} from "./reads.js";
+} from "./reads";
 import {
   branchDeleteWith,
   branchListWith,
@@ -112,7 +112,7 @@ import {
   tagDeleteWith,
   tagListWith,
   tagWith,
-} from "./refs.js";
+} from "./refs";
 import {
   addWith,
   type GitAddOptions,
@@ -120,13 +120,13 @@ import {
   type IsomorphicGitAddClient,
   type IsomorphicGitRmClient,
   rmWith,
-} from "./staging.js";
+} from "./staging";
 import {
   type GitStatusOptions,
   type IsomorphicGitStatusClient,
   type StatusEntry,
   statusWith,
-} from "./status.js";
+} from "./status";
 import {
   type BaseWorktreeOptions,
   type CleanOptions,
@@ -141,12 +141,12 @@ import {
   stashListWith,
   stashPopWith,
   stashPushWith,
-} from "./worktree.js";
+} from "./worktree";
 
-export type { GitCliInput, GitCliResult } from "./cli.js";
-export type { GitCloneOptions, MessageCallback, ProgressCallback } from "./clone.js";
-export type { CommitResult, GitCommitOptions } from "./commit.js";
-export type { DiffSummaryEntry, GitDiffOptions, StatusRow } from "./diff.js";
+export type { GitCliInput, GitCliResult } from "./cli";
+export type { GitCloneOptions, MessageCallback, ProgressCallback } from "./clone";
+export type { CommitResult, GitCommitOptions } from "./commit";
+export type { DiffSummaryEntry, GitDiffOptions, StatusRow } from "./diff";
 export {
   AlreadyInitializedError,
   GitError,
@@ -154,8 +154,8 @@ export {
   NotARepositoryError,
   PathOutsideRepoError,
   PathspecNotFoundError,
-} from "./errors.js";
-export type { GitInitOptions } from "./init.js";
+} from "./errors";
+export type { GitInitOptions } from "./init";
 export type {
   AuthCallback,
   FetchResult,
@@ -171,7 +171,7 @@ export type {
   PushResult,
   RefUpdateStatus,
   RemoteView,
-} from "./network.js";
+} from "./network";
 export type {
   CatFileResult,
   GitCatFileOptions,
@@ -179,7 +179,7 @@ export type {
   GitConfigSetOptions,
   GitHashObjectOptions,
   GitUpdateRefOptions,
-} from "./plumbing.js";
+} from "./plumbing";
 export type {
   CommitView,
   GitCurrentBranchOptions,
@@ -190,7 +190,7 @@ export type {
   GitRevParseOptions,
   GitShowOptions,
   TreeEntryView,
-} from "./reads.js";
+} from "./reads";
 export type {
   GitBranchDeleteOptions,
   GitBranchListOptions,
@@ -199,16 +199,16 @@ export type {
   GitTagDeleteOptions,
   GitTagListOptions,
   GitTagOptions,
-} from "./refs.js";
-export type { GitAddOptions, GitRmOptions } from "./staging.js";
-export type { GitStatusOptions, StatusEntry } from "./status.js";
+} from "./refs";
+export type { GitAddOptions, GitRmOptions } from "./staging";
+export type { GitStatusOptions, StatusEntry } from "./status";
 export type {
   BaseWorktreeOptions,
   CleanOptions,
   ResetOptions,
   StashPopOptions,
   StashPushOptions,
-} from "./worktree.js";
+} from "./worktree";
 
 /** Duck-typed workspace handle. Only `.provider()` is required. */
 export interface WorkspaceLike {
@@ -728,7 +728,7 @@ async function loadDefaultHTTP(): Promise<object> {
 
 async function loadCreatePatch(): Promise<CreatePatchFn> {
   try {
-    const mod = await import("diff");
+    const mod = await import("./create-patch");
     return mod.createPatch;
   } catch (cause) {
     throw new Error("Failed to load @cloudflare/computer/git's bundled diff implementation.", {

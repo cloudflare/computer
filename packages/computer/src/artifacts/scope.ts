@@ -21,7 +21,7 @@
 // underscore. Both the session id and the local name are forbidden
 // from containing that separator, so the split is unambiguous.
 
-import { InvalidRepoNameError, InvalidSessionIdError } from "./errors.js";
+import { InvalidRepoNameError, InvalidSessionIdError } from "./errors";
 
 export const SCOPE_SEPARATOR = "__";
 

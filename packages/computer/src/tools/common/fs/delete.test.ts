@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deleteFromStore } from "./delete.js";
-import type { MutableFileStore } from "./types.js";
+import { deleteFromStore } from "./delete";
+import type { MutableFileStore } from "./types";
 
 function store(remove: MutableFileStore["remove"]): MutableFileStore {
   return {

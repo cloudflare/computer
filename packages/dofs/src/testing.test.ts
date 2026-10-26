@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { initializeSchema, ROOT_INODE } from "./schema/index.js";
-import { Database } from "./storage.js";
-import { SQLiteTestStorage } from "./testing.js";
+import { initializeSchema, ROOT_INODE } from "./schema/index";
+import { Database } from "./storage";
+import { SQLiteTestStorage } from "./testing";
 
 describe("SQLiteTestStorage", () => {
   it("backs a real in-memory database that initializeSchema can apply", () => {

@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import {
-  defaultIgnoreRoot,
-  describeMountIgnore,
-  resolveMountIgnoreConfig,
-} from "./ignore-config.js";
+import { defaultIgnoreRoot, describeMountIgnore, resolveMountIgnoreConfig } from "./ignore-config";
 
 describe("resolveMountIgnoreConfig: the root", () => {
   test("defaults to /tmp plus the mount point", () => {

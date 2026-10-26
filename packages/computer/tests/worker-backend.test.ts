@@ -35,7 +35,7 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import type { Env } from "./worker-backend-worker.js";
+import type { Env } from "./worker-backend-worker";
 
 declare module "cloudflare:test" {
   interface ProvidedEnv extends Env {}

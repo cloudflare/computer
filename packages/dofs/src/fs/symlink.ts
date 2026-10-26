@@ -1,10 +1,10 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { assertNotReadOnly } from "./mount-guard.js";
-import { invalidateResolveSubtree } from "./resolveCache.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { assertNotReadOnly } from "./mount-guard";
+import { invalidateResolveSubtree } from "./resolveCache";
 
 // Create a symlink node. The target is stored as-is — it can be a
 // relative or absolute path, dangling or live. resolveInode follows

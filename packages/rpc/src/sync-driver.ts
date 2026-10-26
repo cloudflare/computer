@@ -27,7 +27,7 @@ import {
   writePushCursor,
 } from "@cloudflare/dofs";
 
-import type { SyncRPC } from "./interface.js";
+import type { SyncRPC } from "./interface";
 
 // The restartable engine ships through the same ./driver entry point.
 // Explicit-cursor block helpers below remain the low-level surface for
@@ -39,9 +39,9 @@ import {
   openPullWindow,
   pullBlocks,
   pushBlocks,
-} from "./sync-engine.js";
+} from "./sync-engine";
 
-export type { PullBlocksOptions, PushBlocksOptions, SyncProgress } from "./sync-engine.js";
+export type { PullBlocksOptions, PushBlocksOptions, SyncProgress } from "./sync-engine";
 export { captureSyncTarget, pullBlocks, pushBlocks };
 
 function hex(bytes: Uint8Array): string {

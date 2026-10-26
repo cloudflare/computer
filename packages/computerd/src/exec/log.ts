@@ -18,7 +18,7 @@
 
 import type { Database } from "@cloudflare/dofs";
 
-import { ExecError, type ExecEvent } from "./types.js";
+import { ExecError, type ExecEvent } from "./types";
 
 const KIND_STDOUT = 0;
 const KIND_STDERR = 1;

@@ -24,15 +24,15 @@
 
 import { env, runInDurableObject } from "cloudflare:test";
 import { it } from "vitest";
-import type { TestBindings } from "../../tests/worker.js";
-import { SQLiteWorkspaceProvider } from "../provider.js";
-import { initializeSchema } from "../schema/index.js";
-import { Database } from "../storage.js";
-import { applyChanges } from "../sync/apply.js";
-import { planBlock, selectMode } from "../sync/blocks.js";
-import { decodeChangePack, encodeChangePack } from "../sync/change-pack.js";
-import { MIN_BLOCK_PROFILE } from "../sync/operations.js";
-import { currentRev } from "../sync/watermarks.js";
+import type { TestBindings } from "../../tests/worker";
+import { SQLiteWorkspaceProvider } from "../provider";
+import { initializeSchema } from "../schema/index";
+import { Database } from "../storage";
+import { applyChanges } from "../sync/apply";
+import { planBlock, selectMode } from "../sync/blocks";
+import { decodeChangePack, encodeChangePack } from "../sync/change-pack";
+import { MIN_BLOCK_PROFILE } from "../sync/operations";
+import { currentRev } from "../sync/watermarks";
 
 const NOW = (): number => 1000;
 const BIG_PROFILE = { maxEntries: 1_000_000, maxBytes: Number.MAX_SAFE_INTEGER };

@@ -20,7 +20,7 @@
 // independent test databases don't pollute each other. Eviction is
 // LRU; access moves an entry to the most-recent position.
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 // Number of distinct blob payloads kept in memory per Database.
 // At 512 KiB per blob this caps the cache at ~8 MiB, large enough

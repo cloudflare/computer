@@ -1,5 +1,5 @@
 // Workerd-backed runner for the WorkspaceProxy tests. The default
-// vitest config aliases ./proxy.js to a throwing stub so the node
+// vitest config aliases ./proxy to a throwing stub so the node
 // runner doesn't have to resolve cloudflare:workers; that means
 // proxy.ts itself is exercised here and only here.
 

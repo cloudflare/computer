@@ -1,8 +1,8 @@
-import type { Database } from "../storage.js";
-import type { ChangeEntry } from "./changes.js";
-import { coalesceChanges } from "./coalesce.js";
-import { pushObjects } from "./push.js";
-import type { ChangeCursor } from "./watermarks.js";
+import type { Database } from "../storage";
+import type { ChangeEntry } from "./changes";
+import { coalesceChanges } from "./coalesce";
+import { pushObjects } from "./push";
+import type { ChangeCursor } from "./watermarks";
 
 // The fetch wire is the mirror of the push wire: same SQL,
 // opposite direction. The DO calls fetchChanges / fetchObjects on

@@ -68,7 +68,7 @@ packages first. Several suites need build output that is absent in
 a clean checkout: `packages/computerd` imports the sibling `@cloudflare/dofs`
 and `@cloudflare/computer-rpc` packages from their `dist/`
 directories, `packages/computerd`'s `src/cli/computerd.test.ts` spawns the bundled
-CLI at `dist/cli/computerd.cjs`, and `examples/think-compare-runtimes`
+CLI at `dist/cli/computerd.js`, and `examples/think-compare-runtimes`
 imports `@cloudflare/computer/backends/container-legacy`, which exists only
 after the `computer` package is built. Run `npm run build` across the
 npm workspace before `npm test` on a clean checkout.

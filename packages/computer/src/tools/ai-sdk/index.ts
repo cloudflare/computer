@@ -1,6 +1,6 @@
 import type { ToolSet } from "ai";
-import { type CreateToolsOptions, resolveToolOptions } from "../common/options.js";
-import type { PublishWorkspaceLike } from "../common/publish.js";
+import { type CreateToolsOptions, resolveToolOptions } from "../common/options";
+import type { PublishWorkspaceLike } from "../common/publish";
 import {
   createDeleteTool,
   createEditTool,
@@ -11,9 +11,9 @@ import {
   createPublishTool,
   createReadTool,
   createWriteTool,
-} from "./tools.js";
+} from "./tools";
 
-export { forAISDKTools } from "./bindings.js";
+export { forAISDKTools } from "./bindings";
 
 /** Options for {@link createAITools}. */
 export type CreateAIToolsOptions = CreateToolsOptions;
@@ -28,7 +28,7 @@ export {
   createPublishTool,
   createReadTool,
   createWriteTool,
-} from "./tools.js";
+} from "./tools";
 
 /**
  * Build the AI SDK tool set for a Workspace: `read`, `ls`, `find`, and

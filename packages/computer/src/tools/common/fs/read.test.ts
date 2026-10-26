@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { readFromStore } from "./read.js";
-import type { FileStore } from "./types.js";
+import { readFromStore } from "./read";
+import type { FileStore } from "./types";
 
 const encode = (value: string) => new TextEncoder().encode(value);
 

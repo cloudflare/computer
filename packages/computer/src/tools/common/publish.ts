@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AssetsClient } from "../../assets/index.js";
+import type { AssetsClient } from "../../assets/index";
 
 export interface PublishWorkspaceLike {
   readonly sessionId: string;

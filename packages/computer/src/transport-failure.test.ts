@@ -5,7 +5,7 @@ import {
   isWorkspaceTransportFailure,
   WorkspacePreDispatchTransportError,
   WorkspaceTransportError,
-} from "./transport-failure.js";
+} from "./transport-failure";
 
 describe("isWorkspaceTransportFailure", () => {
   it("recognises WorkspaceTransportError instances", () => {

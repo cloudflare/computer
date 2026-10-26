@@ -11,8 +11,8 @@
 // - the prefix is normalised: leading and trailing slashes
 //   stripped, internal runs of slashes collapsed.
 
-import { randomId } from "./base32.js";
-import { contentTypeForPath } from "./mime.js";
+import { randomId } from "./base32";
+import { contentTypeForPath } from "./mime";
 
 // The slice of R2Bucket we touch for uploads. Duck-typed so callers
 // can pass the real binding or a test fake without importing

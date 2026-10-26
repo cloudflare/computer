@@ -9,9 +9,9 @@
 // repository in the namespace is in reach.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding.js";
-import { createArtifact } from "./client.js";
-import { NotFoundError } from "./errors.js";
+import { FakeArtifactsBinding } from "../../tests/utilities/fake-artifacts-binding";
+import { createArtifact } from "./client";
+import { NotFoundError } from "./errors";
 
 describe("createArtifact", () => {
   let binding: FakeArtifactsBinding;

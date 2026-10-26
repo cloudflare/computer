@@ -11,7 +11,7 @@ import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell";
 import { createGitClient } from "@cloudflare/computer/git";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 
-import { createComputerMCPServer } from "./server.js";
+import { createComputerMCPServer } from "./server";
 
 interface Env {
   LOADER: WorkerLoader;

@@ -4,7 +4,7 @@
 // typed-error mapping that the wider surface uses. The CLI's
 // argv branches live in cli.ts and call straight into these.
 
-import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors.js";
+import { GitError, isNotARepositoryCause, NotARepositoryError } from "./errors";
 
 /** isomorphic-git's subset used by branch / tag / checkout. */
 export interface IsomorphicGitRefsClient {

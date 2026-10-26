@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 
 import { expect, onTestFinished, test } from "vitest";
 
-import { resolveFuseBackend } from "../fuse/index.js";
+import { resolveFuseBackend } from "../fuse/index";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.resolve(here, "../..");
-const cliPath = path.join(packageRoot, "dist", "cli", "computerd.cjs");
+const cliPath = path.join(packageRoot, "dist", "cli", "computerd.js");
 
 test("computerd rejects relative MOUNT_POINT values", async () => {
   const port = await getAvailablePort();

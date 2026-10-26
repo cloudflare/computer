@@ -1,10 +1,10 @@
-import type { ExecBackends, ExecToolOptions, ExecWorkspaceLike } from "./exec.js";
-import { confineWorkspace } from "./fs/confine.js";
-import type { EditToolOptions } from "./fs/edit.js";
-import type { ReadToolOptions } from "./fs/read.js";
-import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./fs/store.js";
-import type { WriteToolOptions } from "./fs/write.js";
-import type { PublishWorkspaceLike } from "./publish.js";
+import type { ExecBackends, ExecToolOptions, ExecWorkspaceLike } from "./exec";
+import { confineWorkspace } from "./fs/confine";
+import type { EditToolOptions } from "./fs/edit";
+import type { ReadToolOptions } from "./fs/read";
+import { type WorkspaceLike as FileWorkspaceLike, WorkspaceFileStore } from "./fs/store";
+import type { WriteToolOptions } from "./fs/write";
+import type { PublishWorkspaceLike } from "./publish";
 
 /** Options every tool set takes: `createAITools`, `createPiTools`, and `createTanStackTools`. */
 export interface CreateToolsOptions {

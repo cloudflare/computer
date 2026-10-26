@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { ls } from "./ls.js";
-import { mkdir } from "./mkdir.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFile } from "./writeFile.js";
+import { ls } from "./ls";
+import { mkdir } from "./mkdir";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFile } from "./writeFile";
 
 describe("ls", () => {
   it("returns an empty array when nothing matches", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { startHeartbeat } from "./heartbeat.js";
+import { startHeartbeat } from "./heartbeat";
 
 describe("startHeartbeat", () => {
   it("pings on the configured interval", async () => {

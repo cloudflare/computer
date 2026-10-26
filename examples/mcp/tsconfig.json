@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "ESNext.Disposable"],
+    "lib": ["ESNext"],
     "types": [
       "./worker-configuration.d.ts",
       "@cloudflare/vitest-pool-workers/types",

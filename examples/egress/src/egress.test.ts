@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { mimeType, parseShellFetchResult, targetUrl, workspaceEgressPolicy } from "./egress.js";
+import { mimeType, parseShellFetchResult, targetUrl, workspaceEgressPolicy } from "./egress";
 
 describe("workspaceEgressPolicy", () => {
   it("blocks egress in none mode", () => {

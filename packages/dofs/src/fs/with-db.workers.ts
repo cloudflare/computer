@@ -4,9 +4,9 @@
 // SQLite storage instead of a node:sqlite in-memory DB.
 
 import { env, runInDurableObject } from "cloudflare:test";
-import type { TestBindings } from "../../tests/worker.js";
-import { initializeSchema } from "../schema/index.js";
-import { Database } from "../storage.js";
+import type { TestBindings } from "../../tests/worker";
+import { initializeSchema } from "../schema/index";
+import { Database } from "../storage";
 
 export interface WithDBOptions {
   now?: () => number;

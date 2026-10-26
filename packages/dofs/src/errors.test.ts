@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { createWorkspaceError } from "./errors.js";
-import { WorkspaceFilesystem } from "./fs/filesystem.js";
-import { withDB } from "./fs/with-db.js";
+import { createWorkspaceError } from "./errors";
+import { WorkspaceFilesystem } from "./fs/filesystem";
+import { withDB } from "./fs/with-db";
 
 describe("createWorkspaceError", () => {
   it("appends the path to a message that doesn't name it", () => {

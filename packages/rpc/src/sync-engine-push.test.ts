@@ -8,9 +8,9 @@ import {
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { SyncRPC } from "./interface.js";
-import { createSyncServer } from "./server.js";
-import { pushBlocks, type SyncProgress } from "./sync-engine.js";
+import type { SyncRPC } from "./interface";
+import { createSyncServer } from "./server";
+import { pushBlocks, type SyncProgress } from "./sync-engine";
 
 // Push runs the same operation and block machinery as pull, in the
 // other direction. The property that distinguishes it: the local

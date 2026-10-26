@@ -18,7 +18,7 @@ import {
   tagDeleteWith,
   tagListWith,
   tagWith,
-} from "./refs.js";
+} from "./refs";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

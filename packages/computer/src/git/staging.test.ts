@@ -11,7 +11,7 @@ import {
   type IsomorphicGitAddClient,
   type IsomorphicGitRmClient,
   rmWith,
-} from "./staging.js";
+} from "./staging";
 
 const DIR = "/repo";
 const AUTHOR = { name: "t", email: "t@example.test" };

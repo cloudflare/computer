@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { WireErrorCode } from "./interface.js";
+import type { WireErrorCode } from "./interface";
 
 // Hand-maintained registry: code → (a representative call site
 // that raises it, in source form). The test below verifies the

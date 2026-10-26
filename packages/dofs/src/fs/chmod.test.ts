@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { chmod } from "./chmod.js";
-import { mkdir } from "./mkdir.js";
-import { invalidateReadOnlyMountCache } from "./mount-guard.js";
-import { resolveInode } from "./resolve.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFileSync } from "./writeFile.js";
+import { chmod } from "./chmod";
+import { mkdir } from "./mkdir";
+import { invalidateReadOnlyMountCache } from "./mount-guard";
+import { resolveInode } from "./resolve";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFileSync } from "./writeFile";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 

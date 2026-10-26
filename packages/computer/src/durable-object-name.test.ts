@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hostDurableObjectId, withHostName } from "./durable-object-name.js";
+import { hostDurableObjectId, withHostName } from "./durable-object-name";
 
 // A namespace whose ids remember how they were made, standing in for
 // DurableObjectNamespace: a named id knows its name, as ctx.id.name

@@ -28,46 +28,46 @@ import {
   SQLiteWorkspaceProvider,
   WorkspaceFilesystem,
 } from "@cloudflare/dofs";
-import { ARTIFACTS_NOT_CONFIGURED_MESSAGE } from "./artifacts/errors.js";
+import { ARTIFACTS_NOT_CONFIGURED_MESSAGE } from "./artifacts/errors";
 import {
   type ArtifactClient,
   ArtifactError,
   createArtifact,
   runArtifactsCLI,
-} from "./artifacts/index.js";
-import type { AssetsClient } from "./assets/index.js";
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { ExecutionRuntimeTracker, SqlExecutionRuntimeStore } from "./execution-runtime-tracker.js";
-import type { GitClient, GitClientFactory, GitIdentity } from "./git/index.js";
-import { MountIndex } from "./mounts/index.js";
-import { buildMountRegistry, type MountValue } from "./mounts/registry.js";
-import type { Mount } from "./mounts/types.js";
-import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe.js";
-import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry.js";
+} from "./artifacts/index";
+import type { AssetsClient } from "./assets/index";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { ExecutionRuntimeTracker, SqlExecutionRuntimeStore } from "./execution-runtime-tracker";
+import type { GitClient, GitClientFactory, GitIdentity } from "./git/index";
+import { MountIndex } from "./mounts/index";
+import { buildMountRegistry, type MountValue } from "./mounts/registry";
+import type { Mount } from "./mounts/types";
+import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe";
+import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry";
 import {
   DEFAULT_OUTPUT_DIR,
   DEFAULT_OUTPUT_KEEP,
   parseOutputOptions,
   WorkspaceCommandOutputFiles,
   type WorkspaceOutputOptions,
-} from "./runtime/output-files.js";
-import { makeOutputLimits } from "./runtime/output-tail.js";
-import { WorkspaceRuntime } from "./runtime/runtime.js";
+} from "./runtime/output-files";
+import { makeOutputLimits } from "./runtime/output-tail";
+import { WorkspaceRuntime } from "./runtime/runtime";
 import {
   isModuleBackend,
   type WorkspaceModuleBackend,
   type WorkspaceModuleBackendHandle,
   type WorkspaceRegisteredBackend,
   type WorkspaceRuntimeEvent,
-} from "./runtime/types.js";
-import { CommandExecutor, maybeDispose, spawnShell } from "./shell.js";
-import { WorkspaceStub } from "./stub.js";
+} from "./runtime/types";
+import { CommandExecutor, maybeDispose, spawnShell } from "./shell";
+import { WorkspaceStub } from "./stub";
 import {
   isWorkspacePreDispatchTransportFailure,
   isWorkspaceTransportFailure,
   WorkspacePreDispatchTransportError,
   WorkspaceTransportError,
-} from "./transport-failure.js";
+} from "./transport-failure";
 
 // When a backend RPC fails with a transport error, how much replay
 // the operation tolerates. "always" suits idempotent calls; a

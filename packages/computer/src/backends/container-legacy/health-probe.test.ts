@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
-import type { ILegacyWorkspaceContainerAPI } from "./container-host.js";
-import { probeComputerdHealth } from "./health-probe.js";
+import type { ILegacyWorkspaceContainerAPI } from "./container-host";
+import { probeComputerdHealth } from "./health-probe";
 
 // probeComputerdHealth only consumes fetchPort. The helper is typed
 // against the wider ILegacyWorkspaceContainerAPI to make ergonomic

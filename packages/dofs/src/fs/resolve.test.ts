@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { ROOT_INODE } from "../schema/index.js";
-import type { Database } from "../storage.js";
-import { resolveInode } from "./resolve.js";
-import { withDB } from "./with-db.js";
+import { ROOT_INODE } from "../schema/index";
+import type { Database } from "../storage";
+import { resolveInode } from "./resolve";
+import { withDB } from "./with-db";
 
 // Convenience: insert a node row and a dirent under a given parent.
 // Returns the new inode. type defaults to 'file' so directory tests are

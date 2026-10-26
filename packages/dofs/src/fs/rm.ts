@@ -1,14 +1,14 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import { incrementRev } from "../rev.js";
-import type { Database } from "../storage.js";
-import { recordDelete } from "../sync/changes.js";
-import { versionFingerprint } from "../sync/fingerprint.js";
-import { pathOf } from "../sync/paths.js";
-import { assertNotReadOnly } from "./mount-guard.js";
-import { resolveInode } from "./resolve.js";
-import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache.js";
-import { unlinkDirent } from "./unlink.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
+import type { Database } from "../storage";
+import { recordDelete } from "../sync/changes";
+import { versionFingerprint } from "../sync/fingerprint";
+import { pathOf } from "../sync/paths";
+import { assertNotReadOnly } from "./mount-guard";
+import { resolveInode } from "./resolve";
+import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache";
+import { unlinkDirent } from "./unlink";
 
 export interface RmOptions {
   recursive?: boolean;

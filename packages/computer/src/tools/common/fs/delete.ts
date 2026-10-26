@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { withFileLock } from "./locks.js";
-import type { MutableFileStore } from "./types.js";
+import { withFileLock } from "./locks";
+import type { MutableFileStore } from "./types";
 
 export interface DeleteToolOptions {
   store: MutableFileStore;

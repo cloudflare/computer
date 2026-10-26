@@ -27,7 +27,7 @@
 // The cache is per-Database (WeakMap) and bounded (LRU by Map
 // insertion order, same discipline as blobCache).
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 // Sentinel value for "this path resolves to nothing" (ENOENT/ENOTDIR).
 const NEGATIVE = -1;

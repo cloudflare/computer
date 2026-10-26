@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WorkspaceRuntime } from "./runtime.js";
+import { WorkspaceRuntime } from "./runtime";
 import type {
   ModuleExecutionEnvelope,
   WorkspaceModuleBackendHandle,
   WorkspaceRuntimeEvent,
-} from "./types.js";
+} from "./types";
 
 function emptyEnvelope(id: string): ModuleExecutionEnvelope {
   return {

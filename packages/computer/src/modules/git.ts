@@ -8,14 +8,14 @@
 // created with `allowNetwork: true`: they run from the host, so the
 // isolate's own egress settings do not stop them.
 
-import type { GitClient } from "../git/index.js";
+import type { GitClient } from "../git/index";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFactory,
   WorkspaceModuleFunctions,
   WorkspaceModuleHost,
   WorkspaceRuntimeValue,
-} from "../runtime/types.js";
+} from "../runtime/types";
 
 const NETWORK_COMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote", "submodule"]);
 

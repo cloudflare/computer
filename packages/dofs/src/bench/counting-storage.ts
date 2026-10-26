@@ -19,7 +19,7 @@
 // to the real backend, so real SQLite transaction semantics are
 // preserved; only `sql.exec` is instrumented.
 
-import type { DurableObjectStorageLike, SQLCursorLike, SQLStorageLike } from "../types.js";
+import type { DurableObjectStorageLike, SQLCursorLike, SQLStorageLike } from "../types";
 
 export interface StatementCounts {
   statements: number;

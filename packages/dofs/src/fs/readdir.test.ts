@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { mkdir } from "./mkdir.js";
-import { readdir } from "./readdir.js";
-import { withDB } from "./with-db.js";
+import { mkdir } from "./mkdir";
+import { readdir } from "./readdir";
+import { withDB } from "./with-db";
 import {
   openWriteBufferForCreateSync,
   releaseWriteBufferSync,
   writeFile,
   writeRangeSync,
-} from "./writeFile.js";
+} from "./writeFile";
 
 describe("readdir", () => {
   it("returns an empty array for an empty directory", async () => {
@@ -214,7 +214,7 @@ describe("readdir", () => {
     // rows; symlinks were invisible. The dirent shape now carries
     // an explicit isSymbolicLink flag so just-bash and other
     // adapters can branch on the type without a follow-up lstat.
-    const { symlink } = await import("./symlink.js");
+    const { symlink } = await import("./symlink");
     await withDB(async (db) => {
       await writeFile(db, "/target", "x", {}, () => 0);
       symlink(db, "/target", "/link", () => 0);

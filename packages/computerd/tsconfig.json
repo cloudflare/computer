@@ -1,19 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "ESNext.Disposable"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
 
     "strict": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "rootDir": "src",
-    "outDir": "dist",
+    "noEmit": true,
     "types": ["node"],
-    "declaration": true,
-    "sourceMap": true
+    "isolatedModules": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"]

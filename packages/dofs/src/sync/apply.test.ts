@@ -2,23 +2,23 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { link } from "../fs/link.js";
-import { mkdir } from "../fs/mkdir.js";
-import { invalidateReadOnlyMountCache } from "../fs/mount-guard.js";
-import { readFile } from "../fs/readFile.js";
-import { readlink } from "../fs/readlink.js";
-import { rename } from "../fs/rename.js";
-import { resolveInode } from "../fs/resolve.js";
-import { rm } from "../fs/rm.js";
-import { symlink } from "../fs/symlink.js";
-import { withDB, withTwoDBs } from "../fs/with-db.js";
-import { CHUNK_SIZE, writeFile, writeFileSync } from "../fs/writeFile.js";
-import { applyChanges, applyChangesSync } from "./apply.js";
-import { stageBlob } from "./blobs.js";
-import type { ChangeEntry } from "./changes.js";
-import { coalesceChanges } from "./coalesce.js";
-import { fetchObjects } from "./fetch.js";
-import { currentRev } from "./watermarks.js";
+import { link } from "../fs/link";
+import { mkdir } from "../fs/mkdir";
+import { invalidateReadOnlyMountCache } from "../fs/mount-guard";
+import { readFile } from "../fs/readFile";
+import { readlink } from "../fs/readlink";
+import { rename } from "../fs/rename";
+import { resolveInode } from "../fs/resolve";
+import { rm } from "../fs/rm";
+import { symlink } from "../fs/symlink";
+import { withDB, withTwoDBs } from "../fs/with-db";
+import { CHUNK_SIZE, writeFile, writeFileSync } from "../fs/writeFile";
+import { applyChanges, applyChangesSync } from "./apply";
+import { stageBlob } from "./blobs";
+import type { ChangeEntry } from "./changes";
+import { coalesceChanges } from "./coalesce";
+import { fetchObjects } from "./fetch";
+import { currentRev } from "./watermarks";
 
 async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
@@ -37,7 +37,7 @@ function deepChildPath(depth: number): string {
 }
 
 async function collectObjects(
-  db: import("../storage.js").Database,
+  db: import("../storage").Database,
   entries: ChangeEntry[],
 ): Promise<Map<string, Uint8Array>> {
   const hashes: Uint8Array[] = [];
@@ -77,7 +77,7 @@ describe("applyChanges", () => {
   });
 
   describe.each(["async", "sync"] as const)("%s apply", (mode) => {
-    const apply = async (db: import("../storage.js").Database, entries: ChangeEntry[]) => {
+    const apply = async (db: import("../storage").Database, entries: ChangeEntry[]) => {
       if (mode === "sync") {
         return applyChangesSync(db, entries, new Map(), { source: "upstream" });
       }
@@ -1030,7 +1030,7 @@ describe("applyChanges loopback suppression", () => {
       // Pre-existing local state: a write the container already
       // pushed. pushRev sits at currentRev.
       await writeFile(db, "/local.txt", "local", {}, () => 1);
-      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks.js");
+      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks");
       writeWatermark(db, "pushRev", currentRev(db));
       const beforePushRev = readWatermark(db, "pushRev");
       expect(beforePushRev).toBeGreaterThan(0);
@@ -1068,7 +1068,7 @@ describe("applyChanges loopback suppression", () => {
 
   it("source=local (default) does not advance pushRev", async () => {
     await withDB(async (db) => {
-      const { readWatermark } = await import("./watermarks.js");
+      const { readWatermark } = await import("./watermarks");
       await applyChanges(
         db,
         [
@@ -1090,8 +1090,8 @@ describe("applyChanges loopback suppression", () => {
 
   it("upstream entries surface on the next coalesce and rely on receiver-side alreadyApplied", async () => {
     await withDB(async (db) => {
-      const { coalesceChanges } = await import("./coalesce.js");
-      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks.js");
+      const { coalesceChanges } = await import("./coalesce");
+      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks");
       // Seed pushRev at the current point.
       writeWatermark(db, "pushRev", currentRev(db));
 
@@ -1135,7 +1135,7 @@ describe("applyChanges loopback suppression — F1", () => {
   // apply.
   it("does not advance pushRev past unpushed local writes", async () => {
     await withDB(async (db) => {
-      const { currentRev, readWatermark } = await import("./watermarks.js");
+      const { currentRev, readWatermark } = await import("./watermarks");
       // Simulate an unpushed local write: pushRev stays at
       // its initial value (1) but currentRev climbs.
       await writeFile(db, "/local.txt", new Uint8Array([1, 2, 3]), { mode: 0o644 }, () => 1);
@@ -1178,7 +1178,7 @@ describe("applyChanges loopback suppression — F1", () => {
 
   it("leaves pushRev alone even when the caller had no unpushed locals", async () => {
     await withDB(async (db) => {
-      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks.js");
+      const { currentRev, readWatermark, writeWatermark } = await import("./watermarks");
       // pushRev already caught up to currentRev: caller has no
       // pending local writes. The old apply path advanced pushRev
       // here as an optimization; we no longer do that because it
@@ -1212,7 +1212,7 @@ describe("applyChanges loopback suppression — F1", () => {
 });
 
 describe("applyChanges with read-only mount roots", () => {
-  function stageReadOnly(db: import("../storage.js").Database, root: string): void {
+  function stageReadOnly(db: import("../storage").Database, root: string): void {
     db.run(
       "INSERT INTO _vfs_mounts (root, kind, indexed, mode) VALUES (?, ?, 1, 'read-only')",
       root,

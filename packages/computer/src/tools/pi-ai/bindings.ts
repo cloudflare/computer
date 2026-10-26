@@ -10,9 +10,9 @@
  * and dispatcher `createPiTools` returns.
  */
 
-import type { ToolBinding, ToolBindingResult } from "../../modules/tools.js";
-import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
-import type { CreatePiToolsResult, PiToolResultContent } from "./index.js";
+import type { ToolBinding, ToolBindingResult } from "../../modules/tools";
+import type { WorkspaceRuntimeValue } from "../../runtime/types";
+import type { CreatePiToolsResult, PiToolResultContent } from "./index";
 
 // The tools createPiTools makes that only read: the ones it keeps when
 // asked for a readonly set.

@@ -37,7 +37,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 
 const COMPUTERD_BINARY =
-  process.env.COMPUTERD_BINARY ?? join(REPO_ROOT, "packages/computerd/dist/cli/computerd.cjs");
+  process.env.COMPUTERD_BINARY ?? join(REPO_ROOT, "packages/computerd/dist/cli/computerd.js");
 
 const SYNC_TICKS = Number(process.env.SOAK_SYNC_TICKS ?? "50");
 const EXEC_CALLS = Number(process.env.SOAK_EXEC_CALLS ?? "100");

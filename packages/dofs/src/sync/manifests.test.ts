@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
 
 describe("manifests", () => {
   it("writeFile sets vfs_nodes.manifest_hash to a non-null hash", async () => {

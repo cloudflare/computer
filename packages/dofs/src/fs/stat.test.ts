@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { mkdir } from "./mkdir.js";
-import { lstat, stat } from "./stat.js";
-import { symlink } from "./symlink.js";
-import { withDB } from "./with-db.js";
-import { writeFileSync } from "./writeFile.js";
+import { mkdir } from "./mkdir";
+import { lstat, stat } from "./stat";
+import { symlink } from "./symlink";
+import { withDB } from "./with-db";
+import { writeFileSync } from "./writeFile";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 

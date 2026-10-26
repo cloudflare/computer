@@ -1,10 +1,10 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import { Database } from "../storage.js";
-import { RecordingStorage } from "../testing-recording.js";
-import { SCHEMA_VERSION } from "./core.js";
-import { initializeSchema } from "./index.js";
+import { Database } from "../storage";
+import { RecordingStorage } from "../testing-recording";
+import { SCHEMA_VERSION } from "./core";
+import { initializeSchema } from "./index";
 
 describe("initializeSchema", () => {
   it("lazily initializes the documented schema on first use", () => {

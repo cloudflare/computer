@@ -18,7 +18,7 @@
  */
 
 import { routeAgentRequest } from "agents";
-import { Assistant, WorkspaceProxy, WorkspaceServiceProxy } from "./agent.js";
+import { Assistant, WorkspaceProxy, WorkspaceServiceProxy } from "./agent";
 
 export { Assistant, WorkspaceProxy, WorkspaceServiceProxy };
 

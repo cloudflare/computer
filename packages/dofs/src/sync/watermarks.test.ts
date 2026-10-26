@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
 import {
   compareChangeCursors,
   currentRev,
@@ -11,7 +11,7 @@ import {
   writeFetchCursor,
   writePushCursor,
   writeWatermark,
-} from "./watermarks.js";
+} from "./watermarks";
 
 describe("watermarks", () => {
   it("readWatermark returns 0 for a fresh DB", async () => {

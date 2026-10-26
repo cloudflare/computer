@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
 // A manifest names the ordered chunk list for a single file. Two
 // files whose bytes chunk identically share one manifest row, which

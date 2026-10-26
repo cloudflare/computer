@@ -1,9 +1,9 @@
-import { createWorkspaceError } from "../errors.js";
-import { canonicalizePath } from "../path.js";
-import type { Database } from "../storage.js";
-import { findPendingWriteBuffer } from "./pendingWriteBuffer.js";
-import { resolveInode } from "./resolve.js";
-import { getWriteBuffer } from "./writeBuffer.js";
+import { createWorkspaceError } from "../errors";
+import { canonicalizePath } from "../path";
+import type { Database } from "../storage";
+import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { resolveInode } from "./resolve";
+import { getWriteBuffer } from "./writeBuffer";
 
 export interface WorkspaceStatResult {
   name: string;

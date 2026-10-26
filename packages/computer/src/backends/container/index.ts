@@ -26,17 +26,17 @@
 // Status: experimental. This entry point may change in any release
 // and is not yet suitable for production use.
 
-export type { WorkspaceEgressPolicy } from "../../runtime/egress.js";
+export type { WorkspaceEgressPolicy } from "../../runtime/egress";
 export {
   ContainerBackend,
   type ContainerBackendOptions,
   type ContainerHostHolder,
-} from "./container-backend.js";
+} from "./container-backend";
 export {
   type ContainerRuntimeInfo,
   type IWorkspaceContainerAPI,
   WorkspaceContainerAPI,
   type WorkspaceRef,
   withWorkspaceContainer,
-} from "./container-host.js";
-export type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record.js";
+} from "./container-host";
+export type { ContainerInstanceSize, ContainerLaunchSpec } from "./container-launch-record";

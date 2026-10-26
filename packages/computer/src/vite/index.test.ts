@@ -7,7 +7,7 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import { createBuilder, type Plugin } from "vite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { computerBundle } from "./index.js";
+import { computerBundle } from "./index";
 
 const tempDirs: string[] = [];
 

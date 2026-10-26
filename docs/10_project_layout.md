@@ -68,13 +68,13 @@ packages/computer/
 │   └── test-harness/                # Integration test wiring
 ├── tests/                           # Workerd integration suites
 ├── test-harness/                    # Container and load harness
-├── rolldown.config.ts               # ESM and declaration build
+├── tsdown.config.ts                 # ESM and declaration build
 ├── tsconfig.json
 ├── tsconfig.build.json
 └── package.json
 ```
 
-The package builds ESM and declarations with Rolldown. Public entrypoints include the root export, tools, Git, assets, artifacts, the Container, Worker shell, and Worker JavaScript backends, and Cloudflare observability. The injected service is the separate `computerd` package, and shared wire types live in `@cloudflare/computer-rpc`.
+The package builds ESM and declarations with tsdown. Public entrypoints include the root export, tools, Git, assets, artifacts, the Container, Worker shell, and Worker JavaScript backends, and Cloudflare observability. The injected service is the separate `computerd` package, and shared wire types live in `@cloudflare/computer-rpc`.
 
 ## `packages/dofs/` — `@cloudflare/dofs`
 
@@ -164,21 +164,21 @@ packages/computerd/
 ├── vendor/
 │   └── fuse-napi/                   # patched libfuse 3 binding; see PATCHES.md
 ├── scripts/
-│   ├── build.mjs                    # → dist/cli/computerd.cjs
 │   ├── build-bin.mjs                # SEA driver
 │   └── sea/
 │       └── bundle.mjs               # esbuild → SEA bundle
 ├── artifacts/
 │   └── computerd/
 │       └── computerd-linux-x64
+├── tsdown.config.ts                 # → dist/cli/computerd.js
 ├── tsconfig.json
 └── package.json
 ```
 
-Build pipeline: `scripts/build.mjs` emits `dist/cli/computerd.cjs`;
+Build pipeline: tsdown bundles `src/cli/computerd.ts` into `dist/cli/computerd.js`;
 `scripts/build-bin.mjs` together with `scripts/sea/bundle.mjs`
 produces the Node SEA single-file binary at
-`artifacts/computerd/computerd-{linux,macos}-x64`.
+`artifacts/computerd/computerd-linux-x64`.
 
 ## Tools
 
@@ -250,7 +250,7 @@ so each example can declare its own dependencies and scripts.
 - **oxfmt.** Formats JS, TypeScript and JSON, configured in
   `.oxfmtrc.json` at the repo root. Markdown, YAML, HTML and CSS are
   left alone. No ESLint, no Prettier.
-- **Rolldown.** Builds the Workspace package's ESM entrypoints and declarations.
+- **tsdown.** Builds every package: the Workspace package's ESM entrypoints and declarations, `@cloudflare/dofs` and `@cloudflare/computer-rpc`, and the `computerd` CLI. Relative imports resolve under `moduleResolution: "bundler"`.
 - **esbuild.** Used by `packages/computerd/scripts/sea/bundle.mjs` to produce the single-file `computerd` SEA bundle.
 - **vitest.** Drives unit tests in every package. `computerd` additionally
   uses `node --experimental-strip-types --test` for some scripts

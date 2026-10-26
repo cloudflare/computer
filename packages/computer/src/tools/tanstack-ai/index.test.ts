@@ -2,9 +2,9 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { isContentPartArray } from "@tanstack/ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript.js";
-import { Workspace } from "../../workspace.js";
-import { createTanStackTools } from "./index.js";
+import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript";
+import { Workspace } from "../../workspace";
+import { createTanStackTools } from "./index";
 
 function makeWorkspace(): Workspace {
   return new Workspace({ storage: new SQLiteTestStorage(), now: () => 1_700_000_000_000 });

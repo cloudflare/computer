@@ -12,21 +12,21 @@
 // in-package tests skip the class wrapper when they only need a
 // single op.
 
-import type { Database } from "../storage.js";
+import type { Database } from "../storage";
 
-import { chmod } from "./chmod.js";
-import { type FindOptions, find, type WorkspaceFoundEntry } from "./find.js";
-import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep.js";
-import { ls } from "./ls.js";
-import { type MkdirOptions, mkdir } from "./mkdir.js";
-import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir.js";
-import { type ReadFileOptions, readFile } from "./readFile.js";
-import { readlink } from "./readlink.js";
-import { rename } from "./rename.js";
-import { type RmOptions, rm } from "./rm.js";
-import { lstat, stat, type WorkspaceStatResult } from "./stat.js";
-import { symlink } from "./symlink.js";
-import { type WriteFileContent, type WriteFileOptions, writeFile } from "./writeFile.js";
+import { chmod } from "./chmod";
+import { type FindOptions, find, type WorkspaceFoundEntry } from "./find";
+import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep";
+import { ls } from "./ls";
+import { type MkdirOptions, mkdir } from "./mkdir";
+import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir";
+import { type ReadFileOptions, readFile } from "./readFile";
+import { readlink } from "./readlink";
+import { rename } from "./rename";
+import { type RmOptions, rm } from "./rm";
+import { lstat, stat, type WorkspaceStatResult } from "./stat";
+import { symlink } from "./symlink";
+import { type WriteFileContent, type WriteFileOptions, writeFile } from "./writeFile";
 
 export interface WorkspaceFilesystemOptions {
   // Clock used for mtime / last_seen. Defaults to Date.now.

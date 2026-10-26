@@ -1,4 +1,4 @@
-import { type OutputLimits, OutputWindow } from "./output-tail.js";
+import { type OutputLimits, OutputWindow } from "./output-tail";
 
 /** Why a command's full output could not be saved to a file. */
 export class CommandOutputSaveFailed extends Error {

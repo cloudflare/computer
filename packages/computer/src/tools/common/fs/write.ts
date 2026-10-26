@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { withFileLock } from "./locks.js";
-import type { FileStore } from "./types.js";
+import { withFileLock } from "./locks";
+import type { FileStore } from "./types";
 
 export interface WriteToolOptions {
   store: FileStore;

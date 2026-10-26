@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { gc } from "../fs/gc.js";
-import { withDB } from "../fs/with-db.js";
-import { writeFile } from "../fs/writeFile.js";
-import { Database } from "../storage.js";
-import { stageBlob } from "./blobs.js";
+import { gc } from "../fs/gc";
+import { withDB } from "../fs/with-db";
+import { writeFile } from "../fs/writeFile";
+import { Database } from "../storage";
+import { stageBlob } from "./blobs";
 
 function sha256(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(createHash("sha256").update(bytes).digest());

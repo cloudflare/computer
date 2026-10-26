@@ -1,4 +1,4 @@
-import type { Database } from "./storage.js";
+import type { Database } from "./storage";
 
 // Atomic monotonic rev counter. Every FS mutation (mkdir, writeFile,
 // rm, ...) calls incrementRev once per transaction and stamps the returned

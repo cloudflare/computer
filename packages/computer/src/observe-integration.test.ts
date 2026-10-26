@@ -8,10 +8,10 @@ import type { SyncRPC, WorkspaceRPC } from "@cloudflare/computer-rpc";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
-import type { BackendHandle, WorkspaceBackend } from "./backend.js";
-import { makeRecorder, type RecordedSpan } from "./observe-recorder.js";
-import { WorkspaceFilesystemStub, WorkspaceRuntimeStub } from "./stub.js";
-import { Workspace } from "./workspace.js";
+import type { BackendHandle, WorkspaceBackend } from "./backend";
+import { makeRecorder, type RecordedSpan } from "./observe-recorder";
+import { WorkspaceFilesystemStub, WorkspaceRuntimeStub } from "./stub";
+import { Workspace } from "./workspace";
 
 function makeStorage(): SQLiteTestStorage {
   return new SQLiteTestStorage();

@@ -1,7 +1,7 @@
 import type { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
-import { withDB } from "./fs/with-db.js";
-import { SQLiteWorkspaceProvider } from "./provider.js";
+import { withDB } from "./fs/with-db";
+import { SQLiteWorkspaceProvider } from "./provider";
 
 interface WatchEmitter extends EventEmitter {
   close(): void;
