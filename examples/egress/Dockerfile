@@ -1,4 +1,4 @@
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.1 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.8.0 AS computerd
 
 FROM debian:trixie-slim
 

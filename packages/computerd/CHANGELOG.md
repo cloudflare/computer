@@ -1,5 +1,17 @@
 # @cloudflare/computerd
 
+## 0.8.0
+
+### Minor Changes
+
+- [#197](https://github.com/cloudflare/computer/pull/197) Improve local-only filesystem performance with FUSE passthrough and native roots; see the [performance docs](https://github.com/cloudflare/computer/blob/main/docs/19_performance.md). ([`30499be`](https://github.com/cloudflare/computer/commit/30499be9e2b8ecd5ed39a134611efc9b89ead4a5)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @cloudflare/dofs@0.8.0
+  - @cloudflare/computer-rpc@0.8.0
+
 ## 0.7.1
 
 ### Patch Changes

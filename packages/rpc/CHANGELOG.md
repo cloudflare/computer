@@ -1,5 +1,12 @@
 # @cloudflare/computer-rpc
 
+## 0.8.0
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @cloudflare/dofs@0.8.0
+
 ## 0.7.1
 
 ### Patch Changes
