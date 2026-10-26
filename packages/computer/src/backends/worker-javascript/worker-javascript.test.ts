@@ -973,7 +973,7 @@ describe("WorkerJavaScriptBackend", () => {
   it.each([
     ["a host module with a path", { "ws:bad/path": { run: async () => null } }, /simple ws:\*/],
     ["a host module outside ws:*", { container: { run: async () => null } }, /simple ws:\*/],
-    ["source under ws:*", { "ws:lib": "export const x = 1;" }, /only for host modules/],
+    ["source under a ws:* name with a path", { "ws:lib/x": "export const x = 1;" }, /simple ws:\*/],
     ["a replacement node:fs", { "node:fs": "export default {};" }, /built in/],
     [
       "a replacement node:fs host module",
@@ -1915,6 +1915,33 @@ describe("WorkerJavaScriptBackend", () => {
         message,
       );
       expect(load).not.toHaveBeenCalled();
+    });
+
+    it("serves source under a ws:* name, which can import the host's modules", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: {
+              "ws:facade": `import { run } from "ws:echo"; export const echo = { run };`,
+              "ws:echo": { run: async () => null },
+            },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(
+        `import { echo } from "ws:facade"; export default typeof echo.run;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["__modules__/ws:facade"])).toBe(
+        `import { run } from "./ws:echo"; export const echo = { run };`,
+      );
     });
 
     it("rewrites a configured module's host module imports to its own directory", async () => {

@@ -114,9 +114,16 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     }
     if (typeof module === "string") {
       if (specifier.startsWith("ws:")) {
-        throw new Error(
-          `Module ${JSON.stringify(specifier)} uses the ws:* namespace, which is only for host modules.`,
-        );
+        // Source the host provides under its own namespace, such as a facade over its host
+        // modules that exports objects, which host modules can't. Same naming rule as theirs.
+        if (!HOST_SPECIFIER.test(specifier)) {
+          throw new Error(
+            `Module ${JSON.stringify(specifier)} must use a simple ws:* name, such as "ws:git".`,
+          );
+        }
+        source[specifier] = module;
+        lines.push(`- ${name}: a library the host provides.`);
+        continue;
       }
       if (specifier.includes("/") || isInternalModuleName(specifier)) {
         throw new Error(`Module ${JSON.stringify(specifier)} uses a reserved module name.`);
