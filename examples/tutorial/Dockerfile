@@ -8,7 +8,7 @@
 # through the Workspace is on disk for pandoc to read, and the PDF
 # pandoc writes syncs back to the durable object.
 
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.1 AS computerd
 
 FROM debian:stable-slim
 
@@ -20,7 +20,7 @@ ARG TYPST_VERSION=0.15.1
 # install would cost. curl is only the download tool for those two.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 ca-certificates curl xz-utils \
+      fuse3 libfuse2t64 ca-certificates curl xz-utils \
  && curl -fsSL -o /tmp/pandoc.deb \
       "https://github.com/jgm/pandoc/releases/download/${PANDOC_VERSION}/pandoc-${PANDOC_VERSION}-1-amd64.deb" \
  && dpkg -i /tmp/pandoc.deb \

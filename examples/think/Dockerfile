@@ -9,7 +9,7 @@
 # surface reads and writes.
 
 
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.1 AS computerd
 
 FROM debian:stable-slim
 
@@ -22,7 +22,7 @@ FROM debian:stable-slim
 # point is running real build/test workflows.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 ca-certificates curl gnupg git \
+      fuse3 libfuse2t64 ca-certificates curl gnupg git \
  && mkdir -p /etc/apt/keyrings \
  && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \

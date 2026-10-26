@@ -95,10 +95,10 @@ Notes:
 
 - No Node, no `npm install`, no `package.json` — the SEA binary
   embeds everything.
-- `fuse3` provides libfuse 3 and `fusermount3`. computerd needs libfuse
-  3.17 or newer, which is Debian trixie or later; bookworm's 3.14 is too
-  old. computerd 0.6.0 and earlier link libfuse 2 instead and also need
-  `libfuse2t64`.
+- `fuse3` provides libfuse 3 and `fusermount3`. The binary built from
+  this branch needs libfuse 3.17 or newer, which is Debian trixie or
+  later; bookworm's 3.14 is too old. Published computerd 0.7.1 and
+  earlier still link libfuse 2 and also need `libfuse2t64`.
 - `EXPOSE 8080` matches the Cloudflare backend's pinned port. If you
   run `computerd` outside Cloudflare Containers, leave `PORT` unset (default
   `45678`) or pick your own.

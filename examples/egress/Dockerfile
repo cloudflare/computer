@@ -1,10 +1,10 @@
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.1 AS computerd
 
 FROM debian:trixie-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      fuse3 ca-certificates curl \
+      fuse3 libfuse2t64 ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=computerd /usr/local/bin/computerd /usr/local/bin/computerd
