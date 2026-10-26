@@ -28,7 +28,7 @@
     "isomorphic-git": "^1.38.3",
     "just-bash": "^3.0.1",
     "workers-ai-provider": "^4.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
