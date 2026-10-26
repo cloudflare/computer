@@ -1,5 +1,11 @@
 # @cloudflare/dofs
 
+## 0.7.1
+
+### Patch Changes
+
+- [#249](https://github.com/cloudflare/computer/pull/249) `SQLiteWorkspaceProvider.readdirEntriesSync(path)` lists a directory with each entry's type, permission bits and inode, as an `lstat` of it reports them, from one query. ([`07e3920`](https://github.com/cloudflare/computer/commit/07e39207465085ba7a98a6f8ed06b3ead4621cea)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.7.0
 
 ## 0.6.0

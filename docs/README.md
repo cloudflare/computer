@@ -72,7 +72,7 @@ copies the prebuilt binary out of the public GHCR image and into a thin
 Debian base:
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.0 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.7.1 AS computerd
 
 FROM debian:stable-slim
 

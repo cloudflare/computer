@@ -1,5 +1,15 @@
 # @cloudflare/computerd
 
+## 0.7.1
+
+### Patch Changes
+
+- [#249](https://github.com/cloudflare/computer/pull/249) Directory listings on the mount now report each entry's type and inode, on synced and local-only paths alike. Before, every entry came back as `DT_UNKNOWN`, which `bun install` treats as nothing to link: with its cache under a local-only path such as `/workspace/.cache`, it left packages out of `node_modules` and failed with `failed to enqueue lifecycle scripts ...: ENOENT`. Tools that read `d_type`, such as `find` and `git`, no longer need an `lstat` per entry to learn it. ([`07e3920`](https://github.com/cloudflare/computer/commit/07e39207465085ba7a98a6f8ed06b3ead4621cea)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- Updated dependencies [[`07e3920`](https://github.com/cloudflare/computer/commit/07e39207465085ba7a98a6f8ed06b3ead4621cea)]:
+  - @cloudflare/dofs@0.7.1
+  - @cloudflare/computer-rpc@0.7.1
+
 ## 0.7.0
 
 ### Patch Changes
