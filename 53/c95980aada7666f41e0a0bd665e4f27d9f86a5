@@ -1,0 +1,19 @@
+package.json
+  s_6ce11858a29312::t_264f1cd29f680b 26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "53c95980aada7666f41e0a0bd665e4f27d9f86a5",
+  "prompts": {},
+  "sessions": {
+    "s_6ce11858a29312": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a17d3c-2653-7bb6-bcf6-d3c2ffa7aaee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "scuffi <aferguson@cloudflare.com>"
+    }
+  }
+}
