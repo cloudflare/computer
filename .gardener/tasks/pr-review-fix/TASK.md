@@ -44,13 +44,13 @@ Your checkout is the pull request's head commit.
 
 1. **Check the branch.** If the pull request's head branch does not start with `gardener/`, or
    your checkout is not the pull request's head commit (a manual run without a pull request number
-   checks out the default branch), finish immediately without proposing anything.
+   checks out the default branch), finish immediately without adding any steps.
 2. **Check the round count.** Read the pull request's conversation comments with the provider API
    (`GET /repos/{owner}/{repo}/issues/{number}/comments?per_page=100`, reading every page until
    one returns fewer than 100). Count only comments written by
    `github-actions[bot]` whose body contains `<!-- gardener-review-round -->`; ignore everyone
    else's. If a comment by `github-actions[bot]` already contains `<!-- gardener-review-done -->`,
-   finish immediately without proposing anything. If there are 3 or more rounds, propose one
+   finish immediately without adding any steps. If there are 3 or more rounds, post one
    `pull_request.comment.create` whose body starts with `<!-- gardener-review-done -->` on its own
    line, saying the automatic review rounds are used up and a maintainer should take it from
    here, then finish without changing code.
@@ -67,30 +67,30 @@ Your checkout is the pull request's head commit.
    A finding is real only if you can show it. Decline the rest, with a reason.
 5. **Fix the real ones** in the checkout using `repository.exec`. Keep changes minimal and focused
    on the findings. Add or update tests for each fix. Run the relevant tests and checks.
-6. **Push.** If you changed anything, propose one `commit.create` as step `fix`, on the pull
+6. **Push.** If you changed anything, commit it with one `commit.create` as step `fix`, on the pull
    request's head branch, with `expectedHeadSha` set to the checked-out commit and a short message
-   listing the fixes. If nothing needs to change, propose no commit: that is what ends the review
-   loop. If there is also nothing to answer, propose nothing at all.
-7. **Answer each thread in place.** For every thread you are answering, propose one
-   `pull_request.review_comment.reply` with `commentId` set to the `databaseId` of the thread's
+   listing the fixes. If nothing needs to change, add no commit: that is what ends the review loop.
+   If there is also nothing to answer, add no steps at all.
+7. **Answer each thread in place.** Reply to each thread you are answering with one
+   `pull_request.review_comment.reply`, setting `commentId` to the `databaseId` of the thread's
    first comment.
    - **Fixed:** say what changed and which test shows it, and link the commit. Write `{{commit}}`
      in the body and add the reference
      `{"/body": {"placeholders": {"commit": {"step": "fix", "output": "commitUrl"}}}}`.
    - **Declined:** say why, with the evidence.
    - Keep each reply under 120 words.
-8. **Resolve what you fixed.** For each thread this round's commit fixed, propose one
-   `pull_request.review_thread.resolve` with `threadId` set to the thread's `id`. Never resolve a
+8. **Resolve what you fixed.** Resolve each thread this round's commit fixed with one
+   `pull_request.review_thread.resolve`, setting `threadId` to the thread's `id`. Never resolve a
    thread you declined or didn't fix: those stay open for a maintainer.
-9. **Summarise.** Propose one `pull_request.comment.create` whose body starts with
-   `<!-- gardener-review-round -->` on its own line, then one line per thread (fixed or declined),
+9. **Summarise.** Post one `pull_request.comment.create` whose body starts with
+   `<!-- gardener-review-round -->` on its own line, then a line on what this round did, a bullet
+   per thread (fixed or declined),
    an answer to any feedback in the review body, and which tests you ran and whether they passed.
    Keep it under 150 words.
 
-Propose the steps in this order: the commit, the replies, the resolves, the summary. A plan may
+Add the steps in this order: the commit, the replies, the resolves, the summary. A plan may
 have at most 40 steps, so answer at most 15 threads in one round, and say in the summary that more
-remain for the next one. Nothing
-happens until the plan is applied, so describe proposals, not finished work, and never mention
+remain for the next one. Never mention
 `@ask-gardener` or `@gnome-bot`.
 
 Then finish.

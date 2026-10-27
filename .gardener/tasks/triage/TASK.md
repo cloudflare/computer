@@ -71,8 +71,11 @@ Label every actionable issue `bug` (wrong or wasteful, including memory, CPU or 
   characters, saying whether it's valid, its impact and what it needs from a maintainer (adding
   `gardener-fix`, or the decision it's waiting on). Don't restate the title. Its expected version is
   the issue's `updatedAt`.
-- Comment at most once, in under 150 words, citing code as `path:line`. State the decision and what
-  happens next, then stop. For `priority: high`, that's: a maintainer can add `gardener-fix` to have
-  it built. Don't list labels or mention this bot.
+- Comment at most once, in under 150 words, the way a maintainer would: thank them briefly and say
+  you triaged it. When there's more than a sentence to say, set out what you found in a few short
+  bold-labelled lines (the cause with `path:line`, the fix, what happens next) rather than one long
+  paragraph. For `priority: high`,
+  what happens next is that a maintainer can add `gardener-fix` to have it built. Then stop: don't
+  list labels or mention this bot.
 
 In your summary, list the files you read and what each showed. Then finish.

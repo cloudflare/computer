@@ -65,7 +65,8 @@ including adding a changeset when a published package changes.
    it's the best option, the alternatives you considered, and the checks you ran. It ends by noting
    that commits pushed by this task don't start CI, and that a maintainer can mention @ask-gardener
    on the pull request to switch to an alternative or ask for changes.
-6. Comment on the issue linking the pull request: write `{{pr}}` and add the reference
+6. Comment on the issue: a line saying you've opened the fix, linking the pull request, then a
+   bullet each for the cause and the change. To link it, write `{{pr}}` and add the reference
    `{"/body": {"placeholders": {"pr": {"step": "open-pr", "output": "pullUrl"}}}}`.
 
 Then finish.
