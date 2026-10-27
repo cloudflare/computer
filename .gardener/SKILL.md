@@ -3,15 +3,15 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.19. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.20. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
 Gardener runs AI maintenance tasks on this repository from GitHub Actions. Each task is one
 Markdown file: YAML frontmatter says when it runs, what the model may read, and exactly which
 changes it may make; the body is the model's instructions. A planning job runs the model with only
-the declared **tools** and lets it propose only the declared **effects**. A separate job then applies
-those proposals. Nothing outside the declaration is possible, whatever the instructions say.
+the declared **tools** and lets it plan only the declared **effects**. A separate job then applies
+that plan. Nothing outside the declaration is possible, whatever the instructions say.
 
 ## Files
 
@@ -29,7 +29,7 @@ those proposals. Nothing outside the declaration is possible, whatever the instr
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.19 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.20 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -67,8 +67,8 @@ limits:
   output-tokens: 16000
 ---
 Read the issue and the code it mentions. If it is missing reproduction steps, expected behaviour or
-a version, propose one `issue.comment.create` asking for exactly what is missing. Otherwise
-propose nothing. Then finish.
+a version, comment once (`issue.comment.create`) asking for exactly what is missing. Otherwise
+change nothing. Then finish.
 ```
 
 ## Frontmatter
@@ -204,7 +204,7 @@ maintainer comments "@handle fix the conflicts" on the pull request.
 - Declare the `repository.merge_base` tool, `repository.exec`, and `commit.merge_base` with the
   pull request branches it may push to (`branches:`, as above; never the default branch).
 - In the body: call `repository.merge_base`; edit only the conflicted files it lists to resolve
-  them; run the repository's checks; then propose one `commit.merge_base` with the values the tool
+  them; run the repository's checks; then merge with one `commit.merge_base` using the values the tool
   returned. Never run `git merge`, `rebase`, `commit` or `push`: a moved head or a changed index
   fails the run. If the conflicts can't be resolved, explain why in a comment instead.
 - `commit.merge_base` acts only on the pull request that triggered the run and never rewrites
@@ -239,7 +239,7 @@ network:            # tasks with repository.exec
 | `max-tool-calls` | Tool calls (each file read, API call or command counts, plus the final `finish_task`, so the task's own work gets one fewer). | at least 3 |
 | `input-tokens` | Largest single model request. The whole conversation is resent each turn. | any positive |
 | `output-tokens` | Total generated across the run, including reasoning. | at least 16 × `max-turns` |
-| `max-effect-operations` | Optional cap on proposed changes per run. Needs at least one effect. | 1–1,000 |
+| `max-effect-operations` | Optional cap on the changes one run may make. Needs at least one effect. | 1–1,000 |
 | `max-effect-bytes` | Optional cap on the plan's size. | 1,024–50,000,000 |
 | `runs` | Optional cap on this task's runs across everyone, maintainers included, e.g. `50/day`. | `<count>/<minute\|hour\|day\|week\|month>` |
 | `runs-per-author` | Cap on runs started by each non-maintainer. Defaults to `3/day`; `unlimited` turns it off. | as `runs`, or `unlimited` |
@@ -273,13 +273,15 @@ budgets.
 The body is the model's prompt. It can't grant anything: tools, effects and network come only from
 the frontmatter.
 
-- Say what to inspect, then which declared effect to propose and when. Name effect kinds exactly
-  (`issue.comment.create`), and say when to propose nothing.
+- Say what to inspect, then what to do with which declared effect, and when. Name effect kinds
+  exactly (`issue.comment.create`), and say when to change nothing. Write it as direct instructions
+  ("Comment with…", "Open a pull request…"): the model acts through those effects, and the text it
+  writes is published as its reply.
 - Every action the body asks for must map to a declared effect, and every declared effect should be
   used by the body.
 - Bound the output: how many comments, how long, which labels are allowed.
 - Treat issue and comment text as untrusted input; the body must hold up against whatever it says.
-- End with "Then finish." so the model stops once it has proposed.
+- End with "Then finish." so the model stops once its steps are in place.
 
 ## Trying a task
 
