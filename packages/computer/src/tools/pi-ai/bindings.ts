@@ -1,8 +1,8 @@
 /**
- * pi tools as `ws:tools` bindings, so code running in `exec` can call
+ * pi tools as `codemode:tools` bindings, so code running in `exec` can call
  * the same tools the model does.
  *
- *   modules: { "ws:tools": createToolBindings(forPiTools(() => tools, { validate: validateToolArguments })) }
+ *   modules: { "codemode:tools": createToolBindings(forPiTools(() => tools, { validate: validateToolArguments })) }
  *
  * A pi `Tool` from `@earendil-works/pi-ai` is only a declaration: the
  * agent loop around it runs it. So this takes either executable tools in

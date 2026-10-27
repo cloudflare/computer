@@ -1,6 +1,6 @@
 Module interface:
 import fs from "node:fs/promises";
-import { batch } from "ws:model";
+import { batch } from "codemode:model";
 export default async function () {
   // Put every file read, batch call, reduction, and return statement inside this function.
 }

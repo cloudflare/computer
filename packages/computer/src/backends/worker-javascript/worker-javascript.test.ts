@@ -733,7 +733,7 @@ describe("WorkerJavaScriptBackend", () => {
     const backend = new WorkerJavaScriptBackend({
       maxHostCallMs: 5,
       modules: {
-        "ws:test": {
+        "codemode:test": {
           run(_args, context) {
             return new Promise((_resolve, reject) => {
               context.signal.addEventListener("abort", () => {
@@ -753,7 +753,7 @@ describe("WorkerJavaScriptBackend", () => {
                   _input: unknown,
                   host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  await host.call("host/ws:test.run", []);
+                  await host.call("host/codemode:test.run", []);
                 },
               };
             },
@@ -971,34 +971,50 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it.each([
-    ["a host module with a path", { "ws:bad/path": { run: async () => null } }, /simple ws:\*/],
-    ["a host module outside ws:*", { container: { run: async () => null } }, /simple ws:\*/],
-    ["source under a ws:* name with a path", { "ws:lib/x": "export const x = 1;" }, /simple ws:\*/],
+    [
+      "a host module with a path",
+      { "codemode:bad/path": { run: async () => null } },
+      /simple codemode:\*/,
+    ],
+    [
+      "a host module outside codemode:*",
+      { container: { run: async () => null } },
+      /simple codemode:\*/,
+    ],
+    [
+      "source under a codemode:* name with a path",
+      { "codemode:lib/x": "export const x = 1;" },
+      /simple codemode:\*/,
+    ],
     ["a replacement node:fs", { "node:fs": "export default {};" }, /built in/],
     [
       "a replacement node:fs host module",
       { "node:fs/promises": { run: async () => null } },
       /built in/,
     ],
-    ["a number", { "ws:test": 42 }, /source text, an object of functions, or a factory/],
-    ["an object with no functions", { "ws:test": {} }, /must export a function/],
+    ["a number", { "codemode:test": 42 }, /source text, an object of functions, or a factory/],
+    ["an object with no functions", { "codemode:test": {} }, /must export a function/],
     [
       "an object with a non-identifier name",
-      { "ws:test": { "not-a-name": async () => null } },
+      { "codemode:test": { "not-a-name": async () => null } },
       /JavaScript identifier/,
     ],
     [
       "an object with a default export",
-      { "ws:test": { default: async () => null } },
+      { "codemode:test": { default: async () => null } },
       /JavaScript identifier/,
     ],
     [
       "an object with a then export",
       // oxlint-disable-next-line unicorn/no-thenable -- The case checks that the backend rejects a `then` export.
-      { "ws:test": { then: async () => null } },
+      { "codemode:test": { then: async () => null } },
       /JavaScript identifier/,
     ],
-    ["an object with a non-function export", { "ws:test": { run: "nope" } }, /must be a function/],
+    [
+      "an object with a non-function export",
+      { "codemode:test": { run: "nope" } },
+      /must be a function/,
+    ],
   ])("rejects %s at construction", (_label, modules, message) => {
     expect(
       () =>
@@ -1015,7 +1031,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const backend = new WorkerJavaScriptBackend({
       loader: throwingLoader("must not load"),
-      modules: { "ws:test": () => ({ "not-a-name": async () => null }) },
+      modules: { "codemode:test": () => ({ "not-a-name": async () => null }) },
     });
     await expect(
       backend.connect({
@@ -1034,20 +1050,20 @@ describe("WorkerJavaScriptBackend", () => {
       access: "read",
       modules: {
         lib: "export const x = 1;",
-        "ws:weather": { forecast: () => null, alerts: () => null },
-        "ws:described": Object.assign(() => ({ run: () => null }), {
+        "codemode:weather": { forecast: () => null, alerts: () => null },
+        "codemode:described": Object.assign(() => ({ run: () => null }), {
           description: "Does a thing.",
         }),
-        "ws:plain": () => ({ run: () => null }),
+        "codemode:plain": () => ({ run: () => null }),
       },
     });
 
     expect(backend.description).toContain("ECMAScript module source");
     expect(backend.description).toContain("read-only");
     expect(backend.description).toContain("- `lib`: a bundled library.");
-    expect(backend.description).toContain("- `ws:weather`: exports `forecast`, `alerts`.");
-    expect(backend.description).toContain("- `ws:described`: Does a thing.");
-    expect(backend.description).toContain("- `ws:plain`: a host module.");
+    expect(backend.description).toContain("- `codemode:weather`: exports `forecast`, `alerts`.");
+    expect(backend.description).toContain("- `codemode:described`: Does a thing.");
+    expect(backend.description).toContain("- `codemode:plain`: a host module.");
   });
 
   it("lists the Node.js built-ins code can import", () => {
@@ -1083,12 +1099,12 @@ describe("WorkerJavaScriptBackend", () => {
     });
     const backend = new WorkerJavaScriptBackend({
       loader: throwingLoader("must not load"),
-      modules: { "ws:tools": factory },
+      modules: { "codemode:tools": factory },
     });
 
-    expect(backend.description).toContain("- `ws:tools`: Tools: read.");
+    expect(backend.description).toContain("- `codemode:tools`: Tools: read.");
     names = ["read", "grep"];
-    expect(backend.description).toContain("- `ws:tools`: Tools: read, grep.");
+    expect(backend.description).toContain("- `codemode:tools`: Tools: read, grep.");
   });
 
   it("builds host modules from the Workspace services when it connects", async () => {
@@ -1099,7 +1115,7 @@ describe("WorkerJavaScriptBackend", () => {
     const backend = new WorkerJavaScriptBackend({
       loader: throwingLoader("must not load"),
       modules: {
-        "ws:test": (host) => {
+        "codemode:test": (host) => {
           seen = host.git;
           return { run: async () => null };
         },
@@ -1123,7 +1139,7 @@ describe("WorkerJavaScriptBackend", () => {
     const backend = new WorkerJavaScriptBackend({
       loader: throwingLoader("must not load"),
       modules: {
-        "ws:test": (host) => {
+        "codemode:test": (host) => {
           seen.push(host.assets);
           return { run: async () => null };
         },
@@ -1148,7 +1164,7 @@ describe("WorkerJavaScriptBackend", () => {
     await fs.mkdir("/workspace", { recursive: true });
     let response: unknown;
     const backend = new WorkerJavaScriptBackend({
-      modules: { "ws:test": { run: async () => null } },
+      modules: { "codemode:test": { run: async () => null } },
       loader: {
         load() {
           return {
@@ -1158,7 +1174,7 @@ describe("WorkerJavaScriptBackend", () => {
                   _input: unknown,
                   host: { call(name: string, args: unknown[]): Promise<unknown> },
                 ) {
-                  response = await host.call("host/ws:test.toString", []);
+                  response = await host.call("host/codemode:test.toString", []);
                 },
               };
             },
@@ -1183,13 +1199,13 @@ describe("WorkerJavaScriptBackend", () => {
     await handle.close?.();
   });
 
-  it("does not install ws:git or ws:artifacts unless they are configured", async () => {
+  it("does not install codemode:git or codemode:artifacts unless they are configured", async () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
-    for (const specifier of ["ws:git", "ws:artifacts"]) {
+    for (const specifier of ["codemode:git", "codemode:artifacts"]) {
       await expect(
         workspace.runtime.exec(`import * as m from "${specifier}"; export default () => m;`),
       ).rejects.toThrow(/is not configured/);
@@ -1653,19 +1669,22 @@ describe("WorkerJavaScriptBackend", () => {
         backends: [
           new WorkerJavaScriptBackend({
             loader: { load },
-            modules: { large, "ws:echo": { run: async () => null } },
+            modules: { large, "codemode:echo": { run: async () => null } },
           }),
         ],
       });
       await workspace.fs.mkdir("/workspace/a/b", { recursive: true });
       await workspace.fs.writeFile(
         "/workspace/a/one.js",
-        `import "large"; import "ws:echo"; import "./b/two.js";`,
+        `import "large"; import "codemode:echo"; import "./b/two.js";`,
       );
-      await workspace.fs.writeFile("/workspace/a/b/two.js", `import "large"; import "ws:echo";`);
+      await workspace.fs.writeFile(
+        "/workspace/a/b/two.js",
+        `import "large"; import "codemode:echo";`,
+      );
 
       const execution = await workspace.runtime.exec(
-        `import "large"; import "ws:echo"; import "./a/one.js"; export default null;`,
+        `import "large"; import "codemode:echo"; import "./a/one.js"; export default null;`,
       );
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
 
@@ -1673,11 +1692,11 @@ describe("WorkerJavaScriptBackend", () => {
       expect(Object.keys(modules).filter((name) => name.endsWith("large"))).toEqual([
         "__modules__/large",
       ]);
-      expect(Object.keys(modules).filter((name) => name.endsWith("ws:echo"))).toEqual([
-        "__modules__/ws:echo",
+      expect(Object.keys(modules).filter((name) => name.endsWith("codemode:echo"))).toEqual([
+        "__modules__/codemode:echo",
       ]);
       expect(source(modules["workspace/a/b/two.js"])).toBe(
-        `import "../../../__modules__/large"; import "../../../__modules__/ws:echo";`,
+        `import "../../../__modules__/large"; import "../../../__modules__/codemode:echo";`,
       );
     });
 
@@ -1777,24 +1796,24 @@ describe("WorkerJavaScriptBackend", () => {
         backends: [
           new WorkerJavaScriptBackend({
             loader: { load },
-            modules: { "ws:tools": () => ({}), "ws:other": { run: async () => null } },
+            modules: { "codemode:tools": () => ({}), "codemode:other": { run: async () => null } },
           }),
         ],
       });
 
       const execution = await workspace.runtime.exec(
-        `import { run } from "ws:other"; export default run;`,
+        `import { run } from "codemode:other"; export default run;`,
       );
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
       const modules = load.mock.calls[0]?.[0].modules ?? {};
-      expect(Object.keys(modules).filter((name) => name.includes("ws:"))).toEqual([
-        "__modules__/ws:other",
+      expect(Object.keys(modules).filter((name) => name.includes("codemode:"))).toEqual([
+        "__modules__/codemode:other",
       ]);
 
       await expect(
-        workspace.runtime.exec(`import { read } from "ws:tools"; export default read;`),
+        workspace.runtime.exec(`import { read } from "codemode:tools"; export default read;`),
       ).rejects.toThrow(
-        'Module "ws:tools" exports nothing on this backend: its factory built no functions when the backend connected.',
+        'Module "codemode:tools" exports nothing on this backend: its factory built no functions when the backend connected.',
       );
     });
 
@@ -1900,8 +1919,8 @@ describe("WorkerJavaScriptBackend", () => {
       ],
       [
         "an unconfigured host module",
-        `import "ws:missing";`,
-        /imports "ws:missing", which is not configured/,
+        `import "codemode:missing";`,
+        /imports "codemode:missing", which is not configured/,
       ],
     ])("rejects a configured module with %s", async (_label, imports, message) => {
       const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
@@ -1917,7 +1936,7 @@ describe("WorkerJavaScriptBackend", () => {
       expect(load).not.toHaveBeenCalled();
     });
 
-    it("serves source under a ws:* name, which can import the host's modules", async () => {
+    it("serves source under a codemode:* name, which can import the host's modules", async () => {
       const load = completingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
@@ -1925,8 +1944,8 @@ describe("WorkerJavaScriptBackend", () => {
           new WorkerJavaScriptBackend({
             loader: { load },
             modules: {
-              "ws:facade": `import { run } from "ws:echo"; export const echo = { run };`,
-              "ws:echo": { run: async () => null },
+              "codemode:facade": `import { run } from "codemode:echo"; export const echo = { run };`,
+              "codemode:echo": { run: async () => null },
             },
           }),
         ],
@@ -1934,17 +1953,17 @@ describe("WorkerJavaScriptBackend", () => {
       await workspace.fs.mkdir("/workspace", { recursive: true });
 
       const execution = await workspace.runtime.exec(
-        `import { echo } from "ws:facade"; export default typeof echo.run;`,
+        `import { echo } from "codemode:facade"; export default typeof echo.run;`,
       );
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
 
       const modules = load.mock.calls[0]?.[0].modules ?? {};
-      expect(source(modules["__modules__/ws:facade"])).toBe(
-        `import { run } from "./ws:echo"; export const echo = { run };`,
+      expect(source(modules["__modules__/codemode:facade"])).toBe(
+        `import { run } from "./codemode:echo"; export const echo = { run };`,
       );
     });
 
-    it("lets source under ws:* names import each other by name", async () => {
+    it("lets source under codemode:* names import each other by name", async () => {
       const load = completingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
@@ -1952,8 +1971,8 @@ describe("WorkerJavaScriptBackend", () => {
           new WorkerJavaScriptBackend({
             loader: { load },
             modules: {
-              "ws:a": `import { value } from "ws:b"; export { value };`,
-              "ws:b": "export const value = 1;",
+              "codemode:a": `import { value } from "codemode:b"; export { value };`,
+              "codemode:b": "export const value = 1;",
             },
           }),
         ],
@@ -1961,15 +1980,15 @@ describe("WorkerJavaScriptBackend", () => {
       await workspace.fs.mkdir("/workspace", { recursive: true });
 
       const execution = await workspace.runtime.exec(
-        `import { value } from "ws:a"; export default value;`,
+        `import { value } from "codemode:a"; export default value;`,
       );
       await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
 
       const modules = load.mock.calls[0]?.[0].modules ?? {};
-      expect(source(modules["__modules__/ws:a"])).toBe(
-        `import { value } from "./ws:b"; export { value };`,
+      expect(source(modules["__modules__/codemode:a"])).toBe(
+        `import { value } from "./codemode:b"; export { value };`,
       );
-      expect(source(modules["__modules__/ws:b"])).toBe("export const value = 1;");
+      expect(source(modules["__modules__/codemode:b"])).toBe("export const value = 1;");
     });
 
     it("rewrites a configured module's host module imports to its own directory", async () => {
@@ -1981,8 +2000,8 @@ describe("WorkerJavaScriptBackend", () => {
             loader: { load },
             modules: {
               base: "export const value = 1;",
-              facade: `import { value } from "base"; import { run } from "ws:echo"; export { value, run };`,
-              "ws:echo": { run: async () => null },
+              facade: `import { value } from "base"; import { run } from "codemode:echo"; export { value, run };`,
+              "codemode:echo": { run: async () => null },
             },
           }),
         ],
@@ -1994,7 +2013,7 @@ describe("WorkerJavaScriptBackend", () => {
 
       const modules = load.mock.calls[0]?.[0].modules ?? {};
       expect(source(modules["__modules__/facade"])).toBe(
-        `import { value } from "base"; import { run } from "./ws:echo"; export { value, run };`,
+        `import { value } from "base"; import { run } from "./codemode:echo"; export { value, run };`,
       );
     });
   });
@@ -2153,7 +2172,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(3);
     // The run's next call waits for an answer.
     const journal = new ExecutionJournal(db, "worker-javascript", "run");
-    const step = journal.begin("host/ws:test.approve", []);
+    const step = journal.begin("host/codemode:test.approve", []);
     if (step.kind !== "live") throw new Error("expected a live call");
     journal.interrupt(step.seq, { kind: "approval" });
     const answering = open(storage);

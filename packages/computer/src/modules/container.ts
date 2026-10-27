@@ -1,11 +1,11 @@
-// `ws:container`: lets isolate JavaScript run shell commands in the
+// `codemode:container`: lets isolate JavaScript run shell commands in the
 // Workspace's container backend.
 //
 // Installed on a WorkerJavaScriptBackend, it turns the container into a
 // library the JavaScript backend calls, rather than a second backend
 // the model has to choose between:
 //
-//   import { exec } from "ws:container";
+//   import { exec } from "codemode:container";
 //   const { exitCode, stdout } = await exec("npm test", { cwd: "/workspace" });
 //
 // Each call goes through `workspace.runtime.exec`, so the container
@@ -52,7 +52,7 @@ export interface ContainerModuleOptions {
 }
 
 /**
- * Build the `ws:container` host module over the Workspace's container
+ * Build the `codemode:container` host module over the Workspace's container
  * backend.
  *
  * It exports `exec(command, { cwd, env, stdin, timeoutMs })`, which
@@ -67,7 +67,7 @@ export interface ContainerModuleOptions {
  * backend's own egress setting; the JavaScript backend's does not apply.
  *
  * @param options - Which backend to use and how much output to return.
- * @returns The module to pass as `modules["ws:container"]`. Its
+ * @returns The module to pass as `modules["codemode:container"]`. Its
  *   `description` tells the model how to use it.
  * @throws When `maxOutputBytes` is not a positive integer. The module
  *   also throws when the backend connects if the Workspace has no
@@ -108,14 +108,14 @@ export function createContainerModule(
     const target = host.runtime.backends().find((info) => info.id === backend);
     if (target === undefined) {
       throw new Error(
-        `ws:container: the Workspace has no backend ${JSON.stringify(backend)}. Register a ContainerBackend, or pass createContainerModule({ backend }).`,
+        `codemode:container: the Workspace has no backend ${JSON.stringify(backend)}. Register a ContainerBackend, or pass createContainerModule({ backend }).`,
       );
     }
     // A module backend reads `exec` source as code, so a shell command
     // sent there would run as JavaScript, or start a nested run.
     if (target.protocol !== "command") {
       throw new Error(
-        `ws:container: backend ${JSON.stringify(backend)} runs module source, not shell commands.`,
+        `codemode:container: backend ${JSON.stringify(backend)} runs module source, not shell commands.`,
       );
     }
     return { exec: execOn(host) };
@@ -124,7 +124,7 @@ export function createContainerModule(
     (host: WorkspaceModuleHost): WorkspaceModuleFunction =>
     async (args, context) => {
       if (context.access !== "read-write") {
-        throw new Error("ws:container exec requires Workspace write access.");
+        throw new Error("codemode:container exec requires Workspace write access.");
       }
       const request = parseExecArgs(args);
       const timeoutMs = remainingTime(request.timeoutMs, context);

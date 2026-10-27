@@ -25,6 +25,6 @@ describe("RLM trace layout", () => {
     expect(appSource).toContain("JavaScript execution output");
     expect(appSource).toContain("Capability mismatch");
     expect(appSource).toContain("JavaScript completed, but its output does not fit this task.");
-    expect(appSource).toContain("bounded <code>ws:model</code> map calls");
+    expect(appSource).toContain("bounded <code>codemode:model</code> map calls");
   });
 });

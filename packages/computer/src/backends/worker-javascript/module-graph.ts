@@ -74,7 +74,7 @@ function nodeModule(specifier: string): string | undefined {
   const name = specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
   return NODE_MODULES.some((allowed) => allowed === name) ? `node:${name}` : undefined;
 }
-const HOST_SPECIFIER = /^ws:[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const HOST_SPECIFIER = /^codemode:[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 // `default` would turn the function into the default export, and a
 // `then` export makes the module namespace look like a promise to
@@ -113,12 +113,12 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
       throw new Error(`Module ${JSON.stringify(specifier)} is built in and cannot be replaced.`);
     }
     if (typeof module === "string") {
-      if (specifier.startsWith("ws:")) {
+      if (specifier.startsWith("codemode:")) {
         // Source the host provides under its own namespace, such as a facade over its host
         // modules that exports objects, which host modules can't. Same naming rule as theirs.
         if (!HOST_SPECIFIER.test(specifier)) {
           throw new Error(
-            `Module ${JSON.stringify(specifier)} must use a simple ws:* name, such as "ws:git".`,
+            `Module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
           );
         }
         source[specifier] = module;
@@ -134,7 +134,7 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
     }
     if (!HOST_SPECIFIER.test(specifier)) {
       throw new Error(
-        `Host module ${JSON.stringify(specifier)} must use a simple ws:* name, such as "ws:git".`,
+        `Host module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
       );
     }
     if (typeof module === "function") {
@@ -210,11 +210,11 @@ export interface BuildModuleGraphOptions {
 /**
  * Prepare the backend's source modules for the module directory, once
  * per backend handle: check what each one imports, and point its
- * `ws:*` imports at the module directory.
+ * `codemode:*` imports at the module directory.
  *
  * A source module is stored beside the other configured modules rather
  * than beside the caller's files, so it may import them (those under
- * `ws:*` by name too), host modules, and built-in modules, but not
+ * `codemode:*` by name too), host modules, and built-in modules, but not
  * Workspace files.
  *
  * @param sources - Source modules by specifier.
@@ -241,13 +241,13 @@ export function prepareSourceModules(
     const edits: ImportSite[] = [];
     for (const site of sites) {
       const imported = site.specifier;
-      if (imported.startsWith("ws:")) {
+      if (imported.startsWith("codemode:")) {
         if (!hostModules.has(imported) && !Object.hasOwn(sources, imported)) {
           throw new Error(
             `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not configured.`,
           );
         }
-        // The new registry reads "ws:x" as a URL with its own scheme, so
+        // The new registry reads "codemode:x" as a URL with its own scheme, so
         // only the relative form finds the stored module.
         edits.push({ ...site, specifier: `./${imported}` });
         continue;
@@ -315,7 +315,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
           `Module ${JSON.stringify(specifier)} exports nothing on this backend: its factory built no functions when the backend connected.`,
         );
       }
-      if (specifier.startsWith("ws:")) {
+      if (specifier.startsWith("codemode:")) {
         throw new Error(
           `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option.`,
         );
@@ -528,7 +528,7 @@ function isInternalModuleName(name: string) {
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
     name.endsWith(`/${DURABLE_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
-    name.split("/").at(-1)?.startsWith("ws:") === true
+    name.split("/").at(-1)?.startsWith("codemode:") === true
   );
 }
 

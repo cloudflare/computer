@@ -14,7 +14,7 @@ const UNSAFE_TO_REPEAT = Symbol.for("cloudflare.workspace.module.unsafeToRepeat"
  *
  * ```ts
  * modules: {
- *   "ws:billing": { charge: unsafeToRepeat(async ([order, cents]) => ...) },
+ *   "codemode:billing": { charge: unsafeToRepeat(async ([order, cents]) => ...) },
  * }
  * ```
  */

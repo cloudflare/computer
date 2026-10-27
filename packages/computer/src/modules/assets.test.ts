@@ -29,7 +29,7 @@ function build(
     runtime: undefined,
   } as unknown as WorkspaceModuleHost;
   const publish = createAssetsModule(options)(host).publish;
-  if (!publish) throw new Error("ws:assets must export publish");
+  if (!publish) throw new Error("codemode:assets must export publish");
   return publish;
 }
 
