@@ -1944,6 +1944,34 @@ describe("WorkerJavaScriptBackend", () => {
       );
     });
 
+    it("lets source under ws:* names import each other by name", async () => {
+      const load = completingLoader();
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [
+          new WorkerJavaScriptBackend({
+            loader: { load },
+            modules: {
+              "ws:a": `import { value } from "ws:b"; export { value };`,
+              "ws:b": "export const value = 1;",
+            },
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const execution = await workspace.runtime.exec(
+        `import { value } from "ws:a"; export default value;`,
+      );
+      await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+      const modules = load.mock.calls[0]?.[0].modules ?? {};
+      expect(source(modules["__modules__/ws:a"])).toBe(
+        `import { value } from "./ws:b"; export { value };`,
+      );
+      expect(source(modules["__modules__/ws:b"])).toBe("export const value = 1;");
+    });
+
     it("rewrites a configured module's host module imports to its own directory", async () => {
       const load = completingLoader();
       const workspace = new Workspace({

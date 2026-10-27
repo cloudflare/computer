@@ -209,12 +209,13 @@ export interface BuildModuleGraphOptions {
 
 /**
  * Prepare the backend's source modules for the module directory, once
- * per backend handle: check what each one imports, and point its host
- * module imports at the module directory.
+ * per backend handle: check what each one imports, and point its
+ * `ws:*` imports at the module directory.
  *
  * A source module is stored beside the other configured modules rather
- * than beside the caller's files, so it may import them, host modules,
- * and built-in modules, but not Workspace files.
+ * than beside the caller's files, so it may import them (those under
+ * `ws:*` by name too), host modules, and built-in modules, but not
+ * Workspace files.
  *
  * @param sources - Source modules by specifier.
  * @param hostModules - The specifiers of the backend's host modules.
@@ -241,13 +242,13 @@ export function prepareSourceModules(
     for (const site of sites) {
       const imported = site.specifier;
       if (imported.startsWith("ws:")) {
-        if (!hostModules.has(imported)) {
+        if (!hostModules.has(imported) && !Object.hasOwn(sources, imported)) {
           throw new Error(
             `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not configured.`,
           );
         }
         // The new registry reads "ws:x" as a URL with its own scheme, so
-        // only the relative form finds the stored host module.
+        // only the relative form finds the stored module.
         edits.push({ ...site, specifier: `./${imported}` });
         continue;
       }

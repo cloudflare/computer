@@ -344,9 +344,21 @@ Path confinement rejects lexical escapes and every symlink component before an o
 
 ### Source modules
 
-A string value is JavaScript source installed as a bare import, such as a bundled library. It is plain code with no host access, and it cannot use the `ws:` namespace or replace `node:fs` or `node:fs/promises`.
+A string value is JavaScript source installed as a bare import, such as a bundled library. It is plain code with no host access, and it cannot replace `node:fs` or `node:fs/promises`.
 
-Source modules live together in the module directory, not beside the caller's files. A source module may import another source module by its bare name or as `./name`, a configured host module, or a built-in module, but not a Workspace file; an import of one fails before the Worker is created and names the module. A computed dynamic import in a source module resolves by name at run time among the other source modules.
+Source can also be a library the host provides, under a simple `ws:*` specifier like a host module's. Host modules export only functions, so a host that wants to offer objects, or anything else that isn't a function, wraps its host modules in a source module of its own. The model is told it's a library the host provides:
+
+```ts
+modules: {
+  "ws:weather-host": { forecast: ([city]) => lookUpForecast(String(city)) },
+  "ws:weather": `
+    import { forecast } from "ws:weather-host";
+    export const weather = { forecast: (city) => forecast(city) };
+  `,
+}
+```
+
+Source modules live together in the module directory, not beside the caller's files. A source module may import another source module by its bare name (or its `ws:*` name) or as `./name`, a configured host module, or a built-in module, but not a Workspace file; an import of one fails before the Worker is created and names the module. A computed dynamic import in a source module resolves by name at run time among the other source modules.
 
 ### Host modules
 

@@ -65,13 +65,16 @@ export interface WorkerJavaScriptBackendOptions {
    * A string value is JavaScript source bundled into the isolate, such as
    * a library build. An object of functions, or a factory that builds
    * one, is a host module: it runs in the Durable Object under a `ws:*`
-   * specifier, and each function becomes a named export.
+   * specifier, and each function becomes a named export. Source may use a
+   * simple `ws:*` specifier too, for a library the host provides, such as
+   * one that wraps host modules in objects.
    *
    * ```ts
    * modules: {
    *   "tar-stream": TAR_STREAM_BUNDLE,
    *   "ws:git": createGitModule(),
    *   "ws:weather": { forecast: ([city]) => lookUpForecast(String(city)) },
+   *   "ws:forecasts": `import { forecast } from "ws:weather"; export const weather = { forecast };`,
    * }
    * ```
    *

@@ -107,7 +107,8 @@ export interface WorkspaceModuleFactory {
  * - A factory is a host module that needs the Workspace's Git client,
  *   Artifacts client, or runtime, such as `createGitModule()`.
  *
- * Host modules must use a `ws:*` specifier.
+ * Host modules must use a `ws:*` specifier. Source may use a simple one
+ * too, for a library the host provides.
  */
 export type WorkspaceModule = string | WorkspaceModuleFunctions | WorkspaceModuleFactory;
 
