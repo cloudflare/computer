@@ -27,6 +27,7 @@ limits:
   max-tool-calls: 40
   input-tokens: 200000
   output-tokens: 16000
+  runs-per-author: 10/day
 ---
 
 Triage the issue that started this run so maintainers only see what needs them.

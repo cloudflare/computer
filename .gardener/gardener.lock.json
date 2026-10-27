@@ -485,7 +485,7 @@
     },
     "triage": {
       "source": "tasks/triage/TASK.md",
-      "bundleHash": "7c0d4f64998f6866fe1c6ee96c7456c63c27ed5a7d9b0fb48746b8eea896b2dd",
+      "bundleHash": "eac1ebdfa63f7d2a632891ab0285cdee6f159a6c6e36caac760f60c7226f61f0",
       "workflow": ".github/workflows/gardener-triage.yml",
       "bundle": {
         "schemaVersion": "gardener.task-bundle/v1",
@@ -526,7 +526,8 @@
           "maxTurns": 30,
           "maxToolCalls": 40,
           "inputTokens": 200000,
-          "outputTokens": 16000
+          "outputTokens": 16000,
+          "runsPerAuthor": "10/day"
         },
         "model": "anthropic/claude-sonnet-5-5"
       },
