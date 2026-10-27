@@ -66,8 +66,9 @@ Label every actionable issue `bug` (wrong or wasteful, including memory, CPU or 
 - If a non-maintainer opened it and it stays open, assign the likeliest owner: the most substantial
   recent committer to the affected files who still has write access. Assign by numeric id (`author.id`
   on their commits, or `id` from `GET /users/<login>`). Never assign bots or `threepointone`.
-- For every `priority: high` issue, send one message: one lower-case line of plain text, under about
-  200 characters, saying whether it's valid, its impact and what it needs from a maintainer (adding
+- Post every `priority: high` issue to the team's chat with `message.send`. This is required, and
+  separate from any comment. Its summary is one lower-case line of plain text, under about 200
+  characters, saying whether it's valid, its impact and what it needs from a maintainer (adding
   `gardener-fix`, or the decision it's waiting on). Don't restate the title. Its expected version is
   the issue's `updatedAt`.
 - Comment at most once, in under 150 words, citing code as `path:line`. State the decision and what
