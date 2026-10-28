@@ -38,7 +38,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.2.0",
     "workers-ai-provider": "^4.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.63.0",
