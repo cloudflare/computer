@@ -1,5 +1,11 @@
 # @cloudflare/computer
 
+## 0.8.1
+
+### Patch Changes
+
+- [#281](https://github.com/cloudflare/computer/pull/281) `WorkerJavaScriptBackend` custom modules now support exporting objects as well as functions. ([`b681446`](https://github.com/cloudflare/computer/commit/b681446f0eaed8ad010bcd2f5e61b3680a6c02c4)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.8.0
 
 ## 0.7.1
