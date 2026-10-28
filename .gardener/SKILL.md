@@ -3,7 +3,7 @@ name: gardener-tasks
 description: How to write, change and check Gardener tasks (.gardener/tasks/*/TASK.md), the AI maintenance tasks this repository runs from GitHub Actions. Use before creating or editing anything under .gardener/.
 ---
 
-<!-- Written by Gardener 0.1.20. `gardener generate` rewrites this file; do not edit it. -->
+<!-- Written by Gardener 0.1.21. `gardener generate` rewrites this file; do not edit it. -->
 
 # Gardener tasks
 
@@ -29,7 +29,7 @@ that plan. Nothing outside the declaration is possible, whatever the instruction
 ## Workflow
 
 1. Create `.gardener/tasks/<dir>/TASK.md`. Start from the template below or an existing task.
-2. Run `npx @scuffi/gardener@0.1.20 generate` from the repository root (or the repository's own
+2. Run `npx @scuffi/gardener@0.1.21 generate` from the repository root (or the repository's own
    `package.json` script, if it has one). Use this exact version: a different one produces files the
    pull request's **Check tasks** check rejects.
 3. Fix every error `generate` prints and read its warnings. Repeat until it succeeds.
@@ -192,6 +192,14 @@ instructions ask for an effect that isn't declared, it can't happen.
   subject's labels (`regression`, `bug`, `enhancement`, `question`, `documentation`, else 🆕).
   Nothing is sent if the subject changed since the model read it. On Slack, a rerun after a lost
   answer can post twice; Google Chat never posts a plan's message twice.
+- `task.run` starts another task of this repository on the run's issue or pull request, or on a pull
+  request the plan opens, after every other step applied: `- task.run: { tasks: [fix] }`. List
+  every task it may start; the model picks one and the subject, nothing else. At most one per run,
+  always the last step, never retried. The started task inherits the first run's trust and counts against
+  the first author's `runs-per-author`; chains stop at depth 3. A task that only runs this way
+  declares `- event: github.workflow_dispatch` with `subject: issue` or `subject: pull_request`.
+  The task's job gets `actions: write`. `generate` refuses unknown targets, the task itself, and
+  cycles.
 
 ## Updating open pull requests
 
