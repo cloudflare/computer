@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > **Stable.** `WorkerJavaScriptBackend` and its host modules are
-> suitable for production use, except `ws:container`, which runs on the
+> suitable for production use, except `codemode:container`, which runs on the
 > experimental container backend. See the [status table](../packages/computer/README.md#status).
 
 `WorkerJavaScriptBackend` runs an ECMAScript module in a fresh Cloudflare Dynamic Worker:
@@ -188,7 +188,7 @@ A call still running when the object restarted never returned, so the replay run
 import { unsafeToRepeat } from "@cloudflare/computer";
 
 modules: {
-  "ws:billing": {
+  "codemode:billing": {
     charge: unsafeToRepeat(async ([order, cents]) => billing.charge(order, cents)),
     refund: async ([order], { callId }) => billing.refund(order, { idempotencyKey: callId }),
   },
@@ -201,7 +201,7 @@ A host module function can pause a replayable run until someone answers, for exa
 
 ```ts
 modules: {
-  "ws:github": {
+  "codemode:github": {
     postComment: async ([issue, body], ctx) => {
       const { approved } = await ctx.interrupt({ kind: "approval", issue, body });
       if (!approved) throw new Error("The comment was rejected.");
@@ -276,7 +276,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "ws:name": { fn } }`, or a factory | The Durable Object | `ws:git`, `ws:container`, `ws:tools`, your own |
+| Host | `modules: { "codemode:name": { fn } }`, or a factory | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
@@ -290,12 +290,12 @@ new WorkerJavaScriptBackend({
   loader: env.LOADER,
   modules: {
     "tar-stream": TAR_STREAM_BUNDLE,
-    "ws:git": createGitModule(),
-    "ws:artifacts": createArtifactsModule(),
-    "ws:assets": createAssetsModule(),
-    "ws:container": createContainerModule(),
-    "ws:tools": createToolBindings(forPiTools(() => agent.tools)),
-    "ws:weather": {
+    "codemode:git": createGitModule(),
+    "codemode:artifacts": createArtifactsModule(),
+    "codemode:assets": createAssetsModule(),
+    "codemode:container": createContainerModule(),
+    "codemode:tools": createToolBindings(forPiTools(() => agent.tools)),
+    "codemode:weather": {
       forecast: ([city]) => lookUpForecast(String(city)),
     },
   },
@@ -318,13 +318,13 @@ Code has no direct network access.
 Modules code can import:
 - `node:fs/promises` (also `node:fs`): the workspace's files. ...
 - `tar-stream`: a bundled library.
-- `ws:git`: The workspace's Git repository tools: `status({ dir })`, ...
-- `ws:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
-- `ws:weather`: exports `forecast`.
+- `codemode:git`: The workspace's Git repository tools: `status({ dir })`, ...
+- `codemode:container`: Runs shell commands in a full Linux container that shares this workspace's files. ...
+- `codemode:weather`: exports `forecast`.
 - Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
-A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `ws:tools` does with the agent's tools. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
+A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `codemode:tools` does with the agent's tools. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 
@@ -346,29 +346,29 @@ Path confinement rejects lexical escapes and every symlink component before an o
 
 A string value is JavaScript source installed as a bare import, such as a bundled library. It is plain code with no host access, and it cannot replace `node:fs` or `node:fs/promises`.
 
-Source can also be a library the host provides, under a simple `ws:*` specifier like a host module's. Host modules export only functions, so a host that wants to offer objects, or anything else that isn't a function, wraps its host modules in a source module of its own. The model is told it's a library the host provides:
+Source can also be a library the host provides, under a simple `codemode:*` specifier like a host module's. Host modules export only functions, so a host that wants to offer objects, or anything else that isn't a function, wraps its host modules in a source module of its own. The model is told it's a library the host provides:
 
 ```ts
 modules: {
-  "ws:weather-host": { forecast: ([city]) => lookUpForecast(String(city)) },
-  "ws:weather": `
-    import { forecast } from "ws:weather-host";
+  "codemode:weather-host": { forecast: ([city]) => lookUpForecast(String(city)) },
+  "codemode:weather": `
+    import { forecast } from "codemode:weather-host";
     export const weather = { forecast: (city) => forecast(city) };
   `,
 }
 ```
 
-Source modules live together in the module directory, not beside the caller's files. A source module may import another source module by its bare name (or its `ws:*` name) or as `./name`, a configured host module, or a built-in module, but not a Workspace file; an import of one fails before the Worker is created and names the module. A computed dynamic import in a source module resolves by name at run time among the other source modules.
+Source modules live together in the module directory, not beside the caller's files. A source module may import another source module by its bare name (or its `codemode:*` name) or as `./name`, a configured host module, or a built-in module, but not a Workspace file; an import of one fails before the Worker is created and names the module. A computed dynamic import in a source module resolves by name at run time among the other source modules.
 
 ### Host modules
 
-A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `ws:*` specifier. Nothing under `ws:` is installed unless you configure it.
+A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `codemode:*` specifier. Nothing under `codemode:` is installed unless you configure it.
 
 Pass an object of functions:
 
 ```ts
 modules: {
-  "ws:weather": {
+  "codemode:weather": {
     forecast: ([city]) => lookUpForecast(String(city)),
   },
 }
@@ -378,7 +378,7 @@ When the functions need the Workspace's Git client, Artifacts client, runtime, o
 
 ```ts
 modules: {
-  "ws:repo": (host) => ({
+  "codemode:repo": (host) => ({
     async recent(args, context) {
       const dir = await context.resolvePath(String(args[0] ?? "."));
       return host.git.log({ dir, depth: 5 });
@@ -388,7 +388,7 @@ modules: {
 ```
 
 ```js
-import { recent } from "ws:repo";
+import { recent } from "codemode:repo";
 export default () => recent("/workspace/app");
 ```
 
@@ -403,20 +403,20 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 
 The arguments come from caller code, so parse them before use. A function may return a value or a promise. Arguments and results cross the isolate boundary as real values through Workers RPC, not as encoded text. The result must be JSON-compatible plain data, and the bridge checks it at runtime. As in JSON, an `undefined` result or array item becomes `null` and an `undefined` object field is left out, in arguments and results alike. Byte arrays work for `node:fs` calls but not for host modules. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
 
-Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `ws:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "ws:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
+Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `codemode:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "codemode:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
-### `ws:git`
+### `codemode:git`
 
 ```js
-import { clone, diff, status, log, cli } from "ws:git";
+import { clone, diff, status, log, cli } from "codemode:git";
 ```
 
 `createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Every `dir` and `cwd` is confined to the backend root, `clone` and `cli` need a read-write backend, and `cli` treats a leading `-C <path>` as its working directory, confined the same way, while rejecting any other `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
 
-### `ws:artifacts`
+### `codemode:artifacts`
 
 ```js
-import { create, get, list, importArtifact, deleteArtifact, createToken, share } from "ws:artifacts";
+import { create, get, list, importArtifact, deleteArtifact, createToken, share } from "codemode:artifacts";
 ```
 
 `createArtifactsModule()` from `@cloudflare/computer/modules/artifacts` wraps the Workspace's Artifacts client. Calls that change Artifacts need a read-write backend. `importArtifact()` fetches from a caller-chosen URL on the host, so it is denied unless you pass `createArtifactsModule({ allowNetwork: true })`. Every call fails clearly when no Artifacts binding is configured.
@@ -426,11 +426,11 @@ Two functions mint the git token that cloning or pushing a repository needs:
 - `createToken(name, scope?, ttl?)` returns `{ id, plaintext, scope, expiresAt }`.
 - `share(name, { scope?, ttl? })` returns the repository's remote URL with a token embedded, the same URL `artifacts share` prints. It resolves the repository first, so a missing one fails without minting a token.
 
-`scope` is `"read"` (the default) or `"write"`, and a write token needs a read-write backend. `ttl` is seconds, or a duration such as `"15m"` or `"2h30m"`; without it the binding's default applies. The URL from `share` is a credential: pass it to `ws:container` through `env` rather than in the command text, and do not return it from the run.
+`scope` is `"read"` (the default) or `"write"`, and a write token needs a read-write backend. `ttl` is seconds, or a duration such as `"15m"` or `"2h30m"`; without it the binding's default applies. The URL from `share` is a credential: pass it to `codemode:container` through `env` rather than in the command text, and do not return it from the run.
 
 ```js
-import { share } from "ws:artifacts";
-import { exec } from "ws:container";
+import { share } from "codemode:artifacts";
+import { exec } from "codemode:container";
 
 export default async function () {
   const url = await share("site", { scope: "write", ttl: "30m" });
@@ -439,16 +439,16 @@ export default async function () {
 }
 ```
 
-### `ws:assets`
+### `codemode:assets`
 
 ```js
-import { publish } from "ws:assets";
+import { publish } from "codemode:assets";
 ```
 
 `createAssetsModule()` from `@cloudflare/computer/modules/assets` publishes a Workspace file through the Workspace's assets client (see [14. Assets interface](./14_assets_interface.md)) and returns a time-limited URL:
 
 ```js
-import { publish } from "ws:assets";
+import { publish } from "codemode:assets";
 
 export default async function () {
   return publish("/workspace/out/report.pdf", { expiresAfter: "1d", disposition: "attachment" });
@@ -457,12 +457,12 @@ export default async function () {
 
 `publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the JavaScript backend fails to connect. Publishing uploads a file and hands out a public link, so `publish` refuses to run on a read-only backend, as the read-only tool set has no `publish` tool.
 
-### `ws:tools`
+### `codemode:tools`
 
 `createToolBindings()` from `@cloudflare/computer/modules/tools` exports the agent's own tools to JavaScript, each under its own name. A loop over a hundred files is then one `exec` call instead of a hundred model turns:
 
 ```js
-import { grep, read } from "ws:tools";
+import { grep, read } from "codemode:tools";
 
 export default async function ({ files }) {
   const todos = {};
@@ -486,7 +486,7 @@ import { forPiTools } from "@cloudflare/computer/tools/pi-ai";
 new WorkerJavaScriptBackend({
   loader: env.LOADER,
   modules: {
-    "ws:tools": createToolBindings(forPiTools(() => agent.tools, { validate: validateToolArguments })),
+    "codemode:tools": createToolBindings(forPiTools(() => agent.tools, { validate: validateToolArguments })),
   },
 });
 ```
@@ -499,18 +499,18 @@ new WorkerJavaScriptBackend({
 import { createToolBindings } from "@cloudflare/computer/modules/tools";
 import { forAISDKTools } from "@cloudflare/computer/tools/ai-sdk";
 
-"ws:tools": createToolBindings(forAISDKTools(() => agentTools))
+"codemode:tools": createToolBindings(forAISDKTools(() => agentTools))
 ```
 
 It checks the code's arguments against the tool's `inputSchema`, as the AI SDK checks a model's call, and calls `execute` with the parsed value, a fresh call id, and the call's abort signal. Arguments that fail the check reject the call, and a schema's defaults apply. A string result becomes the text; anything else is the JSON text, and `details` holds the value. A result shaped `{ error: string }`, which is how this package's tools report a failure such as a missing file, comes back with `isError: true` and the message as the text. A streaming tool resolves with its last value. Tools with no `execute` function, which run in the browser, and tools that set `needsApproval` are left out, because nothing can approve or run them from code. With a function of tools, a call runs the tool the function returns at that moment, so an agent can swap its tool set between turns without the module going stale.
 
 Pass a function of tools, rather than a list, when the tools need something that does not exist yet when the backend is constructed, such as the Workspace they act on. The function runs each time the backend connects. A tool whose name cannot be a JavaScript export is exported under a normalized name: `-`, `.`, and spaces become `_`, other characters an identifier cannot hold are dropped, a leading digit gets a `_` in front, and `default`, `then`, and `__proto__` get one behind, so `list-files` becomes `list_files`. Two tools that normalize to the same name fail the connection.
 
-On a backend with `access: "read"`, only tools marked `readOnly` run. Every other call is refused before the tool runs, as `ws:git` and `ws:container` refuse to write there. `createToolBindings()` cannot tell what a tool does, so an unmarked tool is taken to write. `forPiTools()` marks `read`, `ls`, `find`, and `grep` from `createPiTools()`. For your own pi tools, name the ones that only read: `forPiTools(tools, { readOnly: ["read", "grep"] })`.
+On a backend with `access: "read"`, only tools marked `readOnly` run. Every other call is refused before the tool runs, as `codemode:git` and `codemode:container` refuse to write there. `createToolBindings()` cannot tell what a tool does, so an unmarked tool is taken to write. `forPiTools()` marks `read`, `ls`, `find`, and `grep` from `createPiTools()`. For your own pi tools, name the ones that only read: `forPiTools(tools, { readOnly: ["read", "grep"] })`.
 
 The module's description lists the names code can import. With a function of tools, the function is called again each time the backend describes itself, so the `exec` tool, built after the Workspace, sees the current list. A list is read as given; any other iterable may be single-use, so it is not read for the description, and neither is a function that throws.
 
-### `ws:container`
+### `codemode:container`
 
 `createContainerModule()` from `@cloudflare/computer/modules/container` lets JavaScript run shell commands in the Workspace's container backend. With it, JavaScript is the only backend the model sees, and the container is something that JavaScript can call:
 
@@ -524,7 +524,7 @@ class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) 
       new WorkerJavaScriptBackend({
         loader: this.env.LOADER,
         access: "read-write",
-        modules: { "ws:container": createContainerModule() },
+        modules: { "codemode:container": createContainerModule() },
       }),
       new ContainerBackend({
         container: () => this,
@@ -535,12 +535,12 @@ class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) 
   });
 }
 
-// Offer only the JavaScript backend; the container is reached through ws:container.
+// Offer only the JavaScript backend; the container is reached through codemode:container.
 const tools = createAITools({ workspace: this.workspace, exec: { "worker-javascript": {} } });
 ```
 
 ```js
-import { exec } from "ws:container";
+import { exec } from "codemode:container";
 
 export default async function () {
   const { exitCode, stdout, stderr } = await exec("npm test", { cwd: "/workspace/app" });

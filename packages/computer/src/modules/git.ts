@@ -1,6 +1,6 @@
-// `ws:git`: the Workspace's Git client for isolate JavaScript.
+// `codemode:git`: the Workspace's Git client for isolate JavaScript.
 //
-//   import { status, diff, log, clone, cli } from "ws:git";
+//   import { status, diff, log, clone, cli } from "codemode:git";
 //
 // Every path the isolate passes is confined to the JavaScript backend's
 // root. Commands that change the repository need a read-write backend,
@@ -30,14 +30,14 @@ export interface GitModuleOptions {
 }
 
 /**
- * Build the `ws:git` host module over the Workspace's Git client.
+ * Build the `codemode:git` host module over the Workspace's Git client.
  *
  * It exports `clone`, `diff`, `status`, `log`, and `cli`. Each takes the
  * same options object as the matching `GitClient` method, with `dir` or
  * `cwd` resolved against the backend root.
  *
  * @param options - Whether network commands are allowed.
- * @returns The module to pass as `modules["ws:git"]`.
+ * @returns The module to pass as `modules["codemode:git"]`.
  */
 export function createGitModule(options: GitModuleOptions = {}): WorkspaceModuleFactory {
   const allowNetwork = options.allowNetwork ?? false;
@@ -51,7 +51,7 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceModule
     async clone([value], context) {
       requireWrite(context, "Git clone");
       requireNetwork("Git clone");
-      // SAFETY: The isolate's options object passes through to the Git client, as it did when ws:git was built in. The client checks its own options; only the path is rewritten here.
+      // SAFETY: The isolate's options object passes through to the Git client, as it did when codemode:git was built in. The client checks its own options; only the path is rewritten here.
       return host.git.clone(
         (await withDir(value, context, true)) as unknown as Parameters<GitClient["clone"]>[0],
       );

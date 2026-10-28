@@ -468,7 +468,7 @@ describe("getWorkspace — backend information", () => {
       backends: [
         new WorkerJavaScriptBackend({
           loader: { load: () => ({ getEntrypoint: () => ({}) }) },
-          modules: { "ws:weather": { forecast: () => null } },
+          modules: { "codemode:weather": { forecast: () => null } },
         }),
       ],
     });
@@ -553,7 +553,7 @@ describe("getWorkspace — backend information", () => {
 
       expect(others).toEqual([]);
       expect(backend).toMatchObject({ id: "worker-javascript", callable: true });
-      expect(backend?.description).toContain("`ws:weather`: exports");
+      expect(backend?.description).toContain("`codemode:weather`: exports");
     });
 
     it(`builds a callable exec tool from a ${path} client`, async () => {
@@ -564,7 +564,7 @@ describe("getWorkspace — backend information", () => {
         throw new Error("exec has no zod input schema");
       const schema = z.toJSONSchema(exec.inputSchema) as { properties: Record<string, unknown> };
 
-      expect(exec.description).toContain("`ws:weather`: exports `forecast`.");
+      expect(exec.description).toContain("`codemode:weather`: exports `forecast`.");
       expect(Object.keys(schema.properties)).toContain("input");
     });
   }

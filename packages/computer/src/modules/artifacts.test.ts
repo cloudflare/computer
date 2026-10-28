@@ -33,7 +33,8 @@ function build(artifacts: ReturnType<typeof fakeArtifacts>["client"]) {
   const host = { artifacts, git: undefined, runtime: undefined } as unknown as WorkspaceModuleHost;
   const functions = createArtifactsModule()(host);
   const { createToken, share } = functions;
-  if (!createToken || !share) throw new Error("ws:artifacts must export createToken and share");
+  if (!createToken || !share)
+    throw new Error("codemode:artifacts must export createToken and share");
   return { createToken, share };
 }
 

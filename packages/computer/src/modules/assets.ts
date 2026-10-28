@@ -24,7 +24,7 @@ export function createAssetsModule(options: AssetsModuleOptions = {}): Workspace
     const assets = host.assets;
     if (assets === undefined) {
       throw new Error(
-        "ws:assets: the Workspace has no assets client. Pass `assets` to the Workspace.",
+        "codemode:assets: the Workspace has no assets client. Pass `assets` to the Workspace.",
       );
     }
     return {
@@ -33,7 +33,7 @@ export function createAssetsModule(options: AssetsModuleOptions = {}): Workspace
         // link, so a read-only backend cannot, as the read-only tool
         // set has no publish tool.
         if (context.access !== "read-write") {
-          throw new Error("ws:assets publish requires Workspace write access.");
+          throw new Error("codemode:assets publish requires Workspace write access.");
         }
         if (args.length === 0 || args.length > 2) {
           throw new TypeError(

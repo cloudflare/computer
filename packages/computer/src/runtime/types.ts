@@ -102,12 +102,12 @@ export interface WorkspaceModuleFactory {
  * - A string is JavaScript source bundled into the isolate, with no host access.
  * - An object of functions is a host module. Its functions run in the
  *   Durable Object and each becomes a named export:
- *   `{ "ws:weather": { forecast } }` lets code write
- *   `import { forecast } from "ws:weather"`.
+ *   `{ "codemode:weather": { forecast } }` lets code write
+ *   `import { forecast } from "codemode:weather"`.
  * - A factory is a host module that needs the Workspace's Git client,
  *   Artifacts client, or runtime, such as `createGitModule()`.
  *
- * Host modules must use a `ws:*` specifier. Source may use a simple one
+ * Host modules must use a `codemode:*` specifier. Source may use a simple one
  * too, for a library the host provides.
  */
 export type WorkspaceModule = string | WorkspaceModuleFunctions | WorkspaceModuleFactory;

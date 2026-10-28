@@ -73,7 +73,7 @@ interface ChildHooks {
   failed(metadata: FailedMetadata): void;
 }
 
-/** The `ws:model` trusted module: one `batch` function over bounded child requests. */
+/** The `codemode:model` trusted module: one `batch` function over bounded child requests. */
 export type ModelCapability = {
   /** Run up to 24 child model requests and return one result per request. */
   readonly batch: WorkspaceModuleFunction;

@@ -1,6 +1,6 @@
-// `ws:tools`: an agent's own tools for isolate JavaScript.
+// `codemode:tools`: an agent's own tools for isolate JavaScript.
 //
-//   import { read, grep } from "ws:tools";
+//   import { read, grep } from "codemode:tools";
 //   const { text, details, isError } = await read({ path: "README.md" });
 //
 // Each tool becomes an export under its own name, taking the one object
@@ -14,7 +14,7 @@
 // bound on how deep it goes.
 //
 // A read-only backend gets only the tools marked `readOnly`, the same
-// way `ws:git` and `ws:container` refuse to write there. This module
+// way `codemode:git` and `codemode:container` refuse to write there. This module
 // cannot tell what a tool does, so a tool that is not marked is taken
 // to write.
 
@@ -74,7 +74,7 @@ export interface ToolBindingsOptions {
 const RESERVED_EXPORT_NAMES = new Set(["default", "then", "__proto__"]);
 
 /**
- * Build the `ws:tools` host module.
+ * Build the `codemode:tools` host module.
  *
  * Pass a function rather than a list when the tools depend on something
  * that does not exist yet when the backend is constructed, such as the
@@ -83,7 +83,7 @@ const RESERVED_EXPORT_NAMES = new Set(["default", "then", "__proto__"]);
  *
  * @param bindings - The tools, or a function returning them.
  * @param options - Tools to leave out, and a replacement description.
- * @returns The module to pass as `modules["ws:tools"]`.
+ * @returns The module to pass as `modules["codemode:tools"]`.
  * @throws When the backend connects, if two tools share an export name
  *   once their names are made into identifiers.
  */
@@ -102,7 +102,7 @@ export function createToolBindings(
       }
       functions[name] = async (args, context) => {
         if (binding.readOnly !== true && context.access !== "read-write") {
-          throw new Error(`ws:tools ${binding.name} requires Workspace write access.`);
+          throw new Error(`codemode:tools ${binding.name} requires Workspace write access.`);
         }
         // A tool may ignore the signal, so a call cancelled while it
         // waited must not start it.
