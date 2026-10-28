@@ -36,6 +36,7 @@ limits:
   max-tool-calls: 120
   input-tokens: 1500000
   output-tokens: 60000
+  runs-per-author: 10/day
 ---
 
 Fix the issue that started this run and open a pull request. Either a maintainer added

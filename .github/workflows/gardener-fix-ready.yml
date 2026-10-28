@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/fix-ready/TASK.md
 # Task: fix-ready
-# Bundle: sha256:5202cadd4595f3c4b61c2cc20c7241753a676ce579288432b9b92d726cd7f888
+# Bundle: sha256:08095ec5d11f64cca892ab77a39ab27bf905ae70399be0f01ee1661e8453ad98
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Fix ready"
@@ -41,7 +41,7 @@ jobs:
       task-id: "fix-ready"
       task-name: "Fix ready"
       task-source: ".gardener/tasks/fix-ready/TASK.md"
-      task-bundle-hash: 5202cadd4595f3c4b61c2cc20c7241753a676ce579288432b9b92d726cd7f888
+      task-bundle-hash: 08095ec5d11f64cca892ab77a39ab27bf905ae70399be0f01ee1661e8453ad98
       plan-timeout-minutes: 13
     secrets:
       chat-webhook: ${{ secrets.GARDENER_CHAT_WEBHOOK }}

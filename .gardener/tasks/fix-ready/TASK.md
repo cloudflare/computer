@@ -21,6 +21,7 @@ limits:
   max-tool-calls: 8
   input-tokens: 100000
   output-tokens: 8000
+  runs-per-author: 10/day
 ---
 
 Gardener's fix task opened the pull request that started this run. Check it with
