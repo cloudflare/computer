@@ -25,7 +25,7 @@ effects:
   - pull_request.label.add
   - issue.label.remove
   - issue.comment.create
-  - task.run: { tasks: [fix-ready] }
+  - task.run: { tasks: [fix-ready, fix-blocked] }
 network:
   default: allow
   allow: []
@@ -73,7 +73,9 @@ including adding a changeset when a published package changes.
 6. Comment on the issue: a line saying you've opened the fix, linking the pull request, then a
    bullet each for the cause and the change. To link it, write `{{pr}}` and add the reference
    `{"/body": {"placeholders": {"pr": {"step": "open-pr", "output": "pullUrl"}}}}`.
-7. If you opened a pull request, start `fix-ready` on it last, with `task.run` and the reference
-   `{"/pullNumber": {"step": "open-pr", "output": "pullNumber"}}`.
+7. Last, start the next task with `task.run`. If you opened a pull request, start `fix-ready` on it
+   with the reference `{"/pullNumber": {"step": "open-pr", "output": "pullNumber"}}`. If you opened
+   nothing because you couldn't reproduce the problem or reach a fix you're confident in, start
+   `fix-blocked` on this issue. If you stopped at step 1, start neither.
 
 Then finish.
