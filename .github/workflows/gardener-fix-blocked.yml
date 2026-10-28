@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/fix-blocked/TASK.md
 # Task: fix-blocked
-# Bundle: sha256:c955fdc4b2f5ae7476b82e8eb690260dcdacd17a7aceab91f573da4fbb8ffd0d
+# Bundle: sha256:366ee9203a0dd6099fcb58fedc997b96a7a774048d937d121e14a0b1e13972ff
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Fix blocked"
@@ -41,7 +41,7 @@ jobs:
       task-id: "fix-blocked"
       task-name: "Fix blocked"
       task-source: ".gardener/tasks/fix-blocked/TASK.md"
-      task-bundle-hash: c955fdc4b2f5ae7476b82e8eb690260dcdacd17a7aceab91f573da4fbb8ffd0d
+      task-bundle-hash: 366ee9203a0dd6099fcb58fedc997b96a7a774048d937d121e14a0b1e13972ff
       plan-timeout-minutes: 13
     secrets:
       chat-webhook: ${{ secrets.GARDENER_CHAT_WEBHOOK }}

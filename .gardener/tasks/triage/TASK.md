@@ -68,7 +68,7 @@ Label every actionable issue `bug` (wrong or wasteful, including memory, CPU or 
   recent committer to the affected files who still has write access. Assign by numeric id (`author.id`
   on their commits, or `id` from `GET /users/<login>`). Never assign bots or `threepointone`.
 - Post every high-impact, high-cost issue to the team's chat with `message.send`; the fix announces
-  the others when its pull request is ready. This is required, and separate from any comment. Its
+  the others, as a pull request to review or as needing a maintainer. This is required, and separate from any comment. Its
   summary is one lower-case line of plain text, under about 200 characters, saying whether it's
   valid, its impact and the decision it's waiting on. Don't restate the title. Its expected version is
   the issue's `updatedAt`.

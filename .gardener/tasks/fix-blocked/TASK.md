@@ -25,8 +25,9 @@ limits:
 ---
 
 Gardener's fix task couldn't complete a fix for the issue that started this run. Check with
-`provider.api.read`: the issue must be open, and no open pull request may have a head branch
-starting with `gardener/issue-<number>`. If either check fails, send nothing.
+`provider.api.read`: the issue must be open, and no open pull request may have the head branch
+`gardener/issue-<number>` or `gardener/issue-<number>-<n>` (another issue's branch, such as
+`gardener/issue-<number>3`, doesn't count). If either check fails, send nothing.
 
 Otherwise post it to the team's chat with `message.send`. The fix task's last comment on the issue
 says why it stopped. Its summary is one lower-case line of plain text, under about 200 characters,
