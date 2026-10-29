@@ -74,6 +74,7 @@ interface DirentEntry {
 }
 
 type AdapterReadFileOptions = { encoding?: "utf8" | null } | "utf8" | null | undefined;
+type AdapterWriteFileOptions = { encoding?: string | null } | string | null | undefined;
 
 export class WorkspaceFsAdapter {
   readonly #fs: WorkspaceFs;
@@ -149,12 +150,20 @@ export class WorkspaceFsAdapter {
 
   // --- Writes ------------------------------------------------------
 
-  async writeFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
+  async writeFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: AdapterWriteFileOptions,
+  ): Promise<void> {
     if (isDevNull(path)) return;
-    await this.#fs.writeFile(path, content);
+    await this.#fs.writeFile(path, binaryContent(content, options));
   }
 
-  async appendFile(path: string, content: string | Uint8Array, _options?: unknown): Promise<void> {
+  async appendFile(
+    path: string,
+    content: string | Uint8Array,
+    options?: AdapterWriteFileOptions,
+  ): Promise<void> {
     if (isDevNull(path)) return;
     let existing: Uint8Array;
     try {
@@ -164,7 +173,8 @@ export class WorkspaceFsAdapter {
       if ((err as { code?: string }).code !== "ENOENT") throw err;
       existing = new Uint8Array(0);
     }
-    const addition = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const data = binaryContent(content, options);
+    const addition = typeof data === "string" ? new TextEncoder().encode(data) : data;
     const out = new Uint8Array(existing.byteLength + addition.byteLength);
     out.set(existing, 0);
     out.set(addition, existing.byteLength);
@@ -278,6 +288,23 @@ function missingPath(path: string): Error & { code: string; path: string } {
   error.code = "ENOENT";
   error.path = path;
   return error;
+}
+
+// just-bash writes shell output (redirections, tee) as a byte string
+// tagged "binary": each char is one byte, so UTF-8 text arrives
+// already encoded. Pass those bytes through; only an untagged or
+// "utf8" string is text for the store to encode.
+function binaryContent(
+  content: string | Uint8Array,
+  options: AdapterWriteFileOptions,
+): string | Uint8Array {
+  const encoding = typeof options === "string" ? options : options?.encoding;
+  if (typeof content !== "string" || (encoding !== "binary" && encoding !== "latin1")) {
+    return content;
+  }
+  const bytes = new Uint8Array(content.length);
+  for (let i = 0; i < content.length; i++) bytes[i] = content.charCodeAt(i);
+  return bytes;
 }
 
 function mapStat(s: WorkspaceStatResult): FsStat {
