@@ -19,7 +19,7 @@ It provides:
  - Read-only mounts for pre-filling the workspace tree from an R2 bucket or from files shipped with the Worker.
  - Durability over DO restarts for all file operations.
  - Pluggable execution backends selected through `workspace.runtime`: a Cloudflare Container shell, a just-bash Dynamic Worker, or an isolated ECMAScript-module Dynamic Worker.
- - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `ws:git`, `ws:container`, `ws:assets` and `ws:tools`, and managed execution records.
+ - Isolated JavaScript with structured input/results, durable relative imports, configured libraries, durable `node:fs/promises`, host modules such as `codemode:git`, `codemode:container`, `codemode:assets` and `codemode:tools`, and managed execution records.
  - Workspace constructable without a backend, for filesystem-only use cases.
  - Out-of-the-box agent tools for the AI SDK (`createAITools()` in `@cloudflare/computer/tools/ai-sdk`), pi (`createPiTools()` in `@cloudflare/computer/tools/pi-ai`), and TanStack AI (`createTanStackTools()` in `@cloudflare/computer/tools/tanstack-ai`).
 
@@ -48,11 +48,11 @@ The package ships several entrypoints:
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable relative imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/git` | Opt-in isomorphic-git glue for working with checkouts inside the workspace. Bundled lazily, with `pako` replaced by Workers `node:zlib`, and kept out of the default `@cloudflare/computer` graph. |
 | `@cloudflare/computer/artifacts` | `createArtifact`, an optionally session-scoped wrapper over the Cloudflare Artifacts Workers binding, plus its argv CLI. |
-| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
-| `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
-| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |
-| `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `ws:assets`: publish a Workspace file from isolate JavaScript. |
-| `@cloudflare/computer/modules/tools` | `createToolBindings()` for `ws:tools`: an agent's own tools, callable from isolate JavaScript. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `codemode:container`: run container commands from isolate JavaScript. |
+| `@cloudflare/computer/modules/git` | `createGitModule()` for `codemode:git`: confined Git from isolate JavaScript. |
+| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `codemode:artifacts`: Artifacts and git tokens from isolate JavaScript. |
+| `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `codemode:assets`: publish a Workspace file from isolate JavaScript. |
+| `@cloudflare/computer/modules/tools` | `createToolBindings()` for `codemode:tools`: an agent's own tools, callable from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: read, write, edit, ls, optional exec, and optional publish. |
 | `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |
 | `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace. |
@@ -264,7 +264,7 @@ rather than an API.
 | [14. Assets interface](./14_assets_interface.md) | Stable | `share` a workspace file to R2 and get back a presigned URL. |
 | [15. Artifacts interface](./15_artifacts_interface.md) | Stable | `createArtifact` and the `artifacts` CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | [16. Execution runtime architecture](./16_code_execution.md) | Stable | One runtime entry point over command and module backends. |
-| [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | Stable, except `ws:container` | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, host modules, and managed lifecycle. |
+| [17. Isolate JavaScript runtime](./17_isolate_javascript.md) | Stable, except `codemode:container` | ECMAScript modules, durable imports, configured libraries, durable `node:fs/promises`, host modules, and managed lifecycle. |
 | [18. Runtime migration](./18_runtime_migration.md) | Reference | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Reference | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
 

@@ -1776,7 +1776,11 @@ describe("createAITools callable exec", () => {
           throw new Error("not used");
         },
         backends: () => [
-          { id: "js", callable: true, description: "Modules: `ws:weather` exports `forecast`." },
+          {
+            id: "js",
+            callable: true,
+            description: "Modules: `codemode:weather` exports `forecast`.",
+          },
         ],
       },
     };
@@ -1787,9 +1791,11 @@ describe("createAITools callable exec", () => {
     const withBackendOnly = createAITools({ workspace, shell: { backends: { js: {} } } });
 
     expect(toolDescription(withBoth.exec)).toContain(
-      "Use for data work.\n\nModules: `ws:weather` exports `forecast`.",
+      "Use for data work.\n\nModules: `codemode:weather` exports `forecast`.",
     );
-    expect(toolDescription(withBackendOnly.exec)).toContain("`ws:weather` exports `forecast`");
+    expect(toolDescription(withBackendOnly.exec)).toContain(
+      "`codemode:weather` exports `forecast`",
+    );
   });
 
   it("falls back to a short description for a backend that does not describe itself", () => {
@@ -1815,8 +1821,8 @@ describe("createAITools exec against a real JavaScript backend", () => {
           loader: { load: () => ({ getEntrypoint: () => ({}) }) },
           modules: {
             "tar-stream": "export default {};",
-            "ws:weather": { forecast: ([city]) => ({ city, sky: "clear" }) },
-            "ws:git": createGitModule(),
+            "codemode:weather": { forecast: ([city]) => ({ city, sky: "clear" }) },
+            "codemode:git": createGitModule(),
           },
         }),
       ],
@@ -1829,8 +1835,8 @@ describe("createAITools exec against a real JavaScript backend", () => {
 
     expect(description).toContain("`node:fs/promises`");
     expect(description).toContain("- `tar-stream`: a bundled library.");
-    expect(description).toContain("- `ws:weather`: exports `forecast`.");
-    expect(description).toContain("- `ws:git`: The workspace's Git repository tools");
+    expect(description).toContain("- `codemode:weather`: exports `forecast`.");
+    expect(description).toContain("- `codemode:git`: The workspace's Git repository tools");
     expect(description).toContain("no direct network access");
     expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
   });

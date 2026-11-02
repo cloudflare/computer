@@ -1,6 +1,6 @@
-// `ws:artifacts`: the Workspace's Artifacts client for isolate JavaScript.
+// `codemode:artifacts`: the Workspace's Artifacts client for isolate JavaScript.
 //
-//   import { create, get, list, importArtifact, deleteArtifact } from "ws:artifacts";
+//   import { create, get, list, importArtifact, deleteArtifact } from "codemode:artifacts";
 //
 // Calls that change Artifacts need a read-write backend. Importing from
 // a caller-chosen URL is denied unless the module is created with
@@ -29,21 +29,21 @@ export interface ArtifactsModuleOptions {
 }
 
 /**
- * Build the `ws:artifacts` host module over the Workspace's Artifacts client.
+ * Build the `codemode:artifacts` host module over the Workspace's Artifacts client.
  *
  * It exports `create`, `get`, `list`, `importArtifact`, and
  * `deleteArtifact`, with the same arguments as the matching
  * `ArtifactClient` methods.
  *
  * @param options - Whether remote imports are allowed.
- * @returns The module to pass as `modules["ws:artifacts"]`.
+ * @returns The module to pass as `modules["codemode:artifacts"]`.
  */
 export function createArtifactsModule(
   options: ArtifactsModuleOptions = {},
 ): WorkspaceModuleFactory {
   const allowNetwork = options.allowNetwork ?? false;
 
-  // SAFETY for the casts below: the isolate's arguments pass through to the Artifacts client, as they did when ws:artifacts was built in. The client checks its own inputs.
+  // SAFETY for the casts below: the isolate's arguments pass through to the Artifacts client, as they did when codemode:artifacts was built in. The client checks its own inputs.
   const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => ({
     create([name, createOptions], context) {
       requireWrite(context, "Artifacts create");

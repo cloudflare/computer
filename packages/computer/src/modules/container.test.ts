@@ -78,7 +78,7 @@ function build(
   const host = { runtime, git: undefined, artifacts: undefined } as unknown as WorkspaceModuleHost;
   const functions = createContainerModule(options)(host);
   const exec = functions.exec;
-  if (!exec) throw new Error("ws:container must export exec");
+  if (!exec) throw new Error("codemode:container must export exec");
   return { exec };
 }
 

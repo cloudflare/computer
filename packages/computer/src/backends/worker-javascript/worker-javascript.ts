@@ -64,17 +64,17 @@ export interface WorkerJavaScriptBackendOptions {
    *
    * A string value is JavaScript source bundled into the isolate, such as
    * a library build. An object of functions, or a factory that builds
-   * one, is a host module: it runs in the Durable Object under a `ws:*`
+   * one, is a host module: it runs in the Durable Object under a `codemode:*`
    * specifier, and each function becomes a named export. Source may use a
-   * simple `ws:*` specifier too, for a library the host provides, such as
+   * simple `codemode:*` specifier too, for a library the host provides, such as
    * one that wraps host modules in objects.
    *
    * ```ts
    * modules: {
    *   "tar-stream": TAR_STREAM_BUNDLE,
-   *   "ws:git": createGitModule(),
-   *   "ws:weather": { forecast: ([city]) => lookUpForecast(String(city)) },
-   *   "ws:forecasts": `import { forecast } from "ws:weather"; export const weather = { forecast };`,
+   *   "codemode:git": createGitModule(),
+   *   "codemode:weather": { forecast: ([city]) => lookUpForecast(String(city)) },
+   *   "codemode:forecasts": `import { forecast } from "codemode:weather"; export const weather = { forecast };`,
    * }
    * ```
    *
@@ -443,7 +443,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         ...(host.assets === undefined ? {} : { assets: host.assets }),
       });
       // A factory can have nothing to offer on a connection, such as
-      // ws:tools for an agent with no tools. Leaving its module out means
+      // codemode:tools for an agent with no tools. Leaving its module out means
       // only an import of it fails, not every run. An object of functions
       // with none is still refused at construction, where it can only be
       // a mistake.

@@ -55,8 +55,8 @@ describe("WorkspaceRuntime", () => {
         import { double } from "math-kit";
         import fs from "node:fs/promises";
         import { promises as nodeFs } from "node:fs";
-        import * as git from "ws:git";
-        import { echo, sum, delete as remove } from "ws:test-host";
+        import * as git from "codemode:git";
+        import { echo, sum, delete as remove } from "codemode:test-host";
         export default async function main(input) {
           const value = double(input.value);
           await fs.writeFile("/workspace/runtime-result.txt", String(value));
@@ -127,7 +127,7 @@ describe("WorkspaceRuntime", () => {
     const response = await runtime({
       source: `
         import fs from "node:fs/promises";
-        import { marker } from "ws:test-host";
+        import { marker } from "codemode:test-host";
         export default async () => {
           await fs.writeFile("/workspace/bytes.bin", new Uint8Array([0, 127, 255]));
           const value = await fs.readFile("/workspace/bytes.bin");
@@ -260,7 +260,7 @@ describe("WorkspaceRuntime", () => {
   it("bounds oversized host module error responses", async () => {
     const response = await runtime({
       source: `
-        import { largeError } from "ws:test-host";
+        import { largeError } from "codemode:test-host";
         export default () => largeError();
       `,
       cwd: "/workspace",
@@ -288,7 +288,7 @@ describe("WorkspaceRuntime", () => {
   it("bounds concurrent host capability calls", async () => {
     const response = await runtime({
       source: `
-        import { slow } from "ws:test-host";
+        import { slow } from "codemode:test-host";
         export default async () => {
           const settled = await Promise.allSettled([slow(), slow(), slow()]);
           return settled.map((item) => item.status);
@@ -304,7 +304,7 @@ describe("WorkspaceRuntime", () => {
   it("rejects non-plain results from host modules", async () => {
     const response = await runtime({
       source: `
-        import { invalidResult } from "ws:test-host";
+        import { invalidResult } from "codemode:test-host";
         export default () => invalidResult();
       `,
       cwd: "/workspace",
@@ -322,7 +322,7 @@ describe("WorkspaceRuntime", () => {
   it("exposes only the functions a host module declares", async () => {
     const response = await runtime({
       source: `
-        import * as host from "ws:test-host";
+        import * as host from "codemode:test-host";
         export default () => Object.keys(host).sort();
       `,
       cwd: "/workspace",
@@ -351,7 +351,7 @@ describe("WorkspaceRuntime", () => {
   it("fails to link an import the host module does not export", async () => {
     const response = await runtime({
       source: `
-        import { call } from "ws:test-host";
+        import { call } from "codemode:test-host";
         export default () => call("echo");
       `,
       cwd: "/workspace",
@@ -359,14 +359,14 @@ describe("WorkspaceRuntime", () => {
     const text = await response.text();
     expect(response.status, text).toBe(200);
     expect(JSON.parse(text), text).toMatchObject({
-      result: { status: "failed", stderr: expect.stringContaining("does not provide an export") },
+      result: { status: "failed", stderr: expect.stringContaining("does not provide") },
     });
   });
 
-  it("runs container commands from isolate code through ws:container", async () => {
+  it("runs container commands from isolate code through codemode:container", async () => {
     const response = await runtime({
       source: `
-        import { exec } from "ws:container";
+        import { exec } from "codemode:container";
         export default () =>
           exec("npm test", { cwd: "/workspace/app", env: { WHO: "isolate" }, stdin: "y" });
       `,
@@ -386,10 +386,10 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("rejects a malformed ws:container call inside the isolate", async () => {
+  it("rejects a malformed codemode:container call inside the isolate", async () => {
     const response = await runtime({
       source: `
-        import { exec } from "ws:container";
+        import { exec } from "codemode:container";
         export default async () => {
           try {
             await exec("ls", { shell: "zsh" });
@@ -409,7 +409,7 @@ describe("WorkspaceRuntime", () => {
   it("rejects a cyclic argument with a clear error", async () => {
     const response = await runtime({
       source: `
-        import { echo } from "ws:test-host";
+        import { echo } from "codemode:test-host";
         export default async () => {
           const value = {};
           value.self = value;
@@ -449,7 +449,7 @@ describe("WorkspaceRuntime", () => {
   it("fails a run that caught a call refused at module scope", async () => {
     const response = await runtime({
       source: `
-        import { echo } from "ws:test-host";
+        import { echo } from "codemode:test-host";
         (async () => {
           try {
             await echo("too early");
@@ -463,7 +463,7 @@ describe("WorkspaceRuntime", () => {
     expect(response.status, text).toBe(200);
     const { result } = JSON.parse(text);
     expect(result, text).toMatchObject({ status: "failed", exitCode: 1 });
-    expect(result.stderr, text).toContain("ws:test-host echo can't run at module scope");
+    expect(result.stderr, text).toContain("codemode:test-host echo can't run at module scope");
   });
 
   it("names the call when top-level await does I/O", async () => {
@@ -618,10 +618,10 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("confines ws:git operations to the backend root", async () => {
+  it("confines codemode:git operations to the backend root", async () => {
     const response = await runtime({
       source: `
-        import { status } from "ws:git";
+        import { status } from "codemode:git";
         export default () => status({ dir: "/" });
       `,
       cwd: "/workspace",
@@ -639,7 +639,7 @@ describe("WorkspaceRuntime", () => {
   it("confines a leading Git CLI -C to the runtime root", async () => {
     const response = await runtime({
       source: `
-        import { cli } from "ws:git";
+        import { cli } from "codemode:git";
         export default () => cli({ cwd: "/workspace", argv: ["-C", "/outside", "status"] });
       `,
       cwd: "/workspace",
@@ -657,7 +657,7 @@ describe("WorkspaceRuntime", () => {
   it("runs a Git CLI command in a leading -C directory", async () => {
     const response = await runtime({
       source: `
-        import { cli } from "ws:git";
+        import { cli } from "codemode:git";
         export default async () => {
           await cli({ cwd: "/workspace", argv: ["init", "c-repo"] });
           return cli({ cwd: "/workspace", argv: ["-C", "c-repo", "rev-parse", "--show-toplevel"] });
@@ -676,7 +676,7 @@ describe("WorkspaceRuntime", () => {
   it("rejects Git CLI path overrides after the subcommand", async () => {
     const response = await runtime({
       source: `
-        import { cli } from "ws:git";
+        import { cli } from "codemode:git";
         export default () => cli({ cwd: "/workspace", argv: ["status", "--git-dir=/outside"] });
       `,
       cwd: "/workspace",
@@ -694,7 +694,7 @@ describe("WorkspaceRuntime", () => {
   it("denies host-side Artifact import authority by default", async () => {
     const response = await runtime({
       source: `
-        import { importArtifact } from "ws:artifacts";
+        import { importArtifact } from "codemode:artifacts";
         export default () => importArtifact("repo", { url: "https://example.com/repo.git" });
       `,
       cwd: "/workspace",
@@ -712,7 +712,7 @@ describe("WorkspaceRuntime", () => {
   it("denies host-side Git network authority by default", async () => {
     const response = await runtime({
       source: `
-        import { clone } from "ws:git";
+        import { clone } from "codemode:git";
         export default () => clone({ url: "https://example.com/repository.git", dir: "/workspace/repository" });
       `,
       cwd: "/workspace",
@@ -727,12 +727,12 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
-  it("rejects ws:git paths that traverse a symlink", async () => {
+  it("rejects codemode:git paths that traverse a symlink", async () => {
     await write("/outside/repository/README.md", "outside");
     await symlink("/outside/repository", "/workspace/linked-repository");
     const response = await runtime({
       source: `
-        import { status } from "ws:git";
+        import { status } from "codemode:git";
         export default () => status({ dir: "/workspace/linked-repository" });
       `,
       cwd: "/workspace",
@@ -911,7 +911,7 @@ describe.each([
     await write(
       "/workspace/app/lib/util.js",
       `import { double } from "math-kit";
-       import { echo } from "ws:test-host";
+       import { echo } from "codemode:test-host";
        import { shared } from "/workspace/shared/abs.js";
        export const fromNested = async () => ({ doubled: double(2), echoed: await echo("nested"), shared });`,
     );
@@ -919,7 +919,7 @@ describe.each([
 
     const result = await run(`
       import { double } from "math-kit";
-      import { echo } from "ws:test-host";
+      import { echo } from "codemode:test-host";
       import { fromNested } from "./lib/util.js";
       import { shared } from "/workspace/shared/abs.js";
       const lazy = await import("/workspace/shared/abs.js");
@@ -980,7 +980,7 @@ describe.each([
 describe("durable executions", () => {
   const source = `
     import fs from "node:fs/promises";
-    import { tick, gate } from "ws:test-host";
+    import { tick, gate } from "codemode:test-host";
     export default async function () {
       const roll = Math.random();
       console.log("a");
@@ -1042,7 +1042,7 @@ describe("durable executions", () => {
     await start("durable-clock", {
       source: `
         import fs from "node:fs/promises";
-        import { gate, tick } from "ws:test-host";
+        import { gate, tick } from "codemode:test-host";
         export default async function () {
           const started = Date.now();
           await fs.writeFile("/workspace/clock.txt", String(started));
@@ -1066,7 +1066,7 @@ describe("durable executions", () => {
   it("doesn't wait out a replayed run's sleeps again", async () => {
     await start("durable-sleep", {
       source: `
-        import { gate, tick } from "ws:test-host";
+        import { gate, tick } from "codemode:test-host";
         export default async function () {
           const started = Date.now();
           for (let index = 0; index < 3; index += 1) {
@@ -1101,7 +1101,7 @@ describe("durable executions", () => {
     await start("durable-diverge", {
       source: `
         import fs from "node:fs/promises";
-        import { gate, tick } from "ws:test-host";
+        import { gate, tick } from "codemode:test-host";
         export default async function () {
           // Generated keys are the one source of randomness a replay
           // doesn't repeat.
@@ -1123,7 +1123,7 @@ describe("durable executions", () => {
   it("repeats a run's random numbers when it replays", async () => {
     await start("durable-random", {
       source: `
-        import { gate } from "ws:test-host";
+        import { gate } from "codemode:test-host";
         export default async function () {
           // Short enough to stay under the test backend's output limit.
           const values = [
@@ -1148,7 +1148,7 @@ describe("durable executions", () => {
   it("delivers replayed responses in the order they first arrived", async () => {
     await start("durable-order", {
       source: `
-        import { gate, wait } from "ws:test-host";
+        import { gate, wait } from "codemode:test-host";
         export default async function () {
           const slow = wait(80, "slow").then(() => "slow");
           const fast = wait(5, "fast").then(() => "fast");
@@ -1169,7 +1169,7 @@ describe("durable executions", () => {
   it("fires replayed timers in order with replayed responses", async () => {
     await start("durable-race", {
       source: `
-        import { gate, wait } from "ws:test-host";
+        import { gate, wait } from "codemode:test-host";
         // unref() checks the timers hand back the same kind of handle as
         // the runtime's own.
         const sleep = (ms, value) =>
@@ -1195,7 +1195,7 @@ describe("durable executions", () => {
   it("keeps the live order when the run computes between events", async () => {
     await start("durable-compute", {
       source: `
-        import { gate, wait } from "ws:test-host";
+        import { gate, wait } from "codemode:test-host";
         const sleep = (ms, value) => new Promise((resolve) => setTimeout(resolve, ms));
         export default async function () {
           // The clock doesn't move while code computes, so the timer is
@@ -1219,7 +1219,7 @@ describe("durable executions", () => {
   it("journals fetch so a replay doesn't send it again", async () => {
     await start("durable-fetch", {
       source: `
-        import { gate } from "ws:test-host";
+        import { gate } from "codemode:test-host";
         export default async function () {
           const response = await fetch("https://gateway.test/items", { method: "POST", body: "hi" });
           const text = await response.text();
@@ -1243,7 +1243,7 @@ describe("durable executions", () => {
   it("doesn't count a replayable run's fetches toward its capability calls", async () => {
     await start("durable-many-fetches", {
       source: `
-        import { gate } from "ws:test-host";
+        import { gate } from "codemode:test-host";
         export default async function () {
           // More than the default 256 capability calls, a dozen at a time.
           for (let round = 0; round < 25; round++) {
@@ -1264,7 +1264,7 @@ describe("durable executions", () => {
   it("fails a replay that prints different output", async () => {
     await start("durable-output", {
       source: `
-        import { gate } from "ws:test-host";
+        import { gate } from "codemode:test-host";
         export default async function () {
           const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
           console.log(new Uint8Array(await crypto.subtle.exportKey("raw", key)).slice(0, 8).join(","));
@@ -1283,7 +1283,7 @@ describe("durable executions", () => {
   it("fails a replay interrupted during a call that isn't safe to repeat", async () => {
     await start("durable-unsafe", {
       source: `
-        import { unsafeGate } from "ws:test-host";
+        import { unsafeGate } from "codemode:test-host";
         export default async function () {
           await unsafeGate();
         }
@@ -1294,7 +1294,7 @@ describe("durable executions", () => {
     const settled = await result("durable-unsafe", { network: true });
     expect(settled).toMatchObject({ status: "failed", exitCode: 1 });
     expect(settled.stderr).toContain(
-      "interrupted while ws:test-host.unsafeGate was running, which isn't safe to repeat",
+      "interrupted while codemode:test-host.unsafeGate was running, which isn't safe to repeat",
     );
     expect(await calls()).toEqual({ gate: 1 });
   });
@@ -1302,7 +1302,7 @@ describe("durable executions", () => {
   it("replays a run interrupted a second time during its replay", async () => {
     await start("durable-twice", {
       source: `
-        import { gate, hold, tick } from "ws:test-host";
+        import { gate, hold, tick } from "codemode:test-host";
         export default async function () {
           console.log("one", await tick("a"));
           await gate();
@@ -1401,7 +1401,7 @@ describe("interrupts", () => {
   }
 
   const approval = `
-    import { approve, tick } from "ws:test-host";
+    import { approve, tick } from "codemode:test-host";
     export default async function () {
       console.log("before", await tick("a"));
       const answer = await approve("deploy");
@@ -1451,7 +1451,7 @@ describe("interrupts", () => {
     await start(
       "wait-both",
       `
-        import { approve } from "ws:test-host";
+        import { approve } from "codemode:test-host";
         export default async () => (await Promise.all([approve("one"), approve("two")])).map((a) => a.v);
       `,
     );
@@ -1479,7 +1479,7 @@ describe("interrupts", () => {
     await start(
       "wait-later",
       `
-        import { approveLater } from "ws:test-host";
+        import { approveLater } from "codemode:test-host";
         export default async () => Promise.all([approveLater("one"), approveLater("two")]);
       `,
     );
@@ -1494,7 +1494,7 @@ describe("interrupts", () => {
     await start(
       "wait-inflight",
       `
-        import { approve, slowTick } from "ws:test-host";
+        import { approve, slowTick } from "codemode:test-host";
         // slowTick reaches the host first, so it's in flight when approve interrupts.
         export default async () => Promise.all([slowTick(300, "slow"), approve("x")]);
       `,
@@ -1513,7 +1513,7 @@ describe("interrupts", () => {
     await start(
       "wait-early",
       `
-        import { approve, slowTick } from "ws:test-host";
+        import { approve, slowTick } from "codemode:test-host";
         export default async () => Promise.all([slowTick(1000, "early"), approve("x")]);
       `,
     );

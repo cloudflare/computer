@@ -91,7 +91,7 @@ describe("createToolBindings", () => {
     const functions = createToolBindings([write.binding])(host);
     await expect(
       functions.write?.([{ path: "a.txt", content: "x" }], callContext({ access: "read" })),
-    ).rejects.toThrow("ws:tools write requires Workspace write access.");
+    ).rejects.toThrow("codemode:tools write requires Workspace write access.");
     expect(write.calls).toEqual([]);
   });
 

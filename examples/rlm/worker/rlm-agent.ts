@@ -103,9 +103,9 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
       root: WORKSPACE_ROOT,
       access: "read",
       egress: { mode: "none" },
-      modules: { "ws:model": modelCapability },
+      modules: { "codemode:model": modelCapability },
       maxConcurrentCapabilityCalls: 4,
-      // One manifest read + 24 chunk reads + one bounded ws:model batch.
+      // One manifest read + 24 chunk reads + one bounded codemode:model batch.
       maxCapabilityCalls: 26,
       maxCapabilityBytes: 4 * 1024 * 1024,
       maxHostCallMs: 300_000,
@@ -239,7 +239,7 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
             ? "The model did not return a successful execution result."
             : completedMap
               ? null
-              : "The generated module did not use its ws:model map capability.",
+              : "The generated module did not use its codemode:model map capability.",
           finishedAt: new Date().toISOString(),
           run: this.#activeRun,
           children: this.#children,

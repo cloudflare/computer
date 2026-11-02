@@ -411,7 +411,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
 
   // `name` is `host/<specifier>.<function>`. Function names are
   // identifiers and never contain a dot, so the last dot splits them
-  // from a specifier such as `ws:a.b`. Own-property checks keep
+  // from a specifier such as `codemode:a.b`. Own-property checks keep
   // isolate code from reaching `toString` or other inherited members.
   async #callHostModule(name: string, args: unknown[], context: WorkspaceModuleCallContext) {
     const fn = this.#hostFunction(name);

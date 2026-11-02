@@ -93,9 +93,17 @@ describe("ExecutionJournal", () => {
   it("runs a call again when it was in flight at the interruption", () => {
     const db = database();
     const first = new ExecutionJournal(db, "js", "run");
-    expect(first.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1, rerun: false });
+    expect(first.begin("host/codemode:test.slow", [])).toEqual({
+      kind: "live",
+      seq: 1,
+      rerun: false,
+    });
     const replay = new ExecutionJournal(db, "js", "run");
-    expect(replay.begin("host/ws:test.slow", [])).toEqual({ kind: "live", seq: 1, rerun: true });
+    expect(replay.begin("host/codemode:test.slow", [])).toEqual({
+      kind: "live",
+      seq: 1,
+      rerun: true,
+    });
     expect(replay.expectedCall()).toBeUndefined();
   });
 
@@ -106,7 +114,7 @@ describe("ExecutionJournal", () => {
        VALUES ('js', 'run', 'replay', 1)`,
     );
     const first = new ExecutionJournal(db, "js", "run");
-    const step = first.begin("host/ws:test.approve", ["deploy"]);
+    const step = first.begin("host/codemode:test.approve", ["deploy"]);
     if (step.kind !== "live") throw new Error("expected a live call");
     first.interrupt(step.seq, { action: "deploy" });
     expect(waitingCalls(db, "js")).toEqual([
@@ -118,7 +126,7 @@ describe("ExecutionJournal", () => {
     expect(waitingCalls(db, "js")).toEqual([]);
     const answer = { value: { ok: true } };
     const resumed = new ExecutionJournal(db, "js", "run");
-    expect(resumed.begin("host/ws:test.approve", ["deploy"])).toEqual({
+    expect(resumed.begin("host/codemode:test.approve", ["deploy"])).toEqual({
       kind: "live",
       seq: 1,
       rerun: false,
@@ -126,7 +134,7 @@ describe("ExecutionJournal", () => {
     });
     // Interrupted again while it runs with its answer: a rerun that keeps it.
     const again = new ExecutionJournal(db, "js", "run");
-    expect(again.begin("host/ws:test.approve", ["deploy"])).toEqual({
+    expect(again.begin("host/codemode:test.approve", ["deploy"])).toEqual({
       kind: "live",
       seq: 1,
       rerun: true,
@@ -146,7 +154,7 @@ describe("ExecutionJournal", () => {
       ["one", 1000],
       ["two", 5000],
     ] as const) {
-      const step = journal.begin("host/ws:test.approve", [action]);
+      const step = journal.begin("host/codemode:test.approve", [action]);
       if (step.kind !== "live") throw new Error("expected a live call");
       now.mockReturnValue(at);
       expect(journal.interrupt(step.seq, { action })).toBe(at);

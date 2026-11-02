@@ -101,11 +101,11 @@ function javascriptBackend(
     modules: {
       "math-kit": "export const double = (value) => value * 2;",
       counter: "let count = 0; export const bump = () => ++count;",
-      facade: `import { double } from "math-kit"; import { echo } from "ws:test-host"; export const both = async (value) => ({ doubled: double(value), echoed: await echo(value) });`,
-      "ws:git": createGitModule(),
-      "ws:artifacts": createArtifactsModule(),
-      "ws:container": createContainerModule(),
-      "ws:test-host": {
+      facade: `import { double } from "math-kit"; import { echo } from "codemode:test-host"; export const both = async (value) => ({ doubled: double(value), echoed: await echo(value) });`,
+      "codemode:git": createGitModule(),
+      "codemode:artifacts": createArtifactsModule(),
+      "codemode:container": createContainerModule(),
+      "codemode:test-host": {
         async echo(args) {
           return { args: [...args] };
         },

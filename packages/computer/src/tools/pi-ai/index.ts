@@ -138,7 +138,7 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
   ];
 
   // These four are the tools a readonly set keeps. bindings.ts marks the
-  // same names read-only for ws:tools, so keep the two lists in step.
+  // same names read-only for codemode:tools, so keep the two lists in step.
   if (resolved.readonly) return entries;
 
   entries.push(

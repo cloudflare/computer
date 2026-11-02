@@ -25,7 +25,7 @@ removed in a future release; each one names its replacement.
 | `WorkerJavaScriptBackend` | `@cloudflare/computer/backends/worker-javascript` | Stable |
 | Read-only mounts (`R2Bucket`, `WorkerBundle`) and the Vite plugin | `@cloudflare/computer`, `@cloudflare/computer/vite` | Stable |
 | Agent tools | `@cloudflare/computer/tools`, `@cloudflare/computer/tools/*` | Stable |
-| Host modules for isolate JavaScript: `ws:git`, `ws:artifacts`, `ws:assets`, `ws:tools` | `@cloudflare/computer/modules/git`, `modules/artifacts`, `modules/assets`, `modules/tools` | Stable |
+| Host modules for isolate JavaScript: `codemode:git`, `codemode:artifacts`, `codemode:assets`, `codemode:tools` | `@cloudflare/computer/modules/git`, `modules/artifacts`, `modules/assets`, `modules/tools` | Stable |
 | Git | `@cloudflare/computer/git` | Stable |
 | Assets and Artifacts | `@cloudflare/computer/assets`, `@cloudflare/computer/artifacts` | Stable |
 | Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
@@ -33,7 +33,7 @@ removed in a future release; each one names its replacement.
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
 | Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
-| The `ws:container` host module | `@cloudflare/computer/modules/container` | Experimental |
+| The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
 | The RPC wire protocol between the durable object and `computerd` (`@cloudflare/computer-rpc`) | Internal | Experimental |
@@ -336,7 +336,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 - **Worker JavaScript** evaluates a module with structured
   input/results, durable relative imports, configured libraries,
   Workspace-backed `node:fs/promises`, and host modules such as
-  `ws:git`, `ws:artifacts`, and `ws:container`. It runs after `runtime.exec()` returns; the
+  `codemode:git`, `codemode:artifacts`, and `codemode:container`. It runs after `runtime.exec()` returns; the
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
   and [`examples/worker-javascript`](../../examples/worker-javascript).
@@ -511,15 +511,15 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
-| `@cloudflare/computer/modules/container` | `createContainerModule()` for `ws:container`: run container commands from isolate JavaScript. |
-| `@cloudflare/computer/modules/git` | `createGitModule()` for `ws:git`: confined Git from isolate JavaScript. |
-| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `ws:artifacts`: Artifacts and git tokens from isolate JavaScript. |
-| `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `ws:assets`: publish a Workspace file from isolate JavaScript. |
-| `@cloudflare/computer/modules/tools` | `createToolBindings()` for `ws:tools`: an agent's own tools, callable from isolate JavaScript. |
+| `@cloudflare/computer/modules/container` | `createContainerModule()` for `codemode:container`: run container commands from isolate JavaScript. |
+| `@cloudflare/computer/modules/git` | `createGitModule()` for `codemode:git`: confined Git from isolate JavaScript. |
+| `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `codemode:artifacts`: Artifacts and git tokens from isolate JavaScript. |
+| `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `codemode:assets`: publish a Workspace file from isolate JavaScript. |
+| `@cloudflare/computer/modules/tools` | `createToolBindings()` for `codemode:tools`: an agent's own tools, callable from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |
-| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace, and `forAISDKTools()` to serve AI SDK tools as `ws:tools`. |
-| `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`), and `forPiTools()` to serve pi tools as `ws:tools`. |
+| `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace, and `forAISDKTools()` to serve AI SDK tools as `codemode:tools`. |
+| `@cloudflare/computer/tools/pi-ai` | `createPiTools()`: the same tool set for pi (`@earendil-works/pi-ai`), and `forPiTools()` to serve pi tools as `codemode:tools`. |
 | `@cloudflare/computer/tools/tanstack-ai` | `createTanStackTools()`: the same tool set for TanStack AI (`@tanstack/ai`). |
 | `@cloudflare/computer/git` | Opt-in `isomorphic-git` glue for checkouts inside the workspace. |
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |

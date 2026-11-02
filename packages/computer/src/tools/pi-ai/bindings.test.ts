@@ -143,7 +143,7 @@ describe("forPiTools", () => {
     expect([...source()].map((binding) => binding.name)).toEqual(["read", "grep"]);
   });
 
-  it("serves pi tools as ws:tools exports, leaving out exec", async () => {
+  it("serves pi tools as codemode:tools exports, leaving out exec", async () => {
     const read = agentTool("read", { content: [{ type: "text", text: "contents" }] });
     const exec = agentTool("exec", { content: [] });
     const functions = createToolBindings(
@@ -169,7 +169,7 @@ describe("forPiTools", () => {
       text: "contents",
     });
     await expect(functions.write?.([{ path: "a" }], callContext("read"))).rejects.toThrow(
-      "ws:tools write requires Workspace write access.",
+      "codemode:tools write requires Workspace write access.",
     );
     expect(write.seen).toEqual([]);
   });
@@ -196,7 +196,7 @@ describe("forPiTools", () => {
     }
     for (const name of ["write", "edit", "delete"]) {
       await expect(functions[name]?.([{ path: "/workspace/notes.txt" }], readOnly)).rejects.toThrow(
-        `ws:tools ${name} requires Workspace write access.`,
+        `codemode:tools ${name} requires Workspace write access.`,
       );
     }
     expect(await workspace.fs.readFile("/workspace/notes.txt", "utf8")).toBe("remember the milk\n");

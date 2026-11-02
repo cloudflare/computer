@@ -26,7 +26,7 @@ The browser runs the same long-context task three ways so you can see what the R
 |---|---|
 | Direct context | One model call with the complete corpus in its prompt |
 | JavaScript only | A Workspace and generated JavaScript |
-| Structured RLM | A Workspace, generated JavaScript, and bounded model calls through `ws:model` |
+| Structured RLM | A Workspace, generated JavaScript, and bounded model calls through `codemode:model` |
 
 ## Why use this pattern?
 
@@ -47,7 +47,7 @@ This pattern is less useful when the context already fits comfortably in one pro
 2. The parent model receives the question, file paths, and the available Computer tool. It does not receive the complete corpus.
 3. The parent writes a complete ECMAScript module for the Worker JavaScript backend.
 4. That module reads record-aligned partitions from the Workspace.
-5. The module calls `ws:model` with a bounded batch of classification or extraction requests.
+5. The module calls `codemode:model` with a bounded batch of classification or extraction requests.
 6. The module validates the returned JSON and reduces it to one answer with JavaScript.
 7. The UI shows the generated module, map calls, token use, duration, and official Oolong score.
 
@@ -67,7 +67,7 @@ const backend = new WorkerJavaScriptBackend({
   access: "read",
   egress: { mode: "none" },
   modules: {
-    "ws:model": modelCapability,
+    "codemode:model": modelCapability,
   },
 });
 
@@ -77,13 +77,13 @@ const workspace = new Workspace({
 });
 ```
 
-The important line is `modules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `ws:model` interface.
+The important line is `modules`. Generated code cannot read model credentials or call the network directly. It can only use the host-owned `codemode:model` interface.
 
 A generated module follows this shape:
 
 ```js
 import fs from "node:fs/promises";
-import { batch } from "ws:model";
+import { batch } from "codemode:model";
 
 export default async function () {
   const manifest = JSON.parse(
@@ -149,8 +149,8 @@ The reducer is exact relative to its inputs. Model classifications can still be 
 
 The shortest path through the example is:
 
-1. [`worker/rlm-agent.ts`](worker/rlm-agent.ts) wires together the model, Workspace, Worker JavaScript backend, executor tool, and `ws:model`.
-2. [`worker/capability.ts`](worker/capability.ts) implements the bounded `batch(requests)` function behind `ws:model`.
+1. [`worker/rlm-agent.ts`](worker/rlm-agent.ts) wires together the model, Workspace, Worker JavaScript backend, executor tool, and `codemode:model`.
+2. [`worker/capability.ts`](worker/capability.ts) implements the bounded `batch(requests)` function behind `codemode:model`.
 3. [`worker/structured-rlm.ts`](worker/structured-rlm.ts) describes the map result and JavaScript reduction for each task family.
 4. [`worker/agent-common.ts`](worker/agent-common.ts) writes the same corpus into each Computer Workspace.
 5. [`worker/executor-tool.ts`](worker/executor-tool.ts) creates the native Computer executor tool and keeps its browser-facing result small.
@@ -160,7 +160,7 @@ The two baselines live in [`worker/direct-agent.ts`](worker/direct-agent.ts) and
 
 ## Bounds used by the example
 
-`ws:model` is deliberately small and predictable:
+`codemode:model` is deliberately small and predictable:
 
 - Up to 24 model requests in one run.
 - Up to four model calls at a time.

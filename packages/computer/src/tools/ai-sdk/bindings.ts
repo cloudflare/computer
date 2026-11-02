@@ -1,8 +1,8 @@
 /**
- * AI SDK tools as `ws:tools` bindings, so code running in `exec` can
+ * AI SDK tools as `codemode:tools` bindings, so code running in `exec` can
  * call the same tools the model does.
  *
- *   modules: { "ws:tools": createToolBindings(forAISDKTools(() => tools)) }
+ *   modules: { "codemode:tools": createToolBindings(forAISDKTools(() => tools)) }
  */
 
 import { asSchema, type Tool, type ToolSet } from "ai";

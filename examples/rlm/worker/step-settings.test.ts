@@ -12,7 +12,7 @@ describe("required Computer steps", () => {
   it("retries recursive inference when the first execution produced no child evidence", () => {
     expect(requiredRlmStep(1, "system", [], false)).toMatchObject({
       instructions: expect.stringContaining("did not use recursive inference"),
-      messages: [{ role: "user", content: expect.stringContaining("ws:model") }],
+      messages: [{ role: "user", content: expect.stringContaining("codemode:model") }],
       toolChoice: { type: "tool", toolName: "executor" },
     });
   });

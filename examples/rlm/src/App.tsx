@@ -313,7 +313,7 @@ function Experiment({ sessionId }: { sessionId: string }) {
           <span>
             {sample === "synth-frequency"
               ? "2,433 records → 22 bounded model maps → one JavaScript reduce"
-              : "Direct context · Computer Workspace · Computer + ws:model"}
+              : "Direct context · Computer Workspace · Computer + codemode:model"}
           </span>
           <small
             className={orchestrationError ? "bad" : undefined}
@@ -416,7 +416,7 @@ function Lane({
       icon: <Code weight="duotone" />,
     },
     rlm: {
-      kicker: "Computer + ws:model",
+      kicker: "Computer + codemode:model",
       title: "Structured RLM",
       description:
         "Generated code asks model workers to interpret partitions, then combines their JSON.",
@@ -580,7 +580,7 @@ function Lane({
             <strong>JavaScript completed, but its output does not fit this task.</strong>
             <p>
               The records need semantic labels before code can count them. This lane has no model
-              capability; Structured RLM adds bounded <code>ws:model</code> map calls.
+              capability; Structured RLM adds bounded <code>codemode:model</code> map calls.
             </p>
           </section>
         ) : null}
