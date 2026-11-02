@@ -334,6 +334,7 @@ describe("WorkspaceRuntime", () => {
       "approveLater",
       "delete",
       "echo",
+      "executionGate",
       "gate",
       "hold",
       "invalidResult",
@@ -1086,6 +1087,24 @@ describe("durable executions", () => {
     expect(settled).toMatchObject({ status: "completed" });
     expect(settled.value).toBeGreaterThanOrEqual(3000);
     expect(await calls()).toEqual({ slept: 3, gate: 2 });
+  });
+
+  it("tells host calls the same execution after a restart", async () => {
+    await start("durable-execution", {
+      source: `
+        import { executionGate } from "codemode:test-host";
+        export default async () => executionGate();
+      `,
+      onInterrupt: "replay",
+    });
+    const execution = { id: "durable-execution" };
+    expect(await result("durable-execution")).toMatchObject({
+      status: "completed",
+      value: execution,
+    });
+    // The gate was in flight at the restart, so it ran again.
+    const seen = await (await SELF.fetch("https://example.test/durable-executions")).json();
+    expect(seen).toEqual([execution, execution]);
   });
 
   it("restarts a run from the beginning", async () => {

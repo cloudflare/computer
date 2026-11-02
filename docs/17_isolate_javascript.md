@@ -400,6 +400,7 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 | `deadline` | Epoch milliseconds after which the isolate stops waiting. |
 | `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
 | `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
+| `execution` | The run the call belongs to: `{ id }`. Every call of one run gets the same id, and a replayable run keeps it when it resumes. Ids are unique within one backend, and a module's functions are per backend connection, so the id alone tells the module's runs apart. |
 
 The arguments come from caller code, so parse them before use. A function may return a value or a promise. Arguments and results cross the isolate boundary as real values through Workers RPC, not as encoded text. The result must be JSON-compatible plain data, and the bridge checks it at runtime. As in JSON, an `undefined` result or array item becomes `null` and an `undefined` object field is left out, in arguments and results alike. Byte arrays work for `node:fs` calls but not for host modules. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
 

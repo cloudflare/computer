@@ -95,6 +95,7 @@ export type {
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
   WorkspaceModuleCallContext,
+  WorkspaceModuleExecution,
   WorkspaceModuleFactory,
   WorkspaceModuleFunction,
   WorkspaceModuleFunctions,

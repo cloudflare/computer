@@ -5,6 +5,17 @@ import type { TruncatedOutput } from "./output-spool";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
 
+/** The execution a host module call belongs to. */
+export interface WorkspaceModuleExecution {
+  /**
+   * The execution's id, as `exec()` returned it. Ids are unique within
+   * one backend, and a module's functions are per backend connection,
+   * so the id alone tells the module's runs apart. A replayable run
+   * keeps its id when it resumes after an interruption or an answer.
+   */
+  readonly id: string;
+}
+
 /** Per-call context the backend passes to every host module function. */
 export interface WorkspaceModuleCallContext {
   /** Aborts when the call passes its deadline or the execution is cancelled. */
@@ -28,6 +39,8 @@ export interface WorkspaceModuleCallContext {
    * the same id, so a function can use it as an idempotency key.
    */
   readonly callId: string;
+  /** The execution this call belongs to. Every call of one run gets the same values. */
+  readonly execution: WorkspaceModuleExecution;
   /**
    * Pause the run until a person or another system answers, and return
    * the answer. The run is released while it waits, survives a deploy,

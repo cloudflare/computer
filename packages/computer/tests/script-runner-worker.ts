@@ -70,6 +70,8 @@ const waits: WorkspaceRuntimePendingCall[] = [];
 let gateOpen = false;
 // Named gates a run can wait on after the first, for a second restart.
 const opened = new Set<string>();
+// The execution each executionGate call was told it belongs to.
+const executions: Array<{ id: string }> = [];
 
 function countCall(name: string): number {
   const count = (durableCalls.get(name) ?? 0) + 1;
@@ -133,6 +135,13 @@ function javascriptBackend(
           countCall(name);
           if (!opened.has(name)) await new Promise(() => undefined);
           return "open";
+        },
+        // The gate, noting which execution each call belongs to.
+        async executionGate(_args, ctx) {
+          executions.push({ ...ctx.execution });
+          countCall("gate");
+          if (!gateOpen) await new Promise(() => undefined);
+          return { ...ctx.execution };
         },
         // The gate, for a call that mustn't run twice.
         unsafeGate: unsafeToRepeat(async () => {
@@ -301,6 +310,7 @@ export class HostDO extends DurableObject<Env> {
     gateOpen = false;
     opened.clear();
     durableCalls.clear();
+    executions.length = 0;
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
       backend: input.network === true ? NETWORK_BACKEND : "worker-javascript",
@@ -363,6 +373,10 @@ export class HostDO extends DurableObject<Env> {
 
   durableCalls() {
     return Object.fromEntries(durableCalls);
+  }
+
+  executions() {
+    return executions;
   }
 
   killRuntime(id: string) {
@@ -641,6 +655,10 @@ export default class extends WorkerEntrypoint<Env> {
           value: WorkspaceRuntimeValue;
         };
         return Response.json(await stub.respond(body.id, body.callId, body.value));
+      }
+
+      if (url.pathname === "/durable-executions") {
+        return Response.json(await stub.executions());
       }
 
       if (url.pathname === "/durable-calls") {
