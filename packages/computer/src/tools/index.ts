@@ -18,6 +18,7 @@ export {
 export type {
   ExecBackendOptions,
   ExecBackends,
+  ExecMetadata,
   ExecRuntimeHandle,
   ExecStreamEvent,
   ExecToolOptions,

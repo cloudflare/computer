@@ -40,7 +40,15 @@ export {
 
 export interface ToolCallContext {
   abortSignal?: AbortSignal;
+  /**
+   * The `metadata` an `exec` call's run starts with, for host modules;
+   * the model never sees it. When set, `execMetadata` isn't used.
+   */
+  metadata?: Record<string, string>;
 }
+
+// What each tool's executor gets: the caller's context and the call's id.
+type PiToolCallContext = ToolCallContext & { toolCallId: string };
 
 interface PiToolEntry {
   name: string;
@@ -48,7 +56,7 @@ interface PiToolEntry {
   inputSchema: z.ZodType;
   strictArguments?: boolean;
   prepareArguments?: (args: unknown) => unknown;
-  execute: (input: never, context: ToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
+  execute: (input: never, context: PiToolCallContext) => Promise<unknown> | AsyncIterable<unknown>;
   toModelOutput?: (args: { input: never; output: never }) => ModelOutput;
 }
 
@@ -248,13 +256,13 @@ function dispatcher(
 
     const run = entry.execute as (
       i: unknown,
-      c: ToolCallContext,
+      c: PiToolCallContext,
     ) => Promise<unknown> | AsyncIterable<unknown>;
     const toOutput = entry.toModelOutput as
       | ((args: { input: unknown; output: unknown }) => ModelOutput)
       | undefined;
     try {
-      const output = await settle(run(parsed.data, context));
+      const output = await settle(run(parsed.data, { ...context, toolCallId: call.id }));
       const modelOutput = toOutput
         ? toOutput({ input: parsed.data, output })
         : defaultModelOutput(output);

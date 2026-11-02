@@ -1,4 +1,4 @@
-import type { ExecBackends, ExecToolOptions, ExecWorkspaceLike } from "./exec";
+import type { ExecBackends, ExecMetadata, ExecToolOptions, ExecWorkspaceLike } from "./exec";
 import { confineWorkspace } from "./fs/confine";
 import type { EditToolOptions } from "./fs/edit";
 import type { ReadToolOptions } from "./fs/read";
@@ -24,6 +24,12 @@ export interface CreateToolsOptions {
    */
   exec?: ExecBackends;
   execOutput?: Pick<ExecToolOptions, "maxBytes" | "maxLines">;
+  /**
+   * The `metadata` each `exec` run starts with, or a function that picks
+   * it from the tool call's id. Host modules read it; the model never
+   * sees it.
+   */
+  execMetadata?: ExecMetadata;
   /**
    * @deprecated Use `exec`. `{ backends }` becomes `exec: backends`;
    * `defaultBackend` is ignored, because the model names a backend
@@ -81,6 +87,7 @@ function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
     ...exec,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
+    ...(options.execMetadata === undefined ? {} : { metadata: options.execMetadata }),
   };
 }
 

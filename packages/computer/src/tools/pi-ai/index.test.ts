@@ -211,6 +211,32 @@ describe("createPiTools execution", () => {
     expect(parsed.entries[0].name).toBe("a.txt");
   });
 
+  it("starts exec with the metadata the caller passes for the call", async () => {
+    const workspace = makeWorkspace();
+    const metadata: unknown[] = [];
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { metadata?: unknown },
+    ) => {
+      metadata.push(options.metadata);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [{ id: "sh", protocol: "command", callable: false }]);
+    const tools = createPiTools({
+      workspace,
+      exec: { sh: {} },
+      execMetadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+    });
+
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "true" } });
+    await tools.execute(
+      { id: "2", name: "exec", arguments: { command: "true" } },
+      { metadata: { conversation: "c1" } },
+    );
+
+    expect(metadata).toEqual([{ toolCall: "1" }, { conversation: "c1" }]);
+  });
+
   it("returns the tool's own output as details", async () => {
     const workspace = makeWorkspace();
     (workspace.runtime as unknown as Record<string, unknown>).exec = async () => ({

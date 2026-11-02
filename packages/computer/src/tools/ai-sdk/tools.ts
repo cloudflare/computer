@@ -125,7 +125,8 @@ export function createExecTool(options: ExecToolOptions): Tool<ExecInput, ExecTo
   return tool({
     description: exec.description,
     inputSchema: exec.inputSchema,
-    execute: (input, { abortSignal }) => exec.execute(input, { abortSignal }),
+    execute: (input, { abortSignal, toolCallId }) =>
+      exec.execute(input, { abortSignal, toolCallId }),
   });
 }
 
