@@ -162,6 +162,25 @@ describe("WorkspaceRuntimeBridge values", () => {
     ).resolves.toContain("request exceeds 256 bytes");
   });
 
+  it("accepts a response of many values that fits the payload limit", async () => {
+    // 10,000 numbers at 8 bytes each, plus 8 for the array.
+    const values = Array.from({ length: 10_000 }, (_, index) => index);
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      hostModules: new Map([["codemode:test", { run: async () => values }]]),
+    });
+    await expect(target.call("host/codemode:test.run", [])).resolves.toEqual({ result: values });
+  });
+
+  it("rejects a response of many empty values by the payload limit", async () => {
+    const target = new WorkspaceRuntimeBridge({} as WorkspaceRuntimeCapability, {
+      maxPayloadBytes: 256,
+      hostModules: new Map([["codemode:test", { run: async () => new Array(300).fill("") }]]),
+    });
+    await expect(message(target.call("host/codemode:test.run", []))).resolves.toContain(
+      "response exceeds 256 bytes",
+    );
+  });
+
   it("keeps an own __proto__ field in a host module result", async () => {
     const value = JSON.parse('{"__proto__": {"a": 1}, "b": 2}') as unknown;
     const response = await echoBridge().call("host/codemode:test.run", [value]);
