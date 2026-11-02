@@ -398,6 +398,31 @@ describe("createTanStackTools", () => {
     await workspace.close();
   });
 
+  it("picks each exec run's metadata from the TanStack tool call", async () => {
+    const workspace = makeWorkspace();
+    const metadata: unknown[] = [];
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { metadata?: unknown },
+    ) => {
+      metadata.push(options.metadata);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    (workspace.runtime as unknown as Record<string, unknown>).backends = () => [
+      { id: "sh", protocol: "command", callable: false },
+    ];
+    const tools = createTanStackTools({
+      workspace,
+      format: "object",
+      execMetadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+    });
+
+    await tools.exec.execute({ command: "true" } as never, { toolCallId: "call-1" });
+
+    expect(metadata).toEqual([{ toolCall: "call-1" }]);
+    await workspace.close();
+  });
+
   it("kills exec when the chat run's abort signal fires", async () => {
     const quiet = quietCommandBackend();
     const workspace = new Workspace({

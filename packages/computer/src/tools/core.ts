@@ -5,6 +5,7 @@ export {
   type ExecCallContext,
   type ExecDefinition,
   type ExecInput,
+  type ExecMetadata,
   type ExecRuntimeHandle,
   type ExecStreamEvent,
   type ExecToolOptions,
