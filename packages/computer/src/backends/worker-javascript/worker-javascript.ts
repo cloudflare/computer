@@ -944,7 +944,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
-        callIdPrefix: record.id,
+        execution: { id: record.id },
         onWait: (call) => {
           this.#notifyWait(record, call);
           void this.#release(record);

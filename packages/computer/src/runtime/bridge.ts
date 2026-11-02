@@ -5,6 +5,7 @@ import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capabilit
 import { isUnsafeToRepeat } from "./replay-safety";
 import type {
   WorkspaceModuleCallContext,
+  WorkspaceModuleExecution,
   WorkspaceModuleFunctions,
   WorkspaceRuntimeValue,
 } from "./types";
@@ -22,7 +23,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
   readonly #journal?: BridgeJournal;
   readonly #fetch?: (request: Request) => Promise<Response>;
-  readonly #callIdPrefix: string;
+  readonly #execution: WorkspaceModuleExecution;
   readonly #inFlight = new Set<Promise<MeasuredResponse>>();
   #fetchesInFlight = 0;
   #fetchesRunning = 0;
@@ -59,8 +60,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       // Makes network requests for the isolate's journaled fetch. Absent
       // when the isolate has no network access.
       fetch?: (request: Request) => Promise<Response>;
-      // Prefix of every call's callId, such as the execution id.
-      callIdPrefix?: string;
+      // The execution every call belongs to. Its id prefixes each call's
+      // callId. A bridge without one, as in a test, gets a random id.
+      execution?: WorkspaceModuleExecution;
       // Called when a call interrupts, to release the run.
       onWait?: (call: { seq: number; payload: unknown; since: number }) => void;
     } = {},
@@ -78,7 +80,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#onAttachOutput = integrations.onAttachOutput;
     this.#journal = integrations.journal;
     this.#fetch = integrations.fetch;
-    this.#callIdPrefix = integrations.callIdPrefix ?? crypto.randomUUID();
+    this.#execution = Object.freeze({ id: integrations.execution?.id ?? crypto.randomUUID() });
     this.#onWait = integrations.onWait;
   }
 
@@ -192,7 +194,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       return reject(message);
     }
     // Stable across attempts for a journaled call, unique otherwise.
-    const callId = `${this.#callIdPrefix}:${step?.kind === "live" ? step.seq : crypto.randomUUID()}`;
+    const callId = `${this.#execution.id}:${step?.kind === "live" ? step.seq : crypto.randomUUID()}`;
     const abort = new AbortController();
     this.#abortControllers.add(abort);
     const deadline = Date.now() + this.#maxCallDurationMs;
@@ -204,6 +206,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
           signal: abort.signal,
           deadline,
           callId,
+          execution: this.#execution,
           interrupt: (payload) => {
             if (interrupted) {
               return Promise.reject(

@@ -18,6 +18,7 @@ function callContext(
     deadline: Date.now() + 60_000,
     access,
     callId: "test-call",
+    execution: { id: "test-run" },
     interrupt: () => Promise.reject(new Error("not used")),
     resolvePath: async (path) => path,
   };
