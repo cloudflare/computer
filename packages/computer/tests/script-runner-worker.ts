@@ -161,6 +161,26 @@ const testJobs = jobsModule.module({
     countCall(`create ${String(name)}`);
     return TestJob({ id: String(name), run: ctx.execution.id });
   },
+  richer: async ([when]) => {
+    countCall("richer");
+    const at = when as unknown as Date;
+    // SAFETY: A codemode module can return values the journal can keep; the type only names JSON.
+    return {
+      isDate: at instanceof Date,
+      next: new Date(at.getTime() + 1),
+      big: 2n ** 70n,
+      bytes: new Uint8Array([1, 2]),
+      buffer: new ArrayBuffer(4),
+    } as never;
+  },
+  failRich: async () => {
+    countCall("failRich");
+    throw Object.assign(new RangeError("too far"), {
+      code: "EFAR",
+      details: { limit: 3 },
+      at: new Date(7),
+    });
+  },
   watch: async ([onEvent]) =>
     `watched ${await (onEvent as unknown as (event: string) => Promise<string>)("built")}`,
   logs: async () => {

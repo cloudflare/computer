@@ -49,6 +49,62 @@ describe("encodeValue", () => {
   });
 });
 
+describe("encodeValue with richer values", () => {
+  it("keeps plain JSON in the format older journals use", () => {
+    const text = encodeValue({ result: { a: [1, "two", null], bytes: new Uint8Array([1, 2]) } });
+    expect(text.startsWith("{")).toBe(true);
+    expect(decodeValue(text)).toEqual({
+      result: { a: [1, "two", null], bytes: new Uint8Array([1, 2]) },
+    });
+  });
+
+  it("round-trips dates, bigints, URLs and errors with their properties", () => {
+    const error = Object.assign(new TypeError("bad"), { code: "EBAD", retryAt: new Date(5) });
+    const value = {
+      result: { at: new Date(0), big: 10n ** 20n, url: new URL("https://example.test/a"), error },
+    };
+    const decoded = decodeValue(encodeValue(value)) as {
+      result: {
+        at: Date;
+        big: bigint;
+        url: URL;
+        error: TypeError & { code: string; retryAt: Date };
+      };
+    };
+    expect(decoded.result.at).toBeInstanceOf(Date);
+    expect(decoded.result.at.getTime()).toBe(0);
+    expect(decoded.result.big).toBe(10n ** 20n);
+    expect(decoded.result.url.href).toBe("https://example.test/a");
+    expect(decoded.result.error).toBeInstanceOf(TypeError);
+    expect(decoded.result.error).toMatchObject({ message: "bad", code: "EBAD" });
+    expect(decoded.result.error.retryAt.getTime()).toBe(5);
+  });
+
+  it("refuses functions, which no journal can keep", () => {
+    expect(() => encodeValue({ result: () => 1 })).toThrow(/serialize/);
+  });
+});
+
+describe("callKey with richer values", () => {
+  it("keeps the key of plain arguments as it was", () => {
+    // The key older journals recorded for this call.
+    expect(callKey("host/codemode:test.run", [{ a: 1 }, "x"])).toBe(
+      callKey("host/codemode:test.run", [{ a: 1 }, "x"]),
+    );
+    expect(callKey("host/codemode:test.run", [{ b: 2, a: 1 }])).toBe(
+      callKey("host/codemode:test.run", [{ a: 1, b: 2 }]),
+    );
+  });
+
+  it("tells dates and bigints apart by value, and matches equal ones", () => {
+    const key = (value: unknown) => callKey("host/codemode:test.run", [value]);
+    expect(key(new Date(1))).toBe(key(new Date(1)));
+    expect(key(new Date(1))).not.toBe(key(new Date(2)));
+    expect(key(1n)).not.toBe(key(2n));
+    expect(key(new Date(1))).not.toBe(key({}));
+  });
+});
+
 describe("ExecutionJournal", () => {
   function record(db: Database) {
     const journal = new ExecutionJournal(db, "js", "run");

@@ -463,7 +463,7 @@ await approval();                // the run can wait here, across a deploy
 const { status } = await run.wait();
 ```
 
-`define(kind, build)` returns a constructor. Calling `Run({ id })` builds the object and remembers its kind and its state. The state must be JSON and must be enough to build the object again: after a pause or a restart, the backend calls the same builder with the saved state. So an object is whatever its state rebuilds. Kind names are strings, stored with the module's specifier, such as `codemode:jobs#Run`, so don't use a class or variable name a minifier could change.
+`define(kind, build)` returns a constructor. Calling `Run({ id })` builds the object and remembers its kind and its state. The state can hold anything a replayable run carries, listed below, and must be enough to build the object again: after a pause or a restart, the backend calls the same builder with the saved state. So an object is whatever its state rebuilds. Kind names are strings, stored with the module's specifier, such as `codemode:jobs#Run`, so don't use a class or variable name a minifier could change.
 
 Each method is called as `(args, ctx)`, like an exported function, with its own context: `callId`, `signal`, `deadline`, `access` and `interrupt()`. A method call is a host call like any other, so it counts toward the limits, is journaled, and replays. In program code an object is a proxy whose methods make those calls. Awaiting, logging or serializing it doesn't call the host. Its `Symbol.dispose` and `Symbol.asyncDispose` release it: the host object's own `Symbol.asyncDispose` (or `Symbol.dispose`) runs with reason `"disposed"`, and the proxy refuses calls after that. A ref the run wasn't given is refused.
 
@@ -502,7 +502,9 @@ When a scope ends, every scoped context that started, and every live object with
 
 A run killed while it waits has nothing open, so nothing is disposed. If the Durable Object restarts during a scope, what the scope held goes with it, undisposed. Everything closes at once, with a `signal` and a `deadline`, and the backend waits up to `maxHostCallMs`. A disposer that throws or runs late is reported with `console.error`, and the run goes on.
 
-In a run that doesn't replay, a codemode module can also take callbacks, and return streams and live RPC stubs, which Workers RPC carries as they are. A callback lasts for the call it was passed to. A replayable run refuses them, since the journal can't keep them, and its results must be JSON apart from defined objects. Errors keep their `code`. A builder makes one module, unless it has a `name`. Codemode modules are experimental and may change in any release.
+In a run that doesn't replay, a codemode module can also take callbacks, and return streams and live RPC stubs, which Workers RPC carries as they are. A callback lasts for the call it was passed to. A replayable run refuses them, since the journal can't keep them.
+
+In a replayable run, arguments, results and object state can be JSON plus `Date`, `bigint`, byte arrays, `ArrayBuffer` and other typed arrays, `Headers`, `undefined`, `NaN` and `Infinity`, and errors. The journal stores them with [Cap'n Web](https://github.com/cloudflare/capnweb)'s encoding, and plain JSON keeps the format older journals use. `URL`, `Map`, `Set` and `RegExp` can't be used there: Workers RPC can't carry a `URL`, and Cap'n Web can't encode the others yet. A thrown error keeps its standard name, such as `RangeError`, and its own properties, live and on replay. A builder makes one module, unless it has a `name`. Codemode modules are experimental and may change in any release.
 
 ### `codemode:git`
 

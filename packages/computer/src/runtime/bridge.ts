@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { deserialize, serialize } from "capnweb";
 
 import { utf8ByteLength, utf8Prefix } from "../text-truncation";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability";
@@ -39,7 +40,7 @@ export interface CodemodeObjectDescriptor {
 const REPLAYABLE_LIVE_VALUE =
   "Callbacks, streams and stubs can't be passed to a host module in a replayable run.";
 const REPLAYABLE_RESULT =
-  "Host module values must be JSON-compatible. Streams, callbacks and live stubs only work in runs that don't replay.";
+  "Host module values in a replayable run must be serializable. Streams, callbacks and live stubs only work in runs that don't replay.";
 
 // A codemode call's result, with the objects found in it.
 class CodemodeResult {
@@ -215,7 +216,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const live = codemodeCall
       ? this.#journal === undefined
         ? "allow"
-        : REPLAYABLE_LIVE_VALUE
+        : "serializable"
       : undefined;
     try {
       requestBytes = measureValue(args, this.#maxPayloadBytes, "request", live);
@@ -263,6 +264,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // A durable execution answers a call it already made from its
     // journal, so the operation doesn't run twice.
     const step = this.#journal?.begin(name, args);
+    // Codemode calls carry richer values and errors.
+    const codemodeCall = this.#codemodeModuleOf(name) !== undefined;
     if (step?.kind === "replay") {
       // The first attempt counted this response, and the replay repeats
       // that attempt, so it counts again. The budget error wasn't counted.
@@ -378,7 +381,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         }
       },
       this.#maxPayloadBytes,
-      this.#journal === undefined && this.#codemodeModuleOf(name) !== undefined,
+      this.#journal === undefined && codemodeCall,
+      codemodeCall,
     );
     const call = withDeadline(operation, this.#maxCallDurationMs, this.#maxPayloadBytes, () => {
       // A call waiting for an answer isn't late: the run is released.
@@ -603,10 +607,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#journal?.diverged(message);
       throw new Error(message);
     }
-    const live = this.#journal === undefined;
     const value: unknown = await fn.call(
       receiver,
-      live ? args : hostArguments(args),
+      args,
       this.#codemodeContext(specifier, runtime, context),
     );
     return this.#encodeObjects(specifier, runtime, value ?? null, refBase);
@@ -681,7 +684,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
           throw new Error(`${specifier} returned an object from another module.`);
         }
         const ref = `${specifier}#${refBase}:${objects.length}`;
-        const state = hostValue(info.state ?? null);
+        const state = snapshotState(info.kind, info.state ?? null);
         objects.push({ ref, kind: info.kind, state });
         this.#known.set(ref, { kind: info.kind, state });
         this.#adopt(ref, item as object);
@@ -695,6 +698,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       ) {
         return item;
       }
+      // Byte arrays cross as they are, in every run.
+      if (item instanceof Uint8Array) return item;
       if (typeof item === "object" && item !== null && isPlainContainer(item)) {
         if (seen.has(item)) throw new Error("Host module values must be acyclic.");
         seen.add(item);
@@ -719,6 +724,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         return copy;
       }
       if (live) return item;
+      if (typeof item !== "function" && isSerializable(item)) return item;
       throw new Error(REPLAYABLE_RESULT);
     };
     return new CodemodeResult(visit(value), objects);
@@ -904,7 +910,12 @@ function replayedBytes(response: BridgeResponse, maxPayloadBytes: number): numbe
   try {
     return measureValue(response.result, maxPayloadBytes, "response");
   } catch {
-    return maxPayloadBytes;
+    // A codemode result with richer values, counted as the journal encodes it.
+    try {
+      return utf8ByteLength(serialize(response.result));
+    } catch {
+      return maxPayloadBytes;
+    }
   }
 }
 
@@ -916,7 +927,15 @@ export type BridgeResponse = (
       readonly objects?: readonly CodemodeObjectDescriptor[];
     }
   | {
-      readonly error: { readonly message: string; readonly code?: string; readonly path?: string };
+      readonly error: {
+        readonly message: string;
+        readonly code?: string;
+        readonly path?: string;
+        /** A standard error name, such as "TypeError", for a codemode call. */
+        readonly name?: string;
+        /** A codemode error's own properties that the journal can keep. */
+        readonly props?: Readonly<Record<string, unknown>>;
+      };
     }
 ) & {
   /**
@@ -982,8 +1001,10 @@ function measureValue(
   maxBytes: number,
   kind: "request" | "response",
   // "allow" counts a live value, such as a callback or stream, as a small
-  // fixed cost. A string is the error to refuse one with.
-  live?: "allow" | string,
+  // fixed cost. "serializable" accepts a richer value the journal can
+  // keep, counted by its encoding. Any other string is the error to
+  // refuse one with.
+  live?: "allow" | "serializable" | string,
 ): number {
   let bytes = 0;
   const seen = new Set<object>();
@@ -1016,6 +1037,14 @@ function measureValue(
     if (typeof item !== "object" || !isPlainContainer(item)) {
       if (live === "allow") {
         add(8);
+        return;
+      }
+      if (live === "serializable") {
+        // A replayable run can take anything the journal can keep.
+        if (typeof item === "function" || !isSerializable(item)) {
+          throw new Error(REPLAYABLE_LIVE_VALUE);
+        }
+        add(Math.max(1, utf8ByteLength(serialize(item))));
         return;
       }
       if (live !== undefined) throw new Error(live);
@@ -1067,16 +1096,18 @@ async function respond(
   run: () => Promise<unknown>,
   maxPayloadBytes: number,
   allowLive = false,
+  richErrors = false,
 ): Promise<MeasuredResponse> {
   try {
     const result = await run();
     const live = allowLive ? "allow" : undefined;
     if (result instanceof CodemodeResult) {
+      // A replayable run's values are counted as the journal encodes them.
       const bytes =
-        measureValue(result.value, maxPayloadBytes, "response", live) +
-        (result.objects.length === 0
-          ? 0
-          : measureValue(result.objects, maxPayloadBytes, "response"));
+        (allowLive
+          ? measureValue(result.value, maxPayloadBytes, "response", live)
+          : utf8ByteLength(serialize(result.value))) +
+        (result.objects.length === 0 ? 0 : utf8ByteLength(serialize(result.objects)));
       if (bytes > maxPayloadBytes) {
         throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
       }
@@ -1086,7 +1117,7 @@ async function respond(
     }
     return { result, bytes: measureValue(result, maxPayloadBytes, "response", live) };
   } catch (error) {
-    return boundedError(error, maxPayloadBytes);
+    return boundedError(error, maxPayloadBytes, richErrors);
   }
 }
 
@@ -1097,12 +1128,38 @@ const ERROR_OVERHEAD_BYTES = 64;
 // whole. `code` and `path` carry node:fs error details. Each is kept if
 // it fits beside the message, or beside half the room when the message
 // is long, and the message is cut to what is left.
-function boundedError(error: unknown, maxPayloadBytes: number) {
+function boundedError(error: unknown, maxPayloadBytes: number, rich = false) {
   const value = error as { code?: unknown; path?: unknown };
   const message = error instanceof Error ? error.message : String(error);
   let room = Math.max(0, maxPayloadBytes - ERROR_OVERHEAD_BYTES);
   const messageReserve = Math.min(utf8ByteLength(message), room / 2);
-  const details: { code?: string; path?: string } = {};
+  const details: {
+    code?: string;
+    path?: string;
+    name?: string;
+    props?: Record<string, unknown>;
+  } = {};
+  // A codemode error keeps a standard error name and the own properties
+  // the journal can keep, if they fit beside the message.
+  if (rich && error instanceof Error) {
+    if (ERROR_NAMES.has(error.name)) {
+      details.name = error.name;
+      room -= utf8ByteLength(error.name);
+    }
+    const props: Record<string, unknown> = {};
+    for (const key of Object.keys(error)) {
+      if (key === "message" || key === "stack") continue;
+      const prop = (error as unknown as Record<string, unknown>)[key];
+      if (typeof prop !== "function" && isSerializable(prop)) props[key] = prop;
+    }
+    if (Object.keys(props).length > 0) {
+      const bytes = utf8ByteLength(serialize(props));
+      if (bytes <= room - messageReserve) {
+        details.props = props;
+        room -= bytes;
+      }
+    }
+  }
   for (const key of ["code", "path"] as const) {
     const detail = value?.[key];
     if (typeof detail !== "string") continue;
@@ -1115,14 +1172,26 @@ function boundedError(error: unknown, maxPayloadBytes: number) {
 }
 
 function errorBytes(response: Extract<BridgeResponse, { error: unknown }>): number {
-  const { message, code, path } = response.error;
+  const { message, code, path, name, props } = response.error;
   return (
     ERROR_OVERHEAD_BYTES +
     utf8ByteLength(message) +
     utf8ByteLength(code ?? "") +
-    utf8ByteLength(path ?? "")
+    utf8ByteLength(path ?? "") +
+    utf8ByteLength(name ?? "") +
+    (props === undefined ? 0 : utf8ByteLength(serialize(props)))
   );
 }
+
+// Error names the isolate can rebuild with the same constructor.
+const ERROR_NAMES = new Set([
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+]);
 
 function truncateText(value: string, maxBytes: number) {
   return utf8Prefix(value, maxBytes).text;
@@ -1146,4 +1215,38 @@ function disposerOf(object: object): Disposer | undefined {
 
 async function disposeObject(object: object, end: WorkspaceModuleScopeEnd): Promise<void> {
   await disposerOf(object)?.call(object, end);
+}
+
+// Whether a replayable run can carry a value: Cap'n Web can encode it
+// for the journal, and Workers RPC can send it to the isolate. Of what
+// Cap'n Web encodes, only URL is refused by Workers RPC.
+function isSerializable(value: unknown): boolean {
+  if (containsUrl(value, new Set())) return false;
+  try {
+    serialize(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function containsUrl(value: unknown, seen: Set<object>): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (value instanceof URL) return true;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some((child) => containsUrl(child, seen));
+}
+
+// A copy of an object's state, as the journal will keep it.
+function snapshotState(kind: string, state: unknown): unknown {
+  try {
+    if (containsUrl(state, new Set())) throw new Error("Workers RPC can't carry a URL.");
+    return deserialize(serialize(state));
+  } catch (error) {
+    throw new Error(
+      `Codemode object ${JSON.stringify(kind)}'s state must be serializable: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }

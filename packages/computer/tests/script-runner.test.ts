@@ -1640,6 +1640,55 @@ describe("interrupts", () => {
     });
   });
 
+  it("keeps richer values and errors across a wait", async () => {
+    await start(
+      "objects-richer",
+      `
+        import { approve } from "codemode:test-host";
+        import { richer, failRich } from "codemode:test-jobs";
+        export default async function () {
+          const value = await richer(new Date(10));
+          let error;
+          try {
+            await failRich();
+          } catch (caught) {
+            error = caught;
+          }
+          await approve("deploy");
+          return {
+            isDate: value.isDate,
+            next: value.next instanceof Date ? value.next.getTime() : String(value.next),
+            big: typeof value.big === "bigint" ? value.big.toString() : typeof value.big,
+            bytes: value.bytes instanceof Uint8Array ? [...value.bytes] : typeof value.bytes,
+            buffer: value.buffer instanceof ArrayBuffer ? value.buffer.byteLength : typeof value.buffer,
+            error: {
+              isRange: error instanceof RangeError,
+              message: error.message,
+              code: error.code,
+              limit: error.details?.limit,
+              at: error.at instanceof Date ? error.at.getTime() : typeof error.at,
+            },
+          };
+        }
+      `,
+    );
+    const call = await waitingCall("objects-richer");
+    await respond("objects-richer", call.callId, { ok: true });
+    // The second scope replays richer and failRich from the journal.
+    expect(await result("objects-richer")).toMatchObject({
+      status: "completed",
+      value: {
+        isDate: true,
+        next: 11,
+        big: (2n ** 70n).toString(),
+        bytes: [1, 2],
+        buffer: 4,
+        error: { isRange: true, message: "too far", code: "EFAR", limit: 3, at: 7 },
+      },
+    });
+    expect(await calls()).toMatchObject({ richer: 1, failRich: 1 });
+  });
+
   it("refuses a callback to a codemode module in a replayable run", async () => {
     await start(
       "objects-callback-replay",

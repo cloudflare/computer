@@ -582,7 +582,15 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       // A replayable run sees responses in the order it first saw them.
       payload = await deliver(payload);
       if (payload.error !== undefined) {
-        const error = new Error(payload.error.message);
+        // A codemode error keeps its standard name and its own properties.
+        const name = payload.error.name;
+        const ErrorType = typeof name === "string" && Object.hasOwn(errorTypes, name) ? errorTypes[name] : Error;
+        const error = new ErrorType(payload.error.message);
+        if (payload.error.props !== undefined && payload.error.props !== null) {
+          for (const [key, value] of Object.entries(payload.error.props)) {
+            if (key !== "message" && key !== "stack") error[key] = value;
+          }
+        }
         if (payload.error.code !== undefined) error.code = payload.error.code;
         if (payload.error.path !== undefined) error.path = payload.error.path;
         throw error;
@@ -593,6 +601,7 @@ function capabilitiesModule(maxCapabilityBytes: number) {
     // with their refs listed beside the result. Each becomes a proxy whose
     // methods are host calls on that ref.
     const objectMarker = "\\u0000codemode";
+    const errorTypes = { TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError };
     function reviveObjects(value, objects) {
       const proxies = objects.map((object) => objectProxy(String(object.ref)));
       const visit = (item) => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { decodeValue, encodeValue } from "../backends/worker-javascript/journal";
+
 import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge";
 import type { WorkspaceRuntimeCapability } from "./capability";
 import {
@@ -12,22 +14,22 @@ import { unsafeToRepeat } from "./replay-safety";
 const OBJECT_MARKER = "\u0000codemode";
 
 // A journal that behaves like ExecutionJournal: entries are found by
-// name and arguments, responses are stored as JSON, and a new attempt
-// replays what the last one committed.
+// name and arguments, responses are stored with the journal's own
+// encoding, and a new attempt replays what the last one committed.
 function memoryJournal() {
   const entries: Array<{ key: string; seq: number; response?: string }> = [];
   let next = 1;
   let consumed = new Set<number>();
   const journal: BridgeJournal = {
     begin(name, args) {
-      const key = `${name}(${JSON.stringify(args)})`;
+      const key = `${name}(${encodeValue(args)})`;
       const entry = entries.find((item) => !consumed.has(item.seq) && item.key === key);
       if (entry !== undefined) {
         consumed.add(entry.seq);
         if (entry.response !== undefined) {
           return {
             kind: "replay",
-            response: JSON.parse(entry.response) as BridgeResponse,
+            response: decodeValue(entry.response) as BridgeResponse,
             at: 0,
             ordinal: entry.seq,
           };
@@ -41,7 +43,7 @@ function memoryJournal() {
     },
     commit(seq, response) {
       const entry = entries.find((item) => item.seq === seq);
-      if (entry !== undefined) entry.response = JSON.stringify(response);
+      if (entry !== undefined) entry.response = encodeValue(response);
       return { at: 0, ordinal: seq };
     },
     interrupt: () => 0,
@@ -83,6 +85,12 @@ function jobsModule() {
   }));
   jobs.context("api", () => "unused: the test passes connection values");
   jobs.context("session", () => "unused", { scoped: true });
+  const Timer = jobs.define("Timer", ({ at }: { at: Date }) => ({
+    when: async () => {
+      events.push("when");
+      return { isDate: at instanceof Date, ms: at.getTime() };
+    },
+  }));
   const other = createCodemodeModule();
   const Other = other.define("Other", () => ({ go: async () => null }));
   const module = jobs.module({
@@ -99,6 +107,27 @@ function jobsModule() {
     foreign: async () => Other({}),
     callback: async ([fn]) => typeof fn,
     stream: async () => new ReadableStream() as never,
+    rich: async ([when]) => {
+      events.push("rich");
+      const at = when as unknown as Date;
+      return {
+        isDate: at instanceof Date,
+        next: new Date(at.getTime() + 1),
+        big: 2n ** 70n,
+        bytes: new Uint8Array([1, 2]),
+        buffer: new ArrayBuffer(4),
+      } as never;
+    },
+    timer: async () => Timer({ at: new Date(42) }),
+    url: async () => new URL("https://example.test/x") as never,
+    urlState: async () => Timer({ at: new URL("https://example.test/x") as never }),
+    failRich: async () => {
+      throw Object.assign(new RangeError("too far"), {
+        code: "EFAR",
+        details: { limit: 3 },
+        at: new Date(7),
+      });
+    },
   });
   return { events, module };
 }
@@ -215,7 +244,7 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
     const first = setup({ journal: memory.journal });
     await first.bridge.call("host/codemode:jobs.createJob", ["build"]);
     await first.bridge.call("host/codemode:jobs#1:0.start", ["main"]);
-    expect(memory.entries[0]?.response).toContain('"state":{"id":"build"}');
+    expect(memory.entries[0]?.response).toContain('"build"');
 
     memory.restart();
     const second = setup({ journal: memory.journal });
@@ -267,7 +296,7 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
     expect(errorOf(await bridge.call("host/codemode:jobs.callback", [() => 1]))).toMatch(
       /replayable run/,
     );
-    expect(errorOf(await bridge.call("host/codemode:jobs.stream", []))).toMatch(/JSON-compatible/);
+    expect(errorOf(await bridge.call("host/codemode:jobs.stream", []))).toMatch(/serializable/);
   });
 
   it("passes callbacks and opaque results through in a run that doesn't replay", async () => {
@@ -296,5 +325,92 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
   it("ignores a release for a ref it doesn't know", async () => {
     const { bridge } = setup();
     await expect(bridge.release("codemode:jobs#c7:0")).resolves.toBeUndefined();
+  });
+
+  it("takes and returns richer values in a replayable run, live and on replay", async () => {
+    const memory = memoryJournal();
+    const first = setup({ journal: memory.journal });
+    const live = result(await first.bridge.call("host/codemode:jobs.rich", [new Date(10)])) as {
+      isDate: boolean;
+      next: Date;
+      big: bigint;
+      bytes: Uint8Array;
+      buffer: ArrayBuffer;
+    };
+    expect(live.isDate).toBe(true);
+    expect(live.next).toEqual(new Date(11));
+    expect(live.big).toBe(2n ** 70n);
+    expect(live.bytes).toEqual(new Uint8Array([1, 2]));
+    expect(live.buffer.byteLength).toBe(4);
+
+    memory.restart();
+    const second = setup({ journal: memory.journal });
+    const replayed = result(
+      await second.bridge.call("host/codemode:jobs.rich", [new Date(10)]),
+    ) as typeof live;
+    expect(replayed.next).toBeInstanceOf(Date);
+    expect(replayed.next.getTime()).toBe(11);
+    expect(replayed.big).toBe(2n ** 70n);
+    expect(replayed.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(second.events).toEqual([]);
+  });
+
+  it("keeps an object's richer state across replay and revival", async () => {
+    const memory = memoryJournal();
+    const first = setup({ journal: memory.journal });
+    await first.bridge.call("host/codemode:jobs.timer", []);
+
+    memory.restart();
+    const second = setup({ journal: memory.journal });
+    const created = await second.bridge.call("host/codemode:jobs.timer", []);
+    const ref = "objects" in created ? created.objects?.[0]?.ref : undefined;
+    expect(result(await second.bridge.call(`host/${ref}.when`, []))).toEqual({
+      isDate: true,
+      ms: 42,
+    });
+  });
+
+  it("carries an error's name and properties, live and on replay", async () => {
+    const memory = memoryJournal();
+    const first = setup({ journal: memory.journal });
+    const live = await first.bridge.call("host/codemode:jobs.failRich", []);
+    expect(live).toMatchObject({
+      error: {
+        message: "too far",
+        code: "EFAR",
+        name: "RangeError",
+        props: { code: "EFAR", details: { limit: 3 }, at: new Date(7) },
+      },
+    });
+
+    memory.restart();
+    const second = setup({ journal: memory.journal });
+    const replayed = await second.bridge.call("host/codemode:jobs.failRich", []);
+    expect(replayed).toMatchObject({
+      error: { name: "RangeError", props: { details: { limit: 3 } } },
+    });
+    const at = "error" in replayed ? (replayed.error.props as { at: unknown }).at : undefined;
+    expect(at).toBeInstanceOf(Date);
+  });
+
+  it("still refuses a value no journal can keep in a replayable run", async () => {
+    const { bridge } = setup({ journal: memoryJournal().journal });
+    expect(errorOf(await bridge.call("host/codemode:jobs.rich", [new ReadableStream()]))).toMatch(
+      /replayable run/,
+    );
+  });
+
+  it("refuses a URL in a replayable run, since Workers RPC can't carry it", async () => {
+    const { bridge } = setup({ journal: memoryJournal().journal });
+    expect(errorOf(await bridge.call("host/codemode:jobs.url", []))).toMatch(
+      /must be serializable/,
+    );
+  });
+
+  it("refuses object state the journal can't keep", async () => {
+    const { bridge } = setup();
+    expect(errorOf(await bridge.call("host/codemode:jobs.urlState", []))).toMatch(
+      /"Timer"'s state must be serializable/,
+    );
   });
 });
