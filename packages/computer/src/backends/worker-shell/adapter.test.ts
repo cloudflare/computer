@@ -236,6 +236,28 @@ describe("WorkspaceFsAdapter — writes", () => {
     expect(await adapter.readlink("/link")).toBe("/target");
   });
 
+  it("writeFile and appendFile store a binary string as one byte per char", async () => {
+    // just-bash hands shell output to the filesystem as a byte string
+    // tagged "binary": "\xc3\xa9" is the UTF-8 encoding of é.
+    await adapter.writeFile("/b", "\xc3\xa9", "binary");
+    await adapter.appendFile("/b", "\xff\n", { encoding: "latin1" });
+    const back = new Uint8Array(
+      await new Response(await workspace.fs.readFile("/b")).arrayBuffer(),
+    );
+    expect(Array.from(back)).toEqual([0xc3, 0xa9, 0xff, 0x0a]);
+  });
+
+  it("keeps non-ASCII bytes when the shell redirects cat, a heredoc or tee", async () => {
+    const bash = new Bash({ fs: adapter as never, cwd: "/" });
+    const result = await bash.exec(
+      "cat > /h <<'EOF'\né\nEOF\ncat /h > /c; cat /h >> /a; cat /h | tee /t >/dev/null",
+    );
+    expect(result).toMatchObject({ exitCode: 0, stderr: "" });
+    for (const path of ["/h", "/c", "/a", "/t"]) {
+      expect(await workspace.fs.readFile(path, "utf8")).toBe("é\n");
+    }
+  });
+
   it("discards shell redirection writes to /dev/null", async () => {
     const bash = new Bash({ fs: adapter as never, cwd: "/" });
     const result = await bash.exec("printf hello >/dev/null && cat /dev/null");
