@@ -9,10 +9,12 @@ import {
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
+  WorkspaceExecutionMetadata,
   WorkspaceModule,
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,
   WorkspaceModuleBackendHost,
+  WorkspaceModuleExecution,
   WorkspaceModuleFunctions,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeEvent,
@@ -259,6 +261,11 @@ interface ExecutionSubscriber {
 
 interface ExecutionRecord {
   id: string;
+  // What host module calls are told about the run. Set while the run
+  // is in memory, from `exec()` or, for a run resumed after a restart,
+  // from its saved start. Absent on a record loaded only to replay its
+  // output.
+  execution?: WorkspaceModuleExecution;
   events: WorkspaceRuntimeEvent[];
   subscribers: Set<ExecutionSubscriber>;
   status: "running" | "completed" | "failed" | "cancelled";
@@ -511,6 +518,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#records.set(id, record);
     const saved = this.#loadResume(record);
     if (saved === undefined) return;
+    record.execution = this.#execution(id, saved.start.metadata);
     // A run waiting for an answer resumes once it has every one.
     if (saved.waitingSince !== null) {
       record.waiting = "released";
@@ -611,6 +619,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       callId: `${record.id}:${call.seq}`,
       payload: call.payload as WorkspaceRuntimeValue,
       since: call.since,
+      metadata: this.#metadataOf(record.id),
     };
     // After the current call, so the hook can't hold up the run's release.
     void Promise.resolve()
@@ -634,7 +643,31 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       callId: `${call.id}:${call.seq}`,
       payload: call.payload as WorkspaceRuntimeValue,
       since: call.since,
+      metadata: this.#metadataOf(call.id),
     }));
+  }
+
+  // A waiting run's metadata. Every running record is in memory with its
+  // execution, so the saved start is only read for a run that isn't.
+  #metadataOf(id: string): WorkspaceExecutionMetadata {
+    const known = this.#records.get(id)?.execution;
+    if (known !== undefined) return known.metadata;
+    let saved: ReturnType<typeof loadResume>;
+    try {
+      saved = loadResume(this.#host.db, this.#backendId, id);
+    } catch {
+      saved = undefined;
+    }
+    return this.#execution(id, saved?.start.metadata).metadata;
+  }
+
+  // What host module calls of a run are told about it, frozen so one
+  // module can't change what another sees.
+  #execution(id: string, metadata: Record<string, string> | undefined): WorkspaceModuleExecution {
+    return Object.freeze({
+      id,
+      metadata: Object.freeze({ ...metadata }),
+    });
   }
 
   async respond(input: { id: string; callId: string; answer: WorkspaceRuntimeValue }) {
@@ -808,7 +841,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     if (stdinBytes.byteLength > this.#options.maxStdinBytes) {
       throw new Error(`Workspace runtime stdin exceeds ${this.#options.maxStdinBytes} bytes.`);
     }
-    assertEnv(input.env, this.#options.maxEnvBytes);
+    assertStringRecord(input.env, this.#options.maxEnvBytes, "env");
+    assertStringRecord(input.metadata, MAX_METADATA_BYTES, "metadata");
     const policy = input.onInterrupt ?? this.#options.onInterrupt;
     assertInterruptPolicy(policy);
     if (new TextEncoder().encode(input.source).byteLength > this.#options.maxSourceBytes) {
@@ -839,6 +873,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       }
       const record: ExecutionRecord = {
         id,
+        execution: this.#execution(id, input.metadata),
         events: [],
         subscribers: new Set(),
         status: "running",
@@ -887,6 +922,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
             startedAt,
             seed,
             fingerprint: this.#fingerprint(),
+            metadata: { ...input.metadata },
           });
           if (policy === "replay") {
             journal = this.#journalFor(record);
@@ -944,7 +980,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
-        execution: { id: record.id },
+        execution: record.execution ?? this.#execution(record.id, undefined),
         onWait: (call) => {
           this.#notifyWait(record, call);
           void this.#release(record);
@@ -1940,21 +1976,31 @@ function normalizeStdin(stdin: Uint8Array | string | undefined): Uint8Array {
   throw new Error("Workspace runtime stdin must be a string or Uint8Array.");
 }
 
-function assertEnv(env: Record<string, string> | undefined, maxBytes: number): void {
-  if (env === undefined) return;
-  if (typeof env !== "object" || env === null || Array.isArray(env)) {
-    throw new Error("Workspace runtime env must be a string-to-string record.");
+// The most bytes of `metadata` one execution can carry, counting the
+// UTF-8 bytes of every key and value.
+const MAX_METADATA_BYTES = 16 * 1024;
+
+function assertStringRecord(
+  record: Record<string, string> | undefined,
+  maxBytes: number,
+  name: "env" | "metadata",
+): void {
+  if (record === undefined) return;
+  if (typeof record !== "object" || record === null || Array.isArray(record)) {
+    throw new Error(`Workspace runtime ${name} must be a string-to-string record.`);
   }
   let bytes = 0;
   const encoder = new TextEncoder();
-  for (const [key, value] of Object.entries(env)) {
+  for (const [key, value] of Object.entries(record)) {
     if (typeof value !== "string") {
-      throw new Error(`Workspace runtime env value for ${JSON.stringify(key)} must be a string.`);
+      throw new Error(
+        `Workspace runtime ${name} value for ${JSON.stringify(key)} must be a string.`,
+      );
     }
     bytes += encoder.encode(key).byteLength + encoder.encode(value).byteLength;
   }
   if (bytes > maxBytes) {
-    throw new Error(`Workspace runtime env exceeds ${maxBytes} bytes.`);
+    throw new Error(`Workspace runtime ${name} exceeds ${maxBytes} bytes.`);
   }
 }
 

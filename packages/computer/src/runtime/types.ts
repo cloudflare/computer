@@ -14,7 +14,20 @@ export interface WorkspaceModuleExecution {
    * keeps its id when it resumes after an interruption or an answer.
    */
   readonly id: string;
+  /**
+   * What the app passed as `metadata` to `exec()`, or an empty object.
+   * The run's own code never sees it, so a module can trust it to say
+   * which conversation or user the run is for.
+   */
+  readonly metadata: WorkspaceExecutionMetadata;
 }
+
+/**
+ * A run's metadata as host code reads it. Any key may be missing: the
+ * run may have been started without metadata, by other code, or before
+ * metadata existed, and then resumed with none.
+ */
+export type WorkspaceExecutionMetadata = Readonly<Record<string, string | undefined>>;
 
 /** Per-call context the backend passes to every host module function. */
 export interface WorkspaceModuleCallContext {
@@ -249,6 +262,15 @@ export interface WorkspaceRuntimeExecOptions<E extends ExecEncoding = undefined>
   timeoutMs?: number;
   sync?: "wait" | "defer";
   /**
+   * Strings the app attaches to the run for host modules, such as the
+   * conversation it belongs to. Host module calls read it as
+   * `context.execution.metadata`, and `pending()` lists it with each
+   * waiting call. The run's code never sees it: it isn't part of `env`
+   * or `input`. A replayable run keeps it when it resumes. Backends that
+   * run no host modules ignore it.
+   */
+  metadata?: Record<string, string>;
+  /**
    * What happens to this run if the Durable Object restarts while it
    * runs, as on a deploy or crash. Overrides the backend's
    * `onInterrupt`. Backends that can't resume a run ignore it.
@@ -308,6 +330,7 @@ export interface ModuleExecutionInput {
   timeoutMs?: number;
   sync?: "wait" | "defer";
   onInterrupt?: WorkspaceRuntimeInterruptPolicy;
+  metadata?: Record<string, string>;
 }
 
 /**
@@ -333,6 +356,8 @@ export interface WorkspaceRuntimePendingCall {
   readonly payload: WorkspaceRuntimeValue;
   /** When the call started waiting, in milliseconds since the epoch. */
   readonly since: number;
+  /** The `metadata` the run was started with, or an empty object. */
+  readonly metadata: WorkspaceExecutionMetadata;
 }
 
 export interface ModuleExecutionEnvelope {

@@ -72,6 +72,12 @@ export interface ResumeStart {
   readonly seed: string;
   /** Identifies the runtime the execution started on. */
   readonly fingerprint: string;
+  /**
+   * The run's metadata for host modules. Runs saved before metadata
+   * existed have none and resume with an empty object, which is why
+   * adding it left `JOURNAL_VERSION` as it was.
+   */
+  readonly metadata?: Record<string, string>;
 }
 
 export interface ResumeState {
