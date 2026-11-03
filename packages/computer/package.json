@@ -164,7 +164,7 @@
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
-    "capnweb": "^0.10.0"
+    "capnweb": "^0.12.0"
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
