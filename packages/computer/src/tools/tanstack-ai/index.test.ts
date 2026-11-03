@@ -294,7 +294,9 @@ describe("createTanStackTools", () => {
     await expect(tools.exec.execute({ command: "ls" } as never)).resolves.toEqual({
       error: "Name a backend to run on.",
     });
-    expect(createTanStackTools({ workspace, exec: {} }).map((t) => t.name)).not.toContain("exec");
+    expect(
+      createTanStackTools({ workspace, exec: { backends: {} } }).map((t) => t.name),
+    ).not.toContain("exec");
     await workspace.close();
   });
 
@@ -312,7 +314,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      exec: { shell: { description: "fast shell" } },
+      exec: { backends: { shell: { description: "fast shell" } } },
       format: "object",
     });
 
@@ -342,7 +344,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      exec: { shell: { description: "fast shell" } },
+      exec: { backends: { shell: { description: "fast shell" } } },
       streamEventName: "exec-progress",
       format: "object",
     });
@@ -366,7 +368,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      exec: { shell: { description: "fast shell" } },
+      exec: { backends: { shell: { description: "fast shell" } } },
       streamEventName: "exec-progress",
       format: "object",
     });
@@ -414,7 +416,7 @@ describe("createTanStackTools", () => {
     const tools = createTanStackTools({
       workspace,
       format: "object",
-      execMetadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+      exec: { metadata: ({ toolCallId }) => ({ toolCall: toolCallId }) },
     });
 
     await tools.exec.execute({ command: "true" } as never, { toolCallId: "call-1" });
@@ -431,7 +433,7 @@ describe("createTanStackTools", () => {
     });
     const tools = createTanStackTools({
       workspace,
-      exec: { shell: { description: "fast shell" } },
+      exec: { backends: { shell: { description: "fast shell" } } },
       format: "object",
     });
     const controller = new AbortController();

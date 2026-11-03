@@ -34,7 +34,7 @@ export {
  * Build the AI SDK tool set for a Workspace: `read`, `ls`, `find`, and
  * `grep`, plus `write`, `edit`, `delete`, `exec`, and `publish` unless
  * the set is read-only. `exec` offers every backend the Workspace has
- * unless `exec` picks them.
+ * unless `exec.backends` lists them.
  *
  * @param options - The Workspace and per-tool options.
  * @returns An AI SDK `ToolSet` for `generateText`, `streamText`, or an agent's `getTools()`.

@@ -1339,7 +1339,7 @@ describe("createAITools exec tool", () => {
 
     expect(createAITools({ workspace: makeWorkspace() }).exec).toBeUndefined();
     expect(createAITools({ workspace: withBackend }).exec).toBeDefined();
-    expect(createAITools({ workspace: withBackend, exec: {} }).exec).toBeUndefined();
+    expect(createAITools({ workspace: withBackend, exec: { backends: {} } }).exec).toBeUndefined();
     expect(createAITools({ workspace: withBackend, readonly: true }).exec).toBeUndefined();
   });
 
@@ -1372,10 +1372,10 @@ describe("createAITools exec tool", () => {
         new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
-    const listed = createAITools({ workspace, exec: { "worker-javascript": {} } });
+    const listed = createAITools({ workspace, exec: { backends: { "worker-javascript": {} } } });
     const mapped = createAITools({
       workspace,
-      exec: { "worker-javascript": { description: "Use for data work." }, shell: {} },
+      exec: { backends: { "worker-javascript": { description: "Use for data work." }, shell: {} } },
     });
 
     expect(inputProperties(listed.exec)).not.toContain("backend");
@@ -1578,16 +1578,16 @@ describe("createAITools exec tool", () => {
     expect(
       createAITools({
         workspace,
-        exec: {},
+        exec: { backends: {} },
         shell: { backends: { shell: { description: "Commands." } } },
       }).exec,
     ).toBeUndefined();
   });
 
   it("rejects a backend the workspace does not have", () => {
-    expect(() => createAITools({ workspace: makeWorkspace(), exec: { missing: {} } })).toThrow(
-      /unknown backend "missing"/,
-    );
+    expect(() =>
+      createAITools({ workspace: makeWorkspace(), exec: { backends: { missing: {} } } }),
+    ).toThrow(/unknown backend "missing"/);
   });
 });
 
@@ -1807,7 +1807,7 @@ describe("createAITools callable exec", () => {
         },
       },
     };
-    const tools = createAITools({ workspace, exec: { shell: {} } });
+    const tools = createAITools({ workspace, exec: { backends: { shell: {} } } });
 
     expect(toolDescription(tools.exec)).toContain("Runs shell commands.");
   });
@@ -1886,7 +1886,7 @@ describe("createAITools exec with one backend", () => {
 
   it("runs on the only backend when a direct caller names another", async () => {
     const { calls, workspace } = recordingWorkspace(false);
-    const tools = createAITools({ workspace, exec: { shell: {} } });
+    const tools = createAITools({ workspace, exec: { backends: { shell: {} } } });
 
     await executeTool(tools.exec, { command: "echo hi", backend: "container" });
     expect(calls).toEqual([{ command: "echo hi", backend: "shell", input: undefined }]);
@@ -1934,7 +1934,7 @@ describe("createAITools exec with one backend", () => {
     const { calls, workspace } = recordingWorkspace(false);
     const tools = createAITools({
       workspace,
-      exec: { container: { description: "Linux." }, shell: { description: "Fast." } },
+      exec: { backends: { container: { description: "Linux." }, shell: { description: "Fast." } } },
     });
 
     expect(() => inputSchema(tools.exec).parse({ command: "ls" })).toThrow(/"backend"/);
@@ -2318,7 +2318,7 @@ describe("createAITools exec metadata", () => {
     const tools = createAITools({
       // SAFETY: The test only runs exec, which reads nothing but the runtime.
       workspace: workspace as Parameters<typeof createAITools>[0]["workspace"],
-      execMetadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+      exec: { metadata: ({ toolCallId }) => ({ toolCall: toolCallId }) },
     });
 
     await executeTool(tools.exec, { command: "true" });
