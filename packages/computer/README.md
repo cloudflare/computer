@@ -34,6 +34,7 @@ removed in a future release; each one names its replacement.
 | Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
+| The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
 | Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
@@ -517,6 +518,7 @@ on a computerd instance.
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `codemode:artifacts`: Artifacts and git tokens from isolate JavaScript. |
 | `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `codemode:assets`: publish a Workspace file from isolate JavaScript. |
 | `@cloudflare/computer/modules/tools` | `createToolBindings()` for `codemode:tools`: an agent's own tools, callable from isolate JavaScript. |
+| `@cloudflare/computer/modules/browser` | `createBrowserModule()` for `codemode:browser`: an agents `Browser`, driven from isolate JavaScript. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |
 | `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace, and `forAISDKTools()` to serve AI SDK tools as `codemode:tools`. |

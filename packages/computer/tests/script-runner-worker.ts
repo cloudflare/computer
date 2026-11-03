@@ -19,6 +19,7 @@ import {
   Workspace,
 } from "../src/index";
 import { createArtifactsModule } from "../src/modules/artifacts";
+import { type BrowserModuleSession, createBrowserModule } from "../src/modules/browser";
 import { createContainerModule } from "../src/modules/container";
 import { createGitModule } from "../src/modules/git";
 
@@ -133,6 +134,37 @@ const testSession = sessionModule.module({
     (await (ctx as unknown as { session: Promise<{ instance: number }> }).session).instance,
 });
 
+// A stand-in for an agents Browser. Each browser scope's sessions,
+// locks, calls and closes go in sessionEvents under "browser:<scope>".
+const fakeBrowser = {
+  functionDocs: () => ({ functions: "- `browser.cdp({ method })`", rules: [] }),
+  session({ scope, lock }: { scope: string; lock?: boolean }): BrowserModuleSession {
+    const id = `browser:${scope}`;
+    let locked = false;
+    if (lock === true) sessionEvents.push({ id, event: "open" });
+    const fn = (name: string) => async (input: unknown) => {
+      sessionEvents.push({ id, event: `${name} ${JSON.stringify(input ?? null)}` });
+      return { name };
+    };
+    return {
+      functions: { cdp: fn("cdp"), spec: fn("spec") },
+      waitedForLockMs: 0,
+      async lock() {
+        locked = true;
+        sessionEvents.push({ id, event: "lock" });
+      },
+      async close() {
+        if (lock === true) sessionEvents.push({ id, event: "close" });
+        return locked ? { notices: [`notice from ${scope}`] } : undefined;
+      },
+    };
+  },
+};
+const testBrowser = createBrowserModule({
+  browser: fakeBrowser,
+  scope: ({ metadata }) => metadata.browserScope ?? "shared",
+});
+
 // Objects: a job that starts runs. Each call counts itself; a run notes
 // when it's disposed, under the execution that made it.
 const jobsModule = createCodemodeModule({
@@ -225,6 +257,7 @@ function javascriptBackend(
       "codemode:artifacts": createArtifactsModule(),
       "codemode:container": createContainerModule(),
       "codemode:test-session": testSession,
+      "codemode:browser": testBrowser,
       "codemode:test-jobs": testJobs,
       "codemode:test-host": {
         async echo(args) {
