@@ -360,10 +360,19 @@ describe("client runtime.exec — plain string form", () => {
   it("forwards options unchanged", async () => {
     const { host, calls } = fakeRemote();
     const ws = await getWorkspace(host);
-    await ws.runtime.exec("npm test", { cwd: "/workspace", backend: "sandbox" });
+    await ws.runtime.exec("npm test", {
+      cwd: "/workspace",
+      backend: "sandbox",
+      metadata: { conversation: "c1" },
+    });
     expect(calls[0]).toEqual({
       command: "npm test",
-      options: { cwd: "/workspace", backend: "sandbox", id: expect.any(String) },
+      options: {
+        cwd: "/workspace",
+        backend: "sandbox",
+        metadata: { conversation: "c1" },
+        id: expect.any(String),
+      },
     });
   });
 

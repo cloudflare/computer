@@ -211,7 +211,7 @@ modules: {
 }
 ```
 
-`ctx.interrupt(payload)` releases the run's isolate once the run's other calls in flight finish. The run stays running, and time spent waiting doesn't count toward its timeout. `workspace.runtime.pending()` lists the calls waiting, with their payloads, and `respond()` answers one:
+`ctx.interrupt(payload)` releases the run's isolate once the run's other calls in flight finish. The run stays running, and time spent waiting doesn't count toward its timeout. `workspace.runtime.pending()` lists the calls waiting, with their payloads and their run's `metadata`, and `respond()` answers one:
 
 ```ts
 for (const call of await workspace.runtime.pending()) {
@@ -242,7 +242,7 @@ Once none of its calls are waiting, the run replays to the call and the function
 
 Each execution installs a small `node:process` shim so ordinary module code can read its environment and standard streams. The shim exposes only what the caller supplies for that execution; the host environment is never visible.
 
-`process.env` is a snapshot of the `env` record passed on the exec options. Values the caller does not pass are absent, and the Durable Object's own environment is never merged in, so a module cannot read host bindings or secrets through `process.env`.
+`process.env` is a snapshot of the `env` record passed on the exec options. Values the caller does not pass are absent, and the Durable Object's own environment is never merged in, so a module cannot read host bindings or secrets through `process.env`. The exec option `metadata` is for host modules and never appears here.
 
 `process.stdin` is a non-interactive async-iterable over the caller-supplied `stdin` bytes. The caller passes `stdin` as a `Uint8Array` or string on the exec options; `for await` yields the bytes once and then ends, and there is no blocking read for further input because an evaluate-once execution has no session to wait on. `isTTY` is `false`. The supplied input is bounded by `maxStdinBytes`; exceeding it fails the run with a clear error.
 
@@ -400,9 +400,32 @@ Each function receives the arguments the isolate passed, as an array of JSON-com
 | `deadline` | Epoch milliseconds after which the isolate stops waiting. |
 | `access` | The backend's `"read"` or `"read-write"` access. Check it before any write. |
 | `resolvePath(path, { allowMissing })` | Confines a caller path to the backend root and rejects symlinks. |
-| `execution` | The run the call belongs to: `{ id }`. Every call of one run gets the same id, and a replayable run keeps it when it resumes. Ids are unique within one backend, and a module's functions are per backend connection, so the id alone tells the module's runs apart. |
+| `execution` | The run the call belongs to: `{ id, metadata }`. Every call of one run gets the same values, and a replayable run keeps them when it resumes. Ids are unique within one backend, and a module's functions are per backend connection, so the id alone tells the module's runs apart. |
 
 The arguments come from caller code, so parse them before use. A function may return a value or a promise. Arguments and results cross the isolate boundary as real values through Workers RPC, not as encoded text. The result must be JSON-compatible plain data, and the bridge checks it at runtime. As in JSON, an `undefined` result or array item becomes `null` and an `undefined` object field is left out, in arguments and results alike. Byte arrays work for `node:fs` calls but not for host modules. It fits within the same capability byte limits as every other host call. A function that ignores `signal` and never settles keeps the execution in its finalizing state.
+
+`metadata` is whatever the app passed to `exec()`, or an empty object. It's a record of strings that tells host modules who a run is for, such as the conversation that started it:
+
+```ts
+await workspace.runtime.exec(source, {
+  backend: "worker-javascript",
+  metadata: { conversation: conversationId },
+});
+
+modules: {
+  "codemode:notes": {
+    add: ([text], { execution }) => {
+      const { conversation } = execution.metadata;
+      if (conversation === undefined) throw new Error("This run isn't for a conversation.");
+      return notes.add(conversation, String(text));
+    },
+  },
+}
+```
+
+Host code reads metadata as `WorkspaceExecutionMetadata`, whose values may be `undefined`, because any key may be missing: a run may have been started without metadata or by other code, and a run saved before metadata existed resumes with an empty object.
+
+The run's code never sees metadata: it isn't in `process.env` or the input, so code can't read or change it, and a module can trust it. It's capped at 16 KiB of keys and values. A replayable run keeps its metadata when it resumes, `pending()` lists it with each waiting call, and `workspace.stub().runtime.exec()` takes it too. Backends that run no host modules ignore it.
 
 Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `codemode:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "codemode:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 

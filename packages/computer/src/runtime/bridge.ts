@@ -80,7 +80,11 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#onAttachOutput = integrations.onAttachOutput;
     this.#journal = integrations.journal;
     this.#fetch = integrations.fetch;
-    this.#execution = Object.freeze({ id: integrations.execution?.id ?? crypto.randomUUID() });
+    const execution = integrations.execution;
+    this.#execution = Object.freeze({
+      id: execution?.id ?? crypto.randomUUID(),
+      metadata: Object.freeze({ ...execution?.metadata }),
+    });
     this.#onWait = integrations.onWait;
   }
 

@@ -7,6 +7,7 @@ import {
 } from "../src/backends/worker-javascript/index";
 import { createGitClient } from "../src/git/index";
 import type {
+  WorkspaceExecutionMetadata,
   WorkspaceRuntimePendingCall,
   WorkspaceRuntimeValue,
   WorkspaceStub,
@@ -71,7 +72,10 @@ let gateOpen = false;
 // Named gates a run can wait on after the first, for a second restart.
 const opened = new Set<string>();
 // The execution each executionGate call was told it belongs to.
-const executions: Array<{ id: string }> = [];
+const executions: Array<{
+  id: string;
+  metadata: WorkspaceExecutionMetadata;
+}> = [];
 
 function countCall(name: string): number {
   const count = (durableCalls.get(name) ?? 0) + 1;
@@ -136,12 +140,16 @@ function javascriptBackend(
           if (!opened.has(name)) await new Promise(() => undefined);
           return "open";
         },
+        // The execution the call belongs to.
+        async execution(_args, ctx) {
+          return { ...ctx.execution, metadata: { ...ctx.execution.metadata } };
+        },
         // The gate, noting which execution each call belongs to.
         async executionGate(_args, ctx) {
-          executions.push({ ...ctx.execution });
+          executions.push({ ...ctx.execution, metadata: { ...ctx.execution.metadata } });
           countCall("gate");
           if (!gateOpen) await new Promise(() => undefined);
-          return { ...ctx.execution };
+          return { ...ctx.execution, metadata: { ...ctx.execution.metadata } };
         },
         // The gate, for a call that mustn't run twice.
         unsafeGate: unsafeToRepeat(async () => {
@@ -306,6 +314,7 @@ export class HostDO extends DurableObject<Env> {
     id: string;
     onInterrupt?: "fail" | "restart" | "replay";
     network?: boolean;
+    metadata?: Record<string, string>;
   }) {
     gateOpen = false;
     opened.clear();
@@ -316,6 +325,7 @@ export class HostDO extends DurableObject<Env> {
       backend: input.network === true ? NETWORK_BACKEND : "worker-javascript",
       id: input.id,
       onInterrupt: input.onInterrupt,
+      metadata: input.metadata,
     });
     void handle.result().catch(() => undefined);
     // Let the run reach the gate.
@@ -330,6 +340,7 @@ export class HostDO extends DurableObject<Env> {
     id: string;
     onInterrupt?: "fail" | "restart" | "replay";
     timeoutMs?: number;
+    metadata?: Record<string, string>;
   }) {
     durableCalls.clear();
     waits.length = 0;
@@ -338,6 +349,7 @@ export class HostDO extends DurableObject<Env> {
       id: input.id,
       onInterrupt: input.onInterrupt ?? "replay",
       timeoutMs: input.timeoutMs,
+      metadata: input.metadata,
     });
     void handle.result().catch(() => undefined);
     return handle.id;
@@ -587,6 +599,22 @@ export default class extends WorkerEntrypoint<Env> {
         );
       }
 
+      // Runs code through the Workspace stub, as another Worker would.
+      if (url.pathname === "/runtime-stub") {
+        const body = (await request.json()) as {
+          source: string;
+          metadata?: Record<string, string>;
+        };
+        // SAFETY: The object's getWorkspace returns a WorkspaceStub; RPC typing can't follow it that deep.
+        using workspace = (await stub.getWorkspace()) as unknown as WorkspaceStub;
+        using handle = await workspace.runtime.exec(body.source, {
+          backend: "worker-javascript",
+          encoding: "utf8",
+          metadata: body.metadata,
+        });
+        return Response.json(await handle.result());
+      }
+
       if (url.pathname === "/runtime-start") {
         return Response.json({
           id: await stub.startRuntime((await request.json()) as { source: string; id: string }),
@@ -612,6 +640,7 @@ export default class extends WorkerEntrypoint<Env> {
               id: string;
               onInterrupt?: "fail" | "restart" | "replay";
               network?: boolean;
+              metadata?: Record<string, string>;
             },
           ),
         });
@@ -635,6 +664,7 @@ export default class extends WorkerEntrypoint<Env> {
               id: string;
               onInterrupt?: "fail" | "restart" | "replay";
               timeoutMs?: number;
+              metadata?: Record<string, string>;
             },
           ),
         });

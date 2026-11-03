@@ -33,6 +33,7 @@ interface WorkspaceRuntimeExecOptions {
   timeoutMs?: number;
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
+  metadata?: Record<string, string>;
   output?: { maxLines?: number; maxBytes?: number } | false;
 }
 
@@ -45,7 +46,7 @@ interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEven
 }
 ```
 
-`input` is accepted by callable backends and rejected by the rest; it carries a structured value that the callable backend returns a structured value for. `env` is accepted everywhere: command backends inherit it for the spawned command, and the JavaScript module backend exposes it through `process.env`. Its values apply to that execution only and do not change later executions. `stdin` is the caller-supplied standard input, accepted by backends that model it (the JavaScript module backend reads it through `process.stdin`). `cwd` is the command working directory or the base for durable relative module imports. A handle is single-consumer: call `result()` or consume its event stream, not both. Repeated `result()` calls return the same promise. `backend` records the resolved backend needed for later reattachment.
+`input` is accepted by callable backends and rejected by the rest; it carries a structured value that the callable backend returns a structured value for. `env` is accepted everywhere: command backends inherit it for the spawned command, and the JavaScript module backend exposes it through `process.env`. Its values apply to that execution only and do not change later executions. `stdin` is the caller-supplied standard input, accepted by backends that model it (the JavaScript module backend reads it through `process.stdin`). `cwd` is the command working directory or the base for durable relative module imports. `metadata` is for host modules: the JavaScript module backend hands it to every host module call as `context.execution.metadata` and keeps it from the run's code, and backends without host modules ignore it. A handle is single-consumer: call `result()` or consume its event stream, not both. Repeated `result()` calls return the same promise. `backend` records the resolved backend needed for later reattachment.
 
 ## Results
 
