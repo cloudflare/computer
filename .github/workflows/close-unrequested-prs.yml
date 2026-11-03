@@ -25,6 +25,7 @@ jobs:
             const allowedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
             const allowedBots = new Set(['agent-think[bot]', 'dependabot[bot]', 'github-actions[bot]', 'renovate[bot]']);
             const allowedLabels = new Set(['allow-pr']);
+            const allowedPermissions = new Set(['admin', 'maintain', 'write']);
 
             const { data: pullRequest } = await github.rest.pulls.get({
               owner,
@@ -43,6 +44,21 @@ jobs:
             const labels = (pullRequest.labels || []).map((label) => label.name);
             if (labels.some((label) => allowedLabels.has(label))) {
               return;
+            }
+
+            // author_association reads CONTRIBUTOR for private org members who get
+            // access through a team, so also check their actual repository permission.
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner,
+                repo,
+                username: pullRequest.user.login,
+              });
+              if (allowedPermissions.has(permission.permission)) {
+                return;
+              }
+            } catch (error) {
+              core.warning(`Could not read repository permission for ${pullRequest.user.login}: ${error.message}`);
             }
 
             const body = [
