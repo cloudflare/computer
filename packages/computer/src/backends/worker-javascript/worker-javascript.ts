@@ -7,6 +7,11 @@ import {
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress";
 import type {
+  WorkspaceModuleScopeEnd,
+  WorkspaceScopedModuleInstance,
+  WorkspaceScopedModule,
+} from "../../runtime/scoped-module";
+import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
   WorkspaceExecutionMetadata,
@@ -16,6 +21,7 @@ import type {
   WorkspaceModuleBackendHost,
   WorkspaceModuleExecution,
   WorkspaceModuleFunctions,
+  WorkspaceModuleHost,
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeInterruptPolicy,
@@ -250,6 +256,11 @@ interface JavaScriptEntrypoint {
 
 interface ActiveControl {
   cancel(): void;
+  // Settles once the isolate has stopped and been disposed, before the
+  // run's completion callbacks start. Never rejects.
+  readonly stopped: Promise<void>;
+  // Settles once the completion callbacks, which settle the run, are
+  // done.
   readonly completion: Promise<void>;
 }
 
@@ -283,6 +294,14 @@ interface ExecutionRecord {
   // Set while a run's isolate is being released for an interrupt, and
   // once it is, until the run resumes.
   waiting?: "releasing" | "released";
+  // Releasing the run's isolate, from when it starts letting go of the
+  // isolate's host calls until its scoped instances have closed. A
+  // run that ends meanwhile waits for it, so its end follows them.
+  releasing?: Promise<void>;
+  // The scoped module instances the run's current scope started, by
+  // specifier. Whoever closes them takes them off the record first, so
+  // each closes once.
+  instances?: Map<string, Promise<WorkspaceScopedModuleInstance>>;
 }
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
@@ -420,6 +439,9 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
   readonly #emptyHostModules: ReadonlySet<string>;
+  // Every host module's export names, for the module graph.
+  readonly #hostModuleExports: ReadonlyMap<string, readonly string[]>;
+  readonly #moduleHost: WorkspaceModuleHost;
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
@@ -442,13 +464,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
     const empty = new Set<string>();
+    // Shared by every factory and scoped module start, so frozen.
+    this.#moduleHost = Object.freeze({
+      git: host.git,
+      artifacts: host.artifacts,
+      runtime: host.runtime,
+      ...(host.assets === undefined ? {} : { assets: host.assets }),
+    });
     for (const [specifier, factory] of options.modules.host) {
-      const built = factory({
-        git: host.git,
-        artifacts: host.artifacts,
-        runtime: host.runtime,
-        ...(host.assets === undefined ? {} : { assets: host.assets }),
-      });
+      const built = factory(this.#moduleHost);
       // A factory can have nothing to offer on a connection, such as
       // codemode:tools for an agent with no tools. Leaving its module out means
       // only an import of it fails, not every run. An object of functions
@@ -463,6 +487,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
     this.#hostModuleFunctions = functions;
     this.#emptyHostModules = empty;
+    const exports = new Map<string, readonly string[]>();
+    for (const [specifier, built] of functions) exports.set(specifier, Object.keys(built));
+    for (const [specifier, module] of options.modules.scoped) {
+      exports.set(specifier, module.exports);
+    }
+    this.#hostModuleExports = exports;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
         backend TEXT NOT NULL,
@@ -599,15 +629,125 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     await bridge.quiesce();
     // It may have settled meanwhile, for example by failing on its own.
     if (record.status !== "running" || record.finalization) return;
-    record.bridge = undefined;
-    record.control?.cancel();
-    await record.control?.completion.catch(() => undefined);
-    await bridge.cancelAndDrain().catch(() => undefined);
-    record.control = undefined;
-    record.journal = undefined;
+    // From here the bridge is off the record, so a run that ends
+    // meanwhile can't drain it, and waits for this instead.
+    const releasing = this.#releaseIsolate(record, bridge);
+    record.releasing = releasing;
+    await releasing;
+    record.releasing = undefined;
+    if (record.status !== "running" || record.finalization) return;
     record.waiting = "released";
     this.#markSettled(record.id);
     this.#resumeIfAnswered(record);
+  }
+
+  async #releaseIsolate(record: ExecutionRecord, bridge: WorkspaceRuntimeBridge) {
+    record.bridge = undefined;
+    record.control?.cancel();
+    // Only until the isolate stops: its completion callbacks may be
+    // settling this run, and that waits for this release.
+    await record.control?.stopped;
+    await bridge.cancelAndDrain().catch(() => undefined);
+    record.control = undefined;
+    record.journal = undefined;
+    // The instances close before the run counts as released, so an
+    // answer that arrives meanwhile can't resume it under them. A run
+    // that ended while its host calls drained closes them as it ends.
+    if (record.status !== "running" || record.finalization) return;
+    await this.#closeInstances(record, "paused");
+  }
+
+  // Close the scoped module instances the run's scope started, all at
+  // once, and wait for them up to `maxHostCallMs`. A close that
+  // throws or runs late is reported and otherwise ignored. Returns what
+  // they logged, cut to what is left of the run's output limit.
+  async #closeInstances(
+    record: ExecutionRecord,
+    reason: WorkspaceModuleScopeEnd["reason"],
+  ): Promise<Uint8Array[]> {
+    const instances = record.instances;
+    record.instances = undefined;
+    if (instances === undefined || instances.size === 0) return [];
+    const output = closeOutput(
+      Math.max(0, this.#options.maxStdioBytes - stdioBytes(record.events)),
+    );
+    let open = true;
+    const timeoutMs = this.#options.maxHostCallMs;
+    const controller = new AbortController();
+    const deadline = Date.now() + timeoutMs;
+    const settled = Promise.all(
+      [...instances].map(async ([specifier, started]) => {
+        // Each instance's log closes when its close returns, even while
+        // another module's close is still running.
+        let active = true;
+        const log = (text: string) => {
+          if (open && active) output.write(String(text));
+        };
+        try {
+          // An instance whose start failed has nothing to close.
+          const instance = await started.catch(() => undefined);
+          await instance?.close?.(
+            Object.freeze(
+              reason === "paused"
+                ? { reason, signal: controller.signal, deadline }
+                : { reason, signal: controller.signal, deadline, log },
+            ),
+          );
+        } catch (error) {
+          console.error({
+            message: "Host module close failed",
+            module: specifier,
+            reason,
+            id: record.id,
+            error: String(error),
+          });
+        } finally {
+          active = false;
+        }
+      }),
+    ).then(() => false);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<true>((resolve) => {
+      timer = setTimeout(() => resolve(true), timeoutMs);
+    });
+    try {
+      if (await Promise.race([settled, late])) {
+        controller.abort(new Error(`Host module close passed its ${timeoutMs}ms deadline.`));
+        console.error({ message: "Host module close timed out", reason, id: record.id, timeoutMs });
+      }
+    } finally {
+      open = false;
+      clearTimeout(timer);
+    }
+    return output.written();
+  }
+
+  // Settle a run held in memory. Its scoped instances close once
+  // its host calls have settled, and what they log goes ahead of the
+  // run's last events, in the same transaction as its terminal state,
+  // so a restart can't replay the run against output it never wrote.
+  async #end(
+    record: ExecutionRecord,
+    status: "completed" | "failed" | "cancelled",
+    tail: TailEvent[],
+  ) {
+    // A run released for an interrupt ends once its released calls and
+    // closes are done.
+    if (record.releasing !== undefined) await record.releasing;
+    const logged = record.instances?.size ? await this.#closeInstances(record, status) : [];
+    const events: TailEvent[] = [
+      ...logged.map((value) => ({ name: "stderr" as const, value })),
+      ...tail,
+    ];
+    this.#finish(
+      record,
+      status,
+      events.map((event, index) => ({
+        ...event,
+        id: record.id,
+        seq: record.events.length + 1 + index,
+      })),
+    );
   }
 
   #notifyWait(record: ExecutionRecord, call: { seq: number; payload: unknown; since: number }) {
@@ -808,7 +948,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   #preparedSourceModules(): Readonly<Record<string, string>> {
     this.#sourceModules ??= prepareSourceModules(
       this.#options.modules.source,
-      new Set(this.#options.modules.host.keys()),
+      new Set([...this.#options.modules.host.keys(), ...this.#options.modules.scoped.keys()]),
     );
     return this.#sourceModules;
   }
@@ -862,7 +1002,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         cwd: input.cwd ?? this.#options.root,
         capability,
         configuredModules: this.#preparedSourceModules(),
-        hostModules: this.#hostModuleFunctions,
+        hostModules: this.#hostModuleExports,
         emptyHostModules: this.#emptyHostModules,
         nodeModules: hasNodeModules(this.#options.compatibilityFlags),
         maxSourceBytes: this.#options.maxSourceBytes,
@@ -954,6 +1094,27 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
+  // This scope's scoped modules, each as the function that gets its
+  // instance. The first live call to a module starts it,
+  // and calls made meanwhile share that start.
+  #startInstances(record: ExecutionRecord, execution: WorkspaceModuleExecution) {
+    const instances = new Map<string, Promise<WorkspaceScopedModuleInstance>>();
+    record.instances = instances;
+    const starters = new Map<string, (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>>();
+    for (const [specifier, module] of this.#options.modules.scoped) {
+      starters.set(specifier, async (signal) => {
+        let started = instances.get(specifier);
+        if (started === undefined) {
+          const scope = Object.freeze({ ...execution, signal });
+          started = Promise.resolve().then(() => module.start(scope, this.#moduleHost));
+          instances.set(specifier, started);
+        }
+        return instanceFunctions(specifier, module, await started);
+      });
+    }
+    return starters;
+  }
+
   // Start a run's Dynamic Worker. A failure to start settles the run.
   async #launch(
     record: ExecutionRecord,
@@ -970,8 +1131,10 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   ): Promise<void> {
     this.#markRunning(record.id, spec.timeoutMs);
     try {
+      const execution = record.execution ?? this.#execution(record.id, undefined);
       const bridge = new WorkspaceRuntimeBridge(spec.capability, {
         hostModules: this.#hostModuleFunctions,
+        scopedModules: this.#startInstances(record, execution),
         maxPayloadBytes: this.#options.maxCapabilityBytes,
         maxCallDurationMs: this.#options.maxHostCallMs,
         maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,
@@ -980,7 +1143,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
-        execution: record.execution ?? this.#execution(record.id, undefined),
+        execution,
         onWait: (call) => {
           this.#notifyWait(record, call);
           void this.#release(record);
@@ -1123,27 +1286,12 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       try {
         await record.bridge?.cancelAndDrain();
       } catch (error) {
-        this.#finish(record, "failed", [
-          {
-            id: record.id,
-            seq: record.events.length + 1,
-            name: "stderr",
-            value: new TextEncoder().encode(
-              `${error instanceof Error ? error.message : String(error)}\n`,
-            ),
-          },
-          { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
-        ]);
+        await this.#end(record, "failed", failure(error));
         return;
       }
-      this.#finish(record, "cancelled", [
-        {
-          id: record.id,
-          seq: record.events.length + 1,
-          name: "stderr",
-          value: new TextEncoder().encode(message),
-        },
-        { id: record.id, seq: record.events.length + 2, name: "exit", code: 130 },
+      await this.#end(record, "cancelled", [
+        { name: "stderr", value: new TextEncoder().encode(message) },
+        { name: "exit", code: 130 },
       ]);
     })();
     record.finalization = finalization;
@@ -1305,31 +1453,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     try {
       await record.bridge?.cancelAndDrain();
     } catch (error) {
-      this.#finish(record, "failed", [
-        {
-          id: record.id,
-          seq: record.events.length + 1,
-          name: "stderr",
-          value: new TextEncoder().encode(
-            `${error instanceof Error ? error.message : String(error)}\n`,
-          ),
-        },
-        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
-      ]);
+      await this.#end(record, "failed", failure(error));
       return;
     }
     if (errorMessage !== undefined) {
-      this.#finish(record, "failed", [
-        {
-          id: record.id,
-          seq: record.events.length + 1,
-          name: "stderr",
-          value: new TextEncoder().encode(
-            `${truncateUtf8(errorMessage, Math.max(0, this.#options.maxStdioBytes - 1))}\n`,
-          ),
-        },
-        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
-      ]);
+      await this.#end(
+        record,
+        "failed",
+        failure(truncateUtf8(errorMessage, Math.max(0, this.#options.maxStdioBytes - 1))),
+      );
       return;
     }
     // No exit frame means the runner never reported a terminal state:
@@ -1337,29 +1469,15 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     // isolate crashed. Settle as a failure rather than a silent exit 0
     // with no result.
     if (record.exitCode === undefined) {
-      this.#finish(record, "failed", [
-        {
-          id: record.id,
-          seq: record.events.length + 1,
-          name: "stderr",
-          value: new TextEncoder().encode("Execution ended without reporting a result.\n"),
-        },
-        { id: record.id, seq: record.events.length + 2, name: "exit", code: 1 },
-      ]);
+      await this.#end(record, "failed", failure("Execution ended without reporting a result."));
       return;
     }
     const exitCode = record.exitCode;
-    const exit: WorkspaceRuntimeEvent =
+    const exit: TailEvent =
       exitCode === 0 && record.hasResult
-        ? {
-            id: record.id,
-            seq: record.events.length + 1,
-            name: "exit",
-            code: exitCode,
-            result: record.result as WorkspaceRuntimeValue,
-          }
-        : { id: record.id, seq: record.events.length + 1, name: "exit", code: exitCode };
-    this.#finish(record, exitCode === 0 ? "completed" : "failed", [exit]);
+        ? { name: "exit", code: exitCode, result: record.result as WorkspaceRuntimeValue }
+        : { name: "exit", code: exitCode };
+    await this.#end(record, exitCode === 0 ? "completed" : "failed", [exit]);
   }
 
   #stream(record: ExecutionRecord, after?: number | "tail") {
@@ -1668,10 +1786,15 @@ function startJavaScriptExecution(options: {
       options.timeoutMs,
     );
   });
-  const completion = Promise.race([run, timeout, cancellation])
+  const race = Promise.race([run, timeout, cancellation]);
+  const stop = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    dispose();
+  };
+  const stopped = race.then(stop, stop);
+  const completion = race
     .then(async () => {
-      if (timer !== undefined) clearTimeout(timer);
-      dispose();
+      stop();
       await options.onComplete();
     })
     .catch(async (error) => {
@@ -1695,6 +1818,7 @@ function startJavaScriptExecution(options: {
   // settled the race; swallow that late rejection.
   run.catch(() => undefined);
   return {
+    stopped,
     completion,
     cancel() {
       if (cancelled) return;
@@ -1946,6 +2070,85 @@ function assertLoaderGraph(
   if (bytes > maxSourceBytes) {
     throw new Error(`Workspace JavaScript loader graph exceeds ${maxSourceBytes} source bytes.`);
   }
+}
+
+// A scoped module instance's functions, checked against the exports its
+// module declared, which the module graph was built from.
+function instanceFunctions(
+  specifier: string,
+  module: WorkspaceScopedModule,
+  instance: WorkspaceScopedModuleInstance,
+): WorkspaceModuleFunctions {
+  const functions: unknown = instance?.functions;
+  const names =
+    typeof functions === "object" && functions !== null ? Object.keys(functions).sort() : [];
+  const exports = [...module.exports].sort();
+  const matches =
+    names.length === exports.length &&
+    names.every(
+      (name, index) =>
+        name === exports[index] &&
+        typeof (functions as Record<string, unknown>)[name] === "function",
+    );
+  if (!matches) {
+    throw new Error(
+      `Host module ${JSON.stringify(specifier)} started with functions ${names.join(", ") || "(none)"}, but declares exports ${exports.join(", ")}.`,
+    );
+  }
+  // SAFETY: Checked above: an object of the declared functions.
+  return functions as WorkspaceModuleFunctions;
+}
+
+// One of the last events of a run, before #end numbers it.
+type TailEvent =
+  | { name: "stderr"; value: Uint8Array }
+  | { name: "exit"; code: number; result?: WorkspaceRuntimeValue };
+
+// The last events of a run that failed with an error.
+function failure(error: unknown): TailEvent[] {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    { name: "stderr", value: new TextEncoder().encode(`${message}\n`) },
+    { name: "exit", code: 1 },
+  ];
+}
+
+const CLOSE_OUTPUT_TRUNCATED = "Host module output truncated.\n";
+
+// What a run's scoped instances log as they close, kept within
+// `room` bytes. Text is held until they are done; if it doesn't all
+// fit, it's cut and ends with a note saying so, and the whole is cut
+// at `room`.
+function closeOutput(room: number) {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  return {
+    write(text: string) {
+      if (bytes > room || text === "") return;
+      const chunk = encoder.encode(text);
+      chunks.push(chunk);
+      bytes += chunk.byteLength;
+    },
+    written(): Uint8Array[] {
+      if (bytes <= room) return chunks;
+      const text = chunks.map((chunk) => new TextDecoder().decode(chunk)).join("");
+      const note = encoder.encode(CLOSE_OUTPUT_TRUNCATED).byteLength;
+      let cut = truncateUtf8(text, Math.max(0, room - note - 1));
+      if (cut !== "" && !cut.endsWith("\n")) cut += "\n";
+      const kept = truncateUtf8(cut + CLOSE_OUTPUT_TRUNCATED, room);
+      return kept === "" ? [] : [encoder.encode(kept)];
+    },
+  };
+}
+
+// The bytes of stdout and stderr a run has written so far.
+function stdioBytes(events: readonly WorkspaceRuntimeEvent[]): number {
+  let bytes = 0;
+  for (const event of events) {
+    if (event.name === "stdout" || event.name === "stderr") bytes += event.value.byteLength;
+  }
+  return bytes;
 }
 
 function truncateUtf8(value: string, maxBytes: number) {

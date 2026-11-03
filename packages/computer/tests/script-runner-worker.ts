@@ -12,7 +12,7 @@ import type {
   WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "../src/index";
-import { unsafeToRepeat, Workspace } from "../src/index";
+import { createScopedModule, unsafeToRepeat, Workspace } from "../src/index";
 import { createArtifactsModule } from "../src/modules/artifacts";
 import { createContainerModule } from "../src/modules/container";
 import { createGitModule } from "../src/modules/git";
@@ -77,6 +77,16 @@ const executions: Array<{
   metadata: WorkspaceExecutionMetadata;
 }> = [];
 
+// What codemode:test-session instances did, and each approve call, in
+// order, such as "start 1" or "close paused 1".
+const sessionEvents: Array<{ id: string; event: string }> = [];
+
+// How many codemode:test-session instances each execution started.
+const sessionCounts = new Map<string, number>();
+
+// Paused closes held until the test lets them go, by execution id.
+const heldCloses = new Map<string, () => void>();
+
 function countCall(name: string): number {
   const count = (durableCalls.get(name) ?? 0) + 1;
   durableCalls.set(name, count);
@@ -111,6 +121,34 @@ function javascriptBackend(
       "codemode:git": createGitModule(),
       "codemode:artifacts": createArtifactsModule(),
       "codemode:container": createContainerModule(),
+      // Records each instance's start and close. `use()` returns the
+      // instance's number within its run. A run's metadata can ask it
+      // to hold a paused close until /session-release, and to log
+      // `closeLog` when the run ends.
+      "codemode:test-session": createScopedModule({
+        exports: ["use"],
+        async start({ id, metadata }) {
+          const instance = (sessionCounts.get(id) ?? 0) + 1;
+          sessionCounts.set(id, instance);
+          sessionEvents.push({ id, event: `start ${instance}` });
+          // Slow enough that a run's concurrent first calls overlap.
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return {
+            functions: { use: () => instance },
+            async close(end) {
+              sessionEvents.push({ id, event: `close ${end.reason} ${instance}` });
+              if (end.reason === "paused" && metadata.holdClose !== undefined) {
+                await new Promise<void>((resolve) => heldCloses.set(id, resolve));
+                heldCloses.delete(id);
+              }
+              if (end.reason !== "paused" && metadata.closeLog !== undefined) {
+                end.log(`${metadata.closeLog}\n`);
+              }
+              sessionEvents.push({ id, event: `closed ${instance}` });
+            },
+          };
+        },
+      }),
       "codemode:test-host": {
         async echo(args) {
           return { args: [...args] };
@@ -190,6 +228,7 @@ function javascriptBackend(
         async approve(args, ctx) {
           const action = String(args[0]);
           countCall(`ask:${action}`);
+          sessionEvents.push({ id: ctx.execution.id, event: "approve" });
           const answer = await ctx.interrupt({ kind: "approval", action });
           countCall(`answered:${action}`);
           return answer;
@@ -389,6 +428,16 @@ export class HostDO extends DurableObject<Env> {
 
   executions() {
     return executions;
+  }
+
+  sessionEvents(id: string) {
+    return sessionEvents.filter((event) => event.id === id).map((event) => event.event);
+  }
+
+  releaseClose(id: string) {
+    const release = heldCloses.get(id);
+    release?.();
+    return release !== undefined;
   }
 
   killRuntime(id: string) {
@@ -685,6 +734,14 @@ export default class extends WorkerEntrypoint<Env> {
           value: WorkspaceRuntimeValue;
         };
         return Response.json(await stub.respond(body.id, body.callId, body.value));
+      }
+
+      if (url.pathname === "/session-release") {
+        return Response.json(await stub.releaseClose(url.searchParams.get("id") ?? ""));
+      }
+
+      if (url.pathname === "/session-events") {
+        return Response.json(await stub.sessionEvents(url.searchParams.get("id") ?? ""));
       }
 
       if (url.pathname === "/durable-executions") {

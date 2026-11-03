@@ -13,6 +13,13 @@ import type {
 export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #capability: WorkspaceRuntimeCapability;
   readonly #hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  readonly #scopedModules: ReadonlyMap<
+    string,
+    (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>
+  >;
+  // Aborts when the scope is cancelled or drained, for scoped module
+  // starts, which the scope's calls share.
+  readonly #scope = new AbortController();
   readonly #maxPayloadBytes: number;
   readonly #maxCallDurationMs: number;
   readonly #maxConcurrentCalls: number;
@@ -48,6 +55,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     capability: WorkspaceRuntimeCapability,
     integrations: {
       hostModules?: ReadonlyMap<string, WorkspaceModuleFunctions>;
+      // Scoped host modules, each as the function that gets this
+      // scope's instance of it, starting it on the first call with a
+      // signal that aborts when the scope is cancelled.
+      scopedModules?: ReadonlyMap<
+        string,
+        (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>
+      >;
       maxPayloadBytes?: number;
       maxCallDurationMs?: number;
       maxConcurrentCalls?: number;
@@ -70,6 +84,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     super();
     this.#capability = capability;
     this.#hostModules = integrations.hostModules ?? new Map();
+    this.#scopedModules = integrations.scopedModules ?? new Map();
     this.#maxPayloadBytes = integrations.maxPayloadBytes ?? 1024 * 1024;
     this.#maxCallDurationMs = integrations.maxCallDurationMs ?? 30_000;
     this.#maxConcurrentCalls = integrations.maxConcurrentCalls ?? 16;
@@ -206,7 +221,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     let interrupted = false;
     const operation = respond(async () => {
       if (name.startsWith("host/")) {
-        return this.#callHostModule(name, args, {
+        return this.#callHostModule(name, args, step?.kind === "live" && step.rerun, {
           signal: abort.signal,
           deadline,
           callId,
@@ -407,6 +422,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
 
   async cancelAndDrain(): Promise<void> {
     this.#cancelled = true;
+    this.#scope.abort(new Error("Workspace execution is being cancelled."));
     for (const controller of this.#abortControllers) {
       controller.abort(new Error("Workspace execution is being cancelled."));
     }
@@ -420,25 +436,38 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   // identifiers and never contain a dot, so the last dot splits them
   // from a specifier such as `codemode:a.b`. Own-property checks keep
   // isolate code from reaching `toString` or other inherited members.
-  async #callHostModule(name: string, args: unknown[], context: WorkspaceModuleCallContext) {
-    const fn = this.#hostFunction(name);
+  async #callHostModule(
+    name: string,
+    args: unknown[],
+    rerun: boolean,
+    context: WorkspaceModuleCallContext,
+  ) {
+    const start = this.#scopedModules.get(moduleSpecifier(name) ?? "");
+    const functions =
+      start === undefined ? this.#hostModuleOf(name) : await start(this.#scope.signal);
+    // The call may have been cancelled or timed out while the instance started.
+    context.signal.throwIfAborted();
+    const fn = this.#hostFunction(name, functions);
     if (fn === undefined) {
       throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
+    // #dispatch can't see a scoped module function until its instance starts.
+    if (start !== undefined && rerun && isUnsafeToRepeat(fn)) {
+      const message = `The execution was interrupted while ${name.slice("host/".length)} was running, which isn't safe to repeat.`;
+      this.#journal?.diverged(message);
+      throw new Error(message);
+    }
     // Called on its module, so a method that uses `this` still works.
-    const result = await fn.call(this.#hostModuleOf(name), hostArguments(args), context);
+    const result = await fn.call(functions, hostArguments(args), context);
     return hostValue(result ?? null);
   }
 
   #hostModuleOf(name: string) {
-    if (!name.startsWith("host/")) return undefined;
-    const target = name.slice("host/".length);
-    const dot = target.lastIndexOf(".");
-    return dot === -1 ? undefined : this.#hostModules.get(target.slice(0, dot));
+    const specifier = moduleSpecifier(name);
+    return specifier === undefined ? undefined : this.#hostModules.get(specifier);
   }
 
-  #hostFunction(name: string) {
-    const functions = this.#hostModuleOf(name);
+  #hostFunction(name: string, functions = this.#hostModuleOf(name)) {
     const functionName = name.slice(name.lastIndexOf(".") + 1);
     const fn =
       functions !== undefined && Object.hasOwn(functions, functionName)
@@ -529,6 +558,14 @@ async function readLimited(response: Response, maxBytes: number): Promise<Uint8A
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+// The module specifier in a call name, `host/<specifier>.<function>`.
+function moduleSpecifier(name: string): string | undefined {
+  if (!name.startsWith("host/")) return undefined;
+  const target = name.slice("host/".length);
+  const dot = target.lastIndexOf(".");
+  return dot === -1 ? undefined : target.slice(0, dot);
 }
 
 function hostArguments(args: unknown[]): WorkspaceRuntimeValue[] {

@@ -1505,6 +1505,88 @@ describe("interrupts", () => {
     });
   });
 
+  async function sessionEvents(id: string) {
+    const response = await SELF.fetch(
+      `https://example.test/session-events?id=${encodeURIComponent(id)}`,
+    );
+    return (await response.json()) as string[];
+  }
+
+  // Two concurrent first calls to a scoped module, a wait, and one
+  // more call to it if the answer is ok.
+  const session = `
+    import { approve } from "codemode:test-host";
+    import { use } from "codemode:test-session";
+    export default async function () {
+      const before = await Promise.all([use(), use()]);
+      const answer = await approve("deploy");
+      const after = answer.ok ? await use() : "none";
+      console.log(before.join(" "), after);
+      return answer;
+    }
+  `;
+
+  it("starts a scoped module once per scope, and resumes only after it closes", async () => {
+    await start("session", session, { metadata: { holdClose: "1", closeLog: "closed" } });
+    const call = await waitingCall("session");
+    await vi.waitFor(async () =>
+      expect(await sessionEvents("session")).toEqual(["start 1", "approve", "close paused 1"]),
+    );
+    // Answered while the close holds the run.
+    await respond("session", call.callId, { ok: true });
+    const released = await SELF.fetch("https://example.test/session-release?id=session");
+    expect(await released.json()).toBe(true);
+
+    // The calls the second scope replays don't start an instance; the
+    // live one after the answer does.
+    expect(await result("session")).toMatchObject({
+      status: "completed",
+      stdout: "1 1 2\n",
+      stderr: "closed\n",
+    });
+    expect(await sessionEvents("session")).toEqual([
+      "start 1",
+      "approve",
+      "close paused 1",
+      "closed 1",
+      "approve",
+      "start 2",
+      "close completed 2",
+      "closed 2",
+    ]);
+  });
+
+  it("starts no instance for a scope whose calls to the module are all replayed", async () => {
+    await start("session-replayed", session);
+    const call = await waitingCall("session-replayed");
+    await respond("session-replayed", call.callId, { ok: false });
+    expect(await result("session-replayed")).toMatchObject({
+      status: "completed",
+      stdout: "1 1 none\n",
+    });
+    expect(await sessionEvents("session-replayed")).toEqual([
+      "start 1",
+      "approve",
+      "close paused 1",
+      "closed 1",
+      "approve",
+    ]);
+  });
+
+  it("closes nothing when a run is killed while it waits", async () => {
+    await start("session-kill", session);
+    await waitingCall("session-kill");
+    await vi.waitFor(async () => expect(await sessionEvents("session-kill")).toContain("closed 1"));
+    await SELF.fetch("https://example.test/runtime-kill?id=session-kill");
+    expect(await result("session-kill")).toMatchObject({ status: "cancelled" });
+    expect(await sessionEvents("session-kill")).toEqual([
+      "start 1",
+      "approve",
+      "close paused 1",
+      "closed 1",
+    ]);
+  });
+
   it("keeps waiting across a restart", async () => {
     await start("wait-restart", approval, { metadata: { conversation: "c2" } });
     expect((await waitingCall("wait-restart")).metadata).toEqual({ conversation: "c2" });

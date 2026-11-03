@@ -1,6 +1,7 @@
 import { parse } from "acorn";
 
 import type { WorkspaceRuntimeCapability } from "../../runtime/capability";
+import { isScopedModule, type WorkspaceScopedModule } from "../../runtime/scoped-module";
 import type {
   WorkspaceModule,
   WorkspaceModuleFactory,
@@ -85,6 +86,7 @@ const RESERVED_EXPORT_NAMES = new Set(["default", "then"]);
 export interface ParsedModules {
   readonly source: Readonly<Record<string, string>>;
   readonly host: ReadonlyMap<string, WorkspaceModuleFactory>;
+  readonly scoped: ReadonlyMap<string, WorkspaceScopedModule>;
   /** One markdown bullet per importable module, for a model. */
   readonly description: string;
 }
@@ -93,19 +95,22 @@ const FILESYSTEM_DESCRIPTION =
   "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, and `access`. Async only.";
 
 /**
- * Parse the backend's `modules` option: split it into bundled source
- * and host module factories, check every specifier and every object's
- * export names, and describe each module for a model. A factory's
- * export names are checked when the backend connects and it runs.
+ * Parse the backend's `modules` option: split it into bundled source,
+ * host module factories, and scoped host modules, check every
+ * specifier and the export names of every object and scoped module,
+ * and describe each module for a model. A factory's export names are
+ * checked when the backend connects and it runs.
  *
  * @param modules - The modules passed to the backend.
- * @returns Source modules, host module factories, and their description.
+ * @returns Source modules, host module factories, scoped modules, and
+ *   their description.
  * @throws When a specifier or an object's export names are not allowed.
  *   The host configured the backend wrongly and no execution can use it.
  */
 export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
   const source: Record<string, string> = Object.create(null);
   const host = new Map<string, WorkspaceModuleFactory>();
+  const scoped = new Map<string, WorkspaceScopedModule>();
   const lines: Array<string | (() => string)> = [FILESYSTEM_DESCRIPTION];
   for (const [specifier, module] of Object.entries(modules)) {
     const name = `\`${specifier}\``;
@@ -137,6 +142,13 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
         `Host module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
       );
     }
+    if (isScopedModule(module)) {
+      assertExportNames(specifier, module.exports);
+      scoped.set(specifier, module);
+      const exports = module.exports.map((key) => `\`${key}\``).join(", ");
+      lines.push(`- ${name}: ${module.description ?? `exports ${exports}.`}`);
+      continue;
+    }
     if (typeof module === "function") {
       host.set(specifier, module);
       lines.push(() => `- ${name}: ${module.description ?? "a host module."}`);
@@ -155,6 +167,7 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
   return {
     source,
     host,
+    scoped,
     get description() {
       return lines.map((line) => (typeof line === "string" ? line : line())).join("\n");
     },
@@ -174,18 +187,27 @@ export function assertHostModuleExports(
   functions: WorkspaceModuleFunctions,
 ): void {
   const names = Object.keys(functions);
-  if (names.length === 0) {
-    throw new Error(`Host module ${JSON.stringify(specifier)} must export a function.`);
-  }
+  assertExportNames(specifier, names);
   for (const name of names) {
-    if (!EXPORT_NAME.test(name) || RESERVED_EXPORT_NAMES.has(name)) {
-      throw new Error(
-        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a JavaScript identifier other than "default" or "then".`,
-      );
-    }
     if (typeof functions[name] !== "function") {
       throw new Error(
         `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a function.`,
+      );
+    }
+  }
+}
+
+// Check a host module's export names.
+function assertExportNames(specifier: string, names: readonly string[]): void {
+  if (names.length === 0) {
+    throw new Error(`Host module ${JSON.stringify(specifier)} must export a function.`);
+  }
+  if (new Set(names).size !== names.length)
+    throw new Error(`Host module ${JSON.stringify(specifier)} exports a name twice.`);
+  for (const name of names) {
+    if (typeof name !== "string" || !EXPORT_NAME.test(name) || RESERVED_EXPORT_NAMES.has(name)) {
+      throw new Error(
+        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a JavaScript identifier other than "default" or "then".`,
       );
     }
   }
@@ -196,7 +218,8 @@ export interface BuildModuleGraphOptions {
   cwd: string;
   capability: WorkspaceRuntimeCapability;
   configuredModules: Readonly<Record<string, string>>;
-  hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
+  /** Each host module's export names, by specifier. */
+  hostModules: ReadonlyMap<string, readonly string[]>;
   /** Host modules whose factory built no functions on this connection, so they are left out. */
   emptyHostModules?: ReadonlySet<string>;
   /** Whether the Dynamic Worker has the Node.js built-ins. */
@@ -365,9 +388,9 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   modules["node:fs"] = { js: nodeFsModule() };
 
   const toCapabilities = relativeSpecifier(storedName("module"), CAPABILITIES_MODULE);
-  for (const [specifier, functions] of options.hostModules) {
+  for (const [specifier, names] of options.hostModules) {
     modules[storedName(specifier)] = {
-      js: hostModule(toCapabilities, specifier, Object.keys(functions)),
+      js: hostModule(toCapabilities, specifier, names),
     };
   }
   for (const [specifier, source] of Object.entries(options.configuredModules)) {

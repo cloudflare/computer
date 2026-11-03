@@ -276,7 +276,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "codemode:name": { fn } }`, or a factory | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
+| Host | `modules: { "codemode:name": { fn } }`, a factory, or `createScopedModule()` | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
@@ -324,7 +324,7 @@ Modules code can import:
 - Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
-A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `codemode:tools` does with the agent's tools. An object of functions is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
+A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `codemode:tools` does with the agent's tools. A scoped module takes `description` as an option. An object of functions, or a scoped module without a description, is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 
@@ -428,6 +428,43 @@ Host code reads metadata as `WorkspaceExecutionMetadata`, whose values may be `u
 The run's code never sees metadata: it isn't in `process.env` or the input, so code can't read or change it, and a module can trust it. It's capped at 16 KiB of keys and values. A replayable run keeps its metadata when it resumes, `pending()` lists it with each waiting call, and `workspace.stub().runtime.exec()` takes it too. Backends that run no host modules ignore it.
 
 Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `codemode:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "codemode:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
+
+#### Scoped modules
+
+A module that holds state for a run, such as a browser session it opens on the first call, can be made with `createScopedModule()`. The state lives for one scope of the run: from when the run's code starts in an isolate until it waits in `ctx.interrupt()` or ends. A run that resumes starts again from the top in a new scope. The backend makes one instance of the module for each scope, on the scope's first call to the module, and closes it when the scope ends:
+
+```ts
+import { createScopedModule } from "@cloudflare/computer";
+
+modules: {
+  "codemode:browser": createScopedModule({
+    description: "A browser: `open(url)` and `text()`.",
+    exports: ["open", "text"],
+    async start(scope, host) {
+      const session = await browsers.connect({ conversation: scope.metadata.conversation });
+      return {
+        functions: {
+          open: ([url]) => session.open(String(url)),
+          text: () => session.text(),
+        },
+        async close(end) {
+          await session.close();
+          if (end.reason !== "paused") end.log("Closed the browser.\n");
+        },
+      };
+    },
+  }),
+}
+```
+
+`start` gets the scope's `{ id, metadata, signal }`, where `id` and `metadata` are the run's and stay the same in every scope, and the same services a factory gets. It returns the instance's `functions` with an optional `close`. The backend needs the export names before any run starts, so the module lists them in `exports`, which is checked at construction like an object's export names. If the functions `start` returns don't match `exports` exactly, the call fails and says so. Calls a scope makes while its instance starts wait for it, and if `start` throws, they fail. `scope.signal` aborts when the scope is cancelled or releases its isolate, and a call that was cancelled or timed out by the time `start` returns fails rather than running. A call answered from a replayable run's journal doesn't start an instance, so a scope whose calls to the module are all replayed never starts one.
+
+An instance closes only if it started, and then once, after the scope's host calls settle. `close` gets one of these reasons:
+
+- `"paused"`: the run is waiting in `ctx.interrupt()` and has released its isolate. Its code starts again from the top when it resumes, in a new scope with a new instance, so let go of everything. An answer that arrives during `close` resumes the run once `close` is done.
+- `"completed"`, `"failed"`, or `"cancelled"`: the run ended. `close` runs before its exit is published, and only these reasons have `log(text)`, which appends text to the run's stderr ahead of its exit. Logged text is saved with the run's terminal state, so a run interrupted before it ends never resumes against output it didn't write. Text past what's left of the run's `maxStdioBytes` is cut, and ends with a line saying `Host module output truncated.` Text logged after `close` returns is dropped.
+
+A run killed while it waits has no instance open, so nothing closes. If the Durable Object restarts during a scope, the scope's instances go with it, unclosed. Every instance of a scope closes at once, with a `signal` and a `deadline`, and the backend waits for them up to `maxHostCallMs`, when `signal` aborts. A `close` that throws or runs late is reported with `console.error`, and the run goes on as it would have. Scoped modules are experimental and may change in any release.
 
 ### `codemode:git`
 
