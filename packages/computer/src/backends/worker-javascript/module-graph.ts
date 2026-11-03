@@ -1,11 +1,11 @@
 import { parse } from "acorn";
 
 import type { WorkspaceRuntimeCapability } from "../../runtime/capability";
-import { isScopedModule, type WorkspaceScopedModule } from "../../runtime/scoped-module";
+import { type CodemodeModule, isCodemodeModule } from "../../runtime/codemode-module";
+import { assertExportNames, assertHostModuleExports } from "../../runtime/export-names";
 import type {
   WorkspaceModule,
   WorkspaceModuleFactory,
-  WorkspaceModuleFunctions,
   WorkspaceRuntimeLoader,
 } from "../../runtime/types";
 import { DURABLE_MODULE, durableRuntimeModule } from "./durable-runtime";
@@ -76,17 +76,12 @@ function nodeModule(specifier: string): string | undefined {
   return NODE_MODULES.some((allowed) => allowed === name) ? `node:${name}` : undefined;
 }
 const HOST_SPECIFIER = /^codemode:[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const EXPORT_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-// `default` would turn the function into the default export, and a
-// `then` export makes the module namespace look like a promise to
-// `await import(...)`.
-const RESERVED_EXPORT_NAMES = new Set(["default", "then"]);
 
 /** The `modules` option, parsed once when the backend is constructed. */
 export interface ParsedModules {
   readonly source: Readonly<Record<string, string>>;
   readonly host: ReadonlyMap<string, WorkspaceModuleFactory>;
-  readonly scoped: ReadonlyMap<string, WorkspaceScopedModule>;
+  readonly codemode: ReadonlyMap<string, CodemodeModule>;
   /** One markdown bullet per importable module, for a model. */
   readonly description: string;
 }
@@ -97,12 +92,12 @@ const FILESYSTEM_DESCRIPTION =
 /**
  * Parse the backend's `modules` option: split it into bundled source,
  * host module factories, and scoped host modules, check every
- * specifier and the export names of every object and scoped module,
+ * specifier and the export names of every object and codemode module,
  * and describe each module for a model. A factory's export names are
  * checked when the backend connects and it runs.
  *
  * @param modules - The modules passed to the backend.
- * @returns Source modules, host module factories, scoped modules, and
+ * @returns Source modules, host module factories, codemode modules, and
  *   their description.
  * @throws When a specifier or an object's export names are not allowed.
  *   The host configured the backend wrongly and no execution can use it.
@@ -110,7 +105,7 @@ const FILESYSTEM_DESCRIPTION =
 export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
   const source: Record<string, string> = Object.create(null);
   const host = new Map<string, WorkspaceModuleFactory>();
-  const scoped = new Map<string, WorkspaceScopedModule>();
+  const codemode = new Map<string, CodemodeModule>();
   const lines: Array<string | (() => string)> = [FILESYSTEM_DESCRIPTION];
   for (const [specifier, module] of Object.entries(modules)) {
     const name = `\`${specifier}\``;
@@ -142,9 +137,9 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
         `Host module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
       );
     }
-    if (isScopedModule(module)) {
+    if (isCodemodeModule(module)) {
       assertExportNames(specifier, module.exports);
-      scoped.set(specifier, module);
+      codemode.set(specifier, module);
       const exports = module.exports.map((key) => `\`${key}\``).join(", ");
       lines.push(`- ${name}: ${module.description ?? `exports ${exports}.`}`);
       continue;
@@ -167,51 +162,14 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
   return {
     source,
     host,
-    scoped,
+    codemode,
     get description() {
       return lines.map((line) => (typeof line === "string" ? line : line())).join("\n");
     },
   };
 }
 
-/**
- * Check the functions a host module exports.
- *
- * @param specifier - The module's specifier, for error messages.
- * @param functions - The module's functions.
- * @throws When the module exports nothing, a name is not allowed, or a
- *   value is not a function.
- */
-export function assertHostModuleExports(
-  specifier: string,
-  functions: WorkspaceModuleFunctions,
-): void {
-  const names = Object.keys(functions);
-  assertExportNames(specifier, names);
-  for (const name of names) {
-    if (typeof functions[name] !== "function") {
-      throw new Error(
-        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a function.`,
-      );
-    }
-  }
-}
-
-// Check a host module's export names.
-function assertExportNames(specifier: string, names: readonly string[]): void {
-  if (names.length === 0) {
-    throw new Error(`Host module ${JSON.stringify(specifier)} must export a function.`);
-  }
-  if (new Set(names).size !== names.length)
-    throw new Error(`Host module ${JSON.stringify(specifier)} exports a name twice.`);
-  for (const name of names) {
-    if (typeof name !== "string" || !EXPORT_NAME.test(name) || RESERVED_EXPORT_NAMES.has(name)) {
-      throw new Error(
-        `Host module ${JSON.stringify(specifier)} export ${JSON.stringify(name)} must be a JavaScript identifier other than "default" or "then".`,
-      );
-    }
-  }
-}
+export { assertHostModuleExports };
 
 export interface BuildModuleGraphOptions {
   source: string;
@@ -629,7 +587,57 @@ function capabilitiesModule(maxCapabilityBytes: number) {
         if (payload.error.path !== undefined) error.path = payload.error.path;
         throw error;
       }
-      return payload.result;
+      return payload.objects === undefined ? payload.result : reviveObjects(payload.result, payload.objects);
+    }
+    // A codemode module's objects arrive as markers, objects with one NUL-prefixed key,
+    // with their refs listed beside the result. Each becomes a proxy whose
+    // methods are host calls on that ref.
+    const objectMarker = "\\u0000codemode";
+    function reviveObjects(value, objects) {
+      const proxies = objects.map((object) => objectProxy(String(object.ref)));
+      const visit = (item) => {
+        if (Array.isArray(item)) return item.map(visit);
+        if (item === null || typeof item !== "object") return item;
+        const prototype = Object.getPrototypeOf(item);
+        if (prototype !== Object.prototype && prototype !== null) return item;
+        const keys = Object.keys(item);
+        if (keys.length === 1 && keys[0] === objectMarker && typeof item[objectMarker] === "number") {
+          return proxies[item[objectMarker]];
+        }
+        const copy = {};
+        for (const key of keys) {
+          Object.defineProperty(copy, key, { value: visit(item[key]), enumerable: true, writable: true, configurable: true });
+        }
+        return copy;
+      };
+      return visit(value);
+    }
+    function objectProxy(ref) {
+      let released;
+      const release = () => {
+        released ??= Promise.resolve(host?.release(ref)).catch(() => undefined);
+        return released;
+      };
+      const methods = new Map();
+      return new Proxy(Object.create(null), {
+        get(_target, key) {
+          if (key === Symbol.dispose) return () => void release();
+          if (key === Symbol.asyncDispose) return release;
+          // Left alone so awaiting, logging or serializing a proxy doesn't call the host.
+          if (typeof key !== "string" || key === "then" || key === "toJSON" || key === "constructor") {
+            return undefined;
+          }
+          let method = methods.get(key);
+          if (method === undefined) {
+            method = (...args) =>
+              released !== undefined
+                ? Promise.reject(new Error("This object was disposed, so its methods can't be called."))
+                : call("host/" + ref, key, args);
+            methods.set(key, method);
+          }
+          return method;
+        },
+      });
     }
     function approximateBytes(value, seen = new Set()) {
       if (typeof value === "string") return value.length;

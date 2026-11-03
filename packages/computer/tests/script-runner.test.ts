@@ -1512,7 +1512,7 @@ describe("interrupts", () => {
     return (await response.json()) as string[];
   }
 
-  // Two concurrent first calls to a scoped module, a wait, and one
+  // Two concurrent first reads of a scoped context, a wait, and one
   // more call to it if the answer is ok.
   const session = `
     import { approve } from "codemode:test-host";
@@ -1526,7 +1526,7 @@ describe("interrupts", () => {
     }
   `;
 
-  it("starts a scoped module once per scope, and resumes only after it closes", async () => {
+  it("starts a scoped context once per scope, and resumes only after it closes", async () => {
     await start("session", session, { metadata: { holdClose: "1", closeLog: "closed" } });
     const call = await waitingCall("session");
     await vi.waitFor(async () =>
@@ -1585,6 +1585,73 @@ describe("interrupts", () => {
       "close paused 1",
       "closed 1",
     ]);
+  });
+
+  // Objects made before a wait, used after it.
+  const objects = `
+    import { approve } from "codemode:test-host";
+    import { createJob } from "codemode:test-jobs";
+    export default async function () {
+      const job = await createJob("build");
+      const run = await job.start("main");
+      await approve("deploy");
+      const done = await run.wait();
+      console.log(done.status);
+      return done;
+    }
+  `;
+
+  it("keeps objects working across a wait, without running anything twice", async () => {
+    await start("objects-wait", objects);
+    const call = await waitingCall("objects-wait");
+    await respond("objects-wait", call.callId, { ok: true });
+    expect(await result("objects-wait")).toMatchObject({
+      status: "completed",
+      stdout: "done\n",
+      value: { id: "build/main", status: "done" },
+    });
+    expect(await calls()).toMatchObject({
+      "create build": 1,
+      "start build": 1,
+      "wait build/main": 1,
+    });
+    // The run was live in the first scope and closed when it paused. The
+    // second scope rebuilt it from its state for wait, and closed it at the end.
+    const disposals = (await sessionEvents("objects-wait")).filter((event) =>
+      event.startsWith("dispose"),
+    );
+    expect(disposals).toEqual(["dispose build/main paused", "dispose build/main completed"]);
+  });
+
+  it("rebuilds objects from their state after a restart", async () => {
+    await start("objects-restart", objects);
+    await waitingCall("objects-restart");
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+    const call = await waitingCall("objects-restart");
+    await respond("objects-restart", call.callId, { ok: true });
+    expect(await result("objects-restart")).toMatchObject({
+      status: "completed",
+      value: { id: "build/main", status: "done" },
+    });
+    expect(await calls()).toMatchObject({
+      "create build": 1,
+      "start build": 1,
+      "wait build/main": 1,
+    });
+  });
+
+  it("refuses a callback to a codemode module in a replayable run", async () => {
+    await start(
+      "objects-callback-replay",
+      `
+        import { watch } from "codemode:test-jobs";
+        export default async () => watch(() => "ack");
+      `,
+    );
+    const settled = await result("objects-callback-replay");
+    expect(settled).toMatchObject({ status: "failed" });
+    // This backend cuts stderr at 64 bytes.
+    expect(settled.stderr).toContain("Callbacks, streams and stubs can't");
   });
 
   it("keeps waiting across a restart", async () => {
@@ -1718,5 +1785,131 @@ describe("interrupts", () => {
     expect(settled.status).toBe("failed");
     // The test backend keeps 64 bytes of standard error.
     expect(settled.stderr).toContain("ctx.interrupt() needs a replayable run");
+  });
+});
+
+describe("codemode module objects", () => {
+  async function run(id: string, source: string) {
+    const response = await runtime({ id, source, cwd: "/workspace" });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    return (JSON.parse(text) as { result: Record<string, unknown> }).result;
+  }
+
+  async function events(id: string) {
+    const response = await SELF.fetch(
+      `https://example.test/session-events?id=${encodeURIComponent(id)}`,
+    );
+    return (await response.json()) as string[];
+  }
+
+  it("returns objects whose methods return more objects", async () => {
+    expect(
+      await run(
+        "objects-chain",
+        `
+          import { createJob } from "codemode:test-jobs";
+          export default async function () {
+            const job = await createJob("chain");
+            const run = await job.start("main");
+            return { done: await run.wait(), awaitable: typeof job.then, json: JSON.stringify(job) };
+          }
+        `,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      value: { done: { id: "chain/main", status: "done" }, awaitable: "undefined" },
+    });
+  });
+
+  it("disposes an object code releases early, and refuses calls on it after", async () => {
+    const settled = await run(
+      "objects-dispose",
+      `
+        import { createJob } from "codemode:test-jobs";
+        export default async function () {
+          const job = await createJob("tmp");
+          const run = await job.start("x");
+          await run.wait();
+          await run[Symbol.asyncDispose]();
+          try {
+            await run.wait();
+            return "called";
+          } catch (error) {
+            return error.message;
+          }
+        }
+      `,
+    );
+    expect(settled).toMatchObject({
+      status: "completed",
+      value: "This object was disposed, so its methods can't be called.",
+    });
+    expect(await events("objects-dispose")).toEqual(["dispose tmp/x disposed"]);
+  });
+
+  it("keeps an error's code", async () => {
+    expect(
+      await run(
+        "objects-error",
+        `
+          import { createJob } from "codemode:test-jobs";
+          export default async function () {
+            const job = await createJob("err");
+            try {
+              await job.fail();
+            } catch (error) {
+              return { message: error.message, code: error.code };
+            }
+          }
+        `,
+      ),
+    ).toMatchObject({ value: { message: "no such ref", code: "ENOREF" } });
+  });
+
+  it("passes callbacks and streams in a run that doesn't replay", async () => {
+    expect(
+      await run(
+        "objects-live",
+        `
+          import { watch, logs } from "codemode:test-jobs";
+          export default async function () {
+            const seen = [];
+            const watched = await watch((event) => {
+              seen.push(event);
+              return "ack";
+            });
+            const text = await new Response(await logs()).text();
+            return { watched, seen, text };
+          }
+        `,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      value: { watched: "watched ack", seen: ["built"], text: "line 1\nline 2\n" },
+    });
+  });
+
+  it("refuses a ref the run wasn't given", async () => {
+    const settled = await run(
+      "objects-forged",
+      `
+        import { createJob } from "codemode:test-jobs";
+        export default async function () {
+          await createJob("real");
+          const call = globalThis[Symbol.for("cloudflare.workspace.runtime.call")];
+          try {
+            await call("host/codemode:test-jobs#c99:0", "start", ["x"]);
+            return "called";
+          } catch (error) {
+            return error.message;
+          }
+        }
+      `,
+    );
+    // The filesystem dispatcher only takes node:fs calls, so a forged ref
+    // can't even reach the host this way.
+    expect(settled).toMatchObject({ status: "completed" });
+    expect(settled.value).not.toBe("called");
   });
 });

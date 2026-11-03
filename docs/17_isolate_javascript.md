@@ -276,7 +276,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "codemode:name": { fn } }`, a factory, or `createScopedModule()` | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
+| Host | `modules: { "codemode:name": { fn } }`, a factory, or `createCodemodeModule()` | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
@@ -324,7 +324,7 @@ Modules code can import:
 - Node.js built-ins: `node:path`, `node:url`, ... Bare names such as `path` work too.
 ```
 
-A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `codemode:tools` does with the agent's tools. A scoped module takes `description` as an option. An object of functions, or a scoped module without a description, is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
+A factory adds its own text through a `description` property, as the prebuilt modules do. The backend reads it each time it describes itself, not once when it is constructed, so a factory can define `description` as a getter and describe something that exists only later, as `codemode:tools` does with the agent's tools. A codemode module takes `description` as an option. An object of functions, or a codemode module without a description, is listed by its export names; say more about it in the `exec` tool's backend description if the model needs it.
 
 ### Built-in filesystem
 
@@ -429,42 +429,80 @@ The run's code never sees metadata: it isn't in `process.env` or the input, so c
 
 Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `codemode:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "codemode:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
 
-#### Scoped modules
+#### Codemode modules
 
-A module that holds state for a run, such as a browser session it opens on the first call, can be made with `createScopedModule()`. The state lives for one scope of the run: from when the run's code starts in an isolate until it waits in `ctx.interrupt()` or ends. A run that resumes starts again from the top in a new scope. The backend makes one instance of the module for each scope, on the scope's first call to the module, and closes it when the scope ends:
+`createCodemodeModule()` builds a host module that can return objects with methods, and give its functions shared context. Define the kinds of object the module returns, add context, then make the module:
 
 ```ts
-import { createScopedModule } from "@cloudflare/computer";
+import { createCodemodeModule } from "@cloudflare/computer";
+
+const jobs = createCodemodeModule({ description: "Build jobs: `createJob(name)` returns a job." });
+
+jobs.context("api", (host) => createJobsClient(host));
+
+const Run = jobs.define("Run", ({ id }) => ({
+  wait: async (_args, ctx) => ctx.api.wait(id, { signal: ctx.signal }),
+}));
+
+const Job = jobs.define("Job", ({ id }) => ({
+  start: async ([ref], ctx) => Run({ id: await ctx.api.start(id, ref, { key: ctx.callId }) }),
+}));
 
 modules: {
-  "codemode:browser": createScopedModule({
-    description: "A browser: `open(url)` and `text()`.",
-    exports: ["open", "text"],
-    async start(scope, host) {
-      const session = await browsers.connect({ conversation: scope.metadata.conversation });
-      return {
-        functions: {
-          open: ([url]) => session.open(String(url)),
-          text: () => session.text(),
-        },
-        async close(end) {
-          await session.close();
-          if (end.reason !== "paused") end.log("Closed the browser.\n");
-        },
-      };
-    },
+  "codemode:jobs": jobs.module({
+    createJob: async ([name], ctx) => Job({ id: await ctx.api.create(name, { key: ctx.callId }) }),
   }),
 }
 ```
 
-`start` gets the scope's `{ id, metadata, signal }`, where `id` and `metadata` are the run's and stay the same in every scope, and the same services a factory gets. It returns the instance's `functions` with an optional `close`. The backend needs the export names before any run starts, so the module lists them in `exports`, which is checked at construction like an object's export names. If the functions `start` returns don't match `exports` exactly, the call fails and says so. Calls a scope makes while its instance starts wait for it, and if `start` throws, they fail. `scope.signal` aborts when the scope is cancelled or releases its isolate, and a call that was cancelled or timed out by the time `start` returns fails rather than running. A call answered from a replayable run's journal doesn't start an instance, so a scope whose calls to the module are all replayed never starts one.
+```js
+import { createJob } from "codemode:jobs";
+const job = await createJob("build");
+const run = await job.start("main");
+await approval();                // the run can wait here, across a deploy
+const { status } = await run.wait();
+```
 
-An instance closes only if it started, and then once, after the scope's host calls settle. `close` gets one of these reasons:
+`define(kind, build)` returns a constructor. Calling `Run({ id })` builds the object and remembers its kind and its state. The state must be JSON and must be enough to build the object again: after a pause or a restart, the backend calls the same builder with the saved state. So an object is whatever its state rebuilds. Kind names are strings, stored with the module's specifier, such as `codemode:jobs#Run`, so don't use a class or variable name a minifier could change.
 
-- `"paused"`: the run is waiting in `ctx.interrupt()` and has released its isolate. Its code starts again from the top when it resumes, in a new scope with a new instance, so let go of everything. An answer that arrives during `close` resumes the run once `close` is done.
-- `"completed"`, `"failed"`, or `"cancelled"`: the run ended. `close` runs before its exit is published, and only these reasons have `log(text)`, which appends text to the run's stderr ahead of its exit. Logged text is saved with the run's terminal state, so a run interrupted before it ends never resumes against output it didn't write. Text past what's left of the run's `maxStdioBytes` is cut, and ends with a line saying `Host module output truncated.` Text logged after `close` returns is dropped.
+Each method is called as `(args, ctx)`, like an exported function, with its own context: `callId`, `signal`, `deadline`, `access` and `interrupt()`. A method call is a host call like any other, so it counts toward the limits, is journaled, and replays. In program code an object is a proxy whose methods make those calls. Awaiting, logging or serializing it doesn't call the host. Its `Symbol.dispose` and `Symbol.asyncDispose` release it: the host object's own `Symbol.asyncDispose` (or `Symbol.dispose`) runs with reason `"disposed"`, and the proxy refuses calls after that. A ref the run wasn't given is refused.
 
-A run killed while it waits has no instance open, so nothing closes. If the Durable Object restarts during a scope, the scope's instances go with it, unclosed. Every instance of a scope closes at once, with a `signal` and a `deadline`, and the backend waits for them up to `maxHostCallMs`, when `signal` aborts. A `close` that throws or runs late is reported with `console.error`, and the run goes on as it would have. Scoped modules are experimental and may change in any release.
+`context(name, create)` adds `ctx[name]` to every function and method in the module. Without options it's made once, when the backend connects, from the services a factory gets. With `{ scoped: true }` it's made once for each scope of a run, from `({ id, metadata, signal }, host)`, the first time a method reads it, and `ctx[name]` is then a promise of the value:
+
+```ts
+const browser = createCodemodeModule();
+browser.context(
+  "session",
+  (scope) => browsers.connect({ conversation: scope.metadata.conversation }),
+  {
+    scoped: true,
+    async dispose(session, end) {
+      await session.close();
+      if (end.reason !== "paused") end.log("Closed the browser.\n");
+    },
+  },
+);
+const Page = browser.define("Page", ({ pageId }) => ({
+  text: async (_args, ctx) => (await ctx.session).page(pageId).text(),
+}));
+modules: {
+  "codemode:browser": browser.module({
+    open: async ([url], ctx) => Page({ pageId: await (await ctx.session).open(String(url)) }),
+  }),
+}
+```
+
+A scope lasts from when the run's code starts in an isolate until it waits in `ctx.interrupt()` or ends. A run that resumes starts again from the top in a new scope. Reads made while a scoped context starts share that start, and a call answered from the journal never runs its method, so it never starts one. Objects read context when they're called, not when they're built, so rebuilding an object never depends on it.
+
+When a scope ends, every scoped context that started, and every live object with a disposer, is disposed. A context uses its `dispose` option, or else its value's own `Symbol.asyncDispose` or `Symbol.dispose`. Disposers get one of these reasons:
+
+- `"paused"`: the run is waiting in `ctx.interrupt()` and has released its isolate. An answer that arrives meanwhile resumes the run once disposal is done.
+- `"completed"`, `"failed"`, or `"cancelled"`: the run ended. Disposal runs before its exit is published, and only these reasons have `log(text)`, which appends text to the run's stderr ahead of its exit. Logged text is saved with the run's terminal state. Text past what's left of the run's `maxStdioBytes` is cut, and ends with a line saying `Host module output truncated.` Text logged after the disposer returns is dropped.
+- `"disposed"`: program code released the object early.
+
+A run killed while it waits has nothing open, so nothing is disposed. If the Durable Object restarts during a scope, what the scope held goes with it, undisposed. Everything closes at once, with a `signal` and a `deadline`, and the backend waits up to `maxHostCallMs`. A disposer that throws or runs late is reported with `console.error`, and the run goes on.
+
+In a run that doesn't replay, a codemode module can also take callbacks, and return streams and live RPC stubs, which Workers RPC carries as they are. A callback lasts for the call it was passed to. A replayable run refuses them, since the journal can't keep them, and its results must be JSON apart from defined objects. Errors keep their `code`. A builder makes one module, unless it has a `name`. Codemode modules are experimental and may change in any release.
 
 ### `codemode:git`
 

@@ -2,6 +2,11 @@ import { RpcTarget } from "cloudflare:workers";
 
 import { utf8ByteLength, utf8Prefix } from "../text-truncation";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability";
+import {
+  type CodemodeModuleDefinition,
+  codemodeObjectInfo,
+  type WorkspaceModuleScopeEnd,
+} from "./codemode-module";
 import { isUnsafeToRepeat } from "./replay-safety";
 import type {
   WorkspaceModuleCallContext,
@@ -10,14 +15,61 @@ import type {
   WorkspaceRuntimeValue,
 } from "./types";
 
+/** A codemode module as the bridge runs it: its definition and its connection context. */
+export interface CodemodeModuleRuntime {
+  readonly definition: CodemodeModuleDefinition;
+  /** Each connection context's value, made when the backend connected. */
+  readonly connection: ReadonlyMap<string, unknown>;
+}
+
+/**
+ * Where a defined object sits in a result: an object with this one key,
+ * whose value is the object's index in the response's `objects`. The key
+ * starts with a NUL so it can't be mistaken for data.
+ */
+export const CODEMODE_OBJECT_MARKER = "\u0000codemode";
+
+/** A defined object in a response. The journal keeps its state; the isolate doesn't see it. */
+export interface CodemodeObjectDescriptor {
+  readonly ref: string;
+  readonly kind: string;
+  readonly state?: unknown;
+}
+
+const REPLAYABLE_LIVE_VALUE =
+  "Callbacks, streams and stubs can't be passed to a host module in a replayable run.";
+const REPLAYABLE_RESULT =
+  "Host module values must be JSON-compatible. Streams, callbacks and live stubs only work in runs that don't replay.";
+
+// A codemode call's result, with the objects found in it.
+class CodemodeResult {
+  constructor(
+    readonly value: unknown,
+    readonly objects: readonly CodemodeObjectDescriptor[],
+  ) {}
+}
+
 export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #capability: WorkspaceRuntimeCapability;
+  readonly #codemode: ReadonlyMap<string, CodemodeModuleRuntime>;
+  readonly #scopedContext?: (
+    specifier: string,
+    name: string,
+    signal: AbortSignal,
+  ) => Promise<unknown>;
+  readonly #trackDisposable?: (
+    key: string,
+    close: (end: WorkspaceModuleScopeEnd) => Promise<void>,
+  ) => void;
+  readonly #untrackDisposable?: (key: string) => void;
+  // Every object ref this scope issued or replayed, with what rebuilds it.
+  readonly #known = new Map<string, { kind: string; state: unknown }>();
+  // Objects built in this scope, by ref.
+  readonly #live = new Map<string, object>();
+  // Numbers refs in a run without a journal.
+  #refCounter = 0;
   readonly #hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
-  readonly #scopedModules: ReadonlyMap<
-    string,
-    (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>
-  >;
-  // Aborts when the scope is cancelled or drained, for scoped module
+  // Aborts when the scope is cancelled or drained, for scoped context
   // starts, which the scope's calls share.
   readonly #scope = new AbortController();
   readonly #maxPayloadBytes: number;
@@ -55,13 +107,18 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     capability: WorkspaceRuntimeCapability,
     integrations: {
       hostModules?: ReadonlyMap<string, WorkspaceModuleFunctions>;
-      // Scoped host modules, each as the function that gets this
-      // scope's instance of it, starting it on the first call with a
-      // signal that aborts when the scope is cancelled.
-      scopedModules?: ReadonlyMap<
-        string,
-        (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>
-      >;
+      // Modules made by createCodemodeModule(), by specifier.
+      codemodeModules?: ReadonlyMap<string, CodemodeModuleRuntime>;
+      // This scope's value of a scoped context, started the first time
+      // it's asked for.
+      scopedContext?: (specifier: string, name: string, signal: AbortSignal) => Promise<unknown>;
+      // Called for each live object with a disposer, so the scope can
+      // dispose it when it ends, and again when it's released early.
+      trackDisposable?: (
+        key: string,
+        close: (end: WorkspaceModuleScopeEnd) => Promise<void>,
+      ) => void;
+      untrackDisposable?: (key: string) => void;
       maxPayloadBytes?: number;
       maxCallDurationMs?: number;
       maxConcurrentCalls?: number;
@@ -84,7 +141,10 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     super();
     this.#capability = capability;
     this.#hostModules = integrations.hostModules ?? new Map();
-    this.#scopedModules = integrations.scopedModules ?? new Map();
+    this.#codemode = integrations.codemodeModules ?? new Map();
+    this.#scopedContext = integrations.scopedContext;
+    this.#trackDisposable = integrations.trackDisposable;
+    this.#untrackDisposable = integrations.untrackDisposable;
     this.#maxPayloadBytes = integrations.maxPayloadBytes ?? 1024 * 1024;
     this.#maxCallDurationMs = integrations.maxCallDurationMs ?? 30_000;
     this.#maxConcurrentCalls = integrations.maxConcurrentCalls ?? 16;
@@ -149,8 +209,16 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     // runs live when it resumes.
     if (this.#holding) return new Promise<never>(() => undefined);
     let requestBytes: number;
+    // A codemode module can take callbacks and other live values, but
+    // only in a run that doesn't replay, since the journal can't keep them.
+    const codemodeCall = this.#codemodeModuleOf(name) !== undefined;
+    const live = codemodeCall
+      ? this.#journal === undefined
+        ? "allow"
+        : REPLAYABLE_LIVE_VALUE
+      : undefined;
     try {
-      requestBytes = measureValue(args, this.#maxPayloadBytes, "request");
+      requestBytes = measureValue(args, this.#maxPayloadBytes, "request", live);
     } catch (error) {
       return Promise.resolve(boundedError(error, this.#maxPayloadBytes));
     }
@@ -201,7 +269,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       if (!isFetch && step.response.uncounted !== true) {
         this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
       }
-      return Promise.resolve({ ...step.response, at: step.at, ordinal: step.ordinal });
+      return Promise.resolve(
+        this.#forIsolate({ ...step.response, at: step.at, ordinal: step.ordinal }),
+      );
     }
     if (step?.kind === "diverge") {
       this.#journal?.diverged(step.message);
@@ -219,92 +289,97 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const deadline = Date.now() + this.#maxCallDurationMs;
     // The journal holds one answer per call, so a call can wait only once.
     let interrupted = false;
-    const operation = respond(async () => {
-      if (name.startsWith("host/")) {
-        return this.#callHostModule(name, args, step?.kind === "live" && step.rerun, {
-          signal: abort.signal,
-          deadline,
-          callId,
-          execution: this.#execution,
-          interrupt: (payload) => {
-            if (interrupted) {
-              return Promise.reject(
-                new Error("ctx.interrupt() can only be called once per host module call."),
-              );
-            }
-            interrupted = true;
-            return this.#interrupt(step, abort, payload);
-          },
-          access: this.#capability.access,
-          resolvePath: (path, options) =>
-            this.#capability.resolveConfined(path, options?.allowMissing ?? false),
-        });
-      }
-      if (name === "net.fetch") return this.#fetchFor(args[0], abort.signal);
-      const operation = name.startsWith("fs.") ? name.slice(3) : name;
-      switch (operation) {
-        case "readFile":
-          return this.#capability.readFile(String(args[0]));
-        case "readFileBytes":
-          return this.#capability.readFileBytes(String(args[0]));
-        case "stat":
-          return this.#capability.stat(String(args[0]));
-        case "lstat":
-          return this.#capability.lstat(String(args[0]));
-        case "exists":
-          return this.#capability.exists(String(args[0]));
-        case "readlink":
-          return this.#capability.readlink(String(args[0]));
-        case "readdir":
-          return this.#capability.readdir(args[0] === undefined ? "." : String(args[0]));
-        case "readdirWithFileTypes":
-          return this.#capability.readdirWithFileTypes(
-            args[0] === undefined ? "." : String(args[0]),
-          );
-        case "find":
-          return this.#capability.find(
-            args[0] === undefined ? "." : String(args[0]),
-            args[1] === undefined ? undefined : String(args[1]),
-          );
-        case "glob":
-          return this.#capability.glob(String(args[0]));
-        case "ls":
-          return this.#capability.ls(args[0] === undefined ? "." : String(args[0]));
-        case "grep":
-          return this.#capability.grep(
-            String(args[0]),
-            args[1] === undefined ? "." : String(args[1]),
-            args[2] as { ignoreCase?: boolean } | undefined,
-          );
-        case "writeFile":
-          await this.#capability.writeFileNode(
-            String(args[0]),
-            decodeBytes(args[1]),
-            args[2] as { flag?: string } | undefined,
-          );
-          return null;
-        case "mkdir":
-          await this.#capability.mkdir(
-            String(args[0]),
-            args[1] as { recursive?: boolean } | undefined,
-          );
-          return null;
-        case "rm":
-          await this.#capability.rm(
-            String(args[0]),
-            args[1] as { recursive?: boolean; force?: boolean } | undefined,
-          );
-          return null;
-        case "chmod":
-          await this.#capability.chmod(String(args[0]), Number(args[1]));
-          return null;
-        case "symlink":
-          await this.#capability.symlink(String(args[0]), String(args[1]));
-          return null;
-        default:
-          throw new Error(`Unknown Workspace code operation ${JSON.stringify(name)}.`);
-      }
-    }, this.#maxPayloadBytes);
+    const operation = respond(
+      async () => {
+        if (name.startsWith("host/")) {
+          const refBase = step?.kind === "live" ? String(step.seq) : `c${++this.#refCounter}`;
+          return this.#callHostModule(name, args, step?.kind === "live" && step.rerun, refBase, {
+            signal: abort.signal,
+            deadline,
+            callId,
+            execution: this.#execution,
+            interrupt: (payload) => {
+              if (interrupted) {
+                return Promise.reject(
+                  new Error("ctx.interrupt() can only be called once per host module call."),
+                );
+              }
+              interrupted = true;
+              return this.#interrupt(step, abort, payload);
+            },
+            access: this.#capability.access,
+            resolvePath: (path, options) =>
+              this.#capability.resolveConfined(path, options?.allowMissing ?? false),
+          });
+        }
+        if (name === "net.fetch") return this.#fetchFor(args[0], abort.signal);
+        const operation = name.startsWith("fs.") ? name.slice(3) : name;
+        switch (operation) {
+          case "readFile":
+            return this.#capability.readFile(String(args[0]));
+          case "readFileBytes":
+            return this.#capability.readFileBytes(String(args[0]));
+          case "stat":
+            return this.#capability.stat(String(args[0]));
+          case "lstat":
+            return this.#capability.lstat(String(args[0]));
+          case "exists":
+            return this.#capability.exists(String(args[0]));
+          case "readlink":
+            return this.#capability.readlink(String(args[0]));
+          case "readdir":
+            return this.#capability.readdir(args[0] === undefined ? "." : String(args[0]));
+          case "readdirWithFileTypes":
+            return this.#capability.readdirWithFileTypes(
+              args[0] === undefined ? "." : String(args[0]),
+            );
+          case "find":
+            return this.#capability.find(
+              args[0] === undefined ? "." : String(args[0]),
+              args[1] === undefined ? undefined : String(args[1]),
+            );
+          case "glob":
+            return this.#capability.glob(String(args[0]));
+          case "ls":
+            return this.#capability.ls(args[0] === undefined ? "." : String(args[0]));
+          case "grep":
+            return this.#capability.grep(
+              String(args[0]),
+              args[1] === undefined ? "." : String(args[1]),
+              args[2] as { ignoreCase?: boolean } | undefined,
+            );
+          case "writeFile":
+            await this.#capability.writeFileNode(
+              String(args[0]),
+              decodeBytes(args[1]),
+              args[2] as { flag?: string } | undefined,
+            );
+            return null;
+          case "mkdir":
+            await this.#capability.mkdir(
+              String(args[0]),
+              args[1] as { recursive?: boolean } | undefined,
+            );
+            return null;
+          case "rm":
+            await this.#capability.rm(
+              String(args[0]),
+              args[1] as { recursive?: boolean; force?: boolean } | undefined,
+            );
+            return null;
+          case "chmod":
+            await this.#capability.chmod(String(args[0]), Number(args[1]));
+            return null;
+          case "symlink":
+            await this.#capability.symlink(String(args[0]), String(args[1]));
+            return null;
+          default:
+            throw new Error(`Unknown Workspace code operation ${JSON.stringify(name)}.`);
+        }
+      },
+      this.#maxPayloadBytes,
+      this.#journal === undefined && this.#codemodeModuleOf(name) !== undefined,
+    );
     const call = withDeadline(operation, this.#maxCallDurationMs, this.#maxPayloadBytes, () => {
       // A call waiting for an answer isn't late: the run is released.
       if (this.#waiting.has(abort)) return;
@@ -327,6 +402,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     const delivered = call
       .then((response) => {
         if (isFetch) return "result" in response ? { result: response.result } : response;
+        const delivered = (): BridgeResponse =>
+          "result" in response
+            ? {
+                result: response.result,
+                ...(response.objects === undefined ? {} : { objects: response.objects }),
+              }
+            : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
           return {
@@ -340,7 +422,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
           };
         }
         this.#responseBytes += bytes;
-        return "result" in response ? { result: response.result } : response;
+        return delivered();
       })
       .then((response) => {
         // An interrupted call answers nothing: it runs again once answered.
@@ -349,8 +431,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         // isolate can act on it. A filesystem change is synchronous SQL on
         // the same database, with no I/O between it and here, so it and
         // its entry commit in the same implicit transaction.
-        if (step?.kind !== "live" || this.#journal === undefined) return response;
-        return { ...response, ...this.#journal.commit(step.seq, response) };
+        if (step?.kind !== "live" || this.#journal === undefined) return this.#forIsolate(response);
+        return this.#forIsolate({ ...response, ...this.#journal.commit(step.seq, response) });
       });
     this.#responses.set(delivered, abort);
     void delivered.finally(() => this.#responses.delete(delivered)).catch(() => undefined);
@@ -440,26 +522,221 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     name: string,
     args: unknown[],
     rerun: boolean,
+    refBase: string,
     context: WorkspaceModuleCallContext,
   ) {
-    const start = this.#scopedModules.get(moduleSpecifier(name) ?? "");
-    const functions =
-      start === undefined ? this.#hostModuleOf(name) : await start(this.#scope.signal);
-    // The call may have been cancelled or timed out while the instance started.
-    context.signal.throwIfAborted();
+    const codemode = this.#codemodeModuleOf(name);
+    if (codemode !== undefined) {
+      return this.#callCodemode(
+        codemode.specifier,
+        codemode.runtime,
+        name,
+        args,
+        rerun,
+        refBase,
+        context,
+      );
+    }
+    const functions = this.#hostModuleOf(name);
     const fn = this.#hostFunction(name, functions);
     if (fn === undefined) {
       throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
     }
-    // #dispatch can't see a scoped module function until its instance starts.
-    if (start !== undefined && rerun && isUnsafeToRepeat(fn)) {
+    // Called on its module, so a method that uses `this` still works.
+    const result = await fn.call(functions, hostArguments(args), context);
+    return hostValue(result ?? null);
+  }
+
+  /**
+   * Let go of an object code released early, with `using` or
+   * `Symbol.dispose`. Its disposer runs with reason "disposed", and the
+   * ref can't be called again in this scope.
+   */
+  async release(ref: unknown): Promise<void> {
+    if (typeof ref !== "string") return;
+    this.#known.delete(ref);
+    const object = this.#live.get(ref);
+    this.#live.delete(ref);
+    if (object === undefined || disposerOf(object) === undefined) return;
+    this.#untrackDisposable?.(`object:${ref}`);
+    const deadline = Date.now() + this.#maxCallDurationMs;
+    const signal = AbortSignal.timeout(this.#maxCallDurationMs);
+    try {
+      await disposeObject(object, Object.freeze({ reason: "disposed", signal, deadline }));
+    } catch (error) {
+      console.error({ message: "Codemode object dispose failed", ref, error: String(error) });
+    }
+  }
+
+  // The codemode module a call name belongs to, from
+  // `host/<specifier>.<function>` or `host/<specifier>#<id>.<method>`.
+  #codemodeModuleOf(name: string) {
+    const target = moduleSpecifier(name);
+    if (target === undefined) return undefined;
+    const hash = target.indexOf("#");
+    const specifier = hash === -1 ? target : target.slice(0, hash);
+    const runtime = this.#codemode.get(specifier);
+    return runtime === undefined ? undefined : { specifier, runtime };
+  }
+
+  async #callCodemode(
+    specifier: string,
+    runtime: CodemodeModuleRuntime,
+    name: string,
+    args: unknown[],
+    rerun: boolean,
+    refBase: string,
+    context: WorkspaceModuleCallContext,
+  ) {
+    const target = moduleSpecifier(name) ?? specifier;
+    const receiver: Readonly<Record<string, unknown>> =
+      target === specifier
+        ? runtime.definition.functions
+        : (this.#object(runtime, target) as Readonly<Record<string, unknown>>);
+    const methodName = name.slice(name.lastIndexOf(".") + 1);
+    const fn = Object.hasOwn(receiver, methodName) ? receiver[methodName] : undefined;
+    if (typeof fn !== "function") {
+      throw new Error(`Unknown Workspace host module call ${JSON.stringify(name)}.`);
+    }
+    if (rerun && isUnsafeToRepeat(fn)) {
       const message = `The execution was interrupted while ${name.slice("host/".length)} was running, which isn't safe to repeat.`;
       this.#journal?.diverged(message);
       throw new Error(message);
     }
-    // Called on its module, so a method that uses `this` still works.
-    const result = await fn.call(functions, hostArguments(args), context);
-    return hostValue(result ?? null);
+    const live = this.#journal === undefined;
+    const value: unknown = await fn.call(
+      receiver,
+      live ? args : hostArguments(args),
+      this.#codemodeContext(specifier, runtime, context),
+    );
+    return this.#encodeObjects(specifier, runtime, value ?? null, refBase);
+  }
+
+  // The live object behind a ref, rebuilt from its state when this scope
+  // only replayed it.
+  #object(runtime: CodemodeModuleRuntime, ref: string): object {
+    const live = this.#live.get(ref);
+    if (live !== undefined) return live;
+    const known = this.#known.get(ref);
+    if (known === undefined) throw new Error(`Unknown codemode object ${JSON.stringify(ref)}.`);
+    const build = runtime.definition.kinds.get(known.kind);
+    if (build === undefined) {
+      throw new Error(
+        `Codemode object ${JSON.stringify(ref)} is a ${JSON.stringify(known.kind)}, which its module no longer defines.`,
+      );
+    }
+    const object = build(known.state);
+    this.#adopt(ref, object);
+    return object;
+  }
+
+  #adopt(ref: string, object: object) {
+    this.#live.set(ref, object);
+    if (disposerOf(object) !== undefined) {
+      this.#trackDisposable?.(`object:${ref}`, (end) => disposeObject(object, end));
+    }
+  }
+
+  // ctx for a codemode call: the call's own context, plus the module's
+  // connection context, plus a getter for each scoped context that
+  // starts it on first read.
+  #codemodeContext(
+    specifier: string,
+    runtime: CodemodeModuleRuntime,
+    context: WorkspaceModuleCallContext,
+  ): WorkspaceModuleCallContext {
+    const ctx: Record<string, unknown> = { ...context };
+    for (const definition of runtime.definition.contexts) {
+      if (!definition.scoped) {
+        ctx[definition.name] = runtime.connection.get(definition.name);
+        continue;
+      }
+      Object.defineProperty(ctx, definition.name, {
+        enumerable: true,
+        get: () =>
+          this.#scopedContext === undefined
+            ? Promise.reject(new Error(`Scoped context ${definition.name} isn't available here.`))
+            : this.#scopedContext(specifier, definition.name, this.#scope.signal),
+      });
+    }
+    return Object.freeze(ctx) as unknown as WorkspaceModuleCallContext;
+  }
+
+  // Swap each defined object in a result for a marker, and list it with
+  // a new ref. The rest follows host module value rules: JSON in a
+  // replayable run, anything Workers RPC carries otherwise.
+  #encodeObjects(
+    specifier: string,
+    runtime: CodemodeModuleRuntime,
+    value: unknown,
+    refBase: string,
+  ): CodemodeResult {
+    const objects: CodemodeObjectDescriptor[] = [];
+    const live = this.#journal === undefined;
+    const seen = new Set<object>();
+    const visit = (item: unknown): unknown => {
+      const info = codemodeObjectInfo(item);
+      if (info !== undefined) {
+        if (info.owner !== runtime.definition.owner) {
+          throw new Error(`${specifier} returned an object from another module.`);
+        }
+        const ref = `${specifier}#${refBase}:${objects.length}`;
+        const state = hostValue(info.state ?? null);
+        objects.push({ ref, kind: info.kind, state });
+        this.#known.set(ref, { kind: info.kind, state });
+        this.#adopt(ref, item as object);
+        return { [CODEMODE_OBJECT_MARKER]: objects.length - 1 };
+      }
+      if (
+        item === null ||
+        typeof item === "boolean" ||
+        typeof item === "string" ||
+        (typeof item === "number" && Number.isFinite(item))
+      ) {
+        return item;
+      }
+      if (typeof item === "object" && item !== null && isPlainContainer(item)) {
+        if (seen.has(item)) throw new Error("Host module values must be acyclic.");
+        seen.add(item);
+        let copy: unknown;
+        if (Array.isArray(item)) {
+          copy = item.map((child: unknown) => (child === undefined ? null : visit(child)));
+        } else {
+          const fields: Record<string, unknown> = {};
+          for (const [key, child] of Object.entries(item)) {
+            if (child !== undefined) {
+              Object.defineProperty(fields, key, {
+                value: visit(child),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+              });
+            }
+          }
+          copy = fields;
+        }
+        seen.delete(item);
+        return copy;
+      }
+      if (live) return item;
+      throw new Error(REPLAYABLE_RESULT);
+    };
+    return new CodemodeResult(visit(value), objects);
+  }
+
+  // What the isolate sees of a response: objects without their state.
+  // A replayed response's objects are remembered, so they can be called.
+  #forIsolate(response: BridgeResponse): BridgeResponse {
+    if (!("result" in response) || response.objects === undefined) return response;
+    for (const object of response.objects) {
+      if (!this.#known.has(object.ref) && !this.#live.has(object.ref)) {
+        this.#known.set(object.ref, { kind: object.kind, state: object.state });
+      }
+    }
+    return {
+      ...response,
+      objects: response.objects.map(({ ref, kind }) => ({ ref, kind })),
+    };
   }
 
   #hostModuleOf(name: string) {
@@ -633,7 +910,11 @@ function replayedBytes(response: BridgeResponse, maxPayloadBytes: number): numbe
 
 /** What the bridge sends back for one call: a value, or a bounded error. */
 export type BridgeResponse = (
-  | { readonly result: unknown }
+  | {
+      readonly result: unknown;
+      /** Defined objects in the result, by marker index. */
+      readonly objects?: readonly CodemodeObjectDescriptor[];
+    }
   | {
       readonly error: { readonly message: string; readonly code?: string; readonly path?: string };
     }
@@ -688,7 +969,7 @@ export interface BridgeJournal {
 
 // A response before the per-execution budget check, carrying its size.
 type MeasuredResponse =
-  | { result: unknown; bytes: number }
+  | { result: unknown; objects?: readonly CodemodeObjectDescriptor[]; bytes: number }
   | Extract<BridgeResponse, { error: unknown }>;
 
 // Measure plain data the way it costs the Durable Object: UTF-8 bytes
@@ -696,7 +977,14 @@ type MeasuredResponse =
 // per scalar. Anything that is not plain data is rejected, including
 // functions and RPC stubs, which Workers RPC would otherwise carry into
 // the host as live callbacks, and cycles.
-function measureValue(value: unknown, maxBytes: number, kind: "request" | "response"): number {
+function measureValue(
+  value: unknown,
+  maxBytes: number,
+  kind: "request" | "response",
+  // "allow" counts a live value, such as a callback or stream, as a small
+  // fixed cost. A string is the error to refuse one with.
+  live?: "allow" | string,
+): number {
   let bytes = 0;
   const seen = new Set<object>();
   const add = (count: number) => {
@@ -724,6 +1012,13 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
     if (item instanceof Uint8Array) {
       add(Math.max(1, item.byteLength));
       return;
+    }
+    if (typeof item !== "object" || !isPlainContainer(item)) {
+      if (live === "allow") {
+        add(8);
+        return;
+      }
+      if (live !== undefined) throw new Error(live);
     }
     if (typeof item !== "object") {
       throw new Error(`Workspace capability ${kind} values must be plain data.`);
@@ -771,10 +1066,25 @@ function withDeadline(
 async function respond(
   run: () => Promise<unknown>,
   maxPayloadBytes: number,
+  allowLive = false,
 ): Promise<MeasuredResponse> {
   try {
     const result = await run();
-    return { result, bytes: measureValue(result, maxPayloadBytes, "response") };
+    const live = allowLive ? "allow" : undefined;
+    if (result instanceof CodemodeResult) {
+      const bytes =
+        measureValue(result.value, maxPayloadBytes, "response", live) +
+        (result.objects.length === 0
+          ? 0
+          : measureValue(result.objects, maxPayloadBytes, "response"));
+      if (bytes > maxPayloadBytes) {
+        throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
+      }
+      return result.objects.length === 0
+        ? { result: result.value, bytes }
+        : { result: result.value, objects: result.objects, bytes };
+    }
+    return { result, bytes: measureValue(result, maxPayloadBytes, "response", live) };
   } catch (error) {
     return boundedError(error, maxPayloadBytes);
   }
@@ -816,4 +1126,24 @@ function errorBytes(response: Extract<BridgeResponse, { error: unknown }>): numb
 
 function truncateText(value: string, maxBytes: number) {
   return utf8Prefix(value, maxBytes).text;
+}
+
+// An array, or an object whose prototype is Object.prototype or null.
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  if (value instanceof Uint8Array) return true;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+type Disposer = (end: WorkspaceModuleScopeEnd) => unknown;
+
+function disposerOf(object: object): Disposer | undefined {
+  const value = object as { [Symbol.asyncDispose]?: unknown; [Symbol.dispose]?: unknown };
+  const dispose = value[Symbol.asyncDispose] ?? value[Symbol.dispose];
+  return typeof dispose === "function" ? (dispose as Disposer) : undefined;
+}
+
+async function disposeObject(object: object, end: WorkspaceModuleScopeEnd): Promise<void> {
+  await disposerOf(object)?.call(object, end);
 }

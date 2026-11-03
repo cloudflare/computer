@@ -120,13 +120,16 @@ export type {
 } from "./runtime/types";
 export { unsafeToRepeat } from "./runtime/replay-safety";
 export {
-  createScopedModule,
-  type WorkspaceModuleScopeEnd,
-  type WorkspaceScopedModuleInstance,
-  type WorkspaceScopedModule,
-  type WorkspaceScopedModuleOptions,
+  createCodemodeModule,
+  type CodemodeModule,
+  type CodemodeModuleBuilder,
+  type CodemodeModuleOptions,
+  type CodemodeObjectConstructor,
+  type CodemodeObjectMethods,
+  type CodemodeScopedContextOptions,
   type WorkspaceModuleScope,
-} from "./runtime/scoped-module";
+  type WorkspaceModuleScopeEnd,
+} from "./runtime/codemode-module";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh";
 export type { ExecEncoding, ExecSyncResult, KillSignal } from "./shell";

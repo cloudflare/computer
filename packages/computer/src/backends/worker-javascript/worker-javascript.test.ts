@@ -2,7 +2,7 @@ import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dof
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
-import { createScopedModule } from "../../runtime/scoped-module";
+import { createCodemodeModule, type WorkspaceModuleScopeEnd } from "../../runtime/codemode-module";
 import type { WorkspaceRuntimeLoader } from "../../runtime/types";
 import { Workspace } from "../../workspace";
 import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
@@ -1049,26 +1049,6 @@ describe("WorkerJavaScriptBackend", () => {
       { "codemode:test": { run: "nope" } },
       /must be a function/,
     ],
-    [
-      "a scoped module with a non-identifier export",
-      {
-        "codemode:test": createScopedModule({
-          exports: ["not-a-name"],
-          start: () => ({ functions: {} }),
-        }),
-      },
-      /JavaScript identifier/,
-    ],
-    [
-      "a scoped module that exports a name twice",
-      {
-        "codemode:test": createScopedModule({
-          exports: ["run", "run"],
-          start: () => ({ functions: {} }),
-        }),
-      },
-      /exports a name twice/,
-    ],
   ])("rejects %s at construction", (_label, modules, message) => {
     expect(
       () =>
@@ -2000,10 +1980,7 @@ describe("WorkerJavaScriptBackend", () => {
             modules: {
               "codemode:facade": `import { run } from "codemode:echo"; import { open } from "codemode:browser"; export const echo = { run, open };`,
               "codemode:echo": { run: async () => null },
-              "codemode:browser": createScopedModule({
-                exports: ["open"],
-                start: () => ({ functions: { open: () => null } }),
-              }),
+              "codemode:browser": createCodemodeModule().module({ open: async () => null }),
             },
           }),
         ],
@@ -2338,7 +2315,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     // The code the runtime loads into the isolate changed. If a run that
     // started on the old code could replay differently on the new code,
     // bump REPLAY_VERSION in journal.ts. Either way, update this digest.
-    expect(fingerprint(runtimeCode("main.js", 1024, 1024))).toBe("v1:0fb1pjqz8570ofg1opq2fb:31550");
+    expect(fingerprint(runtimeCode("main.js", 1024, 1024))).toBe("v1:0z85kjr36yi2bm900g5ab2:33830");
   });
 
   it("fails a run when the runtime changed under it", async () => {
@@ -2468,7 +2445,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await workspace.close();
   });
 });
-describe("WorkerJavaScriptBackend scoped modules", () => {
+describe("WorkerJavaScriptBackend scoped contexts", () => {
   interface Script {
     // Host functions the run calls in turn, such as "host/codemode:test.run".
     calls?: string[];
@@ -2553,43 +2530,27 @@ describe("WorkerJavaScriptBackend scoped modules", () => {
   // Let every task that isn't waiting on a gate run.
   const idle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-  // A scoped module whose instance logs `text` when the run ends.
-  function logging(...texts: string[]) {
-    return createScopedModule({
-      exports: ["run"],
-      start: () => ({
-        functions: { run: () => null },
-        close: (end) => {
-          if (end.reason !== "paused") for (const text of texts) end.log(text);
-        },
-      }),
+  // A module whose scoped context logs `texts` when the run ends. Its
+  // `run` reads the context, which starts it.
+  function scoped(dispose: (end: WorkspaceModuleScopeEnd) => void | Promise<void>) {
+    const module = createCodemodeModule();
+    module.context("instance", () => ({}), {
+      scoped: true,
+      dispose: (_value, end) => dispose(end),
+    });
+    return module.module({
+      run: async (_args, ctx) => {
+        await (ctx as unknown as { instance: Promise<unknown> }).instance;
+        return null;
+      },
     });
   }
 
-  it("fails a call when the instance's functions don't match the module's exports", async () => {
-    const responses: unknown[] = [];
-    const workspace = open(
-      { calls: ["host/codemode:test.run"], responses },
-      {
-        "codemode:test": createScopedModule({
-          exports: ["run"],
-          start: () => ({ functions: { other: () => null } }),
-        }),
-      },
-    );
-
-    await (await start(workspace)).result();
-
-    expect(responses).toEqual([
-      expect.objectContaining({
-        error: expect.objectContaining({
-          message:
-            'Host module "codemode:test" started with functions other, but declares exports run.',
-        }),
-      }),
-    ]);
-    await workspace.close();
-  });
+  function logging(...texts: string[]) {
+    return scoped((end) => {
+      if (end.reason !== "paused") for (const text of texts) end.log(text);
+    });
+  }
 
   it("keeps what an instance logs whole when it fits the run's output limit", async () => {
     const workspace = open(
@@ -2621,11 +2582,7 @@ describe("WorkerJavaScriptBackend scoped modules", () => {
 
   it("reports a close that throws or runs late, and the run goes on", async () => {
     const reported = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const close = (fn: () => Promise<void>) =>
-      createScopedModule({
-        exports: ["run"],
-        start: () => ({ functions: { run: () => null }, close: fn }),
-      });
+    const close = (fn: () => Promise<void>) => scoped(fn);
     const workspace = open(
       {
         calls: ["host/codemode:broken.run", "host/codemode:slow.run", "host/codemode:fine.run"],
@@ -2666,15 +2623,25 @@ describe("WorkerJavaScriptBackend scoped modules", () => {
     const workspace = open(
       { calls: ["host/codemode:test.run"] },
       {
-        "codemode:test": createScopedModule({
-          exports: ["run"],
-          start: ({ signal }) => {
-            starting.open();
-            return new Promise((_resolve, reject) =>
-              signal.addEventListener("abort", () => reject(signal.reason)),
-            );
-          },
-        }),
+        "codemode:test": (() => {
+          const module = createCodemodeModule();
+          module.context(
+            "instance",
+            ({ signal }) => {
+              starting.open();
+              return new Promise((_resolve, reject) =>
+                signal.addEventListener("abort", () => reject(signal.reason)),
+              );
+            },
+            { scoped: true },
+          );
+          return module.module({
+            run: async (_args, ctx) => {
+              await (ctx as unknown as { instance: Promise<unknown> }).instance;
+              return null;
+            },
+          });
+        })(),
       },
     );
     const handle = await start(workspace);
@@ -2693,27 +2660,29 @@ describe("WorkerJavaScriptBackend scoped modules", () => {
     const workspace = open(
       { calls: ["host/codemode:test.wait"], hang: true },
       {
-        "codemode:test": createScopedModule({
-          exports: ["wait"],
-          start: () => ({
-            functions: {
-              wait: async (_args, context) => {
-                try {
-                  return await context.interrupt("approve?");
-                } finally {
-                  steps.push("cleanup starts");
-                  cleaning.open();
-                  await cleanup.opened;
-                  steps.push("cleanup ends");
-                }
-              },
-            },
-            close: (end) => {
+        "codemode:test": (() => {
+          const module = createCodemodeModule();
+          module.context("instance", () => ({}), {
+            scoped: true,
+            dispose: (_value, end) => {
               steps.push(`close ${end.reason}`);
               if (end.reason !== "paused") end.log("Closed.\n");
             },
-          }),
-        }),
+          });
+          return module.module({
+            wait: async (_args, context) => {
+              await (context as unknown as { instance: Promise<unknown> }).instance;
+              try {
+                return await context.interrupt("approve?");
+              } finally {
+                steps.push("cleanup starts");
+                cleaning.open();
+                await cleanup.opened;
+                steps.push("cleanup ends");
+              }
+            },
+          });
+        })(),
       },
     );
     const handle = await start(workspace, { onInterrupt: "replay" });

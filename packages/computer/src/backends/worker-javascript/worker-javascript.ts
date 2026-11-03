@@ -1,16 +1,18 @@
 import type { WorkspaceBackendHost } from "../../backend";
 import { WorkspaceRuntimeBridge } from "../../runtime/bridge";
+import type { CodemodeModuleRuntime } from "../../runtime/bridge";
 import { assertRuntimeValue, WorkspaceRuntimeCapability } from "../../runtime/capability";
+import {
+  type CodemodeContextDefinition,
+  codemodeModuleDefinition,
+  type WorkspaceModuleScope,
+  type WorkspaceModuleScopeEnd,
+} from "../../runtime/codemode-module";
 import {
   dynamicWorkerEgress,
   hostEgressFetch,
   type WorkspaceEgressPolicy,
 } from "../../runtime/egress";
-import type {
-  WorkspaceModuleScopeEnd,
-  WorkspaceScopedModuleInstance,
-  WorkspaceScopedModule,
-} from "../../runtime/scoped-module";
 import type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
@@ -298,10 +300,10 @@ interface ExecutionRecord {
   // isolate's host calls until its scoped instances have closed. A
   // run that ends meanwhile waits for it, so its end follows them.
   releasing?: Promise<void>;
-  // The scoped module instances the run's current scope started, by
-  // specifier. Whoever closes them takes them off the record first, so
-  // each closes once.
-  instances?: Map<string, Promise<WorkspaceScopedModuleInstance>>;
+  // What the run's current scope must close: scoped contexts it started
+  // and live objects with a disposer, by key. Whoever closes them takes
+  // them off the record first, so each closes once.
+  instances?: Map<string, Promise<ScopeInstance>>;
 }
 
 export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
@@ -442,6 +444,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // Every host module's export names, for the module graph.
   readonly #hostModuleExports: ReadonlyMap<string, readonly string[]>;
   readonly #moduleHost: WorkspaceModuleHost;
+  // Codemode modules with their connection context, by specifier.
+  readonly #codemodeModules: ReadonlyMap<string, CodemodeModuleRuntime>;
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
   readonly #pendingIds = new Set<string>();
@@ -464,7 +468,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#host = host;
     const functions = new Map<string, WorkspaceModuleFunctions>();
     const empty = new Set<string>();
-    // Shared by every factory and scoped module start, so frozen.
+    // Shared by every factory and context, so frozen.
     this.#moduleHost = Object.freeze({
       git: host.git,
       artifacts: host.artifacts,
@@ -489,9 +493,23 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     this.#emptyHostModules = empty;
     const exports = new Map<string, readonly string[]>();
     for (const [specifier, built] of functions) exports.set(specifier, Object.keys(built));
-    for (const [specifier, module] of options.modules.scoped) {
+    const codemode = new Map<string, CodemodeModuleRuntime>();
+    for (const [specifier, module] of options.modules.codemode) {
+      const definition = codemodeModuleDefinition(module);
+      if (definition === undefined) continue;
+      // Connection contexts are made once, now, like a factory's functions.
+      const connection = new Map<string, unknown>();
+      for (const context of definition.contexts) {
+        if (context.scoped) continue;
+        connection.set(
+          context.name,
+          (context.create as (host: WorkspaceModuleHost) => unknown)(this.#moduleHost),
+        );
+      }
+      codemode.set(specifier, { definition, connection });
       exports.set(specifier, module.exports);
     }
+    this.#codemodeModules = codemode;
     this.#hostModuleExports = exports;
     host.db.run(`
       CREATE TABLE IF NOT EXISTS workspace_runtime_executions (
@@ -657,7 +675,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     await this.#closeInstances(record, "paused");
   }
 
-  // Close the scoped module instances the run's scope started, all at
+  // Close what the run's scope holds, all at
   // once, and wait for them up to `maxHostCallMs`. A close that
   // throws or runs late is reported and otherwise ignored. Returns what
   // they logged, cut to what is left of the run's output limit.
@@ -696,7 +714,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         } catch (error) {
           console.error({
             message: "Host module close failed",
-            module: specifier,
+            module: moduleOfInstance(specifier),
+            instance: specifier,
             reason,
             id: record.id,
             error: String(error),
@@ -948,7 +967,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   #preparedSourceModules(): Readonly<Record<string, string>> {
     this.#sourceModules ??= prepareSourceModules(
       this.#options.modules.source,
-      new Set([...this.#options.modules.host.keys(), ...this.#options.modules.scoped.keys()]),
+      new Set([...this.#options.modules.host.keys(), ...this.#options.modules.codemode.keys()]),
     );
     return this.#sourceModules;
   }
@@ -1094,25 +1113,46 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
     }
   }
 
-  // This scope's scoped modules, each as the function that gets its
-  // instance. The first live call to a module starts it,
-  // and calls made meanwhile share that start.
-  #startInstances(record: ExecutionRecord, execution: WorkspaceModuleExecution) {
-    const instances = new Map<string, Promise<WorkspaceScopedModuleInstance>>();
+  // What a scope's bridge needs to start scoped contexts and to have
+  // live objects disposed with the scope. Both go in the record's
+  // instances, which close when the scope ends. A scoped context starts
+  // the first time a method reads it, and reads meanwhile share that start.
+  #scopeIntegrations(record: ExecutionRecord, execution: WorkspaceModuleExecution) {
+    const instances = new Map<string, Promise<ScopeInstance>>();
     record.instances = instances;
-    const starters = new Map<string, (signal: AbortSignal) => Promise<WorkspaceModuleFunctions>>();
-    for (const [specifier, module] of this.#options.modules.scoped) {
-      starters.set(specifier, async (signal) => {
-        let started = instances.get(specifier);
+    return {
+      scopedContext: (specifier: string, name: string, signal: AbortSignal) => {
+        const key = `context:${specifier}#${name}`;
+        let started = instances.get(key) as Promise<ScopedContextInstance> | undefined;
         if (started === undefined) {
-          const scope = Object.freeze({ ...execution, signal });
-          started = Promise.resolve().then(() => module.start(scope, this.#moduleHost));
-          instances.set(specifier, started);
+          const context = this.#codemodeModules
+            .get(specifier)
+            ?.definition.contexts.find((item) => item.scoped && item.name === name);
+          if (context === undefined) {
+            return Promise.reject(new Error(`${specifier} has no scoped context ${name}.`));
+          }
+          const scope: WorkspaceModuleScope = Object.freeze({ ...execution, signal });
+          const create = context.create as (
+            scope: WorkspaceModuleScope,
+            host: WorkspaceModuleHost,
+          ) => unknown;
+          started = Promise.resolve()
+            .then(() => create(scope, this.#moduleHost))
+            .then((value) => ({
+              value,
+              close: (end: WorkspaceModuleScopeEnd) => disposeContext(context, value, end),
+            }));
+          instances.set(key, started);
         }
-        return instanceFunctions(specifier, module, await started);
-      });
-    }
-    return starters;
+        return started.then((instance) => instance.value);
+      },
+      trackDisposable: (key: string, close: (end: WorkspaceModuleScopeEnd) => Promise<void>) => {
+        instances.set(key, Promise.resolve({ close }));
+      },
+      untrackDisposable: (key: string) => {
+        instances.delete(key);
+      },
+    };
   }
 
   // Start a run's Dynamic Worker. A failure to start settles the run.
@@ -1134,7 +1174,8 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
       const execution = record.execution ?? this.#execution(record.id, undefined);
       const bridge = new WorkspaceRuntimeBridge(spec.capability, {
         hostModules: this.#hostModuleFunctions,
-        scopedModules: this.#startInstances(record, execution),
+        codemodeModules: this.#codemodeModules,
+        ...this.#scopeIntegrations(record, execution),
         maxPayloadBytes: this.#options.maxCapabilityBytes,
         maxCallDurationMs: this.#options.maxHostCallMs,
         maxConcurrentCalls: this.#options.maxConcurrentCapabilityCalls,
@@ -2072,31 +2113,42 @@ function assertLoaderGraph(
   }
 }
 
-// A scoped module instance's functions, checked against the exports its
-// module declared, which the module graph was built from.
-function instanceFunctions(
-  specifier: string,
-  module: WorkspaceScopedModule,
-  instance: WorkspaceScopedModuleInstance,
-): WorkspaceModuleFunctions {
-  const functions: unknown = instance?.functions;
-  const names =
-    typeof functions === "object" && functions !== null ? Object.keys(functions).sort() : [];
-  const exports = [...module.exports].sort();
-  const matches =
-    names.length === exports.length &&
-    names.every(
-      (name, index) =>
-        name === exports[index] &&
-        typeof (functions as Record<string, unknown>)[name] === "function",
+// Something a scope closes when it ends: a started scoped context, or a
+// live object with a disposer.
+interface ScopeInstance {
+  close?(end: WorkspaceModuleScopeEnd): void | Promise<void>;
+}
+
+interface ScopedContextInstance extends ScopeInstance {
+  readonly value: unknown;
+}
+
+// The module an instance key belongs to: `context:<specifier>#<name>`
+// or `object:<specifier>#<id>`.
+function moduleOfInstance(key: string): string {
+  const rest = key.slice(key.indexOf(":") + 1);
+  const hash = rest.indexOf("#");
+  return hash === -1 ? rest : rest.slice(0, hash);
+}
+
+// Let go of a scoped context's value: with its dispose option, or else
+// its own Symbol.asyncDispose or Symbol.dispose.
+async function disposeContext(
+  context: CodemodeContextDefinition,
+  value: unknown,
+  end: WorkspaceModuleScopeEnd,
+): Promise<void> {
+  if (context.dispose !== undefined) {
+    await (context.dispose as (value: unknown, end: WorkspaceModuleScopeEnd) => unknown)(
+      value,
+      end,
     );
-  if (!matches) {
-    throw new Error(
-      `Host module ${JSON.stringify(specifier)} started with functions ${names.join(", ") || "(none)"}, but declares exports ${exports.join(", ")}.`,
-    );
+    return;
   }
-  // SAFETY: Checked above: an object of the declared functions.
-  return functions as WorkspaceModuleFunctions;
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return;
+  const disposable = value as { [Symbol.asyncDispose]?: unknown; [Symbol.dispose]?: unknown };
+  const dispose = disposable[Symbol.asyncDispose] ?? disposable[Symbol.dispose];
+  if (typeof dispose === "function") await (dispose as (end: unknown) => unknown).call(value, end);
 }
 
 // One of the last events of a run, before #end numbers it.
