@@ -910,18 +910,33 @@ function decodeBytes(value: unknown): string | Uint8Array {
   return value instanceof Uint8Array ? value : String(value);
 }
 
+// A journaled response counts on replay as it did on its first attempt.
 function replayedBytes(response: BridgeResponse, maxPayloadBytes: number): number {
   if (!("result" in response)) return errorBytes(response);
   try {
-    return measureValue(response.result, maxPayloadBytes, "response");
+    return codemodeResultBytes(response.result, response.objects, maxPayloadBytes, "serializable");
   } catch {
-    // A codemode result with richer values, counted as the journal encodes it.
-    try {
-      return utf8ByteLength(serialize(response.result));
-    } catch {
-      return maxPayloadBytes;
-    }
+    return maxPayloadBytes;
   }
+}
+
+// In a replayable run, plain data counts as it does for any host module,
+// and only richer values by the encoding the journal keeps them in, so a
+// deep or heavily escaped JSON result fits as before. Defined objects
+// count by their descriptors.
+function codemodeResultBytes(
+  value: unknown,
+  objects: readonly CodemodeObjectDescriptor[] | undefined,
+  maxPayloadBytes: number,
+  live: "allow" | "serializable",
+): number {
+  const bytes =
+    measureValue(value, maxPayloadBytes, "response", live) +
+    (objects === undefined || objects.length === 0 ? 0 : utf8ByteLength(serialize(objects)));
+  if (bytes > maxPayloadBytes) {
+    throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
+  }
+  return bytes;
 }
 
 /** What the bridge sends back for one call: a value, or a bounded error. */
@@ -1113,15 +1128,12 @@ async function respond(
     const result = await run();
     const live = allowLive ? "allow" : undefined;
     if (result instanceof CodemodeResult) {
-      // In a replayable run, plain data counts as it does for any host
-      // module, and only richer values by the encoding the journal keeps
-      // them in, so a deep or heavily escaped JSON result fits as before.
-      const bytes =
-        measureValue(result.value, maxPayloadBytes, "response", live ?? "serializable") +
-        (result.objects.length === 0 ? 0 : utf8ByteLength(serialize(result.objects)));
-      if (bytes > maxPayloadBytes) {
-        throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
-      }
+      const bytes = codemodeResultBytes(
+        result.value,
+        result.objects,
+        maxPayloadBytes,
+        live ?? "serializable",
+      );
       return result.objects.length === 0
         ? { result: result.value, bytes }
         : { result: result.value, objects: result.objects, bytes };

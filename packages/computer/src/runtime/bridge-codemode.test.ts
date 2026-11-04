@@ -137,6 +137,9 @@ function jobsModule() {
     echo: async ([value]) => value ?? null,
     // 40,000 bytes of text, but 80,002 once escaped as JSON.
     quotes: async () => '"'.repeat(40_000),
+    // 20,000 bytes of text beside a Date, which the journal keeps with
+    // Cap'n Web's encoding, so the whole result is encoded that way.
+    mixed: async () => ({ at: new Date(0), text: '"'.repeat(20_000) }) as never,
     timer: async () => Timer({ at: new Date(42) }),
     url: async () => new URL("https://example.test/x") as never,
     urlState: async () => Timer({ at: new URL("https://example.test/x") as never }),
@@ -155,6 +158,7 @@ function setup(
   options: {
     journal?: BridgeJournal;
     maxPayloadBytes?: number;
+    maxTotalResponseBytes?: number;
     maxCallDurationMs?: number;
     scopedContextMs?: number;
   } = {},
@@ -184,6 +188,9 @@ function setup(
       untrackDisposable: (key) => void tracked.delete(key),
       execution: { id: "exec-1", metadata: {} },
       maxPayloadBytes: options.maxPayloadBytes ?? 4096,
+      ...(options.maxTotalResponseBytes === undefined
+        ? {}
+        : { maxTotalResponseBytes: options.maxTotalResponseBytes }),
       ...(options.maxCallDurationMs === undefined
         ? {}
         : { maxCallDurationMs: options.maxCallDurationMs }),
@@ -445,6 +452,22 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
     expect(result(await replay.bridge.call("host/codemode:jobs.quotes", []))).toBe(
       '"'.repeat(40_000),
     );
+  });
+
+  it("counts a replayed result as its first attempt did", async () => {
+    const memory = memoryJournal();
+    const limits = { maxPayloadBytes: 64 * 1024, maxTotalResponseBytes: 64 * 1024 };
+    const { bridge } = setup({ journal: memory.journal, ...limits });
+    result(await bridge.call("host/codemode:jobs.mixed", []));
+    result(await bridge.call("host/codemode:jobs.quotes", []));
+
+    memory.restart();
+    const replay = setup({ journal: memory.journal, ...limits });
+    result(await replay.bridge.call("host/codemode:jobs.mixed", []));
+    result(await replay.bridge.call("host/codemode:jobs.quotes", []));
+    // About 60 KiB of the 64 KiB budget is spent, as on the first attempt,
+    // so a small new call still fits.
+    expect(result(await replay.bridge.call("host/codemode:jobs.idle", []))).toBe("idle");
   });
 
   it("refuses a rich value too deep for the journal as a call error", async () => {
