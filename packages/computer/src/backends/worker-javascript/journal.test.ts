@@ -40,6 +40,12 @@ describe("describeCall", () => {
       `fs.writeFile("/a", <3 bytes>, "${"x".repeat(46)}…)`,
     );
   });
+
+  it("shows bigint arguments, which JSON can't encode", () => {
+    expect(describeCall("schedule", [2n ** 64n, { after: 5n }])).toBe(
+      `schedule("18446744073709551616n", {"after":"5n"})`,
+    );
+  });
 });
 
 describe("encodeValue", () => {
