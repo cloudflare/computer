@@ -5,10 +5,10 @@
   //
   // Mirrors examples/worker-shell beat for beat — same DO class
   // name, same routes, same R2 mount. The only difference is the
-  // backend: WorkerJavaScriptBackend instead of WorkerShellBackend,
+  // backend: CodemodeBackend instead of WorkerShellBackend,
   // so exec evaluates JavaScript modules rather than shell commands.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "computer-worker-javascript-example",
+  "name": "computer-codemode-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-05-26",
   "compatibility_flags": ["nodejs_compat"],
@@ -20,7 +20,7 @@
   "find_additional_modules": true,
   "rules": [{ "type": "Data", "globs": ["skills/**/*"], "fallthrough": true }],
 
-  // Worker Loader binding. The DO's WorkerJavaScriptBackend calls
+  // Worker Loader binding. The DO's CodemodeBackend calls
   // env.LOADER.load(...) to mint a Dynamic Worker that evaluates
   // each module.
   "worker_loaders": [
@@ -40,12 +40,12 @@
 
   // R2 bucket mounted into every Workspace at /workspace/r2 via
   // R2Bucket(...). Seed it once with:
-  //   npm run seed:r2 --workspace @example/computer-worker-javascript
+  //   npm run seed:r2 --workspace @example/computer-codemode
   // which uploads ./seed/data/hello.txt to the bucket.
   "r2_buckets": [
     {
       "binding": "Bucket",
-      "bucket_name": "computer-worker-javascript-hello"
+      "bucket_name": "computer-codemode-hello"
     }
   ],
 

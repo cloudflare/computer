@@ -83,9 +83,9 @@
       "types": "./dist/backends/container/index.d.ts",
       "import": "./dist/backends/container/index.js"
     },
-    "./backends/worker-javascript": {
-      "types": "./dist/backends/worker-javascript/index.d.ts",
-      "import": "./dist/backends/worker-javascript/index.js"
+    "./backends/codemode": {
+      "types": "./dist/backends/codemode/index.d.ts",
+      "import": "./dist/backends/codemode/index.js"
     },
     "./backends/worker-shell": {
       "types": "./dist/backends/worker-shell/index.d.ts",

@@ -14,13 +14,13 @@ export function parseRuntimeFrame(line: string): RuntimeFrame {
   try {
     record = JSON.parse(line) as Record<string, unknown>;
   } catch {
-    throw new Error("WorkerJavaScriptBackend received an invalid execution frame");
+    throw new Error("CodemodeBackend received an invalid execution frame");
   }
   const frame = parseFrameBody(record);
   const log = record.log as { from?: unknown; events?: unknown } | undefined;
   if (log === undefined) return frame;
   if (log === null || typeof log !== "object") {
-    throw new Error("WorkerJavaScriptBackend received a malformed event log");
+    throw new Error("CodemodeBackend received a malformed event log");
   }
   return { ...frame, log: { from: log.from, events: log.events } };
 }
@@ -29,13 +29,13 @@ function parseFrameBody(record: Record<string, unknown>): RuntimeFrame {
   const name = record.name;
   if (name === "stdout" || name === "stderr") {
     if (typeof record.b64 !== "string") {
-      throw new Error("WorkerJavaScriptBackend received a malformed output frame");
+      throw new Error("CodemodeBackend received a malformed output frame");
     }
     return { name, value: decodeBase64(record.b64) };
   }
   if (name === "exit") {
     if (!Number.isSafeInteger(record.code)) {
-      throw new Error("WorkerJavaScriptBackend received a malformed exit frame");
+      throw new Error("CodemodeBackend received a malformed exit frame");
     }
     if ("result" in record) {
       return {
@@ -46,7 +46,7 @@ function parseFrameBody(record: Record<string, unknown>): RuntimeFrame {
     }
     return { name, code: record.code as number };
   }
-  throw new Error("WorkerJavaScriptBackend received an unknown execution frame");
+  throw new Error("CodemodeBackend received an unknown execution frame");
 }
 
 export function decodeRuntimeFrames(

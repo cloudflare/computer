@@ -1,6 +1,6 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import { Workspace, type WorkspaceRuntimeLoader } from "@cloudflare/computer";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 import type { Connection } from "agents";
 import { isStepCount, streamText, type ToolSet } from "ai";
 
@@ -97,7 +97,7 @@ export class RlmAgent extends AIChatAgent<ModelEnv, BenchmarkAgentState> {
         });
       },
     });
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       id: RLM_BACKEND,
       loader: env.LOADER as unknown as WorkspaceRuntimeLoader,
       root: WORKSPACE_ROOT,

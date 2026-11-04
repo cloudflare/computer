@@ -2,7 +2,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { isContentPartArray } from "@tanstack/ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript";
+import { CodemodeBackend } from "../../backends/codemode/codemode";
 import { Workspace } from "../../workspace";
 import { createTanStackTools } from "./index";
 
@@ -278,7 +278,7 @@ describe("createTanStackTools", () => {
       storage: new SQLiteTestStorage(),
       backends: [
         streamingCommandBackend([]) as never,
-        new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
+        new CodemodeBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
     const tools = createTanStackTools({ workspace, format: "object" });
@@ -287,7 +287,7 @@ describe("createTanStackTools", () => {
       required?: string[];
     };
 
-    expect(schema.properties.backend?.enum).toEqual(["shell", "worker-javascript"]);
+    expect(schema.properties.backend?.enum).toEqual(["shell", "codemode"]);
     expect(schema.required).toContain("backend");
     // Only the callable backend takes structured input.
     expect(schema.properties).toHaveProperty("input");

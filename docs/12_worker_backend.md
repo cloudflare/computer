@@ -47,7 +47,7 @@ isolate that boots instantly, scales out cheaply, and has no
 container lifecycle. The shell is the just-bash interpreter; the
 supported command set is broad (`cat`, `grep`, `awk`, `sed`, `jq`,
 `sort`) but not the full Linux userland. JavaScript modules run through the
-[`worker-javascript` backend](./17_isolate_javascript.md), not through just-bash's
+[codemode backend](./17_isolate_javascript.md), not through just-bash's
 Node-only language commands. Filesystem operations forward into the same
 SQLite store as the container backend, so the storage shape, mount
 rules, and read-only enforcement are unchanged.

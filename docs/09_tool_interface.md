@@ -69,11 +69,11 @@ Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent 
 `exec: { backends }` lists the backends the model can use, keyed by backend id. Leave it out to use every backend.
 
 ```ts
-createAITools({ workspace });                                                       // every backend
-createAITools({ workspace, exec: { backends: { "worker-javascript": {} } } });       // just this one
+createAITools({ workspace });                                              // every backend
+createAITools({ workspace, exec: { backends: { codemode: {} } } });        // just this one
 createAITools({
   workspace,
-  exec: { backends: { "worker-javascript": { description: "Use for data work." } } }, // with your own text
+  exec: { backends: { codemode: { description: "Use for data work." } } }, // with your own text
 });
 ```
 
@@ -361,7 +361,7 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 `exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, maxLines?, metadata? })` takes the same `backends` as the `exec` option, plus output limits and [metadata](#run-metadata).
 
-Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `ContainerBackend` describe their command sets, network access, and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
+Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `CodemodeBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `ContainerBackend` describe their command sets, network access, and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
 The tool offers only the arguments that can work:
 

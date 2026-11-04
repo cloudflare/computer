@@ -7,13 +7,13 @@ import {
   type WorkspaceRuntimeValue,
   withWorkspace,
 } from "@cloudflare/computer";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 
 export class ContainerExample extends withWorkspace(class extends DurableObject<Env> {}, (self) => {
   const { ctx, env } = self as unknown as { ctx: DurableObjectState; env: Env };
   return {
     storage: ctx.storage,
-    backends: [new WorkerJavaScriptBackend({ loader: env.LOADER })],
+    backends: [new CodemodeBackend({ loader: env.LOADER })],
     mounts: {
       "/workspace/r2": R2Bucket(env.Bucket),
       // Read-only copy of src/skills, shipped with the Worker through the
@@ -61,7 +61,7 @@ export default {
     if (url.pathname === "/" || url.pathname === "") {
       return new Response(
         [
-          "worker-javascript example",
+          "codemode example",
           "",
           `  PUT  /c/<name>/file/workspace/<path>     write file at ${MOUNT_ROOT}/<path>`,
           `  GET  /c/<name>/file/workspace/<path>     read file at ${MOUNT_ROOT}/<path>`,
@@ -131,7 +131,7 @@ async function handleExec(request: Request, env: Env, name: string): Promise<Res
   const ws = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
   try {
     const handle = await ws.runtime.exec(body.source, {
-      backend: "worker-javascript",
+      backend: "codemode",
       cwd: body.cwd,
       input: body.input,
       env: body.env,

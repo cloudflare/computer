@@ -27,7 +27,7 @@ export interface CelldJavaScriptBackendOptions {
  * WorkerEntrypoint RPC, static sibling modules, plain JSON env, and no-egress
  * `globalOutbound: null`. That is enough for callable JavaScript execution.
  *
- * The full Computer WorkerJavaScriptBackend also passes a host filesystem bridge
+ * The full Computer CodemodeBackend also passes a host filesystem bridge
  * into the loaded worker. celld v0.1.0 currently rejects that bridge with a
  * DataCloneError, so this backend deliberately exposes only the pieces that are
  * validated under celld today: structured input/output, captured console output,

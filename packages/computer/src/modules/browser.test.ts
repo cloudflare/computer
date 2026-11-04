@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseModules } from "../backends/worker-javascript/module-graph";
+import { parseModules } from "../backends/codemode/module-graph";
 import {
   type CodemodeModule,
   codemodeModuleDefinition,

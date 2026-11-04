@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createCodemodeModule, type WorkspaceModuleScopeEnd } from "../../runtime/codemode-module";
 import type { WorkspaceRuntimeLoader } from "../../runtime/types";
 import { Workspace } from "../../workspace";
+import { runtimeCode, CodemodeBackend } from "./codemode";
 import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
-import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript";
 
 function throwingLoader(message: string) {
   return {
@@ -45,7 +45,7 @@ async function evaluateResult(
   await host.attachOutput(readable);
 }
 
-describe("WorkerJavaScriptBackend", () => {
+describe("CodemodeBackend", () => {
   it("blocks ambient egress by default", async () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {
@@ -62,7 +62,7 @@ describe("WorkerJavaScriptBackend", () => {
     }));
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      backends: [new CodemodeBackend({ loader: { load } })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
 
@@ -88,7 +88,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load },
           egress: { mode: "direct" },
         }),
@@ -119,7 +119,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load },
           egress: { mode: "http-gateway", gateway },
         }),
@@ -135,7 +135,7 @@ describe("WorkerJavaScriptBackend", () => {
   it("rejects globalOutbound together with egress", () => {
     expect(
       () =>
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("unused"),
           globalOutbound: null,
           egress: { mode: "none" },
@@ -146,14 +146,14 @@ describe("WorkerJavaScriptBackend", () => {
   it("validates timeout configuration", () => {
     expect(
       () =>
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("unused"),
           maxTimeoutMs: Number.NaN,
         }),
     ).toThrow(/positive finite/);
     expect(
       () =>
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("unused"),
           defaultTimeoutMs: -1,
         }),
@@ -177,7 +177,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load },
           maxCapabilityBytes: 256,
         }),
@@ -199,7 +199,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: {
             load() {
               return {
@@ -246,7 +246,7 @@ describe("WorkerJavaScriptBackend", () => {
        VALUES ('isolate-javascript', 'legacy', 'completed')`,
     );
     const fs = new WorkspaceFilesystem(db);
-    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("unused") });
+    const backend = new CodemodeBackend({ loader: throwingLoader("unused") });
     await backend.connect({
       db,
       fs,
@@ -280,7 +280,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load },
           maxInputBytes: 8,
           maxResultBytes: 8,
@@ -313,7 +313,7 @@ describe("WorkerJavaScriptBackend", () => {
       await blocked;
       return readFile(...args);
     }) as typeof fs.readFile;
-    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+    const backend = new CodemodeBackend({ loader: throwingLoader("must not load") });
     const handle = await backend.connect({
       db,
       fs,
@@ -341,7 +341,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load }, maxStdinBytes: 8 })],
+      backends: [new CodemodeBackend({ loader: { load }, maxStdinBytes: 8 })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(
@@ -354,7 +354,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load }, maxEnvBytes: 8 })],
+      backends: [new CodemodeBackend({ loader: { load }, maxEnvBytes: 8 })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(
@@ -367,7 +367,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      backends: [new CodemodeBackend({ loader: { load } })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(
@@ -382,7 +382,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      backends: [new CodemodeBackend({ loader: { load } })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(
@@ -395,7 +395,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      backends: [new CodemodeBackend({ loader: { load } })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(
@@ -415,7 +415,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load }, maxSourceBytes: 128 })],
+      backends: [new CodemodeBackend({ loader: { load }, maxSourceBytes: 128 })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     const execution = await workspace.runtime.exec("export default 1", { encoding: "utf8" });
@@ -430,14 +430,14 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("loader failed"),
         }),
       ],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await workspace.runtime.exec("export default () => 1", {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: "startup-failure",
       encoding: "utf8",
     });
@@ -447,7 +447,7 @@ describe("WorkerJavaScriptBackend", () => {
       stderr: expect.stringContaining("loader failed"),
     });
     const replay = await workspace.runtime.getExec("startup-failure", {
-      backend: "worker-javascript",
+      backend: "codemode",
       encoding: "utf8",
     });
     await expect(replay.result()).resolves.toMatchObject({ status: "failed", exitCode: 1 });
@@ -468,20 +468,20 @@ describe("WorkerJavaScriptBackend", () => {
     };
     const first = new Workspace({
       storage,
-      backends: [new WorkerJavaScriptBackend({ loader })],
+      backends: [new CodemodeBackend({ loader })],
     });
     await first.fs.mkdir("/workspace", { recursive: true });
     await first.runtime.exec("export default async () => new Promise(() => {})", {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: "interrupted",
     });
 
     const recreated = new Workspace({
       storage,
-      backends: [new WorkerJavaScriptBackend({ loader })],
+      backends: [new CodemodeBackend({ loader })],
     });
     const replay = await recreated.runtime.getExec("interrupted", {
-      backend: "worker-javascript",
+      backend: "codemode",
       encoding: "utf8",
     });
     await expect(replay.result()).resolves.toMatchObject({
@@ -496,7 +496,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: {
             load() {
               return {
@@ -536,7 +536,7 @@ describe("WorkerJavaScriptBackend", () => {
       await writeReleased;
       return originalWrite(...args);
     }) as typeof fs.writeFile;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -592,7 +592,7 @@ describe("WorkerJavaScriptBackend", () => {
       releaseExit = resolve;
     });
     const encoder = new TextEncoder();
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -649,7 +649,7 @@ describe("WorkerJavaScriptBackend", () => {
     await fs.mkdir("/workspace", { recursive: true });
     const encoder = new TextEncoder();
     let streamController!: ReadableStreamDefaultController<Uint8Array>;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -712,7 +712,7 @@ describe("WorkerJavaScriptBackend", () => {
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
     const encoder = new TextEncoder();
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -764,7 +764,7 @@ describe("WorkerJavaScriptBackend", () => {
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
     let aborted = false;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       maxHostCallMs: 5,
       modules: {
         "codemode:test": {
@@ -828,7 +828,7 @@ describe("WorkerJavaScriptBackend", () => {
       await writeReleased;
       return originalWrite(...args);
     }) as typeof fs.writeFile;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -889,7 +889,7 @@ describe("WorkerJavaScriptBackend", () => {
     const evaluation = new Promise<{ result: number }>((resolve) => {
       finish = resolve;
     });
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: {
         load() {
           return {
@@ -939,7 +939,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("finished"),
           maxRetainedExecutions: 1,
         }),
@@ -961,7 +961,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+      backends: [new CodemodeBackend({ loader: { load } })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await expect(workspace.runtime.exec("export default 1", { cwd: "/outside" })).rejects.toThrow(
@@ -978,7 +978,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       maxExecutionSubscribers: 2,
       loader: {
         load() {
@@ -1052,7 +1052,7 @@ describe("WorkerJavaScriptBackend", () => {
   ])("rejects %s at construction", (_label, modules, message) => {
     expect(
       () =>
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: throwingLoader("must not load"),
           // SAFETY: Each case hands the constructor a shape the types may forbid, to check its runtime guard.
           modules: modules as never,
@@ -1063,7 +1063,7 @@ describe("WorkerJavaScriptBackend", () => {
   it("rejects a factory whose functions are not allowed when it connects", async () => {
     const db = new Database(new SQLiteTestStorage());
     initializeSchema(db, () => 0);
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       modules: { "codemode:test": () => ({ "not-a-name": async () => null }) },
     });
@@ -1079,7 +1079,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("describes its modules for a model", () => {
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       access: "read",
       modules: {
@@ -1101,7 +1101,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("lists the Node.js built-ins code can import", () => {
-    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+    const backend = new CodemodeBackend({ loader: throwingLoader("must not load") });
 
     expect(backend.description).toContain(
       "- Node.js built-ins: `node:path`, `node:url`, `node:util`,",
@@ -1110,7 +1110,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("lists no Node.js built-ins without the nodejs_compat flag", () => {
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       compatibilityFlags: [],
     });
@@ -1119,7 +1119,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 
   it("tells a model to put the work in a default-exported function", () => {
-    const backend = new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") });
+    const backend = new CodemodeBackend({ loader: throwingLoader("must not load") });
 
     expect(backend.description).toContain(
       "Put the work in `export default async function (input) { ... }` and call `node:fs` and the other modules below inside it, since the module's top level can't do I/O. To run a file you've already written, re-export it: `export { default } from \"./main.js\"`.",
@@ -1131,7 +1131,7 @@ describe("WorkerJavaScriptBackend", () => {
     const factory = Object.defineProperty(() => ({ run: () => null }), "description", {
       get: () => `Tools: ${names.join(", ")}.`,
     });
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       modules: { "codemode:tools": factory },
     });
@@ -1146,7 +1146,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const git = { marker: "git" };
     let seen: unknown;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       modules: {
         "codemode:test": (host) => {
@@ -1170,7 +1170,7 @@ describe("WorkerJavaScriptBackend", () => {
     initializeSchema(db, () => 0);
     const assets = { marker: "assets" };
     const seen: unknown[] = [];
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       loader: throwingLoader("must not load"),
       modules: {
         "codemode:test": (host) => {
@@ -1197,7 +1197,7 @@ describe("WorkerJavaScriptBackend", () => {
     const fs = new WorkspaceFilesystem(db);
     await fs.mkdir("/workspace", { recursive: true });
     let response: unknown;
-    const backend = new WorkerJavaScriptBackend({
+    const backend = new CodemodeBackend({
       modules: { "codemode:test": { run: async () => null } },
       loader: {
         load() {
@@ -1236,7 +1236,7 @@ describe("WorkerJavaScriptBackend", () => {
   it("does not install codemode:git or codemode:artifacts unless they are configured", async () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
+      backends: [new CodemodeBackend({ loader: throwingLoader("must not load") })],
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     for (const specifier of ["codemode:git", "codemode:artifacts"]) {
@@ -1255,7 +1255,7 @@ describe("WorkerJavaScriptBackend", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: {
             load() {
               return {
@@ -1302,7 +1302,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             ...options,
             loader: {
               load() {
@@ -1381,7 +1381,7 @@ describe("WorkerJavaScriptBackend", () => {
       const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
       const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
       try {
-        const backend = new WorkerJavaScriptBackend({
+        const backend = new CodemodeBackend({
           maxTimeoutMs: 10_000,
           maxHostCallMs: 5_000,
           loader: {
@@ -1542,8 +1542,7 @@ describe("WorkerJavaScriptBackend", () => {
     it("rejects a keepAliveIntervalMs that is negative, non-finite, or 15 minutes or more", () => {
       for (const keepAliveIntervalMs of [-1, Number.NaN, Number.POSITIVE_INFINITY, 900_000]) {
         expect(
-          () =>
-            new WorkerJavaScriptBackend({ loader: throwingLoader("unused"), keepAliveIntervalMs }),
+          () => new CodemodeBackend({ loader: throwingLoader("unused"), keepAliveIntervalMs }),
         ).toThrow(/keepAliveIntervalMs/);
       }
     });
@@ -1570,7 +1569,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = recordingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+        backends: [new CodemodeBackend({ loader: { load } })],
       });
       await workspace.fs.mkdir("/workspace", { recursive: true });
       await (await workspace.runtime.exec("export default null", { timeoutMs: 45_000 })).result();
@@ -1583,7 +1582,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             maxTimeoutMs: 60 * 60_000,
             maxCpuMs: 300_000,
@@ -1599,9 +1598,9 @@ describe("WorkerJavaScriptBackend", () => {
     });
 
     it("rejects a maxCpuMs that is not positive and finite", () => {
-      expect(
-        () => new WorkerJavaScriptBackend({ loader: throwingLoader("unused"), maxCpuMs: 0 }),
-      ).toThrow(/maxCpuMs/);
+      expect(() => new CodemodeBackend({ loader: throwingLoader("unused"), maxCpuMs: 0 })).toThrow(
+        /maxCpuMs/,
+      );
     });
   });
 
@@ -1609,7 +1608,7 @@ describe("WorkerJavaScriptBackend", () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: { load }, root: "/" })],
+      backends: [new CodemodeBackend({ loader: { load }, root: "/" })],
     });
     await workspace.fs.writeFile("/workspace-capabilities.js", "export const stolen = true");
     await expect(
@@ -1625,7 +1624,7 @@ describe("WorkerJavaScriptBackend", () => {
     (specifier) => {
       expect(
         () =>
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: throwingLoader("must not load"),
             modules: { [specifier]: "export default 42" },
           }),
@@ -1650,7 +1649,7 @@ describe("WorkerJavaScriptBackend", () => {
     it("is created on the first run in a fresh Workspace", async () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader })],
+        backends: [new CodemodeBackend({ loader })],
       });
 
       const execution = await workspace.runtime.exec("export default () => null;");
@@ -1662,7 +1661,7 @@ describe("WorkerJavaScriptBackend", () => {
     it("is left alone by a read-only backend", async () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader, access: "read" })],
+        backends: [new CodemodeBackend({ loader, access: "read" })],
       });
 
       const execution = await workspace.runtime.exec("export default () => null;");
@@ -1701,7 +1700,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: { large, "codemode:echo": { run: async () => null } },
           }),
@@ -1738,7 +1737,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = completingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+        backends: [new CodemodeBackend({ loader: { load } })],
       });
 
       const execution = await workspace.runtime.exec(
@@ -1756,7 +1755,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = completingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+        backends: [new CodemodeBackend({ loader: { load } })],
       });
 
       const execution = await workspace.runtime.exec(
@@ -1775,7 +1774,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: { events: "export const mine = true;" },
           }),
@@ -1798,7 +1797,7 @@ describe("WorkerJavaScriptBackend", () => {
       async (specifier) => {
         const workspace = new Workspace({
           storage: new SQLiteTestStorage(),
-          backends: [new WorkerJavaScriptBackend({ loader: { load: completingLoader() } })],
+          backends: [new CodemodeBackend({ loader: { load: completingLoader() } })],
         });
 
         await expect(
@@ -1811,7 +1810,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load: completingLoader() },
             compatibilityFlags: [],
           }),
@@ -1828,7 +1827,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: { "codemode:tools": () => ({}), "codemode:other": { run: async () => null } },
           }),
@@ -1854,7 +1853,7 @@ describe("WorkerJavaScriptBackend", () => {
     it("rejects a module with no default export before loading it", async () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: throwingLoader("must not load") })],
+        backends: [new CodemodeBackend({ loader: throwingLoader("must not load") })],
       });
 
       await expect(workspace.runtime.exec(`const x = 1;`)).rejects.toThrow(
@@ -1872,7 +1871,7 @@ describe("WorkerJavaScriptBackend", () => {
     ])("runs a module with %s", async (_label, source) => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load: completingLoader() } })],
+        backends: [new CodemodeBackend({ loader: { load: completingLoader() } })],
       });
       await workspace.fs.mkdir("/workspace", { recursive: true });
       await workspace.fs.writeFile("/workspace/main.js", "export default 1;");
@@ -1885,7 +1884,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = completingLoader();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+        backends: [new CodemodeBackend({ loader: { load } })],
       });
       await workspace.fs.mkdir("/workspace/shared", { recursive: true });
       await workspace.fs.writeFile("/workspace/shared/util.js", "export const value = 1;");
@@ -1907,7 +1906,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+        backends: [new CodemodeBackend({ loader: { load } })],
       });
       await workspace.fs.mkdir("/outside", { recursive: true });
       await workspace.fs.writeFile("/outside/secret.js", "export default 1;");
@@ -1924,7 +1923,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             root: "/",
             modules: { lib: "export default 1;" },
@@ -1960,7 +1959,7 @@ describe("WorkerJavaScriptBackend", () => {
       const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
-        backends: [new WorkerJavaScriptBackend({ loader: { load }, modules: { lib: imports } })],
+        backends: [new CodemodeBackend({ loader: { load }, modules: { lib: imports } })],
       });
       await workspace.fs.mkdir("/workspace", { recursive: true });
 
@@ -1975,7 +1974,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: {
               "codemode:facade": `import { run } from "codemode:echo"; import { open } from "codemode:browser"; export const echo = { run, open };`,
@@ -2003,7 +2002,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: {
               "codemode:a": `import { value } from "codemode:b"; export { value };`,
@@ -2031,7 +2030,7 @@ describe("WorkerJavaScriptBackend", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load },
             modules: {
               base: "export const value = 1;",
@@ -2054,7 +2053,7 @@ describe("WorkerJavaScriptBackend", () => {
   });
 });
 
-describe("WorkerJavaScriptBackend interrupted executions", () => {
+describe("CodemodeBackend interrupted executions", () => {
   const hanging = {
     load() {
       return {
@@ -2067,11 +2066,11 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
 
   function open(
     storage: SQLiteTestStorage,
-    options: Partial<ConstructorParameters<typeof WorkerJavaScriptBackend>[0]> = {},
+    options: Partial<ConstructorParameters<typeof CodemodeBackend>[0]> = {},
   ) {
     return new Workspace({
       storage,
-      backends: [new WorkerJavaScriptBackend({ loader: hanging, ...options })],
+      backends: [new CodemodeBackend({ loader: hanging, ...options })],
     });
   }
 
@@ -2083,7 +2082,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     const workspace = open(storage);
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await workspace.runtime.exec("export default 1", {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: "run",
       onInterrupt: "replay",
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -2095,10 +2094,10 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
   // Rewrite the run's saved start as a version without metadata wrote it.
   function forgetMetadata(storage: SQLiteTestStorage) {
     const db = new Database(storage);
-    const saved = loadResume(db, "worker-javascript", "run");
+    const saved = loadResume(db, "codemode", "run");
     if (saved === undefined) throw new Error("expected a saved run");
     const { metadata: _metadata, ...start } = saved.start;
-    saveResume(db, "worker-javascript", "run", saved.policy, start as ResumeStart);
+    saveResume(db, "codemode", "run", saved.policy, start as ResumeStart);
   }
 
   // A loader whose runs call codemode:test.who once and then hang, so the run
@@ -2136,7 +2135,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
 
   async function settle(workspace: Workspace) {
     const handle = await workspace.runtime.getExec("run", {
-      backend: "worker-javascript",
+      backend: "codemode",
       encoding: "utf8",
     });
     return handle.result();
@@ -2148,7 +2147,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     const workspace = new Workspace({
       storage,
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           onInterrupt: "replay",
           loader: {
             load() {
@@ -2192,7 +2191,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await workspace.runtime.exec("export default 1", {
-      backend: "worker-javascript",
+      backend: "codemode",
     });
     await expect(handle.result()).resolves.toMatchObject({ status: "completed" });
     expect(whileRunning).toEqual([[{ position: 0, events: "[-1]" }], [{ name: "stdout" }]]);
@@ -2223,12 +2222,12 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       const workspace = open(storage);
       await workspace.runtime.recover();
       workspaces.push(workspace);
-      return loadResume(db, "worker-javascript", "run")?.attempt;
+      return loadResume(db, "codemode", "run")?.attempt;
     };
     expect(await recover()).toBe(2);
     expect(await recover()).toBe(3);
     // The run journals a call, so its next interruption starts the count again.
-    const journal = new ExecutionJournal(db, "worker-javascript", "run");
+    const journal = new ExecutionJournal(db, "codemode", "run");
     const step = journal.begin("fs.readFile", ["/a"]);
     if (step.kind !== "live") throw new Error("expected a live call");
     journal.commit(step.seq, { result: "a" });
@@ -2251,16 +2250,16 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       await workspace.runtime.recover();
       workspaces.push(workspace);
     }
-    expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(3);
+    expect(loadResume(db, "codemode", "run")?.attempt).toBe(3);
     // The run's next call waits for an answer.
-    const journal = new ExecutionJournal(db, "worker-javascript", "run");
+    const journal = new ExecutionJournal(db, "codemode", "run");
     const step = journal.begin("host/codemode:test.approve", []);
     if (step.kind !== "live") throw new Error("expected a live call");
     journal.interrupt(step.seq, { kind: "approval" });
     const answering = open(storage);
     workspaces.push(answering);
     await answering.runtime.respond("run", `run:${step.seq}`, true);
-    expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(1);
+    expect(loadResume(db, "codemode", "run")?.attempt).toBe(1);
     for (const workspace of workspaces) await workspace.close();
   });
 
@@ -2298,7 +2297,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       const db = new Database(storage);
       const first = await interrupt(storage, undefined, metadata);
       if (metadata === undefined) forgetMetadata(storage);
-      const journal = new ExecutionJournal(db, "worker-javascript", "run");
+      const journal = new ExecutionJournal(db, "codemode", "run");
       const step = journal.begin("host/codemode:test.approve", []);
       if (step.kind !== "live") throw new Error("expected a live call");
       journal.interrupt(step.seq, { kind: "approval" });
@@ -2354,7 +2353,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     const workspace = new Workspace({
       storage,
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           onInterrupt: "replay",
           loader: {
             load() {
@@ -2383,7 +2382,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     });
     await workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await workspace.runtime.exec("export default 1", {
-      backend: "worker-javascript",
+      backend: "codemode",
     });
     await expect(handle.result()).resolves.toMatchObject({ status: "completed", value: 1 });
     expect(whileRunning).toEqual([
@@ -2406,7 +2405,7 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await first.fs.mkdir("/workspace", { recursive: true });
     for (let index = 0; index < 6; index += 1) {
       await first.runtime.exec("export default 1", {
-        backend: "worker-javascript",
+        backend: "codemode",
         id: `run-${index}`,
         onInterrupt: "replay",
       });
@@ -2425,27 +2424,27 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(launched).toBe(4);
     // Each run that settles lets a waiting one start.
-    await later.runtime.killExec("run-0", { backend: "worker-javascript" });
+    await later.runtime.killExec("run-0", { backend: "codemode" });
     await vi.waitFor(() => expect(launched).toBe(5));
     await later.close();
     await first.close();
   });
 
   it("rejects an unknown onInterrupt policy", async () => {
-    expect(
-      () => new WorkerJavaScriptBackend({ loader: hanging, onInterrupt: "maybe" as never }),
-    ).toThrow('onInterrupt must be "fail", "restart" or "replay".');
+    expect(() => new CodemodeBackend({ loader: hanging, onInterrupt: "maybe" as never })).toThrow(
+      'onInterrupt must be "fail", "restart" or "replay".',
+    );
     const workspace = open(new SQLiteTestStorage());
     await expect(
       workspace.runtime.exec("export default 1", {
-        backend: "worker-javascript",
+        backend: "codemode",
         onInterrupt: "maybe" as never,
       }),
     ).rejects.toThrow("onInterrupt must be");
     await workspace.close();
   });
 });
-describe("WorkerJavaScriptBackend scoped contexts", () => {
+describe("CodemodeBackend scoped contexts", () => {
   interface Script {
     // Host functions the run calls in turn, such as "host/codemode:test.run".
     calls?: string[];
@@ -2502,19 +2501,19 @@ describe("WorkerJavaScriptBackend scoped contexts", () => {
 
   function open(
     script: Script,
-    modules: ConstructorParameters<typeof WorkerJavaScriptBackend>[0]["modules"],
-    options: Partial<ConstructorParameters<typeof WorkerJavaScriptBackend>[0]> = {},
+    modules: ConstructorParameters<typeof CodemodeBackend>[0]["modules"],
+    options: Partial<ConstructorParameters<typeof CodemodeBackend>[0]> = {},
   ) {
     return new Workspace({
       storage: new SQLiteTestStorage(),
-      backends: [new WorkerJavaScriptBackend({ loader: scripted(script), modules, ...options })],
+      backends: [new CodemodeBackend({ loader: scripted(script), modules, ...options })],
     });
   }
 
   async function start(workspace: Workspace, options: { onInterrupt?: "replay" } = {}) {
     await workspace.fs.mkdir("/workspace", { recursive: true });
     return workspace.runtime.exec("export default 1", {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: "run",
       encoding: "utf8",
       ...options,
@@ -2647,7 +2646,7 @@ describe("WorkerJavaScriptBackend scoped contexts", () => {
     const handle = await start(workspace);
     await starting.opened;
 
-    await workspace.runtime.killExec("run", { backend: "worker-javascript" });
+    await workspace.runtime.killExec("run", { backend: "codemode" });
 
     await expect(handle.result()).resolves.toMatchObject({ status: "cancelled" });
     await workspace.close();
@@ -2693,7 +2692,7 @@ describe("WorkerJavaScriptBackend scoped contexts", () => {
     });
     await cleaning.opened;
 
-    const killed = workspace.runtime.killExec("run", { backend: "worker-javascript" });
+    const killed = workspace.runtime.killExec("run", { backend: "codemode" });
     await idle();
     expect(steps).toEqual(["cleanup starts"]);
     expect(exited).toBe(false);
@@ -2722,7 +2721,7 @@ describe("WorkerJavaScriptBackend scoped contexts", () => {
       const workspace = new Workspace({
         storage: new SQLiteTestStorage(),
         backends: [
-          new WorkerJavaScriptBackend({
+          new CodemodeBackend({
             loader: { load: () => ({ getEntrypoint: () => ({ evaluate }) }) },
             modules: {
               "codemode:test": {
@@ -2740,7 +2739,7 @@ describe("WorkerJavaScriptBackend scoped contexts", () => {
       await interrupting.opened;
       await idle();
 
-      await workspace.runtime.killExec("run", { backend: "worker-javascript" });
+      await workspace.runtime.killExec("run", { backend: "codemode" });
       await expect(handle.result()).resolves.toMatchObject({
         status: expect.stringMatching(/^(completed|cancelled)$/),
       });

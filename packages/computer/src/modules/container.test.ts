@@ -39,7 +39,7 @@ function fakeRuntime(output: {
     backends: () => [
       { id: "container-shell", protocol: "command" as const, callable: false },
       { id: "linux", protocol: "command" as const, callable: true },
-      { id: "worker-javascript", protocol: "module" as const, callable: true },
+      { id: "codemode", protocol: "module" as const, callable: true },
     ],
     async exec(command: string, options: ExecOptions) {
       const run: Run = { command, options, killed: false };
@@ -322,7 +322,7 @@ describe("createContainerModule", () => {
 
   it("refuses a backend that runs module source", () => {
     const { runtime } = fakeRuntime({});
-    expect(() => build(runtime, { backend: "worker-javascript" })).toThrow(
+    expect(() => build(runtime, { backend: "codemode" })).toThrow(
       /runs module source, not shell commands/,
     );
   });

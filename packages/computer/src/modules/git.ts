@@ -2,7 +2,7 @@
 //
 //   import { status, diff, log, clone, cli } from "codemode:git";
 //
-// Every path the isolate passes is confined to the JavaScript backend's
+// Every path the isolate passes is confined to the codemode backend's
 // root. Commands that change the repository need a read-write backend,
 // and commands that reach the network are denied unless the module is
 // created with `allowNetwork: true`: they run from the host, so the
@@ -24,7 +24,7 @@ export interface GitModuleOptions {
   /**
    * Allow `clone` and network `cli` commands such as `fetch` and `push`.
    * Defaults to `false`. These requests run from the host, so the
-   * JavaScript backend's egress settings do not apply to them.
+   * codemode backend's egress settings do not apply to them.
    */
   readonly allowNetwork?: boolean;
 }

@@ -117,7 +117,7 @@ export interface WorkspaceModuleFactory {
   (host: WorkspaceModuleHost): WorkspaceModuleFunctions;
   /**
    * What the module does and how to call it, for a model. The
-   * JavaScript backend adds it to its own description, which the exec
+   * codemode backend adds it to its own description, which the exec
    * tool shows. Objects of functions are listed by their export names.
    */
   readonly description?: string;
