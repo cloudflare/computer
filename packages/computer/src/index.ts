@@ -121,6 +121,7 @@ export type {
 export { unsafeToRepeat } from "./runtime/replay-safety";
 export {
   createCodemodeModule,
+  type CodemodeContextScopeEnd,
   type CodemodeModule,
   type CodemodeModuleBuilder,
   type CodemodeModuleOptions,

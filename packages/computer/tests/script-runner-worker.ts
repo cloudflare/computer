@@ -121,7 +121,7 @@ sessionModule.context(
         await new Promise<void>((resolve) => heldCloses.set(id, resolve));
         heldCloses.delete(id);
       }
-      if (end.reason !== "paused" && end.reason !== "disposed" && metadata.closeLog !== undefined) {
+      if (end.reason !== "paused" && metadata.closeLog !== undefined) {
         end.log(`${metadata.closeLog}\n`);
       }
       sessionEvents.push({ id, event: `closed ${instance}` });

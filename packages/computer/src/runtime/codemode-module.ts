@@ -83,6 +83,15 @@ export interface CodemodeObjectConstructor<State, Methods extends CodemodeObject
   readonly kind: string;
 }
 
+/**
+ * How a scope ended, as a scoped context's `dispose` is told. Only
+ * objects can be released early, so a context never gets "disposed".
+ */
+export type CodemodeContextScopeEnd = Exclude<
+  WorkspaceModuleScopeEnd,
+  { readonly reason: "disposed" }
+>;
+
 /** Options for a context that lives for one scope of a run. */
 export interface CodemodeScopedContextOptions<Value> {
   readonly scoped: true;
@@ -91,7 +100,7 @@ export interface CodemodeScopedContextOptions<Value> {
    * Called only if the value was started. Without it, the value's own
    * `Symbol.asyncDispose` or `Symbol.dispose` is used, if it has one.
    */
-  dispose?(value: Value, end: WorkspaceModuleScopeEnd): void | Promise<void>;
+  dispose?(value: Value, end: CodemodeContextScopeEnd): void | Promise<void>;
 }
 
 /** What `createCodemodeModule()` takes. */
@@ -147,7 +156,7 @@ export interface CodemodeContextDefinition {
   readonly name: string;
   readonly create: (...args: never[]) => unknown;
   readonly scoped: boolean;
-  readonly dispose?: (value: never, end: WorkspaceModuleScopeEnd) => void | Promise<void>;
+  readonly dispose?: (value: never, end: CodemodeContextScopeEnd) => void | Promise<void>;
 }
 
 /** Everything the backend needs from a codemode module. */
