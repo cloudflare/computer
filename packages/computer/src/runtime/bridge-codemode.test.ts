@@ -61,6 +61,12 @@ function memoryJournal() {
   };
 }
 
+function nest(levels: number, at?: Date): unknown {
+  let node: unknown = at === undefined ? { nodeName: "#text" } : { nodeName: "#text", at };
+  for (let i = 0; i < levels; i++) node = { nodeName: "DIV", children: [node] };
+  return node;
+}
+
 function jobsModule() {
   const events: string[] = [];
   const jobs = createCodemodeModule();
@@ -118,6 +124,14 @@ function jobsModule() {
         buffer: new ArrayBuffer(4),
       } as never;
     },
+    // A DOM tree 130 levels deep: 260 levels of nesting, past Cap'n Web's 256.
+    deep: async () => nest(130) as never,
+    // The same tree with a Date at the bottom, which the journal can only
+    // keep with Cap'n Web's encoding, and that refuses this depth.
+    deepRich: async () => nest(130, new Date(1)) as never,
+    echo: async ([value]) => value ?? null,
+    // 40,000 bytes of text, but 80,002 once escaped as JSON.
+    quotes: async () => '"'.repeat(40_000),
     timer: async () => Timer({ at: new Date(42) }),
     url: async () => new URL("https://example.test/x") as never,
     urlState: async () => Timer({ at: new URL("https://example.test/x") as never }),
@@ -132,7 +146,7 @@ function jobsModule() {
   return { events, module };
 }
 
-function setup(options: { journal?: BridgeJournal } = {}) {
+function setup(options: { journal?: BridgeJournal; maxPayloadBytes?: number } = {}) {
   const { events, module } = jobsModule();
   const scopedStarts: string[] = [];
   const tracked = new Map<string, (end: WorkspaceModuleScopeEnd) => Promise<void>>();
@@ -154,7 +168,7 @@ function setup(options: { journal?: BridgeJournal } = {}) {
       trackDisposable: (key, close) => void tracked.set(key, close),
       untrackDisposable: (key) => void tracked.delete(key),
       execution: { id: "exec-1", metadata: {} },
-      maxPayloadBytes: 4096,
+      maxPayloadBytes: options.maxPayloadBytes ?? 4096,
       ...(options.journal === undefined ? {} : { journal: options.journal }),
     },
   );
@@ -391,6 +405,32 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
     });
     const at = "error" in replayed ? (replayed.error.props as { at: unknown }).at : undefined;
     expect(at).toBeInstanceOf(Date);
+  });
+
+  it("counts a plain result in a replayable run as a plain host module would", async () => {
+    const memory = memoryJournal();
+    const maxPayloadBytes = 64 * 1024;
+    const { bridge } = setup({ journal: memory.journal, maxPayloadBytes });
+    expect(result(await bridge.call("host/codemode:jobs.deep", []))).toEqual(nest(130));
+    expect(result(await bridge.call("host/codemode:jobs.quotes", []))).toBe('"'.repeat(40_000));
+
+    memory.restart();
+    const replay = setup({ journal: memory.journal, maxPayloadBytes });
+    expect(result(await replay.bridge.call("host/codemode:jobs.deep", []))).toEqual(nest(130));
+    expect(result(await replay.bridge.call("host/codemode:jobs.quotes", []))).toBe(
+      '"'.repeat(40_000),
+    );
+  });
+
+  it("refuses a rich value too deep for the journal as a call error", async () => {
+    const memory = memoryJournal();
+    const { bridge } = setup({ journal: memory.journal, maxPayloadBytes: 64 * 1024 });
+    expect(errorOf(await bridge.call("host/codemode:jobs.deepRich", []))).toMatch(
+      /maximum allowed depth/,
+    );
+    expect(errorOf(await bridge.call("host/codemode:jobs.echo", [nest(130, new Date(1))]))).toMatch(
+      /maximum allowed depth/,
+    );
   });
 
   it("still refuses a value no journal can keep in a replayable run", async () => {

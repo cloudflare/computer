@@ -1007,6 +1007,7 @@ function measureValue(
   live?: "allow" | "serializable" | string,
 ): number {
   let bytes = 0;
+  let rich = false;
   const seen = new Set<object>();
   const add = (count: number) => {
     bytes += count;
@@ -1044,6 +1045,7 @@ function measureValue(
         if (typeof item === "function" || !isSerializable(item)) {
           throw new Error(REPLAYABLE_LIVE_VALUE);
         }
+        rich = true;
         add(Math.max(1, utf8ByteLength(serialize(item))));
         return;
       }
@@ -1071,6 +1073,10 @@ function measureValue(
     seen.delete(item);
   };
   visit(value);
+  // The journal keeps a value with anything richer than JSON in it with
+  // Cap'n Web's encoding, as a whole, so check here that it can, while
+  // the failure can still go back as the call's error.
+  if (rich) serialize(value);
   return bytes;
 }
 
@@ -1102,11 +1108,11 @@ async function respond(
     const result = await run();
     const live = allowLive ? "allow" : undefined;
     if (result instanceof CodemodeResult) {
-      // A replayable run's values are counted as the journal encodes them.
+      // In a replayable run, plain data counts as it does for any host
+      // module, and only richer values by the encoding the journal keeps
+      // them in, so a deep or heavily escaped JSON result fits as before.
       const bytes =
-        (allowLive
-          ? measureValue(result.value, maxPayloadBytes, "response", live)
-          : utf8ByteLength(serialize(result.value))) +
+        measureValue(result.value, maxPayloadBytes, "response", live ?? "serializable") +
         (result.objects.length === 0 ? 0 : utf8ByteLength(serialize(result.objects)));
       if (bytes > maxPayloadBytes) {
         throw new Error(`Workspace capability response exceeds ${maxPayloadBytes} bytes.`);
