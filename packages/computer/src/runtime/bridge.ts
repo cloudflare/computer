@@ -659,7 +659,12 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         get: () =>
           this.#scopedContext === undefined
             ? Promise.reject(new Error(`Scoped context ${definition.name} isn't available here.`))
-            : this.#scopedContext(specifier, definition.name, this.#scope.signal),
+            : this.#scopedContext(specifier, definition.name, this.#scope.signal).then((value) => {
+                // The call may have timed out or been cancelled while the
+                // context started, so its method mustn't go on.
+                context.signal.throwIfAborted();
+                return value;
+              }),
       });
     }
     return Object.freeze(ctx) as unknown as WorkspaceModuleCallContext;

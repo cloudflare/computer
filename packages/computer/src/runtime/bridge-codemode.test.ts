@@ -110,6 +110,11 @@ function jobsModule() {
       session: await (ctx as unknown as { session: Promise<string> }).session,
     }),
     idle: async () => "idle",
+    write: async (_args, ctx) => {
+      await (ctx as unknown as { session: Promise<string> }).session;
+      events.push("write");
+      return null;
+    },
     foreign: async () => Other({}),
     callback: async ([fn]) => typeof fn,
     stream: async () => new ReadableStream() as never,
@@ -146,7 +151,14 @@ function jobsModule() {
   return { events, module };
 }
 
-function setup(options: { journal?: BridgeJournal; maxPayloadBytes?: number } = {}) {
+function setup(
+  options: {
+    journal?: BridgeJournal;
+    maxPayloadBytes?: number;
+    maxCallDurationMs?: number;
+    scopedContextMs?: number;
+  } = {},
+) {
   const { events, module } = jobsModule();
   const scopedStarts: string[] = [];
   const tracked = new Map<string, (end: WorkspaceModuleScopeEnd) => Promise<void>>();
@@ -163,12 +175,18 @@ function setup(options: { journal?: BridgeJournal; maxPayloadBytes?: number } = 
       ]),
       scopedContext: async (specifier, name) => {
         scopedStarts.push(`${specifier} ${name}`);
+        if (options.scopedContextMs !== undefined) {
+          await new Promise((resolve) => setTimeout(resolve, options.scopedContextMs));
+        }
         return "session-1";
       },
       trackDisposable: (key, close) => void tracked.set(key, close),
       untrackDisposable: (key) => void tracked.delete(key),
       execution: { id: "exec-1", metadata: {} },
       maxPayloadBytes: options.maxPayloadBytes ?? 4096,
+      ...(options.maxCallDurationMs === undefined
+        ? {}
+        : { maxCallDurationMs: options.maxCallDurationMs }),
       ...(options.journal === undefined ? {} : { journal: options.journal }),
     },
   );
@@ -244,6 +262,13 @@ describe("WorkspaceRuntimeBridge codemode modules", () => {
       session: "session-1",
     });
     expect(scopedStarts).toEqual(["codemode:jobs session"]);
+  });
+
+  it("stops a method waiting on a scoped context once its call has timed out", async () => {
+    const { bridge, events } = setup({ maxCallDurationMs: 20, scopedContextMs: 60 });
+    expect(errorOf(await bridge.call("host/codemode:jobs.write", []))).toMatch(/timed out/);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(events).toEqual([]);
   });
 
   it("uses journal sequence numbers for refs in a journaled run", async () => {
