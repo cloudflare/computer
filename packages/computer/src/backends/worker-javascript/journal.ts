@@ -674,7 +674,11 @@ export function describeCall(name: string, args: readonly unknown[]): string {
 
 function describeValue(value: unknown): string {
   if (value instanceof Uint8Array) return `<${value.byteLength} bytes>`;
-  const text = JSON.stringify(value) ?? "undefined";
+  // JSON can't encode a bigint, which a replayable run allows.
+  const text =
+    JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === "bigint" ? `${item}n` : item,
+    ) ?? "undefined";
   return text.length > 48 ? `${text.slice(0, 47)}…` : text;
 }
 
