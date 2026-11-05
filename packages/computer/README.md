@@ -429,7 +429,8 @@ your Worker; the container then trusts the platform's intercepting CA.
 and `withEgress(stub, value)` passes it with every command the module
 runs. `readOnly: true` runs commands as `nobody` and refuses `pull` and
 `user`, for a read-only backend. See
-[`examples/remote-exec`](../../examples/remote-exec).
+[20. Remote exec](../../docs/20_remote_exec.md) for setup and every
+option, and [`examples/remote-exec`](../../examples/remote-exec).
 
 ## Tools for agents
 

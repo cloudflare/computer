@@ -20,7 +20,8 @@ computer/
 │   ├── dofs/                           # @cloudflare/dofs — SQLite-backed VFS + sync
 │   ├── rpc/                            # @cloudflare/computer-rpc — capnweb wire interface
 │   ├── computerd/                      # @cloudflare/computerd — in-container daemon (binary)
-│   └── computer-computerd-linux-x64/   # private Docker image context for the linux-x64 binary
+│   ├── computer-computerd-linux-x64/   # private Docker image context for the linux-x64 binary
+│   └── remote-exec/                    # @cloudflare/remote-exec — remote exec's in-container binary (Rust)
 ├── examples/                           # Runnable Worker examples (see below)
 ├── docs/                               # This documentation set
 └── package.json                        # Workspace root (explicit package workspaces + examples/*)
@@ -60,6 +61,7 @@ packages/computer/
 │   │   ├── codemode/                # Dynamic Worker ECMAScript module backend
 │   │   └── test.ts                  # In-process test backend
 │   ├── mounts/                      # Mount registry, indexer, R2Bucket and WorkerBundle
+│   ├── remote-exec/                 # codemode:exec and ExecSandbox (@cloudflare/computer/remote-exec)
 │   ├── vite/                        # computerBundle Vite plugin (@cloudflare/computer/vite)
 │   ├── proxy.ts                     # WorkspaceProxy
 │   ├── proxy-stub.ts                # Client-side stub plumbing
@@ -180,6 +182,25 @@ Build pipeline: tsdown bundles `src/cli/computerd.ts` into `dist/cli/computerd.j
 produces the Node SEA single-file binary at
 `artifacts/computerd/computerd-linux-x64`.
 
+## `packages/remote-exec/` — `@cloudflare/remote-exec`
+
+`remote-exec`, the binary inside the container for
+[remote exec](./20_remote_exec.md). A private package: it isn't
+published to npm. Releases ship it as the
+`cloudflare/computer-remote-exec` image and attach it to the
+`@cloudflare/computer` GitHub release.
+
+```
+packages/remote-exec/
+├── src/                             # the session, run, push and pull, process supervision
+├── schema/exec.capnp                # the protocol; packages/computer/src/remote-exec/capnp is generated from it
+├── tests/                           # .gitignore fixtures and golden messages shared with the TypeScript tests
+├── build.sh                         # static musl builds → artifacts/remote-exec/
+├── Dockerfile                       # the image, from those builds
+├── dev/                             # a Linux container with Rust and capnp (dev/run.sh)
+└── Cargo.toml
+```
+
 ## Tools
 
 Agent tools (`read`, `write`, `edit`, `ls`, `exec`, and optional
@@ -214,6 +235,7 @@ examples/
 ├── container/                # computerd inside a Cloudflare Container
 ├── worker-shell/             # WorkerShellBackend (just-bash) example
 ├── codemode/                 # CodemodeBackend example
+├── remote-exec/              # codemode:exec running commands in a container
 ├── think/                    # @cloudflare/think chat integration
 ├── think-compare-runtimes/   # container vs worker runtime comparison UI
 ├── tutorial/                 # step-by-step pandoc PDF agent
