@@ -865,8 +865,8 @@ describe("WorkspaceRuntime", () => {
 // The Worker Loader resolves import specifiers differently under its
 // legacy and new module registries, so each case runs on both.
 describe.each([
-  ["the legacy module registry", "worker-javascript"],
-  ["the new module registry", "worker-javascript-new-registry"],
+  ["the legacy module registry", "codemode"],
+  ["the new module registry", "codemode-new-registry"],
 ])("module resolution on %s", (_label, backend) => {
   async function run(source: string, cwd = "/workspace/app") {
     const response = await runtime({ source, cwd, backend });
@@ -1485,7 +1485,7 @@ describe("interrupts", () => {
     await start("wait-answer", approval);
     const call = await waitingCall("wait-answer");
     expect(call).toMatchObject({
-      backend: "worker-javascript",
+      backend: "codemode",
       callId: expect.stringMatching(/^wait-answer:\d+$/),
       payload: { kind: "approval", action: "deploy" },
       metadata: {},

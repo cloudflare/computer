@@ -1,20 +1,20 @@
 # Isolate JavaScript runtime
 
 > [!NOTE]
-> **Stable.** `WorkerJavaScriptBackend` and its host modules are
+> **Stable.** `CodemodeBackend` and its host modules are
 > suitable for production use, except `codemode:container`, which runs on the
 > experimental container backend. See the [status table](../packages/computer/README.md#status).
 
-`WorkerJavaScriptBackend` runs an ECMAScript module in a fresh Cloudflare Dynamic Worker:
+`CodemodeBackend` runs an ECMAScript module in a fresh Cloudflare Dynamic Worker:
 
 ```ts
 import { Workspace } from "@cloudflare/computer";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 
 const workspace = new Workspace({
   storage: ctx.storage,
   backends: [
-    new WorkerJavaScriptBackend({
+    new CodemodeBackend({
       loader: env.LOADER,
       root: "/workspace",
       access: "read-write",
@@ -31,7 +31,7 @@ const workspace = new Workspace({
 
 `root`, `/workspace` by default, confines every path isolate code touches. A new Workspace doesn't have that directory yet, so a read-write backend creates it the first time it runs.
 
-Execute a module through the common runtime entry point:
+The backend registers as `"codemode"` unless you pass `id`. Execute a module through the common runtime entry point:
 
 ```ts
 const handle = await workspace.runtime.exec(
@@ -46,7 +46,7 @@ const handle = await workspace.runtime.exec(
     }
   `,
   {
-    backend: "worker-javascript",
+    backend: "codemode",
     input: { value: 21 },
     encoding: "utf8",
   },
@@ -94,7 +94,7 @@ await workspace.fs.writeFile(
 await workspace.runtime.exec(
   `import task from "./task.js"; export default task;`,
   {
-    backend: "worker-javascript",
+    backend: "codemode",
     cwd: "/workspace",
     input: { value: 42 },
   },
@@ -129,7 +129,7 @@ An execution runs until its code returns or its timeout passes, and `maxTimeoutM
 Raise the ones a long run needs along with the timeout:
 
 ```ts
-new WorkerJavaScriptBackend({
+new CodemodeBackend({
   loader: env.LOADER,
   maxTimeoutMs: 2 * 60 * 60_000,
   maxCapabilityCalls: 100_000,
@@ -150,7 +150,7 @@ A deploy or a crash still ends a run. See [Interrupted executions](#interrupted-
 A deploy or a crash restarts the Durable Object and ends every run in flight. `onInterrupt` decides what happens to those runs. Set a default on the backend and override it per run:
 
 ```ts
-const backend = new WorkerJavaScriptBackend({ loader: env.LOADER, onInterrupt: "replay" });
+const backend = new CodemodeBackend({ loader: env.LOADER, onInterrupt: "replay" });
 
 await workspace.runtime.exec(source, { onInterrupt: "fail" });
 ```
@@ -259,7 +259,7 @@ const handle = await workspace.runtime.exec(
     }
   `,
   {
-    backend: "worker-javascript",
+    backend: "codemode",
     env: { WHO: "demo" },
     stdin: "hello",
     encoding: "utf8",
@@ -286,7 +286,7 @@ import { createGitModule } from "@cloudflare/computer/modules/git";
 import { createToolBindings } from "@cloudflare/computer/modules/tools";
 import { forPiTools } from "@cloudflare/computer/tools/pi-ai";
 
-new WorkerJavaScriptBackend({
+new CodemodeBackend({
   loader: env.LOADER,
   modules: {
     "tar-stream": TAR_STREAM_BUNDLE,
@@ -408,7 +408,7 @@ The arguments come from caller code, so parse them before use. A function may re
 
 ```ts
 await workspace.runtime.exec(source, {
-  backend: "worker-javascript",
+  backend: "codemode",
   metadata: { conversation: conversationId },
 });
 
@@ -556,7 +556,7 @@ export default async function () {
 }
 ```
 
-`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the JavaScript backend fails to connect. Publishing uploads a file and hands out a public link, so `publish` refuses to run on a read-only backend, as the read-only tool set has no `publish` tool.
+`publish(path, { expiresAfter?, filename?, disposition?, contentType? })` resolves `path` against the backend root like any other host call. `expiresAfter` is milliseconds or a duration such as `"30m"`; the default is one hour, `createAssetsModule({ defaultExpiresAfterMs })` changes it, and the assets client caps it at seven days. `disposition` is `"inline"` or `"attachment"`. If the Workspace has no assets client, the codemode backend fails to connect. Publishing uploads a file and hands out a public link, so `publish` refuses to run on a read-only backend, as the read-only tool set has no `publish` tool.
 
 ### `codemode:tools`
 
@@ -584,7 +584,7 @@ import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createToolBindings } from "@cloudflare/computer/modules/tools";
 import { forPiTools } from "@cloudflare/computer/tools/pi-ai";
 
-new WorkerJavaScriptBackend({
+new CodemodeBackend({
   loader: env.LOADER,
   modules: {
     "codemode:tools": createToolBindings(forPiTools(() => agent.tools, { validate: validateToolArguments })),
@@ -622,7 +622,7 @@ class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) 
   workspace = new Workspace({
     storage: this.ctx.storage,
     backends: [
-      new WorkerJavaScriptBackend({
+      new CodemodeBackend({
         loader: this.env.LOADER,
         access: "read-write",
         modules: { "codemode:container": createContainerModule() },
@@ -636,8 +636,8 @@ class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) 
   });
 }
 
-// Offer only the JavaScript backend; the container is reached through codemode:container.
-const tools = createAITools({ workspace: this.workspace, exec: { backends: { "worker-javascript": {} } } });
+// Offer only the codemode backend; the container is reached through codemode:container.
+const tools = createAITools({ workspace: this.workspace, exec: { backends: { codemode: {} } } });
 ```
 
 ```js
@@ -649,7 +649,7 @@ export default async function () {
 }
 ```
 
-`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, or runs module source rather than shell commands, the JavaScript backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
+`exec(command, { cwd, env, stdin, timeoutMs })` runs through `workspace.runtime.exec` on the container backend: `ContainerBackend`, registered as `"container-shell"` unless you pass `backend`. If that backend is missing, or runs module source rather than shell commands, the codemode backend fails to connect. The container shares the Workspace's files: writes the module made before the call are pushed to the container, and the container's changes are pulled back before `exec` returns. A non-zero exit code comes back as a value, not as an error.
 
 The result also carries `sync`: `{ status, skipped, skippedCount, error? }`. `status` is `pending` when the container's file changes have not reached the Workspace yet, and `error` says why. `skipped` lists up to 100 paths the container wrote that the Workspace refused, such as files in a read-only mount, and `skippedCount` gives the full count. The sync is last-writer-wins: the container's changes replace files written in the Workspace while the command runs, without reporting them as skipped. Don't write files from the isolate that the running command also writes.
 
@@ -659,7 +659,7 @@ A few limits follow from `exec` being a host call:
 - The command's timeout is capped at the time left before the host call deadline (`maxHostCallMs`, which defaults to `maxTimeoutMs`). Raise `defaultTimeoutMs`, `maxTimeoutMs`, and `maxHostCallMs` for slow installs and builds, and remember the container's first start.
 - Cancelling the execution kills the running command.
 
-A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the JavaScript backend's.
+A container command can write to the Workspace, so `exec` refuses to run on a read-only backend. Whether it can reach the network follows `ContainerBackend`'s own `egress` setting, not the codemode backend's.
 
 Two options shape every command:
 

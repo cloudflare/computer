@@ -86,7 +86,7 @@ export interface ExecBackendOptions {
 
 /**
  * The backends the exec tool may run on, keyed by backend id:
- * `{ "worker-javascript": { description: "Use for data work." } }`.
+ * `{ codemode: { description: "Use for data work." } }`.
  * Pass `{}` for a backend that needs nothing beyond its own
  * description.
  */

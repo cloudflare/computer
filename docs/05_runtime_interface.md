@@ -103,7 +103,7 @@ flowchart LR
 - The files are ordinary Workspace files. A container backend receives them on its next push like any other change.
 - If saving fails, for example under a read-only mount, the entry has `status: "not-saved"` and a `reason`; the result still holds the last lines.
 
-Command backends leave `value` unset. `worker-javascript` uses `value` for the module's structured return value and reports a zero-entry completed sync. A command can complete while its post-command pull fails; in that case `sync.status` is `"pending"`, and the next `pull()` resumes the operation from its durable watermark without rerunning the command.
+Command backends leave `value` unset. `codemode` uses `value` for the module's structured return value and reports a zero-entry completed sync. A command can complete while its post-command pull fails; in that case `sync.status` is `"pending"`, and the next `pull()` resumes the operation from its durable watermark without rerunning the command.
 
 ## Backend routing
 
@@ -121,7 +121,7 @@ await workspace.runtime.exec(
     import fs from "node:fs/promises";
     export default async () => fs.readFile("/workspace/package.json", "utf8");
   `,
-  { backend: "worker-javascript" },
+  { backend: "codemode" },
 );
 ```
 
@@ -132,14 +132,14 @@ Omitting `backend` selects the first configured backend. Backend selection is ro
 ```ts
 workspace.runtime.backends();
 // [
-//   { id: "worker-javascript", protocol: "module", callable: true, description: "..." },
+//   { id: "codemode", protocol: "module", callable: true, description: "..." },
 //   { id: "container-shell", protocol: "command", callable: false, description: "..." },
 // ]
 ```
 
 - `protocol` says what `exec` source means there: a shell command (`"command"`) or module source (`"module"`).
 - `callable` says whether the backend takes structured `input` and returns a `value`.
-- `description`, when present, is what the backend tells a model about itself. `WorkerJavaScriptBackend` lists its source language and every module code can import, and `WorkerShellBackend` and `ContainerBackend` describe what they can run. The `exec` tool builds its description from these.
+- `description`, when present, is what the backend tells a model about itself. `CodemodeBackend` lists its source language and every module code can import, and `WorkerShellBackend` and `ContainerBackend` describe what they can run. The `exec` tool builds its description from these.
 
 The list is fixed when the Workspace is constructed. A client from `getWorkspace()` takes a copy of it when the client loads, so once awaited the answer is the same locally and over RPC. Before then, the client reports no backends.
 
@@ -163,7 +163,7 @@ Module backends use host capability calls against the authoritative Workspace an
 
 `container-shell` provides computerd's retained process log, replay, signals, and disposal. Execution handles are scoped to the UUID of the container process that accepted them, so they cannot target a reused execution id after process replacement. The latest UUID owner for each execution ID is stored in Workspace SQLite, with a bounded in-memory LRU cache, so direct by-ID operations preserve the fence across Durable Object incarnation and cache eviction.
 
-`worker-javascript` provides a Workspace-owned execution journal, retained result/events, host cancellation, and explicit disposal. Active Workers cannot be serialized across host restart; orphaned running records are reconciled to failed.
+`codemode` provides a Workspace-owned execution journal, retained result/events, host cancellation, and explicit disposal. Active Workers cannot be serialized across host restart; orphaned running records are reconciled to failed.
 
 `worker-shell` intentionally preserves one-call, buffered-result behavior in this release. It does not retain executions for later reattachment or disposal. `timeoutMs` and a concurrent `killExec()` for a caller-supplied execution ID cooperatively abort just-bash at statement boundaries; by the time an ordinary `exec()` promise returns, the command has already settled. Use the Container or JavaScript isolate when detached execution and retained lifecycle are required.
 

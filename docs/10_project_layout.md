@@ -57,7 +57,7 @@ packages/computer/
 │   ├── backends/
 │   │   ├── container/               # Cloudflare Container + computerd backend
 │   │   ├── worker-shell/            # Dynamic Worker + just-bash shell backend
-│   │   ├── worker-javascript/       # Dynamic Worker ECMAScript module backend
+│   │   ├── codemode/                # Dynamic Worker ECMAScript module backend
 │   │   └── test.ts                  # In-process test backend
 │   ├── mounts/                      # Mount registry, indexer, R2Bucket and WorkerBundle
 │   ├── vite/                        # computerBundle Vite plugin (@cloudflare/computer/vite)
@@ -74,7 +74,7 @@ packages/computer/
 └── package.json
 ```
 
-The package builds ESM and declarations with tsdown. Public entrypoints include the root export, tools, Git, assets, artifacts, the Container, Worker shell, and Worker JavaScript backends, and Cloudflare observability. The injected service is the separate `computerd` package, and shared wire types live in `@cloudflare/computer-rpc`.
+The package builds ESM and declarations with tsdown. Public entrypoints include the root export, tools, Git, assets, artifacts, the Container, Worker shell, and codemode backends, and Cloudflare observability. The injected service is the separate `computerd` package, and shared wire types live in `@cloudflare/computer-rpc`.
 
 ## `packages/dofs/` — `@cloudflare/dofs`
 
@@ -213,7 +213,7 @@ Runnable examples live at the repo root, not inside any package:
 examples/
 ├── container/                # computerd inside a Cloudflare Container
 ├── worker-shell/             # WorkerShellBackend (just-bash) example
-├── worker-javascript/        # WorkerJavaScriptBackend example
+├── codemode/                 # CodemodeBackend example
 ├── think/                    # @cloudflare/think chat integration
 ├── think-compare-runtimes/   # container vs worker runtime comparison UI
 ├── tutorial/                 # step-by-step pandoc PDF agent

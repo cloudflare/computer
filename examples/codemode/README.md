@@ -1,4 +1,4 @@
-# worker-javascript example
+# codemode example
 
 A Cloudflare Worker + Durable Object that runs a Workspace whose
 runtime evaluates **ECMAScript modules** in a **Dynamic Worker**
@@ -13,7 +13,7 @@ module instead of a just-bash command.
 client ─► Worker /c/<name>/{file,exec}
              │  (DO RPC calls)
              ▼
-       DO (ContainerExample) ──► Workspace ──► WorkerJavaScriptBackend
+       DO (ContainerExample) ──► Workspace ──► CodemodeBackend
                                                     │
                                                     │  env.LOADER.load(...)
                                                     ▼
@@ -26,13 +26,13 @@ client ─► Worker /c/<name>/{file,exec}
                                           (fs, git, artifacts)
 ```
 
-1. The DO constructs a `WorkerJavaScriptBackend` from
-   `@cloudflare/computer/backends/worker-javascript`, passing only
+1. The DO constructs a `CodemodeBackend` from
+   `@cloudflare/computer/backends/codemode`, passing only
    the Loader binding. Unlike the shell backend there is no
    `WorkspaceServiceProxy` loopback: the backend is self-contained
    and reaches the host through the `WorkspaceRuntimeBridge` it
    builds internally.
-2. Each `exec(source, { backend: "worker-javascript", input })`
+2. Each `exec(source, { backend: "codemode", input })`
    builds a module graph from the source, mints a fresh Dynamic
    Worker through `env.LOADER.load(...)`, and calls the runner's
    `evaluate(input, bridge)`. The module's default export receives
@@ -71,10 +71,10 @@ internet on its own.
 Identical to the worker-shell example. Seed once with:
 
 ```sh
-npm run seed:r2:local --workspace @example/computer-worker-javascript
+npm run seed:r2:local --workspace @example/computer-codemode
 
 # or after deploy
-npm run seed:r2 --workspace @example/computer-worker-javascript
+npm run seed:r2 --workspace @example/computer-codemode
 ```
 
 ## Bundled skill
@@ -104,13 +104,13 @@ POST /c/<name>/exec                    { source, input?, cwd?, env?, stdin? }
 ## Run it locally
 
 No Docker, no extra build step. The module runner ships inside
-`@cloudflare/computer/backends/worker-javascript`;
-`WorkerJavaScriptBackend` mints the Dynamic Worker through the
+`@cloudflare/computer/backends/codemode`;
+`CodemodeBackend` mints the Dynamic Worker through the
 Loader binding internally so the DO constructor stays a one-line
 backend invocation.
 
 ```sh
-npm run dev --workspace @example/computer-worker-javascript
+npm run dev --workspace @example/computer-codemode
 ```
 
 Smoke test:
@@ -145,14 +145,14 @@ environment is never exposed), and `stdin` is readable through
 ## Layout
 
 ```
-examples/worker-javascript/
+examples/codemode/
   wrangler.jsonc    Worker + DO + worker_loaders binding
   src/index.ts      Worker handler + DO (ContainerExample)
   src/skills/       Files mounted read-only at /workspace/.agents/skills
 ```
 
 Nothing else. The Dynamic Worker module runner ships from
-`@cloudflare/computer/backends/worker-javascript`.
+`@cloudflare/computer/backends/codemode`.
 
 ## Known limitations
 

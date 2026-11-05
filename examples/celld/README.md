@@ -161,7 +161,7 @@ export default async function main(input, ctx) {
 `ctx.cwd` is metadata; the directory is not mounted in the Dynamic Worker.
 
 The backend does not yet provide the full Computer
-`WorkerJavaScriptBackend` bridge:
+`CodemodeBackend` bridge:
 
 - Capability stubs cannot cross into the loaded Worker, so `ctx.fs` methods
   throw and durable `node:fs/promises` is unavailable there.

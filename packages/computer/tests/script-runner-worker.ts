@@ -1,10 +1,7 @@
 import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";
 import type { ShellRPC, SyncRPC } from "@cloudflare/computer-rpc";
 import type { WorkspaceBackend } from "../src/backend";
-import {
-  WorkerJavaScriptBackend,
-  type WorkerJavaScriptBackendOptions,
-} from "../src/backends/worker-javascript/index";
+import { CodemodeBackend, type CodemodeBackendOptions } from "../src/backends/codemode/index";
 import { createGitClient } from "../src/git/index";
 import type {
   WorkspaceExecutionMetadata,
@@ -230,19 +227,19 @@ const testJobs = jobsModule.module({
 
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
-const NEW_REGISTRY_BACKEND = "worker-javascript-new-registry";
-const NETWORK_BACKEND = "worker-javascript-network";
+const NEW_REGISTRY_BACKEND = "codemode-new-registry";
+const NETWORK_BACKEND = "codemode-network";
 
-function javascriptBackend(
+function codemodeBackend(
   env: Env,
   overrides: Partial<
     Pick<
-      WorkerJavaScriptBackendOptions,
+      CodemodeBackendOptions,
       "id" | "compatibilityFlags" | "loader" | "egress" | "maxStdioBytes"
     >
   > = {},
 ) {
-  return new WorkerJavaScriptBackend({
+  return new CodemodeBackend({
     loader: env.LOADER,
     ...overrides,
     maxStdioBytes: overrides.maxStdioBytes ?? 64,
@@ -370,8 +367,8 @@ export class HostDO extends DurableObject<Env> {
       waitUntil: ctx.waitUntil.bind(ctx),
       git: createGitClient(),
       backends: [
-        javascriptBackend(env),
-        javascriptBackend(env, {
+        codemodeBackend(env),
+        codemodeBackend(env, {
           id: NEW_REGISTRY_BACKEND,
           compatibilityFlags: ["nodejs_compat", "new_module_registry"],
           // Local workerd still marks the new registry experimental.
@@ -380,7 +377,7 @@ export class HostDO extends DurableObject<Env> {
               env.LOADER.load({ ...code, allowExperimental: true }),
           },
         }),
-        javascriptBackend(env, {
+        codemodeBackend(env, {
           id: NETWORK_BACKEND,
           egress: { mode: "http-gateway", gateway: ctx.exports.TestGateway },
           maxStdioBytes: 4096,
@@ -422,7 +419,7 @@ export class HostDO extends DurableObject<Env> {
     backend?: string;
   }) {
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: input.backend ?? "worker-javascript",
+      backend: input.backend ?? "codemode",
       cwd: input.cwd,
       input: input.value,
       id: input.id,
@@ -435,7 +432,7 @@ export class HostDO extends DurableObject<Env> {
 
   async startRuntime(input: { source: string; id: string }) {
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: input.id,
     });
     void handle.result().catch(() => undefined);
@@ -445,7 +442,7 @@ export class HostDO extends DurableObject<Env> {
   async getRuntime(id: string, resume?: "tail", network?: boolean) {
     try {
       const handle = await this.#workspace.runtime.getExec(id, {
-        backend: network === true ? NETWORK_BACKEND : "worker-javascript",
+        backend: network === true ? NETWORK_BACKEND : "codemode",
         encoding: "utf8",
         resume,
       });
@@ -471,7 +468,7 @@ export class HostDO extends DurableObject<Env> {
     executions.length = 0;
     await this.#workspace.fs.mkdir("/workspace", { recursive: true });
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: input.network === true ? NETWORK_BACKEND : "worker-javascript",
+      backend: input.network === true ? NETWORK_BACKEND : "codemode",
       id: input.id,
       onInterrupt: input.onInterrupt,
       metadata: input.metadata,
@@ -494,7 +491,7 @@ export class HostDO extends DurableObject<Env> {
     durableCalls.clear();
     waits.length = 0;
     const handle = await this.#workspace.runtime.exec(input.source, {
-      backend: "worker-javascript",
+      backend: "codemode",
       id: input.id,
       onInterrupt: input.onInterrupt ?? "replay",
       timeoutMs: input.timeoutMs,
@@ -551,11 +548,11 @@ export class HostDO extends DurableObject<Env> {
   }
 
   killRuntime(id: string) {
-    return this.#workspace.runtime.killExec(id, { backend: "worker-javascript" });
+    return this.#workspace.runtime.killExec(id, { backend: "codemode" });
   }
 
   disposeRuntime(id: string) {
-    return this.#workspace.runtime.disposeExec(id, { backend: "worker-javascript" });
+    return this.#workspace.runtime.disposeExec(id, { backend: "codemode" });
   }
 }
 
@@ -767,7 +764,7 @@ export default class extends WorkerEntrypoint<Env> {
         // SAFETY: The object's getWorkspace returns a WorkspaceStub; RPC typing can't follow it that deep.
         using workspace = (await stub.getWorkspace()) as unknown as WorkspaceStub;
         using handle = await workspace.runtime.exec(body.source, {
-          backend: "worker-javascript",
+          backend: "codemode",
           encoding: "utf8",
           metadata: body.metadata,
         });

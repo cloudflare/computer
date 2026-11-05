@@ -204,13 +204,13 @@ describe("WorkspaceRuntime callable gate", () => {
   it("accepts structured input for a callable module backend", async () => {
     const handle = moduleHandleStub();
     const runtime = new WorkspaceRuntime({
-      backends: new Map([["worker-javascript", { callable: true }]]),
+      backends: new Map([["codemode", { callable: true }]]),
       backendHandle: async () => handle,
-      resolveBackendId: () => "worker-javascript",
+      resolveBackendId: () => "codemode",
     });
 
     await runtime.exec("export default (i) => i", {
-      backend: "worker-javascript",
+      backend: "codemode",
       input: { n: 1 },
     });
 

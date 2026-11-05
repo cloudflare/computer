@@ -11,7 +11,7 @@ import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { WorkerJavaScriptBackend } from "./backends/worker-javascript/worker-javascript";
+import { CodemodeBackend } from "./backends/codemode/codemode";
 import { getWorkspace } from "./client";
 import type { WorkspaceBackendInfo } from "./runtime/runtime";
 import type { WorkspaceModuleBackend } from "./runtime/types";
@@ -469,13 +469,13 @@ function echoBackend(): WorkspaceModuleBackend {
 }
 
 describe("getWorkspace — backend information", () => {
-  // A Workspace with one callable JavaScript backend that describes its
+  // A Workspace with one callable codemode backend that describes its
   // modules. The loader is never reached; only construction runs.
-  function workspaceWithJavaScript() {
+  function workspaceWithCodemode() {
     return new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load: () => ({ getEntrypoint: () => ({}) }) },
           modules: { "codemode:weather": { forecast: () => null } },
         }),
@@ -556,17 +556,17 @@ describe("getWorkspace — backend information", () => {
     ],
   ] as const) {
     it(`answers backend questions on a ${path} client`, async () => {
-      const client = await connect(workspaceWithJavaScript());
+      const client = await connect(workspaceWithCodemode());
 
       const [backend, ...others] = client.runtime.backends();
 
       expect(others).toEqual([]);
-      expect(backend).toMatchObject({ id: "worker-javascript", callable: true });
+      expect(backend).toMatchObject({ id: "codemode", callable: true });
       expect(backend?.description).toContain("`codemode:weather`: exports");
     });
 
     it(`builds a callable exec tool from a ${path} client`, async () => {
-      const client = await connect(workspaceWithJavaScript());
+      const client = await connect(workspaceWithCodemode());
       const tools = createAITools({ workspace: client });
       const exec = tools.exec as { description?: string; inputSchema?: unknown } | undefined;
       if (!(exec?.inputSchema instanceof z.ZodType))

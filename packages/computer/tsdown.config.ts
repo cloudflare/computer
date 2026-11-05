@@ -42,7 +42,7 @@ export default defineConfig({
     "modules/browser": "src/modules/browser.ts",
     "backends/container-legacy/index": "src/backends/container-legacy/index.ts",
     "backends/container/index": "src/backends/container/index.ts",
-    "backends/worker-javascript/index": "src/backends/worker-javascript/index.ts",
+    "backends/codemode/index": "src/backends/codemode/index.ts",
     "backends/worker-shell/index": "src/backends/worker-shell/index.ts",
     // The shell-module groups build-bundle.mjs emits. Each is its
     // own entry so it lands at the dist path the ./shell/* package

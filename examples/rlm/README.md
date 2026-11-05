@@ -45,7 +45,7 @@ This pattern is less useful when the context already fits comfortably in one pro
 
 1. The host fetches an official Oolong task and writes its corpus and manifest to a Workspace.
 2. The parent model receives the question, file paths, and the available Computer tool. It does not receive the complete corpus.
-3. The parent writes a complete ECMAScript module for the Worker JavaScript backend.
+3. The parent writes a complete ECMAScript module for the codemode backend.
 4. That module reads record-aligned partitions from the Workspace.
 5. The module calls `codemode:model` with a bounded batch of classification or extraction requests.
 6. The module validates the returned JSON and reduces it to one answer with JavaScript.
@@ -60,7 +60,7 @@ The host gives generated code a read-only Workspace and one trusted model module
 ```ts
 const modelCapability = createModelCapability(model, hooks);
 
-const backend = new WorkerJavaScriptBackend({
+const backend = new CodemodeBackend({
   id: "oolong-rlm-javascript",
   loader: env.LOADER,
   root: "/workspace",
@@ -149,7 +149,7 @@ The reducer is exact relative to its inputs. Model classifications can still be 
 
 The shortest path through the example is:
 
-1. [`worker/rlm-agent.ts`](worker/rlm-agent.ts) wires together the model, Workspace, Worker JavaScript backend, executor tool, and `codemode:model`.
+1. [`worker/rlm-agent.ts`](worker/rlm-agent.ts) wires together the model, Workspace, codemode backend, executor tool, and `codemode:model`.
 2. [`worker/capability.ts`](worker/capability.ts) implements the bounded `batch(requests)` function behind `codemode:model`.
 3. [`worker/structured-rlm.ts`](worker/structured-rlm.ts) describes the map result and JavaScript reduction for each task family.
 4. [`worker/agent-common.ts`](worker/agent-common.ts) writes the same corpus into each Computer Workspace.

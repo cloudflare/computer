@@ -1,8 +1,8 @@
 // `codemode:container`: lets isolate JavaScript run shell commands in the
 // Workspace's container backend.
 //
-// Installed on a WorkerJavaScriptBackend, it turns the container into a
-// library the JavaScript backend calls, rather than a second backend
+// Installed on a CodemodeBackend, it turns the container into a
+// library the codemode backend calls, rather than a second backend
 // the model has to choose between:
 //
 //   import { exec } from "codemode:container";
@@ -64,7 +64,7 @@ export interface ContainerModuleOptions {
  *
  * A container command can write to the Workspace, so `exec` refuses to
  * run on a read-only backend. Network access follows the container
- * backend's own egress setting; the JavaScript backend's does not apply.
+ * backend's own egress setting; the codemode backend's does not apply.
  *
  * @param options - Which backend to use and how much output to return.
  * @returns The module to pass as `modules["codemode:container"]`. Its
@@ -102,7 +102,7 @@ export function createContainerModule(
     prelude === undefined || prelude.trim() === "" ? command : `${prelude}\n${command}`;
 
   const create = (host: WorkspaceModuleHost): WorkspaceModuleFunctions => {
-    // The factory runs when the JavaScript backend connects, so a
+    // The factory runs when the codemode backend connects, so a
     // missing or wrong container backend fails there, before any code
     // runs, rather than on the first exec.
     const target = host.runtime.backends().find((info) => info.id === backend);

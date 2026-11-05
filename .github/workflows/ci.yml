@@ -140,6 +140,9 @@ jobs:
           - name: assets
             workspace: "@example/computer-assets"
             path: examples/assets
+          - name: codemode
+            workspace: "@example/computer-codemode"
+            path: examples/codemode
           - name: container
             workspace: "@example/computer-container"
             path: examples/container
@@ -164,9 +167,6 @@ jobs:
           - name: tutorial
             workspace: "@example/computer-tutorial"
             path: examples/tutorial
-          - name: worker-javascript
-            workspace: "@example/computer-worker-javascript"
-            path: examples/worker-javascript
           - name: worker-shell
             workspace: "@example/computer-worker-shell"
             path: examples/worker-shell

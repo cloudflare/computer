@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeValue, encodeValue } from "../backends/worker-javascript/journal";
+import { decodeValue, encodeValue } from "../backends/codemode/journal";
 
 import { type BridgeJournal, type BridgeResponse, WorkspaceRuntimeBridge } from "./bridge";
 import type { WorkspaceRuntimeCapability } from "./capability";

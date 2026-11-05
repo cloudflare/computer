@@ -64,7 +64,7 @@ import {
   prepareSourceModules,
 } from "./module-graph";
 
-export interface WorkerJavaScriptBackendOptions {
+export interface CodemodeBackendOptions {
   loader: WorkspaceRuntimeLoader;
   id?: string;
   root?: string;
@@ -202,9 +202,9 @@ export interface WorkerJavaScriptBackendOptions {
   globalOutbound?: Fetcher | null;
 }
 
-type ResolvedWorkerJavaScriptBackendOptions = Required<
+type ResolvedCodemodeBackendOptions = Required<
   Pick<
-    WorkerJavaScriptBackendOptions,
+    CodemodeBackendOptions,
     | "root"
     | "access"
     | "defaultTimeoutMs"
@@ -232,7 +232,7 @@ type ResolvedWorkerJavaScriptBackendOptions = Required<
     | "compatibilityFlags"
   >
 > &
-  Omit<WorkerJavaScriptBackendOptions, "egress" | "globalOutbound" | "modules"> & {
+  Omit<CodemodeBackendOptions, "egress" | "globalOutbound" | "modules"> & {
     egress: WorkspaceEgressPolicy;
     modules: ParsedModules;
   };
@@ -306,18 +306,18 @@ interface ExecutionRecord {
   instances?: Map<string, Promise<ScopeInstance>>;
 }
 
-export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
+export class CodemodeBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
-  readonly type = "worker-javascript";
+  readonly type = "codemode";
   readonly callable = true;
   readonly id: string;
-  readonly #options: ResolvedWorkerJavaScriptBackendOptions;
+  readonly #options: ResolvedCodemodeBackendOptions;
   readonly #header: string;
 
-  constructor(options: WorkerJavaScriptBackendOptions) {
-    this.id = options.id ?? "worker-javascript";
+  constructor(options: CodemodeBackendOptions) {
+    this.id = options.id ?? "codemode";
     if (options.egress !== undefined && options.globalOutbound !== undefined) {
-      throw new Error("WorkerJavaScriptBackend cannot use globalOutbound together with egress.");
+      throw new Error("CodemodeBackend cannot use globalOutbound together with egress.");
     }
     const maxTimeoutMs = options.maxTimeoutMs ?? 180_000;
     const defaultTimeoutMs = options.defaultTimeoutMs ?? Math.min(60_000, maxTimeoutMs);
@@ -335,9 +335,7 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
       keepAliveIntervalMs < 0 ||
       keepAliveIntervalMs >= 900_000
     ) {
-      throw new Error(
-        "WorkerJavaScriptBackend keepAliveIntervalMs must be zero or less than 15 minutes.",
-      );
+      throw new Error("CodemodeBackend keepAliveIntervalMs must be zero or less than 15 minutes.");
     }
     assertPositiveFinite(options.maxSourceBytes ?? 1024 * 1024, "maxSourceBytes");
     assertPositiveFinite(options.maxInputBytes ?? 1024 * 1024, "maxInputBytes");
@@ -365,14 +363,14 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
     assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
     assertPositiveInteger(options.maxRetainedExecutions ?? 100, "maxRetainedExecutions");
     if ((options.maxCapabilityBytes ?? 1024 * 1024) < 256) {
-      throw new Error("WorkerJavaScriptBackend maxCapabilityBytes must be at least 256 bytes.");
+      throw new Error("CodemodeBackend maxCapabilityBytes must be at least 256 bytes.");
     }
     const compatibilityDate = options.compatibilityDate ?? "2026-05-23";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) {
-      throw new Error("WorkerJavaScriptBackend compatibilityDate must use YYYY-MM-DD.");
+      throw new Error("CodemodeBackend compatibilityDate must use YYYY-MM-DD.");
     }
     if (defaultTimeoutMs > maxTimeoutMs) {
-      throw new Error("WorkerJavaScriptBackend defaultTimeoutMs cannot exceed maxTimeoutMs.");
+      throw new Error("CodemodeBackend defaultTimeoutMs cannot exceed maxTimeoutMs.");
     }
     const { globalOutbound, egress, ...backendOptions } = options;
     const resolvedEgress =
@@ -432,12 +430,12 @@ export class WorkerJavaScriptBackend implements WorkspaceModuleBackend {
   }
 
   async connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle> {
-    return new JavaScriptBackendHandle(this.#options, host);
+    return new CodemodeBackendHandle(this.#options, host);
   }
 }
 
-class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
-  readonly #options: ResolvedWorkerJavaScriptBackendOptions;
+class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
+  readonly #options: ResolvedCodemodeBackendOptions;
   readonly #host: WorkspaceModuleBackendHost;
   readonly #hostModuleFunctions: ReadonlyMap<string, WorkspaceModuleFunctions>;
   readonly #emptyHostModules: ReadonlySet<string>;
@@ -462,7 +460,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   // Zero when the timer is off or can't keep this object in memory.
   readonly #keepAliveIntervalMs: number;
 
-  constructor(options: ResolvedWorkerJavaScriptBackendOptions, host: WorkspaceModuleBackendHost) {
+  constructor(options: ResolvedCodemodeBackendOptions, host: WorkspaceModuleBackendHost) {
     this.#options = options;
     this.#keepAliveIntervalMs = hostKeepsPendingWork() ? options.keepAliveIntervalMs : 0;
     this.#host = host;
@@ -973,7 +971,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   }
 
   async exec(input: ModuleExecutionInput): Promise<ModuleExecutionEnvelope> {
-    if (this.#closed) throw runtimeError("ECLOSED", "Workspace JavaScript backend is closed");
+    if (this.#closed) throw runtimeError("ECLOSED", "CodemodeBackend is closed");
     const id = input.id ?? crypto.randomUUID();
     assertExecutionId(id);
     this.#prune();
@@ -1028,7 +1026,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
       });
       if (this.#closed) {
-        throw runtimeError("ECLOSED", "Workspace JavaScript backend closed during module loading");
+        throw runtimeError("ECLOSED", "CodemodeBackend closed during module loading");
       }
       const record: ExecutionRecord = {
         id,
@@ -1316,7 +1314,7 @@ class JavaScriptBackendHandle implements WorkspaceModuleBackendHandle {
   }
 
   get #backendId(): string {
-    return this.#options.id ?? "worker-javascript";
+    return this.#options.id ?? "codemode";
   }
 
   async #cancel(record: ExecutionRecord, message: string): Promise<void> {
@@ -2261,13 +2259,13 @@ function assertStringRecord(
 
 function assertPositiveFinite(value: number, name: string) {
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`WorkerJavaScriptBackend ${name} must be a positive finite number.`);
+    throw new Error(`CodemodeBackend ${name} must be a positive finite number.`);
   }
 }
 
 function assertPositiveInteger(value: number, name: string) {
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`WorkerJavaScriptBackend ${name} must be a positive integer.`);
+    throw new Error(`CodemodeBackend ${name} must be a positive integer.`);
   }
 }
 

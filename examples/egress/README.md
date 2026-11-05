@@ -12,7 +12,7 @@ This Worker sends one URL through all three Cloudflare Computer execution backen
 
 - the container shell runs `curl`;
 - the Worker shell runs its `curl` command;
-- Worker JavaScript runs `fetch`.
+- the codemode backend runs `fetch`.
 
 `EGRESS_MODE` applies the same egress policy to every backend.
 
@@ -46,7 +46,7 @@ The endpoint returns the status code and MIME type from each backend, or an erro
   "url": "https://example.com/",
   "container": { "status": 200, "mimeType": "text/html" },
   "worker-shell": { "status": 200, "mimeType": "text/html" },
-  "worker-javascript": { "status": 200, "mimeType": "text/html" }
+  "codemode": { "status": 200, "mimeType": "text/html" }
 }
 ```
 

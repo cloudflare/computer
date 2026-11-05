@@ -1,7 +1,7 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { WorkerJavaScriptBackend } from "../../backends/worker-javascript/worker-javascript";
+import { CodemodeBackend } from "../../backends/codemode/codemode";
 import { createGitModule } from "../../modules/git";
 import type { WorkspaceRuntimeExecHandle, WorkspaceRuntimeResult } from "../../runtime/types";
 import { Workspace } from "../../workspace";
@@ -1348,7 +1348,7 @@ describe("createAITools exec tool", () => {
       storage: new SQLiteTestStorage(),
       backends: [
         streamingCommandBackend([]) as never,
-        new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
+        new CodemodeBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
     const tools = createAITools({ workspace });
@@ -1357,7 +1357,7 @@ describe("createAITools exec tool", () => {
       required?: string[];
     };
 
-    expect(schema.properties.backend?.enum).toEqual(["shell", "worker-javascript"]);
+    expect(schema.properties.backend?.enum).toEqual(["shell", "codemode"]);
     expect(schema.required).toContain("backend");
     expect(toolDescription(tools.exec)).not.toMatch(/default backend/i);
     expect(toolDescription(tools.exec)).toContain('- "shell": Runs shell commands.');
@@ -1369,13 +1369,13 @@ describe("createAITools exec tool", () => {
       storage: new SQLiteTestStorage(),
       backends: [
         streamingCommandBackend([]) as never,
-        new WorkerJavaScriptBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
+        new CodemodeBackend({ loader: { load: () => ({ getEntrypoint: () => ({}) }) } }),
       ],
     });
-    const listed = createAITools({ workspace, exec: { backends: { "worker-javascript": {} } } });
+    const listed = createAITools({ workspace, exec: { backends: { codemode: {} } } });
     const mapped = createAITools({
       workspace,
-      exec: { backends: { "worker-javascript": { description: "Use for data work." }, shell: {} } },
+      exec: { backends: { codemode: { description: "Use for data work." }, shell: {} } },
     });
 
     expect(inputProperties(listed.exec)).not.toContain("backend");
@@ -1813,12 +1813,12 @@ describe("createAITools callable exec", () => {
   });
 });
 
-describe("createAITools exec against a real JavaScript backend", () => {
+describe("createAITools exec against a real CodemodeBackend", () => {
   it("lists the backend's modules in the tool description", () => {
     const workspace = new Workspace({
       storage: new SQLiteTestStorage(),
       backends: [
-        new WorkerJavaScriptBackend({
+        new CodemodeBackend({
           loader: { load: () => ({ getEntrypoint: () => ({}) }) },
           modules: {
             "tar-stream": "export default {};",
@@ -1830,7 +1830,7 @@ describe("createAITools exec against a real JavaScript backend", () => {
     });
     const tools = createAITools({
       workspace,
-      shell: { backends: { "worker-javascript": {} } },
+      shell: { backends: { codemode: {} } },
     });
     const description = toolDescription(tools.exec);
 
@@ -1856,7 +1856,7 @@ describe("createAITools exec with one backend", () => {
           return { result: async () => ({ exitCode: 0, stdout: "", stderr: "", value: 1 }) };
         },
         backends: () => [
-          { id: "worker-javascript", callable },
+          { id: "codemode", callable },
           { id: "shell", callable: false },
           { id: "container", callable: false },
         ],
@@ -1869,7 +1869,7 @@ describe("createAITools exec with one backend", () => {
     const { calls, workspace } = recordingWorkspace(true);
     const tools = createAITools({
       workspace,
-      shell: { backends: { "worker-javascript": { description: "Isolated JavaScript." } } },
+      shell: { backends: { codemode: { description: "Isolated JavaScript." } } },
     });
 
     expect(inputProperties(tools.exec)).toEqual(["command", "cwd", "env", "input"]);
@@ -1880,7 +1880,7 @@ describe("createAITools exec with one backend", () => {
     expect(parsed).toEqual({ command: "export default () => 1" });
     await executeTool(tools.exec, parsed);
     expect(calls).toEqual([
-      { command: "export default () => 1", backend: "worker-javascript", input: undefined },
+      { command: "export default () => 1", backend: "codemode", input: undefined },
     ]);
   });
 
@@ -1896,7 +1896,7 @@ describe("createAITools exec with one backend", () => {
     const { workspace } = recordingWorkspace(true);
     const tools = createAITools({
       workspace,
-      shell: { backends: { "worker-javascript": { description: "Isolated JavaScript." } } },
+      shell: { backends: { codemode: { description: "Isolated JavaScript." } } },
     });
 
     expect(toolDescription(tools.exec)).not.toMatch(/backend/i);
@@ -1919,9 +1919,9 @@ describe("createAITools exec with one backend", () => {
     const tools = createAITools({
       workspace,
       shell: {
-        defaultBackend: "worker-javascript",
+        defaultBackend: "codemode",
         backends: {
-          "worker-javascript": { description: "Isolated JavaScript." },
+          codemode: { description: "Isolated JavaScript." },
           container: { description: "Full Linux." },
         },
       },

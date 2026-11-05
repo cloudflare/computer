@@ -22,7 +22,7 @@ removed in a future release; each one names its replacement.
 | --- | --- | --- |
 | `Workspace`, `withWorkspace`, `getWorkspace`, `workspace.fs`, `workspace.runtime`, and the stub types | `@cloudflare/computer` | Stable |
 | The SQLite filesystem layer (`@cloudflare/dofs`, bundled into this package), including `SQLiteWorkspaceProvider` | `@cloudflare/computer` | Stable |
-| `WorkerJavaScriptBackend` | `@cloudflare/computer/backends/worker-javascript` | Stable |
+| `CodemodeBackend` | `@cloudflare/computer/backends/codemode` | Stable |
 | Read-only mounts (`R2Bucket`, `WorkerBundle`) and the Vite plugin | `@cloudflare/computer`, `@cloudflare/computer/vite` | Stable |
 | Agent tools | `@cloudflare/computer/tools`, `@cloudflare/computer/tools/*` | Stable |
 | Host modules for isolate JavaScript: `codemode:git`, `codemode:artifacts`, `codemode:assets`, `codemode:tools` | `@cloudflare/computer/modules/git`, `modules/artifacts`, `modules/assets`, `modules/tools` | Stable |
@@ -31,11 +31,11 @@ removed in a future release; each one names its replacement.
 | Observability hook and its Cloudflare adapter | `@cloudflare/computer`, `@cloudflare/computer/observe/cloudflare` | Stable |
 | `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
-| Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
+| Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
-| Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/worker-javascript` | Experimental |
+| Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
 | The RPC wire protocol between the durable object and `computerd` (`@cloudflare/computer-rpc`) | Internal | Experimental |
@@ -82,7 +82,7 @@ npm install @cloudflare/computer
 ```
 
 Your Worker needs the `nodejs_compat` compatibility flag. The
-worker-shell and worker-javascript backends also need a Worker Loader
+worker-shell and codemode backends also need a Worker Loader
 binding, and the worker-shell backend needs the `experimental` flag. Each backend has its
 own binding requirements — see [Choosing a backend](#choosing-a-backend).
 
@@ -138,8 +138,8 @@ export default {
 To run commands against those files, add an execution backend. The
 worker-shell backend needs no container and no Docker, so it's the
 quickest way to get `exec` working. It is experimental; for a stable
-backend, use the worker-javascript backend, shown in
-[`examples/worker-javascript`](../../examples/worker-javascript):
+backend, use the codemode backend, shown in
+[`examples/codemode`](../../examples/codemode):
 
 ```ts
 import { withWorkspace, getWorkspace } from "@cloudflare/computer";
@@ -279,7 +279,7 @@ for the options, types, and how refresh works.
 `workspace.runtime.exec(source, options)` is the single execution entry
 point. What `source` means depends on the backend: a shell command for
 the container and worker-shell backends, an ECMAScript module for the
-worker-javascript backend.
+codemode backend.
 
 ```ts
 using run = await ws.runtime.exec("ls -la /workspace", { encoding: "utf8" });
@@ -319,7 +319,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 | **Container** | Experimental | `@cloudflare/computer/backends/container` | Shell commands in full Linux userland (real binaries, `npm`, `node`, network) | A Cloudflare Container running `computerd`, scheduled by the durable object (`scheduling_policy: "durable_object"`) |
 | **Container (legacy)** | Deprecated | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
 | **Worker shell** | Experimental | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag; the `just-bash` package |
-| **Worker JavaScript** | Stable | `@cloudflare/computer/backends/worker-javascript` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
+| **Codemode** | Stable | `@cloudflare/computer/backends/codemode` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
 
 - **Container** cold-starts more slowly but gives you a real Linux
   environment. The container owns its own SQLite-backed VFS and this
@@ -335,13 +335,13 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   second store and no sync round trip. See
   [`docs/12_worker_backend.md`](../../docs/12_worker_backend.md) and
   [`examples/worker-shell`](../../examples/worker-shell).
-- **Worker JavaScript** evaluates a module with structured
+- **Codemode** evaluates a module with structured
   input/results, durable relative imports, configured libraries,
   Workspace-backed `node:fs/promises`, and host modules such as
   `codemode:git`, `codemode:artifacts`, and `codemode:container`. It runs after `runtime.exec()` returns; the
   run stays alive while its event stream is consumed. See
   [`docs/17_isolate_javascript.md`](../../docs/17_isolate_javascript.md)
-  and [`examples/worker-javascript`](../../examples/worker-javascript).
+  and [`examples/codemode`](../../examples/codemode).
 
 You can register several backends on one Workspace and route each call
 to a named one — see [Multiple backends](#multiple-backends).
@@ -512,7 +512,7 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container` | `ContainerBackend` and `withWorkspaceContainer`. Pulls in the computerd / capnweb sync plumbing. |
 | `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
-| `@cloudflare/computer/backends/worker-javascript` | `WorkerJavaScriptBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
+| `@cloudflare/computer/backends/codemode` | `CodemodeBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
 | `@cloudflare/computer/modules/container` | `createContainerModule()` for `codemode:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `codemode:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `codemode:artifacts`: Artifacts and git tokens from isolate JavaScript. |
@@ -541,9 +541,10 @@ with the in-container service live in the sibling package
 ### Multiple backends
 
 A Workspace can carry more than one backend, each registered under a
-stable selector `id` (defaulting to `"worker-shell"`,
-`"container-shell"`, or `"worker-javascript"`). `runtime.exec` uses the
-first backend unless the caller names one:
+stable selector `id`. `WorkerShellBackend` defaults to `"worker-shell"`,
+`ContainerBackend` to `"container-shell"`, and `CodemodeBackend` to
+`"codemode"`. `runtime.exec` uses the first backend unless the caller
+names one:
 
 ```ts
 const ws = new Workspace({
@@ -564,7 +565,7 @@ backend, which is handy from an agent's `onStart`. Per-backend sync
 cursors are independent, so activity on one never disturbs the other.
 
 A backend that accepts a structured `input` and returns a structured
-`value` declares `callable: true` (the worker-javascript backend does).
+`value` declares `callable: true` (the codemode backend does).
 Passing `input` to a non-callable backend is a clear error rather than a
 silent drop.
 
@@ -609,7 +610,7 @@ An adapter for the Cloudflare runtime lives at
 - [`examples/worker-shell`](../../examples/worker-shell) — the
   worker-shell backend behind a `write` / `read` / `exec` HTTP surface.
   No container.
-- [`examples/worker-javascript`](../../examples/worker-javascript) — the
+- [`examples/codemode`](../../examples/codemode) — the
   same shape, running ECMAScript modules instead of shell commands.
 - [`examples/container`](../../examples/container) — the container
   backend running `computerd`.

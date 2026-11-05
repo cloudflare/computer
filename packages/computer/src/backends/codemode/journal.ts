@@ -1,4 +1,4 @@
-// Durable execution state for the JavaScript backend.
+// Durable execution state for the codemode backend.
 //
 // An execution started with `onInterrupt: "restart"` or `"replay"` saves
 // what it needs to start again: its module graph, input, context and

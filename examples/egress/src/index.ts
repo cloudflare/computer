@@ -9,11 +9,11 @@ import {
   WorkspaceServiceProxy,
   withWorkspace,
 } from "@cloudflare/computer";
+import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 import {
   LegacyContainerBackend,
   withLegacyWorkspaceContainer,
 } from "@cloudflare/computer/backends/container-legacy";
-import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
 import {
   WorkerShellBackend,
   type WorkerShellLoader,
@@ -71,7 +71,7 @@ function workspaceOptions(self: InstanceType<typeof EgressContainerBase>): Works
         commands: [curl],
         egress: self.egress,
       }),
-      new WorkerJavaScriptBackend({
+      new CodemodeBackend({
         loader: env.LOADER as unknown as WorkspaceRuntimeLoader,
         egress: self.egress,
       }),
@@ -131,7 +131,7 @@ export default {
     const stub = env.EgressExample.get(env.EgressExample.idFromName("default"));
     const workspace = await getWorkspace(stub as unknown as Parameters<typeof getWorkspace>[0]);
     await workspace.fs.mkdir("/workspace", { recursive: true });
-    const [container, workerShell, workerJavaScript] = await Promise.all([
+    const [container, workerShell, codemode] = await Promise.all([
       shellFetch(workspace, "container-shell", url),
       shellFetch(workspace, "worker-shell", url),
       javaScriptFetch(workspace, url),
@@ -142,7 +142,7 @@ export default {
       url,
       container,
       "worker-shell": workerShell,
-      "worker-javascript": workerJavaScript,
+      codemode,
     });
   },
 } satisfies ExportedHandler<Env>;
@@ -168,13 +168,13 @@ async function shellFetch(
 async function javaScriptFetch(workspace: WorkspaceClient, url: string): Promise<FetchResult> {
   try {
     const handle = await workspace.runtime.exec(JAVASCRIPT_FETCH, {
-      backend: "worker-javascript",
+      backend: "codemode",
       input: url,
       encoding: "utf8",
     });
     const result = await handle.result();
     if (result.status !== "completed" || result.value === undefined) {
-      return { error: result.stderr.trim() || "Worker JavaScript fetch failed" };
+      return { error: result.stderr.trim() || "Codemode fetch failed" };
     }
     return result.value as FetchResult;
   } catch (error) {

@@ -331,7 +331,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         continue;
       }
       throw new Error(
-        `Module ${JSON.stringify(specifier)} is not configured for the worker-javascript backend.`,
+        `Module ${JSON.stringify(specifier)} is not configured for the codemode backend.`,
       );
     }
     modules[name] = rewriteImports(source, edits);

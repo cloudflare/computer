@@ -12,7 +12,7 @@ SQLite and exposes one pluggable execution surface through
 - **Isolate shell** runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker. It reaches the authoritative Workspace over
   Workers RPC, so there is no second store or sync round trip.
-- **Isolate JavaScript** runs an ECMAScript module in a fresh Dynamic
+- **Codemode** runs an ECMAScript module in a fresh Dynamic
   Worker with structured input/results, durable relative imports,
   configured libraries, Workspace-backed `node:fs/promises`, and host modules such as
   `codemode:git`, `codemode:artifacts`, and `codemode:container`.
@@ -62,14 +62,14 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the
   container example, but the shell runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker loaded through `env.LOADER`. No container.
-- [`examples/worker-javascript`](examples/worker-javascript) — mirrors
+- [`examples/codemode`](examples/codemode) — mirrors
   `worker-shell`, but `exec` evaluates an ECMAScript module in a Dynamic
   Worker instead of running a shell command.
 - [`examples/vite-bundle`](examples/vite-bundle) — a Vite-built Worker
   that ships `src/skills` into every workspace with `computerBundle()`
   and `WorkerBundle`, including under `vite dev`.
 - [`examples/egress`](examples/egress) — sends one URL through the container,
-  Worker shell, and Worker JavaScript backends with matching `none`, `all`, or
+  Worker shell, and codemode backends with matching `none`, `all`, or
   custom egress policies.
 - [`examples/mcp`](examples/mcp) — a Computer MCP example:
   one Code Mode `code` tool backed by a durable workspace, a Worker shell,
