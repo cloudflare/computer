@@ -1,6 +1,8 @@
 //! Push (workspace → container) and pull (container → workspace).
 
-use crate::util::{check_rel, hex, private_dir, root_key, safe_parent, sha256_file, state_dir, unhex, Error, Res};
+use crate::util::{
+    check_rel, hex, link_stays_inside, private_dir, root_key, safe_parent, sha256_file, state_dir, unhex, Error, Res,
+};
 use crate::walk::{walk, Found, Kind, Selector};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -117,6 +119,15 @@ fn write_ledger(root: &str, ledger: &BTreeMap<String, Vec<u8>>) -> io::Result<()
     fs::rename(tmp, path)
 }
 
+/// A directory where the workspace has a file or a link: the workspace wins, as it does for
+/// files' contents.
+fn clear_directory(dest: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(dest).map(|m| m.is_dir()).unwrap_or(false) {
+        fs::remove_dir_all(dest)?;
+    }
+    Ok(())
+}
+
 pub struct Push {
     root: PathBuf,
     root_text: String,
@@ -140,10 +151,21 @@ impl Push {
         let root_path = PathBuf::from(root);
         fs::create_dir_all(&root_path)?;
         let mut want = Vec::new();
+        let mut paths = HashSet::new();
         for (i, entry) in manifest.iter().enumerate() {
             check_rel(&entry.path)?;
-            if entry.kind == Kind::File && entry.hash.len() != 32 {
-                return Err(Error::protocol(format!("{}: hash must be 32 bytes", entry.path)));
+            if !paths.insert(entry.path.as_str()) {
+                return Err(Error::protocol(format!("{} is in the manifest twice", entry.path)));
+            }
+            match entry.kind {
+                Kind::File if entry.hash.len() != 32 => {
+                    return Err(Error::protocol(format!("{}: hash must be 32 bytes", entry.path)));
+                }
+                // The host only sends links that stay inside the root; don't take its word for it.
+                Kind::Symlink if !link_stays_inside(&entry.path, &entry.target) => {
+                    return Err(Error::protocol(format!("{}: link leaves the root", entry.path)));
+                }
+                _ => {}
             }
             let current = local_entry(&root_path, &entry.path);
             if !current.map(|c| c.same_as(entry)).unwrap_or(false) {
@@ -176,7 +198,14 @@ impl Push {
             let name = entry.path.rsplit('/').next().unwrap();
             let dir = safe_parent(&self.root, &entry.path, self.owner)?;
             let tmp = dir.join(format!(".{name}.remote-exec.{}.tmp", std::process::id()));
-            let file = fs::File::create(&tmp)?;
+            // The name is predictable, so whatever is there may have been planted: a link would
+            // send the write outside the root. Remove it (a link itself, never its target), then
+            // create the file exclusively, which never follows a link.
+            match fs::remove_file(&tmp) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+            let file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
             self.open.insert(index, (file, tmp));
         }
         let (file, _) = self.open.get_mut(&index).unwrap();
@@ -191,9 +220,7 @@ impl Push {
                 lchown(&tmp, Some(uid), Some(gid))?;
             }
             let dest = self.root.join(&entry.path);
-            if fs::symlink_metadata(&dest).map(|m| m.is_dir()).unwrap_or(false) {
-                fs::remove_dir_all(&dest)?;
-            }
+            clear_directory(&dest)?;
             fs::rename(&tmp, &dest)?;
             self.done.insert(index);
             self.report.written += 1;
@@ -214,7 +241,11 @@ impl Push {
                 Kind::Symlink => {
                     let dir = safe_parent(&self.root, &entry.path, self.owner)?;
                     let dest = dir.join(entry.path.rsplit('/').next().unwrap());
-                    let _ = fs::remove_file(&dest);
+                    clear_directory(&dest)?;
+                    match fs::remove_file(&dest) {
+                        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
+                        _ => {}
+                    }
                     std::os::unix::fs::symlink(&entry.target, &dest)?;
                     if let Some((uid, gid)) = self.owner {
                         lchown(&dest, Some(uid), Some(gid))?;
@@ -496,6 +527,52 @@ mod tests {
         assert_eq!(want, [0]);
         assert!(state.chunk(0, b"x", true).is_err());
         assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn push_refuses_to_write_through_a_planted_temporary_file() {
+        private_state();
+        let root = TempDir::new("push-tmp-link");
+        let outside = TempDir::new("push-tmp-outside");
+        let victim = outside.write("victim", "precious");
+        // The temporary file's name is predictable: a command could plant a link there.
+        root.symlink(
+            &format!(".f.remote-exec.{}.tmp", std::process::id()),
+            victim.to_str().unwrap(),
+        );
+        let (_, report) = push(&root, &["**"], vec![(file("f", "pushed", 0o644), "pushed")], None);
+        assert_eq!(report.written, 1);
+        assert_eq!(root.read("f"), "pushed");
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+    }
+
+    #[test]
+    fn push_replaces_a_directory_with_a_symlink() {
+        private_state();
+        let root = TempDir::new("push-link-over-dir");
+        root.write("l/inside", "x");
+        let (_, report) = push(&root, &["**"], vec![(link("l", "t"), "")], None);
+        assert_eq!(report.written, 1);
+        assert_eq!(fs::read_link(root.path().join("l")).unwrap().to_str(), Some("t"));
+    }
+
+    #[test]
+    fn push_refuses_duplicate_paths_and_links_that_escape() {
+        private_state();
+        let root = TempDir::new("push-refuse");
+        let r = root.path().to_str().unwrap();
+        let twice = vec![file("a", "1", 0o644), file("a", "2", 0o644)];
+        assert_eq!(
+            Push::begin(r, sel(&["**"]), twice, None).err().unwrap().code,
+            "protocol"
+        );
+        for target in ["/etc/passwd", "../outside", "d/../../x"] {
+            let e = Push::begin(r, sel(&["**"]), vec![link("l", target)], None)
+                .err()
+                .unwrap();
+            assert_eq!(e.code, "protocol", "{target}");
+        }
+        assert!(Push::begin(r, sel(&["**"]), vec![link("d/l", "../t")], None).is_ok());
     }
 
     #[test]
