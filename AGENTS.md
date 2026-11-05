@@ -63,6 +63,13 @@ same from an arm64 machine (through emulation, which is slow the first
 time; the result is cached under `packages/computerd/dist/sea`). Set
 `COMPUTERD_FUSE_ADDON` to a prebuilt `fuse.node` to skip that step.
 
+**remote-exec is Rust.** `packages/remote-exec` builds a static Linux
+binary with Cargo, which needs Rust with both musl targets and `capnp`;
+its tests and `@cloudflare/computer`'s `npm run test:remote-exec` need
+Linux. Nothing else in the workspace needs Rust, and the npm package
+doesn't ship the binary. `packages/remote-exec/dev/run.sh` runs any
+command in a Linux container that has everything.
+
 **Build before you test.** The test scripts don't build the sibling
 packages first. Several suites need build output that is absent in
 a clean checkout: `packages/computerd` imports the sibling `@cloudflare/dofs`

@@ -32,7 +32,8 @@
     "/artifacts",
     "**/.devbox",
     "**/.venv",
-    "**/worker-configuration.d.ts"
+    "**/worker-configuration.d.ts",
+    "packages/computer/src/remote-exec/capnp/**"
   ],
   "rules": {
     "jsx-a11y/no-access-key": "error",

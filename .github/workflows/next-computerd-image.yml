@@ -1,6 +1,6 @@
-# Build the computerd image from the commit that passed CI on the release
-# branch. The mutable :next tag lets release candidates use the versioned
-# package and matching daemon before publication.
+# Build the computerd and remote-exec images from the commit that passed CI
+# on the release branch. The mutable :next tags let release candidates use
+# the versioned package and matching binaries before publication.
 
 name: Next computerd image
 
@@ -78,6 +78,12 @@ jobs:
             packages/computer-computerd-linux-x64/bin/computerd
           chmod 755 packages/computer-computerd-linux-x64/bin/computerd
 
+      - name: Set up Rust
+        uses: ./.github/actions/rust
+
+      - name: Build the remote-exec binaries
+        run: npm run build:bin --workspace @cloudflare/remote-exec
+
       - name: Set up buildx
         uses: docker/setup-buildx-action@v3
 
@@ -112,7 +118,18 @@ jobs:
             --file packages/computer-computerd-linux-x64/Dockerfile \
             packages/computer-computerd-linux-x64
 
-      - name: Update the release PR with the next image
+      - name: Build and push the next remote-exec image
+        if: steps.release-sha.outputs.current == 'true'
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --provenance=false \
+            --tag ghcr.io/cloudflare/computer-remote-exec:next \
+            --file packages/remote-exec/Dockerfile \
+            artifacts/remote-exec
+
+      - name: Update the release PR with the next images
         if: steps.release-sha.outputs.current == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -128,10 +145,11 @@ jobs:
           body_file="$(mktemp)"
           cat > "$body_file" <<'EOF'
           <!-- computerd-next-image -->
-          The `computerd` image for this release candidate is ready. Copy this stage into your Dockerfile:
+          The `computerd` and `remote-exec` images for this release candidate are ready. Copy these stages into your Dockerfile:
 
           ```dockerfile
           FROM ghcr.io/cloudflare/computer-computerd-linux-x64:next AS computerd
+          FROM ghcr.io/cloudflare/computer-remote-exec:next AS remote-exec
           ```
           EOF
           commit_sha="$(git rev-parse HEAD)"

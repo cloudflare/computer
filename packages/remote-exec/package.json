@@ -1,0 +1,14 @@
+{
+  "name": "@cloudflare/remote-exec",
+  "version": "0.10.0",
+  "description": "remote-exec, the in-container half of @cloudflare/computer/remote-exec: a static Linux binary, built with Cargo.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build:bin": "./build.sh",
+    "build:dev": "./build.sh --dev",
+    "build:docker": "docker build --tag cloudflare/computer-remote-exec:dev --file Dockerfile ../../artifacts/remote-exec",
+    "test:rust": "cargo test --locked",
+    "lint:rust": "cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "@cloudflare/computer",
   "version": "0.10.0",
-  "description": "Cloudflare Computer — a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
+  "description": "Cloudflare Computer \u2014 a SQLite-backed virtual filesystem with sync to a container-side daemon (computerd).",
   "license": "MIT",
   "repository": {
     "directory": "packages/computer",
@@ -54,6 +54,10 @@
     "./modules/browser": {
       "types": "./dist/modules/browser.d.ts",
       "import": "./dist/modules/browser.js"
+    },
+    "./remote-exec": {
+      "types": "./dist/remote-exec/index.d.ts",
+      "import": "./dist/remote-exec/index.js"
     },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
@@ -163,6 +167,8 @@
     "test:stub-soak": "vitest run --config vitest.config.stub-soak.ts",
     "test:worker-backend": "vitest run --config vitest.config.worker-backend.ts",
     "test:code": "vitest run --config vitest.config.script-runner.ts",
+    "test:remote-exec": "vitest run --config vitest.config.remote-exec.ts",
+    "gen:capnp": "node ./src/remote-exec/script/gen-capnp.mjs",
     "test:harness": "./test-harness/run-harness.sh",
     "bench:harness": "./test-harness/run-harness.sh bench",
     "prepublishOnly": "npm run build && npm test"
@@ -207,13 +213,17 @@
     "@earendil-works/pi-ai": "^0.99.2",
     "@platformatic/vfs": "^0.4.0",
     "@tanstack/ai": "^0.63.0",
+    "@types/picomatch": "^4.0.3",
     "acorn": "^8.17.0",
     "ai": "^7.0.0",
+    "capnp-es": "0.0.16",
     "diff": "^9.0.0",
     "esbuild": "^0.28.1",
+    "ignore": "^7.0.14",
     "isomorphic-git": "^1.38.3",
     "just-bash": "^3.0.1",
     "memfs": "^4.57.6",
+    "picomatch": "^4.0.7",
     "tsdown": "^0.23.1",
     "typescript": "^6.0.3",
     "vite": "^8.3.4",

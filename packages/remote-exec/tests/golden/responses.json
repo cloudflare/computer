@@ -1,0 +1,139 @@
+[
+  {
+    "name": "begun",
+    "response": {
+      "type": "begun",
+      "protocol": 1,
+      "version": "remote-exec 0.1.0 protocol 1 sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "arch": "x86_64",
+      "lockWaitMs": 42
+    }
+  },
+  {
+    "name": "want",
+    "response": {
+      "type": "want",
+      "indices": [0, 2, 5]
+    }
+  },
+  {
+    "name": "want-none",
+    "response": {
+      "type": "want",
+      "indices": []
+    }
+  },
+  {
+    "name": "push-report",
+    "response": {
+      "type": "pushReport",
+      "report": {
+        "written": 2,
+        "bytes": 1234,
+        "deleted": ["old/x.txt"],
+        "skipped": [
+          {
+            "path": "big.bin",
+            "reason": "too-large"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "prepared",
+    "response": {
+      "type": "prepared",
+      "token": "000102030405060708090a0b0c0d0e0f"
+    }
+  },
+  {
+    "name": "started",
+    "response": {
+      "type": "started",
+      "pid": 4242
+    }
+  },
+  {
+    "name": "signaled",
+    "response": {
+      "type": "signaled"
+    }
+  },
+  {
+    "name": "changes",
+    "response": {
+      "type": "changes",
+      "changed": [
+        {
+          "path": "src/a.ts",
+          "kind": "file",
+          "mode": 420,
+          "size": 1234,
+          "hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+          "target": ""
+        },
+        {
+          "path": "src/link",
+          "kind": "symlink",
+          "mode": 511,
+          "size": 0,
+          "hash": "",
+          "target": "a.ts"
+        }
+      ],
+      "deleted": ["gone.txt"],
+      "skipped": [
+        {
+          "path": "pipe",
+          "reason": "unsupported"
+        }
+      ]
+    }
+  },
+  {
+    "name": "chunk",
+    "response": {
+      "type": "chunk",
+      "index": 1,
+      "data": "68656c6c6f",
+      "last": true
+    }
+  },
+  {
+    "name": "chunk-empty",
+    "response": {
+      "type": "chunk",
+      "index": 0,
+      "data": "",
+      "last": true
+    }
+  },
+  {
+    "name": "pull-end",
+    "response": {
+      "type": "pullEnd",
+      "report": {
+        "written": 0,
+        "bytes": 0,
+        "deleted": [],
+        "skipped": []
+      }
+    }
+  },
+  {
+    "name": "error",
+    "response": {
+      "type": "error",
+      "code": "spawn",
+      "message": "nope: No such file or directory (os error 2)",
+      "errno": 2
+    }
+  },
+  {
+    "name": "closed",
+    "response": {
+      "type": "closed"
+    }
+  }
+]
