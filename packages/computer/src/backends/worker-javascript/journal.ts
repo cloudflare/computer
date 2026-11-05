@@ -19,6 +19,7 @@
 // vouch for.
 
 import type { Database } from "@cloudflare/dofs";
+import { deserialize, serialize } from "capnweb";
 
 import type { BridgeJournal, BridgeResponse } from "../../runtime/bridge.js";
 import type { WorkspaceRuntimeValue } from "../../runtime/types.js";
@@ -673,13 +674,22 @@ export function describeCall(name: string, args: readonly unknown[]): string {
 
 function describeValue(value: unknown): string {
   if (value instanceof Uint8Array) return `<${value.byteLength} bytes>`;
-  const text = JSON.stringify(value) ?? "undefined";
+  // JSON can't encode a bigint, which a replayable run allows.
+  const text =
+    JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === "bigint" ? `${item}n` : item,
+    ) ?? "undefined";
   return text.length > 48 ? `${text.slice(0, 47)}…` : text;
 }
 
-/** A stable identity for a call: its name and its arguments. */
+/**
+ * A stable identity for a call: its name and its arguments. Plain
+ * arguments key as they always have. Richer ones, such as a Date, key by
+ * their Cap'n Web encoding, so equal values match on replay.
+ */
 export function callKey(name: string, args: readonly unknown[]): string {
-  return digest(`${name}\n${stableStringify(args)}`);
+  const keyed = isPlainValue(args) ? args : (JSON.parse(serialize(args)) as unknown);
+  return digest(`${name}\n${stableStringify(keyed)}`);
 }
 
 /** Identify runtime code by the text of its generated modules. */
@@ -741,13 +751,26 @@ function encodeLimited(value: unknown, what: string): string {
 
 const BYTES_TAG = "\u0000bytes";
 
+// Marks a value stored with Cap'n Web's encoding. JSON text never starts
+// with a NUL, so older rows can't be mistaken for it.
+const CAPNWEB_PREFIX = "\u0000capnweb:";
+
+/**
+ * Encode a value for the journal. Plain JSON, with byte arrays, keeps the
+ * format older journals use. Anything richer, such as a Date, a bigint,
+ * a Set or an Error with its properties, is stored with Cap'n Web's
+ * encoding, which refuses what no journal can keep, such as functions,
+ * stubs and streams.
+ */
 export function encodeValue(value: unknown): string {
+  if (!isPlainValue(value)) return CAPNWEB_PREFIX + serialize(value);
   return JSON.stringify(value, (_key, item: unknown) =>
     item instanceof Uint8Array ? { [BYTES_TAG]: toBase64(item) } : item,
   );
 }
 
 export function decodeValue(text: string): unknown {
+  if (text.startsWith(CAPNWEB_PREFIX)) return deserialize(text.slice(CAPNWEB_PREFIX.length));
   return JSON.parse(text, (_key, item: unknown) => {
     if (item !== null && typeof item === "object" && !Array.isArray(item)) {
       const tagged = (item as Record<string, unknown>)[BYTES_TAG];
@@ -755,6 +778,29 @@ export function decodeValue(text: string): unknown {
     }
     return item;
   });
+}
+
+// Whether the older JSON format holds a value as it is: JSON values,
+// with undefined left out as JSON does, and byte arrays.
+function isPlainValue(value: unknown, seen = new Set<object>()): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object") return false;
+  if (value instanceof Uint8Array) return Object.getPrototypeOf(value) === Uint8Array.prototype;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  let plain: boolean;
+  if (Array.isArray(value)) {
+    plain = value.every((item) => isPlainValue(item, seen));
+  } else {
+    const prototype = Object.getPrototypeOf(value);
+    plain =
+      (prototype === Object.prototype || prototype === null) &&
+      Object.values(value).every((item) => isPlainValue(item, seen));
+  }
+  seen.delete(value);
+  return plain;
 }
 
 export function toBase64(bytes: Uint8Array): string {

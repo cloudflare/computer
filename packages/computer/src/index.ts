@@ -119,6 +119,18 @@ export type {
   WorkspaceRuntimeValue,
 } from "./runtime/types";
 export { unsafeToRepeat } from "./runtime/replay-safety";
+export {
+  createCodemodeModule,
+  type CodemodeContextScopeEnd,
+  type CodemodeModule,
+  type CodemodeModuleBuilder,
+  type CodemodeModuleOptions,
+  type CodemodeObjectConstructor,
+  type CodemodeObjectMethods,
+  type CodemodeScopedContextOptions,
+  type WorkspaceModuleScope,
+  type WorkspaceModuleScopeEnd,
+} from "./runtime/codemode-module";
 export { decodeRuntimeEvents, encodeRuntimeEvent } from "./runtime/wire";
 export { type RawShellValue, type ShellValue, sh, shellQuote } from "./sh";
 export type { ExecEncoding, ExecSyncResult, KillSignal } from "./shell";

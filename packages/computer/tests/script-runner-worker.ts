@@ -12,7 +12,12 @@ import type {
   WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "../src/index";
-import { unsafeToRepeat, Workspace } from "../src/index";
+import {
+  createCodemodeModule,
+  unsafeToRepeat,
+  type WorkspaceModuleScopeEnd,
+  Workspace,
+} from "../src/index";
 import { createArtifactsModule } from "../src/modules/artifacts";
 import { createContainerModule } from "../src/modules/container";
 import { createGitModule } from "../src/modules/git";
@@ -77,11 +82,119 @@ const executions: Array<{
   metadata: WorkspaceExecutionMetadata;
 }> = [];
 
+// What codemode:test-session instances did, and each approve call, in
+// order, such as "start 1" or "close paused 1".
+const sessionEvents: Array<{ id: string; event: string }> = [];
+
+// How many codemode:test-session instances each execution started.
+const sessionCounts = new Map<string, number>();
+
+// Paused closes held until the test lets them go, by execution id.
+const heldCloses = new Map<string, () => void>();
+
 function countCall(name: string): number {
   const count = (durableCalls.get(name) ?? 0) + 1;
   durableCalls.set(name, count);
   return count;
 }
+
+// Records each scope's session start and close. `use()` reads the
+// scoped context, which starts it, and returns the session's number
+// within its run. A run's metadata can ask it to hold a paused close
+// until /session-release, and to log `closeLog` when the run ends.
+const sessionModule = createCodemodeModule();
+sessionModule.context(
+  "session",
+  async ({ id, metadata }) => {
+    const instance = (sessionCounts.get(id) ?? 0) + 1;
+    sessionCounts.set(id, instance);
+    sessionEvents.push({ id, event: `start ${instance}` });
+    // Slow enough that a run's concurrent first calls overlap.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { id, metadata, instance };
+  },
+  {
+    scoped: true,
+    async dispose({ id, metadata, instance }, end) {
+      sessionEvents.push({ id, event: `close ${end.reason} ${instance}` });
+      if (end.reason === "paused" && metadata.holdClose !== undefined) {
+        await new Promise<void>((resolve) => heldCloses.set(id, resolve));
+        heldCloses.delete(id);
+      }
+      if (end.reason !== "paused" && metadata.closeLog !== undefined) {
+        end.log(`${metadata.closeLog}\n`);
+      }
+      sessionEvents.push({ id, event: `closed ${instance}` });
+    },
+  },
+);
+const testSession = sessionModule.module({
+  use: async (_args, ctx) =>
+    (await (ctx as unknown as { session: Promise<{ instance: number }> }).session).instance,
+});
+
+// Objects: a job that starts runs. Each call counts itself; a run notes
+// when it's disposed, under the execution that made it.
+const jobsModule = createCodemodeModule({
+  description: "Test jobs: `createJob(name)` returns a job whose `start(ref)` returns a run.",
+});
+const TestRun = jobsModule.define("Run", ({ id, run }: { id: string; run: string }) => ({
+  wait: async () => {
+    countCall(`wait ${id}`);
+    return { id, status: "done" };
+  },
+  [Symbol.asyncDispose]: async (end: WorkspaceModuleScopeEnd) => {
+    sessionEvents.push({ id: run, event: `dispose ${id} ${end.reason}` });
+  },
+}));
+const TestJob = jobsModule.define("Job", ({ id, run }: { id: string; run: string }) => ({
+  start: async ([ref]) => {
+    countCall(`start ${id}`);
+    return TestRun({ id: `${id}/${String(ref)}`, run });
+  },
+  fail: async () => {
+    throw Object.assign(new Error("no such ref"), { code: "ENOREF" });
+  },
+}));
+const testJobs = jobsModule.module({
+  createJob: async ([name], ctx) => {
+    countCall(`create ${String(name)}`);
+    return TestJob({ id: String(name), run: ctx.execution.id });
+  },
+  richer: async ([when]) => {
+    countCall("richer");
+    const at = when as unknown as Date;
+    // SAFETY: A codemode module can return values the journal can keep; the type only names JSON.
+    return {
+      isDate: at instanceof Date,
+      next: new Date(at.getTime() + 1),
+      big: 2n ** 70n,
+      bytes: new Uint8Array([1, 2]),
+      buffer: new ArrayBuffer(4),
+    } as never;
+  },
+  failRich: async () => {
+    countCall("failRich");
+    throw Object.assign(new RangeError("too far"), {
+      code: "EFAR",
+      details: { limit: 3 },
+      at: new Date(7),
+    });
+  },
+  watch: async ([onEvent]) =>
+    `watched ${await (onEvent as unknown as (event: string) => Promise<string>)("built")}`,
+  logs: async () => {
+    const encoder = new TextEncoder();
+    // SAFETY: A run that doesn't replay can take a stream; the type only names JSON.
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode("line 1\n"));
+        controller.enqueue(encoder.encode("line 2\n"));
+        controller.close();
+      },
+    }) as never;
+  },
+});
 
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
@@ -111,6 +224,8 @@ function javascriptBackend(
       "codemode:git": createGitModule(),
       "codemode:artifacts": createArtifactsModule(),
       "codemode:container": createContainerModule(),
+      "codemode:test-session": testSession,
+      "codemode:test-jobs": testJobs,
       "codemode:test-host": {
         async echo(args) {
           return { args: [...args] };
@@ -190,6 +305,7 @@ function javascriptBackend(
         async approve(args, ctx) {
           const action = String(args[0]);
           countCall(`ask:${action}`);
+          sessionEvents.push({ id: ctx.execution.id, event: "approve" });
           const answer = await ctx.interrupt({ kind: "approval", action });
           countCall(`answered:${action}`);
           return answer;
@@ -389,6 +505,16 @@ export class HostDO extends DurableObject<Env> {
 
   executions() {
     return executions;
+  }
+
+  sessionEvents(id: string) {
+    return sessionEvents.filter((event) => event.id === id).map((event) => event.event);
+  }
+
+  releaseClose(id: string) {
+    const release = heldCloses.get(id);
+    release?.();
+    return release !== undefined;
   }
 
   killRuntime(id: string) {
@@ -685,6 +811,14 @@ export default class extends WorkerEntrypoint<Env> {
           value: WorkspaceRuntimeValue;
         };
         return Response.json(await stub.respond(body.id, body.callId, body.value));
+      }
+
+      if (url.pathname === "/session-release") {
+        return Response.json(await stub.releaseClose(url.searchParams.get("id") ?? ""));
+      }
+
+      if (url.pathname === "/session-events") {
+        return Response.json(await stub.sessionEvents(url.searchParams.get("id") ?? ""));
       }
 
       if (url.pathname === "/durable-executions") {

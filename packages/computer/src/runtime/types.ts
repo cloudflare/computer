@@ -1,6 +1,7 @@
 import type { SkippedEntry } from "@cloudflare/dofs";
 
 import type { ExecEncoding, ExecSyncResult, KillSignal } from "../shell";
+import type { CodemodeModule } from "./codemode-module";
 import type { TruncatedOutput } from "./output-spool";
 
 export type WorkspaceRuntimeAccess = "read" | "read-write";
@@ -132,11 +133,18 @@ export interface WorkspaceModuleFactory {
  *   `import { forecast } from "codemode:weather"`.
  * - A factory is a host module that needs the Workspace's Git client,
  *   Artifacts client, or runtime, such as `createGitModule()`.
+ * - `createCodemodeModule()` makes a host module that can return objects
+ *   with methods, and give its functions shared context, including state
+ *   for one scope of a run, such as a session the run opens and must close.
  *
  * Host modules must use a `codemode:*` specifier. Source may use a simple one
  * too, for a library the host provides.
  */
-export type WorkspaceModule = string | WorkspaceModuleFunctions | WorkspaceModuleFactory;
+export type WorkspaceModule =
+  | string
+  | WorkspaceModuleFunctions
+  | WorkspaceModuleFactory
+  | CodemodeModule;
 
 export type WorkspaceRuntimeValue =
   | null
