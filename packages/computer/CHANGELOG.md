@@ -1,5 +1,78 @@
 # @cloudflare/computer
 
+## 0.10.0
+
+This release is all about **codemode**. It adds codemode modules, which let a host module return objects with methods and keep state for a run, and builds a `codemode:browser` module on them, so the model can drive an agents `Browser`. Runs can now carry metadata for host modules, and the JavaScript backend has been renamed to `CodemodeBackend`.
+
+### Highlights
+
+- **Codemode modules:** `createCodemodeModule()` builds host modules whose functions return objects with methods. Each method call is journaled like any other host call, and an object keeps working after a pause or a restart, because the backend rebuilds it from its saved state. `context()` adds values to `ctx`, made once per connection or once per scope of a run and disposed when the scope ends. Experimental. See [Codemode modules](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#codemode-modules).
+- **A browser for code the model runs:** `createBrowserModule()` from `@cloudflare/computer/modules/browser` serves `codemode:browser`, with the same `browser.*` functions as agents' `browserTool`. A run opens one session in its browser scope, runs in the same scope take turns, a run waiting for a person keeps its scope, and notices such as a restarted browser go to the run's stderr when it ends. It needs a read-write backend. Experimental. See [`codemode:browser`](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#codemodebrowser).
+- **Run metadata:** `runtime.exec()` takes `metadata`, a record of strings the run's code never sees, so host modules can tell which conversation or user a run is for. Host module calls read it, with the run's id, as `context.execution`, `runtime.pending()` lists it with each waiting call, and the `exec` tool can set it with `exec: { metadata }`. See [Run metadata](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#run-metadata).
+- **Richer values in replayable runs:** codemode modules can take and return `Date`, `bigint`, byte and typed arrays, `Headers`, and errors with their name and properties, which the journal stores with Cap'n Web's encoding. In runs that don't replay, they can also take callbacks and return streams and live stubs.
+- **Other changes:** a host module call can return more than 4,096 values, as long as the response fits the byte limits. The worker shell no longer double-encodes non-ASCII bytes from redirected `cat`, heredocs and `tee`. capnweb is now 0.12.
+
+### Upgrading
+
+1. **Rename `WorkerJavaScriptBackend` to `CodemodeBackend`.** There is no alias for the old names.
+
+   ```diff
+   - import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript";
+   - new WorkerJavaScriptBackend({ loader: env.LOADER });
+   + import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
+   + new CodemodeBackend({ loader: env.LOADER });
+   ```
+
+   `WorkerJavaScriptBackendOptions` is now `CodemodeBackendOptions`.
+
+2. **Check the backend's id.** A backend without `id` now registers as `"codemode"` instead of `"worker-javascript"`, and the `exec` tool shows it to the model under that name. Its `type`, which traces record as `workspace.backend.type`, is now `"codemode"` whatever the id. A backend only sees runs saved under its own id, so runs saved under `"worker-javascript"` are ignored: they aren't resumed, listed by `pending()` or found by `getExec()`.
+   - To keep those runs, including any waiting for a person when you deploy, pass `id: "worker-javascript"`.
+   - Otherwise, change `backend: "worker-javascript"` and `exec.backends` keys to `"codemode"`. Old references throw an unknown-backend error.
+
+3. **Move the tool sets' `exec` options under `exec`.** An old backend map or `exec: {}` now throws.
+
+   ```diff
+     createAITools({
+       workspace,
+   -   exec: { codemode: {} },
+   -   execOutput: { maxBytes: 50_000 }
+   +   exec: {
+   +     backends: { codemode: {} },
+   +     output: { maxBytes: 50_000 }
+   +   }
+     });
+   ```
+
+   For no `exec` tool, pass `exec: { backends: {} }` instead of `exec: {}`.
+
+4. **Update code that builds host call contexts or pending calls by hand**, such as a test that calls a host module function directly or a fake `runtime.pending()`. `WorkspaceModuleCallContext` now has a required `execution: { id, metadata }`, and `WorkspaceRuntimePendingCall` has a required `metadata`.
+
+5. **Coming from 0.8?** 0.9.0 renamed host and source modules from `ws:*` to `codemode:*`, such as `ws:git` to `codemode:git`.
+
+### Minor Changes
+
+- [#299](https://github.com/cloudflare/computer/pull/299) Add `createBrowserModule()`, the experimental `codemode:browser` host module, which drives an agents `Browser` from isolate JavaScript. See [`codemode:browser`](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#codemodebrowser). ([`536bb96`](https://github.com/cloudflare/computer/commit/536bb96f860fb946209db79f13fad2201d296b1e)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#305](https://github.com/cloudflare/computer/pull/305) Rename `WorkerJavaScriptBackend` to `CodemodeBackend`, imported from `@cloudflare/computer/backends/codemode`, and change its default id from `"worker-javascript"` to `"codemode"`. See the upgrade steps above. ([`f4aec31`](https://github.com/cloudflare/computer/commit/f4aec31912d0133b77ac5b3d3538fdc2e63b2f07)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#301](https://github.com/cloudflare/computer/pull/301) Add experimental `createCodemodeModule()` for host modules that return objects with methods and share context across a run. See [Codemode modules](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#codemode-modules). ([`af4b3dc`](https://github.com/cloudflare/computer/commit/af4b3dc6144ed9360545c3a826e018fd3e3cc67e)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#291](https://github.com/cloudflare/computer/pull/291) `runtime.exec()` takes `metadata` for host modules, which they read as `context.execution.metadata`. See [Host modules](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#host-modules). ([`1f8dfee`](https://github.com/cloudflare/computer/commit/1f8dfee5e33d8f24cd4cd478b87d326808dd3c05)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#292](https://github.com/cloudflare/computer/pull/292) The `exec` tool can start each run with `metadata`, set with `exec: { metadata }`. See [Run metadata](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#run-metadata). ([`feac0ff`](https://github.com/cloudflare/computer/commit/feac0ff48116e976902a1dac592c0353cdead589)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#300](https://github.com/cloudflare/computer/pull/300) The tool sets' `exec` option now takes `{ backends, output, metadata }`, replacing the backend map and `execOutput`. See the upgrade steps above. ([`3c3734c`](https://github.com/cloudflare/computer/commit/3c3734cb47a15f0c17082339b6a174b02269bcc0)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#290](https://github.com/cloudflare/computer/pull/290) Host module calls get `context.execution`, with the `id` of their run. See [Host modules](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#host-modules). ([`72421fc`](https://github.com/cloudflare/computer/commit/72421fc99be3f4bf8ff5acbc5abd5b8de06617fe)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+### Patch Changes
+
+- [#301](https://github.com/cloudflare/computer/pull/301) Bump capnweb to 0.12. ([`af4b3dc`](https://github.com/cloudflare/computer/commit/af4b3dc6144ed9360545c3a826e018fd3e3cc67e)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#289](https://github.com/cloudflare/computer/pull/289) A host module call can now return more than 4,096 values, as long as the response fits the backend's byte limits. ([`1fbd37f`](https://github.com/cloudflare/computer/commit/1fbd37f5ea2b25a4205b08df459a55c66b0e7c6a)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#287](https://github.com/cloudflare/computer/pull/287) The worker shell no longer double-encodes non-ASCII bytes written by redirected `cat`, heredocs, `tee` and other byte-oriented commands. ([`b995d86`](https://github.com/cloudflare/computer/commit/b995d86503eab22793ba1feb07c3c67818e6f6b9)) - Thanks [@github-actions](https://github.com/apps/github-actions)
+
 ## 0.9.0
 
 ### Minor Changes
