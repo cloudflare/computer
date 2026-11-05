@@ -1,5 +1,39 @@
 # @cloudflare/computer
 
+## 0.10.0
+
+### Minor Changes
+
+- [#299](https://github.com/cloudflare/computer/pull/299) Add `createBrowserModule()` from `@cloudflare/computer/modules/browser`, the `codemode:browser` host module: an agents `Browser` driven from isolate JavaScript with the same `browser.*` functions as `browserTool`. Each run opens one session in its browser scope, runs in one browser scope take turns, and the session's notices go to the run's stderr when it ends. It is experimental. ([`536bb96`](https://github.com/cloudflare/computer/commit/536bb96f860fb946209db79f13fad2201d296b1e)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#305](https://github.com/cloudflare/computer/pull/305) Rename `WorkerJavaScriptBackend` to `CodemodeBackend`, and change its default id from `"worker-javascript"` to `"codemode"`. There is no alias for the old names. To upgrade: ([`f4aec31`](https://github.com/cloudflare/computer/commit/f4aec31912d0133b77ac5b3d3538fdc2e63b2f07)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+  1. Rename the import path and exports:
+     - `@cloudflare/computer/backends/worker-javascript` → `@cloudflare/computer/backends/codemode`
+     - `WorkerJavaScriptBackend` → `CodemodeBackend`
+     - `WorkerJavaScriptBackendOptions` → `CodemodeBackendOptions`
+  2. Decide what id the backend uses. A backend without `id` now registers as `"codemode"`, and the exec tool, which shows the model each backend's id, offers it as `"codemode"`. Its `type`, which traces record, is now `"codemode"` whatever the id. Runs are saved under the id of the backend that started them, and a backend only sees runs saved under its own id. A `"codemode"` backend doesn't fail on runs saved under `"worker-javascript"`; it ignores them. It doesn't resume or fail interrupted ones, `runtime.pending()` doesn't list their waiting calls, `runtime.getExec(id)` on it throws `ENOENT`, and the rows stay in storage.
+     - To keep runs waiting for a person, saved results and journals, and existing `backend: "worker-javascript"` and `exec: { backends: { "worker-javascript": ... } }` references working, pass `id: "worker-javascript"` to `new CodemodeBackend(...)`. The exec tool then keeps offering it to the model as `"worker-javascript"`.
+     - Otherwise, change `backend: "worker-javascript"` to `backend: "codemode"` and `exec.backends` keys from `"worker-javascript"` to `"codemode"`. Left unchanged, `backend: "worker-javascript"` throws `no backend with id "worker-javascript"` and `exec.backends` throws `unknown backend "worker-javascript"`. Runs saved before the upgrade, including any still running or waiting for a person when you deploy, are then out of reach: nothing resumes, lists or cleans them up unless a backend with `id: "worker-javascript"` comes back.
+
+- [#301](https://github.com/cloudflare/computer/pull/301) Add `createCodemodeModule()` for host modules that return objects with methods and give their functions shared context. `define(kind, build)` makes objects whose methods are host calls, journaled like any other, and that keep working after a pause or a restart because the backend rebuilds them from their saved state. `context(name, create)` adds a value to `ctx`, made once per connection, or with `{ scoped: true }` once per scope of a run, the first time a method reads it, and disposed when the scope ends. In replayable runs, codemode modules can use `Date`, `bigint`, byte arrays, `Headers` and errors with their name and properties, which the journal stores with Cap'n Web's encoding. In runs that don't replay, they can also take callbacks and return streams and live stubs. Codemode modules are experimental. ([`af4b3dc`](https://github.com/cloudflare/computer/commit/af4b3dc6144ed9360545c3a826e018fd3e3cc67e)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#291](https://github.com/cloudflare/computer/pull/291) `runtime.exec()` takes `metadata`, a record of strings for host modules that the run's code never sees. Host module calls read it as `context.execution.metadata`, `runtime.pending()` lists it with each waiting call, and a replayable run keeps it when it resumes. `CodemodeBackend` caps it at 16 KiB of keys and values. ([`1f8dfee`](https://github.com/cloudflare/computer/commit/1f8dfee5e33d8f24cd4cd478b87d326808dd3c05)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#292](https://github.com/cloudflare/computer/pull/292) The `exec` tool can start each run with `metadata` for host modules. `createExecTool` takes `metadata` and the tool sets take `exec: { metadata }`: a record of strings, or a function that picks one from the tool call's id. A pi caller can pass `metadata` on the context it hands `execute` instead, which wins. ([`feac0ff`](https://github.com/cloudflare/computer/commit/feac0ff48116e976902a1dac592c0353cdead589)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#300](https://github.com/cloudflare/computer/pull/300) The tool sets' `exec` option now takes `{ backends, output, metadata }`. Change `exec: { id: {...} }` to `exec: { backends: { id: {...} } }`, `execOutput: {...}` to `exec: { output: {...} }`, and `exec: {}` for no exec tool to `exec: { backends: {} }`; an old backend map or `exec: {}` now throws. ([`3c3734c`](https://github.com/cloudflare/computer/commit/3c3734cb47a15f0c17082339b6a174b02269bcc0)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#290](https://github.com/cloudflare/computer/pull/290) Host module calls now get `context.execution`, with the `id` of the run they belong to. A replayable run keeps it when it resumes. ([`72421fc`](https://github.com/cloudflare/computer/commit/72421fc99be3f4bf8ff5acbc5abd5b8de06617fe)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+### Patch Changes
+
+- [#301](https://github.com/cloudflare/computer/pull/301) Bump capnweb to 0.12. ([`af4b3dc`](https://github.com/cloudflare/computer/commit/af4b3dc6144ed9360545c3a826e018fd3e3cc67e)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#289](https://github.com/cloudflare/computer/pull/289) A host module call can now return more than 4,096 values, as long as the response fits the backend's byte limits. ([`1fbd37f`](https://github.com/cloudflare/computer/commit/1fbd37f5ea2b25a4205b08df459a55c66b0e7c6a)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#287](https://github.com/cloudflare/computer/pull/287) The worker shell no longer double-encodes non-ASCII bytes written by redirected `cat`, heredocs, `tee` and other byte-oriented commands. ([`b995d86`](https://github.com/cloudflare/computer/commit/b995d86503eab22793ba1feb07c3c67818e6f6b9)) - Thanks [@github-actions](https://github.com/apps/github-actions)
+
 ## 0.9.0
 
 ### Minor Changes
