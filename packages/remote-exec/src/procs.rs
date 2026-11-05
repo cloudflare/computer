@@ -439,7 +439,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         let (plain, read) = without_ptrace(|| (fs::read(&environ), read_as_owner(&environ)));
-        assert_eq!(plain.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        // In a container, root lacks CAP_SYS_PTRACE and can't read another user's environ, which
+        // is why read_as_owner exists. Where root keeps its other capabilities, on a VM say, it
+        // can read it anyway. read_as_owner must work either way.
+        if let Err(e) = plain {
+            assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+        }
         assert!(read.unwrap().split(|&b| b == 0).any(|e| e == b"FROM=pid"));
         assert_eq!(
             unsafe { (libc::setfsuid(u32::MAX), libc::setfsgid(u32::MAX)) },
