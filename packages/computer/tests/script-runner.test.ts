@@ -1526,6 +1526,86 @@ describe("interrupts", () => {
     }
   `;
 
+  // codemode:browser on createCodemodeModule(), end to end.
+  const browsing = `
+    import * as browser from "codemode:browser";
+    import { approve } from "codemode:test-host";
+    export default async function () {
+      await Promise.all([browser.cdp({ method: "A" }), browser.spec()]);
+      const answer = await approve("deploy");
+      await browser.cdp({ method: "B" });
+      return answer;
+    }
+  `;
+
+  it("codemode:browser opens one session per scope, closes it on pause, and logs notices at the end", async () => {
+    await start("browse", browsing, { metadata: { browserScope: "b1" } });
+    const call = await waitingCall("browse");
+    await vi.waitFor(async () =>
+      expect(await sessionEvents("browser:b1")).toEqual([
+        "open",
+        "lock",
+        'cdp {"method":"A"}',
+        "spec null",
+        "close",
+      ]),
+    );
+    await respond("browse", call.callId, { ok: true });
+    expect(await result("browse")).toMatchObject({
+      status: "completed",
+      stderr: "notice from b1\n",
+    });
+    // The resumed scope replays A and spec without a session, then
+    // opens one for B.
+    expect(await sessionEvents("browser:b1")).toEqual([
+      "open",
+      "lock",
+      'cdp {"method":"A"}',
+      "spec null",
+      "close",
+      "open",
+      "lock",
+      'cdp {"method":"B"}',
+      "close",
+    ]);
+  });
+
+  it("codemode:browser fails a run at once while a run waiting for a person holds its browser scope", async () => {
+    await start("browse-held", browsing, { metadata: { browserScope: "b2" } });
+    const call = await waitingCall("browse-held");
+    await start(
+      "browse-second",
+      `import * as browser from "codemode:browser";
+       export default () => browser.cdp({ method: "C" });`,
+      { metadata: { browserScope: "b2" } },
+    );
+    const second = await result("browse-second");
+    expect(second.status).toBe("failed");
+    // This harness keeps 64 bytes of stdio.
+    expect(second.stderr).toContain('codemode:browser: browser scope "b2" is held by a run');
+    await respond("browse-held", call.callId, { ok: true });
+    expect(await result("browse-held")).toMatchObject({ status: "completed" });
+  });
+
+  it("codemode:browser doesn't count a waiting run that never browsed", async () => {
+    await start(
+      "approve-only",
+      `import { approve } from "codemode:test-host";
+       export default () => approve("deploy");`,
+      { metadata: { browserScope: "b3" } },
+    );
+    const call = await waitingCall("approve-only");
+    await start(
+      "browse-free",
+      `import * as browser from "codemode:browser";
+       export default () => browser.cdp({ method: "D" });`,
+      { metadata: { browserScope: "b3" } },
+    );
+    expect(await result("browse-free")).toMatchObject({ status: "completed" });
+    await respond("approve-only", call.callId, { ok: true });
+    expect(await result("approve-only")).toMatchObject({ status: "completed" });
+  });
+
   it("starts a scoped context once per scope, and resumes only after it closes", async () => {
     await start("session", session, { metadata: { holdClose: "1", closeLog: "closed" } });
     const call = await waitingCall("session");

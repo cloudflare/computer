@@ -276,7 +276,7 @@ Caller source can import four kinds of module, and all of them are fixed when th
 | Built in | Always installed | The isolate, backed by the Workspace | `node:fs`, `node:fs/promises` |
 | Node.js | `nodejs_compat` in `compatibilityFlags`, the default | The isolate, provided by the runtime | `node:path`, `node:crypto` |
 | Source | `modules: { name: "source" }` | The isolate | a bundled library |
-| Host | `modules: { "codemode:name": { fn } }`, a factory, or `createCodemodeModule()` | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, your own |
+| Host | `modules: { "codemode:name": { fn } }`, a factory, or `createCodemodeModule()` | The Durable Object | `codemode:git`, `codemode:container`, `codemode:tools`, `codemode:browser`, your own |
 
 ```ts
 import { createArtifactsModule } from "@cloudflare/computer/modules/artifacts";
@@ -674,6 +674,43 @@ createContainerModule({
   maxOutputLines: 200,
 });
 ```
+
+### `codemode:browser`
+
+`createBrowserModule()` from `@cloudflare/computer/modules/browser` gives JavaScript the agent's persistent browser: an agents `Browser` (from `agents/browser`, version 0.33.0 or later). The exports are the same `browser.*` functions `browserTool` gives its code, so code imports the module as a namespace and reads the same:
+
+```js
+import * as browser from "codemode:browser";
+
+export default async function () {
+  await browser.cdp({ method: "Page.navigate", params: { url: "https://example.com" }, sessionId: "active" });
+  const { result } = await browser.cdp({
+    method: "Runtime.evaluate",
+    params: { expression: "document.title", returnByValue: true },
+    sessionId: "active",
+  });
+  return result.value;
+}
+```
+
+The module keeps its browser session in a scoped context. A run opens one browser session on its first call to the module and closes it when the run waits in `ctx.interrupt()` or ends, which saves its active tab, so the next run, or the next `browserTool` call, picks up where it left off. When the run ends, the session's notices, such as "the browser was restarted", are written to its stderr after its output, along with how long it waited for its turn if that was a second or more. Nothing reaches stderr while the code runs, so replay's output check holds. Every function takes one input object. `cdp` is marked `unsafeToRepeat()`, since a command may submit a form; the rest are safe to repeat. The browser keeps its logins and can change things on the sites it visits, so every function refuses to run on a read-only backend, as `codemode:container`'s `exec` does.
+
+The browser scope says which tab a run drives: runs in one browser scope share an active tab, while cookies and logins are shared by every browser scope. Without a `scope` option, every run uses the `"shared"` browser scope. Pass a string, such as `scope: "research"`, to use another, or a function that picks one from the run's `{ id, metadata }` (see [Run metadata](./09_tool_interface.md#run-metadata) for how a run gets its metadata):
+
+```ts
+createBrowserModule({
+  browser: this.browser,
+  scope: ({ metadata }) => (metadata.user ? `user:${metadata.user}` : "shared"),
+});
+```
+
+The function may throw instead, when a run without that metadata shouldn't browse. An empty browser scope is rejected.
+
+Runs in one browser scope take turns, like `browserTool` calls, because they would otherwise see each other's navigation: pi and the AI SDK run a message's tool calls in parallel. A run takes its turn at its first browser call and keeps it until it ends, and runs that never call the module never wait. A run gives up after `lockTimeoutMs` (45 seconds by default) with an error saying why; keep it under the run's timeout and the backend's `maxHostCallMs`. A run that browsed and is waiting for a person keeps its browser scope while it waits: its session is closed, and other runs' first calls in that browser scope fail at once, saying the browser is held by a run that's waiting for a person. A run that took its turn while one ahead of it paused fails the same way. The module remembers which runs browsed in memory, so after the Durable Object restarts, a waiting run holds nothing until it resumes. Once that run resumes, it takes its turn again only at its first new browser call, since replay answers its earlier calls from the journal.
+
+Don't expose `browserTool` to code through `codemode:tools` alongside this module. A run calling it would wait for its own turn until the host call timed out. The module's description says so, and also tells the model to save screenshots to a file with `node:fs` and open them with `read`, to take about eight per run (each host call returns at most 1 MiB, and a run's calls share 8 MiB each way), and to work on several pages inside one run rather than across runs started together. The backend adds that description to its own, which the `exec` tool shows. An app that writes `exec`'s description itself must include it, from `backend.description`.
+
+The module is experimental and may change in any release.
 
 ## Isolation and lifecycle
 

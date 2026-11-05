@@ -51,6 +51,10 @@
       "types": "./dist/modules/assets.d.ts",
       "import": "./dist/modules/assets.js"
     },
+    "./modules/browser": {
+      "types": "./dist/modules/browser.d.ts",
+      "import": "./dist/modules/browser.js"
+    },
     "./tools": {
       "types": "./dist/tools/index.d.ts",
       "import": "./dist/tools/index.js"
