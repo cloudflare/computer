@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SyncFs } from "./fs";
 import { TESTS_DIR } from "./testing/harness";
 import { directoryFs } from "./testing/local";
-import { linkStaysInside, normalizeGlobs, Selector, walkWorkspace } from "./walk";
+import { linkStaysInside, normalizeGlobs, relativeCwd, Selector, walkWorkspace } from "./walk";
 
 interface Fixture {
   description: string;
@@ -233,5 +233,18 @@ describe("linkStaysInside", () => {
     expect(linkStaysInside("a/link", "../../b")).toBe(false);
     expect(linkStaysInside("a/b/link", "x/../../../../y")).toBe(false);
     expect(linkStaysInside("link", "/etc/passwd")).toBe(false);
+  });
+});
+
+describe("trailing slashes", () => {
+  it("are trimmed from cwd, the root and globs, quickly however many there are", () => {
+    expect(relativeCwd("/workspace/app//", "/workspace/")).toBe("app");
+    expect(relativeCwd("/workspace///", "/workspace")).toBe("");
+    expect(normalizeGlobs(["/workspace/a/**"], "/workspace//")).toEqual(["a/**"]);
+    const slashes = "/".repeat(200_000);
+    const started = performance.now();
+    expect(relativeCwd(`/workspace${slashes}x`, `/workspace${slashes}`)).toBe("x");
+    expect(relativeCwd(`/workspace/app${slashes}`, "/workspace")).toBe("app");
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
