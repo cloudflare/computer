@@ -39,7 +39,6 @@ struct Running {
     pgid: i32,
     done: Arc<AtomicBool>,
     supervisor: Option<JoinHandle<i32>>,
-    exit: Option<i32>,
 }
 
 struct Session {
@@ -381,7 +380,6 @@ impl Session {
             pgid: pid,
             done,
             supervisor: Some(supervisor),
-            exit: None,
         });
         Ok(pid)
     }
@@ -391,8 +389,9 @@ impl Session {
             .running
             .as_mut()
             .ok_or_else(|| Error::protocol("Pull before the command started"))?;
+        // Pull only once the command and everything it left behind have stopped.
         if let Some(handle) = running.supervisor.take() {
-            running.exit = Some(handle.join().unwrap_or(255));
+            let _ = handle.join();
         }
         let changes = match &self.baseline {
             Some(baseline) => baseline.changes(),
@@ -431,16 +430,13 @@ impl Session {
                     continue;
                 }
             };
+            // Whole chunks until a short one, which may be empty, marks the end.
             let mut buf = vec![0u8; CHUNK];
-            let mut sent_any = false;
             loop {
                 let n = read_full(&mut file, &mut buf)?;
                 let last = n < CHUNK;
-                if n > 0 || !sent_any || last {
-                    self.send_chunk(index as u32, &buf[..n], last)?;
-                    sent_any = true;
-                    report.bytes += n as u64;
-                }
+                self.send_chunk(index as u32, &buf[..n], last)?;
+                report.bytes += n as u64;
                 if last {
                     break;
                 }
