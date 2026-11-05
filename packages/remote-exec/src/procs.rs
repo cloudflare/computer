@@ -102,13 +102,19 @@ pub fn spawn(spec: &Spec, fds: [OwnedFd; 3]) -> Res<i32> {
         cmd.uid(uid).gid(gid);
     }
     let unprivileged = owner.is_some_and(|(uid, _)| uid != 0);
+    let session = std::process::id() as libc::pid_t;
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            // If the session dies, so does the command.
+            // If the session dies, so does the command. The death signal comes from the thread
+            // that forks, the session's main thread, which lives as long as the session. A session
+            // that died before this call would send nothing, so check it's still our parent.
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0);
+            if libc::getppid() != session {
+                return Err(std::io::Error::other("the session exited"));
+            }
             if unprivileged {
                 drop_privileges()?;
             }

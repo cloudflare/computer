@@ -9,6 +9,7 @@ use nix::sys::socket::{
 use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
+use std::time::Instant;
 
 pub const MAX_PACKET: usize = 64 * 1024;
 
@@ -27,29 +28,34 @@ pub fn connect_to(path: &Path) -> Res<OwnedFd> {
     Ok(fd)
 }
 
-pub fn accept_within(listener: &OwnedFd, timeout_ms: i32) -> Res<OwnedFd> {
+/// Wait until `fd` is readable (or its peer hung up), or `deadline` passes: true if it's ready.
+pub fn wait_readable(fd: RawFd, deadline: Instant) -> Res<bool> {
     let mut pfd = libc::pollfd {
-        fd: listener.as_raw_fd(),
+        fd,
         events: libc::POLLIN,
         revents: 0,
     };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms as u64);
-    // poll() is never restarted after a signal handler runs, and the process gets SIGCHLD.
     loop {
-        let left = deadline
-            .saturating_duration_since(std::time::Instant::now())
-            .as_millis() as i32;
-        let r = unsafe { libc::poll(&mut pfd, 1, left) };
-        if r == 0 {
-            return Err(Error::new("attach-timeout", "no `remote-exec run` attached in time"));
+        let left = deadline.saturating_duration_since(Instant::now()).as_millis();
+        let r = unsafe { libc::poll(&mut pfd, 1, left.min(i32::MAX as u128) as i32) };
+        if r >= 0 {
+            return Ok(r > 0);
         }
-        if r > 0 {
-            break;
-        }
+        // poll() is never restarted after a signal handler runs.
         let e = std::io::Error::last_os_error();
         if e.kind() != std::io::ErrorKind::Interrupted {
             return Err(e.into());
         }
+    }
+}
+
+fn attach_timeout() -> Error {
+    Error::new("attach-timeout", "no `remote-exec run` attached in time")
+}
+
+pub fn accept_until(listener: &OwnedFd, deadline: Instant) -> Res<OwnedFd> {
+    if !wait_readable(listener.as_raw_fd(), deadline)? {
+        return Err(attach_timeout());
     }
     let fd = unsafe {
         libc::accept4(
@@ -79,6 +85,14 @@ pub fn send(fd: RawFd, bytes: &[u8], fds: &[RawFd]) -> Res<()> {
         )?;
     }
     Ok(())
+}
+
+/// `recv()`, giving up with `attach-timeout` once `deadline` passes.
+pub fn recv_until(fd: RawFd, deadline: Instant) -> Res<(Vec<u8>, Vec<OwnedFd>)> {
+    if !wait_readable(fd, deadline)? {
+        return Err(attach_timeout());
+    }
+    recv(fd)
 }
 
 /// One packet and any descriptors it carried. An empty packet means the peer closed.
@@ -114,7 +128,7 @@ mod tests {
         let listener = listen_at(&path).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         let client = connect_to(&path).unwrap();
-        let server = accept_within(&listener, 1000).unwrap();
+        let server = accept_until(&listener, soon(1000)).unwrap();
 
         let (r, w) = nix::unistd::pipe().unwrap();
         send(client.as_raw_fd(), b"hello", &[w.as_raw_fd()]).unwrap();
@@ -143,9 +157,29 @@ mod tests {
         let dir = TempDir::new("sock-timeout");
         let listener = listen_at(&dir.path().join("t.sock")).unwrap();
         let started = std::time::Instant::now();
-        let e = accept_within(&listener, 100).err().unwrap();
+        let e = accept_until(&listener, soon(100)).err().unwrap();
         assert_eq!(e.code, "attach-timeout");
         assert!(started.elapsed() >= std::time::Duration::from_millis(90));
+    }
+
+    #[test]
+    fn a_connection_that_sends_nothing_times_out() {
+        let dir = TempDir::new("sock-silent");
+        let path = dir.path().join("q.sock");
+        let listener = listen_at(&path).unwrap();
+        let client = connect_to(&path).unwrap();
+        let server = accept_until(&listener, soon(1000)).unwrap();
+        let started = std::time::Instant::now();
+        let e = recv_until(server.as_raw_fd(), soon(100)).err().unwrap();
+        assert_eq!(e.code, "attach-timeout");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(90));
+        // A deadline already past still takes what has arrived.
+        send(client.as_raw_fd(), b"late", &[]).unwrap();
+        assert_eq!(recv_until(server.as_raw_fd(), Instant::now()).unwrap().0, b"late");
+    }
+
+    fn soon(ms: u64) -> Instant {
+        Instant::now() + std::time::Duration::from_millis(ms)
     }
 
     #[test]

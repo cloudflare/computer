@@ -22,16 +22,20 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long the session waits for `remote-exec run` after `Prepared`. `REMOTE_EXEC_ATTACH_TIMEOUT_MS`
 /// overrides it, for tests.
-fn attach_timeout_ms() -> i32 {
-    std::env::var("REMOTE_EXEC_ATTACH_TIMEOUT_MS")
+fn attach_timeout() -> Duration {
+    let ms = std::env::var("REMOTE_EXEC_ATTACH_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(30_000)
+        .unwrap_or(30_000);
+    Duration::from_millis(ms)
 }
+/// How long one connection may take to send its attach message: `remote-exec run` sends it right
+/// after connecting, so one that stays silent isn't run and mustn't hold up the one that is.
+const ATTACH_MESSAGE: Duration = Duration::from_secs(2);
 const CHUNK: usize = 1024 * 1024;
 const GRACE: Duration = Duration::from_secs(2);
 
@@ -298,11 +302,16 @@ impl Session {
     /// Accept `remote-exec run`, check its token, and start the command on its descriptors.
     fn attach(&mut self, token: [u8; 16]) -> Res<i32> {
         let listener = self.listener.as_ref().ok_or_else(|| Error::protocol("no socket"))?;
+        // One deadline for the whole wait, however many connections come and go.
+        let deadline = Instant::now() + attach_timeout();
         let conn = loop {
-            let conn = sock::accept_within(listener, attach_timeout_ms())?;
-            let (bytes, fds) = match sock::recv(conn.as_raw_fd()) {
+            let conn = sock::accept_until(listener, deadline)?;
+            let (bytes, fds) = match sock::recv_until(conn.as_raw_fd(), deadline.min(Instant::now() + ATTACH_MESSAGE)) {
                 Ok(x) => x,
-                Err(_) => continue,
+                Err(_) => {
+                    log("reject", "a connection that sent no attach message");
+                    continue;
+                }
             };
             let attach_token = proto::from_bytes(&bytes).ok().and_then(|m| {
                 let msg = m.get_root::<run_to_session::Reader>().ok()?;
@@ -329,7 +338,12 @@ impl Session {
             }
         };
         let (conn, pid) = conn;
-        send_to_run(&conn, |mut m| m.set_accepted(()))?;
+        if let Err(e) = send_to_run(&conn, |mut m| m.set_accepted(())) {
+            // run is gone, and nothing supervises the command yet: don't leave it running.
+            log("run-gone", "killing the command before it was accepted");
+            procs::kill_all(pid);
+            return Err(e);
+        }
         let done = Arc::new(AtomicBool::new(false));
         let conn = Arc::new(conn);
 
