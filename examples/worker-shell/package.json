@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@cloudflare/computer": "*",
-    "just-bash": "^3.0.1"
+    "just-bash": "^3.6.0"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
