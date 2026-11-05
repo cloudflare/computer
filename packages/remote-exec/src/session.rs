@@ -471,10 +471,19 @@ impl Session {
     }
 
     fn cleanup(&mut self) {
-        if let Some(running) = &self.running {
+        if let Some(running) = &mut self.running {
             if !running.done.load(Ordering::SeqCst) {
                 log("cleanup", "killing the command");
-                procs::kill_all(running.pgid);
+                // Signal without reaping, and let the supervisor reap: it then tells run the
+                // command's real status before we exit. Reaping here could take the leader's
+                // status first, and exiting first would leave run with only a closed socket.
+                procs::signal_tree(running.pgid, libc::SIGKILL, true);
+                match running.supervisor.take() {
+                    Some(handle) => {
+                        let _ = handle.join();
+                    }
+                    None => procs::kill_all(running.pgid),
+                }
             }
         }
         if self.listener.take().is_some() {
