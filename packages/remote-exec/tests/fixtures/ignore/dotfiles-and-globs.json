@@ -1,0 +1,46 @@
+{
+  "description": "Globs match dotfiles; braces, character classes, ? and negative globs.",
+  "files": {
+    ".env": "",
+    ".config/tool.json": "",
+    "src/a1.ts": "",
+    "src/a2.ts": "",
+    "src/b.tsx": "",
+    "src/c.css": "",
+    "test/a.test.ts": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [
+        ".config/tool.json",
+        ".env",
+        "src/a1.ts",
+        "src/a2.ts",
+        "src/b.tsx",
+        "src/c.css",
+        "test/a.test.ts"
+      ]
+    },
+    {
+      "globs": ["src/*.{ts,tsx}"],
+      "expected": ["src/a1.ts", "src/a2.ts", "src/b.tsx"]
+    },
+    {
+      "globs": ["src/a[12].ts"],
+      "expected": ["src/a1.ts", "src/a2.ts"]
+    },
+    {
+      "globs": ["src/a?.ts", "!src/a2.ts"],
+      "expected": ["src/a1.ts"]
+    },
+    {
+      "globs": ["**", "!**/*.ts", "!.*/**"],
+      "expected": [".env", "src/b.tsx", "src/c.css"]
+    },
+    {
+      "globs": ["*"],
+      "expected": [".env"]
+    }
+  ]
+}

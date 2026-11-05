@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Local development only (`wrangler dev`), with Docker for the container.
+  "name": "computer-remote-exec-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-11",
+  "compatibility_flags": ["nodejs_compat"],
+  // codemode's Dynamic Workers.
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "containers": [{ "class_name": "Sandbox", "image": "./Dockerfile", "max_instances": 5 }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "SANDBOX", "class_name": "Sandbox" },
+      { "name": "WORKSPACE", "class_name": "WorkspaceObject" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox", "WorkspaceObject"] }]
+}

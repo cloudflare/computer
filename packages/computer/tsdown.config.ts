@@ -61,6 +61,7 @@ export default defineConfig({
     "backends/worker-shell/shell/file": "src/backends/worker-shell/generated/file.ts",
     "backends/worker-shell/shell/xan": "src/backends/worker-shell/generated/xan.ts",
     "backends/worker-shell/shell/jq": "src/backends/worker-shell/generated/jq.ts",
+    "remote-exec/index": "src/remote-exec/index.ts",
     "observe/cloudflare": "src/observe/cloudflare.ts",
     "vite/index": "src/vite/index.ts",
   },
@@ -97,6 +98,9 @@ export default defineConfig({
       "diff3",
       "ignore",
       "pify",
+      // remote-exec: the session protocol's encoding, and the push and pull globs.
+      "capnp-es",
+      "picomatch",
     ],
   },
   alias: {

@@ -1,0 +1,15 @@
+{
+  "description": "Comments, blank lines, escaped #, and trailing spaces in .gitignore.",
+  "files": {
+    ".gitignore": "# a comment\n\n\\#hash.txt\nspace.txt   \n",
+    "#hash.txt": "",
+    "space.txt": "",
+    "kept.txt": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [".gitignore", "kept.txt"]
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+===
+syncing calls take turns, and each pulls back only its own command's changes
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const options = { push: ["par/**"], pull: ["par/**"] };
+  const [a, b] = await Promise.all([
+    exec(["sh", "-c", "sleep 1; mkdir -p par && echo A > par/a.txt"], options),
+    exec(["sh", "-c", "sleep 1; mkdir -p par && echo B > par/b.txt"], options),
+  ]);
+  const waits = [a.sync.pushed.lockWaitMs, b.sync.pushed.lockWaitMs].sort((x, y) => x - y);
+  return {
+    pulled: [a.sync.pulled.files, b.sync.pulled.files],
+    firstWaited: waits[0] > 500,
+    secondWaited: waits[1] > 500,
+  };
+}
+EOF
+workspace get par/a.txt
+workspace get par/b.txt
+---
+{
+  "pulled": [
+    1,
+    1
+  ],
+  "firstWaited": false,
+  "secondWaited": true
+}
+A
+B
+
+===
+aborting SIGKILLs everything the command started, and skips the pull
+===
+workspace run <<'EOF'
+import { exec } from "codemode:remote-exec";
+import { exec as run } from "codemode:exec";
+
+export default async function () {
+  const controller = new AbortController();
+  const p = await exec(["sh", "-c", "sleep 300 & sleep 300 & wait"], {
+    signal: controller.signal,
+    pull: ["**"],
+  });
+  const count = async () => (await run(["pgrep", "-c", "-f", "sleep 300$"])).stdout.trim();
+  const before = await count();
+  controller.abort();
+  const exitCode = await p.exitCode;
+  const pulled = await p.pulled;
+  return { before, exitCode, pulled: pulled.status, after: await count() };
+}
+EOF
+---
+{
+  "before": "2",
+  "exitCode": 137,
+  "pulled": "skipped",
+  "after": "0"
+}
+
+===
+background processes don't outlive their call
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const started = await exec(["sh", "-c", "setsid sleep 301 & echo started"]);
+  const { stdout } = await exec(["pgrep", "-c", "-f", "sleep 301$"]);
+  return { started: started.stdout, sleeping: stdout.trim() };
+}
+EOF
+---
+{
+  "started": "started\n",
+  "sleeping": "0"
+}
+
+===
+a command that can't start rejects exec()
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  return await exec(["/no/such/thing"]).catch((error) => String(error));
+}
+EOF
+---
+"Error: exec: /no/such/thing: No such file or directory (os error 2)"
+
+===
+commands get the image's environment, under their own env
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const image = await exec(["sh", "-c", 'echo "$IMAGE_ENV"']);
+  const own = await exec(["sh", "-c", 'echo "$IMAGE_ENV"'], { env: { IMAGE_ENV: "from-the-call" } });
+  return { image: image.stdout, own: own.stdout };
+}
+EOF
+---
+{
+  "image": "from-the-image\n",
+  "own": "from-the-call\n"
+}

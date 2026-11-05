@@ -1,0 +1,15 @@
+{
+  "description": "A file can't be re-included when a parent directory is excluded (git's rule).",
+  "files": {
+    ".gitignore": "vendor/\n!vendor/keep.txt\n",
+    "vendor/keep.txt": "",
+    "vendor/drop.txt": "",
+    "main.go": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [".gitignore", "main.go"]
+    }
+  ]
+}
