@@ -560,7 +560,7 @@ class Agent extends withWorkspaceContainer(class extends DurableObject<Env> {}) 
 }
 
 // Offer only the JavaScript backend; the container is reached through codemode:container.
-const tools = createAITools({ workspace: this.workspace, exec: { "worker-javascript": {} } });
+const tools = createAITools({ workspace: this.workspace, exec: { backends: { "worker-javascript": {} } } });
 ```
 
 ```js

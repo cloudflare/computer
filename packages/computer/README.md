@@ -360,12 +360,12 @@ const tools = createAITools({
   workspace,
   read: { maxBytes: 32 * 1024, maxLines: 800 },
   // The backends the model can use. Omit for every backend.
-  exec: { shell: { description: "Try this first." }, container: {} },
+  exec: { backends: { shell: { description: "Try this first." }, container: {} } },
 });
 ```
 
 Each backend describes itself to the model, and the text you give in
-`exec` comes first. The model reads both when deciding where a command
+`exec.backends` comes first. The model reads both when deciding where a command
 should run, so write yours in plain language. Truncated text
 model output keeps both line and byte continuations; pass both to the
 next call to avoid transferring the same bytes again. Eligible image and

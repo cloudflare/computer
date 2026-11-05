@@ -24,6 +24,7 @@ export type {
   ExecToolOptions,
   ExecToolOutput,
 } from "./common/exec";
+export type { ExecToolSetOptions } from "./common/options";
 export type { DeleteToolOptions } from "./common/fs/delete";
 export type { EditToolOptions } from "./common/fs/edit";
 export type { FindToolOptions } from "./common/fs/find";

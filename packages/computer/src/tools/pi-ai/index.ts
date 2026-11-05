@@ -42,7 +42,8 @@ export interface ToolCallContext {
   abortSignal?: AbortSignal;
   /**
    * The `metadata` an `exec` call's run starts with, for host modules;
-   * the model never sees it. When set, `execMetadata` isn't used.
+   * the model never sees it. When set, the tool set's
+   * `exec: { metadata }` isn't used.
    */
   metadata?: Record<string, string>;
 }

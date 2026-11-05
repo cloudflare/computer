@@ -18,24 +18,38 @@ export interface CreateToolsOptions {
   write?: Omit<WriteToolOptions, "store">;
   edit?: Omit<EditToolOptions, "store">;
   /**
+   * Options for the `exec` tool. Omit `exec` or its `backends` to offer
+   * every backend the Workspace has; `{ backends: {} }` means no exec
+   * tool. `exec: {}` and keys other than `backends`, `output`, and
+   * `metadata`, such as a backend map from before `exec.backends`,
+   * throw.
+   */
+  exec?: ExecToolSetOptions;
+  /**
+   * @deprecated Use `exec`. `{ backends }` becomes `exec: { backends }`
+   * and `maxBytes` and `maxLines` move to `exec: { output }`;
+   * `defaultBackend` is ignored, because the model names a backend
+   * whenever there is a choice.
+   */
+  shell?: LegacyShellOptions;
+}
+
+/** The `exec` options every tool set takes. */
+export interface ExecToolSetOptions {
+  /**
    * The backends `exec` may run on, keyed by id, each with an optional
    * description for the model. Omit to offer every backend the
    * Workspace has; `{}` means no exec tool.
    */
-  exec?: ExecBackends;
-  execOutput?: Pick<ExecToolOptions, "maxBytes" | "maxLines">;
+  backends?: ExecBackends;
+  /** How much of each `exec` stream the model sees. */
+  output?: Pick<ExecToolOptions, "maxBytes" | "maxLines">;
   /**
    * The `metadata` each `exec` run starts with, or a function that picks
    * it from the tool call's id. Host modules read it; the model never
    * sees it.
    */
-  execMetadata?: ExecMetadata;
-  /**
-   * @deprecated Use `exec`. `{ backends }` becomes `exec: backends`;
-   * `defaultBackend` is ignored, because the model names a backend
-   * whenever there is a choice. Output limits move to `createExecTool`.
-   */
-  shell?: LegacyShellOptions;
+  metadata?: ExecMetadata;
 }
 
 interface LegacyShellOptions extends Omit<ExecToolOptions, "workspace" | "backends"> {
@@ -57,6 +71,7 @@ export interface ResolvedToolOptions {
 
 /** Resolve the options into what each tool needs, so every tool set offers the same tools. */
 export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOptions {
+  checkExec(options.exec);
   const workspace =
     options.root === undefined
       ? options.workspace
@@ -75,19 +90,38 @@ export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOpt
   };
 }
 
+const EXEC_KEYS = new Set(["backends", "output", "metadata"]);
+
+// Reject the shapes `exec` had before it took `{ backends, output,
+// metadata }`, rather than offering every backend for them.
+function checkExec(exec: ExecToolSetOptions | undefined): void {
+  if (exec === undefined) return;
+  const keys = Object.keys(exec);
+  if (keys.some((key) => !EXEC_KEYS.has(key))) {
+    throw new TypeError(
+      "exec takes `{ backends, output, metadata }`; move backend options under `exec.backends`",
+    );
+  }
+  if (keys.length === 0) {
+    throw new TypeError(
+      "`exec: {}` no longer turns exec off; pass `exec: { backends: {} }` for no exec tool, or leave `exec` out for every backend",
+    );
+  }
+}
+
 // Turn `exec`, or the deprecated `shell`, into exec tool options.
 function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
   const runtime = options.workspace.runtime;
   if (runtime === undefined) return undefined;
-  const exec = selectExec(options, runtime);
-  if (Object.keys(exec.backends).length === 0) return undefined;
-  const output = options.execOutput;
+  const selected = selectExec(options, runtime);
+  if (Object.keys(selected.backends).length === 0) return undefined;
+  const { output, metadata } = options.exec ?? {};
   return {
     workspace: { runtime },
-    ...exec,
+    ...selected,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
-    ...(options.execMetadata === undefined ? {} : { metadata: options.execMetadata }),
+    ...(metadata === undefined ? {} : { metadata }),
   };
 }
 
@@ -95,10 +129,11 @@ function selectExec(
   options: CreateToolsOptions,
   runtime: ExecWorkspaceLike["runtime"],
 ): Omit<ExecToolOptions, "workspace"> & { backends: ExecBackends } {
-  // `exec` wins over the deprecated `shell`, so `exec: {}` always means
-  // no exec tool.
-  if (options.exec !== undefined) return { backends: options.exec };
-  if (options.shell !== undefined) {
+  // `exec` wins over the deprecated `shell`, so `exec: { backends: {} }`
+  // always means no exec tool.
+  const exec = options.exec;
+  if (exec?.backends !== undefined) return { backends: exec.backends };
+  if (exec === undefined && options.shell !== undefined) {
     const { backends, defaultBackend: _ignored, ...limits } = options.shell;
     return { ...limits, backends };
   }

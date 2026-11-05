@@ -35,7 +35,7 @@ The tools wrap three Workspace surfaces:
 | `WorkspaceFileStore` | Adapt `workspace.fs` to the store used by file tools. |
 | `defineExec` | Build the `exec` tool's description, input schema, argument repair, and executor, for a library with no adapter here. |
 
-Every tool set names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: {}`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
+Every tool set names its tools `read`, `ls`, `find`, `grep`, `write`, `edit`, and `delete`. `exec` appears when the Workspace has a backend, unless you pass `exec: { backends: {} }`. `publish` appears when assets are configured. In read-only mode the set is `read`, `ls`, `find`, and `grep`.
 
 ## Wiring up
 
@@ -66,18 +66,18 @@ export class Agent {
 
 Pass the returned AI SDK `ToolSet` to `generateText`, `streamText`, or an agent framework hook such as `getTools()`.
 
-`exec` lists the backends the model can use, keyed by backend id. Leave it out to use every backend.
+`exec: { backends }` lists the backends the model can use, keyed by backend id. Leave it out to use every backend.
 
 ```ts
 createAITools({ workspace });                                                       // every backend
-createAITools({ workspace, exec: { "worker-javascript": {} } });                     // just this one
+createAITools({ workspace, exec: { backends: { "worker-javascript": {} } } });       // just this one
 createAITools({
   workspace,
-  exec: { "worker-javascript": { description: "Use for data work." } },             // with your own text
+  exec: { backends: { "worker-javascript": { description: "Use for data work." } } }, // with your own text
 });
 ```
 
-Each backend describes itself, and a `description` you pass comes first. `exec: {}` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there. With several, the model must name a backend on every call; there is no default.
+Each backend describes itself, and a `description` you pass comes first. `exec: { backends: {} }` means no exec tool. With one backend, `exec` has no `backend` argument and always runs there. With several, the model must name a backend on every call; there is no default.
 
 `createPiTools` and `createTanStackTools` take `exec` the same way.
 
@@ -174,9 +174,7 @@ createAITools({
   read?,
   write?,
   edit?,
-  exec?,
-  execOutput?,
-  execMetadata?,
+  exec?: { backends?, output?, metadata? },
   root?,
 });
 ```
@@ -190,10 +188,12 @@ createAITools({
 | `read` | default caps | Options passed to `createReadTool`. |
 | `write` | default caps | Options passed to `createWriteTool`. |
 | `edit` | default caps | Options passed to `createEditTool`. |
-| `exec` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. Both types are exported from `@cloudflare/computer/tools`. |
-| `execOutput` | 2000 lines, 64 KiB | `{ maxLines?, maxBytes? }`: how much of each `exec` stream the model sees. See [`exec`](#exec). |
-| `execMetadata` | none | The `metadata` each `exec` run starts with, or `({ toolCallId }) => metadata` to pick it per call. See [Run metadata](#run-metadata). |
-| `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
+| `exec.backends` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. |
+| `exec.output` | 2000 lines, 64 KiB | `{ maxLines?, maxBytes? }`: how much of each `exec` stream the model sees. See [`exec`](#exec). |
+| `exec.metadata` | none | The `metadata` each `exec` run starts with, or `({ toolCallId }) => metadata` to pick it per call. See [Run metadata](#run-metadata). |
+| `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: { backends }` and its output limits become `exec.output`; `defaultBackend` is ignored. |
+
+`exec` is an `ExecToolSetOptions`, exported from `@cloudflare/computer/tools` with `ExecBackends` and `ExecBackendOptions`. `exec: {}` throws, as does any key other than `backends`, `output`, and `metadata`: pass `exec: { backends: {} }` for no exec tool, or leave `exec` out for every backend.
 
 `createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
 
@@ -375,7 +375,7 @@ A `backend` value the model sends anyway is dropped when only one backend is con
 
 `input` is an object of JSON values, described to the model as an input object. Offered any JSON value, some models send the object they mean as a string of JSON. A string that parses to an object is replaced by that object before validation, through the definition's `prepareArguments`; `createPiTools` applies it, and a caller of `defineExec` should too.
 
-Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. Set them with `execOutput` on a tool set, or on `createExecTool` directly. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
+Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. Set them with `exec: { output }` on a tool set, or on `createExecTool` directly. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
 
 ```text
 line 2999
@@ -388,19 +388,19 @@ The model can open that file with `read` or search it with `grep`. `streamMaxByt
 
 ### Run metadata
 
-A run can carry `metadata`, a record of strings that host modules read and the model never sees (see [Host modules](./17_isolate_javascript.md#host-modules)). `metadata` on `createExecTool`, or `execMetadata` on a tool set, is either the record itself or a function that picks it from the tool call's id, which each agent library passes. A throw fails the call without running anything.
+A run can carry `metadata`, a record of strings that host modules read and the model never sees (see [Host modules](./17_isolate_javascript.md#host-modules)). `metadata` on `createExecTool`, or `exec: { metadata }` on a tool set, is either the record itself or a function that picks it from the tool call's id, which each agent library passes. A throw fails the call without running anything.
 
 ```ts
 // Inside an agent with one instance per conversation.
 const tools = createAITools({
   workspace,
-  execMetadata: ({ toolCallId }) => ({ conversation: this.name, toolCall: toolCallId }),
+  exec: { metadata: ({ toolCallId }) => ({ conversation: this.name, toolCall: toolCallId }) },
 });
 ```
 
-A pi caller runs each call itself, so it can instead pass the metadata with the call: `execute(call, { metadata })`. Metadata passed with a call wins over `execMetadata`. A caller of `defineExec` passes `metadata` or `toolCallId` on each `execute` the same way.
+A pi caller runs each call itself, so it can instead pass the metadata with the call: `execute(call, { metadata })`. Metadata passed with a call wins over `exec: { metadata }`. A caller of `defineExec` passes `metadata` or `toolCallId` on each `execute` the same way.
 
-Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: {}` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: { backends: {} }` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 
 ## `publish`
 
