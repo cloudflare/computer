@@ -647,8 +647,6 @@ type MeasuredResponse =
   | { result: unknown; bytes: number }
   | Extract<BridgeResponse, { error: unknown }>;
 
-const MAX_RESPONSE_VALUES = 4096;
-
 // Measure plain data the way it costs the Durable Object: UTF-8 bytes
 // of strings and keys, raw bytes of byte arrays, and a small fixed cost
 // per scalar. Anything that is not plain data is rejected, including
@@ -656,7 +654,6 @@ const MAX_RESPONSE_VALUES = 4096;
 // the host as live callbacks, and cycles.
 function measureValue(value: unknown, maxBytes: number, kind: "request" | "response"): number {
   let bytes = 0;
-  let values = 0;
   const seen = new Set<object>();
   const add = (count: number) => {
     bytes += count;
@@ -665,10 +662,6 @@ function measureValue(value: unknown, maxBytes: number, kind: "request" | "respo
     }
   };
   const visit = (item: unknown): void => {
-    values += 1;
-    if (kind === "response" && values > MAX_RESPONSE_VALUES) {
-      throw new Error("Workspace capability response has too many values.");
-    }
     if (
       item === null ||
       item === undefined ||
