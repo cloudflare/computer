@@ -180,7 +180,8 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    // Byte-indexed below: anything but ASCII could split a character.
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len())
@@ -216,8 +217,28 @@ pub fn random_token() -> io::Result<[u8; 16]> {
 
 pub fn log(event: &str, detail: &str) {
     // stderr is the session's log channel; the host forwards it to Workers logs.
-    let detail = detail.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
-    eprintln!("{{\"remote-exec\":\"{event}\",\"detail\":\"{detail}\"}}");
+    eprintln!("{}", log_line(event, detail));
+}
+
+/// One JSON object per line. `event` is always one of our own literals; `detail` can hold anything
+/// an error message carries, control characters included.
+fn log_line(event: &str, detail: &str) -> String {
+    use std::fmt::Write;
+    let mut escaped = String::with_capacity(detail.len());
+    for c in detail.chars() {
+        match c {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            c if c < ' ' => {
+                let _ = write!(escaped, "\\u{:04x}", c as u32);
+            }
+            c => escaped.push(c),
+        }
+    }
+    format!("{{\"remote-exec\":\"{event}\",\"detail\":\"{escaped}\"}}")
 }
 
 #[cfg(test)]
@@ -290,6 +311,22 @@ mod tests {
         assert_eq!(unhex("ABff").unwrap(), vec![0xab, 0xff]);
         assert!(unhex("abc").is_none());
         assert!(unhex("zz").is_none());
+    }
+
+    #[test]
+    fn unhex_refuses_text_that_isnt_ascii() {
+        // A multi-byte character straddling a pair would slice inside it.
+        assert!(unhex("aé0").is_none());
+        assert!(unhex("éé").is_none());
+    }
+
+    #[test]
+    fn log_lines_are_json() {
+        assert_eq!(log_line("e", "plain"), r#"{"remote-exec":"e","detail":"plain"}"#);
+        assert_eq!(
+            log_line("e", "q\"b\\\n\r\t\u{1}"),
+            r#"{"remote-exec":"e","detail":"q\"b\\\n\r\t\u0001"}"#
+        );
     }
 
     #[test]
