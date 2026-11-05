@@ -112,6 +112,7 @@ export class WorkspaceRuntime {
       timeoutMs: options.timeoutMs,
       sync: options.sync,
       onInterrupt: options.onInterrupt,
+      metadata: options.metadata,
     });
     return wrapModuleHandle(
       runtime,

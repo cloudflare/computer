@@ -334,6 +334,7 @@ describe("WorkspaceRuntime", () => {
       "approveLater",
       "delete",
       "echo",
+      "execution",
       "executionGate",
       "gate",
       "hold",
@@ -347,6 +348,41 @@ describe("WorkspaceRuntime", () => {
       "unsafeGate",
       "wait",
     ]);
+  });
+
+  it("hands host modules a run's metadata and keeps it from the run's code", async () => {
+    const response = await SELF.fetch("https://example.test/runtime-stub", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source: `
+          import { execution } from "codemode:test-host";
+          export default async (input) => ({
+            execution: await execution(),
+            seen: JSON.stringify({ input, env: process.env, argv: process.argv, globals: Object.keys(globalThis) }),
+          });
+        `,
+        metadata: { conversation: "secret-conversation" },
+      }),
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const { value } = JSON.parse(text) as {
+      value: { execution: { metadata: unknown }; seen: string };
+    };
+    expect(value.execution).toMatchObject({
+      metadata: { conversation: "secret-conversation" },
+    });
+    expect(value.seen).not.toContain("secret-conversation");
+  });
+
+  it("gives host modules empty metadata when a run has none", async () => {
+    const response = await runtime({
+      source: `import { execution } from "codemode:test-host"; export default () => execution();`,
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result.value.metadata).toEqual({});
   });
 
   it("fails to link an import the host module does not export", async () => {
@@ -996,7 +1032,12 @@ describe("durable executions", () => {
 
   async function start(
     id: string,
-    body: { source: string; onInterrupt?: string; network?: boolean },
+    body: {
+      source: string;
+      onInterrupt?: string;
+      network?: boolean;
+      metadata?: Record<string, string>;
+    },
   ) {
     const response = await SELF.fetch("https://example.test/durable-start", {
       method: "POST",
@@ -1096,8 +1137,12 @@ describe("durable executions", () => {
         export default async () => executionGate();
       `,
       onInterrupt: "replay",
+      metadata: { conversation: "c1" },
     });
-    const execution = { id: "durable-execution" };
+    const execution = {
+      id: "durable-execution",
+      metadata: { conversation: "c1" },
+    };
     expect(await result("durable-execution")).toMatchObject({
       status: "completed",
       value: execution,
@@ -1365,7 +1410,14 @@ describe("durable executions", () => {
 });
 
 describe("interrupts", () => {
-  type Pending = { id: string; backend: string; callId: string; payload: unknown; since: number };
+  type Pending = {
+    id: string;
+    backend: string;
+    callId: string;
+    payload: unknown;
+    since: number;
+    metadata: Record<string, string>;
+  };
 
   async function start(id: string, source: string, options: Record<string, unknown> = {}) {
     const response = await SELF.fetch("https://example.test/interrupt-start", {
@@ -1436,6 +1488,7 @@ describe("interrupts", () => {
       backend: "worker-javascript",
       callId: expect.stringMatching(/^wait-answer:\d+$/),
       payload: { kind: "approval", action: "deploy" },
+      metadata: {},
     });
     await expect(respond("wait-answer", call.callId, { ok: true })).resolves.toEqual({ ok: true });
     expect(await result("wait-answer")).toMatchObject({
@@ -1453,11 +1506,12 @@ describe("interrupts", () => {
   });
 
   it("keeps waiting across a restart", async () => {
-    await start("wait-restart", approval);
-    await waitingCall("wait-restart");
+    await start("wait-restart", approval, { metadata: { conversation: "c2" } });
+    expect((await waitingCall("wait-restart")).metadata).toEqual({ conversation: "c2" });
     await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
     const call = await waitingCall("wait-restart");
     expect(call.payload).toEqual({ kind: "approval", action: "deploy" });
+    expect(call.metadata).toEqual({ conversation: "c2" });
     await respond("wait-restart", call.callId, { ok: false });
     expect(await result("wait-restart")).toMatchObject({
       status: "completed",

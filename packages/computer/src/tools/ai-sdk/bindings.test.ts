@@ -15,7 +15,7 @@ function callContext(): WorkspaceModuleCallContext {
     deadline: Date.now() + 60_000,
     access: "read-write",
     callId: "test-call",
-    execution: { id: "test-run" },
+    execution: { id: "test-run", metadata: {} },
     interrupt: () => Promise.reject(new Error("not used")),
     resolvePath: async (path) => path,
   };

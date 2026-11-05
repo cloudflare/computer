@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { WorkspaceRuntimeLoader } from "../../runtime/types";
 import { Workspace } from "../../workspace";
-import { ExecutionJournal, fingerprint, loadResume } from "./journal";
+import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
 import { runtimeCode, WorkerJavaScriptBackend } from "./worker-javascript";
 
 function throwingLoader(message: string) {
@@ -374,6 +374,39 @@ describe("WorkerJavaScriptBackend", () => {
         env: { KEY: 42 as unknown as string },
       }),
     ).rejects.toThrow(/env value for "KEY" must be a string/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("rejects metadata larger than 16 KiB", async () => {
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", { metadata: { key: "x".repeat(16 * 1024) } }),
+    ).rejects.toThrow(/metadata exceeds 16384 bytes/);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("rejects metadata that isn't a string-to-string record", async () => {
+    const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [new WorkerJavaScriptBackend({ loader: { load } })],
+    });
+    await workspace.fs.mkdir("/workspace", { recursive: true });
+    await expect(
+      workspace.runtime.exec("export default 1", {
+        metadata: { key: 42 as unknown as string },
+      }),
+    ).rejects.toThrow(/metadata value for "key" must be a string/);
+    await expect(
+      workspace.runtime.exec("export default 1", {
+        metadata: ["a"] as unknown as Record<string, string>,
+      }),
+    ).rejects.toThrow(/metadata must be a string-to-string record/);
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -2040,7 +2073,11 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     });
   }
 
-  async function interrupt(storage: SQLiteTestStorage, timeoutMs?: number) {
+  async function interrupt(
+    storage: SQLiteTestStorage,
+    timeoutMs?: number,
+    metadata?: Record<string, string>,
+  ) {
     const workspace = open(storage);
     await workspace.fs.mkdir("/workspace", { recursive: true });
     await workspace.runtime.exec("export default 1", {
@@ -2048,8 +2085,51 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
       id: "run",
       onInterrupt: "replay",
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(metadata === undefined ? {} : { metadata }),
     });
     return workspace;
+  }
+
+  // Rewrite the run's saved start as a version without metadata wrote it.
+  function forgetMetadata(storage: SQLiteTestStorage) {
+    const db = new Database(storage);
+    const saved = loadResume(db, "worker-javascript", "run");
+    if (saved === undefined) throw new Error("expected a saved run");
+    const { metadata: _metadata, ...start } = saved.start;
+    saveResume(db, "worker-javascript", "run", saved.policy, start as ResumeStart);
+  }
+
+  // A loader whose runs call codemode:test.who once and then hang, so the run
+  // stays running.
+  function calling() {
+    return {
+      load() {
+        return {
+          getEntrypoint() {
+            return {
+              async evaluate(
+                _input: unknown,
+                host: { call(name: string, args: unknown[]): Promise<unknown> },
+              ) {
+                await host.call("host/codemode:test.who", []);
+                await new Promise<void>(() => undefined);
+              },
+            };
+          },
+        };
+      },
+    };
+  }
+
+  function recordingModule(seen: unknown[]) {
+    return {
+      "codemode:test": {
+        who: (_args: unknown, context: { execution: unknown }) => {
+          seen.push(context.execution);
+          return null;
+        },
+      },
+    };
   }
 
   async function settle(workspace: Workspace) {
@@ -2180,6 +2260,53 @@ describe("WorkerJavaScriptBackend interrupted executions", () => {
     await answering.runtime.respond("run", `run:${step.seq}`, true);
     expect(loadResume(db, "worker-javascript", "run")?.attempt).toBe(1);
     for (const workspace of workspaces) await workspace.close();
+  });
+
+  it("keeps a run's metadata when it resumes", async () => {
+    const storage = new SQLiteTestStorage();
+    const first = await interrupt(storage, undefined, { conversation: "c1" });
+    const seen: unknown[] = [];
+    const later = open(storage, { loader: calling(), modules: recordingModule(seen) });
+    await later.runtime.recover();
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen).toEqual([{ id: "run", metadata: { conversation: "c1" } }]);
+    await later.close();
+    await first.close();
+  });
+
+  it("resumes a run saved without metadata, with none", async () => {
+    const storage = new SQLiteTestStorage();
+    const first = await interrupt(storage);
+    forgetMetadata(storage);
+    const seen: unknown[] = [];
+    const later = open(storage, { loader: calling(), modules: recordingModule(seen) });
+    await later.runtime.recover();
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen).toEqual([{ id: "run", metadata: {} }]);
+    await later.close();
+    await first.close();
+  });
+
+  it("lists a waiting run's metadata, and none for a run saved without it", async () => {
+    for (const [metadata, listed] of [
+      [{ conversation: "c1" }, { conversation: "c1" }],
+      [undefined, {}],
+    ] as const) {
+      const storage = new SQLiteTestStorage();
+      const db = new Database(storage);
+      const first = await interrupt(storage, undefined, metadata);
+      if (metadata === undefined) forgetMetadata(storage);
+      const journal = new ExecutionJournal(db, "worker-javascript", "run");
+      const step = journal.begin("host/codemode:test.approve", []);
+      if (step.kind !== "live") throw new Error("expected a live call");
+      journal.interrupt(step.seq, { kind: "approval" });
+      const later = open(storage);
+      await expect(later.runtime.pending()).resolves.toEqual([
+        expect.objectContaining({ id: "run", metadata: listed }),
+      ]);
+      await later.close();
+      await first.close();
+    }
   });
 
   it("asks for a REPLAY_VERSION check when the runtime's code changes", () => {

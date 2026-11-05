@@ -313,7 +313,7 @@ describe("WorkspaceRuntimeBridge journal", () => {
         ],
       ]),
       journal,
-      execution: { id: "exec-1" },
+      execution: { id: "exec-1", metadata: { conversation: "c1" } },
     });
     return { target, commits, responses, diverged, contexts, logs };
   }
@@ -362,11 +362,10 @@ describe("WorkspaceRuntimeBridge journal", () => {
     ]);
     await target.call("host/codemode:test.run", args);
     await target.call("host/codemode:test.run", args);
-    expect(contexts.map((context) => context.execution)).toEqual([
-      { id: "exec-1" },
-      { id: "exec-1" },
-    ]);
+    const execution = { id: "exec-1", metadata: { conversation: "c1" } };
+    expect(contexts.map((context) => context.execution)).toEqual([execution, execution]);
     expect(Object.isFrozen(contexts[0]?.execution)).toBe(true);
+    expect(Object.isFrozen(contexts[0]?.execution.metadata)).toBe(true);
   });
 
   it("refuses to run an unsafe call again after an interruption", async () => {

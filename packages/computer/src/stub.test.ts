@@ -359,7 +359,14 @@ describe("WorkspaceStub", () => {
 
   it("passes runtime.pending and runtime.respond through", async () => {
     await withStub(async (ws) => {
-      const call = { id: "run", backend: "b", callId: "run:1", payload: { kind: "x" }, since: 1 };
+      const call = {
+        id: "run",
+        backend: "b",
+        callId: "run:1",
+        payload: { kind: "x" },
+        since: 1,
+        metadata: { conversation: "c1" },
+      };
       vi.spyOn(ws.runtime, "pending").mockResolvedValue([call]);
       const respond = vi.spyOn(ws.runtime, "respond").mockResolvedValue();
       await expect(ws.stub().runtime.pending()).resolves.toEqual([call]);

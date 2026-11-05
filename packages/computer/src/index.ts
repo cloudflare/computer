@@ -90,6 +90,7 @@ export type { WorkspaceBackendInfo } from "./runtime/runtime";
 export type {
   ModuleExecutionEnvelope,
   ModuleExecutionInput,
+  WorkspaceExecutionMetadata,
   WorkspaceModule,
   WorkspaceModuleBackend,
   WorkspaceModuleBackendHandle,

@@ -228,6 +228,8 @@ export interface RuntimeExecOptions {
   input?: WorkspaceRuntimeValue;
   env?: Record<string, string>;
   stdin?: Uint8Array | string;
+  /** Strings for host modules, hidden from the run's code; see `WorkspaceRuntimeExecOptions.metadata`. */
+  metadata?: Record<string, string>;
   /** Output limits for this run; see `WorkspaceRuntimeExecOptions.output`. */
   output?: WorkspaceRuntimeOutputOptions | false;
 }
