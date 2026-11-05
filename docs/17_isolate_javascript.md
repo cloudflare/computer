@@ -704,6 +704,10 @@ createContainerModule({
 });
 ```
 
+### `codemode:exec`
+
+`createExecModule()` from `@cloudflare/computer/remote-exec` runs a command in any container Durable Object, not only the Workspace's container backend. The files the command names are pushed into the container before it runs, and the files it changed are pulled back after. The container needs the `remote-exec` binary, and nothing else. Experimental. Setup, options and the streaming `codemode:remote-exec` are in [20. Remote exec](./20_remote_exec.md).
+
 ### `codemode:browser`
 
 `createBrowserModule()` from `@cloudflare/computer/modules/browser` gives JavaScript the agent's persistent browser: an agents `Browser` (from `agents/browser`, version 0.33.0 or later). The exports are the same `browser.*` functions `browserTool` gives its code, so code imports the module as a namespace and reads the same:
