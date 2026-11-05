@@ -54,6 +54,13 @@ export class Selector {
 
 const GLOB_SYNTAX = /[*?[\]{}]/;
 
+/** `path` without trailing slashes. A loop rather than `/\/+$/`, which is slow on long runs of "/". */
+function trimTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 0 && path.charCodeAt(end - 1) === 0x2f) end--;
+  return path.slice(0, end);
+}
+
 /** Resolves "." and ".." segments; undefined when ".." would leave the start or follow a glob. */
 function resolveSegments(segments: readonly string[]): string[] | undefined {
   const out: string[] = [];
@@ -75,11 +82,11 @@ function resolveSegments(segments: readonly string[]): string[] | undefined {
  * outside the root. A relative cwd is relative to the root.
  */
 export function relativeCwd(cwd: string | undefined, root: string): string | undefined {
-  const base = root.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(root);
   if (cwd === undefined || cwd === "") return "";
   let rel = cwd;
   if (cwd.startsWith("/")) {
-    const path = cwd.replace(/\/+$/, "");
+    const path = trimTrailingSlashes(cwd);
     if (path === base) return "";
     if (!path.startsWith(`${base}/`)) return undefined;
     rel = path.slice(base.length + 1);
@@ -97,7 +104,7 @@ export function normalizeGlobs(
   root: string,
   cwd?: string,
 ): string[] {
-  const base = root.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(root);
   const from = relativeCwd(cwd, root);
   return (globs ?? []).map((raw) => {
     const negated = raw.startsWith("!");
