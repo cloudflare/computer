@@ -1,0 +1,23 @@
+{
+  "description": "A leading / anchors to the .gitignore's directory; a trailing / matches directories only; ** spans directories.",
+  "files": {
+    ".gitignore": "/top.txt\nbuild/\n**/cache/**\nlib/**/gen\n",
+    "top.txt": "",
+    "sub/top.txt": "",
+    "build/x.o": "",
+    "sub/build/y.o": "",
+    "build.txt": "",
+    "a/cache/c.bin": "",
+    "a/b/cache/d.bin": "",
+    "lib/gen": "",
+    "lib/x/gen": "",
+    "lib/x/y/gen": "",
+    "lib/x/keep.ts": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [".gitignore", "build.txt", "lib/x/keep.ts", "sub/top.txt"]
+    }
+  ]
+}

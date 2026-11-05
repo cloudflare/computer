@@ -1,0 +1,29 @@
+{
+  "description": "Root .gitignore with file, extension and directory patterns.",
+  "files": {
+    ".gitignore": "dist/\n*.log\n",
+    "src/a.ts": "",
+    "src/b.js": "",
+    "src/debug.log": "",
+    "dist/out.js": "",
+    "notes.md": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [".gitignore", "notes.md", "src/a.ts", "src/b.js"]
+    },
+    {
+      "globs": ["src/**"],
+      "expected": ["src/a.ts", "src/b.js"]
+    },
+    {
+      "globs": ["dist/**"],
+      "expected": []
+    },
+    {
+      "globs": ["*.md"],
+      "expected": ["notes.md"]
+    }
+  ]
+}

@@ -48,6 +48,8 @@ export default defineConfig({
     // The docker harness has its own config and globalSetup;
     // it runs via `npm run test:harness`. Excluded here so the
     // unit-test command doesn't try to boot a container.
-    exclude: ["src/test-harness/**"],
+    // The remote-exec suites that run the real binary are Linux-only
+    // and need it built; they run via `npm run test:remote-exec`.
+    exclude: ["src/test-harness/**", "src/**/*.linux.test.ts"],
   },
 });

@@ -1,0 +1,131 @@
+[
+  {
+    "name": "begin",
+    "request": {
+      "type": "begin",
+      "id": "x1",
+      "root": "/workspace",
+      "lock": true,
+      "lockTimeoutMs": 60000
+    }
+  },
+  {
+    "name": "begin-nolock",
+    "request": {
+      "type": "begin",
+      "id": "abc_DEF-9",
+      "root": "/srv/root",
+      "lock": false,
+      "lockTimeoutMs": 0
+    }
+  },
+  {
+    "name": "push",
+    "request": {
+      "type": "push",
+      "selection": {
+        "root": "/workspace",
+        "globs": ["src/**", "!**/*.log"]
+      },
+      "manifest": [
+        {
+          "path": "src/a.ts",
+          "kind": "file",
+          "mode": 420,
+          "size": 1234,
+          "hash": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+          "target": ""
+        },
+        {
+          "path": "src/link",
+          "kind": "symlink",
+          "mode": 511,
+          "size": 0,
+          "hash": "",
+          "target": "a.ts"
+        }
+      ],
+      "owner": "1000:1000"
+    }
+  },
+  {
+    "name": "push-empty",
+    "request": {
+      "type": "push",
+      "selection": {
+        "root": "/workspace",
+        "globs": []
+      },
+      "manifest": [],
+      "owner": ""
+    }
+  },
+  {
+    "name": "chunk",
+    "request": {
+      "type": "chunk",
+      "index": 2,
+      "data": "68656c6c6f",
+      "last": false
+    }
+  },
+  {
+    "name": "chunk-empty",
+    "request": {
+      "type": "chunk",
+      "index": 0,
+      "data": "",
+      "last": true
+    }
+  },
+  {
+    "name": "push-end",
+    "request": {
+      "type": "pushEnd"
+    }
+  },
+  {
+    "name": "prepare",
+    "request": {
+      "type": "prepare",
+      "spec": {
+        "argv": ["sh", "-c", "echo hi"],
+        "cwd": "/workspace/app",
+        "env": {
+          "A": "1",
+          "B": "two words"
+        },
+        "user": ""
+      },
+      "pull": {
+        "root": "/workspace",
+        "globs": ["out/**"]
+      }
+    }
+  },
+  {
+    "name": "await-start",
+    "request": {
+      "type": "awaitStart"
+    }
+  },
+  {
+    "name": "signal",
+    "request": {
+      "type": "signal",
+      "signal": 15
+    }
+  },
+  {
+    "name": "pull",
+    "request": {
+      "type": "pull"
+    }
+  },
+  {
+    "name": "close",
+    "request": {
+      "type": "close"
+    }
+  }
+]

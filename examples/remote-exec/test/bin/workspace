@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# The example's workspace, for the cctr tests: one per test suite, named after its directory.
+#
+#   workspace put <path> < contents     write /workspace/<path>
+#   workspace get <path>                print /workspace/<path>, or "(missing)"
+#   workspace run < program.js          run a codemode module, print what it returns as JSON (or
+#                                       the whole result, if it failed)
+#   workspace run-read < program.js     the same, as a read-only agent
+#   workspace exec < options.json       remoteExec() from the Durable Object, print its result
+#   workspace destroy                   destroy the container
+set -euo pipefail
+BASE="${BASE:-http://127.0.0.1:8799}"
+SESSION="cctr-$(printf %s "$CCTR_WORK_DIR" | shasum | cut -c1-12)"
+URL="$BASE/s/$SESSION"
+case "$1" in
+  put)
+    curl -sf -X PUT --data-binary @- "$URL/files/$2" ;;
+  get)
+    curl -s -w '\n%{http_code}' "$URL/files/$2" | {
+      body=$(cat)
+      code=${body##*$'\n'}
+      if [ "$code" = 404 ]; then echo "(missing)"; else printf '%s' "${body%$'\n'*}"; fi
+    } ;;
+  run | run-read)
+    curl -sf -X POST --data-binary @- "$URL/$1" |
+      jq 'if .status == "completed" and .exitCode == 0 then .value else . end' ;;
+  exec)
+    curl -sf -X POST --data-binary @- "$URL/exec" | jq . ;;
+  destroy)
+    curl -sf -X DELETE "$URL" ;;
+  *)
+    echo "usage: workspace put|get <path> | run | run-read | exec | destroy" >&2
+    exit 2 ;;
+esac

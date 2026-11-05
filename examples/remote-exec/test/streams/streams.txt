@@ -1,0 +1,156 @@
+===
+the remote-exec module streams stdin, stdout and stderr
+===
+workspace run <<'EOF'
+import { exec } from "codemode:remote-exec";
+
+export default async function () {
+  const p = await exec(["sh", "-c", 'while read line; do echo "got: $line"; done; echo done >&2'], {
+    stdin: "pipe",
+  });
+  const writer = p.stdin.getWriter();
+  const encoder = new TextEncoder();
+  await writer.write(encoder.encode("a\n"));
+  await writer.write(encoder.encode("b\n"));
+  await writer.close();
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(p.stdout).text(),
+    new Response(p.stderr).text(),
+    p.exitCode,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+EOF
+---
+{
+  "stdout": "got: a\ngot: b\n",
+  "stderr": "done\n",
+  "exitCode": 0
+}
+
+===
+the streams are still readable after the command has exited
+===
+workspace run <<'EOF'
+import { exec } from "codemode:remote-exec";
+
+export default async function () {
+  const p = await exec(["sh", "-c", "echo out; echo err >&2"]);
+  const exitCode = await p.exitCode;
+  const stdout = await new Response(p.stdout).text();
+  const stderr = await new Response(p.stderr).text();
+  return { exitCode, stdout, stderr };
+}
+EOF
+---
+{
+  "exitCode": 0,
+  "stdout": "out\n",
+  "stderr": "err\n"
+}
+
+===
+output() returns stdout and stderr as bytes
+===
+workspace run <<'EOF'
+import { exec } from "codemode:remote-exec";
+
+export default async function () {
+  const p = await exec(["printf", "bytes\\000ok"]);
+  const { stdout, stderr } = await p.output();
+  return { stdout: Array.from(new Uint8Array(stdout)), stderr: stderr.byteLength };
+}
+EOF
+---
+{
+  "stdout": [
+    98,
+    121,
+    116,
+    101,
+    115,
+    0,
+    111,
+    107
+  ],
+  "stderr": 0
+}
+
+===
+stdin can be a string, and stderr can join stdout
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const { stdout, stderr } = await exec(["sh", "-c", "cat; echo oops >&2; cat /no/such/file"], {
+    stdin: "from stdin\n",
+    stderr: "combined",
+  });
+  return { stdout, stderr };
+}
+EOF
+---
+{
+  "stdout": "from stdin\noops\ncat: /no/such/file: No such file or directory\n",
+  "stderr": ""
+}
+
+===
+a failing command resolves with its exit code
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const { exitCode, stdout, stderr } = await exec(["sh", "-c", "echo partial; exit 3"]);
+  return { exitCode, stdout, stderr };
+}
+EOF
+---
+{
+  "exitCode": 3,
+  "stdout": "partial\n",
+  "stderr": ""
+}
+
+===
+long output keeps its last 2,000 lines and saves the rest in the workspace
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+import { readFile } from "node:fs/promises";
+
+export default async function () {
+  const { stdout, truncated } = await exec(["seq", "1", "100000"]);
+  const saved = await readFile(truncated.stdout.path, "utf8");
+  const lines = stdout.trimEnd().split("\n");
+  return {
+    lines: lines.length,
+    first: lines[0],
+    last: lines.at(-1),
+    truncated,
+    savedLines: saved.trimEnd().split("\n").length,
+  };
+}
+EOF
+---
+{
+  "lines": 2000,
+  "first": "98001",
+  "last": "100000",
+  "truncated": {
+    "stdout": {
+      "status": "saved",
+      "path": "{{ path }}",
+      "totalBytes": 588895,
+      "totalLines": 100000,
+      "firstLine": 98001,
+      "partialLine": false
+    }
+  },
+  "savedLines": 100000
+}
+---
+where
+* path matches /^\/\.computer\/output\/.+\.stdout\.log$/
