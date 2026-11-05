@@ -126,6 +126,11 @@ Follow [`COLLABORATORS.md`](COLLABORATORS.md). The short version:
 Full guidance is in [`.agents/skills/prose/SKILL.md`](.agents/skills/prose/SKILL.md)
 and [`.agents/skills/pull-requests/SKILL.md`](.agents/skills/pull-requests/SKILL.md).
 
+## Changesets
+
+Keep a changeset to one line. Link to the docs when they say more,
+and put longer upgrade steps there rather than in the changeset.
+
 ## Scripts
 
 Two top-level directories hold helper scripts. They're outside the
