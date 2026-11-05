@@ -15,7 +15,7 @@
     "@cloudflare/computer": "*",
     "@earendil-works/pi-ai": "^0.99.2",
     "just-bash": "^3.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/dofs": "*",

@@ -22,7 +22,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "workers-ai-provider": "^4.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.63.0",

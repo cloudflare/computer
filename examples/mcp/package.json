@@ -19,7 +19,7 @@
     "@platformatic/vfs": "^0.4.0",
     "ai": "^7.0.0",
     "just-bash": "^3.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
