@@ -8,6 +8,7 @@ import { Workspace } from "../../workspace";
 import {
   createDeleteTool,
   createEditTool,
+  createExecTool,
   createFindTool,
   createGrepTool,
   createReadTool,
@@ -2277,6 +2278,52 @@ describe("createAITools exec streaming", () => {
       // Drain to completion.
     }
     expect(killed).toBe(1);
+  });
+});
+
+describe("createAITools exec metadata", () => {
+  function recordingWorkspace(): {
+    workspace: Parameters<typeof createExecTool>[0]["workspace"];
+    metadata: unknown[];
+  } {
+    const metadata: unknown[] = [];
+    return {
+      metadata,
+      workspace: {
+        runtime: {
+          async exec(_command, options) {
+            metadata.push(options.metadata);
+            return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+          },
+          backends: () => [{ id: "sh", protocol: "command", callable: false }],
+        },
+      },
+    };
+  }
+
+  it("picks each run's metadata from the AI SDK tool call's id", async () => {
+    const { workspace, metadata } = recordingWorkspace();
+    const tool = createExecTool({
+      workspace,
+      metadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+    });
+
+    await executeTool(tool, { command: "true" });
+
+    expect(metadata).toEqual([{ toolCall: "test-call" }]);
+  });
+
+  it("takes the metadata on the tool set", async () => {
+    const { workspace, metadata } = recordingWorkspace();
+    const tools = createAITools({
+      // SAFETY: The test only runs exec, which reads nothing but the runtime.
+      workspace: workspace as Parameters<typeof createAITools>[0]["workspace"],
+      execMetadata: ({ toolCallId }) => ({ toolCall: toolCallId }),
+    });
+
+    await executeTool(tools.exec, { command: "true" });
+
+    expect(metadata).toEqual([{ toolCall: "test-call" }]);
   });
 });
 

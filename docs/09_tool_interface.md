@@ -176,6 +176,7 @@ createAITools({
   edit?,
   exec?,
   execOutput?,
+  execMetadata?,
   root?,
 });
 ```
@@ -191,6 +192,7 @@ createAITools({
 | `edit` | default caps | Options passed to `createEditTool`. |
 | `exec` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. Both types are exported from `@cloudflare/computer/tools`. |
 | `execOutput` | 2000 lines, 64 KiB | `{ maxLines?, maxBytes? }`: how much of each `exec` stream the model sees. See [`exec`](#exec). |
+| `execMetadata` | none | The `metadata` each `exec` run starts with, or `({ toolCallId }) => metadata` to pick it per call. See [Run metadata](#run-metadata). |
 | `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: backends`; `defaultBackend` is ignored. |
 
 `createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
@@ -357,7 +359,7 @@ The tool uses forced removal, so deleting a missing path succeeds. Set `recursiv
 
 ## `exec`
 
-`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, maxLines? })` takes the same `backends` as the `exec` option, plus output limits.
+`exec` calls `workspace.runtime.exec` on the chosen backend and streams bounded output. `createExecTool({ workspace, backends?, maxBytes?, maxLines?, metadata? })` takes the same `backends` as the `exec` option, plus output limits and [metadata](#run-metadata).
 
 Each backend's entry in the tool description joins two parts: your text, if any, and what the backend says about itself (`backend.description`, read through `workspace.runtime.backends()`). `WorkerJavaScriptBackend` describes its source language and every module code can import, so the list stays in step with `modules`. `WorkerShellBackend` and `ContainerBackend` describe their command sets, network access, and startup cost. A backend that says nothing gets a one-line default, so add text for a custom backend.
 
@@ -383,6 +385,20 @@ line 3000
 ```
 
 The model can open that file with `read` or search it with `grep`. `streamMaxBytes` is ignored; memory per stream stays within a few times `maxBytes`.
+
+### Run metadata
+
+A run can carry `metadata`, a record of strings that host modules read and the model never sees (see [Host modules](./17_isolate_javascript.md#host-modules)). `metadata` on `createExecTool`, or `execMetadata` on a tool set, is either the record itself or a function that picks it from the tool call's id, which each agent library passes. A throw fails the call without running anything.
+
+```ts
+// Inside an agent with one instance per conversation.
+const tools = createAITools({
+  workspace,
+  execMetadata: ({ toolCallId }) => ({ conversation: this.name, toolCall: toolCallId }),
+});
+```
+
+A pi caller runs each call itself, so it can instead pass the metadata with the call: `execute(call, { metadata })`. Metadata passed with a call wins over `execMetadata`. A caller of `defineExec` passes `metadata` or `toolCallId` on each `execute` the same way.
 
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: {}` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 

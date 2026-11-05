@@ -185,7 +185,10 @@ export function createTanStackTools<Format extends TanStackToolFormat = "array">
         mutates: true,
         streams: true,
         run: async (input: never, context?: TanStackToolExecutionContext) => {
-          const returned = exec.execute(input, { abortSignal: context?.abortSignal });
+          const returned = exec.execute(input, {
+            abortSignal: context?.abortSignal,
+            toolCallId: context?.toolCallId,
+          });
           const output = options.streamEventName
             ? await settleWithEvents(returned, options.streamEventName, context)
             : await settle(returned);

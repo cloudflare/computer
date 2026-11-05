@@ -65,6 +65,7 @@ export interface ExecWorkspaceLike {
         backend?: string;
         env?: Record<string, string>;
         input?: WorkspaceRuntimeValue;
+        metadata?: Record<string, string>;
         output?: { maxBytes: number; maxLines: number };
       },
     ): Promise<ExecRuntimeHandle>;
@@ -91,6 +92,15 @@ export interface ExecBackendOptions {
  */
 export type ExecBackends = Readonly<Record<string, ExecBackendOptions>>;
 
+/**
+ * The `metadata` each exec run starts with, for host modules; the model
+ * never sees it. A function picks it per tool call. A throw fails the
+ * call without running it.
+ */
+export type ExecMetadata =
+  | Record<string, string>
+  | ((call: { toolCallId: string }) => Record<string, string>);
+
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
   // Omit to offer every backend the Workspace has. With one backend
@@ -109,6 +119,11 @@ export interface ExecToolOptions {
    * times `maxBytes`.
    */
   streamMaxBytes?: number;
+  /**
+   * Each run's `metadata`, such as the conversation the tool call
+   * belongs to. Metadata a call passes itself, as a pi caller can, wins.
+   */
+  metadata?: ExecMetadata;
   // Clock backing the running-snapshot coalescing floor. Defaults to
   // Date.now; injectable so tests can drive the interval deterministically.
   now?: () => number;
@@ -145,6 +160,10 @@ export interface ExecInput {
 
 export interface ExecCallContext {
   abortSignal?: AbortSignal;
+  /** The tool call's id, handed to an `ExecToolOptions.metadata` function. */
+  toolCallId?: string;
+  /** The run's metadata. When set, `ExecToolOptions.metadata` isn't used. */
+  metadata?: Record<string, string>;
 }
 
 /** The exec tool with no agent library attached. Each library wraps it in its own tool shape. */
@@ -230,7 +249,8 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     description,
     inputSchema,
     prepareArguments: callableBackendIds.size > 0 ? parseInputObject : (args) => args,
-    execute: async function* ({ command, cwd, backend, env, input }, { abortSignal } = {}) {
+    execute: async function* ({ command, cwd, backend, env, input }, context = {}) {
+      const { abortSignal } = context;
       // With one backend there is nothing to choose. With several the
       // schema requires `backend`; a caller that skips the schema gets
       // the same answer as an error.
@@ -246,12 +266,18 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       }
       let handle: ExecRuntimeHandle;
       try {
+        const metadata =
+          context.metadata ??
+          (typeof options.metadata === "function"
+            ? options.metadata({ toolCallId: context.toolCallId ?? "" })
+            : options.metadata);
         handle = await options.workspace.runtime.exec(command, {
           cwd,
           encoding: "utf8",
           backend: selectedBackend,
           env,
           input,
+          ...(metadata === undefined ? {} : { metadata }),
           // The runtime cuts and saves by the same limits the tool
           // shows, so whatever the model does not see is in the file.
           output: limits,
