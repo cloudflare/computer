@@ -16,9 +16,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends capnproto jq procps \
   && rm -rf /var/lib/apt/lists/*
 
+# run.sh passes the channel from ../rust-toolchain.toml, so the image has the toolchain cargo picks
+# there instead of downloading it on every run.
+ARG RUST_TOOLCHAIN=stable
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
 RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
-    --default-toolchain stable \
+    --default-toolchain "$RUST_TOOLCHAIN" \
     --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl \
   && rustup component add rustfmt clippy \
   && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"

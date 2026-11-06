@@ -20,7 +20,9 @@ IMAGE="remote-exec-dev:$ARCH"
 VOLUME="remote-exec-dev-$(printf %s "$ROOT" | shasum | cut -c1-8)-$ARCH"
 SECRET=()
 [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && SECRET=(--secret "id=ca,src=$NODE_EXTRA_CA_CERTS")
-docker build -q --platform "$PLATFORM" ${SECRET[@]+"${SECRET[@]}"} -t "$IMAGE" "$ROOT/packages/remote-exec/dev" >/dev/null
+RUST_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$ROOT/packages/remote-exec/rust-toolchain.toml")"
+docker build -q --platform "$PLATFORM" ${SECRET[@]+"${SECRET[@]}"} --build-arg "RUST_TOOLCHAIN=$RUST_TOOLCHAIN" \
+  -t "$IMAGE" "$ROOT/packages/remote-exec/dev" >/dev/null
 TTY=()
 [ -t 0 ] && TTY=(-it)
 exec docker run --rm --platform "$PLATFORM" ${TTY[@]+"${TTY[@]}"} \

@@ -6,8 +6,8 @@
 #   packages/remote-exec/build.sh          # release builds for both architectures
 #   packages/remote-exec/build.sh --dev    # debug build for the host only, for the Node tests
 #
-# Needs: rustup with both musl targets (`rustup target add x86_64-unknown-linux-musl
-# aarch64-unknown-linux-musl`) and capnp. Rust's musl targets are self-contained, so aarch64 links
+# Needs: rustup and capnp. rustup picks the Rust version, targets and components pinned in
+# rust-toolchain.toml, so every build of a release gives the same bytes. Rust's musl targets are self-contained, so aarch64 links
 # with the toolchain's own rust-lld: no cross compiler needed. dev/run.sh has all of it.
 # The target directory defaults to packages/remote-exec/target; set CARGO_TARGET_DIR to move it.
 set -euo pipefail
