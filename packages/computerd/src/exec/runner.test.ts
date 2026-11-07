@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
@@ -706,10 +707,15 @@ test("an exec finishes at exitDrainMaxMs when its reader stops reading", async (
 
 // True while `pid` is a live (non-zombie) process. A killed process
 // whose parent has gone can linger as a zombie until init reaps it.
+// `ps -o stat=` works on Linux and macOS, unlike `/proc`; it exits
+// non-zero when the pid does not exist.
 function isRunning(pid: number): boolean {
   try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+    const stat = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return stat !== "" && !stat.startsWith("Z");
   } catch {
     return false;
   }
