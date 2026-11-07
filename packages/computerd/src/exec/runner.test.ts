@@ -703,3 +703,24 @@ test("an exec finishes at exitDrainMaxMs when its reader stops reading", async (
     dispose();
   }
 });
+
+test("killExec stops grandchildren and delivers the exit event", async () => {
+  const { runner, dispose } = fixture();
+  try {
+    const { id, events } = runner.exec("yes | cat >/dev/null; yes");
+    const reader = events.getReader();
+    await sleep(200);
+    runner.kill(id, "SIGKILL");
+    const seen: ExecEvent[] = [];
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen.push(value);
+      await sleep(10);
+    }
+    expect(seen.some((e) => e.name === "exit")).toBe(true);
+  } finally {
+    dispose();
+  }
+}, 10_000);
