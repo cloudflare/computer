@@ -245,10 +245,8 @@ export class Runner {
         clearTimeout(record.timeoutTimer);
         record.timeoutTimer = undefined;
       }
-      if (record.killTimer !== undefined) {
-        clearTimeout(record.killTimer);
-        record.killTimer = undefined;
-      }
+      // Leave a pending killTimer running: the shell can exit on SIGTERM
+      // while a descendant that ignores it keeps going.
       if (record.heartbeatTimer !== undefined) {
         clearTimeout(record.heartbeatTimer);
         record.heartbeatTimer = undefined;
@@ -337,10 +335,13 @@ export class Runner {
       record.timeoutTimer = setTimeout(() => {
         if (!record.live) return;
         signalGroup(child, "SIGTERM");
+        // Escalate even if the exec has finished by then, so the group's
+        // survivors are killed too.
         record.killTimer = setTimeout(() => {
-          if (!record.live) return;
+          record.killTimer = undefined;
           signalGroup(child, "SIGKILL");
         }, DEFAULTS.killGraceMs);
+        record.killTimer.unref?.();
       }, timeoutMs);
     }
 
@@ -501,6 +502,7 @@ export class Runner {
 
   private disposeRecord(record: ExecRecord): void {
     const wasLive = record.live;
+    const escalating = record.killTimer !== undefined;
     record.live = false;
     if (record.timeoutTimer !== undefined) {
       clearTimeout(record.timeoutTimer);
@@ -524,8 +526,13 @@ export class Runner {
     }
     flowStdio(record.child);
     // A live record's shell may have exited with its group still
-    // running, so signal the group whenever the exec was still live.
-    if (wasLive || (record.child.exitCode === null && record.child.signalCode === null)) {
+    // running, so signal the group whenever the exec was still live or
+    // a timeout's SIGKILL was still pending.
+    if (
+      wasLive ||
+      escalating ||
+      (record.child.exitCode === null && record.child.signalCode === null)
+    ) {
       signalGroup(record.child, "SIGKILL");
     }
     record.subscriber?.close();
