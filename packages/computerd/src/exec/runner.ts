@@ -165,6 +165,10 @@ export class Runner {
     const wrapped = cwd !== undefined ? `cd ${shellQuote(cwd)} && ${command}` : command;
     const child = spawn(this.opts.shell, ["-c", wrapped], {
       env,
+      // Own process group, so kill and timeout reach grandchildren
+      // (pipelines, background jobs, shells that don't exec the last
+      // command) and not just the shell.
+      detached: true,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     if (options.stdin !== undefined && child.stdin) {
@@ -241,10 +245,8 @@ export class Runner {
         clearTimeout(record.timeoutTimer);
         record.timeoutTimer = undefined;
       }
-      if (record.killTimer !== undefined) {
-        clearTimeout(record.killTimer);
-        record.killTimer = undefined;
-      }
+      // Leave a pending killTimer running: the shell can exit on SIGTERM
+      // while a descendant that ignores it keeps going.
       if (record.heartbeatTimer !== undefined) {
         clearTimeout(record.heartbeatTimer);
         record.heartbeatTimer = undefined;
@@ -332,19 +334,14 @@ export class Runner {
     if (timeoutMs > 0) {
       record.timeoutTimer = setTimeout(() => {
         if (!record.live) return;
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // Child already gone; finalise will sort it out.
-        }
+        signalGroup(child, "SIGTERM");
+        // Escalate even if the exec has finished by then, so the group's
+        // survivors are killed too.
         record.killTimer = setTimeout(() => {
-          if (!record.live) return;
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // ignore
-          }
+          record.killTimer = undefined;
+          signalGroup(child, "SIGKILL");
         }, DEFAULTS.killGraceMs);
+        record.killTimer.unref?.();
       }, timeoutMs);
     }
 
@@ -374,7 +371,7 @@ export class Runner {
       throw new ExecError("ENOENT", `no exec record for id ${id}`);
     }
     if (!record.live) return;
-    record.child.kill(signal);
+    signalGroup(record.child, signal);
   }
 
   dispose(id: string): void {
@@ -466,7 +463,8 @@ export class Runner {
         }
       },
       pause: () => {
-        if (sub.paused) return;
+        // Pause the pipes even if already paused: Node resumes them
+        // when the child exits, and the flag would hide that.
         sub.paused = true;
         record.child.stdout?.pause();
         record.child.stderr?.pause();
@@ -503,6 +501,8 @@ export class Runner {
   }
 
   private disposeRecord(record: ExecRecord): void {
+    const wasLive = record.live;
+    const escalating = record.killTimer !== undefined;
     record.live = false;
     if (record.timeoutTimer !== undefined) {
       clearTimeout(record.timeoutTimer);
@@ -525,12 +525,15 @@ export class Runner {
       record.drainDeadlineTimer = undefined;
     }
     flowStdio(record.child);
-    try {
-      if (record.child.exitCode === null && record.child.signalCode === null) {
-        record.child.kill("SIGKILL");
-      }
-    } catch {
-      /* */
+    // A live record's shell may have exited with its group still
+    // running, so signal the group whenever the exec was still live or
+    // a timeout's SIGKILL was still pending.
+    if (
+      wasLive ||
+      escalating ||
+      (record.child.exitCode === null && record.child.signalCode === null)
+    ) {
+      signalGroup(record.child, "SIGKILL");
     }
     record.subscriber?.close();
     record.subscriber = undefined;
@@ -605,6 +608,23 @@ function readBufferedStdio(child: ChildProcess): void {
 function flowStdio(child: ChildProcess): void {
   child.stdout?.resume();
   child.stderr?.resume();
+}
+
+// Signal the child's process group, falling back to the child alone.
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // No such group; fall through.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // Already gone.
+  }
 }
 
 function mapExitCode(code: number | null, signal: NodeJS.Signals | null): number {
