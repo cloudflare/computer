@@ -43,22 +43,35 @@ should see the whole Workspace all the time.
 
 ### 1. A container Durable Object
 
-`ExecSandbox` is a base class for the container. It starts the container on the first command
-and keeps it running for 10 minutes after the last one. Commands run as root unless the call
-names another user. It can also [snapshot](#snapshots) the container once it goes quiet.
+`executor()` runs commands in a Durable Object's container. It starts the container on the first
+command, with the options `ctx.container.start()` takes, and keeps it running for 10 minutes
+after the last one. Commands run as root unless the call names another user.
 
 ```ts
-import { ExecSandbox } from "@cloudflare/computer/remote-exec";
+import { DurableObject } from "cloudflare:workers";
+import { type ExecArgs, executor } from "@cloudflare/computer/remote-exec";
 
-export class Sandbox extends ExecSandbox<Env> {
-  protected startOptions() {
-    return { enableInternet: false }; // what ctx.container.start() takes
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor(this, { enableInternet: false });
+
+  exec(...args: ExecArgs) {
+    return this.#executor.exec(...args);
   }
 }
 ```
 
-Any Durable Object that implements `exec(cmd, options)` the way `ctx.container.exec()` does
-works too. That interface is the `ExecTarget` type.
+The `exec()` method is what the module calls. Workers RPC reaches only the methods a class
+declares, never its fields, so the executor can't be called through the field alone.
+
+The start options can also be a function, called each time the container starts, for example to
+start from a [snapshot](#snapshots). A third argument takes hooks: `outbound` and `egressKey` to
+[route the network](#routing-the-containers-network), `snapshot` and `snapshotDebounceMs`,
+`inactivityTimeoutMs`, `user`, `onIdle` and `onStopped`. The executor also has `destroy()`, which
+stops the container.
+
+`ExecSandbox` is the same thing as a base class, with methods to override instead of hooks. Any
+Durable Object that implements `exec(cmd, options)` the way `ctx.container.exec()` does works too.
+That interface is the `ExecTarget` type.
 
 ### 2. Get remote-exec into the container
 
@@ -266,15 +279,16 @@ them, and `pull` and `user` are refused.
 
 ### Routing the container's network
 
-Override `outbound()` on `ExecSandbox` to send all of the container's HTTP and HTTPS through a
+Give the executor an `outbound` hook to send all of the container's HTTP and HTTPS through a
 `Fetcher`, such as an entrypoint of your Worker. The container then trusts the platform's
-intercepting CA, and `enableInternet` is off unless `startOptions()` turns it on. `outbound()`
+intercepting CA, and `enableInternet` is off unless the start options turn it on. `outbound`
 gets the value the caller passed as `exec()`'s third argument. `withEgress(stub, value)` passes a
 value with every command the module runs, so the route can depend on something only the caller
 knows, such as credentials to add:
 
 ```ts
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { type ExecArgs, executor, withEgress } from "@cloudflare/computer/remote-exec";
 
 export class ContainerEgress extends WorkerEntrypoint<Env, { token: string }> {
   override async fetch(request: Request) {
@@ -285,12 +299,13 @@ export class ContainerEgress extends WorkerEntrypoint<Env, { token: string }> {
   }
 }
 
-export class Sandbox extends ExecSandbox<Env, { token: string }> {
-  protected startOptions() {
-    return {};
-  }
-  protected override outbound(egress: { token: string } | undefined) {
-    return egress && this.ctx.exports.ContainerEgress({ props: egress });
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor<{ token: string }>(this, {}, {
+    outbound: (egress) => egress && this.ctx.exports.ContainerEgress({ props: egress }),
+  });
+
+  exec(...args: ExecArgs<{ token: string }>) {
+    return this.#executor.exec(...args);
   }
 }
 
@@ -300,49 +315,59 @@ target: () => withEgress(env.SANDBOX.getByName(id), { token }),
 
 A container has one route for all its processes, so it's routed for one egress at a time:
 
-- Commands whose egress is the same (`egressKey()`, by default equal JSON for plain data) share the
+- Commands whose egress is the same (`egressKey`, by default equal JSON for plain data) share the
   route.
 - A command with a different egress re-routes the container when nothing else is running there.
   While commands from the current route still run, it's refused rather than handed their
   credentials, or they its.
-- A command with no egress is refused on a routed container.
+- A command with no egress is refused on a routed container. It's also refused on a container
+  that was already running when the Durable Object started, since how that one is routed isn't
+  known; a command with an egress re-routes it, and `destroy()` starts it afresh.
 - An egress that isn't plain data, such as a stub, has no key by default, so each command with one
-  needs the container to itself. Override `egressKey()` when something in it identifies the
+  needs the container to itself. Give an `egressKey` hook when something in it identifies the
   caller.
 
 Give each tenant or credential its own container (`getByName()`) when they run commands at once.
 
 ### Snapshots
 
-Define `snapshot()` on `ExecSandbox` to persist the container, with `snapshotContainer()` or
-`snapshotDirectory()`, and have `startOptions()` start from what it recorded:
+Give the executor a `snapshot` hook to persist the container, with `snapshotContainer()` or
+`snapshotDirectory()`, and start options that start from what it recorded:
 
 ```ts
-import { ExecSandbox, type PlatformContainer } from "@cloudflare/computer/remote-exec";
+import { DurableObject } from "cloudflare:workers";
+import { type ExecArgs, executor } from "@cloudflare/computer/remote-exec";
 
-export class Sandbox extends ExecSandbox<Env> {
-  protected startOptions() {
-    const id = this.ctx.storage.kv.get<string>("snapshot");
-    return id ? { containerSnapshot: { id } } : { image: "base" };
-  }
-  protected override async snapshot(container: PlatformContainer) {
-    const { id } = await container.snapshotContainer!();
-    this.ctx.storage.kv.put("snapshot", id);
-  }
-  protected override snapshotDebounceMs() {
-    return 30_000; // default 10_000
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor(
+    this,
+    () => {
+      const id = this.ctx.storage.kv.get<string>("snapshot");
+      return id ? { containerSnapshot: { id } } : { image: "base" };
+    },
+    {
+      snapshot: async (container) => {
+        const { id } = await container.snapshotContainer!();
+        this.ctx.storage.kv.put("snapshot", id);
+      },
+      snapshotDebounceMs: 30_000, // default 10_000
+    },
+  );
+
+  exec(...args: ExecArgs) {
+    return this.#executor.exec(...args);
   }
 }
 ```
 
-- **Debounced.** `snapshot()` runs once no command has been running or starting for
-  `snapshotDebounceMs()`, and only if a command ran since the last snapshot. A command in that
+- **Debounced.** The hook runs once no command has been running or starting for
+  `snapshotDebounceMs`, and only if a command ran since the last snapshot. A command in that
   window restarts the wait, so a call's short gaps, such as between its install check and its
   session, don't trigger one.
 - **Commands wait for it.** The platform's `exec()` fails while a snapshot is in progress, so
   commands that arrive then queue and start in order once it finishes. A failed snapshot is
   logged, releases the queue the same way, and is tried again at the next idle.
-- **Use `container` in `snapshot()`, not `this.exec()`**, which would wait for the snapshot itself.
+- **Use `container` in the hook, not `exec()`**, which would wait for the snapshot itself.
 - **`destroy()` waits** for a snapshot in progress and drops one that hasn't started.
 - **The wait is held in memory.** If the Durable Object is evicted before it ends, that snapshot is
   skipped until the next idle.

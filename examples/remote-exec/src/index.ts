@@ -7,7 +7,6 @@
  *   GET  /s/:session/files/<path>   read a workspace file
  *   POST /s/:session/run            run a codemode module (body = source); returns the result
  *   POST /s/:session/run-read       the same, as a read-only agent: on a backend that only reads
- *   POST /s/:session/exec           direct remote exec from the Worker (body = JSON { argv, ...options })
  *   DELETE /s/:session              destroy the session's container
  */
 import { DurableObject } from "cloudflare:workers";
@@ -15,19 +14,10 @@ import { Workspace } from "@cloudflare/computer";
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 import {
   createExecModule,
-  DEFAULT_AGENT_PATH,
-  ensureRemoteExec,
-  ExecSandbox,
+  type ExecArgs,
+  executor,
   fileRemoteExec,
-  remoteExec,
-  type ExecTarget,
 } from "@cloudflare/computer/remote-exec";
-
-// The x86_64 remote-exec build (scripts/fetch-remote-exec.sh): the container is linux/amd64, as
-// Cloudflare runs it and wrangler dev builds it. wrangler.jsonc's rules upload it as its own module,
-// which workerd shows under /bundle; node:fs streams it into the container on first use, so the
-// Worker never holds it in memory. An image that has remote-exec already wouldn't need it.
-const REMOTE_EXEC_BINARIES = fileRemoteExec({ x86_64: "/bundle/remote-exec" });
 
 interface Env {
   SANDBOX: DurableObjectNamespace<Sandbox>;
@@ -35,10 +25,16 @@ interface Env {
   LOADER: WorkerLoader;
 }
 
-/** The container: `sleep infinity`, commands arrive through exec(). */
-export class Sandbox extends ExecSandbox<Env> {
-  protected startOptions() {
-    return { enableInternet: false };
+/** The container: `sleep infinity`, with commands arriving through exec(). */
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor(this, { enableInternet: false });
+
+  exec(...args: ExecArgs) {
+    return this.#executor.exec(...args);
+  }
+
+  destroy() {
+    return this.#executor.destroy();
   }
 }
 
@@ -63,9 +59,14 @@ export class WorkspaceObject extends DurableObject<Env> {
             access,
             modules: {
               "codemode:exec": createExecModule({
-                target: () => this.#target(),
+                // One container for each workspace.
+                target: () => env.SANDBOX.getByName(ctx.id.toString()),
                 fs: () => this.#workspace.fs,
-                binaries: REMOTE_EXEC_BINARIES,
+                // The x86_64 build (scripts/fetch-remote-exec.sh): the container is linux/amd64,
+                // as Cloudflare runs it and wrangler dev builds it. wrangler.jsonc uploads it as a
+                // module of its own, which workerd shows under /bundle, and node:fs streams it into
+                // the container on first use, so the Worker never holds it in memory.
+                binaries: fileRemoteExec({ x86_64: "/bundle/remote-exec" }),
                 readOnly: access === "read",
               }),
             },
@@ -74,12 +75,6 @@ export class WorkspaceObject extends DurableObject<Env> {
           }),
       ),
     });
-  }
-
-  #target(): ExecTarget {
-    return this.env.SANDBOX.get(
-      this.env.SANDBOX.idFromName(this.ctx.id.toString()),
-    ) as unknown as ExecTarget;
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
@@ -114,53 +109,21 @@ export class WorkspaceObject extends DurableObject<Env> {
     };
   }
 
-  /** The DO-side API directly, with raw streams: no codemode in between. */
-  async directExec(
-    argv: string[],
-    options: { push?: string[]; pull?: string[]; stdin?: string; cwd?: string; user?: string },
-  ) {
-    await this.#workspace.ready();
-    const installed = await ensureRemoteExec(
-      this.#target(),
-      DEFAULT_AGENT_PATH,
-      REMOTE_EXEC_BINARIES,
-    );
-    const proc = await remoteExec({ target: this.#target(), fs: this.#workspace.fs }, argv, {
-      ...options,
-      stdin: options.stdin === undefined ? undefined : new Blob([options.stdin]).stream(),
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout ? new Response(proc.stdout).text() : "",
-      proc.stderr ? new Response(proc.stderr).text() : "",
-      proc.exitCode,
-    ]);
-    return {
-      installed,
-      pid: proc.pid,
-      exitCode,
-      stdout,
-      stderr,
-      pushed: proc.pushed,
-      pulled: await proc.pulled,
-    };
-  }
-
   async destroy(): Promise<void> {
-    await (this.#target() as unknown as Sandbox).destroy();
+    await this.env.SANDBOX.getByName(this.ctx.id.toString()).destroy();
   }
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const m = /^\/s\/([A-Za-z0-9_-]+)(?:\/(files\/(.+)|run|run-read|exec))?$/.exec(url.pathname);
+    const m = /^\/s\/([A-Za-z0-9_-]+)(?:\/(files\/(.+)|run|run-read))?$/.exec(url.pathname);
     if (!m) return new Response("not found", { status: 404 });
     // RPC's inferred types can't follow `run`'s any-JSON result; the stub's API, plainly:
-    const stub = env.WORKSPACE.get(env.WORKSPACE.idFromName(m[1] ?? "")) as unknown as {
+    const stub = env.WORKSPACE.getByName(m[1] ?? "") as unknown as {
       writeFile(path: string, data: Uint8Array): Promise<void>;
       readFile(path: string): Promise<string | null>;
       run(source: string, access: "read-write" | "read"): Promise<unknown>;
-      directExec(argv: string[], options: object): Promise<unknown>;
       destroy(): Promise<void>;
     };
     try {
@@ -178,12 +141,8 @@ export default {
         const text = await stub.readFile(path);
         return text === null ? new Response("not found", { status: 404 }) : new Response(text);
       }
-      if (m[2] === "run" || m[2] === "run-read") {
-        const access = m[2] === "run" ? "read-write" : "read";
-        return Response.json(await stub.run(await request.text(), access));
-      }
-      const { argv, ...options } = (await request.json()) as { argv: string[] };
-      return Response.json(await stub.directExec(argv, options));
+      const access = m[2] === "run" ? "read-write" : "read";
+      return Response.json(await stub.run(await request.text(), access));
     } catch (error) {
       return Response.json(
         { error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) },

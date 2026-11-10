@@ -35,7 +35,7 @@ removed in a future release; each one names its replacement.
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
-| Remote exec: the `codemode:exec` host module, `ExecSandbox`, and the `remote-exec` binary and its image | `@cloudflare/computer/remote-exec`, `ghcr.io/cloudflare/computer-remote-exec` | Experimental |
+| Remote exec: the `codemode:exec` module, `executor()` and `ExecSandbox`, and the `remote-exec` binary and its image | `@cloudflare/computer/remote-exec`, `ghcr.io/cloudflare/computer-remote-exec` | Experimental |
 | Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
@@ -394,12 +394,15 @@ module streams it in on first use. That works with any image.
 
 ```ts
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
-import { createExecModule, ExecSandbox } from "@cloudflare/computer/remote-exec";
+import { DurableObject } from "cloudflare:workers";
+import { createExecModule, type ExecArgs, executor } from "@cloudflare/computer/remote-exec";
 
 // The container: started on the first command, stopped 10 minutes after the last.
-export class Sandbox extends ExecSandbox<Env> {
-  protected startOptions() {
-    return { enableInternet: false };
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor(this, { enableInternet: false });
+
+  exec(...args: ExecArgs) {
+    return this.#executor.exec(...args);
   }
 }
 
@@ -415,7 +418,7 @@ new CodemodeBackend({
 });
 ```
 
-Override `ExecSandbox`'s `outbound(egress)` to send all of the
+Give `executor()` an `outbound(egress)` hook to send all of the
 container's HTTP and HTTPS through a `Fetcher`, such as an entrypoint of
 your Worker; the container then trusts the platform's intercepting CA.
 `egress` is whatever the caller passed as `exec()`'s third argument,

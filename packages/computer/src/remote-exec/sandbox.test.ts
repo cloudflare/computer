@@ -8,6 +8,7 @@ import {
   ContainerExec,
   DEFAULT_SNAPSHOT_DEBOUNCE_MS,
   ExecSandbox,
+  executor,
   plainEgressKey,
   ProcessHandle,
   withEgress,
@@ -789,6 +790,65 @@ describe("ContainerExec egress isolation", () => {
     expect(plainEgressKey({ a: Number.NaN })).toBeUndefined();
     expect(plainEgressKey({ a: new Date(0) })).toBeUndefined();
     expect(plainEgressKey({ f: () => 1 })).toBeUndefined();
+  });
+});
+
+describe("executor", () => {
+  const owner = (container: unknown) => {
+    const blocked: Promise<unknown>[] = [];
+    return {
+      blocked,
+      ctx: {
+        container,
+        blockConcurrencyWhile: (f: () => Promise<unknown>) => {
+          const p = f();
+          blocked.push(p);
+          return p;
+        },
+      },
+    };
+  };
+
+  it("starts the container with the start options, given as a value or a function", async () => {
+    const { container, log } = fakeContainer(false);
+    await executor(owner(container), { enableInternet: false }, { inactivityTimeoutMs: 99 }).exec([
+      "a",
+    ]);
+    const next = fakeContainer(false);
+    let snapshot = "snap-1";
+    await executor(owner(next.container), () => ({ containerSnapshot: { id: snapshot } })).exec([
+      "b",
+    ]);
+    snapshot = "unused";
+    expect(log).toEqual(['start {"enableInternet":false}', "timeout 99", 'exec a {"user":"0:0"}']);
+    expect(next.log[0]).toBe('start {"containerSnapshot":{"id":"snap-1"}}');
+  });
+
+  it("takes the hooks: a user, an outbound, a snapshot", async () => {
+    const { container, log } = interceptingContainer();
+    const target = executor<Egress>(
+      owner(container),
+      {},
+      {
+        user: "1000:1000",
+        outbound: (egress) => ({ name: `outbound for ${egress?.name}` }) as never,
+      },
+    );
+    await target.exec(["a"], undefined, EGRESS);
+    expect(log).toContain("intercept http outbound for the caller's egress");
+    expect(log).toContain("exec a");
+  });
+
+  it("sets the inactivity timeout again when the Durable Object starts with its container running", async () => {
+    const { container, log } = fakeContainer(true);
+    const o = owner(container);
+    executor(o, {}, { inactivityTimeoutMs: 5 });
+    await Promise.all(o.blocked);
+    expect(log).toEqual(["timeout 5"]);
+  });
+
+  it("needs the Durable Object", () => {
+    expect(() => executor({}, {})).toThrow(/takes the Durable Object/);
   });
 });
 

@@ -483,6 +483,84 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
   }
 }
 
+/** What `executor()` takes besides the start options: its hooks, all optional. */
+export interface ExecutorOptions<Egress = undefined> {
+  /** How long the container keeps running after the Durable Object goes idle, in ms. Default 10 minutes. */
+  inactivityTimeoutMs?: number;
+  /** Who commands run as when a call doesn't say. Default root (`0:0`). */
+  user?: string;
+  /** Where the container's HTTP and HTTPS go, given the call's egress: see `ContainerExecOptions`. */
+  outbound?: (egress: Egress | undefined) => Fetcher | undefined;
+  /** Identifies an egress: see `ContainerExecOptions`. */
+  egressKey?: (egress: Egress | undefined) => string | undefined;
+  /** Persist the container once it has been idle for `snapshotDebounceMs`: see `ContainerExecOptions`. */
+  snapshot?: (container: PlatformContainer) => Promise<void>;
+  /** Default 10 seconds. */
+  snapshotDebounceMs?: number;
+  onIdle?: () => void;
+  onStopped?: (error: unknown) => void;
+}
+
+// A Durable Object that restarts while its container runs starts without a timeout.
+function reapplyInactivityTimeout(
+  ctx: DurableObjectState,
+  container: PlatformContainer | undefined,
+  timeoutMs: () => number,
+): void {
+  if (!container?.running) return;
+  void ctx.blockConcurrencyWhile(async () => {
+    await container.setInactivityTimeout?.(timeoutMs()).catch(() => undefined);
+  });
+}
+
+/**
+ * Remote exec for a Durable Object with a container: it starts the container on the first command
+ * with `start` (the options `ctx.container.start()` takes, or a function that returns them, say to
+ * start from a snapshot), and keeps it running for 10 minutes after the last. Hold it in a private
+ * field and give the class an `exec()` that calls it, since RPC reaches only the class's methods:
+ *
+ * ```ts
+ * export class Sandbox extends DurableObject<Env> {
+ *   #executor = executor(this, { enableInternet: false });
+ *   exec(...args: ExecArgs) {
+ *     return this.#executor.exec(...args);
+ *   }
+ * }
+ * ```
+ *
+ * `hooks` route the container's network, snapshot it, and so on; `ExecSandbox` is the same as a
+ * base class with methods to override.
+ */
+export function executor<Egress = undefined>(
+  owner: object,
+  start: Record<string, unknown> | (() => Record<string, unknown> | undefined) | undefined,
+  hooks: ExecutorOptions<Egress> = {},
+): ContainerExec<Egress> {
+  const ctx = (owner as { ctx?: DurableObjectState }).ctx;
+  if (ctx === undefined) throw new TypeError("executor() takes the Durable Object, as `this`");
+  const container = () => (ctx as unknown as { container?: PlatformContainer }).container;
+  const timeout = () => hooks.inactivityTimeoutMs ?? DEFAULT_INACTIVITY_TIMEOUT_MS;
+  const exec = new ContainerExec<Egress>({
+    container,
+    startOptions: typeof start === "function" ? start : () => start,
+    inactivityTimeoutMs: timeout,
+    ...(hooks.user === undefined ? {} : { user: hooks.user }),
+    ...(hooks.outbound === undefined ? {} : { outbound: hooks.outbound }),
+    ...(hooks.egressKey === undefined ? {} : { egressKey: hooks.egressKey }),
+    ...(hooks.snapshot === undefined ? {} : { snapshot: hooks.snapshot }),
+    ...(hooks.snapshotDebounceMs === undefined
+      ? {}
+      : { snapshotDebounceMs: () => hooks.snapshotDebounceMs ?? DEFAULT_SNAPSHOT_DEBOUNCE_MS }),
+    ...(hooks.onIdle === undefined ? {} : { onIdle: hooks.onIdle }),
+    ...(hooks.onStopped === undefined ? {} : { onStopped: hooks.onStopped }),
+  });
+  reapplyInactivityTimeout(ctx, container(), timeout);
+  return exec;
+}
+
+/** The arguments of an executor's `exec()`, for a Durable Object's own `exec()` to take. */
+export type ExecArgs<Egress = undefined> = Parameters<ContainerExec<Egress>["exec"]>;
+
 /**
  * A Durable Object whose container runs its image's entrypoint (or `sleep infinity`) and takes
  * commands through exec(). Subclasses choose the start options, may route the container's network
@@ -569,13 +647,7 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
       snapshot: this.#snapshotHook(),
       snapshotDebounceMs: () => this.snapshotDebounceMs(),
     });
-    // A Durable Object that restarts while its container runs starts without a timeout.
-    const running = container();
-    if (running?.running) {
-      void ctx.blockConcurrencyWhile(async () => {
-        await running.setInactivityTimeout?.(this.inactivityTimeoutMs()).catch(() => undefined);
-      });
-    }
+    reapplyInactivityTimeout(ctx, container(), () => this.inactivityTimeoutMs());
   }
 
   /**
