@@ -3,7 +3,7 @@
  * `ctx.container.exec()`-shaped API, with workspace files pushed in before and pulled back after.
  * `createExecModule()` is the `codemode:exec` host module for a `CodemodeBackend`. Experimental.
  */
-export { bundledRemoteExec } from "./bundle";
+export { bundledRemoteExec, fileRemoteExec } from "./bundle";
 export { CA_BUNDLE, CA_ENV, CONTAINERS_CA, TRUST_CA_SCRIPT } from "./egress";
 export {
   remoteExec,

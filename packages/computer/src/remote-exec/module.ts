@@ -46,9 +46,9 @@ export interface ExecModuleOptions {
   containerRoot?: string;
   agentPath?: string;
   /**
-   * The remote-exec builds the Worker carries (`bundledRemoteExec()`), copied to `agentPath`
-   * unless it already holds the same build. Leave it out when the image has remote-exec at
-   * `agentPath` already.
+   * The remote-exec builds the Worker carries (`fileRemoteExec()` or `bundledRemoteExec()`),
+   * copied to `agentPath` unless it already holds the same build. Leave it out when the image has
+   * remote-exec at `agentPath` already.
    */
   binaries?: RemoteExecBinaries;
   limits?: Partial<SyncLimits>;

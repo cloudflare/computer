@@ -74,20 +74,42 @@ COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
 CMD ["sleep", "infinity"]
 ```
 
-**Or have the Worker carry it.** Download `remote-exec-linux-x86_64` and
-`remote-exec-linux-aarch64` from the `@cloudflare/computer@<version>` GitHub release, and check
-them against its `SHA256SUMS`. Save them with a `.bin` extension: Wrangler and the Cloudflare Vite
-plugin import `.bin` files as bytes. Then pass them as `binaries`, and the module copies the right
-one into the container on the first command, and again whenever the container has lost it. This
-works with any image that has a POSIX shell and the usual core utilities, and adds about 2.7 MB to
-the Worker.
+**Or have the Worker carry it.** Download the build for your containers from the
+`@cloudflare/computer@<version>` GitHub release and check it against its `SHA256SUMS`. Cloudflare
+runs containers as `linux/amd64`, and `wrangler dev` builds them that way, so that's
+`remote-exec-linux-x86_64`, about 1.5 MB. Pass it as `binaries`, and the module copies it into the
+container on the first command, and again whenever the container has lost it. This works with any
+image that has a POSIX shell and the usual core utilities. A container of an architecture the
+Worker has no build for fails with an error that names it.
+
+The Worker can stream the build from its bundle with `node:fs` (it needs `nodejs_compat`), reading
+it a chunk at a time to hash it and to copy it in, so it's never held in memory whole. Upload it as
+a module of its own, which workerd shows under `/bundle` by its path relative to `base_dir`. Importing it would rename it
+to a content hash:
+
+```jsonc
+// wrangler.jsonc, with the build saved as bin/remote-exec. base_dir is bin/ alone: a wider
+// directory has wrangler upload, and watch, everything its default rules match (*.txt, *.bin).
+"base_dir": "bin",
+"find_additional_modules": true,
+"rules": [{ "type": "Data", "globs": ["remote-exec"], "fallthrough": false }]
+```
+
+```ts
+import { fileRemoteExec } from "@cloudflare/computer/remote-exec";
+
+const binaries = fileRemoteExec({ x86_64: "/bundle/remote-exec" });
+```
+
+Where `/bundle` isn't available, such as under the Cloudflare Vite plugin, import the build as
+bytes instead. Wrangler and the Vite plugin import `.bin` files as `Data` modules, which stay in
+memory for the isolate's life:
 
 ```ts
 import { bundledRemoteExec } from "@cloudflare/computer/remote-exec";
-import aarch64 from "./remote-exec-linux-aarch64.bin";
 import x86_64 from "./remote-exec-linux-x86_64.bin";
 
-const binaries = bundledRemoteExec({ x86_64, aarch64 });
+const binaries = bundledRemoteExec({ x86_64 });
 ```
 
 Either way, the module checks that the binary speaks its protocol before running anything.

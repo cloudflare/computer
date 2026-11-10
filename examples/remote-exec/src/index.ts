@@ -14,23 +14,22 @@ import { DurableObject } from "cloudflare:workers";
 import { Workspace } from "@cloudflare/computer";
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
 import {
-  bundledRemoteExec,
   createExecModule,
   DEFAULT_AGENT_PATH,
   ensureRemoteExec,
   ExecSandbox,
   FACADE_SOURCE,
   FACADE_SPECIFIER,
+  fileRemoteExec,
   remoteExec,
   type ExecTarget,
 } from "@cloudflare/computer/remote-exec";
-// Both remote-exec builds, from the GitHub release (scripts/fetch-remote-exec.sh). The Worker
-// copies the right one into the container on first use; an image that has remote-exec already
-// wouldn't need them.
-import aarch64 from "../bin/remote-exec-linux-aarch64.bin";
-import x86_64 from "../bin/remote-exec-linux-x86_64.bin";
 
-const REMOTE_EXEC_BINARIES = bundledRemoteExec({ x86_64, aarch64 });
+// The x86_64 remote-exec build (scripts/fetch-remote-exec.sh): the container is linux/amd64, as
+// Cloudflare runs it and wrangler dev builds it. wrangler.jsonc's rules upload it as its own module,
+// which workerd shows under /bundle; node:fs streams it into the container on first use, so the
+// Worker never holds it in memory. An image that has remote-exec already wouldn't need it.
+const REMOTE_EXEC_BINARIES = fileRemoteExec({ x86_64: "/bundle/remote-exec" });
 
 interface Env {
   SANDBOX: DurableObjectNamespace<Sandbox>;
