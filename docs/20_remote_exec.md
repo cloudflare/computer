@@ -90,18 +90,45 @@ COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
 CMD ["sleep", "infinity"]
 ```
 
-**Or have the Worker carry it.** Download the build for your containers from the
-`@cloudflare/computer@<version>` GitHub release and check it against its `SHA256SUMS`. Cloudflare
-runs containers as `linux/amd64`, and `wrangler dev` builds them that way, so that's
+**Or have the Worker carry it.** The build for your containers comes from the
+`@cloudflare/computer@<version>` GitHub release, checked against its `SHA256SUMS`. Cloudflare runs
+containers as `linux/amd64`, and `vite dev` and `wrangler dev` build them that way, so that's
 `remote-exec-linux-x86_64`, about 1.5 MB. Pass it as `binaries`, and the module copies it into the
 container on the first command, and again whenever the container has lost it. This works with any
 image that has a POSIX shell and the usual core utilities. A container of an architecture the
 Worker has no build for fails with an error that names it.
 
-The Worker can stream the build from its bundle with `node:fs` (it needs `nodejs_compat`), reading
-it a chunk at a time to hash it and to copy it in, so it's never held in memory whole. Upload it as
-a module of its own, which workerd shows under `/bundle` by its path relative to `base_dir`. Importing it would rename it
-to a content hash:
+With Vite, `remoteExec()` from `@cloudflare/computer/vite` does all of this. It downloads the build
+from the release that matches the installed package, checks it, and caches it, so only the first
+build downloads it. It serves it as `computer:remote-exec`:
+
+```ts
+// vite.config.ts
+import { remoteExec } from "@cloudflare/computer/vite";
+import { cloudflare } from "@cloudflare/vite-plugin";
+
+export default { plugins: [cloudflare(), remoteExec()] };
+```
+
+```ts
+import binaries from "computer:remote-exec";
+
+createExecModule({ binaries, ... });
+```
+
+`vite build` puts the build beside the Worker, where `wrangler deploy` uploads it as a module of its
+own, and the Worker streams it from `/bundle` with `node:fs` (it needs `nodejs_compat`). It reads a
+chunk at a time to hash it and to copy it in, so the build is never held in memory whole. `vite
+dev` doesn't put files under `/bundle`, so there the Worker imports the build instead. The plugin
+takes `arch` for the architectures to carry (`x86_64` by default), `version` for another release,
+and `builds` for a directory of local builds. For TypeScript, add
+`"@cloudflare/computer/vite/client"` to `compilerOptions.types`. The plugin needs
+`@cloudflare/vite-plugin` 1.68.0 or later, whose workerd keeps a container's `exec()` streams open
+until they finish.
+
+With Wrangler, download the build yourself, upload it as a module of its own, and stream it with
+`fileRemoteExec()`. workerd shows the module under `/bundle` by its path relative to `base_dir`.
+Importing it would rename it to a content hash, and hold it in memory:
 
 ```jsonc
 // wrangler.jsonc, with the build saved as bin/remote-exec. base_dir is bin/ alone: a wider
@@ -117,9 +144,8 @@ import { fileRemoteExec } from "@cloudflare/computer/remote-exec";
 const binaries = fileRemoteExec({ x86_64: "/bundle/remote-exec" });
 ```
 
-Where `/bundle` isn't available, such as under the Cloudflare Vite plugin, import the build as
-bytes instead. Wrangler and the Vite plugin import `.bin` files as `Data` modules, which stay in
-memory for the isolate's life:
+Where neither works, import the build as bytes with `bundledRemoteExec()`. Wrangler and the Vite
+plugin import `.bin` files as `Data` modules, which stay in memory for the isolate's life:
 
 ```ts
 import { bundledRemoteExec } from "@cloudflare/computer/remote-exec";

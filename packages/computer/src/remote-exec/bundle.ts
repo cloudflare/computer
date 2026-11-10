@@ -69,6 +69,8 @@ type NodeFs = typeof import("node:fs");
  * ```ts
  * createExecModule({ binaries: fileRemoteExec({ x86_64: "/bundle/remote-exec" }), ... });
  * ```
+ *
+ * With Vite, `remoteExec()` from `@cloudflare/computer/vite` downloads the builds and does this.
  */
 export function fileRemoteExec(paths: Partial<Record<Arch, string>>): RemoteExecBinaries {
   // Imported when first needed, so the rest of this module doesn't need nodejs_compat.

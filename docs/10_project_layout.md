@@ -62,7 +62,7 @@ packages/computer/
 │   │   └── test.ts                  # In-process test backend
 │   ├── mounts/                      # Mount registry, indexer, R2Bucket and WorkerBundle
 │   ├── remote-exec/                 # codemode:exec and ExecSandbox (@cloudflare/computer/remote-exec)
-│   ├── vite/                        # computerBundle Vite plugin (@cloudflare/computer/vite)
+│   ├── vite/                        # computerBundle and remoteExec Vite plugins (@cloudflare/computer/vite)
 │   ├── proxy.ts                     # WorkspaceProxy
 │   ├── proxy-stub.ts                # Client-side stub plumbing
 │   ├── stub.ts                      # DO stub helpers
