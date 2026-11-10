@@ -23,9 +23,9 @@ npm run build
 npm run test:e2e --workspace @example/computer-remote-exec
 ```
 
-`npm run dev --workspace @example/computer-remote-exec` starts it in `wrangler dev` instead.
+`npm run dev --workspace @example/computer-remote-exec` starts it in `vite dev` instead.
 
-The tests start `wrangler dev`, which builds the container image, and run the vitest suites in
+The tests start `vite dev`, which builds the container image, and run the vitest suites in
 `test/` against it. Each suite has its own workspace and container, destroyed when it ends, and
 sends codemode programs to `POST /s/:session/run`:
 
@@ -56,21 +56,20 @@ workspace and a `CodemodeBackend`, whose `codemode:exec` runs commands on the se
 
 The container image is Docker's agent-less
 [sandbox image](https://docs.docker.com/ai/sandboxes/agents/shell/), without `remote-exec`: the
-Worker carries the build and streams it into the container on first use. The container is
-`linux/amd64`, as Cloudflare runs it and `wrangler dev` builds it, so that's just the x86_64 build.
-`scripts/fetch-remote-exec.sh` puts it at `bin/remote-exec`, from the `@cloudflare/computer`
-GitHub release matching the installed package, checked against its `SHA256SUMS`. It runs before
-`npm run dev` and the tests.
+Worker carries the build and copies it into the container on first use. The container is
+`linux/amd64`, as Cloudflare runs it and `vite dev` builds it, so that's just the x86_64 build.
 
-`wrangler.jsonc`'s `rules` upload `bin/remote-exec` as a module of its own, which workerd shows at
-`/bundle/remote-exec`. `fileRemoteExec()` reads it from there with `node:fs`, a chunk at a time,
-both to hash it and to copy it in, so the Worker never holds the 1.5 MB build in memory.
+`remoteExec()` in `vite.config.ts` gets it from the `@cloudflare/computer` GitHub release matching
+the installed package, checks it against the release's `SHA256SUMS`, and caches it. The Worker
+imports it as `computer:remote-exec`. Built with `vite build`, it streams the build from
+`/bundle` with `node:fs`, a chunk at a time, so it never holds the 1.5 MB build in memory. Under
+`vite dev`, which doesn't put files under `/bundle`, it imports the build instead.
 
 ## Using the remote-exec image instead
 
 To bake remote-exec into the image rather than have the Worker copy it in, copy it from the
 `cloudflare/computer-remote-exec` image, whose version matches `@cloudflare/computer`'s, and drop
-`binaries` from `createExecModule()` (and `bin/remote-exec`'s rule from `wrangler.jsonc`):
+`binaries` from `createExecModule()` (and `remoteExec()` from `vite.config.ts`):
 
 ```dockerfile
 FROM ghcr.io/cloudflare/computer-remote-exec:0.11.0 AS remote-exec
@@ -85,8 +84,8 @@ The image is on both `ghcr.io/cloudflare/computer-remote-exec` and
 
 ## Working on remote-exec itself
 
-To try a change to `remote-exec`, build it first. `scripts/fetch-remote-exec.sh` then takes the
-repository's own build from `artifacts/remote-exec` instead of the release's. Building needs Rust
+To try a change to `remote-exec`, build it first. `vite.config.ts` then takes the repository's own
+build from `artifacts/remote-exec` instead of the release's. Building needs Rust
 with both musl targets and `capnp`; `packages/remote-exec/dev/run.sh` provides them on any machine
 with Docker:
 

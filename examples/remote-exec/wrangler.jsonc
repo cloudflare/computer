@@ -1,17 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Local development only (`wrangler dev`), with Docker for the container.
+  // Local development only (`vite dev`), with Docker for the container.
   "name": "computer-remote-exec-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-08-11",
   "compatibility_flags": ["nodejs_compat"],
-  // bin/remote-exec (scripts/fetch-remote-exec.sh) goes up as a module of its own, so workerd shows
-  // it at /bundle/remote-exec and src/index.ts streams it with node:fs. An import would hold it in
-  // memory instead, under a content-hash name. base_dir is bin/ alone: wider, and wrangler would
-  // upload (and watch) everything its default rules match, such as test/**/*.txt.
-  "base_dir": "bin",
-  "find_additional_modules": true,
-  "rules": [{ "type": "Data", "globs": ["remote-exec"], "fallthrough": false }],
   // codemode's Dynamic Workers.
   "worker_loaders": [{ "binding": "LOADER" }],
   "containers": [{ "class_name": "Sandbox", "image": "./Dockerfile", "max_instances": 5 }],

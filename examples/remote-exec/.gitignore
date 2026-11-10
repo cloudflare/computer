@@ -1,4 +1,3 @@
 .wrangler/
 node_modules/
-# The remote-exec builds (scripts/fetch-remote-exec.sh).
-bin/
+dist/

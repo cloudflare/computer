@@ -207,7 +207,7 @@
   "devDependencies": {
     "@cloudflare/computer-rpc": "*",
     "@cloudflare/dofs": "*",
-    "@cloudflare/vite-plugin": "^1.63.0",
+    "@cloudflare/vite-plugin": "^1.68.0",
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^4.20260616.1 || ^5.20260921.1",
     "@earendil-works/pi-ai": "^0.99.2",

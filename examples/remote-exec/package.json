@@ -5,9 +5,7 @@
   "type": "module",
   "description": "Example Worker whose CodemodeBackend runs commands in a container through @cloudflare/computer/remote-exec's codemode:exec, with workspace files synced in and out.",
   "scripts": {
-    "fetch:remote-exec": "scripts/fetch-remote-exec.sh",
-    "predev": "scripts/fetch-remote-exec.sh",
-    "dev": "wrangler dev",
+    "dev": "vite dev",
     "typecheck": "tsc --noEmit",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "build:types": "wrangler types"
@@ -16,7 +14,9 @@
     "@cloudflare/computer": "*"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.68.0",
     "typescript": "^6.0.3",
+    "vite": "^8.3.4",
     "vitest": "^4.1.12",
     "wrangler": "^4.148.0"
   }

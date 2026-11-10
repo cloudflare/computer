@@ -169,7 +169,8 @@ describe("computerBundle vite plugin", () => {
     for (const key of ["./README.md", "./app/package.json", "./scripts/setup.sh"]) {
       expect(entry).toContain(JSON.stringify(key));
     }
-    const chunks = readdirSync(join(out, "assets"));
+    // Newer Cloudflare plugins also emit each chunk's source map.
+    const chunks = readdirSync(join(out, "assets")).filter((name) => !name.endsWith(".map"));
     expect(chunks).toHaveLength(3);
     const contents = chunks
       .map((chunk) => readFileSync(join(out, "assets", chunk), "utf8"))
