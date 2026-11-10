@@ -247,6 +247,11 @@ export class Workspace {
   readonly #pendingSync: PendingSyncFences;
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
+  // A module handle's close() must finish before the backend connects
+  // again. A codemode handle relaunches every run its rows say is
+  // running, so a handle opened while the old one is still cancelling
+  // would run those runs a second time, beside the first.
+  readonly #closingModuleHandles = new Map<string, Promise<void>>();
   #connectionGeneration = 0;
   #runtime: WorkspaceRuntime | undefined;
   #readyPromise: Promise<void> | undefined;
@@ -939,26 +944,43 @@ export class Workspace {
     // and rebuilds against fresh handles.
     this.#connectionGeneration += 1;
     const handles = [...this.#handles.values()];
-    const moduleHandles = [...this.#moduleHandles.values()];
+    const moduleHandles = [...this.#moduleHandles];
     this.#handles.clear();
     this.#shells.clear();
     this.#commandHandles.clear();
     this.#connecting.clear();
     const disconnecting = [...this.#disconnecting.values()];
+    // A module connect still in flight sees the generation change and
+    // closes its handle before it settles, so it counts as closing too.
+    const moduleConnecting = [...this.#connectingModuleHandles].map(
+      ([id, connecting]) => [id, connecting.then(noop, noop)] as const,
+    );
     this.#moduleHandles.clear();
     this.#connectingModuleHandles.clear();
     this.#readyPromise = undefined;
-    await Promise.all([
-      ...disconnecting,
-      ...[...handles, ...moduleHandles].map(async (h) => {
-        try {
-          await h.close?.();
-        } catch {
-          // close() is best-effort; a transport that's already
-          // gone shouldn't take the workspace down with it.
-        }
-      }),
-    ]);
+    const closeQuietly = async (h: { close?: () => Promise<void> }) => {
+      try {
+        await h.close?.();
+      } catch {
+        // close() is best-effort; a transport that's already
+        // gone shouldn't take the workspace down with it.
+      }
+    };
+    const trackClosing = (id: string, closed: Promise<void>) => {
+      const previous = this.#closingModuleHandles.get(id);
+      const closing = Promise.all([previous, closed])
+        .then(noop)
+        .finally(() => {
+          if (this.#closingModuleHandles.get(id) === closing) this.#closingModuleHandles.delete(id);
+        });
+      this.#closingModuleHandles.set(id, closing);
+      return closing;
+    };
+    // close() doesn't wait for a connect that hasn't resolved, but the
+    // next connect for that backend does.
+    for (const [id, settled] of moduleConnecting) void trackClosing(id, settled);
+    const moduleClosing = moduleHandles.map(([id, h]) => trackClosing(id, closeQuietly(h)));
+    await Promise.all([...disconnecting, ...handles.map(closeQuietly), ...moduleClosing]);
   }
 
   // Unified backend handle used by the runtime. Module backends
@@ -1040,6 +1062,8 @@ export class Workspace {
     if (cached) return Promise.resolve(cached);
     const inflight = this.#connectingModuleHandles.get(id);
     if (inflight) return inflight;
+    const closing = this.#closingModuleHandles.get(id);
+    if (closing) return closing.then(() => this.#moduleHandleFor(id));
     const backend = this.#moduleBackendsById.get(id);
     if (!backend) {
       return Promise.reject(
@@ -1366,6 +1390,8 @@ export class Workspace {
 // reports sync: "none") still has to produce a terminating iterable.
 // One complete, empty block lets a caller's `for await` finish rather
 // than spin waiting for progress that will never come.
+function noop(): void {}
+
 function emptySyncProgress(backend: string, direction: "pull" | "push"): SyncProgress {
   const cursor = { rev: 0, path: null };
   return {
