@@ -93,6 +93,10 @@ export async function push(
   lockWaitMs: number,
 ): Promise<Pushed> {
   const walked = await walkWorkspace(fs, workspaceRoot, new Selector(globs));
+  // Without a listing of the root, the session would take every earlier file as deleted.
+  if (walked.skipped.some((s) => s.path === "")) {
+    throw new RemoteExecError("push", `exec: can't push: ${workspaceRoot} can't be read`);
+  }
   const skipped: Skipped[] = [...walked.skipped];
   const manifest: Entry[] = [];
   let total = 0;

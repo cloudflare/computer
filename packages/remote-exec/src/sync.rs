@@ -252,6 +252,11 @@ impl Push {
         self.keep.extend(paths.into_iter().filter(|p| check_rel(p).is_ok()));
     }
 
+    /// Whether the host left `path` out, or a directory above it that it couldn't list.
+    fn kept(&self, path: &str) -> bool {
+        self.keep.contains(path) || path.match_indices('/').any(|(at, _)| self.keep.contains(&path[..at]))
+    }
+
     pub fn chunk(&mut self, index: u32, data: &[u8], last: bool) -> Res<()> {
         if !self.want.contains(&index) || self.done.contains(&index) {
             return Err(Error::protocol(format!("chunk for entry {index}, which wasn't wanted")));
@@ -337,9 +342,7 @@ impl Push {
         // workspace.
         let stale: Vec<String> = ledger
             .keys()
-            .filter(|p| {
-                self.selector.matches(p) && !in_manifest.contains(p.as_str()) && !self.keep.contains(p.as_str())
-            })
+            .filter(|p| self.selector.matches(p) && !in_manifest.contains(p.as_str()) && !self.kept(p))
             .cloned()
             .collect();
         for path in stale {
@@ -806,6 +809,32 @@ mod tests {
         // It stays in the ledger, so a later push that leaves it out for good still deletes it.
         let (_, report) = push(&root, &["**"], vec![(file("a", "a", 0o644), "a")], None);
         assert_eq!(report.deleted, ["data.bin"]);
+    }
+
+    #[test]
+    fn push_keeps_everything_under_a_directory_the_host_couldnt_list() {
+        private_state();
+        let root = TempDir::new("push-keep-dir");
+        push(
+            &root,
+            &["**"],
+            vec![
+                (file("src/a.txt", "a", 0o644), "a"),
+                (file("src/deep/b.txt", "b", 0o644), "b"),
+                (file("srcfile", "c", 0o644), "c"),
+            ],
+            None,
+        );
+        // src couldn't be listed this time; srcfile is just gone.
+        let (mut state, _) = Push::begin(root.path().to_str().unwrap(), sel(&["**"]), Vec::new(), None).unwrap();
+        state.keep(vec!["src".into()]);
+        let report = state.end().unwrap();
+        assert_eq!(
+            report.deleted,
+            ["srcfile"],
+            "a sibling that only shares the prefix isn't kept"
+        );
+        assert!(root.exists("src/a.txt") && root.exists("src/deep/b.txt"));
     }
 
     #[test]

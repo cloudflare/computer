@@ -220,6 +220,29 @@ describe("what the host sends", () => {
     ]);
   });
 
+  it("refuses to push when the workspace root can't be listed, rather than delete everything", async () => {
+    const target = new FakeSessionTarget(async (s) => {
+      await openNormally(s);
+      await s.next();
+    });
+    const fs = directoryFs(ws);
+    const unlistable = new Proxy(fs, {
+      get(object, key) {
+        if (key === "readdir") {
+          return async () => {
+            throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+          };
+        }
+        const value = Reflect.get(object, key) as unknown;
+        return typeof value === "function" ? value.bind(object) : value;
+      },
+    });
+    await expect(
+      remoteExec(config(target, { fs: unlistable }), ["true"], { push: ["**"] }),
+    ).rejects.toThrow(/can't push: \/workspace can't be read/);
+    expect(target.requests.some((r) => r.type === "push")).toBe(false);
+  });
+
   it("tells the session which selected files it left out, so it keeps them", async () => {
     await write(ws, { "big.bin": "0123456789", "a.txt": "a" });
     const target = new FakeSessionTarget(async (s) => {
