@@ -4,6 +4,10 @@ import { deserialize, serialize } from "capnweb";
 import { utf8ByteLength, utf8Prefix } from "../text-truncation";
 import { assertRuntimeValue, type WorkspaceRuntimeCapability } from "./capability";
 import {
+  type CodemodeMember,
+  type CodemodeMemberKind,
+  codemodeMember,
+  codemodeMemberKind,
   type CodemodeModuleDefinition,
   codemodeObjectInfo,
   type WorkspaceModuleScopeEnd,
@@ -35,6 +39,128 @@ export interface CodemodeObjectDescriptor {
   readonly ref: string;
   readonly kind: string;
   readonly state?: unknown;
+  /** Members that aren't methods, by name: what the isolate builds for each. */
+  readonly members?: Readonly<Record<string, Exclude<CodemodeMemberKind, "field">>>;
+  /** Field values, by name. */
+  readonly fields?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Where a stream argument sits in a replayable run's call: an object with this one key, whose
+ * value is the stream's id. The isolate sends its chunks with `stream.push` calls.
+ */
+export const CODEMODE_STREAM_MARKER = "\u0000stream";
+
+/**
+ * Where an `AbortSignal` argument sits in a call, in any run: Workers RPC can't carry one. The
+ * value is the signal's id; the isolate sends `signal.abort` when it aborts.
+ */
+export const CODEMODE_SIGNAL_MARKER = "\u0000signal";
+
+// A member operation's name, `@<op>:<member>`, in place of a method name. "@" can't start a
+// method, whose names are identifiers.
+const MEMBER_OPS = {
+  await: "promise",
+  read: "readable",
+  cancel: "readable",
+  write: "writable",
+  close: "writable",
+  abort: "writable",
+} as const satisfies Record<string, Exclude<CodemodeMemberKind, "field">>;
+type MemberOp = keyof typeof MEMBER_OPS;
+
+/** The member operation a call name is, if it is one. */
+function memberOp(name: string): { op: MemberOp; member: string } | undefined {
+  const method = name.slice(name.lastIndexOf(".") + 1);
+  if (!method.startsWith("@")) return undefined;
+  const colon = method.indexOf(":");
+  const op = method.slice(1, colon);
+  if (colon === -1 || !Object.hasOwn(MEMBER_OPS, op)) return undefined;
+  return { op: op as MemberOp, member: method.slice(colon + 1) };
+}
+
+// Calls that move a stream's bytes. They don't count against the call and byte budgets: a
+// command's output would spend those on its own. In a replayable run, the bytes they journal
+// count against maxStreamBytes instead.
+function isStreamCall(name: string): boolean {
+  if (name === "stream.push") return true;
+  const op = memberOp(name)?.op;
+  return op !== undefined && op !== "await";
+}
+
+// What a member keeps between calls, while its object is live.
+type MemberState =
+  | { kind: "promise"; settled: Promise<{ value: unknown } | { error: unknown }> }
+  | {
+      kind: "readable";
+      reader: ReadableStreamDefaultReader<Uint8Array>;
+      // A read still waiting when the last call had to answer.
+      pending?: Promise<ReadableStreamReadResult<Uint8Array>>;
+      // What's left of a chunk larger than one call can carry.
+      rest?: Uint8Array;
+      done: boolean;
+    }
+  | {
+      kind: "writable";
+      writer: WritableStreamDefaultWriter<Uint8Array>;
+      // A close that the last call had to answer before it finished.
+      closing?: Promise<void>;
+      failed?: unknown;
+    };
+
+// What a member's promise or stream failed with, as an error to throw.
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+// A stream chunk as bytes.
+function asBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  throw new TypeError("A readable() member's stream must give bytes.");
+}
+
+// A stream argument in a replayable run, fed by the isolate's `stream.push` calls.
+interface ArgumentStream {
+  readonly stream: ReadableStream<Uint8Array>;
+  readonly controller: ReadableStreamDefaultController<Uint8Array>;
+  // Wakes a push waiting for room.
+  room?: () => void;
+  closed: boolean;
+}
+
+// How long before its deadline a waiting member call answers "not yet", so the isolate's next
+// call picks up where it left off rather than the call timing out.
+function answerBy(deadline: number, maxCallDurationMs: number): number {
+  return deadline - Math.min(1000, Math.max(1, Math.floor(maxCallDurationMs / 10)));
+}
+
+// Waits for `promise` until `by`, or until the call is aborted, as it is when the run ends, then
+// gives up waiting, leaving it to settle.
+async function until<T>(
+  promise: Promise<T>,
+  by: number,
+  signal?: AbortSignal,
+): Promise<{ value: T } | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ value })),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), Math.max(0, by - Date.now()));
+        onAbort = () => resolve(undefined);
+        if (signal?.aborted) resolve(undefined);
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 const REPLAYABLE_LIVE_VALUE =
@@ -69,6 +195,14 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   readonly #live = new Map<string, object>();
   // Numbers refs in a run without a journal.
   #refCounter = 0;
+  // Promise and stream members of live objects, by `<ref>\0<member>`.
+  readonly #members = new Map<string, MemberState>();
+  // A replayable run's stream arguments, by id.
+  readonly #argumentStreams = new Map<string, ArgumentStream>();
+  // Signal arguments, by id. Made by whichever comes first: the call that takes it, or its abort.
+  readonly #argumentSignals = new Map<string, AbortController>();
+  readonly #maxStreamBytes: number;
+  #streamBytes = 0;
   readonly #hostModules: ReadonlyMap<string, WorkspaceModuleFunctions>;
   // Aborts when the scope is cancelled or drained, for scoped context
   // starts, which the scope's calls share.
@@ -127,6 +261,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       maxTotalRequestBytes?: number;
       maxTotalResponseBytes?: number;
       maxResultBytes?: number;
+      // The most stream bytes a replayable run may journal, in and out together.
+      maxStreamBytes?: number;
       onAttachOutput?: (readable: ReadableStream<Uint8Array>) => Promise<void>;
       journal?: BridgeJournal;
       // Makes network requests for the isolate's journaled fetch. Absent
@@ -153,6 +289,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     this.#maxTotalRequestBytes = integrations.maxTotalRequestBytes ?? 8 * 1024 * 1024;
     this.#maxTotalResponseBytes = integrations.maxTotalResponseBytes ?? 8 * 1024 * 1024;
     this.#maxResultBytes = integrations.maxResultBytes ?? 1024 * 1024;
+    this.#maxStreamBytes = integrations.maxStreamBytes ?? 64 * 1024 * 1024;
     this.#onAttachOutput = integrations.onAttachOutput;
     this.#journal = integrations.journal;
     this.#fetch = integrations.fetch;
@@ -242,6 +379,17 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         `Workspace execution exceeds ${this.#maxConcurrentCalls} concurrent capability calls.`,
       );
     }
+    if (isStreamCall(name)) {
+      // Each is bounded by the payload limit and the concurrency limit above. What a replayable
+      // run journals is bounded too.
+      if (this.#journal !== undefined) {
+        if (this.#streamBytes + requestBytes > this.#maxStreamBytes) {
+          return reject(`Workspace execution streams exceed ${this.#maxStreamBytes} bytes.`);
+        }
+        this.#streamBytes += requestBytes;
+      }
+      return this.#dispatch(name, args, reject, false);
+    }
     if (this.#calls >= this.#maxCalls) {
       return reject(`Workspace execution exceeds ${this.#maxCalls} capability calls.`);
     }
@@ -270,7 +418,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       // The first attempt counted this response, and the replay repeats
       // that attempt, so it counts again. The budget error wasn't counted.
       if (!isFetch && step.response.uncounted !== true) {
-        this.#responseBytes += replayedBytes(step.response, this.#maxPayloadBytes);
+        const bytes = replayedBytes(step.response, this.#maxPayloadBytes);
+        if (isStreamCall(name)) this.#streamBytes += bytes;
+        else this.#responseBytes += bytes;
       }
       return Promise.resolve(
         this.#forIsolate({ ...step.response, at: step.at, ordinal: step.ordinal }),
@@ -316,6 +466,8 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
           });
         }
         if (name === "net.fetch") return this.#fetchFor(args[0], abort.signal);
+        if (name === "stream.push") return this.#push(args, deadline, abort.signal);
+        if (name === "signal.abort") return this.#abortSignal(args);
         const operation = name.startsWith("fs.") ? name.slice(3) : name;
         switch (operation) {
           case "readFile":
@@ -414,6 +566,20 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
               }
             : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
+        if (isStreamCall(name)) {
+          if (this.#journal === undefined) return delivered();
+          if (this.#streamBytes + bytes > this.#maxStreamBytes) {
+            return {
+              ...boundedError(
+                new Error(`Workspace execution streams exceed ${this.#maxStreamBytes} bytes.`),
+                this.#maxPayloadBytes,
+              ),
+              uncounted: true as const,
+            };
+          }
+          this.#streamBytes += bytes;
+          return delivered();
+        }
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {
           return {
             ...boundedError(
@@ -513,6 +679,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       controller.abort(new Error("Workspace execution is being cancelled."));
     }
     await Promise.allSettled([...this.#inFlight]);
+    this.#dropMembers();
+    for (const entry of this.#argumentStreams.values()) {
+      if (!entry.closed) {
+        entry.closed = true;
+        entry.controller.error(new Error("Workspace execution is being cancelled."));
+      }
+    }
     if (this.#callTimedOut) {
       throw new Error("A Workspace capability call did not settle before its deadline.");
     }
@@ -559,6 +732,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   async release(ref: unknown): Promise<void> {
     if (typeof ref !== "string") return;
     this.#known.delete(ref);
+    this.#dropMembers(ref);
     const object = this.#live.get(ref);
     this.#live.delete(ref);
     if (object === undefined || disposerOf(object) === undefined) return;
@@ -597,6 +771,10 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       target === specifier
         ? runtime.definition.functions
         : (this.#object(runtime, target) as Readonly<Record<string, unknown>>);
+    const op = memberOp(name);
+    if (op !== undefined && target !== specifier) {
+      return this.#memberCall(specifier, runtime, target, receiver, op, args, refBase, context);
+    }
     const methodName = name.slice(name.lastIndexOf(".") + 1);
     const fn = Object.hasOwn(receiver, methodName) ? receiver[methodName] : undefined;
     if (typeof fn !== "function") {
@@ -607,12 +785,358 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       this.#journal?.diverged(message);
       throw new Error(message);
     }
-    const value: unknown = await fn.call(
-      receiver,
-      args,
-      this.#codemodeContext(specifier, runtime, context),
+    // Done before the first await, so the isolate's pushes find their streams.
+    const streams: ArgumentStream[] = [];
+    const hostArgs = this.#withArguments(args, this.#journal === undefined ? undefined : streams);
+    try {
+      const value: unknown = await fn.call(
+        receiver,
+        hostArgs,
+        this.#codemodeContext(specifier, runtime, context),
+      );
+      return this.#encodeObjects(specifier, runtime, value ?? null, refBase);
+    } finally {
+      // A stream the function didn't start reading by the time it returned never will be: end
+      // it, so the isolate stops pushing. One it's reading carries on.
+      for (const entry of streams) {
+        if (!entry.stream.locked && !entry.closed) {
+          entry.closed = true;
+          entry.room?.();
+          void entry.stream.cancel().catch(() => undefined);
+        }
+      }
+    }
+  }
+
+  // A member's context: the call's own, except that it lasts as long as the scope, since a
+  // promise or stream outlives the call that first asked for it.
+  #memberContext(
+    specifier: string,
+    runtime: CodemodeModuleRuntime,
+    context: WorkspaceModuleCallContext,
+  ): WorkspaceModuleCallContext {
+    return this.#codemodeContext(specifier, runtime, {
+      ...context,
+      signal: this.#scope.signal,
+      deadline: Number.POSITIVE_INFINITY,
+    });
+  }
+
+  // `@<op>:<member>` on an object: the host side of its promise and stream members. A call that
+  // would wait past its deadline answers `{ again: true }`, or `{ done: false }` for a promise,
+  // and the isolate calls again; what it was waiting for carries on meanwhile.
+  async #memberCall(
+    specifier: string,
+    runtime: CodemodeModuleRuntime,
+    ref: string,
+    receiver: Readonly<Record<string, unknown>>,
+    { op, member: name }: { op: MemberOp; member: string },
+    args: unknown[],
+    refBase: string,
+    context: WorkspaceModuleCallContext,
+  ): Promise<CodemodeResult> {
+    const value = Object.hasOwn(receiver, name) ? receiver[name] : undefined;
+    const member = codemodeMember(value);
+    const kind = MEMBER_OPS[op];
+    if (member === undefined || codemodeMemberKind(member) !== kind) {
+      throw new Error(
+        `Codemode object ${JSON.stringify(ref)} has no ${kind} member ${JSON.stringify(name)}.`,
+      );
+    }
+    const key = `${ref}\u0000${name}`;
+    const by = answerBy(context.deadline, this.#maxCallDurationMs);
+    const open = () => this.#memberContext(specifier, runtime, context);
+    const plain = (result: unknown) => new CodemodeResult(result, []);
+    switch (op) {
+      case "await":
+        return this.#encodeObjects(
+          specifier,
+          runtime,
+          await this.#awaitMember(key, member, open, by, context.signal),
+          refBase,
+        );
+      case "read":
+        return plain(await this.#readMember(key, member, open, by, context.signal));
+      case "cancel": {
+        // A stream code cancels before reading still has to reach the host: its source may be
+        // holding something back until it's read or cancelled, as a process's pipe holds its exit.
+        let state = this.#members.get(key);
+        if (state === undefined) {
+          const stream = await (member as Extract<CodemodeMember, { open: unknown }>).open(open());
+          if (stream instanceof ReadableStream) {
+            state = { kind: "readable", reader: stream.getReader(), done: false };
+            this.#members.set(key, state);
+          }
+        }
+        if (state?.kind === "readable" && !state.done) {
+          state.done = true;
+          await state.reader.cancel(args[0] ?? undefined).catch(() => undefined);
+        }
+        return plain(null);
+      }
+      case "write":
+      case "close":
+      case "abort":
+        return plain(await this.#writeMember(key, member, open, op, args[0], by, context.signal));
+    }
+  }
+
+  async #awaitMember(
+    key: string,
+    member: CodemodeMember,
+    open: () => WorkspaceModuleCallContext,
+    by: number,
+    signal: AbortSignal,
+  ): Promise<{ done: false } | { done: true; value: unknown }> {
+    let state = this.#members.get(key);
+    if (state?.kind !== "promise") {
+      const { settle } = member as Extract<CodemodeMember, { settle: unknown }>;
+      const settled = Promise.resolve()
+        .then(() => settle(open()))
+        .then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error }),
+        );
+      state = { kind: "promise", settled };
+      this.#members.set(key, state);
+    }
+    const outcome = await until(state.settled, by, signal);
+    if (outcome === undefined) return { done: false };
+    if ("error" in outcome.value) throw asError(outcome.value.error);
+    return { done: true, value: outcome.value.value ?? null };
+  }
+
+  // The most bytes one read answers with, leaving room for the envelope.
+  get #chunkBytes(): number {
+    return Math.max(1, this.#maxPayloadBytes - 64);
+  }
+
+  async #readMember(
+    key: string,
+    member: CodemodeMember,
+    open: () => WorkspaceModuleCallContext,
+    by: number,
+    signal: AbortSignal,
+  ): Promise<{ chunk: Uint8Array } | { done: true } | { again: true }> {
+    let state = this.#members.get(key);
+    if (state?.kind !== "readable") {
+      const stream = await (member as Extract<CodemodeMember, { open: unknown }>).open(open());
+      if (!(stream instanceof ReadableStream)) {
+        throw new Error("A readable() member must open a ReadableStream.");
+      }
+      state = {
+        kind: "readable",
+        reader: (stream as ReadableStream<Uint8Array>).getReader(),
+        done: false,
+      };
+      this.#members.set(key, state);
+    }
+    if (state.done) throw new Error("This stream has already ended.");
+    const take = (bytes: Uint8Array) => {
+      const readable = state as Extract<MemberState, { kind: "readable" }>;
+      if (bytes.byteLength <= this.#chunkBytes) {
+        readable.rest = undefined;
+        return { chunk: bytes };
+      }
+      readable.rest = bytes.subarray(this.#chunkBytes);
+      return { chunk: bytes.slice(0, this.#chunkBytes) };
+    };
+    if (state.rest !== undefined) return take(state.rest);
+    state.pending ??= state.reader.read();
+    let outcome: { value: ReadableStreamReadResult<Uint8Array> } | undefined;
+    try {
+      outcome = await until(state.pending, by, signal);
+    } catch (error) {
+      state.pending = undefined;
+      state.done = true;
+      throw error;
+    }
+    if (outcome === undefined) return { again: true };
+    state.pending = undefined;
+    if (outcome.value.done) {
+      state.done = true;
+      return { done: true };
+    }
+    return take(asBytes(outcome.value.value));
+  }
+
+  async #writeMember(
+    key: string,
+    member: CodemodeMember,
+    open: () => WorkspaceModuleCallContext,
+    op: "write" | "close" | "abort",
+    arg: unknown,
+    by: number,
+    signal: AbortSignal,
+  ): Promise<{ ok: true } | { again: true }> {
+    let state = this.#members.get(key);
+    if (state?.kind !== "writable") {
+      const stream = await (member as Extract<CodemodeMember, { open: unknown }>).open(open());
+      if (!(stream instanceof WritableStream)) {
+        throw new Error("A writable() member must open a WritableStream.");
+      }
+      state = { kind: "writable", writer: (stream as WritableStream<Uint8Array>).getWriter() };
+      this.#members.set(key, state);
+    }
+    const writable = state;
+    if (op === "abort") {
+      await writable.writer.abort(arg ?? undefined).catch(() => undefined);
+      return { ok: true };
+    }
+    if (writable.failed !== undefined) throw asError(writable.failed);
+    if (op === "close") {
+      writable.closing ??= writable.writer.close();
+      return (await until(writable.closing, by, signal)) === undefined
+        ? { again: true }
+        : { ok: true };
+    }
+    if (!(arg instanceof Uint8Array)) throw new TypeError("A stream takes bytes.");
+    // Accept the chunk once the host stream has room, so code feels its backpressure. The write
+    // itself isn't waited for: its failure shows on the next write or the close.
+    if ((await until(writable.writer.ready, by, signal)) === undefined) return { again: true };
+    writable.writer.write(arg).catch((error: unknown) => {
+      writable.failed ??= error;
+    });
+    return { ok: true };
+  }
+
+  // A codemode call's arguments, with each signal marker replaced by its signal, and in a
+  // replayable run (`streams` given) each stream marker by the stream the isolate's pushes feed.
+  #withArguments(args: unknown[], streams: ArgumentStream[] | undefined): unknown[] {
+    const visit = (item: unknown): unknown => {
+      if (Array.isArray(item)) return item.map(visit);
+      if (item === null || typeof item !== "object" || item instanceof Uint8Array) return item;
+      const prototype = Object.getPrototypeOf(item) as unknown;
+      if (prototype !== Object.prototype && prototype !== null) return item;
+      const keys = Object.keys(item);
+      const marked = (marker: string) => {
+        const id = (item as Record<string, unknown>)[marker];
+        return keys.length === 1 && keys[0] === marker && typeof id === "string" ? id : undefined;
+      };
+      const signal = marked(CODEMODE_SIGNAL_MARKER);
+      if (signal !== undefined) return this.#argumentSignal(signal).signal;
+      const stream = streams === undefined ? undefined : marked(CODEMODE_STREAM_MARKER);
+      if (stream !== undefined) {
+        const entry = this.#argumentStream(stream);
+        streams?.push(entry);
+        return entry.stream;
+      }
+      const copy: Record<string, unknown> = {};
+      for (const key of keys) {
+        Object.defineProperty(copy, key, {
+          value: visit((item as Record<string, unknown>)[key]),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return copy;
+    };
+    return args.map(visit);
+  }
+
+  #argumentSignal(id: string): AbortController {
+    let controller = this.#argumentSignals.get(id);
+    if (controller === undefined) {
+      controller = new AbortController();
+      this.#argumentSignals.set(id, controller);
+    }
+    return controller;
+  }
+
+  // `signal.abort(id, message)`: the isolate's signal argument aborted.
+  #abortSignal(args: unknown[]): null {
+    const [id, message] = args;
+    if (typeof id !== "string") throw new TypeError("signal.abort takes a signal id.");
+    const controller = this.#argumentSignal(id);
+    if (!controller.signal.aborted) {
+      const reason = new Error(typeof message === "string" ? message : "The operation was aborted");
+      reason.name = "AbortError";
+      controller.abort(reason);
+    }
+    return null;
+  }
+
+  #argumentStream(id: string): ArgumentStream {
+    const existing = this.#argumentStreams.get(id);
+    if (existing !== undefined) return existing;
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const entry = { closed: false } as {
+      stream: ReadableStream<Uint8Array>;
+      controller: ReadableStreamDefaultController<Uint8Array>;
+      room?: () => void;
+      closed: boolean;
+    };
+    entry.stream = new ReadableStream<Uint8Array>(
+      {
+        start: (c) => {
+          controller = c;
+        },
+        pull: () => {
+          entry.room?.();
+          entry.room = undefined;
+        },
+        cancel: () => {
+          entry.closed = true;
+          entry.room?.();
+          entry.room = undefined;
+        },
+      },
+      // One chunk ahead of the host's reads, so the isolate feels its backpressure.
+      { highWaterMark: 1 },
     );
-    return this.#encodeObjects(specifier, runtime, value ?? null, refBase);
+    entry.controller = controller;
+    this.#argumentStreams.set(id, entry);
+    return entry;
+  }
+
+  // `stream.push(id, chunk)`: the next chunk of a stream argument, or with `null` its end, or
+  // with `null` and a message its failure. Answers once the host has room for it.
+  async #push(
+    args: unknown[],
+    deadline: number,
+    signal: AbortSignal,
+  ): Promise<{ ok: true } | { again: true } | { closed: true }> {
+    const [id, chunk, failure] = args;
+    if (typeof id !== "string") throw new TypeError("stream.push takes a stream id.");
+    const entry = this.#argumentStreams.get(id);
+    if (entry === undefined) {
+      throw new Error(
+        "Nothing is reading this stream: the call it was passed to has ended, or was answered from the journal.",
+      );
+    }
+    if (entry.closed) return { closed: true };
+    if (chunk === null || chunk === undefined) {
+      entry.closed = true;
+      if (typeof failure === "string") entry.controller.error(new Error(failure));
+      else entry.controller.close();
+      return { ok: true };
+    }
+    if (!(chunk instanceof Uint8Array)) throw new TypeError("stream.push takes bytes.");
+    if ((entry.controller.desiredSize ?? 0) <= 0) {
+      const room = new Promise<void>((resolve) => {
+        entry.room = resolve;
+      });
+      if ((await until(room, answerBy(deadline, this.#maxCallDurationMs), signal)) === undefined) {
+        return { again: true };
+      }
+      if (entry.closed) return { closed: true };
+    }
+    entry.controller.enqueue(chunk);
+    return { ok: true };
+  }
+
+  // Let go of the members a ref's object kept, or every object's.
+  #dropMembers(ref?: string) {
+    for (const [key, state] of this.#members) {
+      if (ref !== undefined && !key.startsWith(`${ref}\u0000`)) continue;
+      this.#members.delete(key);
+      if (state.kind === "readable" && !state.done) {
+        void state.reader.cancel().catch(() => undefined);
+      } else if (state.kind === "writable") {
+        void state.writer.abort().catch(() => undefined);
+      }
+    }
   }
 
   // The live object behind a ref, rebuilt from its state when this scope
@@ -636,7 +1160,11 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   #adopt(ref: string, object: object) {
     this.#live.set(ref, object);
     if (disposerOf(object) !== undefined) {
-      this.#trackDisposable?.(`object:${ref}`, (end) => disposeObject(object, end));
+      this.#trackDisposable?.(`object:${ref}`, (end) => {
+        // The streams it opened for code first, so its disposer finds them let go.
+        this.#dropMembers(ref);
+        return disposeObject(object, end);
+      });
     }
   }
 
@@ -690,10 +1218,37 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         }
         const ref = `${specifier}#${refBase}:${objects.length}`;
         const state = snapshotState(info.kind, info.state ?? null);
-        objects.push({ ref, kind: info.kind, state });
+        const descriptor: {
+          ref: string;
+          kind: string;
+          state: unknown;
+          members?: Record<string, Exclude<CodemodeMemberKind, "field">>;
+          fields?: Record<string, unknown>;
+        } = { ref, kind: info.kind, state };
+        const index = objects.length;
+        objects.push(descriptor);
         this.#known.set(ref, { kind: info.kind, state });
         this.#adopt(ref, item as object);
-        return { [CODEMODE_OBJECT_MARKER]: objects.length - 1 };
+        // Its fields go with it, checked as a result's values are; the isolate builds its other
+        // members from their kinds.
+        for (const [name, value] of Object.entries(item as object)) {
+          const member = codemodeMember(value);
+          if (member === undefined) continue;
+          const kind = codemodeMemberKind(member);
+          if (kind === "field") {
+            const before = objects.length;
+            const field = visit((member as Extract<CodemodeMember, { value: unknown }>).value);
+            if (objects.length !== before) {
+              throw new Error(
+                `Codemode object ${JSON.stringify(info.kind)}'s field ${JSON.stringify(name)} can't hold another object.`,
+              );
+            }
+            (descriptor.fields ??= {})[name] = field;
+          } else if (kind !== undefined) {
+            (descriptor.members ??= {})[name] = kind;
+          }
+        }
+        return { [CODEMODE_OBJECT_MARKER]: index };
       }
       if (
         item === null ||
@@ -746,7 +1301,12 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
     return {
       ...response,
-      objects: response.objects.map(({ ref, kind }) => ({ ref, kind })),
+      objects: response.objects.map(({ ref, kind, members, fields }) => ({
+        ref,
+        kind,
+        ...(members === undefined ? {} : { members }),
+        ...(fields === undefined ? {} : { fields }),
+      })),
     };
   }
 

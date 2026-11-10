@@ -7,6 +7,7 @@
     "packages/rpc",
     "packages/computer",
     "packages/computerd",
+    "packages/remote-exec",
     "examples/*"
   ],
   "scripts": {

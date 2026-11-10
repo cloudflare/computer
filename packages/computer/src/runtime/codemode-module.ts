@@ -1,5 +1,6 @@
 import { assertHostModuleExports } from "./export-names";
 import type {
+  WorkspaceModuleCallContext,
   WorkspaceModuleExecution,
   WorkspaceModuleFunction,
   WorkspaceModuleFunctions,
@@ -69,8 +70,106 @@ export interface WorkspaceModuleScope extends WorkspaceModuleExecution {
   readonly signal: AbortSignal;
 }
 
-/** The methods of an object a codemode module defines. Each is called as `(args, ctx)`. */
-export type CodemodeObjectMethods = Readonly<Record<string, WorkspaceModuleFunction>>;
+const MEMBER = Symbol.for("@cloudflare/computer/codemode-member");
+
+/**
+ * An object member that isn't a method: a value, a promise or a stream. Make one with `field()`,
+ * `promised()`, `readable()` or `writable()`.
+ */
+export type CodemodeMember =
+  | { readonly [MEMBER]: "field"; readonly value: unknown }
+  | {
+      readonly [MEMBER]: "promise";
+      readonly settle: (ctx: WorkspaceModuleCallContext) => unknown;
+    }
+  | {
+      readonly [MEMBER]: "readable";
+      readonly open: (
+        ctx: WorkspaceModuleCallContext,
+      ) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>;
+    }
+  | {
+      readonly [MEMBER]: "writable";
+      readonly open: (
+        ctx: WorkspaceModuleCallContext,
+      ) => WritableStream<Uint8Array> | Promise<WritableStream<Uint8Array>>;
+    };
+
+/** What a member is, as an object's descriptor names it. */
+export type CodemodeMemberKind = CodemodeMember[typeof MEMBER];
+
+/**
+ * A plain value the object carries, such as an id: code reads it as a property, without a host
+ * call. It travels with the object, so it must be what a result may hold: in a replayable run,
+ * a value the journal can keep.
+ */
+export function field<T>(value: T): CodemodeMember {
+  return Object.freeze({ [MEMBER]: "field" as const, value });
+}
+
+/**
+ * A property that's a promise in code, such as an exit code. `settle` runs on the host the first
+ * time code reads the property, and the backend waits for it across as many host calls as it
+ * takes, so a promise that settles after `maxHostCallMs` still arrives. In a replayable run each
+ * of those calls is journaled, and a replay answers them again; a run resumed live after a
+ * restart calls `settle` again, on the object rebuilt from its state.
+ */
+export function promised(settle: (ctx: WorkspaceModuleCallContext) => unknown): CodemodeMember {
+  if (typeof settle !== "function") throw new TypeError("promised() takes a function.");
+  return Object.freeze({ [MEMBER]: "promise" as const, settle });
+}
+
+/**
+ * A property that's a `ReadableStream` of bytes in code. `open` runs on the host the first time
+ * code reads from it, once per object, and the stream's chunks travel as host calls made only as
+ * code reads, so backpressure reaches the host stream. In a replayable run each chunk is
+ * journaled, and counts against the backend's `maxStreamBytes` rather than its call and byte
+ * budgets.
+ */
+export function readable(
+  open: (
+    ctx: WorkspaceModuleCallContext,
+  ) => ReadableStream<Uint8Array> | Promise<ReadableStream<Uint8Array>>,
+): CodemodeMember {
+  if (typeof open !== "function") throw new TypeError("readable() takes a function.");
+  return Object.freeze({ [MEMBER]: "readable" as const, open });
+}
+
+/**
+ * A property that's a `WritableStream` of bytes in code. `open` runs on the host on the first
+ * write, once per object. A write is accepted once the host stream has room, so backpressure
+ * reaches code; closing and aborting reach the host stream too.
+ */
+export function writable(
+  open: (
+    ctx: WorkspaceModuleCallContext,
+  ) => WritableStream<Uint8Array> | Promise<WritableStream<Uint8Array>>,
+): CodemodeMember {
+  if (typeof open !== "function") throw new TypeError("writable() takes a function.");
+  return Object.freeze({ [MEMBER]: "writable" as const, open });
+}
+
+/** The member a value is, or undefined for a method or anything else. */
+export function codemodeMember(value: unknown): CodemodeMember | undefined {
+  return typeof value === "object" &&
+    value !== null &&
+    typeof (value as { [MEMBER]?: unknown })[MEMBER] === "string"
+    ? (value as CodemodeMember)
+    : undefined;
+}
+
+/** The kind of member a value is, or undefined. */
+export function codemodeMemberKind(value: unknown): CodemodeMemberKind | undefined {
+  return codemodeMember(value)?.[MEMBER];
+}
+
+/**
+ * The members of an object a codemode module defines: methods, called as `(args, ctx)`, and
+ * fields, promises and streams made with `field()`, `promised()`, `readable()` and `writable()`.
+ */
+export type CodemodeObjectMethods = Readonly<
+  Record<string, WorkspaceModuleFunction | CodemodeMember>
+>;
 
 /**
  * Builds one kind of object from its state. Call it to make an object;
@@ -118,8 +217,9 @@ export interface CodemodeModuleOptions {
 export interface CodemodeModuleBuilder {
   /**
    * Define a kind of object the module can return. The builder makes an
-   * object of methods from its state. The state must be JSON, and must
-   * be enough to make the object again.
+   * object of methods from its state, and may add fields, promises and
+   * streams with `field()`, `promised()`, `readable()` and `writable()`.
+   * The state must be JSON, and must be enough to make the object again.
    */
   define<State, Methods extends CodemodeObjectMethods>(
     kind: string,
@@ -219,6 +319,14 @@ export function createCodemodeModule(options: CodemodeModuleOptions = {}): Codem
           throw new Error(
             `Codemode object kind ${JSON.stringify(kind)}'s builder must return an object of methods.`,
           );
+        }
+        // A member's name travels in the host calls that use it, which split on "." and ":".
+        for (const [name, value] of Object.entries(built)) {
+          if (codemodeMember(value) !== undefined && !IDENTIFIER.test(name)) {
+            throw new Error(
+              `Codemode object kind ${JSON.stringify(kind)}'s member ${JSON.stringify(name)} must be named like a JavaScript identifier.`,
+            );
+          }
         }
         Object.defineProperty(built, OBJECT, {
           value: Object.freeze({ owner, kind, state }),

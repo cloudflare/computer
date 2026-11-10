@@ -1,0 +1,35 @@
+name: Rust
+description: Set up Rust with both musl targets, capnp, and a build cache for packages/remote-exec.
+
+runs:
+  using: composite
+  steps:
+    # build.rs compiles remote-exec's protocol schema with capnp.
+    - name: Install capnp
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends capnproto
+
+    # The version is pinned in packages/remote-exec/rust-toolchain.toml, so a rebuild of a release
+    # gives the same bytes as the first build.
+    - name: Read the pinned toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' packages/remote-exec/rust-toolchain.toml)"
+        if [[ -z "$channel" ]]; then
+          echo "::error::no channel in packages/remote-exec/rust-toolchain.toml"
+          exit 1
+        fi
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
+        targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+        components: rustfmt, clippy
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: packages/remote-exec

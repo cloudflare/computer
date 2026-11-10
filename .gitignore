@@ -19,6 +19,10 @@ packages/computer/src/backends/worker-shell/generated/
 packages/computer-computerd-*/bin/computerd
 packages/computer/dist/bin/computerd-*
 
+# Cargo's output for remote-exec. Its release builds go to artifacts/remote-exec/
+# (covered by /artifacts/ above).
+packages/remote-exec/target/
+
 # Worker binding types, generated per example by `wrangler types`
 # from wrangler.jsonc plus the example's committed env template. The
 # build:types script in each example's package.json writes this file,

@@ -1,0 +1,37 @@
+[package]
+name = "remote-exec"
+version = "0.10.0"
+edition = "2021"
+description = "The in-container half of @cloudflare/computer/remote-exec: runs commands and syncs files"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "remote-exec"
+path = "src/main.rs"
+
+[dependencies]
+capnp = "0.27.2"
+globset = "0.4.20"
+ignore = "0.4.33"
+libc = "0.2.191"
+nix = { version = "0.31.3", features = ["socket", "uio", "signal", "process", "fs", "user"] }
+sha2 = "0.11.1"
+signal-hook = "0.4.5"
+
+[build-dependencies]
+capnpc = "0.27.0"
+
+# `remote-exec --version` hashes its own binary; unoptimised SHA-256 over a debug build takes seconds.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+serde_json = "1.0.154"

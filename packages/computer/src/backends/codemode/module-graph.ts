@@ -529,8 +529,13 @@ export function internalModuleSources(maxCapabilityBytes: number): string[] {
 function capabilitiesModule(maxCapabilityBytes: number) {
   const requestTooLargeMessage = `Workspace capability request exceeds ${maxCapabilityBytes} bytes.`;
   return `
-    import { deliver, failed, request, takeLog } from "${DURABLE_MODULE}";
+    import { deliver, durable, failed, request, takeLog } from "${DURABLE_MODULE}";
     let host;
+    // The most bytes of a stream one call carries, inside the request limit.
+    const STREAM_BYTES = Math.max(1, Math.floor(${maxCapabilityBytes} / 2));
+    // Numbers a run's stream and signal arguments, the same on every replay.
+    let streamCount = 0;
+    let signalCount = 0;
     const callKey = Symbol.for("cloudflare.workspace.runtime.call");
     const filesystemMethods = new Set([
       "readFile", "readFileBytes", "writeFile", "mkdir", "rm", "chmod",
@@ -542,6 +547,8 @@ function capabilitiesModule(maxCapabilityBytes: number) {
     export const moduleScopeRefusals = [];
     export function install(value) {
       host = value;
+      streamCount = 0;
+      signalCount = 0;
       moduleScopeRefusals.length = 0;
       globalThis[callKey] = filesystemCall;
     }
@@ -556,13 +563,27 @@ function capabilitiesModule(maxCapabilityBytes: number) {
     // spares an obviously oversized request the round trip.
     export async function call(namespace, method, args) {
       if (!host) throw new Error("Workspace capabilities are not installed");
+      // A replayable run's calls can't carry a stream, so a stream passed to a codemode module
+      // goes as a marker, and its chunks follow in calls of their own. No run's calls can carry
+      // an AbortSignal, so one goes as a marker too, and its abort follows as a call.
+      let streams;
+      let signals;
+      if (namespace.startsWith("host/")) {
+        streams = durable() ? [] : undefined;
+        signals = [];
+        args = swapArguments(args, streams, signals);
+      }
       if (approximateBytes(args) > ${maxCapabilityBytes}) {
         throw new Error(${JSON.stringify(requestTooLargeMessage)});
       }
       let payload;
       request();
       try {
-        payload = await host.call(namespace + "." + method, args, takeLog());
+        const sent = host.call(namespace + "." + method, args, takeLog());
+        // After the call they belong to, so the host has made their streams.
+        for (const [id, stream] of streams ?? []) void pump(id, stream);
+        for (const [id, signal] of signals ?? []) forwardAbort(id, signal);
+        payload = await sent;
       } catch (error) {
         failed();
         // A module is evaluated outside any request, and the runtime
@@ -603,7 +624,7 @@ function capabilitiesModule(maxCapabilityBytes: number) {
     const objectMarker = "\\u0000codemode";
     const errorTypes = { TypeError, RangeError, SyntaxError, ReferenceError, EvalError, URIError };
     function reviveObjects(value, objects) {
-      const proxies = objects.map((object) => objectProxy(String(object.ref)));
+      const proxies = objects.map((object) => objectProxy(String(object.ref), object.members, object.fields));
       const visit = (item) => {
         if (Array.isArray(item)) return item.map(visit);
         if (item === null || typeof item !== "object") return item;
@@ -621,11 +642,60 @@ function capabilitiesModule(maxCapabilityBytes: number) {
       };
       return visit(value);
     }
-    function objectProxy(ref) {
+    // An object's fields are its values; its promises and streams are made the first time code
+    // reads them, and work through host calls on \`@<op>:<member>\`. A call that would have waited
+    // past its deadline answers to say so, and is made again.
+    function objectProxy(ref, members, fields) {
       let released;
       const release = () => {
         released ??= Promise.resolve(host?.release(ref)).catch(() => undefined);
         return released;
+      };
+      const namespace = "host/" + ref;
+      const disposedError = () => new Error("This object was disposed, so its methods can't be called.");
+      const memberCall = async (op, key, args, waiting) => {
+        for (;;) {
+          if (released !== undefined) throw disposedError();
+          const answer = await call(namespace, "@" + op + ":" + key, args);
+          if (!waiting(answer)) return answer;
+        }
+      };
+      const made = new Map();
+      const member = (key, kind) => {
+        if (made.has(key)) return made.get(key);
+        let value;
+        if (kind === "promise") {
+          value = memberCall("await", key, [], (answer) => answer?.done === false).then((answer) => answer.value);
+          // Rejects for code that awaits it, and isn't unhandled for code that doesn't.
+          value.catch(() => {});
+        } else if (kind === "readable") {
+          value = new ReadableStream({
+            async pull(controller) {
+              const answer = await memberCall("read", key, [], (answer) => answer?.again === true);
+              if (answer?.done === true) controller.close();
+              else controller.enqueue(answer.chunk);
+            },
+            cancel: (reason) =>
+              released !== undefined
+                ? undefined
+                : call(namespace, "@cancel:" + key, [reason === undefined ? null : String(reason)]).then(() => undefined, () => undefined),
+          }, { highWaterMark: 0 }); // Read from the host only as code reads.
+        } else if (kind === "writable") {
+          const again = (answer) => answer?.again === true;
+          value = new WritableStream({
+            async write(chunk) {
+              const bytes = toBytes(chunk);
+              for (let at = 0; at < bytes.byteLength || at === 0; at += STREAM_BYTES) {
+                await memberCall("write", key, [bytes.subarray(at, at + STREAM_BYTES)], again);
+                if (bytes.byteLength === 0) break;
+              }
+            },
+            close: () => memberCall("close", key, [], again).then(() => undefined),
+            abort: (reason) => memberCall("abort", key, [reason === undefined ? null : String(reason)], again).then(() => undefined),
+          });
+        }
+        made.set(key, value);
+        return value;
       };
       const methods = new Map();
       return new Proxy(Object.create(null), {
@@ -636,6 +706,8 @@ function capabilitiesModule(maxCapabilityBytes: number) {
           if (typeof key !== "string" || key === "then" || key === "toJSON" || key === "constructor") {
             return undefined;
           }
+          if (fields != null && Object.hasOwn(fields, key)) return fields[key];
+          if (members != null && Object.hasOwn(members, key)) return member(key, members[key]);
           let method = methods.get(key);
           if (method === undefined) {
             method = (...args) =>
@@ -647,6 +719,87 @@ function capabilitiesModule(maxCapabilityBytes: number) {
           return method;
         },
       });
+    }
+    function toBytes(chunk) {
+      if (chunk instanceof Uint8Array) return chunk;
+      if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
+      if (ArrayBuffer.isView(chunk)) return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      if (typeof chunk === "string") return new TextEncoder().encode(chunk);
+      throw new TypeError("A stream to a host module takes bytes or strings.");
+    }
+    // Replaces each AbortSignal in a call's arguments with a marker, and with \`streams\` each
+    // ReadableStream, collecting them to forward.
+    function swapArguments(value, streams, signals, seen = new Set()) {
+      if (value instanceof AbortSignal) {
+        const id = "a" + ++signalCount;
+        signals.push([id, value]);
+        return { [signalMarker]: id };
+      }
+      if (streams !== undefined && value instanceof ReadableStream) {
+        const id = "s" + ++streamCount;
+        streams.push([id, value]);
+        return { [streamMarker]: id };
+      }
+      if (value === null || typeof value !== "object" || value instanceof Uint8Array) return value;
+      // A cycle is left as it is, for the size check to refuse with its own message.
+      if (seen.has(value)) return value;
+      if (Array.isArray(value)) {
+        seen.add(value);
+        const items = value.map((item) => swapArguments(item, streams, signals, seen));
+        seen.delete(value);
+        return items;
+      }
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) return value;
+      seen.add(value);
+      const copy = {};
+      for (const key of Object.keys(value)) {
+        Object.defineProperty(copy, key, { value: swapArguments(value[key], streams, signals, seen), enumerable: true, writable: true, configurable: true });
+      }
+      seen.delete(value);
+      return copy;
+    }
+    const streamMarker = "\\u0000stream";
+    const signalMarker = "\\u0000signal";
+    // Sends a signal argument's abort, now if it has already happened.
+    function forwardAbort(id, signal) {
+      const send = () => {
+        const reason = signal.reason;
+        const message = reason instanceof Error ? reason.message : reason === undefined ? undefined : String(reason);
+        call("signal", "abort", message === undefined ? [id] : [id, message]).catch(() => {});
+      };
+      if (signal.aborted) send();
+      else signal.addEventListener("abort", send, { once: true });
+    }
+    // Sends a stream argument's chunks as \`stream.push\` calls, each once the host has room.
+    async function pump(id, stream) {
+      const push = async (chunk, failure) => {
+        for (;;) {
+          const answer = await call("stream", "push", failure === undefined ? [id, chunk] : [id, chunk, failure]);
+          if (answer?.again !== true) return answer;
+        }
+      };
+      let reader;
+      try {
+        reader = stream.getReader();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) {
+            await push(null);
+            return;
+          }
+          const bytes = toBytes(value);
+          for (let at = 0; at < bytes.byteLength; at += STREAM_BYTES) {
+            if ((await push(bytes.subarray(at, at + STREAM_BYTES)))?.closed === true) {
+              await reader.cancel().catch(() => {});
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        await push(null, String(error?.message ?? error)).catch(() => {});
+        await reader?.cancel(error).catch(() => {});
+      }
     }
     function approximateBytes(value, seen = new Set()) {
       if (typeof value === "string") return value.length;

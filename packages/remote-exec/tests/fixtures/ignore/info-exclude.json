@@ -1,0 +1,15 @@
+{
+  "description": ".git/info/exclude applies like a root .gitignore; .git itself is synced like any directory.",
+  "files": {
+    "local.env": "",
+    "app.env": "",
+    "README": ""
+  },
+  "exclude": "local.env\n",
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [".git/info/exclude", "README", "app.env"]
+    }
+  ]
+}

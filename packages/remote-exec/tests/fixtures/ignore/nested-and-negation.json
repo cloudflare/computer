@@ -1,0 +1,31 @@
+{
+  "description": "Nested .gitignore files apply below their directory; ! re-includes files.",
+  "files": {
+    ".gitignore": "*.log\n!keep.log\n",
+    "a.log": "",
+    "keep.log": "",
+    "pkg/.gitignore": "secret.txt\n!important.log\n",
+    "pkg/secret.txt": "",
+    "pkg/public.txt": "",
+    "pkg/important.log": "",
+    "pkg/other.log": "",
+    "secret.txt": ""
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": [
+        ".gitignore",
+        "keep.log",
+        "pkg/.gitignore",
+        "pkg/important.log",
+        "pkg/public.txt",
+        "secret.txt"
+      ]
+    },
+    {
+      "globs": ["**/*.log"],
+      "expected": ["keep.log", "pkg/important.log"]
+    }
+  ]
+}

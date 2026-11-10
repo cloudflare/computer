@@ -6,17 +6,26 @@
 #   - `.github/changeset-version.mjs` applies the pending versions;
 #   - create-pull-request commits those changes to the `release` branch;
 #   - the Version Packages PR includes package versions, changelogs, lockfile
-#     updates, and the Dockerfile/docs pins for the computerd image;
+#     updates, remote-exec's Cargo version, and the Dockerfile/docs pins for
+#     the computerd and remote-exec images;
 #   - this workflow dispatches CI on `release`, which publishes the package
 #     preview and lets the branch image workflow publish `:next`.
 #
 # Publish path:
 #   - no pending changesets remain on main;
 #   - changesets/action runs `.github/changeset-publish.mjs`;
-#   - the script builds and pushes the computerd container image first, then
-#     runs `changeset publish` for npm. Reruns are safe: pushing the same image
-#     tags again is idempotent, and changeset publish skips npm versions that
-#     already exist.
+#   - remote-exec's release binaries are built once, so the image and the
+#     GitHub release carry the same bytes (the npm package doesn't ship
+#     them);
+#   - the script builds and pushes the computerd and remote-exec container
+#     images first, then runs `changeset publish` for npm. Reruns are safe:
+#     pushing the same image tags again is idempotent, and changeset publish
+#     skips npm versions that already exist;
+#   - the remote-exec binaries and their SHA-256 sums are attached to the
+#     @cloudflare/computer GitHub release that changesets/action creates, on
+#     the publishing run or a rerun of it. The Rust toolchain is pinned in
+#     packages/remote-exec/rust-toolchain.toml so a rerun rebuilds the same
+#     bytes the image already has.
 
 name: Release
 
@@ -63,12 +72,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fuse3
 
-      # Build every workspace's dist/ up front. changesets doesn't run the
-      # build itself (changesets/changesets#860), and package builds/tests
-      # resolve sibling dist/ directories.
-      - name: Build all workspaces
-        run: npm run build --workspaces --if-present
-
       - name: Detect pending changesets
         id: pending-changesets
         shell: bash
@@ -86,6 +89,21 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # For the remote-exec image and the GitHub release.
+      - name: Set up Rust
+        if: steps.pending-changesets.outputs.present == 'false'
+        uses: ./.github/actions/rust
+
+      - name: Build the remote-exec binaries
+        if: steps.pending-changesets.outputs.present == 'false'
+        run: npm run build:bin --workspace @cloudflare/remote-exec
+
+      # Build every workspace's dist/ up front. changesets doesn't run the
+      # build itself (changesets/changesets#860), and package builds/tests
+      # resolve sibling dist/ directories.
+      - name: Build all workspaces
+        run: npm run build --workspaces --if-present
 
       - name: Capture the release plan
         if: steps.pending-changesets.outputs.present == 'true'
@@ -137,6 +155,8 @@ jobs:
 
       # The following Docker setup is only needed on the publish path. The
       # Version Packages PR path should not need registry credentials.
+      # The remote-exec image is multi-platform; its stages only COPY, so
+      # buildx needs no emulation.
       - name: Set up buildx
         if: steps.pending-changesets.outputs.present == 'false'
         uses: docker/setup-buildx-action@v3
@@ -168,6 +188,64 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+
+      # Like cloudflared's releases: the binaries, ready to download, with
+      # their sums.
+      #
+      # This runs on every publish-path run, not only when this run published
+      # to npm. If a run publishes and then fails before the upload finishes, a
+      # rerun publishes nothing, and an `outputs.published` gate would leave the
+      # release without binaries for good. To stay safe on every run:
+      #   - a release that already has all three files is left alone;
+      #   - files are only attached when HEAD is the commit the release tag
+      #     points to. That holds for the publishing run and its reruns. Later
+      #     no-op runs on a newer main don't qualify, so they never attach
+      #     binaries built from code the release doesn't contain.
+      - name: Attach the remote-exec binaries to the GitHub release
+        if: steps.pending-changesets.outputs.present == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISHED_NOW: ${{ steps.changesets.outputs.published }}
+        run: |
+          version="$(jq -r .version packages/computer/package.json)"
+          tag="@cloudflare/computer@$version"
+          files=(remote-exec-linux-x86_64 remote-exec-linux-aarch64 SHA256SUMS)
+
+          if ! attached="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"; then
+            if [[ "$PUBLISHED_NOW" == "true" ]]; then
+              echo "::error::$tag was published, but it has no GitHub release to attach remote-exec to"
+              exit 1
+            fi
+            echo "no GitHub release $tag; nothing to attach"
+            exit 0
+          fi
+
+          missing=()
+          for file in "${files[@]}"; do
+            grep -qxF "$file" <<< "$attached" || missing+=("$file")
+          done
+          if [[ ${#missing[@]} -eq 0 ]]; then
+            echo "$tag already has the remote-exec binaries"
+            exit 0
+          fi
+
+          git fetch --no-tags --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+          tag_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+          head_sha="$(git rev-parse HEAD)"
+          if [[ "$tag_sha" != "$head_sha" ]]; then
+            if [[ "$PUBLISHED_NOW" == "true" ]]; then
+              echo "::error::$tag points to $tag_sha, but this run built $head_sha"
+              exit 1
+            fi
+            echo "::warning::$tag is missing ${missing[*]}, but it points to $tag_sha and this run built $head_sha; rerun the release run for $tag_sha to attach them"
+            exit 0
+          fi
+
+          # The files that are there came from the same commit and toolchain,
+          # so replacing them all keeps SHA256SUMS consistent.
+          cd artifacts/remote-exec
+          sha256sum remote-exec-linux-x86_64 remote-exec-linux-aarch64 > SHA256SUMS
+          gh release upload "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
 
       # A branch update made with GITHUB_TOKEN cannot trigger a push workflow.
       # workflow_dispatch is exempt from that recursion guard.

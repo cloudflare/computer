@@ -39,7 +39,7 @@ export const JOURNAL_VERSION = 1;
  * them. A test notices when the isolate's code changes and asks for
  * this check, but nothing notices a host-side change.
  */
-export const REPLAY_VERSION = 1;
+export const REPLAY_VERSION = 2;
 
 /**
  * How many attempts an execution gets, since it last journaled a call,

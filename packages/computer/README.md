@@ -35,6 +35,7 @@ removed in a future release; each one names its replacement.
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
+| Remote exec: the `codemode:exec` module, `executor()` and `ExecSandbox`, and the `remote-exec` binary and its image | `@cloudflare/computer/remote-exec`, `ghcr.io/cloudflare/computer-remote-exec` | Experimental |
 | Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
@@ -346,6 +347,87 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 You can register several backends on one Workspace and route each call
 to a named one — see [Multiple backends](#multiple-backends).
 
+### Remote exec
+
+`@cloudflare/computer/remote-exec` is a third way to reach a container,
+experimental for now. Codemode code imports `codemode:exec` and runs a
+command in any Durable Object with `ctx.container.exec()`. No
+`computerd`, no FUSE and no long-lived sync: the files a command names
+are pushed before it runs, and what it changed is pulled back after.
+
+```js
+import { exec } from "codemode:exec";
+
+const proc = await exec(["npm", "test"], {
+  cwd: "/workspace/app",
+  push: ["**", "!node_modules/**"],
+  pull: ["coverage/**"],
+});
+const { exitCode, stdout, sync } = await proc.output();
+```
+
+Globs follow `.gitignore` rules, push only sends files the container
+doesn't have, and commands that sync take turns. `argv` runs without a
+shell. `exec()` takes `ctx.container.exec()`'s options and returns a
+process shaped exactly like its, with streams, `exitCode`, `output()`
+and `kill()`, in every run, replayable ones included. `output()` adds
+the sync reports, and keeps each stream's tail, with the rest saved
+under the Workspace's `output` settings.
+
+Inside the container, a small static binary, `remote-exec`, runs the
+commands and syncs the files. It isn't in the npm package. Copy it into
+your image from the image of the same version, also at
+`registry.cloudflare.com/library/computer-remote-exec`:
+
+```dockerfile
+FROM ghcr.io/cloudflare/computer-remote-exec:0.10.0 AS remote-exec
+FROM debian:stable-slim
+COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
+CMD ["sleep", "infinity"]
+```
+
+Or download `remote-exec-linux-x86_64` from the matching
+`@cloudflare/computer` GitHub release (`SHA256SUMS` lists its hash),
+upload it with the Worker, and pass
+`binaries: fileRemoteExec({ x86_64: "/bundle/remote-exec" })`: the
+module streams it in on first use. That works with any image.
+
+```ts
+import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
+import { DurableObject } from "cloudflare:workers";
+import { createExecModule, type ExecArgs, executor } from "@cloudflare/computer/remote-exec";
+
+// The container: started on the first command, stopped 10 minutes after the last.
+export class Sandbox extends DurableObject<Env> {
+  #executor = executor(this, { enableInternet: false });
+
+  exec(...args: ExecArgs) {
+    return this.#executor.exec(...args);
+  }
+}
+
+// In the Durable Object that holds the Workspace:
+new CodemodeBackend({
+  loader: env.LOADER,
+  modules: {
+    "codemode:exec": createExecModule({
+      target: () => env.SANDBOX.getByName(ctx.id.toString()),
+      fs: () => this.workspace.fs,
+    }),
+  },
+});
+```
+
+Give `executor()` an `outbound(egress)` hook to send all of the
+container's HTTP and HTTPS through a `Fetcher`, such as an entrypoint of
+your Worker; the container then trusts the platform's intercepting CA.
+`egress` is whatever the caller passed as `exec()`'s third argument,
+and `withEgress(stub, value)` passes it with every command the module
+runs. `readOnly: true` runs commands as `nobody` and refuses `pull` and
+`user`, for a read-only backend. See
+[20. Remote exec](../../docs/20_remote_exec.md) for setup and every
+option, and [`examples/remote-exec`](../../examples/remote-exec).
+
 ## Tools for agents
 
 `@cloudflare/computer/tools/ai-sdk` ships `createAITools()`, AI SDK tools that wrap the Workspace
@@ -519,6 +601,7 @@ on a computerd instance.
 | `@cloudflare/computer/modules/assets` | `createAssetsModule()` for `codemode:assets`: publish a Workspace file from isolate JavaScript. |
 | `@cloudflare/computer/modules/tools` | `createToolBindings()` for `codemode:tools`: an agent's own tools, callable from isolate JavaScript. |
 | `@cloudflare/computer/modules/browser` | `createBrowserModule()` for `codemode:browser`: an agents `Browser`, driven from isolate JavaScript. |
+| `@cloudflare/computer/remote-exec` | `createExecModule()` for `codemode:exec`: run commands in any container Durable Object, with Workspace files synced in and out. Also `ExecSandbox`, `withEgress()`, `bundledRemoteExec()`, and `remoteExec()`. |
 | `@cloudflare/computer/tools` | AI SDK tools for agents: `read`, `ls`, `find`, `grep`, `write`, `edit`, `delete`, and optional `exec` and `publish`. |
 | `@cloudflare/computer/tools/core` | `defineExec()`: the `exec` tool's description, schema, and executor, with no agent library. |
 | `@cloudflare/computer/tools/ai-sdk` | `createAITools()`: the AI SDK tool set for a Workspace, and `forAISDKTools()` to serve AI SDK tools as `codemode:tools`. |
@@ -616,6 +699,8 @@ An adapter for the Cloudflare runtime lives at
   backend running `computerd`.
 - [`examples/container-legacy`](../../examples/container-legacy) — the
   deprecated legacy container backend.
+- [`examples/remote-exec`](../../examples/remote-exec) — codemode running
+  commands in a container through `codemode:exec`, with end-to-end tests.
 - [`examples/think`](../../examples/think) — a chat agent that uses the
   workspace as its working directory.
 - [`examples/tutorial`](../../examples/tutorial) — a step-by-step build:

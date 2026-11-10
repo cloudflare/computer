@@ -1,0 +1,19 @@
+{
+  "description": "Symlinks are selected as links, never followed; links escaping the root are skipped.",
+  "files": {
+    "real/file.txt": "x"
+  },
+  "symlinks": {
+    "inside": "real/file.txt",
+    "dir-link": "real",
+    "up/escape": "../../outside.txt",
+    "abs": "/etc/passwd"
+  },
+  "cases": [
+    {
+      "globs": ["**"],
+      "expected": ["dir-link", "inside", "real/file.txt"],
+      "skipped": ["abs", "up/escape"]
+    }
+  ]
+}

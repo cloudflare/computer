@@ -93,6 +93,11 @@ export function durableRuntimeModule(): string {
       }
     }
 
+    // Whether this is a replayable run, whose calls can't carry live values such as streams.
+    export function durable() {
+      return active;
+    }
+
     // The events logged since the last call, for the host to save.
     export function takeLog() {
       if (!active || pending.length === 0) return undefined;

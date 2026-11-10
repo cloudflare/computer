@@ -150,18 +150,22 @@ over in two steps:
    request from the `release` branch. That pull request advances
    `@cloudflare/computer`, its private implementation packages, and the
    derivative image package to the same version, rewrites changelogs, and
-   updates Dockerfile and documentation pins for the `computerd` image.
+   updates Dockerfile and documentation pins for the `computerd` and
+   `remote-exec` images and remote-exec's `Cargo.toml`.
    Private packages such as `@cloudflare/dofs`,
    `@cloudflare/computer-rpc`, and `@cloudflare/computerd` are versioned and
    get changelogs, but are not published to npm. Each update publishes a
    package preview through
    `pkg.pr.new` and the mutable
-   `ghcr.io/cloudflare/computer-computerd-linux-x64:next` image after CI
-   passes.
-2. Merging that pull request first builds and pushes the `computerd`
-   binary image to `ghcr.io` and `registry.cloudflare.com`, then publishes
-   public npm packages. Rerunning a failed publish is safe: existing image
-   tags are pushed again and existing npm versions are skipped.
+   `ghcr.io/cloudflare/computer-computerd-linux-x64:next` and
+   `ghcr.io/cloudflare/computer-remote-exec:next` images after CI passes.
+2. Merging that pull request first builds remote-exec for x86_64 and
+   aarch64, builds and pushes the `computerd` and `remote-exec` images to
+   `ghcr.io` and `registry.cloudflare.com`, then publishes public npm
+   packages, and attaches the remote-exec binaries and their SHA-256 sums
+   to the `@cloudflare/computer` GitHub release. Rerunning a failed publish
+   is safe: existing image tags are pushed again and existing npm versions
+   are skipped.
 
 The package publishes under the `unreleased` dist-tag while it's
 pre-1.0, so `npm install @cloudflare/computer` does not yet pick up

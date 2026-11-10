@@ -467,6 +467,33 @@ const { status } = await run.wait();
 
 Each method is called as `(args, ctx)`, like an exported function, with its own context: `callId`, `signal`, `deadline`, `access` and `interrupt()`. A method call is a host call like any other, so it counts toward the limits, is journaled, and replays. In program code an object is a proxy whose methods make those calls. Awaiting, logging or serializing it doesn't call the host. Its `Symbol.dispose` and `Symbol.asyncDispose` release it: the host object's own `Symbol.asyncDispose` (or `Symbol.dispose`) runs with reason `"disposed"`, and the proxy refuses calls after that. A ref the run wasn't given is refused.
 
+##### Fields, promises and streams
+
+An object can have members that aren't methods. Each is made with a helper, and code reads it as a property. These work the same way in every run, including replayable ones:
+
+```ts
+import { createCodemodeModule, field, promised, readable, writable } from "@cloudflare/computer";
+
+const Proc = procs.define("Proc", ({ id, pid }) => ({
+  pid: field(pid),                                 // a value: proc.pid
+  exitCode: promised(() => running(id).exitCode),  // a promise: await proc.exitCode
+  stdout: readable(() => running(id).stdout),      // a ReadableStream of bytes
+  stdin: writable(() => running(id).stdin),        // a WritableStream of bytes
+  kill: async ([signal]) => running(id).kill(signal),
+}));
+```
+
+- **`field(value)`** travels with the object, so reading it makes no host call. Its value must be something a result could hold, and can't be another object.
+- **`promised(settle)`** runs `settle` on the host the first time code reads the property. The backend then waits for it across as many host calls as it takes: a call about to reach its deadline answers "not yet", and the isolate calls again. So a promise that settles after `maxHostCallMs` still arrives, and code just awaits it.
+- **`readable(open)`** opens the host stream on the first read. Its chunks travel as host calls made only as code reads, so backpressure reaches the host stream. A chunk larger than one call can carry arrives in pieces.
+- **`writable(open)`** opens the host stream on the first write. A write is accepted once the host stream has room, and closing or aborting reaches the host stream. A write's failure shows on the next write or the close.
+
+`settle` and `open` get a context whose `signal` aborts when the scope ends, since a promise or stream outlives the call that first asked for it. Member names must be JavaScript identifiers.
+
+In a replayable run, every one of these calls is journaled. A replay answers them again without running `settle` or `open`, so chunks read before a pause or a restart come back exactly as they were. A run that carries on live afterwards rebuilds the object from its state, and its first live member call runs `settle` or `open` again. For a process that died with the scope, that's where the error shows.
+
+Stream calls don't count against `maxCapabilityCalls` or the capability byte budgets, which a command's output would use up on its own. Each call is still bounded by `maxCapabilityBytes` and by the concurrency limit. In a replayable run, the bytes they journal, in and out together, count against `maxStreamBytes` (64 MiB by default). A run that doesn't replay journals nothing, so its streams are bounded only per call.
+
 `context(name, create)` adds `ctx[name]` to every function and method in the module. Without options it's made once, when the backend connects, from the services a factory gets. With `{ scoped: true }` it's made once for each scope of a run, from `({ id, metadata, signal }, host)`, the first time a method reads it, and `ctx[name]` is then a promise of the value:
 
 ```ts
@@ -502,7 +529,9 @@ When a scope ends, every scoped context that started, and every live object with
 
 A run killed while it waits has nothing open, so nothing is disposed. If the Durable Object restarts during a scope, what the scope held goes with it, undisposed. Everything closes at once, with a `signal` and a `deadline`, and the backend waits up to `maxHostCallMs`. A disposer that throws or runs late is reported with `console.error`, and the run goes on.
 
-In a run that doesn't replay, a codemode module can also take callbacks, and return streams and live RPC stubs, which Workers RPC carries as they are. A callback lasts for the call it was passed to. A replayable run refuses them, since the journal can't keep them.
+In a run that doesn't replay, a codemode module can also take callbacks, and return streams and live RPC stubs, which Workers RPC carries as they are. A callback lasts for the call it was passed to. A replayable run refuses them, since the journal can't keep them, with one exception: a `ReadableStream` passed as an argument, anywhere in plain data. The isolate sends its chunks in journaled calls of their own, each once the host has room, and the function gets an ordinary `ReadableStream`. If the function returns without starting to read it, the stream is cancelled, and the isolate stops sending. Return a stream from a replayable run with `readable()`.
+
+An `AbortSignal` can be passed to a codemode module in any run, anywhere in plain data, although Workers RPC can't carry one. The isolate sends its abort as a call of its own, journaled in a replayable run, and the function gets an ordinary `AbortSignal` that aborts with an `AbortError` carrying the reason's message. A signal that was already aborted arrives aborted.
 
 In a replayable run, arguments, results and object state can be JSON plus `Date`, `bigint`, byte arrays, `ArrayBuffer` and other typed arrays, `Headers`, `NaN` and `Infinity`, and errors. The journal stores them with [Cap'n Web](https://github.com/cloudflare/capnweb)'s encoding, and plain JSON keeps the format older journals use. In results, `undefined` follows JSON's rules in every run: an `undefined` field is left out, and an `undefined` array item or result becomes `null`. `URL`, `Map`, `Set` and `RegExp` can't be used there: Workers RPC can't carry a `URL`, and Cap'n Web can't encode the others yet. A thrown error keeps its standard name, such as `RangeError`, and its own properties, live and on replay. A builder makes one module, unless it has a `name`. Codemode modules are experimental and may change in any release.
 
@@ -674,6 +703,10 @@ createContainerModule({
   maxOutputLines: 200,
 });
 ```
+
+### `codemode:exec`
+
+`createExecModule()` from `@cloudflare/computer/remote-exec` runs a command in any container Durable Object, not only the Workspace's container backend. The files the command names are pushed into the container before it runs, and the files it changed are pulled back after. The container needs the `remote-exec` binary, and nothing else. `exec()` returns a process shaped exactly like `ctx.container.exec()`'s, with streams, `exitCode`, `output()` and `kill()`, and it works in replayable runs too. Experimental. Setup and options are in [20. Remote exec](./20_remote_exec.md).
 
 ### `codemode:browser`
 

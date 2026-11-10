@@ -8,13 +8,16 @@
 // The linux-x64 image context is derivative of @cloudflare/computerd, not a
 // changeset target, so this script copies computerd's version into that
 // package.json and updates Dockerfile/docs image pins to the same version.
+// The same goes for the computer-remote-exec image, and for remote-exec's
+// Cargo.toml and Cargo.lock, which take @cloudflare/remote-exec's version so
+// `remote-exec --version` reports it.
 
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const IMAGE_TAG_RE =
-  /(ghcr\.io\/cloudflare\/computer-computerd-linux-x64:)[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?/g;
+  /(ghcr\.io\/cloudflare\/computer-(?:computerd-linux-x64|remote-exec):)[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?/g;
 const TEXT_FILE_EXTENSIONS = new Set([
   "",
   ".Dockerfile",
@@ -26,7 +29,15 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".yaml",
   ".yml",
 ]);
-const IGNORED_DIRS = new Set([".git", ".devbox", ".venv", "artifacts", "dist", "node_modules"]);
+const IGNORED_DIRS = new Set([
+  ".git",
+  ".devbox",
+  ".venv",
+  "artifacts",
+  "dist",
+  "node_modules",
+  "target",
+]);
 const IGNORED_FILES = new Set([
   "package-lock.json",
   "CHANGELOG.md",
@@ -76,6 +87,17 @@ function syncDerivedImagePackage(computerdVersion) {
   console.log(`${path}: derivative image package version → ${computerdVersion}`);
 }
 
+function syncRemoteExecCrate() {
+  const { version } = readJson("packages/remote-exec/package.json");
+  for (const path of ["packages/remote-exec/Cargo.toml", "packages/remote-exec/Cargo.lock"]) {
+    const crate = /^(name = "remote-exec"\nversion = )"[^"]+"/m;
+    const before = readFileSync(path, "utf8");
+    if (!crate.test(before)) throw new Error(`${path}: no remote-exec version to update`);
+    writeFileSync(path, before.replace(crate, `$1"${version}"`));
+    console.log(`${path}: remote-exec version → ${version}`);
+  }
+}
+
 function updateImageReferences(computerdVersion) {
   let updatedFiles = 0;
   let replacements = 0;
@@ -94,20 +116,19 @@ function updateImageReferences(computerdVersion) {
       writeFileSync(file, after);
       updatedFiles += 1;
       replacements += count;
-      console.log(`${file}: computerd image tag → ${computerdVersion}`);
+      console.log(`${file}: image tag → ${computerdVersion}`);
     }
     IMAGE_TAG_RE.lastIndex = 0;
   }
 
-  console.log(
-    `updated ${replacements} computerd image tag reference(s) across ${updatedFiles} file(s)`,
-  );
+  console.log(`updated ${replacements} image tag reference(s) across ${updatedFiles} file(s)`);
 }
 
 run("npx", ["changeset", "version"]);
 
 const { version: computerdVersion } = readJson("packages/computerd/package.json");
 syncDerivedImagePackage(computerdVersion);
+syncRemoteExecCrate();
 updateImageReferences(computerdVersion);
 
 // changeset version doesn't update package-lock.json (changesets/changesets#421).
