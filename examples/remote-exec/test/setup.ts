@@ -49,8 +49,13 @@ export default async function setup(project: TestProject) {
   });
   project.provide("base", `http://127.0.0.1:${port}`);
   return async () => {
-    wrangler.kill();
-    await new Promise((resolve) => wrangler.once("exit", resolve));
+    // wrangler dev may have exited on its own since it was ready, and its exit event won't fire
+    // again.
+    if (wrangler.exitCode === null && wrangler.signalCode === null) {
+      const exited = new Promise((resolve) => wrangler.once("exit", resolve));
+      wrangler.kill();
+      await exited;
+    }
     removeSidecars();
   };
 }
