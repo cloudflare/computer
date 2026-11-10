@@ -1,7 +1,7 @@
 # Remote exec example
 
-Codemode code calls `codemode:exec`, or the streaming `codemode:remote-exec`, from
-`@cloudflare/computer/remote-exec`. That runs commands in a real container through
+Codemode code calls `codemode:exec` from `@cloudflare/computer/remote-exec`, whose `exec()`
+returns a process shaped like `ctx.container.exec()`'s. It runs commands in a real container through
 `ctx.container.exec()`, pushing files from a computer workspace before the command and pulling
 changes back after it. The container image is Docker's agent-less
 [sandbox image](https://docs.docker.com/ai/sandboxes/agents/shell/). The container is
@@ -49,12 +49,14 @@ returns. Each suite has its own workspace and container, destroyed when it ends:
   out in both directions. A second push sends only what changed. Push and pull globs are
   relative to `cwd`. `user: "1000:1000"` runs the command as that user, who owns the files
   pushed for it.
-- `streams`: the `codemode:remote-exec` facade's lazy streams and `stdin: "pipe"`, `output()` as
-  bytes, string stdin and `stderr: "combined"`, a failing command's exit code, and long output
-  keeping its last 2,000 lines with the rest saved to `/.computer/output/*.stdout.log`.
+- `streams`: the process's streams and `stdin: "pipe"`, `exitCode` waiting for both pipes,
+  `output()` as bytes and only once, a stream as stdin and `stderr: "combined"`, a failing
+  command's exit code and `kill()`, and long output keeping its last 2,000 lines with the rest
+  saved to `/.computer/output/*.stdout.log`.
 - `processes`: concurrent syncing calls take turns and pull only their own changes. An abort
   SIGKILLs everything the command started and skips the pull. Background processes don't outlive
-  their call. A command that can't start rejects `exec()`.
+  their call, and a command still running when the code ends is killed, freeing the root's lock.
+  A command that can't start rejects `exec()`.
 - `read-only`: through `POST /s/:session/run-read`, on a read-only `CodemodeBackend`. Commands
   run as nobody and can read pushed files but not change them, and `pull` and `user` are refused.
 

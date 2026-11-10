@@ -6,9 +6,10 @@ import { exec } from "codemode:exec";
 
 export default async function () {
   const options = { push: ["par/**"], pull: ["par/**"] };
+  const run = async (script) => (await exec(["sh", "-c", script], options)).output();
   const [a, b] = await Promise.all([
-    exec(["sh", "-c", "sleep 1; mkdir -p par && echo A > par/a.txt"], options),
-    exec(["sh", "-c", "sleep 1; mkdir -p par && echo B > par/b.txt"], options),
+    run("sleep 1; mkdir -p par && echo A > par/a.txt"),
+    run("sleep 1; mkdir -p par && echo B > par/b.txt"),
   ]);
   const waits = [a.sync.pushed.lockWaitMs, b.sync.pushed.lockWaitMs].sort((x, y) => x - y);
   return {
@@ -36,21 +37,22 @@ B
 aborting SIGKILLs everything the command started, and skips the pull
 ===
 workspace run <<'EOF'
-import { exec } from "codemode:remote-exec";
-import { exec as run } from "codemode:exec";
+import { exec } from "codemode:exec";
 
 export default async function () {
+  const count = async () => {
+    const { stdout } = await (await exec(["pgrep", "-c", "-f", "sleep 300$"])).output();
+    return new TextDecoder().decode(stdout).trim();
+  };
   const controller = new AbortController();
   const p = await exec(["sh", "-c", "sleep 300 & sleep 300 & wait"], {
     signal: controller.signal,
     pull: ["**"],
   });
-  const count = async () => (await run(["pgrep", "-c", "-f", "sleep 300$"])).stdout.trim();
   const before = await count();
   controller.abort();
-  const exitCode = await p.exitCode;
-  const pulled = await p.pulled;
-  return { before, exitCode, pulled: pulled.status, after: await count() };
+  const { exitCode, sync } = await p.output();
+  return { before, exitCode, pulled: sync.pulled.status, after: await count() };
 }
 EOF
 ---
@@ -68,15 +70,67 @@ workspace run <<'EOF'
 import { exec } from "codemode:exec";
 
 export default async function () {
-  const started = await exec(["sh", "-c", "setsid sleep 301 & echo started"]);
-  const { stdout } = await exec(["pgrep", "-c", "-f", "sleep 301$"]);
-  return { started: started.stdout, sleeping: stdout.trim() };
+  const decoder = new TextDecoder();
+  const run = async (argv) => decoder.decode((await (await exec(argv)).output()).stdout);
+  const started = await run(["sh", "-c", "setsid sleep 301 & echo started"]);
+  return { started, sleeping: (await run(["pgrep", "-c", "-f", "sleep 301$"])).trim() };
 }
 EOF
 ---
 {
   "started": "started\n",
   "sleeping": "0"
+}
+
+===
+a command still running when the code ends is killed
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  await exec(["sleep", "302"], { stdout: "ignore", stderr: "ignore" });
+  return "returned";
+}
+EOF
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const { stdout } = await (await exec(["pgrep", "-c", "-f", "sleep 302$"])).output();
+  return new TextDecoder().decode(stdout).trim();
+}
+EOF
+---
+"returned"
+"0"
+
+===
+a syncing command left unread when the code ends lets go of the lock
+===
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  // Holds the root's lock, and its output fills its pipe; nobody reads it.
+  await exec(["sh", "-c", "seq 1 1000000; sleep 300"], { pull: ["unread/**"] });
+  return "returned";
+}
+EOF
+workspace run <<'EOF'
+import { exec } from "codemode:exec";
+
+export default async function () {
+  const proc = await exec(["true"], { push: ["unread/**"], lockTimeoutMs: 10000 });
+  const { exitCode, sync } = await proc.output();
+  return { exitCode, waitedLong: sync.pushed.lockWaitMs > 5000 };
+}
+EOF
+---
+"returned"
+{
+  "exitCode": 0,
+  "waitedLong": false
 }
 
 ===
@@ -90,7 +144,7 @@ export default async function () {
 }
 EOF
 ---
-"Error: exec: /no/such/thing: No such file or directory (os error 2)"
+"RemoteExecError: exec: /no/such/thing: No such file or directory (os error 2)"
 
 ===
 commands get the image's environment, under their own env
@@ -99,9 +153,10 @@ workspace run <<'EOF'
 import { exec } from "codemode:exec";
 
 export default async function () {
-  const image = await exec(["sh", "-c", 'echo "$IMAGE_ENV"']);
-  const own = await exec(["sh", "-c", 'echo "$IMAGE_ENV"'], { env: { IMAGE_ENV: "from-the-call" } });
-  return { image: image.stdout, own: own.stdout };
+  const decoder = new TextDecoder();
+  const run = async (options) =>
+    decoder.decode((await (await exec(["sh", "-c", 'echo "$IMAGE_ENV"'], options)).output()).stdout);
+  return { image: await run(), own: await run({ env: { IMAGE_ENV: "from-the-call" } }) };
 }
 EOF
 ---

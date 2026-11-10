@@ -1,33 +1,35 @@
 /**
- * `codemode:exec`: remote exec as a computer host module, for codemode.
+ * `codemode:exec`: remote exec as a codemode module.
  *
- * Host modules exchange JSON-only values with the isolate, so this exports two layers:
+ * `exec(argv, options)` takes the platform's `ctx.container.exec()` options, plus `push`, `pull` and
+ * `lockTimeoutMs`, and returns the platform's `ExecProcess`: `pid`, `isPty`, `stdin`, `stdout`,
+ * `stderr`, `exitCode`, `output()`, `kill()` and `resize()`. The process is a codemode object, so its
+ * streams and its exit code work in every run, replayable ones included, and it ends with the scope
+ * that made it: when the run ends, pauses, or releases it, the command is killed.
  *
- * - `exec(argv, options)`: the whole call in one host call. Returns `{ exitCode, stdout, stderr,
- *   truncated?, sync }` once the command has exited and pull has finished.
- * - Primitives keyed by an execution id (`spawn`, `write`, `closeStdin`, `read`, `wait`, `kill`,
- *   `cancel`), which the isolate-side facade (`facade.ts`, imported as "codemode:remote-exec")
- *   turns into an `ExecProcess` with streams, like `ctx.container.exec()`'s.
- *
- * An execution is kept until it has exited and each of its streams has been read to the end or
- * cancelled, so output stays readable after exit, or until the code that spawned it has timed out.
- *
- * Bytes cross as base64. Output follows the Workspace's spill-over settings (`output.ts`).
+ * `output()` reads both streams to the end, keeping their tails under the Workspace's output
+ * settings (`output.ts`), and adds what the platform's doesn't have: `truncated` and the `sync`
+ * reports. It can be called once, and only before either stream has been read: they're the same
+ * pipes, not copies.
  */
+import {
+  createCodemodeModule,
+  field,
+  promised,
+  readable,
+  writable,
+} from "../runtime/codemode-module";
+import type { CodemodeModule } from "../runtime/codemode-module";
 import { unsafeToRepeat } from "../runtime/replay-safety";
-import type {
-  WorkspaceModuleCallContext,
-  WorkspaceModuleFactory,
-  WorkspaceRuntimeValue,
-} from "../runtime/types";
+import type { WorkspaceModuleCallContext } from "../runtime/types";
 import { remoteExec, type RemoteExecOptions, type RemoteProcess, DEFAULT_AGENT_PATH } from "./exec";
-import { asBytes } from "./framing";
 import type { SyncFs } from "./fs";
 import { ensureRemoteExec, type RemoteExecBinaries } from "./install";
 import {
+  type Captured,
   OutputCapture,
   outputSettings,
-  type Captured,
+  type OutputSettings,
   type Truncation,
   type WorkspaceOutputOptions,
 } from "./output";
@@ -52,21 +54,6 @@ export interface ExecModuleOptions {
    */
   binaries?: RemoteExecBinaries;
   limits?: Partial<SyncLimits>;
-  /** Read-ahead per stream for the streaming facade. */
-  maxStreamBuffer?: number;
-  /**
-   * How long a stream that has been read may go unread, with its read-ahead full, before it stops
-   * holding the command back, in ms. Default 30 seconds. Until then a full read-ahead pauses the
-   * command, as a pipe does; after it, the rest of the output goes only to the result (`output()`,
-   * `truncated`), so a caller that read part of a stream and moved on to `exitCode` doesn't wait
-   * for ever. Reading the stream again then fails, saying so.
-   */
-  streamStallMs?: number;
-  /**
-   * How long the calling code may run: commands are stopped when it times out, and output nobody
-   * has read is dropped once the code that spawned it can no longer be running.
-   */
-  runTimeoutMs: number;
   /**
    * For code that may only read: commands run as `READ_ONLY_USER`, pushed files stay root's, and
    * `pull` and `user` are refused. Pull writes through `fs`, past the backend's read-only guard.
@@ -74,45 +61,109 @@ export interface ExecModuleOptions {
   readOnly?: boolean;
 }
 
+/** What `output()` resolves with: the platform's `ExecOutput`, plus remote exec's own reports. */
+export interface RemoteExecOutput {
+  readonly stdout: ArrayBuffer;
+  readonly stderr: ArrayBuffer;
+  readonly exitCode: number;
+  /** Where long output was saved, as the Workspace's output settings say. */
+  readonly truncated?: Truncation;
+  readonly sync: { readonly pushed: SyncReport; readonly pulled: SyncReport };
+}
+
 /** nobody: a read-only agent's commands can read what's pushed, but not change it. */
 const READ_ONLY_USER = "65534:65534";
 
 const DESCRIPTION = [
   "Runs a command in a Linux container, copying workspace files in before and changed files back after.",
-  'Call `const { exitCode, stdout, stderr, sync } = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] })`.',
+  '`const proc = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] })` returns a process like ctx.container.exec()\'s:',
+  "`pid`, `stdin`, `stdout` and `stderr` streams, `exitCode`, `output()` and `kill()`.",
+  "`const { stdout, stderr, exitCode, truncated, sync } = await proc.output()` waits for the command and gives its output as ArrayBuffers (decode with TextDecoder), with what push and pull did.",
+  "output() reads the same pipes as the streams, so call it once and only before reading them.",
+  'As with ctx.container.exec(), `exitCode` resolves, and each stream ends, only once both stdout and stderr have been read to the end or cancelled, and a pipe nobody reads blocks the command once it fills: read the streams together, call output(), cancel or `"ignore"` what you don\'t need.',
   'argv runs directly, with no shell: use `["sh", "-c", "..."]` for pipes and redirects.',
-  "`push` globs are copied into the container before the command starts and `pull` globs are copied back after it exits; both respect .gitignore. Relative globs are relative to `cwd` (default /workspace), like the command's own paths; `/workspace/...` globs work too.",
-  'Commands start with the image\'s environment plus any the host adds. Other options: `user` ("uid:gid"), `env` (added over those), `stdin` (a string), `stdout`/`stderr` ("ignore"), `lockTimeoutMs`.',
+  "`push` globs are copied into the container before the command starts and `pull` globs are copied back before `exitCode` resolves; both respect .gitignore. Relative globs are relative to `cwd` (default /workspace), like the command's own paths; `/workspace/...` globs work too.",
+  'Other options, as ctx.container.exec() takes them: `user` ("uid:gid"), `env` (added over the image\'s), `stdin` ("pipe" or a ReadableStream), `stdout` ("pipe" or "ignore"), `stderr` ("pipe", "ignore" or "combined"), `signal`. Also `lockTimeoutMs`.',
   "File modes cross both ways. To make a workspace file executable, call node:fs `chmod` after writing it, or `chmod +x` in the command: writeFile's `mode` option isn't kept, and rewriting a file resets it to 644.",
-  "Long output keeps its tail; `truncated.stdout.path` then names a workspace file with all of it.",
-  "Commands that push or pull run one at a time. Everything a command starts is stopped when it exits.",
-  'For streams, stdin piping and kill(), `import { exec } from "codemode:remote-exec"` instead: it returns a process like ctx.container.exec().',
+  "Long output keeps its tail in output(); `truncated.stdout.path` then names a workspace file with all of it.",
+  "Commands that push or pull run one at a time. Everything a command starts is stopped when it exits, and a command still running when the code ends, or pauses, is killed.",
 ].join(" ");
 
-type Json = WorkspaceRuntimeValue;
+const GONE =
+  "exec: this command is no longer running here: it was stopped when the run paused, or when the Durable Object restarted.";
 
-function obj(value: Json | undefined, what: string): Record<string, Json> {
+/** A command this module started, while its scope lasts. */
+interface Running {
+  readonly proc: RemoteProcess;
+  readonly settings: OutputSettings;
+  readonly fs: SyncFs;
+  readonly id: string;
+  /** Read as a stream, or taken by output(): each pipe has one reader. */
+  streamed: boolean;
+  outputTaken: boolean;
+  exited: boolean;
+  /** The pipes as code's streams read them, once code has opened them. */
+  readonly opened: Partial<Record<"stdout" | "stderr", ReadableStream<Uint8Array>>>;
+}
+
+/**
+ * The command's pipe as code reads it. Cancelling it drains the pipe instead: a pipe that isn't
+ * read to its end holds the command's exit back, and the platform's exec() fails a process
+ * whose stream is cancelled outright.
+ */
+function drainOnCancel(source: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const { value, done } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+      cancel: () => drain(reader),
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+/** Read a pipe to its end, discarding it, in the background. */
+function drain(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  void (async () => {
+    for (;;) if ((await reader.read()).done) return;
+  })().catch(() => undefined);
+}
+
+/** The process as its object's state keeps it: enough to find it again, and its shape. */
+interface ProcessState {
+  readonly id: string;
+  readonly pid: number;
+  readonly stdin: boolean;
+  readonly stdout: boolean;
+  readonly stderr: boolean;
+}
+
+function record(value: unknown, what: string): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value))
     throw new TypeError(`exec: ${what} must be an object`);
-  return value;
+  return value as Record<string, unknown>;
 }
 
-function strings(value: Json | undefined, what: string): string[] | undefined {
+function strings(value: unknown, what: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.some((v) => typeof v !== "string"))
     throw new TypeError(`exec: ${what} must be an array of strings`);
   return value as string[];
 }
 
-function str(value: Json | undefined, what: string): string | undefined {
+function str(value: unknown, what: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") throw new TypeError(`exec: ${what} must be a string`);
   return value;
 }
 
 function oneOf<T extends string>(
-  value: Json | undefined,
+  value: unknown,
   allowed: readonly T[],
   what: string,
 ): T | undefined {
@@ -123,30 +174,42 @@ function oneOf<T extends string>(
 }
 
 const OPTION_KEYS = new Set([
-  "push",
-  "pull",
-  "user",
+  // ctx.container.exec()'s.
   "cwd",
   "env",
+  "user",
+  "signal",
+  "pty",
   "stdin",
-  "stdinBase64",
   "stdout",
   "stderr",
+  // Remote exec's own.
+  "push",
+  "pull",
   "lockTimeoutMs",
 ]);
 
-function parseOptions(raw: Json | undefined): {
-  options: RemoteExecOptions;
-  stdinData?: Uint8Array<ArrayBuffer>;
-  pipeStdin: boolean;
-} {
-  const o = obj(raw, "options");
+function parseOptions(raw: unknown): RemoteExecOptions {
+  const o = record(raw, "options");
   for (const key of Object.keys(o))
     if (!OPTION_KEYS.has(key)) throw new TypeError(`exec: unknown option ${JSON.stringify(key)}`);
-  const env = obj(o.env, "env");
+  if (o.pty !== undefined && o.pty !== null && o.pty !== false)
+    throw new TypeError("exec: remote exec has no pty");
+  const env = record(o.env, "env");
   for (const [k, v] of Object.entries(env))
     if (typeof v !== "string")
       throw new TypeError(`exec: env ${JSON.stringify(k)} must be a string`);
+  const stdin = o.stdin;
+  if (
+    stdin !== undefined &&
+    stdin !== null &&
+    stdin !== "pipe" &&
+    !(stdin instanceof ReadableStream)
+  )
+    throw new TypeError('exec: stdin must be "pipe" or a ReadableStream');
+  const signal = o.signal;
+  if (signal !== undefined && signal !== null && !(signal instanceof AbortSignal))
+    throw new TypeError("exec: signal must be an AbortSignal");
   const options: RemoteExecOptions = {
     push: strings(o.push, "push"),
     pull: strings(o.pull, "pull"),
@@ -156,15 +219,12 @@ function parseOptions(raw: Json | undefined): {
     stdout: oneOf(o.stdout, ["pipe", "ignore"] as const, "stdout"),
     stderr: oneOf(o.stderr, ["pipe", "ignore", "combined"] as const, "stderr"),
   };
+  if (stdin === "pipe" || stdin instanceof ReadableStream) {
+    options.stdin = stdin as NonNullable<RemoteExecOptions["stdin"]>;
+  }
+  if (signal instanceof AbortSignal) options.signal = signal;
   if (typeof o.lockTimeoutMs === "number") options.lockTimeoutMs = o.lockTimeoutMs;
-  let stdinData: Uint8Array<ArrayBuffer> | undefined;
-  let pipeStdin = false;
-  if (o.stdin === "pipe") pipeStdin = true;
-  else if (typeof o.stdin === "string") stdinData = new TextEncoder().encode(o.stdin);
-  else if (typeof o.stdinBase64 === "string") stdinData = fromBase64(o.stdinBase64);
-  else if (o.stdin !== undefined && o.stdin !== null)
-    throw new TypeError('exec: stdin must be a string or "pipe"');
-  return { options, ...(stdinData === undefined ? {} : { stdinData }), pipeStdin };
+  return options;
 }
 
 function readOnlyOptions(options: RemoteExecOptions): RemoteExecOptions {
@@ -179,166 +239,56 @@ function readOnlyOptions(options: RemoteExecOptions): RemoteExecOptions {
   return { ...options, user: READ_ONLY_USER, pushOwner: "" };
 }
 
-function toBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
+function signalOf(value: unknown): number {
+  const signal = value === undefined || value === null ? 15 : value;
+  if (typeof signal !== "number" || !Number.isInteger(signal) || signal < 1 || signal > 64)
+    throw new RangeError("exec: signal must be 1 to 64");
+  return signal;
 }
 
-function fromBase64(text: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(text);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
+function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-class StreamPump {
-  readonly #readahead: Uint8Array[] = [];
-  #bytes = 0;
-  #reading = false;
-  #overflowed = false;
-  #cancelled = false;
-  /** Read once, then left unread past `stallMs` with the read-ahead full. */
-  #stalled = false;
-  #eof = false;
-  #drained: boolean;
-  #wakeReader: (() => void) | undefined;
-  #wakePump: (() => void) | undefined;
-  readonly done: Promise<Captured>;
-
-  constructor(
+/** Read both pipes to the end, keeping their tails, then wait for the exit and the pull. */
+async function takeOutput(running: Running): Promise<RemoteExecOutput> {
+  if (running.outputTaken) throw new TypeError("exec: output() can only be called once");
+  if (running.streamed)
+    throw new TypeError(
+      "exec: output() reads stdout and stderr, so it can't be called once either has been read",
+    );
+  running.outputTaken = true;
+  const { proc, fs, settings, id } = running;
+  const capture = async (
     stream: ReadableStream<Uint8Array> | undefined,
-    capture: OutputCapture,
-    private readonly max: number,
-    private readonly name: string,
-    private readonly stallMs: number,
-  ) {
-    this.#drained = stream === undefined;
-    this.done = (async () => {
-      if (stream) {
-        for await (const raw of stream) {
-          const chunk = asBytes(raw);
-          await capture.write(chunk);
-          if (this.#overflowed || this.#cancelled || this.#stalled) continue;
-          while (this.#bytes + chunk.byteLength > this.max && !this.#cancelled) {
-            if (!this.#reading) {
-              // Nobody is streaming this output: stop buffering it, output() still has it.
-              this.#overflowed = true;
-              this.#readahead.length = 0;
-              this.#bytes = 0;
-              break;
-            }
-            // A reader takes a chunk larger than the read-ahead whole.
-            if (this.#bytes === 0) break;
-            // Hold the command back for a reader, as a pipe would, but not for one that's gone.
-            const woken = await new Promise<boolean>((resolve) => {
-              const timer = setTimeout(() => resolve(false), this.stallMs);
-              this.#wakePump = () => {
-                clearTimeout(timer);
-                resolve(true);
-              };
-            });
-            this.#wakePump = undefined;
-            if (!woken) {
-              this.#stalled = true;
-              this.#readahead.length = 0;
-              this.#bytes = 0;
-              break;
-            }
-          }
-          if (!this.#overflowed && !this.#cancelled && !this.#stalled) {
-            this.#readahead.push(chunk);
-            this.#bytes += chunk.byteLength;
-            this.#wakeReader?.();
-          }
-        }
-      }
-      this.#eof = true;
-      this.#wakeReader?.();
-      return capture.finish();
-    })();
-    this.done.catch(() => undefined);
-  }
-
-  async read(waitMs: number, signal: AbortSignal): Promise<{ data: Uint8Array; eof: boolean }> {
-    if (this.#cancelled) throw new Error("exec: this stream was cancelled");
-    if (this.#overflowed)
-      throw new Error(
-        "exec: this stream passed its read-ahead before it was first read; use output() instead",
-      );
-    if (this.#stalled)
-      throw new Error(
-        `exec: ${this.name} went unread for ${this.stallMs} ms with its read-ahead full, so it ` +
-          "stopped holding the command back; the rest of its output is in the result",
-      );
-    this.#reading = true;
-    if (this.#bytes === 0 && !this.#eof && waitMs > 0) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, waitMs);
-        const wake = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        this.#wakeReader = wake;
-        signal.addEventListener("abort", wake, { once: true });
-      });
-      this.#wakeReader = undefined;
-    }
-    const data = new Uint8Array(this.#bytes);
-    let at = 0;
-    for (const c of this.#readahead.splice(0)) {
-      data.set(c, at);
-      at += c.byteLength;
-    }
-    this.#bytes = 0;
-    this.#wakePump?.();
-    this.#wakePump = undefined;
-    const eof = this.#eof && this.#readahead.length === 0;
-    if (eof) this.#drained = true;
-    return { data, eof };
-  }
-
-  /** Nobody will read this stream: stop buffering it. output() still has it. */
-  cancel(): void {
-    this.#cancelled = true;
-    this.#readahead.length = 0;
-    this.#bytes = 0;
-    this.#wakePump?.();
-    this.#wakePump = undefined;
-  }
-
-  /** Read to the end, cancelled, stalled, or never piped. */
-  get settled(): boolean {
-    return this.#drained || this.#cancelled || this.#stalled;
-  }
+    which: string,
+  ): Promise<Captured> =>
+    stream === undefined
+      ? { kept: new Uint8Array() }
+      : new OutputCapture(fs, settings, `${id}.${which}.log`).consume(stream);
+  const [out, err, exitCode] = await Promise.all([
+    capture(proc.stdout, "stdout"),
+    capture(proc.stderr, "stderr"),
+    proc.exitCode,
+  ]);
+  const truncated: Truncation = {};
+  if (out.truncated) truncated.stdout = out.truncated;
+  if (err.truncated) truncated.stderr = err.truncated;
+  return {
+    stdout: arrayBuffer(out.kept),
+    stderr: arrayBuffer(err.kept),
+    exitCode,
+    ...(Object.keys(truncated).length > 0 ? { truncated } : {}),
+    sync: { pushed: proc.pushed, pulled: await proc.pulled },
+  };
 }
 
-interface Execution {
-  proc: RemoteProcess;
-  finished: boolean;
-  /** When the code that spawned it has timed out. */
-  expiresAt: number;
-  stdin: WritableStreamDefaultWriter<Uint8Array> | undefined;
-  stdout: StreamPump;
-  stderr: StreamPump;
-}
-
-interface ExecResult {
-  exitCode: number;
-  /** Text for `exec`; base64 for `wait`, which the facade decodes to bytes. */
-  stdout: string;
-  stderr: string;
-  truncated?: Truncation;
-  sync: { pushed: SyncReport; pulled: SyncReport };
-}
-
-export function createExecModule(options: ExecModuleOptions): WorkspaceModuleFactory {
-  const executions = new Map<string, Execution>();
+export function createExecModule(options: ExecModuleOptions): CodemodeModule {
   const settings = outputSettings(options.output);
   const agentPath = options.agentPath ?? DEFAULT_AGENT_PATH;
-  const maxStreamBuffer = options.maxStreamBuffer ?? 1024 * 1024;
-  const streamStallMs = options.streamStallMs ?? 30_000;
+  // The commands this module is running, by id, while the scopes that started them last. A
+  // process rebuilt in a later scope, or after a restart, finds nothing here.
+  const running = new Map<string, Running>();
   let installed: Promise<unknown> | undefined;
 
   const target = async (context: WorkspaceModuleCallContext): Promise<ExecTarget> => {
@@ -351,189 +301,145 @@ export function createExecModule(options: ExecModuleOptions): WorkspaceModuleFac
     return t;
   };
 
-  const start = async (
-    argv: Json | undefined,
-    rawOptions: Json | undefined,
-    context: WorkspaceModuleCallContext,
-  ) => {
-    if (!options.readOnly && context.access !== "read-write")
-      throw new Error("codemode:exec requires Workspace write access.");
-    const parsed = parseOptions(rawOptions);
-    const own = options.readOnly ? readOnlyOptions(parsed.options) : parsed.options;
-    const execOptions = { ...own, env: { ...(await options.env?.(context)), ...own.env } };
-    const args = strings(argv, "argv");
-    if (!args?.length) throw new TypeError("exec: argv must be a non-empty array of strings");
-    dropExpired();
-    const fs = options.fs();
-    const spawnedAt = Date.now();
-    const id = `x${context.callId.replace(/[^A-Za-z0-9]/g, "").slice(-40)}${Math.random().toString(36).slice(2, 8)}`;
-    const stdin = parsed.stdinData
-      ? new Blob([parsed.stdinData]).stream()
-      : parsed.pipeStdin
-        ? "pipe"
-        : undefined;
-    const run = async () =>
-      remoteExec(
-        {
-          target: await target(context),
-          fs,
-          agentPath,
-          id,
-          ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
-          ...(options.containerRoot ? { containerRoot: options.containerRoot } : {}),
-          ...(options.limits ? { limits: options.limits } : {}),
-        },
-        args,
-        { ...execOptions, ...(stdin === undefined ? {} : { stdin }) },
-      );
-    let proc: RemoteProcess;
-    try {
-      proc = await run();
-    } catch (error) {
-      // A container replaced since the last install (a fresh image, a lost snapshot) no longer
-      // has the binary: forget that it was installed and try once more. Errors about the call
-      // itself (a bad option, a command that can't start) aren't retried.
-      if (
-        error instanceof TypeError ||
-        (error instanceof RemoteExecError && error.code !== "session")
-      ) {
+  const module = createCodemodeModule({ description: DESCRIPTION });
+
+  const Process = module.define("Process", (state: ProcessState) => {
+    const live = (): Running => {
+      const entry = running.get(state.id);
+      if (entry === undefined) throw new Error(GONE);
+      return entry;
+    };
+    const pipe = (which: "stdout" | "stderr") => () => {
+      const entry = live();
+      if (entry.outputTaken) throw new TypeError(`exec: output() has already read ${which}`);
+      const stream = entry.proc[which];
+      if (stream === undefined) throw new TypeError(`exec: ${which} isn't piped`);
+      entry.streamed = true;
+      return (entry.opened[which] ??= drainOnCancel(stream));
+    };
+    return {
+      pid: field(state.pid),
+      isPty: field(false),
+      stdin: state.stdin
+        ? writable(() => {
+            const stream = live().proc.stdin;
+            if (stream === undefined) throw new TypeError('exec: stdin isn\'t "pipe"');
+            return stream;
+          })
+        : field(null),
+      stdout: state.stdout ? readable(pipe("stdout")) : field(null),
+      stderr: state.stderr ? readable(pipe("stderr")) : field(null),
+      // After the pull, so its files are in the workspace by then.
+      exitCode: promised(() => live().proc.exitCode),
+      output: async () => takeOutput(live()) as never,
+      kill: async ([signal]) => {
+        const number = signalOf(signal);
+        live().proc.kill(number);
+        return null;
+      },
+      resize: async () => {
+        throw new TypeError("exec: remote exec has no pty, so it can't be resized");
+      },
+      // The scope that made it ended, paused, or let it go: kill what's still running, which also
+      // skips its pull. A pipe nobody reads holds the command's exit back, and with it the end of
+      // its session and the root's lock, so drain whatever is still unread.
+      [Symbol.asyncDispose]: async () => {
+        const entry = running.get(state.id);
+        if (entry === undefined) return;
+        running.delete(state.id);
+        if (!entry.exited) entry.proc.abort();
+        for (const which of ["stdout", "stderr"] as const) {
+          const opened = entry.opened[which];
+          const source = entry.proc[which];
+          if (opened !== undefined) {
+            // Code's stream: the bridge may still hold its reader, so cancel through it if not.
+            if (!opened.locked) void opened.cancel().catch(() => undefined);
+          } else if (source !== undefined && !source.locked) {
+            drain(source.getReader());
+          }
+        }
+      },
+    };
+  });
+
+  return module.module({
+    // A command can't be run twice safely: an interruption during this call fails the run.
+    exec: unsafeToRepeat(async ([argv, rawOptions], context) => {
+      if (!options.readOnly && context.access !== "read-write")
+        throw new Error("codemode:exec requires Workspace write access.");
+      const args = strings(argv, "argv");
+      if (!args?.length) throw new TypeError("exec: argv must be a non-empty array of strings");
+      const parsed = parseOptions(rawOptions);
+      const own = options.readOnly ? readOnlyOptions(parsed) : parsed;
+      const execOptions: RemoteExecOptions = {
+        ...own,
+        env: { ...(await options.env?.(context)), ...own.env },
+      };
+      // Before anything reaches the container, not even the install check.
+      if (execOptions.signal?.aborted) {
+        const error = new Error("The operation was aborted");
+        error.name = "AbortError";
         throw error;
       }
-      installed = undefined;
-      proc = await run();
-    }
-    const execution: Execution = {
-      proc,
-      finished: false,
-      expiresAt: spawnedAt + options.runTimeoutMs,
-      stdin: proc.stdin?.getWriter(),
-      stdout: new StreamPump(
-        proc.stdout,
-        new OutputCapture(fs, settings, `${id}.stdout.log`),
-        maxStreamBuffer,
-        "stdout",
-        streamStallMs,
-      ),
-      stderr: new StreamPump(
-        proc.stderr,
-        new OutputCapture(fs, settings, `${id}.stderr.log`),
-        maxStreamBuffer,
-        "stderr",
-        streamStallMs,
-      ),
-    };
-    executions.set(id, execution);
-    return { id, execution };
-  };
-
-  const release = (id: string, execution: Execution) => {
-    if (execution.finished && execution.stdout.settled && execution.stderr.settled)
-      executions.delete(id);
-  };
-
-  const dropExpired = () => {
-    const now = Date.now();
-    for (const [id, execution] of executions)
-      if (execution.finished && execution.expiresAt <= now) executions.delete(id);
-  };
-
-  const finish = async (
-    id: string,
-    execution: Execution,
-    context: WorkspaceModuleCallContext,
-    encoding: "text" | "base64",
-  ): Promise<ExecResult> => {
-    const kill = () => execution.proc.kill(9);
-    context.signal.addEventListener("abort", kill, { once: true });
-    if (context.signal.aborted) kill();
-    try {
-      const exitCode = await execution.proc.exitCode;
-      const [out, err] = await Promise.all([execution.stdout.done, execution.stderr.done]);
-      const truncated: Truncation = {};
-      if (out.truncated) truncated.stdout = out.truncated;
-      if (err.truncated) truncated.stderr = err.truncated;
-      const decoder = new TextDecoder();
-      const encode = (bytes: Uint8Array) =>
-        encoding === "text" ? decoder.decode(bytes) : toBase64(bytes);
-      return {
-        exitCode,
-        stdout: encode(out.kept),
-        stderr: encode(err.kept),
-        ...(Object.keys(truncated).length ? { truncated } : {}),
-        sync: { pushed: execution.proc.pushed, pulled: await execution.proc.pulled },
+      const fs = options.fs();
+      const id = `x${context.callId.replace(/[^A-Za-z0-9]/g, "").slice(-40)}${Math.random().toString(36).slice(2, 8)}`;
+      const run = async () =>
+        remoteExec(
+          {
+            target: await target(context),
+            fs,
+            agentPath,
+            id,
+            ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+            ...(options.containerRoot ? { containerRoot: options.containerRoot } : {}),
+            ...(options.limits ? { limits: options.limits } : {}),
+          },
+          args,
+          execOptions,
+        );
+      let proc: RemoteProcess;
+      try {
+        proc = await run();
+      } catch (error) {
+        // A container replaced since the last install (a fresh image, a lost snapshot) no longer
+        // has the binary: forget that it was installed and try once more. Errors about the call
+        // itself (a bad option, a command that can't start, an abort) aren't retried. A stream
+        // passed as stdin can only be read once, so neither is a call that took one.
+        if (
+          error instanceof TypeError ||
+          (error instanceof Error && error.name === "AbortError") ||
+          (error instanceof RemoteExecError && error.code !== "session") ||
+          execOptions.stdin instanceof ReadableStream
+        ) {
+          throw error;
+        }
+        installed = undefined;
+        proc = await run();
+      }
+      const entry: Running = {
+        proc,
+        settings,
+        fs,
+        id,
+        streamed: false,
+        outputTaken: false,
+        exited: false,
+        opened: {},
       };
-    } finally {
-      context.signal.removeEventListener("abort", kill);
-      execution.finished = true;
-      release(id, execution);
-    }
-  };
-
-  const get = (id: Json | undefined): Execution => {
-    dropExpired();
-    const execution = typeof id === "string" ? executions.get(id) : undefined;
-    if (!execution) throw new Error(`exec: no running execution ${JSON.stringify(id)}`);
-    return execution;
-  };
-
-  const create = () => ({
-    // A command can't be run twice safely: on a replay, fail the run instead.
-    exec: unsafeToRepeat(async (args: readonly Json[], context: WorkspaceModuleCallContext) => {
-      const { id, execution } = await start(args[0], args[1], context);
-      execution.stdout.cancel();
-      execution.stderr.cancel();
-      return (await finish(id, execution, context, "text")) as unknown as Json;
+      const exited = () => {
+        entry.exited = true;
+      };
+      proc.exitCode.then(exited, exited);
+      running.set(id, entry);
+      return Process({
+        id,
+        pid: proc.pid,
+        stdin: execOptions.stdin === "pipe",
+        stdout: (execOptions.stdout ?? "pipe") === "pipe",
+        stderr: (execOptions.stderr ?? "pipe") === "pipe",
+      });
     }),
-    spawn: unsafeToRepeat(async (args: readonly Json[], context: WorkspaceModuleCallContext) => {
-      const { id, execution } = await start(args[0], args[1], context);
-      return { id, pid: execution.proc.pid, pushed: execution.proc.pushed as unknown as Json };
-    }),
-    write: async (args: readonly Json[]) => {
-      const execution = get(args[0]);
-      if (!execution.stdin) throw new Error('exec: stdin isn\'t "pipe"');
-      await execution.stdin.write(fromBase64(str(args[1], "data") ?? ""));
-      return null;
-    },
-    closeStdin: async (args: readonly Json[]) => {
-      await get(args[0]).stdin?.close();
-      return null;
-    },
-    read: async (args: readonly Json[], context: WorkspaceModuleCallContext) => {
-      const execution = get(args[0]);
-      const which = oneOf(args[1], ["stdout", "stderr"] as const, "stream") ?? "stdout";
-      const waitMs = Math.max(
-        0,
-        Math.min(Number(args[2] ?? 50), Math.max(0, context.deadline - Date.now() - 100)),
-      );
-      const { data, eof } = await execution[which].read(waitMs, context.signal);
-      release(str(args[0], "id") ?? "", execution);
-      return { data: toBase64(data), eof };
-    },
-    wait: async (args: readonly Json[], context: WorkspaceModuleCallContext) => {
-      const id = str(args[0], "id") ?? "";
-      return (await finish(id, get(id), context, "base64")) as unknown as Json;
-    },
-    abort: async (args: readonly Json[]) => {
-      get(args[0]).proc.abort();
-      return null;
-    },
-    cancel: async (args: readonly Json[]) => {
-      const id = str(args[0], "id") ?? "";
-      const execution = get(id);
-      const which = oneOf(args[1], ["stdout", "stderr"] as const, "stream");
-      for (const stream of which ? [which] : (["stdout", "stderr"] as const))
-        execution[stream].cancel();
-      release(id, execution);
-      return null;
-    },
-    kill: async (args: readonly Json[]) => {
-      const signal = typeof args[1] === "number" ? args[1] : 15;
-      get(args[0]).proc.kill(signal);
-      return null;
-    },
   });
-  const limit = ` Commands are stopped when this code times out, after ${Math.round(options.runTimeoutMs / 60_000)} minutes: split longer work across calls.`;
-  return Object.assign(create, { description: DESCRIPTION + limit });
 }
 
 export { RemoteExecError };

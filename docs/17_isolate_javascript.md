@@ -706,7 +706,7 @@ createContainerModule({
 
 ### `codemode:exec`
 
-`createExecModule()` from `@cloudflare/computer/remote-exec` runs a command in any container Durable Object, not only the Workspace's container backend. The files the command names are pushed into the container before it runs, and the files it changed are pulled back after. The container needs the `remote-exec` binary, and nothing else. Experimental. Setup, options and the streaming `codemode:remote-exec` are in [20. Remote exec](./20_remote_exec.md).
+`createExecModule()` from `@cloudflare/computer/remote-exec` runs a command in any container Durable Object, not only the Workspace's container backend. The files the command names are pushed into the container before it runs, and the files it changed are pulled back after. The container needs the `remote-exec` binary, and nothing else. `exec()` returns a process shaped exactly like `ctx.container.exec()`'s, with streams, `exitCode`, `output()` and `kill()`, and it works in replayable runs too. Experimental. Setup and options are in [20. Remote exec](./20_remote_exec.md).
 
 ### `codemode:browser`
 

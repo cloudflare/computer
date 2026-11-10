@@ -1,7 +1,8 @@
 /**
  * `@cloudflare/computer/remote-exec`: run commands in any Durable Object with a
  * `ctx.container.exec()`-shaped API, with workspace files pushed in before and pulled back after.
- * `createExecModule()` is the `codemode:exec` host module for a `CodemodeBackend`. Experimental.
+ * `createExecModule()` is the `codemode:exec` codemode module for a `CodemodeBackend`, whose `exec()`
+ * returns a process shaped like `ctx.container.exec()`'s. Experimental.
  */
 export { bundledRemoteExec, fileRemoteExec } from "./bundle";
 export { CA_BUNDLE, CA_ENV, CONTAINERS_CA, TRUST_CA_SCRIPT } from "./egress";
@@ -13,11 +14,10 @@ export {
   type RemoteExecOptions,
   type RemoteProcess,
 } from "./exec";
-export { FACADE_SOURCE, FACADE_SPECIFIER } from "./facade";
 export type { SyncFs } from "./fs";
 export { ensureRemoteExec, type Arch, type RemoteExecBinaries } from "./install";
 export { PROTOCOL } from "./messages";
-export { createExecModule, type ExecModuleOptions } from "./module";
+export { createExecModule, type ExecModuleOptions, type RemoteExecOutput } from "./module";
 export {
   OutputCapture,
   outputSettings,

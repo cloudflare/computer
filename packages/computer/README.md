@@ -358,20 +358,21 @@ are pushed before it runs, and what it changed is pulled back after.
 ```js
 import { exec } from "codemode:exec";
 
-const { exitCode, stdout, sync } = await exec(["npm", "test"], {
+const proc = await exec(["npm", "test"], {
   cwd: "/workspace/app",
   push: ["**", "!node_modules/**"],
   pull: ["coverage/**"],
 });
+const { exitCode, stdout, sync } = await proc.output();
 ```
 
 Globs follow `.gitignore` rules, push only sends files the container
 doesn't have, and commands that sync take turns. `argv` runs without a
-shell. Other options are `user`, `env`, `stdin`, `stdout`/`stderr`
-(`"ignore"`) and `lockTimeoutMs`. Long output keeps its tail, with the
-rest saved under the Workspace's `output` settings.
-`codemode:remote-exec` is a streaming `exec()` shaped like
-`ctx.container.exec()`.
+shell. `exec()` takes `ctx.container.exec()`'s options and returns a
+process shaped exactly like its, with streams, `exitCode`, `output()`
+and `kill()`, in every run, replayable ones included. `output()` adds
+the sync reports, and keeps each stream's tail, with the rest saved
+under the Workspace's `output` settings.
 
 Inside the container, a small static binary, `remote-exec`, runs the
 commands and syncs the files. It isn't in the npm package. Copy it into
@@ -385,21 +386,15 @@ COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
 CMD ["sleep", "infinity"]
 ```
 
-Or download `remote-exec-linux-x86_64` and `remote-exec-linux-aarch64`
-from the matching `@cloudflare/computer` GitHub release (`SHA256SUMS`
-lists their hashes), import them into the Worker as `.bin` modules, and
-pass `binaries: bundledRemoteExec({ x86_64, aarch64 })`: the module
-copies the right one in on first use. That works with any image, for
-about 2.7 MB in the Worker.
+Or download `remote-exec-linux-x86_64` from the matching
+`@cloudflare/computer` GitHub release (`SHA256SUMS` lists its hash),
+upload it with the Worker, and pass
+`binaries: fileRemoteExec({ x86_64: "/bundle/remote-exec" })`: the
+module streams it in on first use. That works with any image.
 
 ```ts
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
-import {
-  createExecModule,
-  ExecSandbox,
-  FACADE_SOURCE,
-  FACADE_SPECIFIER,
-} from "@cloudflare/computer/remote-exec";
+import { createExecModule, ExecSandbox } from "@cloudflare/computer/remote-exec";
 
 // The container: started on the first command, stopped 10 minutes after the last.
 export class Sandbox extends ExecSandbox<Env> {
@@ -415,9 +410,7 @@ new CodemodeBackend({
     "codemode:exec": createExecModule({
       target: () => env.SANDBOX.getByName(ctx.id.toString()),
       fs: () => this.workspace.fs,
-      runTimeoutMs: 120_000,
     }),
-    [FACADE_SPECIFIER]: FACADE_SOURCE, // codemode:remote-exec
   },
 });
 ```

@@ -17,11 +17,14 @@ After it exits, the files it changed are pulled back:
 import { exec } from "codemode:exec";
 
 export default async function () {
-  return await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] });
+  const proc = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] });
+  const { exitCode, stdout, sync } = await proc.output();
+  return { exitCode, stdout: new TextDecoder().decode(stdout), pulled: sync.pulled.files };
 }
 ```
 
-It works with any Durable Object that has `ctx.container.exec()`, and with any Linux image.
+`exec()` returns a process shaped exactly like `ctx.container.exec()`'s, with streams, an exit code,
+`output()` and `kill()`. It works with any Durable Object that has `ctx.container.exec()`, and with any Linux image.
 
 ## When to reach for it
 
@@ -117,12 +120,11 @@ Either way, the module checks that the binary speaks its protocol before running
 
 ### 3. Register the module
 
-Add `codemode:exec` to the `CodemodeBackend` of the Durable Object that holds the Workspace. The
-optional `codemode:remote-exec` module is a streaming `exec()`:
+Add `codemode:exec` to the `CodemodeBackend` of the Durable Object that holds the Workspace:
 
 ```ts
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
-import { createExecModule, FACADE_SOURCE, FACADE_SPECIFIER } from "@cloudflare/computer/remote-exec";
+import { createExecModule } from "@cloudflare/computer/remote-exec";
 
 new CodemodeBackend({
   loader: env.LOADER,
@@ -131,10 +133,8 @@ new CodemodeBackend({
       // One container per Workspace.
       target: () => env.SANDBOX.getByName(ctx.id.toString()),
       fs: () => this.workspace.fs,
-      runTimeoutMs: 120_000,
       binaries, // from step 2, if the Worker carries the binary
     }),
-    [FACADE_SPECIFIER]: FACADE_SOURCE, // codemode:remote-exec
   },
   defaultTimeoutMs: 120_000,
   maxTimeoutMs: 120_000,
@@ -162,7 +162,6 @@ new CodemodeBackend({
 | --- | --- |
 | `target(context)` | **Required.** The container to run on. Gets the host call's context, so it can choose a container for each run. |
 | `fs()` | **Required.** The Workspace's filesystem. |
-| `runTimeoutMs` | **Required.** How long the calling code can run. Commands still running then are stopped. |
 | `binaries` | The builds the Worker carries. Leave it out when the image has `remote-exec`. |
 | `env(context)` | Environment every command starts with, under the call's own `env`. |
 | `output` | The same value as `new Workspace({ output })`. |
@@ -174,20 +173,65 @@ new CodemodeBackend({
 
 ### `exec(argv, options?)`
 
-`exec()` comes from `codemode:exec`. It resolves once the command has exited and its files have
-been pulled back, with `{ exitCode, stdout, stderr, truncated?, sync }`. `argv` runs without a
-shell: use `["sh", "-c", "..."]` for pipes and redirects.
+`exec()` comes from `codemode:exec`. It starts the command and resolves with its process, shaped
+exactly like the one `ctx.container.exec()` returns. `argv` runs without a shell: use
+`["sh", "-c", "..."]` for pipes and redirects.
+
+The options are `ctx.container.exec()`'s, plus three of remote exec's own:
 
 | Option | |
 | --- | --- |
 | `cwd` | Working directory. It defaults to `/workspace`, and Workspace paths are the same in the container. |
+| `env` | Added over the image's environment. |
+| `user` | `"uid:gid"`, numeric. Pushed files are owned by this user. |
+| `stdin` | `"pipe"` for a writable `stdin`, or a `ReadableStream` to read the command's input from. |
+| `stdout` | `"pipe"` (the default) or `"ignore"`. |
+| `stderr` | `"pipe"` (the default), `"ignore"`, or `"combined"` to send it to stdout. |
+| `signal` | An `AbortSignal`. Aborting it SIGKILLs everything the command started and skips the pull. |
 | `push` | Globs to copy into the container before the command runs. |
 | `pull` | Globs to copy back after it exits, deletions included. |
-| `user` | `"uid:gid"`, numeric. Pushed files are owned by this user. |
-| `env` | Added over the image's environment. |
-| `stdin` | A string. |
-| `stdout`, `stderr` | `"ignore"` to drop the stream. |
 | `lockTimeoutMs` | How long to wait for another command that pushes or pulls. The default is 60 seconds. |
+
+`pty` is refused: remote exec has no pty.
+
+The process has the platform's members:
+
+| Member | |
+| --- | --- |
+| `pid` | The command's process id. |
+| `isPty` | Always `false`. |
+| `stdin` | A `WritableStream` with `stdin: "pipe"`, otherwise `null`. |
+| `stdout`, `stderr` | `ReadableStream`s of bytes, or `null` for an ignored or combined stream. |
+| `exitCode` | A promise of the exit code. It resolves after the pull, so the pulled files are in the Workspace by then. |
+| `output()` | Waits for the command and resolves with `{ stdout, stderr, exitCode }`, the output as `ArrayBuffer`s, plus `truncated` and `sync`. |
+| `kill(signal?)` | Sends a signal, `SIGTERM` (15) by default, to everything the command started. |
+| `resize()` | Refused: there's no pty. |
+
+The streams are the command's pipes, not copies:
+
+- **`exitCode` waits for the pipes.** It resolves, and each stream ends, only once both stdout and
+  stderr have been read to the end or cancelled, as on the platform. Read the streams together, call
+  `output()`, and cancel or `"ignore"` what you don't need.
+- **A full pipe blocks.** A command whose pipe nobody reads stops once the pipe fills.
+- **`output()` reads the same pipes.** It can be called once, and only before either stream has
+  been read. After it, the streams can't be read.
+
+```js
+import { exec } from "codemode:exec";
+
+const proc = await exec(["sh", "-c", "tr a-z A-Z"], { stdin: "pipe", stderr: "ignore" });
+const writer = proc.stdin.getWriter();
+await writer.write(new TextEncoder().encode("hello\n"));
+await writer.close();
+for await (const chunk of proc.stdout) console.log(new TextDecoder().decode(chunk));
+console.log(await proc.exitCode);
+```
+
+`output()` keeps each stream's tail under the Workspace's `output` settings. It saves the rest under
+the Workspace's `output` directory, and names the file in `truncated`. `sync.pushed` and
+`sync.pulled` report what was copied, skipped, deleted or in conflict. A caller that streams the
+output can't call `output()`, so it doesn't get these reports; the pull still happens before
+`exitCode` resolves.
 
 Rules for push and pull:
 
@@ -198,37 +242,20 @@ Rules for push and pull:
 - File modes are kept. Symlinks that point outside the root are refused.
 - Commands that push or pull take turns.
 
-Everything a command starts is stopped when it exits. Long output keeps its tail, and the rest is
-saved under the Workspace's `output` settings, with the file named in `truncated`. `sync.pushed`
-and `sync.pulled` report what was copied, skipped, deleted or in conflict. A command can't safely
-run twice, so a [replayed run](./17_isolate_javascript.md#interrupted-executions) fails at an
-`exec()` call instead of running it again.
+Everything a command starts is stopped when it exits.
 
-### Streams: `codemode:remote-exec`
+### When the code ends
 
-`codemode:remote-exec` exports an `exec()` that returns a process shaped like
-`ctx.container.exec()`'s:
+The process belongs to the code that started it. When that code ends, or pauses in
+`ctx.interrupt()`, or releases the process early with `using` or `Symbol.dispose`, a command
+still running is SIGKILLed and its pull skipped. Any pipe left unread is drained, so the command's
+session ends and the root's lock is freed.
 
-```js
-import { exec } from "codemode:remote-exec";
-
-const proc = await exec(["node", "server.js"], { push: ["**"], stdin: "pipe" });
-const writer = proc.stdin.getWriter();
-await writer.write(new TextEncoder().encode("hello\n"));
-await writer.close();
-for await (const chunk of proc.stdout) console.log(new TextDecoder().decode(chunk));
-console.log(await proc.exitCode);
-```
-
-The process has `pid`, `stdin`, `stdout`, `stderr`, `exitCode`, `pushed`, `pulled`, `truncated`,
-`output()` and `kill(signal?)`. This `exec()` also takes `signal`, an `AbortSignal` that kills
-everything the command started and skips the pull, and `stderr: "combined"`.
-
-A stream that's being read holds the command back once its read-ahead is full, as a pipe does. If
-code stops reading it for 30 seconds (`createExecModule({ streamStallMs })`), it stops streaming
-and stops holding the command back, so `exitCode` still resolves. Long output is still saved, as
-`truncated` reports, and reading the stream again fails, saying why. Cancel a stream you're done
-with (`break` out of a `for await` does) to let the command go at once.
+The process works in [replayable runs](./17_isolate_javascript.md#interrupted-executions) too.
+Every call it makes is journaled, so a replay gives the same output and exit code without running
+anything. A command can't run twice safely, so a run interrupted during `exec()` itself fails
+rather than run it again. After a replay, a call the journal doesn't hold finds the command gone, since
+it was stopped when the run paused or the Durable Object restarted, and fails saying so.
 
 ### Read-only code
 
