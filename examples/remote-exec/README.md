@@ -1,49 +1,33 @@
 # Remote exec example
 
-Codemode code calls `codemode:exec` from `@cloudflare/computer/remote-exec`, whose `exec()`
-returns a process shaped like `ctx.container.exec()`'s. It runs commands in a real container through
-`ctx.container.exec()`, pushing files from a computer workspace before the command and pulling
-changes back after it. The container image is Docker's agent-less
-[sandbox image](https://docs.docker.com/ai/sandboxes/agents/shell/). The container is
-`linux/amd64`, so the Worker carries just the x86_64 `remote-exec` build, and streams it into the
-container on first use. `scripts/fetch-remote-exec.sh` puts it at `bin/remote-exec`. It uses the
-repository's own build when there is one, and otherwise the one attached to the matching
-`@cloudflare/computer` GitHub release, checked against its `SHA256SUMS`. It runs before
-`npm run dev` and the end-to-end tests.
-
-`wrangler.jsonc`'s `rules` upload `bin/remote-exec` as a module of its own, which workerd shows at
-`/bundle/remote-exec`. `fileRemoteExec()` reads it from there with `node:fs`, a chunk at a time,
-both to hash it and to copy it in, so the Worker never holds the 1.5 MB build in memory. Importing
-it would, and would also rename it in the bundle.
+Codemode code calls `codemode:exec` from `@cloudflare/computer/remote-exec`. Its `exec()` runs a
+command in a real container and returns a process shaped like `ctx.container.exec()`'s. Workspace
+files are pushed in before the command runs, and its changes are pulled back after it exits:
 
 ```js
 import { exec } from "codemode:exec";
 
 export default async function () {
-  return await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] });
+  const proc = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] });
+  const { exitCode, stdout } = await proc.output();
+  return { exitCode, stdout: new TextDecoder().decode(stdout) };
 }
 ```
 
 ## Run it
 
-You need Docker, and [cctr](https://github.com/andreasjansson/cctr) for the tests. Building
-`remote-exec` needs Rust with both musl targets and `capnp`, which
-`packages/remote-exec/dev/run.sh` provides on any machine with Docker. From the repository root:
+You need Docker. From the repository root:
 
 ```bash
-packages/remote-exec/dev/run.sh npm run build:bin --workspace @cloudflare/remote-exec   # optional
 npm run build
 npm run test:e2e --workspace @example/computer-remote-exec
 ```
 
-Without the first step, the example uses the released builds for the installed
-`@cloudflare/computer`.
+`npm run dev --workspace @example/computer-remote-exec` starts it in `wrangler dev` instead.
 
-`scripts/e2e.sh` starts `wrangler dev`, which builds the container image. It then runs the cctr
-tests in `test/` against it and stops it. Extra arguments go to cctr
-(`npm run test:e2e --workspace @example/computer-remote-exec -- -p abort`). Each test sends a
-codemode program to `POST /s/:session/run` through `test/bin/workspace` and shows what it
-returns. Each suite has its own workspace and container, destroyed when it ends:
+The tests start `wrangler dev`, which builds the container image, and run the vitest suites in
+`test/` against it. Each suite has its own workspace and container, destroyed when it ends, and
+sends codemode programs to `POST /s/:session/run`:
 
 - `sync`: push with `.gitignore`, run, then pull, including deletions, with ignored files kept
   out in both directions. A second push sends only what changed. Push and pull globs are
@@ -60,12 +44,27 @@ returns. Each suite has its own workspace and container, destroyed when it ends:
 - `read-only`: through `POST /s/:session/run-read`, on a read-only `CodemodeBackend`. Commands
   run as nobody and can read pushed files but not change them, and `pull` and `user` are refused.
 
-`wrangler dev` builds the image for `linux/amd64`, as Cloudflare runs it. On an Arm Mac the
-container is emulated and runs the same x86_64 build of `remote-exec`.
+The routes are `PUT` and `GET /s/:session/files/<path>` for workspace files, `POST
+/s/:session/run` and `/run-read` for codemode programs, and `DELETE /s/:session` to destroy the
+session's container.
 
-Other routes: `PUT /s/:session/files/<path>` writes a workspace file, and `DELETE /s/:session`
-destroys the session's container. `POST /s/:session/exec` calls `remoteExec()` directly from the
-Durable Object, with raw streams.
+## How it fits together
+
+`Sandbox` is the container's Durable Object. It holds an `executor()`, which starts the container
+on the first command, and gives it an `exec()` for the Worker to call. `WorkspaceObject` holds the
+workspace and a `CodemodeBackend`, whose `codemode:exec` runs commands on the session's `Sandbox`.
+
+The container image is Docker's agent-less
+[sandbox image](https://docs.docker.com/ai/sandboxes/agents/shell/), without `remote-exec`: the
+Worker carries the build and streams it into the container on first use. The container is
+`linux/amd64`, as Cloudflare runs it and `wrangler dev` builds it, so that's just the x86_64 build.
+`scripts/fetch-remote-exec.sh` puts it at `bin/remote-exec`, from the `@cloudflare/computer`
+GitHub release matching the installed package, checked against its `SHA256SUMS`. It runs before
+`npm run dev` and the tests.
+
+`wrangler.jsonc`'s `rules` upload `bin/remote-exec` as a module of its own, which workerd shows at
+`/bundle/remote-exec`. `fileRemoteExec()` reads it from there with `node:fs`, a chunk at a time,
+both to hash it and to copy it in, so the Worker never holds the 1.5 MB build in memory.
 
 ## Using the remote-exec image instead
 
@@ -83,3 +82,18 @@ CMD ["sleep", "infinity"]
 
 The image is on both `ghcr.io/cloudflare/computer-remote-exec` and
 `registry.cloudflare.com/library/computer-remote-exec`.
+
+## Working on remote-exec itself
+
+To try a change to `remote-exec`, build it first. `scripts/fetch-remote-exec.sh` then takes the
+repository's own build from `artifacts/remote-exec` instead of the release's. Building needs Rust
+with both musl targets and `capnp`; `packages/remote-exec/dev/run.sh` provides them on any machine
+with Docker:
+
+```bash
+packages/remote-exec/dev/run.sh npm run build:bin --workspace @cloudflare/remote-exec
+npm run build
+npm run test:e2e --workspace @example/computer-remote-exec
+```
+
+On an Arm Mac the container is emulated and runs the same x86_64 build.

@@ -9,7 +9,7 @@
     "predev": "scripts/fetch-remote-exec.sh",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "scripts/e2e.sh",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "build:types": "wrangler types"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "typescript": "^6.0.3",
+    "vitest": "^4.1.12",
     "wrangler": "^4.148.0"
   }
 }

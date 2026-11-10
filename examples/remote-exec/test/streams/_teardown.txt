@@ -1,5 +1,0 @@
-===
-destroy the container
-===
-workspace destroy
----
