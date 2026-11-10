@@ -122,9 +122,58 @@ export interface ContainerExecOptions<Egress = undefined> {
    * Where the container's HTTP and HTTPS go, given the `egress` value the call passed to
    * `exec()` (undefined if it passed none). Return a `Fetcher`, such as a `ctx.exports` entrypoint,
    * to intercept them all through it, or undefined to leave the network to the start options.
-   * Asked before a command whenever the running container isn't routed yet.
+   *
+   * A container has one route for all its processes, so it's routed for one egress at a time.
+   * A command whose egress has the same `egressKey` as the route's uses it as it is. One with
+   * another egress re-routes the container if nothing is using it, and is refused if commands
+   * that started under the current route are still running: they'd otherwise send requests with
+   * its credentials, or it with theirs. A command without an outbound is refused on a routed
+   * container for the same reason.
    */
   outbound?: (egress: Egress | undefined) => Fetcher | undefined;
+  /**
+   * Identifies an egress, for telling whether a command's is the one the container is routed
+   * for. Return undefined when it can't be told, and every command with that egress needs the
+   * container to itself. The default is JSON for plain data (strings, numbers, booleans, null,
+   * arrays, plain objects, with keys sorted) and undefined for anything else, such as a stub.
+   */
+  egressKey?: (egress: Egress | undefined) => string | undefined;
+}
+
+/** JSON for plain data, keys sorted; undefined for anything else. */
+export function plainEgressKey(egress: unknown): string | undefined {
+  const plain = (value: unknown): unknown => {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? value : NOT_PLAIN;
+    if (Array.isArray(value)) {
+      const items = value.map(plain);
+      return items.includes(NOT_PLAIN) ? NOT_PLAIN : items;
+    }
+    if (typeof value === "object") {
+      const proto = Object.getPrototypeOf(value) as unknown;
+      if (proto !== Object.prototype && proto !== null) return NOT_PLAIN;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value).sort()) {
+        const item = plain((value as Record<string, unknown>)[key]);
+        if (item === NOT_PLAIN) return NOT_PLAIN;
+        out[key] = item;
+      }
+      return out;
+    }
+    return NOT_PLAIN;
+  };
+  const value = plain(egress ?? null);
+  return value === NOT_PLAIN ? undefined : JSON.stringify(value);
+}
+const NOT_PLAIN = Symbol("not plain");
+
+/** What the running container's network is routed for. */
+type Route = { kind: "none" } | { kind: "egress"; key: string | undefined };
+
+/** Whether a command wanting `b` can use a container routed as `a`. An unknown key matches nothing. */
+function sameRoute(a: Route, b: Route): boolean {
+  if (a.kind === "none" || b.kind === "none") return a.kind === b.kind;
+  return a.key !== undefined && a.key === b.key;
 }
 
 /**
@@ -138,9 +187,17 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
   #running = 0;
   /** Commands on their way in: waiting for a snapshot or a start, or for the platform's exec(). */
   #entering = 0;
+  /** A start or a re-route in progress: commands wait for it, then decide again. */
   #starting: Promise<void> | undefined;
-  /** Whether this object has routed the running container's egress and trusted its CA. */
-  #routed = false;
+  /**
+   * How this object has set up the running container's network: undefined until it has, such as
+   * after the Durable Object restarted with the container running.
+   */
+  #route: Route | undefined;
+  /** Whether the running container trusts the intercepting CA. */
+  #trusted = false;
+  /** Commands admitted under the current route, until they exit or fail to start. */
+  #users = 0;
   /** A command has run since the last snapshot. */
   #dirty = false;
   #snapshotTimer: ReturnType<typeof setTimeout> | undefined;
@@ -198,18 +255,19 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
       return;
     }
     this.#dirty = false;
-    this.#snapshotting = (async () => {
-      try {
-        await snapshot(container);
-      } catch (error) {
+    // The hook runs from a then(), so this is pending when it's assigned even if the hook throws
+    // before returning a promise; the cleanup below can't run first and leave it set for good.
+    this.#snapshotting = Promise.resolve()
+      .then(() => snapshot(container))
+      .catch((error: unknown) => {
         console.error("container snapshot failed", String(error));
         this.#dirty = true;
-      } finally {
+      })
+      .finally(() => {
         this.#snapshotting = undefined;
         // A failure isn't retried until the next idle, so a broken snapshot can't loop.
         for (const release of this.#queue.splice(0)) release();
-      }
-    })();
+      });
   }
 
   /**
@@ -227,31 +285,71 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
   }
 
   /**
-   * Commands wait for a start in progress: its intercepts and CA come before any of them. A
-   * running container whose egress this object hasn't routed, because routing failed or the
-   * Durable Object restarted, is routed again before the command: registering an intercept again
-   * replaces it, and the CA script can run again.
+   * Admit a command: start the container or route its network as `egress` needs, then count it
+   * as a user of that route until `#leave()`. Commands wait for a start or re-route in progress,
+   * then decide again. The admission itself is synchronous after the last await, so two commands
+   * can't both see an unused container and route it two ways.
    */
-  async ensureRunning(egress?: Egress): Promise<void> {
-    if (this.#starting !== undefined) return this.#starting;
-    const container = this.#get();
-    if (container.running && this.#routed) return;
-    const outbound = this.#options.outbound?.(egress);
-    if (container.running && outbound === undefined) return;
-    const starting = container.running
-      ? this.#route(container, outbound as Fetcher)
-      : this.#start(container, outbound);
-    this.#starting = starting;
-    try {
-      await starting;
-    } finally {
-      this.#starting = undefined;
+  async #admit(egress: Egress | undefined): Promise<void> {
+    for (;;) {
+      if (this.#starting !== undefined) {
+        await this.#starting;
+        continue;
+      }
+      const container = this.#get();
+      const outbound = this.#options.outbound?.(egress);
+      const wanted: Route =
+        outbound === undefined
+          ? { kind: "none" }
+          : { kind: "egress", key: (this.#options.egressKey ?? plainEgressKey)(egress) };
+      let setUp: Promise<void>;
+      if (!container.running) {
+        setUp = this.#start(container, outbound, wanted);
+      } else if (this.#route !== undefined && sameRoute(this.#route, wanted)) {
+        this.#users += 1;
+        return;
+      } else if (outbound === undefined) {
+        // Nothing to route; a container this object routed can't be unrouted, and one it knows
+        // nothing about (the Durable Object restarted) is taken as it is.
+        if (this.#route?.kind === "egress")
+          throw new Error(
+            "this container's network is routed through another caller's egress, and this command has none: pass the egress with every command",
+          );
+        this.#route = wanted;
+        this.#users += 1;
+        return;
+      } else if (this.#users > 0) {
+        throw new Error(
+          `this container's network is routed for a different egress, and ${this.#users} command(s) using it are still running: wait for them to exit, or give each egress its own container`,
+        );
+      } else {
+        setUp = this.#reroute(container, outbound, wanted);
+      }
+      this.#starting = setUp;
+      try {
+        // Registered before any waiter's, so this command is admitted before they decide again.
+        await setUp;
+      } finally {
+        if (this.#starting === setUp) this.#starting = undefined;
+      }
+      this.#users += 1;
+      return;
     }
   }
 
-  async #start(container: PlatformContainer, outbound: Fetcher | undefined): Promise<void> {
+  /** A command admitted by `#admit()` exited, or failed to start. */
+  #leave(): void {
+    this.#users -= 1;
+  }
+
+  async #start(
+    container: PlatformContainer,
+    outbound: Fetcher | undefined,
+    route: Route,
+  ): Promise<void> {
     const options = this.#options.startOptions();
-    this.#routed = false;
+    this.#route = undefined;
+    this.#trusted = false;
     try {
       container.start(
         outbound === undefined
@@ -263,8 +361,12 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
             },
       );
     } catch (error) {
-      // Another call started it in the meantime.
-      if (container.running || /already running/i.test(String(error))) return;
+      // Started some other way in the meantime: route it like any running container.
+      if (container.running || /already running/i.test(String(error))) {
+        if (outbound === undefined) this.#route = route;
+        else await this.#reroute(container, outbound, route);
+        return;
+      }
       throw error;
     }
     container.monitor().then(
@@ -280,33 +382,42 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
         this.#options.inactivityTimeoutMs?.() ?? DEFAULT_INACTIVITY_TIMEOUT_MS,
       )
       .catch(() => undefined);
-    if (outbound !== undefined) {
-      await this.#route(container, outbound);
-    }
+    if (outbound === undefined) this.#route = route;
+    else await this.#reroute(container, outbound, route);
   }
 
-  async #route(container: PlatformContainer, outbound: Fetcher): Promise<void> {
+  /**
+   * Send the running container's HTTP and HTTPS through `outbound`. Registering an intercept again
+   * replaces the last one. The CA is the platform's whichever binding intercepts, so it's trusted
+   * once per container; the script can run again after a restart of this object.
+   */
+  async #reroute(container: PlatformContainer, outbound: Fetcher, route: Route): Promise<void> {
     if (
       container.interceptAllOutboundHttp === undefined ||
       container.interceptOutboundHttps === undefined
     ) {
       throw new Error("this container can't route its egress: it has no outbound interception");
     }
+    // Until both intercepts are in, the container's route is neither the old one nor this one.
+    this.#route = undefined;
     await container.interceptAllOutboundHttp(outbound);
     await container.interceptOutboundHttps("*", outbound);
-    const trust = await container.exec(["sh", "-c", TRUST_CA_SCRIPT], {
-      user: ROOT,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [exitCode, stderr] = await Promise.all([
-      trust.exitCode,
-      new Response(trust.stderr).text(),
-    ]);
-    if (exitCode !== 0) {
-      throw new Error(`the container can't trust its egress CA (exit ${exitCode}): ${stderr}`);
+    if (!this.#trusted) {
+      const trust = await container.exec(["sh", "-c", TRUST_CA_SCRIPT], {
+        user: ROOT,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([
+        trust.exitCode,
+        new Response(trust.stderr).text(),
+      ]);
+      if (exitCode !== 0) {
+        throw new Error(`the container can't trust its egress CA (exit ${exitCode}): ${stderr}`);
+      }
+      this.#trusted = true;
     }
-    this.#routed = true;
+    this.#route = route;
   }
 
   async exec(
@@ -320,12 +431,17 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
     let process: PlatformProcess;
     try {
       await this.#afterSnapshot();
-      await this.ensureRunning(egress);
-      // exec() waits for a container that's still starting.
-      process = await this.#get().exec(cmd, {
-        ...options,
-        user: options?.user ?? this.#options.user ?? ROOT,
-      });
+      await this.#admit(egress);
+      try {
+        // exec() waits for a container that's still starting.
+        process = await this.#get().exec(cmd, {
+          ...options,
+          user: options?.user ?? this.#options.user ?? ROOT,
+        });
+      } catch (error) {
+        this.#leave();
+        throw error;
+      }
       this.#running += 1;
       this.#dirty = true;
     } finally {
@@ -334,6 +450,7 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
       this.#scheduleSnapshot();
     }
     const exited = () => {
+      this.#leave();
       this.#running -= 1;
       if (this.#running === 0) this.#options.onIdle?.();
       this.#scheduleSnapshot();
@@ -387,6 +504,16 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
   }
 
   /**
+   * Identifies an egress, so commands with the same one share the container's route. One with
+   * another re-routes an idle container, and is refused while others still run. The default is
+   * JSON for plain data and undefined, "can't tell", for anything else, such as a stub: override it
+   * when the egress carries something stable to compare, like a tenant id.
+   */
+  protected egressKey(egress: Egress | undefined): string | undefined {
+    return plainEgressKey(egress);
+  }
+
+  /**
    * Persist the container, once it has been idle for `snapshotDebounceMs()` after commands ran.
    * Define it to snapshot; there is no default. Record what you take, and have `startOptions()`
    * start from it:
@@ -420,6 +547,7 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
       onIdle: () => this.onIdle(),
       onStopped: (error) => this.onStopped(error),
       outbound: (egress) => this.outbound(egress),
+      egressKey: (egress) => this.egressKey(egress),
       // Subclass methods are on the prototype, so this sees one defined there.
       snapshot: this.#snapshotHook(),
       snapshotDebounceMs: () => this.snapshotDebounceMs(),

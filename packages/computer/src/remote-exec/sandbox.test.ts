@@ -8,6 +8,7 @@ import {
   ContainerExec,
   DEFAULT_SNAPSHOT_DEBOUNCE_MS,
   ExecSandbox,
+  plainEgressKey,
   ProcessHandle,
   withEgress,
   type PlatformContainer,
@@ -556,6 +557,26 @@ describe("ContainerExec snapshots", () => {
     expect(c.log).toEqual(["exec a", "snapshot", "snapshot failed", "snapshot"]);
   });
 
+  it("releases commands when the hook throws before returning a promise", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const c = snapshottingContainer();
+    const target = new ContainerExec({
+      container: () => c.container as never,
+      startOptions: () => undefined,
+      snapshot: () => {
+        throw new Error("no snapshot destination");
+      },
+      snapshotDebounceMs: () => 1000,
+    });
+    await target.exec(["a"]);
+    c.exit("a");
+    await vi.advanceTimersByTimeAsync(1000);
+    await target.settled();
+    expect(target.snapshotting).toBe(false);
+    await expect(target.exec(["b"])).resolves.toBeInstanceOf(ProcessHandle);
+    expect(c.log).toEqual(["exec a", "exec b"]);
+  });
+
   it("skips the snapshot when the container stopped, or when there's no snapshot hook", async () => {
     const c = snapshottingContainer();
     const target = snapshotted(c);
@@ -637,6 +658,116 @@ describe("ContainerExec snapshots", () => {
     await target.destroy();
     await vi.advanceTimersByTimeAsync(5000);
     expect(c.log).toEqual(["exec a", "snapshot", "snapshot done", "exec b"]);
+  });
+});
+
+describe("ContainerExec egress isolation", () => {
+  /** An intercepting container whose commands run until `exit(name)`. */
+  function routed() {
+    const { container, log } = interceptingContainer();
+    const exits = new Map<string, () => void>();
+    const exec = container.exec;
+    container.exec = async (cmd: string[], options?: unknown) => {
+      const p = await exec(cmd, options);
+      if (cmd[2] === TRUST_CA_SCRIPT) return p;
+      return { ...p, exitCode: new Promise<number>((r) => exits.set(cmd.join(" "), () => r(0))) };
+    };
+    const exit = async (name: string) => {
+      exits.get(name)?.();
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    return { container, log, exit };
+  }
+  const intercepts = (log: string[]) => log.filter((l) => l.startsWith("intercept http "));
+
+  it("re-routes an idle container for a different egress, trusting the CA only once", async () => {
+    const { container, log, exit } = routed();
+    const target = egressing(container);
+    await target.exec(["a"], undefined, { name: "alice" });
+    await exit("a");
+    await target.exec(["b"], undefined, { name: "bob" });
+    expect(intercepts(log)).toEqual([
+      "intercept http outbound for alice",
+      "intercept http outbound for bob",
+    ]);
+    expect(log.filter((l) => l.startsWith("trust"))).toHaveLength(1);
+  });
+
+  it("shares the route with commands of the same egress, even a fresh but equal value", async () => {
+    const { container, log } = routed();
+    const target = egressing(container);
+    await target.exec(["a"], undefined, { name: "alice" });
+    await target.exec(["b"], undefined, { name: "alice" });
+    expect(intercepts(log)).toEqual(["intercept http outbound for alice"]);
+    expect(log).toContain("exec b");
+  });
+
+  it("refuses a different egress while commands of the current one still run", async () => {
+    const { container, log, exit } = routed();
+    const target = egressing(container);
+    await target.exec(["a"], undefined, { name: "alice" });
+    await expect(target.exec(["b"], undefined, { name: "bob" })).rejects.toThrow(
+      /routed for a different egress, and 1 command\(s\) using it are still running/,
+    );
+    expect(log).not.toContain("exec b");
+    expect(intercepts(log)).toEqual(["intercept http outbound for alice"]);
+    // Once it exits, bob gets the container.
+    await exit("a");
+    await target.exec(["b"], undefined, { name: "bob" });
+    expect(intercepts(log).at(-1)).toBe("intercept http outbound for bob");
+  });
+
+  it("doesn't let two first commands route one container two ways", async () => {
+    const { container, log } = routed();
+    const target = egressing(container);
+    const results = await Promise.allSettled([
+      target.exec(["a"], undefined, { name: "alice" }),
+      target.exec(["b"], undefined, { name: "bob" }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(intercepts(log)).toEqual(["intercept http outbound for alice"]);
+    expect(log).not.toContain("exec b");
+  });
+
+  it("refuses a command with no egress on a container routed for one", async () => {
+    const { container } = routed();
+    const target = egressing(container);
+    await target.exec(["a"], undefined, { name: "alice" });
+    await expect(target.exec(["b"])).rejects.toThrow(/routed through another caller's egress/);
+  });
+
+  it("treats an egress it can't key as needing the container to itself", async () => {
+    const { container, log, exit } = routed();
+    const target = egressing(container);
+    const stub = Object.assign(Object.create({ fetch() {} }) as object, { name: "stub" });
+    await target.exec(["a"], undefined, stub as Egress);
+    await expect(target.exec(["b"], undefined, stub as Egress)).rejects.toThrow(/still running/);
+    await exit("a");
+    await target.exec(["b"], undefined, stub as Egress);
+    expect(intercepts(log)).toHaveLength(2);
+  });
+
+  it("uses a custom egressKey", async () => {
+    const { container, log } = routed();
+    const target = new ContainerExec<Egress & { token?: string }>({
+      container: () => container as never,
+      startOptions: () => ({}),
+      outbound: (e) => ({ name: `outbound for ${e?.name}` }) as never,
+      egressKey: (e) => e?.name,
+    });
+    await target.exec(["a"], undefined, { name: "alice", token: "t1" });
+    await target.exec(["b"], undefined, { name: "alice", token: "t2" });
+    expect(intercepts(log)).toHaveLength(1);
+  });
+
+  it("plainEgressKey is stable for plain data and undefined for anything else", () => {
+    expect(plainEgressKey({ b: 1, a: [true, null, "x"] })).toBe(
+      plainEgressKey({ a: [true, null, "x"], b: 1 }),
+    );
+    expect(plainEgressKey(undefined)).toBe("null");
+    expect(plainEgressKey({ a: Number.NaN })).toBeUndefined();
+    expect(plainEgressKey({ a: new Date(0) })).toBeUndefined();
+    expect(plainEgressKey({ f: () => 1 })).toBeUndefined();
   });
 });
 

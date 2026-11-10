@@ -249,6 +249,20 @@ export class Sandbox extends ExecSandbox<Env, { token: string }> {
 target: () => withEgress(env.SANDBOX.getByName(id), { token }),
 ```
 
+A container has one route for all its processes, so it's routed for one egress at a time:
+
+- Commands whose egress is the same (`egressKey()`, by default equal JSON for plain data) share the
+  route.
+- A command with a different egress re-routes the container when nothing else is running there.
+  While commands from the current route still run, it's refused rather than handed their
+  credentials, or they its.
+- A command with no egress is refused on a routed container.
+- An egress that isn't plain data, such as a stub, has no key by default, so each command with one
+  needs the container to itself. Override `egressKey()` when something in it identifies the
+  caller.
+
+Give each tenant or credential its own container (`getByName()`) when they run commands at once.
+
 ### Snapshots
 
 Define `snapshot()` on `ExecSandbox` to persist the container, with `snapshotContainer()` or
