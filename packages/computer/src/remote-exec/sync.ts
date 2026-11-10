@@ -133,6 +133,10 @@ export async function push(
       selection: { root: containerRoot, globs },
       manifest,
       owner,
+      // Still in the workspace, just not sent: the session's ledger would otherwise read their
+      // absence from the manifest as a deletion. A path the protocol can't carry can't be in the
+      // ledger either.
+      keep: skipped.map((s) => s.path).filter(isRelPath),
     });
     const { indices } = await session.expect("want");
     for (const index of indices) {

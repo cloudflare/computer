@@ -220,6 +220,21 @@ describe("what the host sends", () => {
     ]);
   });
 
+  it("tells the session which selected files it left out, so it keeps them", async () => {
+    await write(ws, { "big.bin": "0123456789", "a.txt": "a" });
+    const target = new FakeSessionTarget(async (s) => {
+      await openNormally(s);
+      await s.next();
+    });
+    const proc = await remoteExec(config(target, { limits: { maxFileBytes: 5 } }), ["true"], {
+      push: ["*"],
+    });
+    await proc.exitCode;
+    const push = target.requests.find((r) => r.type === "push");
+    expect(push?.type === "push" && push.manifest.map((e) => e.path)).toEqual(["a.txt"]);
+    expect(push?.type === "push" && push.keep).toEqual(["big.bin"]);
+  });
+
   it("kill() signals through the session; abort SIGKILLs and skips pull", async () => {
     let release!: () => void;
     const exited = new Promise<number>((r) => (release = () => r(137)));

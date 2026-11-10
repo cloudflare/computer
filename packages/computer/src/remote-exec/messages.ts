@@ -51,7 +51,14 @@ export interface Report {
 
 export type Request =
   | { type: "begin"; id: string; root: string; lock: boolean; lockTimeoutMs: number }
-  | { type: "push"; selection: Selection; manifest: Entry[]; owner: string }
+  | {
+      type: "push";
+      selection: Selection;
+      manifest: Entry[];
+      owner: string;
+      /** Selected paths left out of the manifest, which the session mustn't delete. */
+      keep?: string[];
+    }
   | { type: "chunk"; index: number; data: Uint8Array; last: boolean }
   | { type: "pushEnd" }
   | { type: "prepare"; spec: RunSpec; pull: Selection }
@@ -145,6 +152,10 @@ export function encodeRequest(request: Request): Uint8Array {
       const list = p._initManifest(request.manifest.length);
       for (const [i, entry] of request.manifest.entries()) setEntry(list.get(i), entry);
       p.owner = request.owner;
+      if (request.keep?.length) {
+        const keep = p._initKeep(request.keep.length);
+        for (const [i, path] of request.keep.entries()) keep.set(i, path);
+      }
       break;
     }
     case "chunk": {

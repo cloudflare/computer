@@ -148,6 +148,7 @@ export function decodeRequest(frame: Uint8Array): Request {
         selection: { root: p.selection.root, globs: list(p.selection.globs) },
         manifest,
         owner: p.owner,
+        ...(p.keep.length ? { keep: list(p.keep) } : {}),
       };
     }
     case S.Request.CHUNK:

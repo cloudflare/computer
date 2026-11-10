@@ -212,7 +212,13 @@ impl Session {
                     manifest.push(read_entry(entry)?);
                 }
                 let owner = parse_owner(push.get_owner()?.to_str()?)?;
-                let (state, want) = Push::begin(&root, Selector::new(&globs)?, manifest, owner)?;
+                let keep = if push.has_keep() {
+                    text_list(push.get_keep()?)?
+                } else {
+                    Vec::new()
+                };
+                let (mut state, want) = Push::begin(&root, Selector::new(&globs)?, manifest, owner)?;
+                state.keep(keep);
                 self.push = Some(state);
                 self.respond(|r| {
                     let mut list = r.init_want(want.len() as u32);

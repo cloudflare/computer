@@ -133,9 +133,14 @@ mod tests {
                     .iter()
                     .map(|e| entry_json(&read_entry(e).unwrap()))
                     .collect();
-                json!({ "type": "push",
+                let mut push = json!({ "type": "push",
                         "selection": { "root": sel.get_root().unwrap().to_str().unwrap(), "globs": text_list_json(sel.get_globs().unwrap()) },
-                        "manifest": manifest, "owner": p.get_owner().unwrap().to_str().unwrap() })
+                        "manifest": manifest, "owner": p.get_owner().unwrap().to_str().unwrap() });
+                // As TypeScript describes it: only when there is something to keep.
+                if p.has_keep() && !p.get_keep().unwrap().is_empty() {
+                    push["keep"] = text_list_json(p.get_keep().unwrap());
+                }
+                push
             }
             Which::Chunk(c) => {
                 let c = c.unwrap();

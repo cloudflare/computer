@@ -45,7 +45,8 @@
           "target": "a.ts"
         }
       ],
-      "owner": "1000:1000"
+      "owner": "1000:1000",
+      "keep": ["src/big.bin", "src/unreadable"]
     }
   },
   {

@@ -453,7 +453,7 @@ export class Request_Push extends $.Struct {
   static readonly _capnp = {
     displayName: "Push",
     id: "b8866baf86350653",
-    size: new $.ObjectSize(0, 3),
+    size: new $.ObjectSize(0, 4),
   };
   static _Manifest: $.ListCtor<Entry>;
   _adoptSelection(value: $.Orphan<Selection>): void {
@@ -501,6 +501,29 @@ export class Request_Push extends $.Struct {
   }
   set owner(value: string) {
     $.utils.setText(2, value, this);
+  }
+  _adoptKeep(value: $.Orphan<$.List<string>>): void {
+    $.utils.adopt(value, $.utils.getPointer(3, this));
+  }
+  _disownKeep(): $.Orphan<$.List<string>> {
+    return $.utils.disown(this.keep);
+  }
+  /**
+   * selected workspace paths left out of the manifest (over a limit,
+   * unreadable): they still exist, so push mustn't delete them
+   *
+   */
+  get keep(): $.List<string> {
+    return $.utils.getList(3, $.TextList, this);
+  }
+  _hasKeep(): boolean {
+    return !$.utils.isNull($.utils.getPointer(3, this));
+  }
+  _initKeep(length: number): $.List<string> {
+    return $.utils.initList(3, $.TextList, length, this);
+  }
+  set keep(value: $.List<string>) {
+    $.utils.copyFrom(value, $.utils.getPointer(3, this));
   }
   toString(): string {
     return "Request_Push_" + super.toString();

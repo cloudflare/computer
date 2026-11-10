@@ -7,7 +7,7 @@ use crate::walk::{walk, Found, Kind, Selector};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{lchown, PermissionsExt};
+use std::os::unix::fs::{lchown, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -82,19 +82,55 @@ fn local_entry(root: &Path, rel: &str) -> Option<Entry> {
 
 // ── ledger: what earlier pushes put in the container, so push can delete only those ──
 
+/// What a push placed at a path, to tell later whether the container has changed it since.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Placed {
+    /// A file with this content hash.
+    File(Vec<u8>),
+    /// A symlink to this target.
+    Link(String),
+    /// A symlink recorded before targets were: whether it changed can't be told, so it's kept.
+    UnknownLink,
+}
+
+impl Placed {
+    fn of(entry: &Entry) -> Placed {
+        match entry.kind {
+            Kind::File => Placed::File(entry.hash.clone()),
+            Kind::Symlink => Placed::Link(entry.target.clone()),
+        }
+    }
+
+    /// Whether `current` is still exactly what was placed.
+    fn unchanged(&self, current: &Entry) -> bool {
+        match (self, &current.kind) {
+            (Placed::File(hash), Kind::File) => current.hash == *hash,
+            (Placed::Link(target), Kind::Symlink) => current.target == *target,
+            _ => false,
+        }
+    }
+}
+
 fn ledger_path(root: &str) -> PathBuf {
     state_dir().join("ledger").join(root_key(root))
 }
 
-fn read_ledger(root: &str) -> BTreeMap<String, Vec<u8>> {
+/// One line per path: `<hex hash> <path>` for a file, `@<hex target> <path>` for a symlink (hex,
+/// as a target may hold spaces), and `- <path>` for a symlink from an older ledger.
+fn read_ledger(root: &str) -> BTreeMap<String, Placed> {
     let mut ledger = BTreeMap::new();
     if let Ok(text) = fs::read_to_string(ledger_path(root)) {
         for line in text.lines() {
-            if let Some((hash, path)) = line.split_once(' ') {
-                // Symlinks are recorded as "-": no content hash.
-                let hash = if hash == "-" { Some(Vec::new()) } else { unhex(hash) };
-                if let Some(hash) = hash {
-                    ledger.insert(path.to_string(), hash);
+            if let Some((recorded, path)) = line.split_once(' ') {
+                let placed = if recorded == "-" {
+                    Some(Placed::UnknownLink)
+                } else if let Some(target) = recorded.strip_prefix('@') {
+                    unhex(target).and_then(|t| String::from_utf8(t).ok()).map(Placed::Link)
+                } else {
+                    unhex(recorded).map(Placed::File)
+                };
+                if let Some(placed) = placed {
+                    ledger.insert(path.to_string(), placed);
                 }
             }
         }
@@ -102,21 +138,27 @@ fn read_ledger(root: &str) -> BTreeMap<String, Vec<u8>> {
     ledger
 }
 
-fn write_ledger(root: &str, ledger: &BTreeMap<String, Vec<u8>>) -> io::Result<()> {
+fn write_ledger(root: &str, ledger: &BTreeMap<String, Placed>) -> io::Result<()> {
     let path = ledger_path(root);
     private_dir(path.parent().unwrap())?;
     let tmp = path.with_extension("tmp");
     let mut file = fs::File::create(&tmp)?;
-    for (p, hash) in ledger {
-        writeln!(
-            file,
-            "{} {}",
-            if hash.is_empty() { "-".to_string() } else { hex(hash) },
-            p
-        )?;
+    for (p, placed) in ledger {
+        let recorded = match placed {
+            Placed::File(hash) => hex(hash),
+            Placed::Link(target) => format!("@{}", hex(target.as_bytes())),
+            Placed::UnknownLink => "-".to_string(),
+        };
+        writeln!(file, "{recorded} {p}")?;
     }
     file.sync_all()?;
     fs::rename(tmp, path)
+}
+
+/// Who owns `rel`, without following a link at the end of it.
+fn owner_of(root: &Path, rel: &str) -> Option<(u32, u32)> {
+    let meta = fs::symlink_metadata(root.join(rel)).ok()?;
+    Some((meta.uid(), meta.gid()))
 }
 
 /// A directory where the workspace has a file or a link: the workspace wins, as it does for
@@ -135,9 +177,18 @@ pub struct Push {
     manifest: Vec<Entry>,
     want: HashSet<u32>,
     owner: Option<(u32, u32)>,
+    /// Entries the container already has, but owned by someone other than this push's owner.
+    chown: Vec<u32>,
+    /// Selected paths the host left out of the manifest: still in the workspace, so not deleted.
+    keep: HashSet<String>,
     open: HashMap<u32, (fs::File, PathBuf)>,
     done: HashSet<u32>,
     pub report: Report,
+}
+
+/// Who a push's files belong to: its owner, or whoever this process runs as.
+fn effective_owner(owner: Option<(u32, u32)>) -> (u32, u32) {
+    owner.unwrap_or_else(|| (nix::unistd::geteuid().as_raw(), nix::unistd::getegid().as_raw()))
 }
 
 impl Push {
@@ -151,6 +202,8 @@ impl Push {
         let root_path = PathBuf::from(root);
         fs::create_dir_all(&root_path)?;
         let mut want = Vec::new();
+        let mut chown = Vec::new();
+        let wanted_owner = effective_owner(owner);
         let mut paths = HashSet::new();
         for (i, entry) in manifest.iter().enumerate() {
             check_rel(&entry.path)?;
@@ -170,6 +223,10 @@ impl Push {
             let current = local_entry(&root_path, &entry.path);
             if !current.map(|c| c.same_as(entry)).unwrap_or(false) {
                 want.push(i as u32);
+            } else if owner_of(&root_path, &entry.path) != Some(wanted_owner) {
+                // The same bytes, but an earlier push gave them to another user: a command
+                // running as this push's owner couldn't change them.
+                chown.push(i as u32);
             }
         }
         let push = Push {
@@ -179,11 +236,20 @@ impl Push {
             want: want.iter().copied().collect(),
             manifest,
             owner,
+            chown,
+            keep: HashSet::new(),
             open: HashMap::new(),
             done: HashSet::new(),
             report: Report::default(),
         };
         Ok((push, want))
+    }
+
+    /// Paths the push selects but the host left out of the manifest, over a limit or unreadable:
+    /// they still exist in the workspace, so `end` mustn't delete them. Paths that aren't valid
+    /// protocol paths can't be in the ledger, so they're ignored rather than refused.
+    pub fn keep(&mut self, paths: Vec<String>) {
+        self.keep.extend(paths.into_iter().filter(|p| check_rel(p).is_ok()));
     }
 
     pub fn chunk(&mut self, index: u32, data: &[u8], last: bool) -> Res<()> {
@@ -258,21 +324,28 @@ impl Push {
                 Kind::File => {}
             }
         }
+        // Unchanged entries that belong to someone else: give them to this push's owner. Through
+        // safe_parent, so a directory the container replaced with a link can't redirect it.
+        let (uid, gid) = effective_owner(self.owner);
+        for &index in &self.chown {
+            let entry = &self.manifest[index as usize];
+            let dir = safe_parent(&self.root, &entry.path, self.owner)?;
+            lchown(dir.join(entry.path.rsplit('/').next().unwrap()), Some(uid), Some(gid))?;
+        }
         // Delete what an earlier push placed, this push selects, and the workspace no longer has,
-        // unless the container changed it since.
+        // unless the container changed it since. A path the host left out (`keep`) is still in the
+        // workspace.
         let stale: Vec<String> = ledger
             .keys()
-            .filter(|p| self.selector.matches(p) && !in_manifest.contains(p.as_str()))
+            .filter(|p| {
+                self.selector.matches(p) && !in_manifest.contains(p.as_str()) && !self.keep.contains(p.as_str())
+            })
             .cloned()
             .collect();
         for path in stale {
             let recorded = ledger.remove(&path).unwrap();
             if let Some(current) = local_entry(&self.root, &path) {
-                let unchanged = match current.kind {
-                    Kind::File => current.hash == recorded,
-                    Kind::Symlink => recorded.is_empty(),
-                };
-                if unchanged {
+                if recorded.unchanged(&current) {
                     fs::remove_file(self.root.join(&path))?;
                     self.report.deleted.push(path);
                 }
@@ -282,7 +355,7 @@ impl Push {
             let placed =
                 !self.want.contains(&(i as u32)) || self.done.contains(&(i as u32)) || entry.kind == Kind::Symlink;
             if placed {
-                ledger.insert(entry.path.clone(), entry.hash.clone());
+                ledger.insert(entry.path.clone(), Placed::of(entry));
             }
         }
         write_ledger(&self.root_text, &ledger)?;
@@ -660,10 +733,122 @@ mod tests {
         let root = TempDir::new("ledger");
         let r = root.path().to_str().unwrap();
         let mut ledger = BTreeMap::new();
-        ledger.insert("a b/c.txt".to_string(), vec![1u8; 32]);
-        ledger.insert("link".to_string(), Vec::new());
+        ledger.insert("a b/c.txt".to_string(), Placed::File(vec![1u8; 32]));
+        ledger.insert("link".to_string(), Placed::Link("../a b/c.txt".into()));
+        ledger.insert("old link".to_string(), Placed::UnknownLink);
         write_ledger(r, &ledger).unwrap();
         assert_eq!(read_ledger(r), ledger);
+    }
+
+    #[test]
+    fn ledger_reads_links_recorded_before_targets_were() {
+        private_state();
+        let root = TempDir::new("ledger-old");
+        let r = root.path().to_str().unwrap();
+        let path = ledger_path(r);
+        private_dir(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{} a.txt\n- link\n", hex(&[2u8; 32]))).unwrap();
+        let ledger = read_ledger(r);
+        assert_eq!(ledger["a.txt"], Placed::File(vec![2u8; 32]));
+        assert_eq!(ledger["link"], Placed::UnknownLink);
+    }
+
+    #[test]
+    fn push_keeps_a_retargeted_link_and_one_from_an_old_ledger() {
+        private_state();
+        let root = TempDir::new("push-ledger-relink");
+        push(
+            &root,
+            &["**"],
+            vec![
+                (file("v1", "1", 0o644), "1"),
+                (link("current", "v1"), ""),
+                (link("old", "v1"), ""),
+            ],
+            None,
+        );
+        // A command points the link elsewhere; the workspace then drops it.
+        fs::remove_file(root.path().join("current")).unwrap();
+        root.symlink("current", "v2");
+        // And `old` reads as a link recorded before targets were.
+        let r = root.path().to_str().unwrap();
+        let mut ledger = read_ledger(r);
+        ledger.insert("old".into(), Placed::UnknownLink);
+        write_ledger(r, &ledger).unwrap();
+        let (_, report) = push(&root, &["**"], vec![(file("v1", "1", 0o644), "1")], None);
+        assert!(report.deleted.is_empty(), "{:?}", report.deleted);
+        assert_eq!(fs::read_link(root.path().join("current")).unwrap().to_str(), Some("v2"));
+        assert!(fs::symlink_metadata(root.path().join("old")).is_ok());
+    }
+
+    #[test]
+    fn push_keeps_what_the_host_left_out() {
+        private_state();
+        let root = TempDir::new("push-keep");
+        push(
+            &root,
+            &["**"],
+            vec![(file("data.bin", "big", 0o644), "big"), (file("a", "a", 0o644), "a")],
+            None,
+        );
+        // The next push skips data.bin for size, and says so: it's still in the workspace.
+        let (mut state, _) = Push::begin(
+            root.path().to_str().unwrap(),
+            sel(&["**"]),
+            vec![file("a", "a", 0o644)],
+            None,
+        )
+        .unwrap();
+        state.keep(vec!["data.bin".into(), "../bad".into(), "bad\nname".into()]);
+        let report = state.end().unwrap();
+        assert!(report.deleted.is_empty(), "{:?}", report.deleted);
+        assert_eq!(root.read("data.bin"), "big");
+        // It stays in the ledger, so a later push that leaves it out for good still deletes it.
+        let (_, report) = push(&root, &["**"], vec![(file("a", "a", 0o644), "a")], None);
+        assert_eq!(report.deleted, ["data.bin"]);
+    }
+
+    #[test]
+    fn push_gives_unchanged_files_and_links_to_a_new_owner() {
+        private_state();
+        let root = TempDir::new("push-reown");
+        let manifest = || vec![(file("d/f.txt", "f", 0o644), "f"), (link("d/l", "f.txt"), "")];
+        push(&root, &["**"], manifest(), Some((4321, 8765)));
+        let (want, report) = push(&root, &["**"], manifest(), Some((1111, 2222)));
+        assert!(want.is_empty() && report.written == 0, "nothing re-sent");
+        for p in ["d/f.txt", "d/l"] {
+            let meta = fs::symlink_metadata(root.path().join(p)).unwrap();
+            assert_eq!((meta.uid(), meta.gid()), (1111, 2222), "{p}");
+        }
+        // No owner: whoever runs the session, as files it writes would be.
+        push(&root, &["**"], manifest(), None);
+        let meta = fs::symlink_metadata(root.path().join("d/f.txt")).unwrap();
+        assert_eq!(
+            (meta.uid(), meta.gid()),
+            (nix::unistd::geteuid().as_raw(), nix::unistd::getegid().as_raw())
+        );
+    }
+
+    #[test]
+    fn push_reowns_nothing_through_a_planted_directory_link() {
+        private_state();
+        let root = TempDir::new("push-reown-link");
+        let outside = TempDir::new("push-reown-outside");
+        outside.write("f.txt", "f");
+        root.symlink("d", outside.path().to_str().unwrap());
+        let (mut state, want) = Push::begin(
+            root.path().to_str().unwrap(),
+            sel(&["**"]),
+            vec![file("d/f.txt", "f", 0o644)],
+            Some((4321, 8765)),
+        )
+        .unwrap();
+        assert!(want.is_empty(), "the same bytes, through the link");
+        assert!(state.chown.contains(&0));
+        state.keep(Vec::new());
+        assert!(state.end().is_err());
+        let meta = fs::metadata(outside.path().join("f.txt")).unwrap();
+        assert_ne!((meta.uid(), meta.gid()), (4321, 8765));
     }
 
     #[test]

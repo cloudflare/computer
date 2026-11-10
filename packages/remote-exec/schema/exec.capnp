@@ -90,6 +90,8 @@ struct Request {
     selection @0 :Selection;
     manifest  @1 :List(Entry);
     owner     @2 :Text;      # "uid:gid" or ""
+    keep      @3 :List(Text); # selected workspace paths left out of the manifest (over a limit,
+                              # unreadable): they still exist, so push mustn't delete them
   }
 
   struct Prepare {
