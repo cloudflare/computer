@@ -189,7 +189,48 @@ If none of the four yields a name and email,
 commit: author identity unknown` with exit code 128. This
 config-after-env order matches real git.
 
-### Auth (`headers` and `onAuth`)
+### Host Fetch and authentication
+
+Give `createGitClient()` a Fetch-compatible `fetch` and every request a
+clone, fetch, pull or push makes goes through it: the typed API, `cli()`,
+the worker-shell `git` command and `codemode:git`. Pass a wrapper that adds
+credentials, or a service binding's bound `fetch`. Credentials then never
+reach argv, the remote URL, `.git/config` or command output.
+
+```ts
+const gitFetch: typeof fetch = async (input, init) => {
+  const request = new Request(input, init);
+  const url = new URL(request.url);
+  if (
+    url.origin === "https://github.com" &&
+    url.pathname.startsWith("/acme/") &&
+    !request.headers.has("Authorization")
+  ) {
+    const authed = new Request(request, { redirect: "manual" });
+    authed.headers.set("Authorization", `Bearer ${env.GITHUB_TOKEN}`);
+    // Don't follow a redirect with the token attached; Git reports the 3xx as an error.
+    return fetch(authed);
+  }
+  return fetch(request);
+};
+
+const ws = new Workspace({
+  storage: ctx.storage,
+  git: createGitClient({ fetch: gitFetch }),
+});
+```
+
+What gets credentials is up to the wrapper: scope them to HTTPS and the
+repositories you trust, decide whether an `Authorization` header from the
+caller wins, and don't follow redirects with them attached. To hand out a
+read token for fetches and a write token for pushes, look at the Git
+service: `service=git-receive-pack` or a `/git-receive-pack` path is a push,
+and `git-upload-pack` is a read.
+
+Request and response bodies stream through as Fetch streams, so packfiles
+aren't buffered, and the `fetch` you pass must accept a streaming request
+body. Workers and Node do; browsers may not. Without `fetch`, Git uses
+`isomorphic-git`'s own transport.
 
 Network commands (`fetch`, `pull`, `push`, `clone`) accept the
 same auth contract `isomorphic-git` exposes:
@@ -206,8 +247,8 @@ same auth contract `isomorphic-git` exposes:
   Return a `GitAuth` (`username` / `password` / `headers`) and
   `isomorphic-git` retries with it.
 
-The CLI does not surface `onAuth` (no clean argv shape for a
-callback); for interactive flows reach for the typed API.
+The CLI does not surface `headers` or `onAuth` (no clean argv shape
+for a callback); use a host-provided `fetch` instead.
 
 ### Errors
 
