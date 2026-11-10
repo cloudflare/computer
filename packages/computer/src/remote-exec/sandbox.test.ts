@@ -852,6 +852,32 @@ describe("executor", () => {
   });
 });
 
+describe("ExecSandbox hooks defined as fields", () => {
+  // A subclass's fields are only set after ExecSandbox's constructor has run.
+  it("routes through an outbound field, and snapshots through a snapshot field", async () => {
+    vi.useFakeTimers();
+    try {
+      const { container, log } = interceptingContainer();
+      const ctx = { container, blockConcurrencyWhile: async (f: () => unknown) => f() };
+      class Fielded extends ExecSandbox<Record<string, never>, Egress> {
+        protected startOptions() {
+          return { enableInternet: true };
+        }
+        protected override outbound = (egress: Egress | undefined) =>
+          egress === undefined ? undefined : ({ name: `outbound for ${egress.name}` } as never);
+        protected override snapshot = async () => void log.push("snapshot");
+      }
+      const sandbox = new Fielded(ctx as never, {});
+      await sandbox.exec(["a"], undefined, EGRESS);
+      expect(log).toContain("intercept http outbound for the caller's egress");
+      await vi.advanceTimersByTimeAsync(DEFAULT_SNAPSHOT_DEBOUNCE_MS);
+      expect(log.at(-1)).toBe("snapshot");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("withEgress", () => {
   it("passes the egress with every command", async () => {
     const calls: unknown[] = [];

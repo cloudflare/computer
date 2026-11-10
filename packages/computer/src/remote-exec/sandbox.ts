@@ -627,13 +627,25 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
     return DEFAULT_SNAPSHOT_DEBOUNCE_MS;
   }
 
-  readonly #exec: ContainerExec<Egress>;
+  #execTarget: ContainerExec<Egress> | undefined;
 
   constructor(ctx: DurableObjectState, env: E) {
     super(ctx, env);
-    const container = () => (this.ctx as unknown as { container?: PlatformContainer }).container;
-    this.#exec = new ContainerExec<Egress>({
-      container,
+    reapplyInactivityTimeout(ctx, this.#container(), () => this.inactivityTimeoutMs());
+  }
+
+  #container(): PlatformContainer | undefined {
+    return (this.ctx as unknown as { container?: PlatformContainer }).container;
+  }
+
+  /**
+   * Made on first use rather than in the constructor: a subclass can define `outbound` or
+   * `snapshot` as a field, which is only set once this constructor has returned.
+   * Built in the constructor, a sandbox with an `outbound` field would run unrouted.
+   */
+  get #exec(): ContainerExec<Egress> {
+    this.#execTarget ??= new ContainerExec<Egress>({
+      container: () => this.#container(),
       startOptions: () => this.startOptions(),
       inactivityTimeoutMs: () => this.inactivityTimeoutMs(),
       onIdle: () => this.onIdle(),
@@ -643,11 +655,10 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
         ? {}
         : { outbound: (egress: Egress | undefined) => this.outbound(egress) }),
       egressKey: (egress) => this.egressKey(egress),
-      // Subclass methods are on the prototype, so this sees one defined there.
       snapshot: this.#snapshotHook(),
       snapshotDebounceMs: () => this.snapshotDebounceMs(),
     });
-    reapplyInactivityTimeout(ctx, container(), () => this.inactivityTimeoutMs());
+    return this.#execTarget;
   }
 
   /**
