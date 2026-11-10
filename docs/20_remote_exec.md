@@ -42,7 +42,7 @@ should see the whole Workspace all the time.
 
 `ExecSandbox` is a base class for the container. It starts the container on the first command
 and keeps it running for 10 minutes after the last one. Commands run as root unless the call
-names another user.
+names another user. It can also [snapshot](#snapshots) the container once it goes quiet.
 
 ```ts
 import { ExecSandbox } from "@cloudflare/computer/remote-exec";
@@ -242,6 +242,41 @@ export class Sandbox extends ExecSandbox<Env, { token: string }> {
 // In createExecModule():
 target: () => withEgress(env.SANDBOX.getByName(id), { token }),
 ```
+
+### Snapshots
+
+Define `snapshot()` on `ExecSandbox` to persist the container, with `snapshotContainer()` or
+`snapshotDirectory()`, and have `startOptions()` start from what it recorded:
+
+```ts
+import { ExecSandbox, type PlatformContainer } from "@cloudflare/computer/remote-exec";
+
+export class Sandbox extends ExecSandbox<Env> {
+  protected startOptions() {
+    const id = this.ctx.storage.kv.get<string>("snapshot");
+    return id ? { containerSnapshot: { id } } : { image: "base" };
+  }
+  protected override async snapshot(container: PlatformContainer) {
+    const { id } = await container.snapshotContainer!();
+    this.ctx.storage.kv.put("snapshot", id);
+  }
+  protected override snapshotDebounceMs() {
+    return 30_000; // default 10_000
+  }
+}
+```
+
+- **Debounced.** `snapshot()` runs once no command has been running or starting for
+  `snapshotDebounceMs()`, and only if a command ran since the last snapshot. A command in that
+  window restarts the wait, so a call's short gaps, such as between its install check and its
+  session, don't trigger one.
+- **Commands wait for it.** The platform's `exec()` fails while a snapshot is in progress, so
+  commands that arrive then queue and start in order once it finishes. A failed snapshot is
+  logged, releases the queue the same way, and is tried again at the next idle.
+- **Use `container` in `snapshot()`, not `this.exec()`**, which would wait for the snapshot itself.
+- **`destroy()` waits** for a snapshot in progress and drops one that hasn't started.
+- **The wait is held in memory.** If the Durable Object is evicted before it ends, that snapshot is
+  skipped until the next idle.
 
 ## How it works
 

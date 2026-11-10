@@ -27,6 +27,13 @@ export interface PlatformContainer {
   destroy?(reason?: unknown): Promise<void>;
   interceptAllOutboundHttp?(binding: Fetcher): Promise<void>;
   interceptOutboundHttps?(addr: string, binding: Fetcher): Promise<void>;
+  snapshotContainer?(options?: {
+    name?: string;
+  }): Promise<{ id: string; size: number; name?: string }>;
+  snapshotDirectory?(options: {
+    dir: string;
+    name?: string;
+  }): Promise<{ id: string; size: number; dir: string; name?: string }>;
 }
 
 /**
@@ -69,6 +76,8 @@ export class ProcessHandle extends RpcTarget implements ExecTargetProcess {
 }
 
 export const DEFAULT_INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
+/** How long the container must stay idle before a snapshot is taken, by default. */
+export const DEFAULT_SNAPSHOT_DEBOUNCE_MS = 10 * 1000;
 const ROOT = "0:0";
 
 export interface ContainerExecOptions<Egress = undefined> {
@@ -77,8 +86,30 @@ export interface ContainerExecOptions<Egress = undefined> {
   startOptions: () => Record<string, unknown> | undefined;
   /** How long the container keeps running after the Durable Object goes idle, in ms. */
   inactivityTimeoutMs?: () => number;
-  /** Every process started has exited: a moment to snapshot, say. */
+  /**
+   * Every process started has exited. To snapshot, use `snapshot` instead: it waits for the
+   * container to settle, and holds commands back while it runs.
+   */
   onIdle?: () => void;
+  /**
+   * Persist the container, such as with `container.snapshotContainer()` or
+   * `snapshotDirectory()`, recording the result for the next `startOptions()`. It runs once the
+   * container has been idle (no process running, no command on its way in) for
+   * `snapshotDebounceMs`, and only if a command ran since the last one. While it runs, commands
+   * queue and start in order once it settles, whether it succeeded or not: the platform's
+   * exec() fails during a snapshot. A failed snapshot is logged and tried again at the next idle.
+   *
+   * It gets the platform's container. Call that directly; calling back into this `exec()`
+   * would wait for the snapshot itself.
+   */
+  snapshot?: (container: PlatformContainer) => Promise<void>;
+  /**
+   * How long the container must stay idle before `snapshot` runs, in ms. Default 10 seconds. A
+   * command in that window resets it, so short gaps between commands, like those between one
+   * call's install check and its session, don't snapshot. The timer is held in memory: if the
+   * Durable Object is evicted before it fires, that snapshot is skipped until the next idle.
+   */
+  snapshotDebounceMs?: () => number;
   /** The container stopped: cleanly (undefined) or with an error. */
   onStopped?: (error: unknown) => void;
   /**
@@ -105,9 +136,18 @@ export interface ContainerExecOptions<Egress = undefined> {
 export class ContainerExec<Egress = undefined> implements ExecTarget {
   readonly #options: ContainerExecOptions<Egress>;
   #running = 0;
+  /** Commands on their way in: waiting for a snapshot or a start, or for the platform's exec(). */
+  #entering = 0;
   #starting: Promise<void> | undefined;
   /** Whether this object has routed the running container's egress and trusted its CA. */
   #routed = false;
+  /** A command has run since the last snapshot. */
+  #dirty = false;
+  #snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The snapshot in progress; it never rejects. */
+  #snapshotting: Promise<void> | undefined;
+  /** Commands that arrived during the snapshot, released in order when it settles. */
+  readonly #queue: (() => void)[] = [];
 
   constructor(options: ContainerExecOptions<Egress>) {
     this.#options = options;
@@ -115,6 +155,69 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
 
   get running(): number {
     return this.#running;
+  }
+
+  /** Whether a snapshot is in progress. */
+  get snapshotting(): boolean {
+    return this.#snapshotting !== undefined;
+  }
+
+  /** Resolves once no snapshot is in progress, after the commands queued before it. */
+  #afterSnapshot(): Promise<void> {
+    if (this.#snapshotting === undefined) return Promise.resolve();
+    return new Promise((resolve) => this.#queue.push(resolve));
+  }
+
+  #cancelSnapshot(): void {
+    if (this.#snapshotTimer === undefined) return;
+    clearTimeout(this.#snapshotTimer);
+    this.#snapshotTimer = undefined;
+  }
+
+  /** (Re)start the debounce, if there is something to snapshot and nothing is using the container. */
+  #scheduleSnapshot(): void {
+    if (this.#options.snapshot === undefined || !this.#dirty) return;
+    if (this.#running > 0 || this.#entering > 0 || this.#snapshotting !== undefined) return;
+    this.#cancelSnapshot();
+    const delay = this.#options.snapshotDebounceMs?.() ?? DEFAULT_SNAPSHOT_DEBOUNCE_MS;
+    this.#snapshotTimer = setTimeout(() => {
+      this.#snapshotTimer = undefined;
+      this.#takeSnapshot();
+    }, delay);
+  }
+
+  #takeSnapshot(): void {
+    const snapshot = this.#options.snapshot;
+    if (snapshot === undefined || !this.#dirty) return;
+    // A command that got in after the timer was set cancels it, so this is only a safeguard.
+    if (this.#running > 0 || this.#entering > 0 || this.#snapshotting !== undefined) return;
+    const container = this.#options.container();
+    // A stopped container has nothing left to snapshot.
+    if (!container?.running) {
+      this.#dirty = false;
+      return;
+    }
+    this.#dirty = false;
+    this.#snapshotting = (async () => {
+      try {
+        await snapshot(container);
+      } catch (error) {
+        console.error("container snapshot failed", String(error));
+        this.#dirty = true;
+      } finally {
+        this.#snapshotting = undefined;
+        // A failure isn't retried until the next idle, so a broken snapshot can't loop.
+        for (const release of this.#queue.splice(0)) release();
+      }
+    })();
+  }
+
+  /**
+   * Waits for the snapshot in progress, if any. A command arriving meanwhile still queues behind
+   * it; use this to know a snapshot has been written, in tests or before destroy.
+   */
+  async settled(): Promise<void> {
+    await this.#snapshotting;
   }
 
   #get(): PlatformContainer {
@@ -211,22 +314,39 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
     options?: ExecTargetOptions,
     egress?: Egress,
   ): Promise<ExecTargetProcess> {
-    await this.ensureRunning(egress);
-    // exec() waits for a container that's still starting.
-    const process = await this.#get().exec(cmd, {
-      ...options,
-      user: options?.user ?? this.#options.user ?? ROOT,
-    });
-    this.#running += 1;
+    // Counted from the start, so no snapshot can begin between the wait and the platform's exec().
+    this.#entering += 1;
+    this.#cancelSnapshot();
+    let process: PlatformProcess;
+    try {
+      await this.#afterSnapshot();
+      await this.ensureRunning(egress);
+      // exec() waits for a container that's still starting.
+      process = await this.#get().exec(cmd, {
+        ...options,
+        user: options?.user ?? this.#options.user ?? ROOT,
+      });
+      this.#running += 1;
+      this.#dirty = true;
+    } finally {
+      this.#entering -= 1;
+      // A command that failed to start leaves the container as it was: snapshot only if it's dirty.
+      this.#scheduleSnapshot();
+    }
     const exited = () => {
       this.#running -= 1;
       if (this.#running === 0) this.#options.onIdle?.();
+      this.#scheduleSnapshot();
     };
     process.exitCode.then(exited, exited);
     return new ProcessHandle(process);
   }
 
+  /** Stops the container, after any snapshot in progress; a pending one is dropped. */
   async destroy(): Promise<void> {
+    this.#cancelSnapshot();
+    await this.#snapshotting;
+    this.#dirty = false;
     const container = this.#get();
     if (container.running) await container.destroy?.();
   }
@@ -235,8 +355,9 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
 /**
  * A Durable Object whose container runs its image's entrypoint (or `sleep infinity`) and takes
  * commands through exec(). Subclasses choose the start options, may route the container's network
- * through `outbound()`, and may persist the container through the hooks: `onIdle()` after
- * commands finish, `onStopped()`, `onDestroy()`.
+ * through `outbound()`, and may persist the container with `snapshot()`, which runs once commands
+ * have been quiet for `snapshotDebounceMs()` and holds new commands back while it runs. The other
+ * hooks are `onIdle()` after commands finish, `onStopped()` and `onDestroy()`.
  *
  * `Egress` is what callers may pass as `exec()`'s third argument, for `outbound()` to route the
  * container by: credentials to add, a stub that decides, anything that crosses Workers RPC.
@@ -265,6 +386,28 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
     return undefined;
   }
 
+  /**
+   * Persist the container, once it has been idle for `snapshotDebounceMs()` after commands ran.
+   * Define it to snapshot; there is no default. Record what you take, and have `startOptions()`
+   * start from it:
+   *
+   * ```ts
+   * protected async snapshot(container: PlatformContainer) {
+   *   const { id } = await container.snapshotContainer!();
+   *   await this.ctx.storage.put("snapshot", id);
+   * }
+   * ```
+   *
+   * Commands that arrive while it runs wait for it, in order. Use `container` directly, not
+   * `this.exec()`, which would wait for this snapshot.
+   */
+  protected snapshot?(container: PlatformContainer): Promise<void>;
+
+  /** How long the container must be idle before `snapshot()` runs, in ms. Default 10 seconds. */
+  protected snapshotDebounceMs(): number {
+    return DEFAULT_SNAPSHOT_DEBOUNCE_MS;
+  }
+
   readonly #exec: ContainerExec<Egress>;
 
   constructor(ctx: DurableObjectState, env: E) {
@@ -277,6 +420,9 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
       onIdle: () => this.onIdle(),
       onStopped: (error) => this.onStopped(error),
       outbound: (egress) => this.outbound(egress),
+      // Subclass methods are on the prototype, so this sees one defined there.
+      snapshot: this.#snapshotHook(),
+      snapshotDebounceMs: () => this.snapshotDebounceMs(),
     });
     // A Durable Object that restarts while its container runs starts without a timeout.
     const running = container();
@@ -307,6 +453,16 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
 
   protected get busy(): boolean {
     return this.#exec.running > 0;
+  }
+
+  #snapshotHook(): ((container: PlatformContainer) => Promise<void>) | undefined {
+    const snapshot = this.snapshot;
+    return snapshot === undefined ? undefined : (container) => snapshot.call(this, container);
+  }
+
+  /** Whether `snapshot()` is running; commands wait for it. */
+  protected get snapshotting(): boolean {
+    return this.#exec.snapshotting;
   }
 
   protected onIdle(): void {}

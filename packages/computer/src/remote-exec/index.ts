@@ -28,6 +28,7 @@ export {
 export {
   ContainerExec,
   DEFAULT_INACTIVITY_TIMEOUT_MS,
+  DEFAULT_SNAPSHOT_DEBOUNCE_MS,
   ExecSandbox,
   ProcessHandle,
   withEgress,
