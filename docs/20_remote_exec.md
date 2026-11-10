@@ -202,6 +202,12 @@ The process has `pid`, `stdin`, `stdout`, `stderr`, `exitCode`, `pushed`, `pulle
 `output()` and `kill(signal?)`. This `exec()` also takes `signal`, an `AbortSignal` that kills
 everything the command started and skips the pull, and `stderr: "combined"`.
 
+A stream that's being read holds the command back once its read-ahead is full, as a pipe does. If
+code stops reading it for 30 seconds (`createExecModule({ streamStallMs })`), it stops streaming
+and stops holding the command back, so `exitCode` still resolves. Long output is still saved, as
+`truncated` reports, and reading the stream again fails, saying why. Cancel a stream you're done
+with (`break` out of a `for await` does) to let the command go at once.
+
 ### Read-only code
 
 `codemode:exec` needs a read-write backend. For code that may only read files, register the

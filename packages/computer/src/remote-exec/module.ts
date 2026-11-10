@@ -55,6 +55,14 @@ export interface ExecModuleOptions {
   /** Read-ahead per stream for the streaming facade. */
   maxStreamBuffer?: number;
   /**
+   * How long a stream that has been read may go unread, with its read-ahead full, before it stops
+   * holding the command back, in ms. Default 30 seconds. Until then a full read-ahead pauses the
+   * command, as a pipe does; after it, the rest of the output goes only to the result (`output()`,
+   * `truncated`), so a caller that read part of a stream and moved on to `exitCode` doesn't wait
+   * for ever. Reading the stream again then fails, saying so.
+   */
+  streamStallMs?: number;
+  /**
    * How long the calling code may run: commands are stopped when it times out, and output nobody
    * has read is dropped once the code that spawned it can no longer be running.
    */
@@ -191,6 +199,8 @@ class StreamPump {
   #reading = false;
   #overflowed = false;
   #cancelled = false;
+  /** Read once, then left unread past `stallMs` with the read-ahead full. */
+  #stalled = false;
   #eof = false;
   #drained: boolean;
   #wakeReader: (() => void) | undefined;
@@ -201,6 +211,8 @@ class StreamPump {
     stream: ReadableStream<Uint8Array> | undefined,
     capture: OutputCapture,
     private readonly max: number,
+    private readonly name: string,
+    private readonly stallMs: number,
   ) {
     this.#drained = stream === undefined;
     this.done = (async () => {
@@ -208,7 +220,7 @@ class StreamPump {
         for await (const raw of stream) {
           const chunk = asBytes(raw);
           await capture.write(chunk);
-          if (this.#overflowed || this.#cancelled) continue;
+          if (this.#overflowed || this.#cancelled || this.#stalled) continue;
           while (this.#bytes + chunk.byteLength > this.max && !this.#cancelled) {
             if (!this.#reading) {
               // Nobody is streaming this output: stop buffering it, output() still has it.
@@ -219,9 +231,23 @@ class StreamPump {
             }
             // A reader takes a chunk larger than the read-ahead whole.
             if (this.#bytes === 0) break;
-            await new Promise<void>((resolve) => (this.#wakePump = resolve));
+            // Hold the command back for a reader, as a pipe would, but not for one that's gone.
+            const woken = await new Promise<boolean>((resolve) => {
+              const timer = setTimeout(() => resolve(false), this.stallMs);
+              this.#wakePump = () => {
+                clearTimeout(timer);
+                resolve(true);
+              };
+            });
+            this.#wakePump = undefined;
+            if (!woken) {
+              this.#stalled = true;
+              this.#readahead.length = 0;
+              this.#bytes = 0;
+              break;
+            }
           }
-          if (!this.#overflowed && !this.#cancelled) {
+          if (!this.#overflowed && !this.#cancelled && !this.#stalled) {
             this.#readahead.push(chunk);
             this.#bytes += chunk.byteLength;
             this.#wakeReader?.();
@@ -240,6 +266,11 @@ class StreamPump {
     if (this.#overflowed)
       throw new Error(
         "exec: this stream passed its read-ahead before it was first read; use output() instead",
+      );
+    if (this.#stalled)
+      throw new Error(
+        `exec: ${this.name} went unread for ${this.stallMs} ms with its read-ahead full, so it ` +
+          "stopped holding the command back; the rest of its output is in the result",
       );
     this.#reading = true;
     if (this.#bytes === 0 && !this.#eof && waitMs > 0) {
@@ -277,9 +308,9 @@ class StreamPump {
     this.#wakePump = undefined;
   }
 
-  /** Read to the end, cancelled, or never piped. */
+  /** Read to the end, cancelled, stalled, or never piped. */
   get settled(): boolean {
-    return this.#drained || this.#cancelled;
+    return this.#drained || this.#cancelled || this.#stalled;
   }
 }
 
@@ -307,6 +338,7 @@ export function createExecModule(options: ExecModuleOptions): WorkspaceModuleFac
   const settings = outputSettings(options.output);
   const agentPath = options.agentPath ?? DEFAULT_AGENT_PATH;
   const maxStreamBuffer = options.maxStreamBuffer ?? 1024 * 1024;
+  const streamStallMs = options.streamStallMs ?? 30_000;
   let installed: Promise<unknown> | undefined;
 
   const target = async (context: WorkspaceModuleCallContext): Promise<ExecTarget> => {
@@ -379,11 +411,15 @@ export function createExecModule(options: ExecModuleOptions): WorkspaceModuleFac
         proc.stdout,
         new OutputCapture(fs, settings, `${id}.stdout.log`),
         maxStreamBuffer,
+        "stdout",
+        streamStallMs,
       ),
       stderr: new StreamPump(
         proc.stderr,
         new OutputCapture(fs, settings, `${id}.stderr.log`),
         maxStreamBuffer,
+        "stderr",
+        streamStallMs,
       ),
     };
     executions.set(id, execution);

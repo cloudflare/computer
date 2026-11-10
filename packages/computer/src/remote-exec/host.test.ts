@@ -235,6 +235,46 @@ describe("what the host sends", () => {
     expect(push?.type === "push" && push.keep).toEqual(["big.bin"]);
   });
 
+  for (const during of ["begin", "push", "prepare"] as const) {
+    it(`an abort while the session answers ${during} ends it and never starts the command`, async () => {
+      await write(ws, { "a.txt": "a" });
+      const controller = new AbortController();
+      const target = new FakeSessionTarget(async (s) => {
+        for (;;) {
+          const r = await s.next();
+          if (r === undefined) return; // the host closed stdin: aborted
+          if (r.type === during) {
+            // Waiting for the lock, mid-push, preparing: the caller gives up.
+            controller.abort();
+            await s.next();
+            return;
+          }
+          if (r.type === "begin")
+            await s.send({
+              type: "begun",
+              protocol: 1,
+              version: "f",
+              arch: "x86_64",
+              lockWaitMs: 0,
+            });
+          else if (r.type === "push") await s.send({ type: "want", indices: [] });
+          else if (r.type === "pushEnd")
+            await s.send({
+              type: "pushReport",
+              report: { written: 0, bytes: 0, deleted: [], skipped: [] },
+            });
+        }
+      });
+      await expect(
+        remoteExec(config(target), ["touch", "ran"], { push: ["**"], signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      await target.sessionDone;
+      expect(target.stdinClosed).toBe(true);
+      expect(target.commands.some((c) => c[1] === "run")).toBe(false);
+      expect(target.requests.some((r) => r.type === "awaitStart")).toBe(false);
+    });
+  }
+
   it("kill() signals through the session; abort SIGKILLs and skips pull", async () => {
     let release!: () => void;
     const exited = new Promise<number>((r) => (release = () => r(137)));

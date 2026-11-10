@@ -343,6 +343,18 @@ describe("codemode:exec primitives", () => {
     expect((await call(fns, "wait", [id])).exitCode).toBe(0);
   });
 
+  it("lets the command finish when a reader takes one chunk and moves on to wait()", async () => {
+    const fns = makeModule({ maxStreamBuffer: 4096, streamStallMs: 200 });
+    const { id } = await call(fns, "spawn", [["sh", "-c", "seq 1 200000"]]);
+    const first = await call(fns, "read", [id, "stdout", 1000]);
+    expect(unb64(first.data)).toMatch(/^1\n2\n/);
+    // Without the stall limit, the full read-ahead would hold the command, and wait(), for ever.
+    const result = await call(fns, "wait", [id]);
+    expect(result.exitCode).toBe(0);
+    expect(unb64(result.stdout).trim().split("\n").at(-1)).toBe("200000");
+    await expect(call(fns, "read", [id, "stdout", 0])).rejects.toThrow(/went unread for 200 ms/);
+  });
+
   // seq writes many small chunks; printf writes one larger than the read-ahead.
   for (const command of ["seq 1 5000", "printf '%04000d\\n' 5000"]) {
     it(`stops buffering a stream nobody reads, but wait() still has its output: ${command}`, async () => {
@@ -394,15 +406,20 @@ describe("remote-exec facade (the isolate-side ExecProcess)", () => {
     };
     const dir = path.join(h.base, "facade");
     await fsp.mkdir(dir);
-    const names = ["spawn", "write", "closeStdin", "read", "wait", "cancel", "kill", "abort"];
+    // codemode:exec's exports, each forwarding to the module under test. Written out rather than
+    // generated, so no code is built from values.
     await fsp.writeFile(
       path.join(dir, "ws-exec.mjs"),
-      names
-        .map(
-          (n) =>
-            `export const ${n} = (...args) => globalThis.__wsExec(${JSON.stringify(n)}, args);`,
-        )
-        .join("\n"),
+      `const call = (name) => (...args) => globalThis.__wsExec(name, args);
+export const spawn = call("spawn");
+export const write = call("write");
+export const closeStdin = call("closeStdin");
+export const read = call("read");
+export const wait = call("wait");
+export const cancel = call("cancel");
+export const kill = call("kill");
+export const abort = call("abort");
+`,
     );
     await fsp.writeFile(
       path.join(dir, "facade.mjs"),

@@ -115,7 +115,24 @@ export async function remoteExec(
   const id = config.id ?? `x${hex(crypto.getRandomValues(new Uint8Array(12)))}`;
 
   const session = await SessionClient.start(config.target, agentPath, id);
+  const signal = options.signal;
   let started = false;
+  let aborted = false;
+  let exited = false;
+  const signalCommand = (sig: number) => {
+    if (exited) return;
+    void session.request({ type: "signal", signal: sig }, "signaled").catch(() => undefined);
+  };
+  // One listener for the whole call. Before the command starts (waiting for the lock, pushing,
+  // preparing), an abort ends the session, which fails the step in progress and never starts the
+  // command; after, it SIGKILLs everything the command started and skips pull.
+  const onAbort = () => {
+    aborted = true;
+    if (started) signalCommand(9);
+    else session.abort();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   try {
     const begun = await session.request(
       {
@@ -162,19 +179,9 @@ export async function remoteExec(
       },
     );
     const { pid } = await session.request({ type: "awaitStart" }, "started");
+    // An abort that landed while the session answered has ended it already.
+    if (aborted) throw abortError();
     started = true;
-
-    let aborted = false;
-    let exited = false;
-    const signalCommand = (signal: number) => {
-      if (exited) return;
-      void session.request({ type: "signal", signal }, "signaled").catch(() => undefined);
-    };
-    const onAbort = () => {
-      aborted = true;
-      signalCommand(9);
-    };
-    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     let resolvePulled!: (r: SyncReport) => void;
     let rejectPulled!: (e: unknown) => void;
@@ -195,7 +202,7 @@ export async function remoteExec(
         throw error;
       } finally {
         exited = true;
-        options.signal?.removeEventListener("abort", onAbort);
+        signal?.removeEventListener("abort", onAbort);
       }
       try {
         if (aborted || pullGlobs.length === 0) {
@@ -244,7 +251,12 @@ export async function remoteExec(
       },
     };
   } catch (error) {
-    if (!started) session.abort();
+    if (!started) {
+      session.abort();
+      signal?.removeEventListener("abort", onAbort);
+      // Whatever the step in progress failed with, the reason is the abort.
+      if (aborted) throw abortError();
+    }
     if (error instanceof RemoteExecError && error.code === "spawn") {
       // Match the platform: a command that can't start rejects exec().
       throw new RemoteExecError("spawn", `exec: ${error.message}`, error.errno);
