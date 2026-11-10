@@ -315,6 +315,18 @@ describe("codemode object members", () => {
     });
   });
 
+  it("stops waiting on a promise when the run ends, rather than at the call's deadline", async () => {
+    // The default deadline: 30 seconds.
+    const { bridge } = setup();
+    const proc = await spawn(bridge);
+    const waiting = bridge.call(proc.at("@await:exitCode"), []);
+    await sleep(20);
+    const started = Date.now();
+    await bridge.cancelAndDrain();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result(await waiting)).toEqual({ done: false });
+  });
+
   it("rejects a promise as its settle function does", async () => {
     const { bridge, procs } = setup();
     const proc = await spawn(bridge);

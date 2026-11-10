@@ -138,18 +138,28 @@ function answerBy(deadline: number, maxCallDurationMs: number): number {
   return deadline - Math.min(1000, Math.max(1, Math.floor(maxCallDurationMs / 10)));
 }
 
-// Waits for `promise` until `by`, then gives up waiting, leaving it to settle.
-async function until<T>(promise: Promise<T>, by: number): Promise<{ value: T } | undefined> {
+// Waits for `promise` until `by`, or until the call is aborted, as it is when the run ends, then
+// gives up waiting, leaving it to settle.
+async function until<T>(
+  promise: Promise<T>,
+  by: number,
+  signal?: AbortSignal,
+): Promise<{ value: T } | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       promise.then((value) => ({ value })),
       new Promise<undefined>((resolve) => {
         timer = setTimeout(() => resolve(undefined), Math.max(0, by - Date.now()));
+        onAbort = () => resolve(undefined);
+        if (signal?.aborted) resolve(undefined);
+        else signal?.addEventListener("abort", onAbort, { once: true });
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -456,7 +466,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
           });
         }
         if (name === "net.fetch") return this.#fetchFor(args[0], abort.signal);
-        if (name === "stream.push") return this.#push(args, deadline);
+        if (name === "stream.push") return this.#push(args, deadline, abort.signal);
         if (name === "signal.abort") return this.#abortSignal(args);
         const operation = name.startsWith("fs.") ? name.slice(3) : name;
         switch (operation) {
@@ -842,11 +852,11 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
         return this.#encodeObjects(
           specifier,
           runtime,
-          await this.#awaitMember(key, member, open, by),
+          await this.#awaitMember(key, member, open, by, context.signal),
           refBase,
         );
       case "read":
-        return plain(await this.#readMember(key, member, open, by));
+        return plain(await this.#readMember(key, member, open, by, context.signal));
       case "cancel": {
         // A stream code cancels before reading still has to reach the host: its source may be
         // holding something back until it's read or cancelled, as a process's pipe holds its exit.
@@ -867,7 +877,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       case "write":
       case "close":
       case "abort":
-        return plain(await this.#writeMember(key, member, open, op, args[0], by));
+        return plain(await this.#writeMember(key, member, open, op, args[0], by, context.signal));
     }
   }
 
@@ -876,6 +886,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     member: CodemodeMember,
     open: () => WorkspaceModuleCallContext,
     by: number,
+    signal: AbortSignal,
   ): Promise<{ done: false } | { done: true; value: unknown }> {
     let state = this.#members.get(key);
     if (state?.kind !== "promise") {
@@ -889,7 +900,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       state = { kind: "promise", settled };
       this.#members.set(key, state);
     }
-    const outcome = await until(state.settled, by);
+    const outcome = await until(state.settled, by, signal);
     if (outcome === undefined) return { done: false };
     if ("error" in outcome.value) throw asError(outcome.value.error);
     return { done: true, value: outcome.value.value ?? null };
@@ -905,6 +916,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     member: CodemodeMember,
     open: () => WorkspaceModuleCallContext,
     by: number,
+    signal: AbortSignal,
   ): Promise<{ chunk: Uint8Array } | { done: true } | { again: true }> {
     let state = this.#members.get(key);
     if (state?.kind !== "readable") {
@@ -933,7 +945,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     state.pending ??= state.reader.read();
     let outcome: { value: ReadableStreamReadResult<Uint8Array> } | undefined;
     try {
-      outcome = await until(state.pending, by);
+      outcome = await until(state.pending, by, signal);
     } catch (error) {
       state.pending = undefined;
       state.done = true;
@@ -955,6 +967,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     op: "write" | "close" | "abort",
     arg: unknown,
     by: number,
+    signal: AbortSignal,
   ): Promise<{ ok: true } | { again: true }> {
     let state = this.#members.get(key);
     if (state?.kind !== "writable") {
@@ -973,12 +986,14 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     if (writable.failed !== undefined) throw asError(writable.failed);
     if (op === "close") {
       writable.closing ??= writable.writer.close();
-      return (await until(writable.closing, by)) === undefined ? { again: true } : { ok: true };
+      return (await until(writable.closing, by, signal)) === undefined
+        ? { again: true }
+        : { ok: true };
     }
     if (!(arg instanceof Uint8Array)) throw new TypeError("A stream takes bytes.");
     // Accept the chunk once the host stream has room, so code feels its backpressure. The write
     // itself isn't waited for: its failure shows on the next write or the close.
-    if ((await until(writable.writer.ready, by)) === undefined) return { again: true };
+    if ((await until(writable.writer.ready, by, signal)) === undefined) return { again: true };
     writable.writer.write(arg).catch((error: unknown) => {
       writable.failed ??= error;
     });
@@ -1080,6 +1095,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
   async #push(
     args: unknown[],
     deadline: number,
+    signal: AbortSignal,
   ): Promise<{ ok: true } | { again: true } | { closed: true }> {
     const [id, chunk, failure] = args;
     if (typeof id !== "string") throw new TypeError("stream.push takes a stream id.");
@@ -1101,7 +1117,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       const room = new Promise<void>((resolve) => {
         entry.room = resolve;
       });
-      if ((await until(room, answerBy(deadline, this.#maxCallDurationMs))) === undefined) {
+      if ((await until(room, answerBy(deadline, this.#maxCallDurationMs), signal)) === undefined) {
         return { again: true };
       }
       if (entry.closed) return { closed: true };
