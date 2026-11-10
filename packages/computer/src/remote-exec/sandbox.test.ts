@@ -729,6 +729,20 @@ describe("ContainerExec egress isolation", () => {
     expect(log).not.toContain("exec b");
   });
 
+  it("refuses a command with no egress on a running container whose route it doesn't know", async () => {
+    const { container, log } = routed();
+    container.running = true; // running before this object started: a restart
+    const target = egressing(container);
+    await expect(target.exec(["a"])).rejects.toThrow(/may still be routed through an earlier/);
+    expect(log).not.toContain("exec a");
+    // An egress of its own replaces whatever the route was.
+    await target.exec(["b"], undefined, { name: "alice" });
+    expect(intercepts(log)).toEqual(["intercept http outbound for alice"]);
+    // A sandbox that never routes has no route to be unsure of.
+    const { container: plain } = fakeContainer(true);
+    await expect(sandbox(plain).exec(["c"])).resolves.toBeInstanceOf(ProcessHandle);
+  });
+
   it("refuses a command with no egress on a container routed for one", async () => {
     const { container } = routed();
     const target = egressing(container);
@@ -765,6 +779,13 @@ describe("ContainerExec egress isolation", () => {
       plainEgressKey({ a: [true, null, "x"], b: 1 }),
     );
     expect(plainEgressKey(undefined)).toBe("null");
+    // An own "__proto__" key is a key like any other.
+    const sneaky = JSON.parse('{"__proto__": {"token": "alice"}}') as unknown;
+    expect(plainEgressKey(sneaky)).toBe('{"__proto__":{"token":"alice"}}');
+    expect(plainEgressKey(sneaky)).not.toBe(
+      plainEgressKey(JSON.parse('{"__proto__": {"token": "bob"}}')),
+    );
+    expect(plainEgressKey(sneaky)).not.toBe(plainEgressKey({}));
     expect(plainEgressKey({ a: Number.NaN })).toBeUndefined();
     expect(plainEgressKey({ a: new Date(0) })).toBeUndefined();
     expect(plainEgressKey({ f: () => 1 })).toBeUndefined();

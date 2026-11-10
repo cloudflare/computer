@@ -156,7 +156,14 @@ export function plainEgressKey(egress: unknown): string | undefined {
       for (const key of Object.keys(value).sort()) {
         const item = plain((value as Record<string, unknown>)[key]);
         if (item === NOT_PLAIN) return NOT_PLAIN;
-        out[key] = item;
+        // Defined, not assigned: assigning "__proto__" would set the prototype and drop the key,
+        // so two different egress values could share a key, and a route.
+        Object.defineProperty(out, key, {
+          value: item,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       }
       return out;
     }
@@ -314,6 +321,13 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
         if (this.#route?.kind === "egress")
           throw new Error(
             "this container's network is routed through another caller's egress, and this command has none: pass the egress with every command",
+          );
+        // The Durable Object restarted while the container ran, so how it's routed isn't known.
+        // It may still send requests through an earlier caller's egress, which only a command
+        // with an egress of its own can replace; intercepts can't be taken back.
+        if (this.#route === undefined && this.#options.outbound !== undefined)
+          throw new Error(
+            "this container was running before this Durable Object started, so it may still be routed through an earlier caller's egress: pass an egress with this command, or destroy the container",
           );
         this.#route = wanted;
         this.#users += 1;
@@ -546,7 +560,10 @@ export abstract class ExecSandbox<E = unknown, Egress = undefined>
       inactivityTimeoutMs: () => this.inactivityTimeoutMs(),
       onIdle: () => this.onIdle(),
       onStopped: (error) => this.onStopped(error),
-      outbound: (egress) => this.outbound(egress),
+      // Only a sandbox that overrides outbound() routes, and so has a route to be unsure of.
+      ...(this.outbound === ExecSandbox.prototype.outbound
+        ? {}
+        : { outbound: (egress: Egress | undefined) => this.outbound(egress) }),
       egressKey: (egress) => this.egressKey(egress),
       // Subclass methods are on the prototype, so this sees one defined there.
       snapshot: this.#snapshotHook(),
