@@ -584,14 +584,23 @@ const stub = ws.stub();  // crosses the Workers-RPC boundary
 
 A command can change backend files and then have its post-command pull
 fail; the result exposes `sync: { status: "pending", ... }`. Nothing
-further is required to recover it. The sync operation and its watermark
-hold the progress durably, so the next `pull()` resumes from where the
-failed one stopped and drains the rest of the fixed target.
+further is required to recover it: the next `pull()` that runs to
+completion has pulled every command that reported pending before it
+started. The fetch cursor is durable, so it resumes where the failed
+pull stopped.
 
-A deferred exec fixes that target when the command finishes, which pins
-the command's changes rather than capturing a newer target that could
-have raced ahead. Attempt counts, backoff, and exhaustion are not part
-of the API: a caller that wants to stop trying stops iterating.
+A deferred exec fixes a pull target when the command finishes. If a
+pull is already pending, the command joins it, and `pull()` keeps going
+past that older target until the command's changes are in.
+
+A pending sync remembers the container runtime that ran the command. If
+that container was replaced before the sync finished, its changes are
+gone with it, and the next `pull()` rejects with `ESYNC_LOST` instead of
+reporting a clean sync from the empty replacement. The `pull()` after
+that synchronizes the live container.
+
+Attempt counts, backoff, and exhaustion are not part of the API: a
+caller that wants to stop trying stops iterating.
 
 ### Observability
 
