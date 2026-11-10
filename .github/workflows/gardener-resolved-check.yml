@@ -2,7 +2,7 @@
 #
 # Source: .gardener/tasks/resolved-check/TASK.md
 # Task: resolved-check
-# Bundle: sha256:fcc07756d36ff65de621803ea65b556e9ae2d9e212d28bec73233e135e1f153a
+# Bundle: sha256:4a01555786dfe9fc6460879608b0f062af3ed3ed61829798109fe23bb2841038
 # Regenerate: gardener generate
 # Do not edit this workflow directly.
 name: "Gardener · Resolved check"
@@ -40,5 +40,5 @@ jobs:
       task-id: "resolved-check"
       task-name: "Resolved check"
       task-source: ".gardener/tasks/resolved-check/TASK.md"
-      task-bundle-hash: fcc07756d36ff65de621803ea65b556e9ae2d9e212d28bec73233e135e1f153a
+      task-bundle-hash: 4a01555786dfe9fc6460879608b0f062af3ed3ed61829798109fe23bb2841038
       plan-timeout-minutes: 70
