@@ -1703,6 +1703,62 @@ describe("interrupts", () => {
     expect(disposals).toEqual(["dispose build/main paused", "dispose build/main completed"]);
   });
 
+  it("replays a stream read before a wait, and streams the rest live after it", async () => {
+    await start(
+      "members-wait",
+      `
+        import { approve } from "codemode:test-host";
+        import { spawn, upload, received } from "codemode:test-streams";
+        export default async function () {
+          const proc = await spawn("durable");
+          const decoder = new TextDecoder();
+          let out = "";
+          for await (const chunk of proc.stdout) out += decoder.decode(chunk);
+          await approve("deploy");
+          const writer = proc.stdin.getWriter();
+          await writer.write(new TextEncoder().encode("y".repeat(1500)));
+          await writer.write("tail");
+          await writer.close();
+          return {
+            pid: proc.pid,
+            name: proc.name,
+            out: [out.length, out.slice(0, 7), out.slice(-4)],
+            exit: await proc.exitCode,
+            uploaded: await upload(new Blob(["up", "load"]).stream()),
+            received: await received(),
+          };
+        }
+      `,
+    );
+    const call = await waitingCall("members-wait");
+    await respond("members-wait", call.callId, { ok: true });
+    expect(await result("members-wait")).toMatchObject({
+      status: "completed",
+      value: {
+        pid: 7,
+        name: "durable",
+        out: [2011, "line 1\n", "end\n"],
+        exit: 42,
+        uploaded: "upload",
+        received: 1504,
+      },
+    });
+    // The second scope replayed the spawn and every stdout chunk from the journal; what came
+    // after the wait ran once, live.
+    expect(await calls()).toMatchObject({
+      "spawn durable": 1,
+      "open stdout durable": 1,
+      "open stdin durable": 1,
+      "close stdin durable": 1,
+      "settle durable": 1,
+      upload: 1,
+    });
+    const disposals = (await sessionEvents("members-wait")).filter((event) =>
+      event.startsWith("dispose"),
+    );
+    expect(disposals).toEqual(["dispose durable paused", "dispose durable completed"]);
+  });
+
   it("rebuilds objects from their state after a restart", async () => {
     await start("objects-restart", objects);
     await waitingCall("objects-restart");
@@ -1931,6 +1987,96 @@ describe("codemode module objects", () => {
     );
     return (await response.json()) as string[];
   }
+
+  it("gives objects fields, promises and streams in both directions", async () => {
+    expect(
+      await run(
+        "members-live",
+        `
+          import { spawn, upload, received } from "codemode:test-streams";
+          export default async function () {
+            const proc = await spawn("live");
+            const decoder = new TextDecoder();
+            const chunks = [];
+            for await (const chunk of proc.stdout) chunks.push(decoder.decode(chunk));
+            const writer = proc.stdin.getWriter();
+            // Larger than one call carries, so it goes in pieces.
+            await writer.write(new TextEncoder().encode("y".repeat(1500)));
+            await writer.write("tail");
+            await writer.close();
+            return {
+              fields: [proc.pid, proc.name],
+              chunks: chunks.length,
+              out: chunks.join("").length,
+              exit: await proc.exitCode,
+              again: await proc.exitCode,
+              same: proc.stdout === proc.stdout,
+              uploaded: await upload(new Blob(["up", "load"]).stream()),
+              received: await received(),
+            };
+          }
+        `,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      value: {
+        fields: [7, "live"],
+        // The 2,000-byte chunk arrives in pieces of what a 1,024-byte call carries.
+        chunks: 5,
+        out: 2011,
+        exit: 42,
+        again: 42,
+        same: true,
+        uploaded: "upload",
+        received: 1504,
+      },
+    });
+  });
+
+  it("passes an AbortSignal to a codemode module, aborted now or later", async () => {
+    expect(
+      await run(
+        "members-signal",
+        `
+          import { whenAborted } from "codemode:test-streams";
+          export default async function () {
+            const later = new AbortController();
+            const waiting = whenAborted({ signal: later.signal });
+            setTimeout(() => later.abort(new Error("stop now")), 20);
+            return { later: await waiting, already: await whenAborted({ signal: AbortSignal.abort() }) };
+          }
+        `,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      value: { later: "AbortError: stop now", already: expect.stringMatching(/^AbortError: /) },
+    });
+  });
+
+  it("refuses a disposed object's streams and promises", async () => {
+    expect(
+      await run(
+        "members-disposed",
+        `
+          import { spawn } from "codemode:test-streams";
+          export default async function () {
+            const proc = await spawn("gone");
+            await proc[Symbol.asyncDispose]();
+            const failures = [];
+            try { await proc.exitCode; } catch (error) { failures.push(error.message); }
+            try { await proc.stdout.getReader().read(); } catch (error) { failures.push(error.message); }
+            return failures;
+          }
+        `,
+      ),
+    ).toMatchObject({
+      status: "completed",
+      value: [
+        "This object was disposed, so its methods can't be called.",
+        "This object was disposed, so its methods can't be called.",
+      ],
+    });
+  });
 
   it("returns objects whose methods return more objects", async () => {
     expect(

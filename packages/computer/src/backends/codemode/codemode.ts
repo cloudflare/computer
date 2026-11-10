@@ -188,6 +188,13 @@ export interface CodemodeBackendOptions {
   maxCapabilityCalls?: number;
   maxCapabilityRequestBytes?: number;
   maxCapabilityResponseBytes?: number;
+  /**
+   * The most bytes a replayable run may journal through codemode module streams, in and out
+   * together. Defaults to 64 MiB. Stream chunks don't count against the capability call and byte
+   * budgets, which a command's output would spend on its own; a run that doesn't replay journals
+   * nothing, so its streams are bounded only per call.
+   */
+  maxStreamBytes?: number;
   /** Maximum entries returned by one isolated directory read. Defaults to 1024. */
   maxDirectoryEntries?: number;
   /** Maximum live replay subscribers per execution. Defaults to 8. */
@@ -224,6 +231,7 @@ type ResolvedCodemodeBackendOptions = Required<
     | "maxCapabilityCalls"
     | "maxCapabilityRequestBytes"
     | "maxCapabilityResponseBytes"
+    | "maxStreamBytes"
     | "maxDirectoryEntries"
     | "maxExecutionSubscribers"
     | "retentionMs"
@@ -358,6 +366,7 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
       options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
       "maxCapabilityResponseBytes",
     );
+    assertPositiveFinite(options.maxStreamBytes ?? 64 * 1024 * 1024, "maxStreamBytes");
     assertPositiveInteger(options.maxDirectoryEntries ?? 1024, "maxDirectoryEntries");
     assertPositiveInteger(options.maxExecutionSubscribers ?? 8, "maxExecutionSubscribers");
     assertPositiveFinite(options.retentionMs ?? 60 * 60_000, "retentionMs");
@@ -403,6 +412,7 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
       maxCapabilityCalls: options.maxCapabilityCalls ?? 256,
       maxCapabilityRequestBytes: options.maxCapabilityRequestBytes ?? 8 * 1024 * 1024,
       maxCapabilityResponseBytes: options.maxCapabilityResponseBytes ?? 8 * 1024 * 1024,
+      maxStreamBytes: options.maxStreamBytes ?? 64 * 1024 * 1024,
       maxDirectoryEntries: options.maxDirectoryEntries ?? 1024,
       maxExecutionSubscribers: options.maxExecutionSubscribers ?? 8,
       retentionMs: options.retentionMs ?? 60 * 60_000,
@@ -1180,6 +1190,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
         maxCalls: this.#options.maxCapabilityCalls,
         maxTotalRequestBytes: this.#options.maxCapabilityRequestBytes,
         maxTotalResponseBytes: this.#options.maxCapabilityResponseBytes,
+        maxStreamBytes: this.#options.maxStreamBytes,
         maxResultBytes: this.#options.maxResultBytes,
         onAttachOutput: (readable) => this.#pumpFrames(record, readable),
         execution,

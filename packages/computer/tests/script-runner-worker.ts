@@ -11,9 +11,13 @@ import type {
 } from "../src/index";
 import {
   createCodemodeModule,
+  field,
+  promised,
+  readable,
   unsafeToRepeat,
   type WorkspaceModuleScopeEnd,
   Workspace,
+  writable,
 } from "../src/index";
 import { createArtifactsModule } from "../src/modules/artifacts";
 import { type BrowserModuleSession, createBrowserModule } from "../src/modules/browser";
@@ -225,6 +229,74 @@ const testJobs = jobsModule.module({
   },
 });
 
+// A process-like object for members that aren't methods: `pid` and `name` fields, an
+// `exitCode` promise that settles after a moment, a `stdout` of three chunks, one larger than a
+// call carries, and a `stdin` whose writes go in `streamInputs` by run. Each open and settle is
+// counted, so a test can tell what a replay didn't do again.
+const streamInputs = new Map<string, string[]>();
+const streamsModule = createCodemodeModule();
+const StreamProc = streamsModule.define("Proc", ({ id, run }: { id: string; run: string }) => ({
+  pid: field(7),
+  name: field(id),
+  exitCode: promised(async () => {
+    countCall(`settle ${id}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return 42;
+  }),
+  stdout: readable(() => {
+    countCall(`open stdout ${id}`);
+    const encoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("line 1\n"));
+        controller.enqueue(encoder.encode("x".repeat(2000)));
+        controller.enqueue(encoder.encode("end\n"));
+        controller.close();
+      },
+    });
+  }),
+  stdin: writable(() => {
+    countCall(`open stdin ${id}`);
+    const decoder = new TextDecoder();
+    return new WritableStream<Uint8Array>({
+      write(chunk) {
+        const inputs = streamInputs.get(run) ?? [];
+        inputs.push(decoder.decode(chunk));
+        streamInputs.set(run, inputs);
+      },
+      close() {
+        countCall(`close stdin ${id}`);
+      },
+    });
+  }),
+  [Symbol.asyncDispose]: async (end: WorkspaceModuleScopeEnd) => {
+    sessionEvents.push({ id: run, event: `dispose ${id} ${end.reason}` });
+  },
+}));
+const testStreams = streamsModule.module({
+  spawn: async ([name], ctx) => {
+    countCall(`spawn ${String(name)}`);
+    return StreamProc({ id: String(name), run: ctx.execution.id });
+  },
+  // Reads a stream argument to its end, as text.
+  upload: async ([stream]) => {
+    countCall("upload");
+    return await new Response(stream as unknown as ReadableStream).text();
+  },
+  // Settles once the signal in its options aborts, with the reason it got.
+  whenAborted: async ([options]) => {
+    const { signal } = options as unknown as { signal: AbortSignal };
+    if (!(signal instanceof AbortSignal)) return "not a signal";
+    if (!signal.aborted) {
+      await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+    }
+    const reason = signal.reason as Error;
+    return `${reason.name}: ${reason.message}`;
+  },
+  // How many characters the run's stdin writes carried. The test backend's calls carry 1 KiB.
+  received: async (_args, ctx) => (streamInputs.get(ctx.execution.id) ?? []).join("").length,
+});
+
 // The Worker Loader resolves imports differently under the legacy and
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "codemode-new-registry";
@@ -256,6 +328,7 @@ function codemodeBackend(
       "codemode:test-session": testSession,
       "codemode:browser": testBrowser,
       "codemode:test-jobs": testJobs,
+      "codemode:test-streams": testStreams,
       "codemode:test-host": {
         async echo(args) {
           return { args: [...args] };
