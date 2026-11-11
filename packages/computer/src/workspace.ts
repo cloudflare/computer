@@ -24,7 +24,9 @@ import {
   type ChangeCursor,
   Database,
   type DurableObjectStorageLike,
+  failOperation,
   initializeSchema,
+  readOperation,
   SQLiteWorkspaceProvider,
   WorkspaceFilesystem,
 } from "@cloudflare/dofs";
@@ -44,6 +46,7 @@ import { buildMountRegistry, type MountValue } from "./mounts/registry";
 import type { Mount } from "./mounts/types";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe";
 import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry";
+import { PendingSyncFences } from "./pending-sync-fence";
 import {
   DEFAULT_OUTPUT_DIR,
   DEFAULT_OUTPUT_KEEP,
@@ -240,8 +243,15 @@ export class Workspace {
   // Returned handles carry their own id; the bounded LRU supports
   // direct by-id lifecycle calls without growing for the DO lifetime.
   readonly #executionRuntimes: ExecutionRuntimeTracker;
+  // Runtimes with command syncs still pending; see pending-sync-fence.ts.
+  readonly #pendingSync: PendingSyncFences;
   readonly #moduleHandles = new Map<string, WorkspaceModuleBackendHandle>();
   readonly #connectingModuleHandles = new Map<string, Promise<WorkspaceModuleBackendHandle>>();
+  // A module handle's close() must finish before the backend connects
+  // again. A codemode handle relaunches every run its rows say is
+  // running, so a handle opened while the old one is still cancelling
+  // would run those runs a second time, beside the first.
+  readonly #closingModuleHandles = new Map<string, Promise<void>>();
   #connectionGeneration = 0;
   #runtime: WorkspaceRuntime | undefined;
   #readyPromise: Promise<void> | undefined;
@@ -268,6 +278,7 @@ export class Workspace {
       1_024,
       new SqlExecutionRuntimeStore(this.#db),
     );
+    this.#pendingSync = new PendingSyncFences(this.#db);
     this.#fs = new WorkspaceFilesystem(this.#db, { now: this.#now });
     const registered = (options.backends ?? []).slice();
     this.#backends = registered.filter(
@@ -582,11 +593,13 @@ export class Workspace {
                     // from durable state, so building a new iterator
                     // costs nothing and is what makes the reconnect
                     // land on the replacement stub.
-                    const iterable =
-                      direction === "pull"
-                        ? pullBlocks(this.#db, handle.rpc.sync, { backend: resolvedId })
-                        : pushBlocks(this.#db, handle.rpc.sync, { backend: resolvedId });
-                    return iterable[Symbol.asyncIterator]().next();
+                    if (direction === "push") {
+                      const iterable = pushBlocks(this.#db, handle.rpc.sync, {
+                        backend: resolvedId,
+                      });
+                      return iterable[Symbol.asyncIterator]().next();
+                    }
+                    return this.#pullBlock(resolvedId, handle);
                   });
                 },
                 (spanRef, outcome) => {
@@ -659,6 +672,66 @@ export class Workspace {
     };
   }
 
+  // One pull() block, checked against the pending command syncs.
+  //
+  // A pending sync from a runtime that is gone can never finish: its
+  // files went with it. Say so, once, rather than complete against the
+  // replacement's empty store. A pending sync from this runtime finishes
+  // only when an operation captured after it completes, so a block that
+  // completes an older operation reports itself incomplete and the next
+  // block captures a target that covers it.
+  async #pullBlock(backend: string, handle: BackendHandle): Promise<IteratorResult<SyncProgress>> {
+    const runtimeId = handle.runtimeId;
+    const blocks = () =>
+      pullBlocks(this.#db, handle.rpc.sync, { backend })[Symbol.asyncIterator]().next();
+    if (runtimeId === undefined) return blocks();
+
+    const stale = this.#pendingSync.stale(backend, runtimeId);
+    if (stale.length > 0) {
+      const operation = readOperation(this.#db, backend, "pull");
+      const message = `Sync of commands that ran on container runtime ${stale.join(", ")} was lost: the runtime was replaced before their files were pulled.`;
+      if (operation !== undefined && operation.status !== "failed" && operation.status !== "lost") {
+        failOperation(this.#db, backend, "pull", operation.generation, "lost", message);
+      }
+      this.#pendingSync.clear(backend, stale);
+      this.#pendingSync.dropStamp(backend);
+      // Its own code, not EEXEC_LOST: no execution id is gone, the
+      // files of these commands' pending syncs are.
+      throw Object.assign(new Error(message), {
+        name: "WorkspaceSyncLostError",
+        code: "ESYNC_LOST",
+        runtimeIds: stale,
+      });
+    }
+
+    // A block that finds no pending operation captures a target, after
+    // every fence written so far.
+    const captures = readOperation(this.#db, backend, "pull")?.status !== "pending";
+    const seq = this.#pendingSync.current();
+    const result = await blocks();
+    if (result.done) return result;
+    const progress = result.value;
+    const stamp =
+      this.#pendingSync.stampOf(backend, progress.generation) ?? (captures ? seq : undefined);
+    if (!progress.complete) {
+      if (captures) this.#pendingSync.stamp(backend, progress.generation, seq);
+      return result;
+    }
+    if (stamp !== undefined) this.#pendingSync.clearCovered(backend, runtimeId, stamp);
+    this.#pendingSync.dropStamp(backend);
+    if (this.#pendingSync.has(backend, runtimeId)) {
+      return { done: false, value: { ...progress, complete: false } };
+    }
+    return result;
+  }
+
+  // Note a command's pending sync against the runtime that ran it.
+  #recordPendingSync(backend: string | undefined, runtimeId: string | undefined): number {
+    if (backend === undefined || runtimeId === undefined) return this.#pendingSync.current();
+    if (this.#moduleBackendsById.has(backend)) return this.#pendingSync.current();
+    return this.#pendingSync.record(backend, runtimeId);
+  }
+
   #pullResolved(resolvedId: string | undefined, expectedRuntimeId?: string): Promise<ApplyResult> {
     return withSpan(
       this.#observer,
@@ -673,7 +746,15 @@ export class Workspace {
             assertExecutionRuntime("post-command sync", expectedRuntimeId, handle.runtimeId);
           }
           if (handle.sync === "none") return { applied: 0, skipped: [] };
-          return pullOnce(this.#db, handle.rpc.sync, resolvedId);
+          // pullOnce pulls to the remote's head. Every fence on this
+          // runtime was written after its command finished, in an earlier
+          // FIFO task, so a complete pull covers it.
+          const seq = this.#pendingSync.current();
+          const result = await pullOnce(this.#db, handle.rpc.sync, resolvedId);
+          if (handle.runtimeId !== undefined) {
+            this.#pendingSync.clearCovered(resolvedId, handle.runtimeId, seq);
+          }
+          return result;
         });
       },
       (span, outcome) => {
@@ -697,6 +778,9 @@ export class Workspace {
   ): Promise<{ backend?: string; runtimeId?: string; targetCursor?: ChangeCursor }> {
     return this.#serialize(id, async (resolvedId) => {
       if (resolvedId === undefined || this.#moduleBackendsById.has(resolvedId)) return {};
+      // Recorded first, so the sync stays remembered whether or not the
+      // target capture below succeeds.
+      const seq = this.#recordPendingSync(resolvedId, runtimeId);
       const handle = await this.#handleFor(resolvedId);
       if (runtimeId !== undefined) {
         assertExecutionRuntime("post-command sync", runtimeId, handle.runtimeId);
@@ -707,7 +791,14 @@ export class Workspace {
       // changes are pinned even though nothing drains them yet. A
       // later pull() joins this pending operation rather than
       // capturing a newer target that could race ahead.
+      const joins = readOperation(this.#db, resolvedId, "pull")?.status === "pending";
       const target = await captureSyncTarget(this.#db, handle.rpc.sync, resolvedId);
+      // A joined operation keeps its older stamp: its target may predate
+      // this command's writes, and its fence makes pull() go on past it.
+      const operation = readOperation(this.#db, resolvedId, "pull");
+      if (!joins && operation?.status === "pending") {
+        this.#pendingSync.stamp(resolvedId, operation.generation, seq);
+      }
       return {
         backend: resolvedId,
         ...(runtimeId === undefined ? {} : { runtimeId }),
@@ -853,26 +944,43 @@ export class Workspace {
     // and rebuilds against fresh handles.
     this.#connectionGeneration += 1;
     const handles = [...this.#handles.values()];
-    const moduleHandles = [...this.#moduleHandles.values()];
+    const moduleHandles = [...this.#moduleHandles];
     this.#handles.clear();
     this.#shells.clear();
     this.#commandHandles.clear();
     this.#connecting.clear();
     const disconnecting = [...this.#disconnecting.values()];
+    // A module connect still in flight sees the generation change and
+    // closes its handle before it settles, so it counts as closing too.
+    const moduleConnecting = [...this.#connectingModuleHandles].map(
+      ([id, connecting]) => [id, connecting.then(noop, noop)] as const,
+    );
     this.#moduleHandles.clear();
     this.#connectingModuleHandles.clear();
     this.#readyPromise = undefined;
-    await Promise.all([
-      ...disconnecting,
-      ...[...handles, ...moduleHandles].map(async (h) => {
-        try {
-          await h.close?.();
-        } catch {
-          // close() is best-effort; a transport that's already
-          // gone shouldn't take the workspace down with it.
-        }
-      }),
-    ]);
+    const closeQuietly = async (h: { close?: () => Promise<void> }) => {
+      try {
+        await h.close?.();
+      } catch {
+        // close() is best-effort; a transport that's already
+        // gone shouldn't take the workspace down with it.
+      }
+    };
+    const trackClosing = (id: string, closed: Promise<void>) => {
+      const previous = this.#closingModuleHandles.get(id);
+      const closing = Promise.all([previous, closed])
+        .then(noop)
+        .finally(() => {
+          if (this.#closingModuleHandles.get(id) === closing) this.#closingModuleHandles.delete(id);
+        });
+      this.#closingModuleHandles.set(id, closing);
+      return closing;
+    };
+    // close() doesn't wait for a connect that hasn't resolved, but the
+    // next connect for that backend does.
+    for (const [id, settled] of moduleConnecting) void trackClosing(id, settled);
+    const moduleClosing = moduleHandles.map(([id, h]) => trackClosing(id, closeQuietly(h)));
+    await Promise.all([...disconnecting, ...handles.map(closeQuietly), ...moduleClosing]);
   }
 
   // Unified backend handle used by the runtime. Module backends
@@ -954,6 +1062,8 @@ export class Workspace {
     if (cached) return Promise.resolve(cached);
     const inflight = this.#connectingModuleHandles.get(id);
     if (inflight) return inflight;
+    const closing = this.#closingModuleHandles.get(id);
+    if (closing) return closing.then(() => this.#moduleHandleFor(id));
     const backend = this.#moduleBackendsById.get(id);
     if (!backend) {
       return Promise.reject(
@@ -1141,11 +1251,8 @@ export class Workspace {
       {
         push: () => this.#pushForExecDefault(id),
         pull: (runtimeId) => this.#pullForExec(id, runtimeId),
-        // A pull that failed in-band already left its operation
-        // pending, and its cursor is durable, so the next pull()
-        // resumes it with no bookkeeping here. Dialing a fresh handle
-        // just to record that would turn a failed command into a
-        // second connection attempt.
+        // A failed in-band pull records its pending sync inside its own
+        // FIFO task (#pullForExec), without dialing a fresh handle.
         onPullPending: undefined,
         onPostExecPending: (runtimeId) => this.#capturePendingSync(id, runtimeId),
       },
@@ -1158,7 +1265,17 @@ export class Workspace {
   }
 
   #pullForExec(id: string, runtimeId?: string): Promise<ApplyResult> {
-    return this.#serialize(id, (resolvedId) => this.#pullResolved(resolvedId, runtimeId));
+    return this.#serialize(id, async (resolvedId) => {
+      try {
+        return await this.#pullResolved(resolvedId, runtimeId);
+      } catch (error) {
+        // The command's result will say its sync is pending. Remember
+        // the runtime that holds its files before anything else can
+        // pull, so the next pull() either finishes it or reports it lost.
+        this.#recordPendingSync(resolvedId, runtimeId);
+        throw error;
+      }
+    });
   }
 
   // The exec bracket's pre-command push. Distinct from the public
@@ -1273,6 +1390,8 @@ export class Workspace {
 // reports sync: "none") still has to produce a terminating iterable.
 // One complete, empty block lets a caller's `for await` finish rather
 // than spin waiting for progress that will never come.
+function noop(): void {}
+
 function emptySyncProgress(backend: string, direction: "pull" | "push"): SyncProgress {
   const cursor = { rev: 0, path: null };
   return {

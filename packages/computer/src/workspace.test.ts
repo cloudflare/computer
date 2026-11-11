@@ -658,7 +658,7 @@ describe("Workspace backend selection", () => {
     expect(closed).toHaveBeenCalledOnce();
   });
 
-  it("does not let a stale module connection clear a newer in-flight connection", async () => {
+  it("connects a module backend again only after a stale connection settles", async () => {
     const resolvers: Array<
       (handle: Awaited<ReturnType<WorkspaceModuleBackend["connect"]>>) => void
     > = [];
@@ -683,12 +683,16 @@ describe("Workspace backend selection", () => {
     const stale = ws.ready("module");
     await Promise.resolve();
     await ws.close();
+    // The stale connection may still hold a live handle, such as a
+    // codemode handle that has relaunched runs, so the next one waits.
     const current = ws.ready("module");
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(resolvers).toHaveLength(1);
     resolvers[0]?.(handle());
     await expect(stale).rejects.toThrow(/closed while backend/);
+    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+    // The stale connection settling doesn't clear the newer one in flight.
     const shared = ws.ready("module");
-    expect(resolvers).toHaveLength(2);
     resolvers[1]?.(handle());
     await Promise.all([current, shared]);
     expect(resolvers).toHaveLength(2);
