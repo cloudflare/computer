@@ -69,6 +69,7 @@ async function read(id: string, path: string): Promise<string> {
 async function exec(
   id: string,
   command: string,
+  backend?: string,
 ): Promise<{
   exitCode: number;
   stdout: string;
@@ -78,6 +79,7 @@ async function exec(
   const url = new URL("http://test/exec");
   url.searchParams.set("id", id);
   url.searchParams.set("command", command);
+  if (backend !== undefined) url.searchParams.set("backend", backend);
   const res = await SELF.fetch(url);
   if (!res.ok) throw new Error(`exec failed: ${res.status} ${await res.text()}`);
   return res.json();
@@ -163,6 +165,21 @@ describe("WorkerShellBackend end-to-end", () => {
     expect(result.stdout).toMatch(/done/);
     expect(result.stdout).toMatch(/curl: no URL specified/);
     expect(result.stdout).not.toMatch(/command not found/);
+  });
+
+  it("fetches with curl through the Dynamic Worker's outbound", async () => {
+    // The networked shell sends its requests to EchoGateway, which answers with what it got, so
+    // this covers curl's whole path: just-bash's fetch, then the Dynamic Worker's outbound.
+    const id = freshId();
+    const result = await exec(
+      id,
+      "curl -s -i -X POST -d hello https://api.example.test/things",
+      "worker-shell-net",
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatch(/^HTTP\/1\.1 200/);
+    expect(result.stdout.toLowerCase()).toContain("x-echo: yes");
+    expect(result.stdout).toContain("POST https://api.example.test/things hello");
   });
 
   it("isolates state between separate workspace ids", async () => {

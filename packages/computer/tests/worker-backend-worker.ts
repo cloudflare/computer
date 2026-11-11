@@ -25,6 +25,15 @@ import { Workspace } from "../src/index";
 
 export { WorkspaceServiceProxy } from "../src/proxy";
 
+/** The gateway the networked shell's requests go to: it answers with what it was sent. */
+export class EchoGateway extends WorkerEntrypoint<Env> {
+  override async fetch(request: Request): Promise<Response> {
+    return new Response(`${request.method} ${request.url} ${await request.text()}`, {
+      headers: { "x-echo": "yes" },
+    });
+  }
+}
+
 export interface Env {
   HOST: DurableObjectNamespace<HostDO>;
   LOADER: WorkerLoader;
@@ -46,6 +55,19 @@ export class HostDO extends DurableObject<Env> {
           // Opt curl in by importing its group and passing it; the
           // fetch-path curl integration test exercises the wiring.
           commands: [curlModules],
+        }),
+        // The same shell with a network: its requests go to EchoGateway, so curl's whole path,
+        // through just-bash's fetch and the Dynamic Worker's outbound, runs without real egress.
+        new WorkerShellBackend({
+          id: "worker-shell-net",
+          loader: env.LOADER,
+          workspace: { binding: "HOST", id: ctx.id.toString() },
+          ctx,
+          commands: [curlModules],
+          egress: {
+            mode: "http-gateway",
+            gateway: (ctx as unknown as { exports: { EchoGateway: Fetcher } }).exports.EchoGateway,
+          },
         }),
       ],
     });
@@ -81,7 +103,10 @@ export class HostDO extends DurableObject<Env> {
     return this.#workspace.fs.readFile(path, "utf8");
   }
 
-  async exec(command: string): Promise<{
+  async exec(
+    command: string,
+    backend?: string,
+  ): Promise<{
     exitCode: number;
     stdout: string;
     stderr: string;
@@ -90,6 +115,7 @@ export class HostDO extends DurableObject<Env> {
     await this.#seed();
     const handle = await this.#workspace.runtime.exec(command, {
       encoding: "utf8",
+      ...(backend === undefined ? {} : { backend }),
     });
     const result = await handle.result();
     return {
@@ -130,7 +156,7 @@ export default class extends WorkerEntrypoint<Env> {
 
     if (url.pathname === "/exec") {
       const command = url.searchParams.get("command") ?? "true";
-      const result = await stub.exec(command);
+      const result = await stub.exec(command, url.searchParams.get("backend") ?? undefined);
       return Response.json(result);
     }
 

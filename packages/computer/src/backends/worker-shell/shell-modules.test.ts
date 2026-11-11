@@ -89,14 +89,30 @@ describe("SHELL_CORE_MODULES", () => {
     }
   });
 
-  it("excludes the real undici dependency, leaving only the stub", () => {
-    // undici is redirected to a throwing stub at bundle time, so
-    // even when curl is included it runs on the fetch path and the
-    // ~620 KB real dependency never ships. The stub marker lives in
-    // core (the secure-fetch seam), so it is present by default.
-    const marker = "undici is excluded from the Worker shell bundle";
-    const stubPresent = Object.values(SHELL_CORE_MODULES).some((mod) => mod.js.includes(marker));
-    expect(stubPresent).toBe(true);
+  it("leaves out guarded-fetch and the real undici, in core and every group", () => {
+    // curl runs on the plain fetch path, so neither guarded-fetch's DNS
+    // pinning nor the ~620 KB undici it pins through ships. Each marker is
+    // a string literal of the real library's: undici's error code, and the
+    // message guarded-fetch blocks a URL with.
+    const groups = [
+      SHELL_CORE_MODULES,
+      curlModules,
+      fileModules,
+      htmlToMarkdownModules,
+      jqModules,
+      jsExecModules,
+      pythonModules,
+      sqliteModules,
+      xanModules,
+      yqModules,
+    ];
+    for (const marker of ["UND_ERR_CONNECT_TIMEOUT", "guarded-fetch blocked URL"]) {
+      for (const group of groups) {
+        for (const [name, mod] of Object.entries(group)) {
+          expect(mod.js.includes(marker), `${marker} in ${name}`).toBe(false);
+        }
+      }
+    }
   });
 });
 
