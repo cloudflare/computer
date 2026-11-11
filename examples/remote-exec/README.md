@@ -72,7 +72,7 @@ To bake remote-exec into the image rather than have the Worker copy it in, copy 
 `binaries` from `createExecModule()` (and `remoteExec()` from `vite.config.ts`):
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-remote-exec:0.11.0 AS remote-exec
+FROM ghcr.io/cloudflare/computer-remote-exec:0.11.1 AS remote-exec
 
 FROM docker/sandbox-templates:shell
 COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec

@@ -1,5 +1,25 @@
 # @cloudflare/computer
 
+## 0.11.1
+
+### Patch Changes
+
+- [#314](https://github.com/cloudflare/computer/pull/314) A codemode run no longer starts again when the Workspace is used while `close()` is still cancelling it. See [Isolation and lifecycle](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#isolation-and-lifecycle). ([`c314667`](https://github.com/cloudflare/computer/commit/c3146675db8b0e42df0a2f4b8f345884964016c9)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#245](https://github.com/cloudflare/computer/pull/245) `createGitClient({ fetch })` sends every Git network request through a host `fetch`, so a wrapper can add credentials the model never sees. See [Host Fetch and authentication](https://github.com/cloudflare/computer/blob/main/docs/13_git_interface.md#host-fetch-and-authentication). ([`ff49ab7`](https://github.com/cloudflare/computer/commit/ff49ab713dc930a1957056f2eb7cc75871e4a683)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#318](https://github.com/cloudflare/computer/pull/318) `codemode:git` exports `fetch`, `pull` and `push`, and `GitClient.cli()` takes `headers`, so code can authenticate with an `Authorization` header instead of a token in the URL. See [`codemode:git`](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#codemodegit). ([`181a0fa`](https://github.com/cloudflare/computer/commit/181a0fa1c21086e3933924d8942a585dd190ad16)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#308](https://github.com/cloudflare/computer/pull/308) Update `just-bash` to 3.6. The Worker shell keeps running `curl` on plain `fetch`, without `guarded-fetch`. See [Worker backend](https://github.com/cloudflare/computer/blob/main/docs/12_worker_backend.md). ([`fc8da84`](https://github.com/cloudflare/computer/commit/fc8da845cfcdf68dafa3fccfa47561b67494b9c8)) - Thanks [@dependabot](https://github.com/apps/dependabot)
+
+- [#314](https://github.com/cloudflare/computer/pull/314) `pull()` rejects with `ESYNC_LOST` when a pending command sync's container was replaced, and doesn't report complete until every pending command's changes are pulled. See [Command synchronization](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#command-synchronization). ([`c314667`](https://github.com/cloudflare/computer/commit/c3146675db8b0e42df0a2f4b8f345884964016c9)) - Thanks [@mattzcarey](https://github.com/mattzcarey)
+
+- [#319](https://github.com/cloudflare/computer/pull/319) `createExecModule()` takes a `description` to replace or extend `EXEC_DESCRIPTION`. See [Remote exec](https://github.com/cloudflare/computer/blob/main/docs/20_remote_exec.md). ([`af5cd4c`](https://github.com/cloudflare/computer/commit/af5cd4c0b882c5795a68f259b86b5e86d9c81779)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#319](https://github.com/cloudflare/computer/pull/319) `codemode:exec` takes a string as `stdin`. See [Remote exec](https://github.com/cloudflare/computer/blob/main/docs/20_remote_exec.md). ([`af5cd4c`](https://github.com/cloudflare/computer/commit/af5cd4c0b882c5795a68f259b86b5e86d9c81779)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#316](https://github.com/cloudflare/computer/pull/316) Add `remoteExec()` to `@cloudflare/computer/vite`, which downloads the `remote-exec` build for a Worker to carry. See [Get remote-exec into the container](https://github.com/cloudflare/computer/blob/main/docs/20_remote_exec.md#2-get-remote-exec-into-the-container). ([`12b8a34`](https://github.com/cloudflare/computer/commit/12b8a348bffccfdcc74ace08b4e4536c07104087)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.11.0
 
 ### Minor Changes
