@@ -59,6 +59,11 @@ export interface ExecModuleOptions {
    * `pull` and `user` are refused. Pull writes through `fs`, past the backend's read-only guard.
    */
   readOnly?: boolean;
+  /**
+   * What the model reads about the module, in place of `EXEC_DESCRIPTION`. Build on it to add
+   * what's true of your containers, such as their environment or how long a command may run.
+   */
+  description?: string;
 }
 
 /** What `output()` resolves with: the platform's `ExecOutput`, plus remote exec's own reports. */
@@ -74,7 +79,8 @@ export interface RemoteExecOutput {
 /** nobody: a read-only agent's commands can read what's pushed, but not change it. */
 const READ_ONLY_USER = "65534:65534";
 
-const DESCRIPTION = [
+/** What the model reads about `codemode:exec`, unless `createExecModule()` is given a `description`. */
+export const EXEC_DESCRIPTION = [
   "Runs a command in a Linux container, copying workspace files in before and changed files back after.",
   '`const proc = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] })` returns a process like ctx.container.exec()\'s:',
   "`pid`, `stdin`, `stdout` and `stderr` streams, `exitCode`, `output()` and `kill()`.",
@@ -319,7 +325,7 @@ export function createExecModule(options: ExecModuleOptions): CodemodeModule {
     return t;
   };
 
-  const module = createCodemodeModule({ description: DESCRIPTION });
+  const module = createCodemodeModule({ description: options.description ?? EXEC_DESCRIPTION });
 
   const Process = module.define("Process", (state: ProcessState) => {
     const live = (): Running => {

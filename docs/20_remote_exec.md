@@ -205,6 +205,7 @@ new CodemodeBackend({
 | `env(context)` | Environment every command starts with, under the call's own `env`. |
 | `output` | The same value as `new Workspace({ output })`. |
 | `readOnly` | For a read-only backend: see [Read-only code](#read-only-code). |
+| `description` | What the model reads about the module, in place of `EXEC_DESCRIPTION`. Build on it to add notes about your containers: `` `${EXEC_DESCRIPTION} Commands time out after 2 minutes.` ``. |
 | `workspaceRoot`, `containerRoot` | The directories that map to each other. Both default to `/workspace`. |
 | `limits` | `maxFileBytes`, `maxSyncBytes` and `maxSyncFiles`. The defaults are 32 MiB, 512 MiB and 50,000. Files over a limit are skipped and reported. |
 

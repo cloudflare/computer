@@ -18,7 +18,12 @@ import {
 import type { WorkspaceModuleCallContext, WorkspaceRuntimeValue } from "../runtime/types";
 import { bundledRemoteExec } from "./bundle";
 import type { RemoteExecBinaries } from "./install";
-import { createExecModule, type ExecModuleOptions, type RemoteExecOutput } from "./module";
+import {
+  createExecModule,
+  EXEC_DESCRIPTION,
+  type ExecModuleOptions,
+  type RemoteExecOutput,
+} from "./module";
 import { BIN, harness, type Harness, write } from "./testing/harness";
 
 let h: Harness;
@@ -409,10 +414,19 @@ describe("codemode:exec", () => {
 
   it("describes itself for the model", () => {
     const description = createExecModule(moduleOptions()).description ?? "";
+    expect(description).toBe(EXEC_DESCRIPTION);
     expect(description).toMatch(/push/);
     expect(description).toMatch(/output\(\)/);
     expect(description).toMatch(/blocks the command/);
     expect(description).toMatch(/`stdin` \("pipe", a string or a ReadableStream\)/);
+  });
+
+  it("takes a description in place of its own, which can build on the default", () => {
+    const notes = `${EXEC_DESCRIPTION} Commands time out after two minutes.`;
+    expect(createExecModule(moduleOptions({ description: notes })).description).toBe(notes);
+    expect(createExecModule(moduleOptions({ description: "Runs builds." })).description).toBe(
+      "Runs builds.",
+    );
   });
 });
 
