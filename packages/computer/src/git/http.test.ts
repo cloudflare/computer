@@ -149,6 +149,45 @@ describe("createGitClient({ fetch })", () => {
     );
   });
 
+  it("sends CLI headers with clone, fetch, pull and push without printing them", async () => {
+    const { git, ws, requests } = setup();
+    const headers = { Authorization: "Bearer caller-token" };
+    const clone = await git.cli({ argv: ["clone", url, "copy"], cwd: "/", headers });
+    await git.init({ dir: "/repo" });
+    await ws.fs.writeFile("/repo/README.md", "hi\n");
+    await git.add({ dir: "/repo", paths: ["README.md"] });
+    await git.commit({
+      dir: "/repo",
+      message: "x",
+      author: { name: "T", email: "t@example.test" },
+    });
+    await git.remoteAdd({ dir: "/repo", name: "origin", url });
+    const results = [
+      clone,
+      await git.cli({ argv: ["fetch", "origin"], cwd: "/repo", headers }),
+      await git.cli({
+        argv: ["pull", "origin", "main"],
+        cwd: "/repo",
+        env: { GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@example.test" },
+        headers,
+      }),
+      await git.cli({ argv: ["push", url, "main"], cwd: "/repo", headers }),
+    ];
+    expect(results.map((result) => result.exitCode)).toEqual([1, 1, 1, 1]);
+    expect(results.map((result) => result.stdout + result.stderr).join("")).not.toContain(
+      "caller-token",
+    );
+    expect(requests.map((r) => new URL(r.url).searchParams.get("service"))).toEqual([
+      "git-upload-pack",
+      "git-upload-pack",
+      "git-upload-pack",
+      "git-receive-pack",
+    ]);
+    expect(requests.map((r) => r.headers.get("Authorization"))).toEqual(
+      Array(4).fill("Bearer caller-token"),
+    );
+  });
+
   it("passes explicit Authorization through to the host fetch", async () => {
     const { git, requests } = setup();
     await expect(

@@ -538,10 +538,28 @@ In a replayable run, arguments, results and object state can be JSON plus `Date`
 ### `codemode:git`
 
 ```js
-import { clone, diff, status, log, cli } from "codemode:git";
+import { clone, fetch, pull, push, diff, status, log, cli } from "codemode:git";
 ```
 
-`createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Every `dir` and `cwd` is confined to the backend root, `clone` and `cli` need a read-write backend, and `cli` treats a leading `-C <path>` as its working directory, confined the same way, while rejecting any other `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
+`createGitModule()` from `@cloudflare/computer/modules/git` wraps the Workspace's Git client. Every `dir` and `cwd` is confined to the backend root, `clone`, `fetch`, `pull`, `push` and `cli` need a read-write backend, and `cli` treats a leading `-C <path>` as its working directory, confined the same way, while rejecting any other `-C`, `--git-dir`, and `--work-tree`. Clone, fetch, pull, push, `ls-remote`, and submodule commands run from the host, even when the Dynamic Worker has `globalOutbound: null`, so they are denied unless you pass `createGitModule({ allowNetwork: true })`.
+
+`clone`, `fetch`, `pull` and `push` take the same options as the matching `GitClient` methods, and `push` is marked unsafe to repeat. They and `cli` take `headers`, sent with every request to the remote, so a token can go in an `Authorization` header instead of the remote URL, where it would be saved in `.git/config`:
+
+```js
+import { createToken, get } from "codemode:artifacts";
+import { clone, push } from "codemode:git";
+
+export default async function () {
+  const { remote } = await get("site");
+  const { plaintext } = await createToken("site", "write", "15m");
+  const headers = { Authorization: `Bearer ${plaintext}` };
+  await clone({ url: remote, dir: "site", headers });
+  // ...change and commit files...
+  return push({ dir: "site", ref: "main", headers });
+}
+```
+
+The token still passes through the isolate's code. To keep it out entirely, give `createGitClient()` a host `fetch` that adds credentials instead; see [Host Fetch and authentication](13_git_interface.md#host-fetch-and-authentication).
 
 ### `codemode:artifacts`
 

@@ -1,6 +1,6 @@
 // `codemode:git`: the Workspace's Git client for isolate JavaScript.
 //
-//   import { status, diff, log, clone, cli } from "codemode:git";
+//   import { status, diff, log, clone, fetch, pull, push, cli } from "codemode:git";
 //
 // Every path the isolate passes is confined to the codemode backend's
 // root. Commands that change the repository need a read-write backend,
@@ -9,6 +9,7 @@
 // isolate's own egress settings do not stop them.
 
 import type { GitClient } from "../git/index";
+import { unsafeToRepeat } from "../runtime/replay-safety";
 import type {
   WorkspaceModuleCallContext,
   WorkspaceModuleFactory,
@@ -22,7 +23,7 @@ const NETWORK_COMMANDS = new Set(["clone", "fetch", "pull", "push", "ls-remote",
 /** Options for {@link createGitModule}. */
 export interface GitModuleOptions {
   /**
-   * Allow `clone` and network `cli` commands such as `fetch` and `push`.
+   * Allow `clone`, `fetch`, `pull`, `push` and network `cli` commands.
    * Defaults to `false`. These requests run from the host, so the
    * codemode backend's egress settings do not apply to them.
    */
@@ -32,9 +33,12 @@ export interface GitModuleOptions {
 /**
  * Build the `codemode:git` host module over the Workspace's Git client.
  *
- * It exports `clone`, `diff`, `status`, `log`, and `cli`. Each takes the
- * same options object as the matching `GitClient` method, with `dir` or
- * `cwd` resolved against the backend root.
+ * It exports `clone`, `fetch`, `pull`, `push`, `diff`, `status`, `log`,
+ * and `cli`. Each takes the same options object as the matching
+ * `GitClient` method, with `dir` or `cwd` resolved against the backend
+ * root. The network calls and `cli` take `headers`, such as an
+ * `Authorization` header with a token, which stays out of the remote
+ * URL and `.git/config`.
  *
  * @param options - Whether network commands are allowed.
  * @returns The module to pass as `modules["codemode:git"]`.
@@ -56,6 +60,27 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceModule
         (await withDir(value, context, true)) as unknown as Parameters<GitClient["clone"]>[0],
       );
     },
+    async fetch([value], context) {
+      requireWrite(context, "Git fetch");
+      requireNetwork("Git fetch");
+      // SAFETY: As for clone.
+      return host.git.fetch((await withDir(value, context)) as Parameters<GitClient["fetch"]>[0]);
+    },
+    async pull([value], context) {
+      requireWrite(context, "Git pull");
+      requireNetwork("Git pull");
+      // SAFETY: As for clone.
+      await host.git.pull((await withDir(value, context)) as Parameters<GitClient["pull"]>[0]);
+      return null;
+    },
+    // A push changes the remote, so one cut off by an interruption fails
+    // the run instead of being sent again.
+    push: unsafeToRepeat(async ([value], context) => {
+      requireWrite(context, "Git push");
+      requireNetwork("Git push");
+      // SAFETY: As for clone.
+      return host.git.push((await withDir(value, context)) as Parameters<GitClient["push"]>[0]);
+    }),
     async diff([value], context) {
       // SAFETY: As for clone.
       return host.git.diff((await withDir(value, context)) as Parameters<GitClient["diff"]>[0]);
@@ -85,7 +110,7 @@ export function createGitModule(options: GitModuleOptions = {}): WorkspaceModule
     },
   });
   return Object.assign(create, {
-    description: `The workspace's Git repository tools: \`status({ dir })\`, \`diff({ dir })\`, \`log({ dir, depth })\`, \`clone({ url, dir })\`, and \`cli({ argv, cwd })\` for any other git subcommand, including a leading \`-C <path>\`.${allowNetwork ? "" : " Network commands such as clone, fetch, and push are not allowed."}`,
+    description: `The workspace's Git repository tools: \`status({ dir })\`, \`diff({ dir })\`, \`log({ dir, depth })\`, \`clone({ url, dir })\`, \`fetch({ dir, remote?, url?, ref? })\`, \`pull({ dir, remote?, url?, ref? })\`, \`push({ dir, remote?, url?, ref?, remoteRef?, force? })\`, and \`cli({ argv, cwd })\` for any other git subcommand, including a leading \`-C <path>\`.${allowNetwork ? ' clone, fetch, pull, push, and cli also take `headers`, such as `{ Authorization: "Bearer <token>" }`, to authenticate without putting a token in the URL.' : " Network commands such as clone, fetch, pull, and push are not allowed."}`,
   });
 }
 
