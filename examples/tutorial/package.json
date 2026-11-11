@@ -15,7 +15,7 @@
     "@cloudflare/think": "^0.21.0",
     "agents": "^0.29.0",
     "ai": "^7.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
