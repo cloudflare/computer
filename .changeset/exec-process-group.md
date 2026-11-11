@@ -2,4 +2,4 @@
 "@cloudflare/computerd": patch
 ---
 
-Run each exec in its own process group so `killExec`, timeouts and disposal stop the whole command rather than only the shell, and keep the output pipes paused while the reader is behind so the exit event is not buried.
+`killExec`, timeouts and disposal stop a command's whole process group, not just its shell, and a slow reader no longer holds back the exit. See [Lifecycle differences](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#lifecycle-differences).
