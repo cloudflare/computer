@@ -502,6 +502,19 @@ await ws.git.add({ paths: ["notes.md"] });
 await ws.git.commit({ message: "add notes" });
 ```
 
+Pass a Fetch-compatible implementation to route Git traffic through a host
+wrapper or a service binding. It covers typed calls, the shell's `git`
+command and `codemode:git`:
+
+```ts
+createGitClient({ fetch: env.GIT_SERVICE.fetch.bind(env.GIT_SERVICE) });
+```
+
+For private repositories, a host fetch wrapper can inject credentials without
+putting tokens in model-visible commands or remote URLs. The host must scope
+credentials to trusted HTTPS repositories and enforce redirect safety; see the
+[authentication example](../../docs/13_git_interface.md#host-fetch-and-authentication).
+
 The git subpath bundles `isomorphic-git` lazily and swaps its `pako`
 dependency for the Workers `node:zlib` implementation, so the default
 package graph stays free of git. There's also an argv entry point

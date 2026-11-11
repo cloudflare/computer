@@ -41,6 +41,7 @@ import {
   type IsomorphicGitDiffClient,
   type ReadFileFn,
 } from "./diff";
+import { withFetch } from "./http";
 import { type GitInitOptions, type IsomorphicGitInitClient, initWith } from "./init";
 import {
   type FetchResult,
@@ -334,6 +335,15 @@ export interface CreateGitClientOptions {
    * Production callers do not pass this.
    */
   adapter?: (provider: SQLiteWorkspaceProvider) => Promise<IsomorphicGitFSClient>;
+  /**
+   * The `fetch` every clone, fetch, pull and push sends its requests
+   * through, from the typed API, `cli()`, the worker-shell `git` command
+   * and `codemode:git` alike. Pass a wrapper that adds credentials, or a
+   * service binding's bound `fetch`. The wrapper decides which requests get
+   * credentials, whether a caller's `Authorization` header wins, and how
+   * redirects are handled. Defaults to isomorphic-git's own transport.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 export type GitClientFactory = (options: WorkspaceGitClientOptions) => GitClient;
@@ -360,6 +370,7 @@ export type GitClientFactory = (options: WorkspaceGitClientOptions) => GitClient
  */
 export function createGitClient({
   adapter = workspaceIsomorphicGitClient,
+  fetch: fetcher,
 }: CreateGitClientOptions = {}): GitClientFactory {
   return function createWorkspaceGitClient({
     ws,
@@ -384,7 +395,8 @@ export function createGitClient({
       return gitPromise as Promise<T>;
     };
     const loadHttp = (): Promise<object> => {
-      if (!httpPromise) httpPromise = loadDefaultHTTP();
+      if (!httpPromise)
+        httpPromise = fetcher ? Promise.resolve(withFetch(fetcher)) : loadDefaultHTTP();
       return httpPromise;
     };
     const loadDiffPatch = (): Promise<CreatePatchFn> => {
