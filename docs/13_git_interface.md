@@ -247,8 +247,11 @@ same auth contract `isomorphic-git` exposes:
   Return a `GitAuth` (`username` / `password` / `headers`) and
   `isomorphic-git` retries with it.
 
-The CLI does not surface `headers` or `onAuth` (no clean argv shape
-for a callback); use a host-provided `fetch` instead.
+`cli({ argv, headers })` applies `headers` to the network subcommands
+(`clone`, `fetch`, `pull`, `push`), so a token stays out of argv and the
+remote URL. The worker-shell `git` command has no way to pass them. The
+CLI does not surface `onAuth` (no clean argv shape for a callback); use a
+host-provided `fetch` instead.
 
 ### Errors
 

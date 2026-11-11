@@ -36,6 +36,18 @@ export interface GitCliInput {
   env?: Record<string, string>;
   /** Stdin, decoded to UTF-8. Currently unused; reserved for `commit -F -`. */
   stdin?: string;
+  /**
+   * Extra HTTP headers for the subcommands that reach a remote:
+   * `clone`, `fetch`, `pull` and `push`. Use it for a token in an
+   * `Authorization` header, which then stays out of argv, the remote
+   * URL and `.git/config`. Other subcommands ignore it.
+   */
+  headers?: Record<string, string>;
+}
+
+/** The caller's extra HTTP headers, for the subcommands that reach a remote. */
+function remoteOptions(input: GitCliInput): { headers?: Record<string, string> } {
+  return input.headers === undefined ? {} : { headers: input.headers };
 }
 
 export interface GitCliResult {
@@ -351,6 +363,7 @@ async function runClone(
       depth,
       singleBranch,
       noTags,
+      ...remoteOptions(input),
     });
   } catch (cause) {
     return {
@@ -1550,6 +1563,7 @@ async function runFetch(
       singleBranch,
       tags,
       prune: parsed.flags.prune === true,
+      ...remoteOptions(input),
     });
     return { stdout: "", stderr: "", exitCode: 0 };
   } catch (cause) {
@@ -1605,6 +1619,7 @@ async function runPush(
       remoteRef: refspec.remoteRef,
       force: parsed.flags.force === true,
       delete: parsed.flags.delete === true,
+      ...remoteOptions(input),
     });
     if (!result.ok) {
       const err = result.error ?? "push rejected";
@@ -1673,6 +1688,7 @@ async function runPull(
       fastForwardOnly: parsed.flags["ff-only"] === true,
       fastForward: parsed.flags["no-ff"] === true ? false : undefined,
       env: input.env,
+      ...remoteOptions(input),
     });
     return { stdout: "", stderr: "", exitCode: 0 };
   } catch (cause) {
