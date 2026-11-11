@@ -1,5 +1,15 @@
 # @cloudflare/computerd
 
+## 0.11.1
+
+### Patch Changes
+
+- [#312](https://github.com/cloudflare/computer/pull/312) `killExec`, timeouts and disposal stop a command's whole process group, not just its shell, and a slow reader no longer holds back the exit. See [Lifecycle differences](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#lifecycle-differences). ([`3e1f91b`](https://github.com/cloudflare/computer/commit/3e1f91bad6431db2efb8f47d48ddcf3dcfdf6b6e)) - Thanks [@github-actions](https://github.com/apps/github-actions)
+
+- Updated dependencies []:
+  - @cloudflare/dofs@0.11.1
+  - @cloudflare/computer-rpc@0.11.1
+
 ## 0.11.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/remote-exec",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "remote-exec, the in-container half of @cloudflare/computer/remote-exec: a static Linux binary, built with Cargo.",
   "license": "MIT",
   "private": true,
