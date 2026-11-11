@@ -14,7 +14,7 @@
   "dependencies": {
     "@cloudflare/computer": "*",
     "@earendil-works/pi-ai": "^0.99.2",
-    "just-bash": "^3.0.1",
+    "just-bash": "^3.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
