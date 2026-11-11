@@ -205,6 +205,7 @@ new CodemodeBackend({
 | `env(context)` | Environment every command starts with, under the call's own `env`. |
 | `output` | The same value as `new Workspace({ output })`. |
 | `readOnly` | For a read-only backend: see [Read-only code](#read-only-code). |
+| `description` | What the model reads about the module, in place of `EXEC_DESCRIPTION`. Build on it to add notes about your containers: `` `${EXEC_DESCRIPTION} Commands time out after 2 minutes.` ``. |
 | `workspaceRoot`, `containerRoot` | The directories that map to each other. Both default to `/workspace`. |
 | `limits` | `maxFileBytes`, `maxSyncBytes` and `maxSyncFiles`. The defaults are 32 MiB, 512 MiB and 50,000. Files over a limit are skipped and reported. |
 
@@ -223,7 +224,7 @@ The options are `ctx.container.exec()`'s, plus three of remote exec's own:
 | `cwd` | Working directory. It defaults to `/workspace`, and Workspace paths are the same in the container. |
 | `env` | Added over the image's environment. |
 | `user` | `"uid:gid"`, numeric. Pushed files are owned by this user. |
-| `stdin` | `"pipe"` for a writable `stdin`, or a `ReadableStream` to read the command's input from. |
+| `stdin` | `"pipe"` for a writable `stdin`, a string to give the command as its input, or a `ReadableStream` to read its input from. |
 | `stdout` | `"pipe"` (the default) or `"ignore"`. |
 | `stderr` | `"pipe"` (the default), `"ignore"`, or `"combined"` to send it to stdout. |
 | `signal` | An `AbortSignal`. Aborting it SIGKILLs everything the command started and skips the pull. |

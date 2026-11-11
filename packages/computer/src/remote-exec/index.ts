@@ -17,7 +17,12 @@ export {
 export type { SyncFs } from "./fs";
 export { ensureRemoteExec, type Arch, type RemoteExecBinaries } from "./install";
 export { PROTOCOL } from "./messages";
-export { createExecModule, type ExecModuleOptions, type RemoteExecOutput } from "./module";
+export {
+  createExecModule,
+  EXEC_DESCRIPTION,
+  type ExecModuleOptions,
+  type RemoteExecOutput,
+} from "./module";
 export {
   OutputCapture,
   outputSettings,

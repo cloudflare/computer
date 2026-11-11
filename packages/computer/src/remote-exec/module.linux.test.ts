@@ -18,7 +18,12 @@ import {
 import type { WorkspaceModuleCallContext, WorkspaceRuntimeValue } from "../runtime/types";
 import { bundledRemoteExec } from "./bundle";
 import type { RemoteExecBinaries } from "./install";
-import { createExecModule, type ExecModuleOptions, type RemoteExecOutput } from "./module";
+import {
+  createExecModule,
+  EXEC_DESCRIPTION,
+  type ExecModuleOptions,
+  type RemoteExecOutput,
+} from "./module";
 import { BIN, harness, type Harness, write } from "./testing/harness";
 
 let h: Harness;
@@ -224,6 +229,18 @@ describe("codemode:exec", () => {
     ).toHaveLength(1001);
   });
 
+  it("takes a string as stdin, as its UTF-8 bytes", async () => {
+    const proc = await exec(["sh", "-c", 'cat; echo "|"'], { stdin: "héllo\nwörld" });
+    // The string is the command's input: there's no writable stdin.
+    expect(proc.stdin).toBeNull();
+    const out = await proc.output();
+    expect([text(out.stdout), out.exitCode]).toEqual(["héllo\nwörld|\n", 0]);
+
+    // An empty string is an empty input, not a missing one.
+    const empty = await exec(["wc", "-c"], { stdin: "" });
+    expect(text((await empty.output()).stdout).trim()).toBe("0");
+  });
+
   it("streams stdin, stdout and stderr, and resolves exitCode", async () => {
     const proc = await exec(["sh", "-c", 'while read l; do echo "got $l"; done; echo done >&2'], {
       stdin: "pipe",
@@ -331,7 +348,7 @@ describe("codemode:exec", () => {
       [[["ls"], "opts"], /options must be an object/],
       [[["ls"], { nope: 1 }], /unknown option "nope"/],
       [[["ls"], { env: { A: 1 } }], /env "A" must be a string/],
-      [[["ls"], { stdin: "text" }], /stdin must be "pipe" or a ReadableStream/],
+      [[["ls"], { stdin: 3 }], /stdin must be "pipe", a string or a ReadableStream/],
       [[["ls"], { stdout: "file" }], /stdout must be one of/],
       [[["ls"], { push: "src/**" }], /push must be an array/],
       [[["ls"], { user: "root" }], /numeric/],
@@ -397,9 +414,19 @@ describe("codemode:exec", () => {
 
   it("describes itself for the model", () => {
     const description = createExecModule(moduleOptions()).description ?? "";
+    expect(description).toBe(EXEC_DESCRIPTION);
     expect(description).toMatch(/push/);
     expect(description).toMatch(/output\(\)/);
     expect(description).toMatch(/blocks the command/);
+    expect(description).toMatch(/`stdin` \("pipe", a string or a ReadableStream\)/);
+  });
+
+  it("takes a description in place of its own, which can build on the default", () => {
+    const notes = `${EXEC_DESCRIPTION} Commands time out after two minutes.`;
+    expect(createExecModule(moduleOptions({ description: notes })).description).toBe(notes);
+    expect(createExecModule(moduleOptions({ description: "Runs builds." })).description).toBe(
+      "Runs builds.",
+    );
   });
 });
 

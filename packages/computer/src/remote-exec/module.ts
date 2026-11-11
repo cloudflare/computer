@@ -59,6 +59,11 @@ export interface ExecModuleOptions {
    * `pull` and `user` are refused. Pull writes through `fs`, past the backend's read-only guard.
    */
   readOnly?: boolean;
+  /**
+   * What the model reads about the module, in place of `EXEC_DESCRIPTION`. Build on it to add
+   * what's true of your containers, such as their environment or how long a command may run.
+   */
+  description?: string;
 }
 
 /** What `output()` resolves with: the platform's `ExecOutput`, plus remote exec's own reports. */
@@ -74,7 +79,8 @@ export interface RemoteExecOutput {
 /** nobody: a read-only agent's commands can read what's pushed, but not change it. */
 const READ_ONLY_USER = "65534:65534";
 
-const DESCRIPTION = [
+/** What the model reads about `codemode:exec`, unless `createExecModule()` is given a `description`. */
+export const EXEC_DESCRIPTION = [
   "Runs a command in a Linux container, copying workspace files in before and changed files back after.",
   '`const proc = await exec(["npm", "test"], { cwd: "/workspace/app", push: ["**"], pull: ["coverage/**"] })` returns a process like ctx.container.exec()\'s:',
   "`pid`, `stdin`, `stdout` and `stderr` streams, `exitCode`, `output()` and `kill()`.",
@@ -83,7 +89,7 @@ const DESCRIPTION = [
   'As with ctx.container.exec(), `exitCode` resolves, and each stream ends, only once both stdout and stderr have been read to the end or cancelled, and a pipe nobody reads blocks the command once it fills: read the streams together, call output(), cancel or `"ignore"` what you don\'t need.',
   'argv runs directly, with no shell: use `["sh", "-c", "..."]` for pipes and redirects.',
   "`push` globs are copied into the container before the command starts and `pull` globs are copied back before `exitCode` resolves; both respect .gitignore. Relative globs are relative to `cwd` (default /workspace), like the command's own paths; `/workspace/...` globs work too.",
-  'Other options, as ctx.container.exec() takes them: `user` ("uid:gid"), `env` (added over the image\'s), `stdin` ("pipe" or a ReadableStream), `stdout` ("pipe" or "ignore"), `stderr` ("pipe", "ignore" or "combined"), `signal`. Also `lockTimeoutMs`.',
+  'Other options, as ctx.container.exec() takes them: `user` ("uid:gid"), `env` (added over the image\'s), `stdin` ("pipe", a string or a ReadableStream), `stdout` ("pipe" or "ignore"), `stderr` ("pipe", "ignore" or "combined"), `signal`. Also `lockTimeoutMs`.',
   "File modes cross both ways. To make a workspace file executable, call node:fs `chmod` after writing it, or `chmod +x` in the command: writeFile's `mode` option isn't kept, and rewriting a file resets it to 644.",
   "Long output keeps its tail in output(); `truncated.stdout.path` then names a workspace file with all of it.",
   "Commands that push or pull run one at a time. Everything a command starts is stopped when it exits, and a command still running when the code ends, or pauses, is killed.",
@@ -189,7 +195,13 @@ const OPTION_KEYS = new Set([
   "lockTimeoutMs",
 ]);
 
-function parseOptions(raw: unknown): RemoteExecOptions {
+/** The options code passed, with a string `stdin` kept apart: it's made into a stream per attempt. */
+interface ParsedOptions {
+  readonly options: RemoteExecOptions;
+  readonly stdinText: string | undefined;
+}
+
+function parseOptions(raw: unknown): ParsedOptions {
   const o = record(raw, "options");
   for (const key of Object.keys(o))
     if (!OPTION_KEYS.has(key)) throw new TypeError(`exec: unknown option ${JSON.stringify(key)}`);
@@ -203,10 +215,10 @@ function parseOptions(raw: unknown): RemoteExecOptions {
   if (
     stdin !== undefined &&
     stdin !== null &&
-    stdin !== "pipe" &&
+    typeof stdin !== "string" &&
     !(stdin instanceof ReadableStream)
   )
-    throw new TypeError('exec: stdin must be "pipe" or a ReadableStream');
+    throw new TypeError('exec: stdin must be "pipe", a string or a ReadableStream');
   const signal = o.signal;
   if (signal !== undefined && signal !== null && !(signal instanceof AbortSignal))
     throw new TypeError("exec: signal must be an AbortSignal");
@@ -224,7 +236,19 @@ function parseOptions(raw: unknown): RemoteExecOptions {
   }
   if (signal instanceof AbortSignal) options.signal = signal;
   if (typeof o.lockTimeoutMs === "number") options.lockTimeoutMs = o.lockTimeoutMs;
-  return options;
+  // "pipe" asks for a writable stdin; any other string is the command's input.
+  return { options, stdinText: typeof stdin === "string" && stdin !== "pipe" ? stdin : undefined };
+}
+
+/** A string as a stream of its UTF-8 bytes, for a command's stdin. */
+function textStream(text: string): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }
 
 function readOnlyOptions(options: RemoteExecOptions): RemoteExecOptions {
@@ -301,7 +325,7 @@ export function createExecModule(options: ExecModuleOptions): CodemodeModule {
     return t;
   };
 
-  const module = createCodemodeModule({ description: DESCRIPTION });
+  const module = createCodemodeModule({ description: options.description ?? EXEC_DESCRIPTION });
 
   const Process = module.define("Process", (state: ProcessState) => {
     const live = (): Running => {
@@ -369,7 +393,7 @@ export function createExecModule(options: ExecModuleOptions): CodemodeModule {
         throw new Error("codemode:exec requires Workspace write access.");
       const args = strings(argv, "argv");
       if (!args?.length) throw new TypeError("exec: argv must be a non-empty array of strings");
-      const parsed = parseOptions(rawOptions);
+      const { options: parsed, stdinText } = parseOptions(rawOptions);
       const own = options.readOnly ? readOnlyOptions(parsed) : parsed;
       const execOptions: RemoteExecOptions = {
         ...own,
@@ -395,7 +419,8 @@ export function createExecModule(options: ExecModuleOptions): CodemodeModule {
             ...(options.limits ? { limits: options.limits } : {}),
           },
           args,
-          execOptions,
+          // A string's stream is made for each attempt, so unlike a caller's stream it can retry.
+          stdinText === undefined ? execOptions : { ...execOptions, stdin: textStream(stdinText) },
         );
       let proc: RemoteProcess;
       try {
