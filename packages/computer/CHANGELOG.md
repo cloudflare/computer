@@ -1,5 +1,13 @@
 # @cloudflare/computer
 
+## 0.11.0
+
+### Minor Changes
+
+- [#310](https://github.com/cloudflare/computer/pull/310) Codemode module objects can have fields, promises and byte streams (`field()`, `promised()`, `readable()`, `writable()`), any run can pass an `AbortSignal` to a codemode module, and replayable runs can pass a `ReadableStream`; see [Fields, promises and streams](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#fields-promises-and-streams). ([`deb774f`](https://github.com/cloudflare/computer/commit/deb774ff962b9d070efc257b573b9ea2b4174036)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#310](https://github.com/cloudflare/computer/pull/310) Add `@cloudflare/computer/remote-exec`, an experimental `codemode:exec` module whose `exec()` runs a command in a container Durable Object, with Workspace files pushed in and pulled back, and returns a process shaped like `ctx.container.exec()`'s, and the `ghcr.io/cloudflare/computer-remote-exec` image with its `remote-exec` binary. See [Remote exec](https://github.com/cloudflare/computer/blob/main/docs/20_remote_exec.md). ([`deb774f`](https://github.com/cloudflare/computer/commit/deb774ff962b9d070efc257b573b9ea2b4174036)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.10.0
 
 This release is all about **codemode**. It adds codemode modules, which let a host module return objects with methods and keep state for a run, and builds a `codemode:browser` module on them, so the model can drive an agents `Browser`. Runs can now carry metadata for host modules, and the JavaScript backend has been renamed to `CodemodeBackend`.
@@ -26,6 +34,7 @@ This release is all about **codemode**. It adds codemode modules, which let a ho
    `WorkerJavaScriptBackendOptions` is now `CodemodeBackendOptions`.
 
 2. **Check the backend's id.** A backend without `id` now registers as `"codemode"` instead of `"worker-javascript"`, and the `exec` tool shows it to the model under that name. Its `type`, which traces record as `workspace.backend.type`, is now `"codemode"` whatever the id. A backend only sees runs saved under its own id, so runs saved under `"worker-javascript"` are ignored: they aren't resumed, listed by `pending()` or found by `getExec()`.
+
    - To keep those runs, including any waiting for a person when you deploy, pass `id: "worker-javascript"`.
    - Otherwise, change `backend: "worker-javascript"` and `exec.backends` keys to `"codemode"`. Old references throw an unknown-backend error.
 

@@ -1,6 +1,6 @@
 [package]
 name = "remote-exec"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 description = "The in-container half of @cloudflare/computer/remote-exec: runs commands and syncs files"
 license = "MIT"

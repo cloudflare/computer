@@ -3,7 +3,7 @@
 # @cloudflare/computer/remote-exec. Like the computerd image, it isn't meant to be run: it ships
 # the static binary at a known path so downstream Dockerfiles can `COPY --from`:
 #
-#   FROM ghcr.io/cloudflare/computer-remote-exec:0.10.0 AS remote-exec
+#   FROM ghcr.io/cloudflare/computer-remote-exec:0.11.0 AS remote-exec
 #   FROM debian:stable-slim
 #   COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
 #
