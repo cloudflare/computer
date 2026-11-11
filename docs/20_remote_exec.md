@@ -223,7 +223,7 @@ The options are `ctx.container.exec()`'s, plus three of remote exec's own:
 | `cwd` | Working directory. It defaults to `/workspace`, and Workspace paths are the same in the container. |
 | `env` | Added over the image's environment. |
 | `user` | `"uid:gid"`, numeric. Pushed files are owned by this user. |
-| `stdin` | `"pipe"` for a writable `stdin`, or a `ReadableStream` to read the command's input from. |
+| `stdin` | `"pipe"` for a writable `stdin`, a string to give the command as its input, or a `ReadableStream` to read its input from. |
 | `stdout` | `"pipe"` (the default) or `"ignore"`. |
 | `stderr` | `"pipe"` (the default), `"ignore"`, or `"combined"` to send it to stdout. |
 | `signal` | An `AbortSignal`. Aborting it SIGKILLs everything the command started and skips the pull. |
