@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
 import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dofs";
@@ -703,3 +704,88 @@ test("an exec finishes at exitDrainMaxMs when its reader stops reading", async (
     dispose();
   }
 });
+
+// True while `pid` is a live (non-zombie) process. A killed process
+// whose parent has gone can linger as a zombie until init reaps it.
+// `ps -o stat=` works on Linux and macOS, unlike `/proc`; it exits
+// non-zero when the pid does not exist.
+function isRunning(pid: number): boolean {
+  try {
+    const stat = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return stat !== "" && !stat.startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
+function forceKill(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
+async function readPid(reader: ReadableStreamDefaultReader<ExecEvent>): Promise<number> {
+  let text = "";
+  while (!text.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("stream ended before the pid was printed");
+    if (value.name === "stdout") text += decode(value.value);
+  }
+  return Number(text.trim());
+}
+
+test("killExec stops grandchildren and delivers the exit event", async () => {
+  const { runner, dispose } = fixture();
+  let pid: number | undefined;
+  try {
+    // The pipeline and the trailing `; true` keep the shell from exec'ing
+    // into the command, so `sleep` is a grandchild of the spawned shell.
+    const { id, events } = runner.exec("sh -c 'echo $$; exec sleep 30' | cat; true");
+    const reader = events.getReader();
+    pid = await readPid(reader);
+    expect(isRunning(pid)).toBe(true);
+    runner.kill(id, "SIGKILL");
+    const seen: ExecEvent[] = [];
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen.push(value);
+    }
+    expect(seen.some((e) => e.name === "exit")).toBe(true);
+    await sleep(100);
+    expect(isRunning(pid)).toBe(false);
+  } finally {
+    forceKill(pid);
+    dispose();
+  }
+}, 10_000);
+
+test("a timed-out exec SIGKILLs descendants that ignore SIGTERM after the shell exits", async () => {
+  const { runner, dispose } = fixture();
+  let pid: number | undefined;
+  try {
+    // The shell dies on SIGTERM; the inner shell ignores it and holds
+    // the pipes open, so the exec finishes before the kill grace ends.
+    const { events } = runner.exec(
+      "sh -c 'trap \"\" TERM; echo $$; while :; do sleep 0.1; done' & wait",
+      { timeoutMs: 200 },
+    );
+    const reader = events.getReader();
+    pid = await readPid(reader);
+    while (!(await reader.read()).done) {
+      // Drain to the exit event.
+    }
+    expect(isRunning(pid)).toBe(true);
+    await sleep(5_500);
+    expect(isRunning(pid)).toBe(false);
+  } finally {
+    forceKill(pid);
+    dispose();
+  }
+}, 15_000);
