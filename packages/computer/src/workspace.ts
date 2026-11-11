@@ -1136,6 +1136,7 @@ export class Workspace {
               fs: this.#fs,
               git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
               artifacts: this.#artifacts,
+              ...(this.#assets === undefined ? {} : { assets: this.#assets }),
             }),
         );
         if (generation !== this.#connectionGeneration) {

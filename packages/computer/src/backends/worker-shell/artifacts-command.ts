@@ -13,14 +13,14 @@
 // binding.
 //
 // Keeping this file clean is deliberate. Argv parsing and every
-// behavioral choice live in `artifacts/cli.ts`; this file only
-// adapts the just-bash `Command` signature to the
-// `ArtifactsCLIInput` / `ArtifactsCLIResult` shape the client
-// exposes.
+// behavioral choice live in `artifacts/cli.ts`, and the bridge to the
+// client in `../workspace-commands.ts`, shared with other shells;
+// this file only adapts the just-bash `Command` signature.
 
 import { type CustomCommand, defineCommand } from "just-bash";
 
-import type { ArtifactsCLIInput, ArtifactsCLIResult, RemoteAddFn } from "../../artifacts/index";
+import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../../artifacts/index";
+import { runArtifactsCommand } from "../workspace-commands";
 import type { GitCommandHost } from "./git-command";
 
 /**
@@ -48,46 +48,6 @@ export function defineArtifactsCommand(host: ArtifactsCommandHost): CustomComman
   return defineCommand("artifacts", async (args, ctx) => {
     const env: Record<string, string> = {};
     for (const [k, v] of ctx.env) env[k] = v;
-
-    // Bridge the `create` shorthand's git step to the workspace git
-    // CLI. Bound to the shell's cwd so the remote lands in the repo
-    // the caller is sitting in. Collisions are detected by listing
-    // first, so the artifacts CLI can tell "name taken" (recoverable
-    // with --force) apart from any other git failure.
-    const remoteAdd: RemoteAddFn = async ({ name, url, force }) => {
-      if (force !== true) {
-        const listed = await host.git.cli({ argv: ["remote"], cwd: ctx.cwd, env });
-        const names = listed.stdout
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (names.includes(name)) return { ok: false, exists: true };
-      }
-      const addArgs =
-        force === true ? ["remote", "add", "--force", name, url] : ["remote", "add", name, url];
-      const result = await host.git.cli({ argv: addArgs, cwd: ctx.cwd, env });
-      if (result.exitCode !== 0) {
-        return { ok: false, message: (result.stderr || result.stdout).trim() };
-      }
-      return { ok: true };
-    };
-
-    try {
-      const result = await host.artifacts.cli({ argv: args, env, remoteAdd });
-      return {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      };
-    } catch (cause) {
-      // The CLI dispatcher catches its own subcommand failures and
-      // returns them as { exitCode } results. A throw here means the
-      // RPC itself failed (transport hiccup, host client gone) —
-      // surface that as exit 1 with the message on stderr so the
-      // shell sees a normal command failure rather than crashing the
-      // pipeline.
-      const message = cause instanceof Error ? cause.message : String(cause);
-      return { stdout: "", stderr: `artifacts: ${message}\n`, exitCode: 1 };
-    }
+    return runArtifactsCommand(host, args, ctx.cwd, env);
   });
 }

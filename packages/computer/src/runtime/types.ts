@@ -412,7 +412,6 @@ export interface WorkspaceModuleBackendHandle {
 export type WorkspaceModuleBackendHost = import("../backend").WorkspaceBackendHost & {
   /** The Workspace runtime, handed to host modules. */
   readonly runtime: import("./runtime").WorkspaceRuntime;
-  readonly assets?: import("../assets/index").AssetsClient;
 };
 
 export interface WorkspaceModuleBackend {

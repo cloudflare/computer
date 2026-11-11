@@ -25,14 +25,15 @@ import type { WorkspaceRPC } from "@cloudflare/computer-rpc";
 // after the caller has already constructed the backends and passed
 // them in, so a backend cannot capture them at its own
 // construction time. `connect(host)` is how the Workspace hands
-// over the storage-layer handles once they exist. Shell and
-// container backends ignore the bag (they reach the host through
-// their own transport); the in-process module backend uses it.
+// over the storage-layer handles once they exist. Backends that
+// reach the host through their own transport ignore the bag;
+// in-process backends use it.
 export interface WorkspaceBackendHost {
   readonly db: import("@cloudflare/dofs").Database;
   readonly fs: import("@cloudflare/dofs").WorkspaceFilesystem;
   readonly git: import("./git/index").GitClient;
   readonly artifacts: import("./artifacts/index").ArtifactClient;
+  readonly assets?: import("./assets/index").AssetsClient;
 }
 
 export interface WorkspaceBackend {
