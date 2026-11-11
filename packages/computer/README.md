@@ -35,7 +35,7 @@ removed in a future release; each one names its replacement.
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |
-| Remote exec: the `codemode:exec` module, `executor()` and `ExecSandbox`, and the `remote-exec` binary and its image | `@cloudflare/computer/remote-exec`, `ghcr.io/cloudflare/computer-remote-exec` | Experimental |
+| Remote exec: the `codemode:exec` module, `executor()` and `ExecSandbox`, the `remoteExec()` Vite plugin, and the `remote-exec` binary and its image | `@cloudflare/computer/remote-exec`, `@cloudflare/computer/vite`, `ghcr.io/cloudflare/computer-remote-exec` | Experimental |
 | Codemode modules: `createCodemodeModule()`, with objects and scoped context | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
 | `workspace.push()`, `workspace.pull()`, and the sync protocol between the durable object and `computerd` | `@cloudflare/computer` | Experimental |
 | The `computerd` daemon and its container image | `ghcr.io/cloudflare/computer-computerd-linux-x64` | Experimental |
@@ -624,8 +624,8 @@ on a computerd instance.
 | `@cloudflare/computer/assets` | `createAssets` — share a workspace file to R2 as a presigned URL. |
 | `@cloudflare/computer/artifacts` | `createArtifact` and its CLI, an optionally session-scoped wrapper over the Cloudflare Artifacts binding. |
 | `@cloudflare/computer/observe/cloudflare` | Cloudflare-runtime adapter for the observability hook. |
-| `@cloudflare/computer/vite` | `computerBundle()`: a Vite plugin that serves `computer:bundle/<dir>` imports for `WorkerBundle`. |
-| `@cloudflare/computer/vite/client` | Types for `computer:bundle/<dir>` imports. |
+| `@cloudflare/computer/vite` | `computerBundle()`: a Vite plugin that serves `computer:bundle/<dir>` imports for `WorkerBundle`. `remoteExec()` (experimental): a Vite plugin that downloads the remote-exec builds and serves them as `computer:remote-exec`. |
+| `@cloudflare/computer/vite/client` | Types for `computer:bundle/<dir>` and `computer:remote-exec` imports. |
 
 A consumer that only uses the container backend never imports the worker
 subpaths, so unused backend payloads tree-shake away. Wire types shared

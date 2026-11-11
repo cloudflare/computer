@@ -287,7 +287,7 @@ jobs:
           chmod 755 artifacts/remote-exec/*
           sudo -E env "PATH=$PATH" npm run test:remote-exec --workspace @cloudflare/computer
 
-  # examples/remote-exec in `wrangler dev`, with a real container, through
+  # examples/remote-exec in `vite dev`, with a real container, through
   # its vitest suites.
   remote-exec-e2e:
     name: example/remote-exec (e2e)
@@ -301,8 +301,8 @@ jobs:
 
       - uses: ./.github/actions/install
 
-      # The example's scripts/fetch-remote-exec.sh takes the builds from
-      # here rather than from a release.
+      # The example's vite.config.ts takes the builds from here rather
+      # than from a release.
       - uses: actions/download-artifact@v4
         with:
           name: remote-exec

@@ -1,12 +1,13 @@
 /**
- * Starts the example in `wrangler dev`, which builds the container image, and gives the tests its
- * URL. Puts the remote-exec build in bin/ first (scripts/fetch-remote-exec.sh). Stops wrangler
- * afterwards, with the containers' network sidecars it leaves running: enough of those exhaust
- * Docker's kernel keyring, after which no container starts.
+ * Starts the example in `vite dev`, which builds the container image, and gives the tests its URL.
+ * remoteExec() in vite.config.ts gets the remote-exec build. Stops the server afterwards, with the
+ * containers' network sidecars it leaves running: enough of those exhaust Docker's kernel keyring,
+ * after which no container starts.
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 import type { TestProject } from "vitest/node";
 
 declare module "vitest" {
@@ -31,31 +32,16 @@ function removeSidecars() {
 }
 
 export default async function setup(project: TestProject) {
-  execFileSync("scripts/fetch-remote-exec.sh", { cwd: EXAMPLE, stdio: "inherit" });
-  const port = process.env.PORT ?? "8799";
-  const wrangler = spawn("npx", ["wrangler", "dev", "--port", port, "--ip", "127.0.0.1"], {
-    cwd: EXAMPLE,
-    stdio: ["ignore", "pipe", "pipe"],
+  const server = await createServer({
+    root: EXAMPLE,
+    configFile: join(EXAMPLE, "vite.config.ts"),
+    server: { host: "127.0.0.1", port: Number(process.env.PORT ?? 8799), strictPort: true },
+    logLevel: "warn",
   });
-  let log = "";
-  await new Promise<void>((resolve, reject) => {
-    const onData = (chunk: Buffer) => {
-      log += chunk.toString();
-      if (log.includes("Ready on")) resolve();
-    };
-    wrangler.stdout.on("data", onData);
-    wrangler.stderr.on("data", onData);
-    wrangler.once("exit", (code) => reject(new Error(`wrangler dev exited (${code}):\n${log}`)));
-  });
-  project.provide("base", `http://127.0.0.1:${port}`);
+  await server.listen();
+  project.provide("base", `http://127.0.0.1:${server.config.server.port}`);
   return async () => {
-    // wrangler dev may have exited on its own since it was ready, and its exit event won't fire
-    // again.
-    if (wrangler.exitCode === null && wrangler.signalCode === null) {
-      const exited = new Promise((resolve) => wrangler.once("exit", resolve));
-      wrangler.kill();
-      await exited;
-    }
+    await server.close();
     removeSidecars();
   };
 }

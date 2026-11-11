@@ -41,7 +41,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.63.0",
+    "@cloudflare/vite-plugin": "^1.68.0",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.3.2",

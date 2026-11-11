@@ -31,6 +31,8 @@ import { join, relative, resolve, sep } from "node:path";
 
 import type { Plugin } from "vite";
 
+export { remoteExec, type RemoteExecArch, type RemoteExecPluginOptions } from "./remote-exec";
+
 const SPECIFIER_PREFIX = "computer:bundle/";
 // The \0 prefix is Vite's convention for virtual modules: other plugins
 // leave the id alone and no file lookup is attempted.

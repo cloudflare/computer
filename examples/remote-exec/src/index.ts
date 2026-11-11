@@ -12,12 +12,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { Workspace } from "@cloudflare/computer";
 import { CodemodeBackend } from "@cloudflare/computer/backends/codemode";
-import {
-  createExecModule,
-  type ExecArgs,
-  executor,
-  fileRemoteExec,
-} from "@cloudflare/computer/remote-exec";
+import { createExecModule, type ExecArgs, executor } from "@cloudflare/computer/remote-exec";
+// The remote-exec builds this Worker carries, from remoteExec() in vite.config.ts.
+import binaries from "computer:remote-exec";
 
 interface Env {
   SANDBOX: DurableObjectNamespace<Sandbox>;
@@ -62,11 +59,8 @@ export class WorkspaceObject extends DurableObject<Env> {
                 // One container for each workspace.
                 target: () => env.SANDBOX.getByName(ctx.id.toString()),
                 fs: () => this.#workspace.fs,
-                // The x86_64 build (scripts/fetch-remote-exec.sh): the container is linux/amd64,
-                // as Cloudflare runs it and wrangler dev builds it. wrangler.jsonc uploads it as a
-                // module of its own, which workerd shows under /bundle, and node:fs streams it into
-                // the container on first use, so the Worker never holds it in memory.
-                binaries: fileRemoteExec({ x86_64: "/bundle/remote-exec" }),
+                // Copied into the container on first use.
+                binaries,
                 readOnly: access === "read",
               }),
             },
