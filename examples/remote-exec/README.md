@@ -73,7 +73,7 @@ To bake remote-exec into the image rather than have the Worker copy it in, copy 
 `binaries` from `createExecModule()` (and `bin/remote-exec`'s rule from `wrangler.jsonc`):
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-remote-exec:0.10.0 AS remote-exec
+FROM ghcr.io/cloudflare/computer-remote-exec:0.11.0 AS remote-exec
 
 FROM docker/sandbox-templates:shell
 COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
