@@ -83,7 +83,7 @@ in one of two ways, using the same version as `@cloudflare/computer`.
 `linux/amd64` and `linux/arm64`, at `/usr/local/bin/remote-exec`:
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-remote-exec:0.11.1 AS remote-exec
+FROM ghcr.io/cloudflare/computer-remote-exec:0.11.2 AS remote-exec
 
 FROM debian:stable-slim
 COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec

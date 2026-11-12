@@ -1,5 +1,11 @@
 # @cloudflare/computer
 
+## 0.11.2
+
+### Patch Changes
+
+- [#323](https://github.com/cloudflare/computer/pull/323) `CodemodeBackend` takes a `scheme`, such as `"agent"`, to serve host modules and the host's libraries as `agent:*` instead of `codemode:*`, and `createBrowserModule()` takes `specifier` and `toolsSpecifier` for the names its description gives. See [Module scheme](https://github.com/cloudflare/computer/blob/main/docs/17_isolate_javascript.md#module-scheme). ([`de44ba6`](https://github.com/cloudflare/computer/commit/de44ba6f3bf5cce67e9c9ecb6e561fdbc6f682ee)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.11.1
 
 ### Patch Changes

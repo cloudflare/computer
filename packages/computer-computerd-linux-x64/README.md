@@ -23,7 +23,7 @@ instead. This sample keeps both libfuse runtime packages until the
 libfuse 3 binary is published:
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.11.1 AS computerd
+FROM ghcr.io/cloudflare/computer-computerd-linux-x64:0.11.2 AS computerd
 FROM debian:trixie-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
