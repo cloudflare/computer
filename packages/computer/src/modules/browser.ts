@@ -68,6 +68,19 @@ export interface BrowserModuleOptions {
    * gets this module's error rather than timing out.
    */
   readonly lockTimeoutMs?: number;
+  /**
+   * The specifier the backend serves this module under, which its
+   * description tells code to import and its errors name. Defaults to
+   * `"codemode:browser"`. Set it when the module is served under another
+   * name, or under a backend's `scheme`, such as `"agent:browser"`.
+   */
+  readonly specifier?: string;
+  /**
+   * The specifier of the module that serves the agent's tools, which the
+   * description tells code not to call the browser tool through. Defaults
+   * to `"codemode:tools"`.
+   */
+  readonly toolsSpecifier?: string;
 }
 
 const DEFAULT_BROWSER_SCOPE = "shared";
@@ -75,13 +88,16 @@ const DEFAULT_LOCK_TIMEOUT_MS = 45_000;
 // A run that waited less than this for its turn isn't told about it.
 const NOTICEABLE_WAIT_MS = 1_000;
 
-const WORKSPACE_RULES = [
-  'Import the module as a namespace, `import * as browser from "codemode:browser"`, and call `browser.<name>({ ... })` as above.',
+const DEFAULT_SPECIFIER = "codemode:browser";
+const DEFAULT_TOOLS_SPECIFIER = "codemode:tools";
+
+const workspaceRules = (specifier: string, toolsSpecifier: string) => [
+  `Import the module as a namespace, \`import * as browser from ${JSON.stringify(specifier)}\`, and call \`browser.<name>({ ... })\` as above.`,
   "Notices about the browser (it restarted, your tab was closed, the page opened tabs) are written to stderr after the run ends.",
   'To look at a page, save a screenshot and open the file with `read`: `const { data } = await browser.cdp({ method: "Page.captureScreenshot", sessionId: "active" })`, then `await fs.writeFile(path, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))` with `node:fs/promises`.',
   "One call returns at most 1 MiB, and a run's calls share 8 MiB each way, so take about eight screenshots per run at most, and print PDFs in a run of their own.",
   "Runs that use the browser take turns, even when started together: a run waits until the runs ahead of it end. To work on several pages, do it in one run: open a tab per page with Target.createTarget and drive them with Promise.all.",
-  "Don't call the browser tool from code through `codemode:tools`: it waits for this run's turn, which only ends when this run does.",
+  `Don't call the browser tool from code through \`${toolsSpecifier}\`: it waits for this run's turn, which only ends when this run does.`,
 ];
 
 /**
@@ -95,7 +111,8 @@ const WORKSPACE_RULES = [
  * needs Workspace write access, since browsing can change things on the
  * sites the browser is logged in to.
  *
- * @param options - The browser, the browser scope, and how long to wait for a turn.
+ * @param options - The browser, the browser scope, how long to wait for a
+ *   turn, and the specifiers its description names.
  * @returns The module to pass as `modules["codemode:browser"]`.
  * @throws When `scope` is an empty string.
  */
@@ -103,12 +120,14 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
   const { browser } = options;
   const scope = options.scope ?? DEFAULT_BROWSER_SCOPE;
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-  if (scope === "") throw new Error("codemode:browser: scope must not be empty.");
+  const specifier = options.specifier ?? DEFAULT_SPECIFIER;
+  const toolsSpecifier = options.toolsSpecifier ?? DEFAULT_TOOLS_SPECIFIER;
+  if (scope === "") throw new Error(`${specifier}: scope must not be empty.`);
   const browserScopeOf = ({ id, metadata }: WorkspaceModuleExecution): string => {
     const value = typeof scope === "function" ? scope({ id, metadata }) : scope;
     if (typeof value !== "string" || value === "") {
       throw new Error(
-        `codemode:browser: the scope function returned ${JSON.stringify(value)} for run ${id}; a browser scope must be a non-empty string.`,
+        `${specifier}: the scope function returned ${JSON.stringify(value)} for run ${id}; a browser scope must be a non-empty string.`,
       );
     }
     return value;
@@ -128,7 +147,7 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
     docs.functions,
     "",
     "Rules:",
-    ...[...docs.rules, ...WORKSPACE_RULES].map((rule) => `- ${rule}`),
+    ...[...docs.rules, ...workspaceRules(specifier, toolsSpecifier)].map((rule) => `- ${rule}`),
   ]
     .join("\n")
     .split("\n")
@@ -151,7 +170,7 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
     "session",
     async (run: WorkspaceModuleScope, host: WorkspaceModuleHost) => {
       const browserScope = browserScopeOf(run);
-      await assertNotHeldByPausedRun(host, run, browserScope, pausedWithSession);
+      await assertNotHeldByPausedRun(specifier, host, run, browserScope, pausedWithSession);
 
       const session = browser.session({ scope: browserScope, lock: true });
       const timeout = AbortSignal.timeout(lockTimeoutMs);
@@ -161,7 +180,7 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
         await session.close();
         if (timeout.aborted && !run.signal.aborted) {
           throw new Error(
-            `codemode:browser: gave up waiting for the browser after ${Math.round(lockTimeoutMs / 1000)}s: other runs in browser scope ${JSON.stringify(browserScope)} were using it. Runs that use the browser take turns, so try again once they finish.`,
+            `${specifier}: gave up waiting for the browser after ${Math.round(lockTimeoutMs / 1000)}s: other runs in browser scope ${JSON.stringify(browserScope)} were using it. Runs that use the browser take turns, so try again once they finish.`,
           );
         }
         throw error;
@@ -170,7 +189,7 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
       // this one waited. A run marks itself waiting before it releases
       // the lock, so checking again now can't miss it.
       try {
-        await assertNotHeldByPausedRun(host, run, browserScope, pausedWithSession);
+        await assertNotHeldByPausedRun(specifier, host, run, browserScope, pausedWithSession);
       } catch (error) {
         await session.close();
         throw error;
@@ -211,7 +230,7 @@ export function createBrowserModule(options: BrowserModuleOptions): CodemodeModu
   for (const name of exportNames) {
     functions[name] = async (args, ctx) => {
       if (ctx.access !== "read-write") {
-        throw new Error(`codemode:browser ${name} requires Workspace write access.`);
+        throw new Error(`${specifier} ${name} requires Workspace write access.`);
       }
       if (args.length > 1) {
         throw new TypeError(`browser.${name}(input) takes one input object.`);
@@ -246,6 +265,7 @@ interface PausedClaim {
 // that reused the id, holds nothing. Claims for runs no longer waiting
 // are dropped here, since only a waiting run can hold a scope.
 async function assertNotHeldByPausedRun(
+  specifier: string,
   host: WorkspaceModuleHost,
   run: WorkspaceModuleScope,
   browserScope: string,
@@ -261,7 +281,7 @@ async function assertNotHeldByPausedRun(
     const claim = pausedWithSession.get(call.id);
     if (claim?.browserScope === browserScope && call.since <= claim.closedAt) {
       throw new Error(
-        `codemode:browser: browser scope ${JSON.stringify(browserScope)} is held by a run that's waiting for a person (run ${call.id}). Try again once it has its answer.`,
+        `${specifier}: browser scope ${JSON.stringify(browserScope)} is held by a run that's waiting for a person (run ${call.id}). Try again once it has its answer.`,
       );
     }
   }

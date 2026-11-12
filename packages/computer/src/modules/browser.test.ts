@@ -212,6 +212,21 @@ describe("createBrowserModule", () => {
     );
   });
 
+  it("names the specifiers it's given in its description", () => {
+    const module = createBrowserModule({
+      browser: new FakeBrowser(["cdp"]),
+      specifier: "agent:browser",
+      toolsSpecifier: "agent:tools",
+    });
+
+    expect(module.description).toContain('import * as browser from "agent:browser"');
+    expect(module.description).toContain("through `agent:tools`");
+    expect(module.description).not.toContain("codemode:");
+    expect(parseModules({ "agent:browser": module }, "agent").description).toContain(
+      "- `agent:browser`: A persistent Chrome browser",
+    );
+  });
+
   it('drives the "shared" browser scope by default, a string, or the one a function picks', async () => {
     const browser = new FakeBrowser();
     await startScope(createBrowserModule({ browser }), runScope(), hostWith());

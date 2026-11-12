@@ -137,7 +137,8 @@ export interface WorkspaceModuleFactory {
  *   with methods, and give its functions shared context, including state
  *   for one scope of a run, such as a session the run opens and must close.
  *
- * Host modules must use a `codemode:*` specifier. Source may use a simple one
+ * Host modules must use a `codemode:*` specifier, or one under the scheme
+ * the backend's `scheme` names instead. Source may use a simple one
  * too, for a library the host provides.
  */
 export type WorkspaceModule =

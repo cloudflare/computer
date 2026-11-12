@@ -55,7 +55,9 @@ import {
 } from "./journal.js";
 import {
   assertHostModuleExports,
+  assertScheme,
   buildModuleGraph,
+  DEFAULT_SCHEME,
   hasNodeModules,
   internalModuleSources,
   NODE_MODULES_DESCRIPTION,
@@ -77,7 +79,8 @@ export interface CodemodeBackendOptions {
    * one, is a host module: it runs in the Durable Object under a `codemode:*`
    * specifier, and each function becomes a named export. Source may use a
    * simple `codemode:*` specifier too, for a library the host provides, such as
-   * one that wraps host modules in objects.
+   * one that wraps host modules in objects. `scheme` replaces `codemode`
+   * in these specifiers.
    *
    * ```ts
    * modules: {
@@ -93,6 +96,21 @@ export interface CodemodeBackendOptions {
    * connecting throws when a host module's export names are not allowed.
    */
   modules?: Record<string, WorkspaceModule>;
+  /**
+   * The scheme of host module specifiers, and of the libraries the host
+   * provides, without its colon. Defaults to `"codemode"`, for
+   * `codemode:git`. With `"agent"`, host modules are `agent:git` and
+   * `agent:weather`, code imports them by those names, and the backend's
+   * description lists them so.
+   *
+   * A specifier under any other scheme, `codemode:` included, is then an
+   * ordinary bare name: a host module can't use it, and an import of one
+   * that isn't configured fails like any other unknown module. The scheme
+   * must be a lowercase letter followed by lowercase letters, digits, or
+   * `-`, and not one the Workers runtime or URLs already use, such as
+   * `node`, `cloudflare`, `http` or `file`.
+   */
+  scheme?: string;
   defaultTimeoutMs?: number;
   maxTimeoutMs?: number;
   /**
@@ -214,6 +232,7 @@ type ResolvedCodemodeBackendOptions = Required<
     CodemodeBackendOptions,
     | "root"
     | "access"
+    | "scheme"
     | "defaultTimeoutMs"
     | "maxTimeoutMs"
     | "maxCpuMs"
@@ -374,6 +393,8 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
     if ((options.maxCapabilityBytes ?? 1024 * 1024) < 256) {
       throw new Error("CodemodeBackend maxCapabilityBytes must be at least 256 bytes.");
     }
+    const scheme = options.scheme ?? DEFAULT_SCHEME;
+    assertScheme(scheme);
     const compatibilityDate = options.compatibilityDate ?? "2026-05-23";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(compatibilityDate)) {
       throw new Error("CodemodeBackend compatibilityDate must use YYYY-MM-DD.");
@@ -392,7 +413,8 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
     this.#options = {
       ...backendOptions,
       egress: resolvedEgress,
-      modules: parseModules(options.modules ?? {}),
+      modules: parseModules(options.modules ?? {}, scheme),
+      scheme,
       root: options.root ?? WORKSPACE_ROOT,
       access: options.access ?? "read-write",
       defaultTimeoutMs,
@@ -976,6 +998,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     this.#sourceModules ??= prepareSourceModules(
       this.#options.modules.source,
       new Set([...this.#options.modules.host.keys(), ...this.#options.modules.codemode.keys()]),
+      this.#options.scheme,
     );
     return this.#sourceModules;
   }
@@ -1034,6 +1057,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
         nodeModules: hasNodeModules(this.#options.compatibilityFlags),
         maxSourceBytes: this.#options.maxSourceBytes,
         maxCapabilityBytes: this.#options.maxCapabilityBytes,
+        scheme: this.#options.scheme,
       });
       if (this.#closed) {
         throw runtimeError("ECLOSED", "CodemodeBackend closed during module loading");
