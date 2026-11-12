@@ -362,7 +362,7 @@ Source modules live together in the module directory, not beside the caller's fi
 
 ### Host modules
 
-A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `codemode:*` specifier. Nothing under `codemode:` is installed unless you configure it.
+A host module runs in the Durable Object, and each of its functions becomes a named export in the isolate. Host modules must use a simple `codemode:*` specifier, or one under the backend's [module scheme](#module-scheme). Nothing under `codemode:` is installed unless you configure it.
 
 Pass an object of functions:
 
@@ -428,6 +428,30 @@ Host code reads metadata as `WorkspaceExecutionMetadata`, whose values may be `u
 The run's code never sees metadata: it isn't in `process.env` or the input, so code can't read or change it, and a module can trust it. It's capped at 16 KiB of keys and values. A replayable run keeps its metadata when it resumes, `pending()` lists it with each waiting call, and `workspace.stub().runtime.exec()` takes it too. Backends that run no host modules ignore it.
 
 Specifiers and the export names of an object are checked at construction. A factory's export names are checked when the backend connects and the factory runs. An object must export at least one function. A factory may build none, as `codemode:tools` does for an agent with no tools: the backend then leaves that module out of the connection, so only code that imports it fails, with a message saying the module exports nothing, and every other run still starts. Every export name must be a JavaScript identifier name other than `default` or `then`. A reserved word such as `delete` is allowed, and caller code renames it on import: `import { delete as remove } from "codemode:files"`. Importing a name the module does not export fails when the module graph links, before any code runs.
+
+#### Module scheme
+
+A host that wants its modules under a name of its own sets `scheme`, which replaces `codemode` in every specifier above. With `scheme: "agent"`, host modules and the libraries the host provides are `agent:git`, `agent:weather` and so on: code imports them by those names, the backend's description lists them so, and an import of an `agent:*` module that isn't configured fails before the Worker is created, as an unconfigured `codemode:*` one does by default.
+
+```ts
+new CodemodeBackend({
+  loader: env.LOADER,
+  scheme: "agent",
+  modules: {
+    "agent:git": createGitModule(),
+    "agent:web": createBrowserModule({
+      browser: this.browser,
+      specifier: "agent:web",
+      toolsSpecifier: "agent:tools",
+    }),
+    "agent:tools": createToolBindings(forPiTools(() => agent.tools)),
+  },
+});
+```
+
+`codemode:*` is then an ordinary bare name: a host module can't use it, and code that imports one it doesn't have fails as it would for any other unknown module. A backend has one scheme. It must be a lowercase letter followed by lowercase letters, digits, or `-`, and can't be one the Workers runtime or URLs already give a meaning, such as `node`, `cloudflare`, `http`, or `file`. The default, `codemode`, behaves exactly as before.
+
+The prebuilt modules work under any specifier. `createBrowserModule()` tells the model which specifier to import it from, and not to reach the browser tool through `codemode:tools`, so pass it `specifier` and `toolsSpecifier` when it's served under other names.
 
 #### Codemode modules
 
@@ -759,7 +783,7 @@ The function may throw instead, when a run without that metadata shouldn't brows
 
 Runs in one browser scope take turns, like `browserTool` calls, because they would otherwise see each other's navigation: pi and the AI SDK run a message's tool calls in parallel. A run takes its turn at its first browser call and keeps it until it ends, and runs that never call the module never wait. A run gives up after `lockTimeoutMs` (45 seconds by default) with an error saying why; keep it under the run's timeout and the backend's `maxHostCallMs`. A run that browsed and is waiting for a person keeps its browser scope while it waits: its session is closed, and other runs' first calls in that browser scope fail at once, saying the browser is held by a run that's waiting for a person. A run that took its turn while one ahead of it paused fails the same way. The module remembers which runs browsed in memory, so after the Durable Object restarts, a waiting run holds nothing until it resumes. Once that run resumes, it takes its turn again only at its first new browser call, since replay answers its earlier calls from the journal.
 
-Don't expose `browserTool` to code through `codemode:tools` alongside this module. A run calling it would wait for its own turn until the host call timed out. The module's description says so, and also tells the model to save screenshots to a file with `node:fs` and open them with `read`, to take about eight per run (each host call returns at most 1 MiB, and a run's calls share 8 MiB each way), and to work on several pages inside one run rather than across runs started together. The backend adds that description to its own, which the `exec` tool shows. An app that writes `exec`'s description itself must include it, from `backend.description`.
+Don't expose `browserTool` to code through `codemode:tools` alongside this module. A run calling it would wait for its own turn until the host call timed out. The module's description says so, naming `toolsSpecifier` (`codemode:tools` by default) as it names `specifier` (`codemode:browser` by default) in its import line, and also tells the model to save screenshots to a file with `node:fs` and open them with `read`, to take about eight per run (each host call returns at most 1 MiB, and a run's calls share 8 MiB each way), and to work on several pages inside one run rather than across runs started together. The backend adds that description to its own, which the `exec` tool shows. An app that writes `exec`'s description itself must include it, from `backend.description`.
 
 The module is experimental and may change in any release.
 

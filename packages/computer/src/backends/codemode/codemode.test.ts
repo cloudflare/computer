@@ -2,8 +2,9 @@ import { Database, initializeSchema, WorkspaceFilesystem } from "@cloudflare/dof
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
 
+import { createGitModule } from "../../modules/git";
 import { createCodemodeModule, type WorkspaceModuleScopeEnd } from "../../runtime/codemode-module";
-import type { WorkspaceRuntimeLoader } from "../../runtime/types";
+import type { WorkspaceModule, WorkspaceRuntimeLoader } from "../../runtime/types";
 import { Workspace } from "../../workspace";
 import { runtimeCode, CodemodeBackend } from "./codemode";
 import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
@@ -2049,6 +2050,203 @@ describe("CodemodeBackend", () => {
       expect(source(modules["__modules__/facade"])).toBe(
         `import { value } from "base"; import { run } from "./codemode:echo"; export { value, run };`,
       );
+    });
+
+    describe("with a scheme", () => {
+      async function workspaceWith(
+        load: WorkspaceRuntimeLoader["load"],
+        modules: Record<string, WorkspaceModule>,
+      ) {
+        const workspace = new Workspace({
+          storage: new SQLiteTestStorage(),
+          backends: [new CodemodeBackend({ loader: { load }, scheme: "agent", modules })],
+        });
+        await workspace.fs.mkdir("/workspace", { recursive: true });
+        return workspace;
+      }
+
+      // A loader whose run calls each host function in turn, as code that
+      // imported them would, then completes.
+      function callingLoader(names: readonly string[]) {
+        return vi.fn<WorkspaceRuntimeLoader["load"]>(
+          (_code: { modules: Record<string, string | { js?: string }> }) => ({
+            getEntrypoint() {
+              return {
+                async evaluate(
+                  _input: unknown,
+                  host: {
+                    call(name: string, args: unknown[]): Promise<unknown>;
+                    assertResult(value: unknown): Promise<void>;
+                    attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+                  },
+                ) {
+                  for (const name of names) await host.call(name, []);
+                  await evaluateResult(host, null);
+                },
+              };
+            },
+          }),
+        );
+      }
+
+      it("serves objects of functions, factories and codemode modules under its scheme", async () => {
+        const called: string[] = [];
+        const load = callingLoader([
+          "host/agent:echo.run",
+          "host/agent:repo.recent",
+          "host/agent:jobs.start",
+        ]);
+        const workspace = await workspaceWith(load, {
+          "agent:echo": { run: async () => void called.push("echo") },
+          "agent:repo": () => ({ recent: async () => void called.push("repo") }),
+          "agent:jobs": createCodemodeModule().module({
+            start: async () => void called.push("jobs"),
+          }),
+        });
+
+        const execution = await workspace.runtime.exec(
+          `import { run } from "agent:echo"; import { recent } from "agent:repo"; import { start } from "agent:jobs"; export default [run, recent, start].length;`,
+        );
+        await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+        expect(called).toEqual(["echo", "repo", "jobs"]);
+        const modules = load.mock.calls[0]?.[0].modules ?? {};
+        expect(Object.keys(modules).filter((name) => name.startsWith("__modules__/"))).toEqual([
+          "__modules__/agent:echo",
+          "__modules__/agent:repo",
+          "__modules__/agent:jobs",
+        ]);
+        expect(source(modules["workspace/__workspace_entry__.js"])).toBe(
+          `import { run } from "../__modules__/agent:echo"; import { recent } from "../__modules__/agent:repo"; import { start } from "../__modules__/agent:jobs"; export default [run, recent, start].length;`,
+        );
+      });
+
+      it("describes a prebuilt factory and the host's libraries under its scheme", () => {
+        const backend = new CodemodeBackend({
+          loader: throwingLoader("must not load"),
+          scheme: "agent",
+          modules: {
+            "agent:git": createGitModule(),
+            "agent:lib": "export const x = 1;",
+            // Under another scheme, codemode:* is an ordinary bare name.
+            "codemode:lib": "export const x = 1;",
+          },
+        });
+
+        expect(backend.description).toContain(
+          "- `agent:git`: The workspace's Git repository tools: `status({ dir })`",
+        );
+        expect(backend.description).toContain("- `agent:lib`: a library the host provides.");
+        expect(backend.description).toContain("- `codemode:lib`: a bundled library.");
+      });
+
+      it("serves source under its scheme, which can import the host's modules by name", async () => {
+        const load = completingLoader();
+        const workspace = await workspaceWith(load, {
+          "agent:facade": `import { run } from "agent:echo"; import { value } from "agent:base"; export const echo = { run, value };`,
+          "agent:base": "export const value = 1;",
+          "agent:echo": { run: async () => null },
+        });
+
+        const execution = await workspace.runtime.exec(
+          `import { echo } from "agent:facade"; export default typeof echo.run;`,
+        );
+        await expect(execution.result()).resolves.toMatchObject({ status: "completed" });
+
+        const modules = load.mock.calls[0]?.[0].modules ?? {};
+        expect(source(modules["__modules__/agent:facade"])).toBe(
+          `import { run } from "./agent:echo"; import { value } from "./agent:base"; export const echo = { run, value };`,
+        );
+      });
+
+      it.each([
+        [
+          "code that imports an unconfigured module under its scheme",
+          {},
+          `import "agent:missing"; export default 1;`,
+          `Module "agent:missing" is not configured. Add it to the backend's modules option.`,
+        ],
+        [
+          "code that imports a codemode:* module",
+          {},
+          `import { status } from "codemode:git"; export default status;`,
+          `Module "codemode:git" is not configured for the codemode backend.`,
+        ],
+        [
+          "source that imports an unconfigured module under its scheme",
+          { lib: `import "agent:missing";` },
+          `import "lib"; export default 1;`,
+          `Configured module "lib" imports "agent:missing", which is not configured.`,
+        ],
+      ])("rejects %s", async (_label, modules, code, message) => {
+        const load = vi.fn<WorkspaceRuntimeLoader["load"]>();
+        const workspace = await workspaceWith(load, modules);
+
+        await expect(workspace.runtime.exec(code)).rejects.toThrow(message);
+        expect(load).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        [
+          "a host module under codemode:*",
+          { "codemode:git": { run: async () => null } },
+          'Host module "codemode:git" must use a simple agent:* name, such as "agent:git".',
+        ],
+        [
+          "source under its scheme with a path",
+          { "agent:lib/x": "export const x = 1;" },
+          'Module "agent:lib/x" must use a simple agent:* name, such as "agent:git".',
+        ],
+      ])("rejects %s at construction", (_label, modules, message) => {
+        expect(
+          () =>
+            new CodemodeBackend({
+              loader: throwingLoader("must not load"),
+              scheme: "agent",
+              modules,
+            }),
+        ).toThrow(message);
+      });
+
+      it("keeps codemode:* by default, and refuses another scheme's host modules", () => {
+        expect(
+          () =>
+            new CodemodeBackend({
+              loader: throwingLoader("must not load"),
+              modules: { "agent:git": { run: async () => null } },
+            }),
+        ).toThrow(
+          'Host module "agent:git" must use a simple codemode:* name, such as "codemode:git".',
+        );
+        const backend = new CodemodeBackend({
+          loader: throwingLoader("must not load"),
+          scheme: "codemode",
+          modules: { "codemode:weather": { forecast: () => null } },
+        });
+        expect(backend.description).toBe(
+          new CodemodeBackend({
+            loader: throwingLoader("must not load"),
+            modules: { "codemode:weather": { forecast: () => null } },
+          }).description,
+        );
+      });
+
+      it.each(["", "Agent", "1agent", "agent:", "my_agent", "node", "cloudflare", "https", "file"])(
+        "refuses the scheme %j",
+        (scheme) => {
+          expect(
+            () => new CodemodeBackend({ loader: throwingLoader("must not load"), scheme }),
+          ).toThrow(/CodemodeBackend scheme/);
+        },
+      );
+
+      it("accepts lowercase schemes with digits and dashes", () => {
+        for (const scheme of ["agent", "my-agent", "agent2"]) {
+          expect(
+            () => new CodemodeBackend({ loader: throwingLoader("must not load"), scheme }),
+          ).not.toThrow();
+        }
+      });
     });
   });
 });

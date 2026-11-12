@@ -75,7 +75,53 @@ function nodeModule(specifier: string): string | undefined {
   const name = specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
   return NODE_MODULES.some((allowed) => allowed === name) ? `node:${name}` : undefined;
 }
-const HOST_SPECIFIER = /^codemode:[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** The scheme of host module specifiers unless the backend's `scheme` says otherwise. */
+export const DEFAULT_SCHEME = "codemode";
+
+const SCHEME = /^[a-z][a-z0-9-]*$/;
+// Schemes the Workers runtime or URLs already give a meaning, such as
+// `node:path` or `https://...`. Modules under one would shadow those, or
+// be mistaken for them by the code that imports them.
+const RESERVED_SCHEMES = new Set([
+  "node",
+  "cloudflare",
+  "workerd",
+  "http",
+  "https",
+  "ws",
+  "wss",
+  "ftp",
+  "file",
+  "data",
+  "blob",
+  "javascript",
+]);
+
+/**
+ * Check a backend's `scheme`.
+ *
+ * @param scheme - The scheme, without its colon.
+ * @throws When it is not a lowercase letter followed by lowercase letters,
+ *   digits, or `-`, or is a scheme the runtime or URLs already use.
+ */
+export function assertScheme(scheme: string): void {
+  if (typeof scheme !== "string" || !SCHEME.test(scheme)) {
+    throw new Error(
+      `CodemodeBackend scheme must be a lowercase letter followed by lowercase letters, digits, or "-", such as "codemode", not ${JSON.stringify(scheme)}.`,
+    );
+  }
+  if (RESERVED_SCHEMES.has(scheme)) {
+    throw new Error(
+      `CodemodeBackend scheme ${JSON.stringify(scheme)} is reserved: the Workers runtime or URL parsing already gives it a meaning.`,
+    );
+  }
+}
+
+// A simple specifier under the scheme, such as `codemode:git`. The scheme
+// is checked first, so it has no characters a pattern treats specially.
+function hostSpecifier(scheme: string): RegExp {
+  return new RegExp(`^${scheme}:[A-Za-z0-9][A-Za-z0-9._-]*$`);
+}
 
 /** The `modules` option, parsed once when the backend is constructed. */
 export interface ParsedModules {
@@ -97,12 +143,19 @@ const FILESYSTEM_DESCRIPTION =
  * checked when the backend connects and it runs.
  *
  * @param modules - The modules passed to the backend.
+ * @param scheme - The scheme host modules use, such as `codemode`.
  * @returns Source modules, host module factories, codemode modules, and
  *   their description.
  * @throws When a specifier or an object's export names are not allowed.
  *   The host configured the backend wrongly and no execution can use it.
  */
-export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>): ParsedModules {
+export function parseModules(
+  modules: Readonly<Record<string, WorkspaceModule>>,
+  scheme: string = DEFAULT_SCHEME,
+): ParsedModules {
+  const prefix = `${scheme}:`;
+  const simple = hostSpecifier(scheme);
+  const example = JSON.stringify(`${scheme}:git`);
   const source: Record<string, string> = Object.create(null);
   const host = new Map<string, WorkspaceModuleFactory>();
   const codemode = new Map<string, CodemodeModule>();
@@ -113,28 +166,28 @@ export function parseModules(modules: Readonly<Record<string, WorkspaceModule>>)
       throw new Error(`Module ${JSON.stringify(specifier)} is built in and cannot be replaced.`);
     }
     if (typeof module === "string") {
-      if (specifier.startsWith("codemode:")) {
+      if (specifier.startsWith(prefix)) {
         // Source the host provides under its own namespace, such as a facade over its host
         // modules that exports objects, which host modules can't. Same naming rule as theirs.
-        if (!HOST_SPECIFIER.test(specifier)) {
+        if (!simple.test(specifier)) {
           throw new Error(
-            `Module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
+            `Module ${JSON.stringify(specifier)} must use a simple ${prefix}* name, such as ${example}.`,
           );
         }
         source[specifier] = module;
         lines.push(`- ${name}: a library the host provides.`);
         continue;
       }
-      if (specifier.includes("/") || isInternalModuleName(specifier)) {
+      if (specifier.includes("/") || isInternalModuleName(specifier, scheme)) {
         throw new Error(`Module ${JSON.stringify(specifier)} uses a reserved module name.`);
       }
       source[specifier] = module;
       lines.push(`- ${name}: a bundled library.`);
       continue;
     }
-    if (!HOST_SPECIFIER.test(specifier)) {
+    if (!simple.test(specifier)) {
       throw new Error(
-        `Host module ${JSON.stringify(specifier)} must use a simple codemode:* name, such as "codemode:git".`,
+        `Host module ${JSON.stringify(specifier)} must use a simple ${prefix}* name, such as ${example}.`,
       );
     }
     if (isCodemodeModule(module)) {
@@ -186,20 +239,24 @@ export interface BuildModuleGraphOptions {
   maxCapabilityBytes: number;
   maxModules?: number;
   maxDepth?: number;
+  /** The scheme host modules use. Defaults to `codemode`. */
+  scheme?: string;
 }
 
 /**
  * Prepare the backend's source modules for the module directory, once
  * per backend handle: check what each one imports, and point its
- * `codemode:*` imports at the module directory.
+ * imports under the module scheme, such as `codemode:*`, at the module
+ * directory.
  *
  * A source module is stored beside the other configured modules rather
  * than beside the caller's files, so it may import them (those under
- * `codemode:*` by name too), host modules, and built-in modules, but not
- * Workspace files.
+ * the module scheme by name too), host modules, and built-in modules,
+ * but not Workspace files.
  *
  * @param sources - Source modules by specifier.
  * @param hostModules - The specifiers of the backend's host modules.
+ * @param scheme - The scheme host modules use, such as `codemode`.
  * @returns Each source module, ready to store in the module directory.
  * @throws When a source module is not valid JavaScript, or imports a
  *   path that is not another configured module or a host module that is
@@ -208,6 +265,7 @@ export interface BuildModuleGraphOptions {
 export function prepareSourceModules(
   sources: Readonly<Record<string, string>>,
   hostModules: ReadonlySet<string>,
+  scheme: string = DEFAULT_SCHEME,
 ): Readonly<Record<string, string>> {
   const prepared: Record<string, string> = Object.create(null);
   for (const [specifier, source] of Object.entries(sources)) {
@@ -222,7 +280,7 @@ export function prepareSourceModules(
     const edits: ImportSite[] = [];
     for (const site of sites) {
       const imported = site.specifier;
-      if (imported.startsWith("codemode:")) {
+      if (imported.startsWith(`${scheme}:`)) {
         if (!hostModules.has(imported) && !Object.hasOwn(sources, imported)) {
           throw new Error(
             `Configured module ${JSON.stringify(specifier)} imports ${JSON.stringify(imported)}, which is not configured.`,
@@ -259,6 +317,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
   let totalBytes = new TextEncoder().encode(options.source).byteLength;
   const maxModules = options.maxModules ?? 128;
   const maxDepth = options.maxDepth ?? 32;
+  const scheme = options.scheme ?? DEFAULT_SCHEME;
   const storedName = (specifier: string) => `${MODULES_DIRECTORY}/${specifier}`;
 
   async function visit(path: string, source: string, depth: number): Promise<void> {
@@ -296,7 +355,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
           `Module ${JSON.stringify(specifier)} exports nothing on this backend: its factory built no functions when the backend connected.`,
         );
       }
-      if (specifier.startsWith("codemode:")) {
+      if (specifier.startsWith(`${scheme}:`)) {
         throw new Error(
           `Module ${JSON.stringify(specifier)} is not configured. Add it to the backend's modules option.`,
         );
@@ -305,7 +364,7 @@ export async function buildModuleGraph(options: BuildModuleGraphOptions) {
         const absolute = specifier.startsWith("/");
         const resolved = absolute ? normalizePath(specifier) : resolveRelative(path, specifier);
         const childName = moduleName(resolved);
-        if (isInternalModuleName(childName)) {
+        if (isInternalModuleName(childName, scheme)) {
           throw new Error(
             `Module ${JSON.stringify(childName)} is reserved for Workspace internals.`,
           );
@@ -498,7 +557,7 @@ function directoryName(name: string) {
   return slash === -1 ? "" : name.slice(0, slash);
 }
 
-function isInternalModuleName(name: string) {
+function isInternalModuleName(name: string, scheme: string) {
   return (
     name === CAPABILITIES_MODULE ||
     name === DURABLE_MODULE ||
@@ -509,7 +568,7 @@ function isInternalModuleName(name: string) {
     name.endsWith(`/${CAPABILITIES_MODULE}`) ||
     name.endsWith(`/${DURABLE_MODULE}`) ||
     name.endsWith(`/${RUNNER_MODULE}`) ||
-    name.split("/").at(-1)?.startsWith("codemode:") === true
+    name.split("/").at(-1)?.startsWith(`${scheme}:`) === true
   );
 }
 
