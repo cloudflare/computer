@@ -53,6 +53,11 @@ export interface WorkspaceBackendInfo {
   readonly callable: boolean;
   /** What the backend tells a model about itself. */
   readonly description?: string;
+  /**
+   * Whether its execs can detach, through `runtime.detachExec()`, such
+   * as a `CodemodeBackend` with `onDetachedExit`.
+   */
+  readonly detachable: boolean;
 }
 
 export class WorkspaceRuntime {
@@ -80,7 +85,12 @@ export class WorkspaceRuntime {
       protocol: isModuleBackend(backend) ? ("module" as const) : ("command" as const),
       callable: backend.callable === true,
       ...(backend.description === undefined ? {} : { description: backend.description }),
+      detachable: this.#detachable(backend),
     }));
+  }
+
+  #detachable(backend: WorkspaceRegisteredBackend): boolean {
+    return isModuleBackend(backend) && backend.detachable === true;
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandle<undefined>>;
@@ -162,10 +172,12 @@ export class WorkspaceRuntime {
   }
 
   /**
-   * Resume or settle the runs a Durable Object restart interrupted.
+   * Resume or settle the runs a Durable Object restart interrupted, and
+   * call a backend's `onDetachedExit` again for exits it hasn't taken
+   * yet.
    * Backends do this when they first connect, which the next runtime
    * call or `ready({ all: true })` triggers. Call this from an alarm to
-   * resume runs without waiting for one.
+   * do it without waiting for one.
    */
   async recover(): Promise<void> {
     for (const [id, backend] of this.#options.backends) {
@@ -210,6 +222,31 @@ export class WorkspaceRuntime {
       throw new Error(`Backend ${backend} doesn't run calls that wait for an answer.`);
     }
     await handle.respond({ id, callId, answer });
+  }
+
+  /**
+   * Note that nothing waits on the exec any more, and leave it running.
+   * Once it exits, its backend's `onDetachedExit` hears how it ended.
+   * Returns false, and changes nothing, if the exec has already exited:
+   * read its result from `getExec()` instead. Needs a backend that can
+   * detach, such as a `CodemodeBackend` with `onDetachedExit`.
+   * Experimental: it may change in any release.
+   */
+  async detachExec(id: string, options: { backend?: string } = {}): Promise<boolean> {
+    assertExecutionId(id);
+    const backend = this.#backend(options.backend);
+    const registered = this.#options.backends.get(backend);
+    const handle = await this.#options.backendHandle(backend);
+    if (
+      registered === undefined ||
+      !this.#detachable(registered) ||
+      handle.detachExec === undefined
+    ) {
+      throw new Error(
+        `Backend ${backend} can't detach execs: it needs somewhere to send their exits, such as CodemodeBackend's onDetachedExit.`,
+      );
+    }
+    return handle.detachExec({ id });
   }
 
   async killExec(id: string, options: WorkspaceRuntimeKillOptions = {}): Promise<void> {

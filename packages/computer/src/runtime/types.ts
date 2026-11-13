@@ -369,6 +369,28 @@ export interface WorkspaceRuntimePendingCall {
   readonly metadata: WorkspaceExecutionMetadata;
 }
 
+/**
+ * How a detached exec ended, as a backend's `onDetachedExit` hears it.
+ * Experimental: it may change in any release.
+ */
+export interface WorkspaceRuntimeExecExit {
+  /** The exec that exited. */
+  readonly id: string;
+  readonly backend: string;
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly exitCode: number;
+  /** What the run's default export returned, when it returned something. */
+  readonly result?: WorkspaceRuntimeValue;
+  /** The `metadata` the run was started with, or an empty object. */
+  readonly metadata: WorkspaceExecutionMetadata;
+  /** The last 16 KiB of the run's standard output. */
+  readonly stdout: string;
+  /** The last 16 KiB of the run's standard error. */
+  readonly stderr: string;
+  /** When the run ended, in milliseconds since the epoch. */
+  readonly exitedAt: number;
+}
+
 export interface ModuleExecutionEnvelope {
   id: string;
   // Identity of the process-local backend runtime that owns this
@@ -396,9 +418,13 @@ export interface WorkspaceModuleBackendHandle {
   }): Promise<ModuleExecutionEnvelope>;
   killExec(input: { id: string; signal?: KillSignal; runtimeId?: string }): Promise<void>;
   disposeExec(input: { id: string; runtimeId?: string }): Promise<void>;
-  // Settle the runs a restart interrupted. A backend that recovers
-  // when it connects needs nothing more here.
+  // Settle the runs a restart interrupted, and hand on detached execs'
+  // exits that `onDetachedExit` hasn't taken yet. A backend that does
+  // this when it connects only needs to retry the hook here.
   recover?(): Promise<void>;
+  // Note that nothing waits on the exec any more, so its exit goes to
+  // the backend's `onDetachedExit`. False if it has already exited.
+  detachExec?(input: { id: string }): Promise<boolean>;
   // Calls waiting for an answer, and answering one.
   pending?(): Promise<Omit<WorkspaceRuntimePendingCall, "backend">[]>;
   respond?(input: { id: string; callId: string; answer: WorkspaceRuntimeValue }): Promise<void>;
@@ -422,6 +448,11 @@ export interface WorkspaceModuleBackend {
   readonly callable?: boolean;
   /** What the backend tells a model about itself. Shown by the exec tool. */
   readonly description?: string;
+  /**
+   * Whether its execs can detach, through `runtime.detachExec()`: the
+   * backend supports it and has somewhere to send their exits.
+   */
+  readonly detachable?: boolean;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
 }
 

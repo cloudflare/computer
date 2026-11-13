@@ -105,6 +105,7 @@ export type {
   WorkspaceRuntimeAccess,
   WorkspaceRuntimeDisposeOptions,
   WorkspaceRuntimeEvent,
+  WorkspaceRuntimeExecExit,
   WorkspaceRuntimeExecHandle,
   WorkspaceRuntimeExecOptions,
   WorkspaceRuntimeGetOptions,

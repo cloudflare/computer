@@ -6,6 +6,7 @@ import { createGitClient } from "../src/git/index";
 import type {
   WorkspaceExecutionMetadata,
   WorkspaceRuntimePendingCall,
+  WorkspaceRuntimeExecExit,
   WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "../src/index";
@@ -75,6 +76,11 @@ function fakeContainerBackend(): WorkspaceBackend {
 const durableCalls = new Map<string, number>();
 // Each call onWait was told about.
 const waits: WorkspaceRuntimePendingCall[] = [];
+// Each exit onDetachedExit was handed, as often as it was handed it.
+const exits: WorkspaceRuntimeExecExit[] = [];
+// Execs whose next onDetachedExit call throws, as a hook that couldn't
+// reach its app would.
+const refuseExit = new Set<string>();
 let gateOpen = false;
 // Named gates a run can wait on after the first, for a second restart.
 const opened = new Set<string>();
@@ -317,6 +323,10 @@ function codemodeBackend(
     maxStdioBytes: overrides.maxStdioBytes ?? 64,
     maxCapabilityBytes: 1024,
     onWait: (call) => void waits.push(call),
+    onDetachedExit: (exec) => {
+      if (refuseExit.delete(exec.id)) throw new Error("the app is away");
+      exits.push(exec);
+    },
     maxConcurrentCapabilityCalls: 2,
     modules: {
       "math-kit": "export const double = (value) => value * 2;",
@@ -534,6 +544,7 @@ export class HostDO extends DurableObject<Env> {
     onInterrupt?: "fail" | "restart" | "replay";
     network?: boolean;
     metadata?: Record<string, string>;
+    detach?: boolean;
   }) {
     gateOpen = false;
     opened.clear();
@@ -547,6 +558,7 @@ export class HostDO extends DurableObject<Env> {
       metadata: input.metadata,
     });
     void handle.result().catch(() => undefined);
+    if (input.detach === true) await this.#workspace.runtime.detachExec(handle.id);
     // Let the run reach the gate.
     for (let attempt = 0; attempt < 500 && !durableCalls.has("gate"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -580,6 +592,18 @@ export class HostDO extends DurableObject<Env> {
 
   waits() {
     return waits;
+  }
+
+  exits(id: string) {
+    return exits.filter((exec) => exec.id === id);
+  }
+
+  refuseExit(id: string) {
+    refuseExit.add(id);
+  }
+
+  async detachExec(id: string, backend?: string) {
+    return this.#workspace.runtime.detachExec(id, { backend });
   }
 
   async respond(id: string, callId: string, value: WorkspaceRuntimeValue) {
@@ -870,6 +894,7 @@ export default class extends WorkerEntrypoint<Env> {
               onInterrupt?: "fail" | "restart" | "replay";
               network?: boolean;
               metadata?: Record<string, string>;
+              detach?: boolean;
             },
           ),
         });
@@ -901,6 +926,25 @@ export default class extends WorkerEntrypoint<Env> {
 
       if (url.pathname === "/interrupt-waits") {
         return Response.json(await stub.waits());
+      }
+
+      if (url.pathname === "/exits") {
+        return Response.json(await stub.exits(url.searchParams.get("id") ?? ""));
+      }
+
+      if (url.pathname === "/detach") {
+        const id = url.searchParams.get("id") ?? "";
+        const backend = url.searchParams.get("backend") ?? undefined;
+        try {
+          return Response.json({ detached: await stub.detachExec(id, backend) });
+        } catch (error) {
+          return Response.json({ error: String(error) }, { status: 400 });
+        }
+      }
+
+      if (url.pathname === "/refuse-exit") {
+        await stub.refuseExit(url.searchParams.get("id") ?? "");
+        return new Response(null, { status: 204 });
       }
 
       if (url.pathname === "/interrupt-pending") {
