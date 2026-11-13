@@ -29,6 +29,7 @@ import type {
   WorkspaceRuntimeInterruptPolicy,
   WorkspaceRuntimeLoader,
   WorkspaceRuntimePendingCall,
+  WorkspaceRuntimeExecExit,
   WorkspaceRuntimeValue,
 } from "../../runtime/types";
 import { WORKSPACE_ROOT } from "../../workspace-root";
@@ -160,6 +161,21 @@ export interface CodemodeBackendOptions {
    * change in any release.
    */
   onWait?: (call: WorkspaceRuntimePendingCall) => void | Promise<void>;
+  /**
+   * Called once a detached exec exits, however it exits, with how it
+   * ended. An exec detaches through `runtime.detachExec()`, or the exec
+   * tool's `detach`, when nothing should wait on it any more, such as
+   * one an agent left waiting for an approval. Nothing else hears how
+   * it ended, so this is where the outcome goes back to whoever started
+   * it. Without this, the backend's execs can't detach.
+   *
+   * The backend saves the exit in the same transaction that records
+   * it, and deletes it once this returns. If this throws, or the object
+   * restarts first, it's called again when the backend next connects or
+   * from `runtime.recover()`, so it may hear about an exec more than
+   * once: key on its `id`. Experimental: it may change in any release.
+   */
+  onDetachedExit?: (exec: WorkspaceRuntimeExecExit) => void | Promise<void>;
   /**
    * How often to schedule a timer while any execution is running, in
    * milliseconds. Set it to 0 to turn the timer off. Defaults to 60
@@ -337,12 +353,15 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
   readonly protocol = "module" as const;
   readonly type = "codemode";
   readonly callable = true;
+  // Execs detach only when their exits have somewhere to go.
+  readonly detachable: boolean;
   readonly id: string;
   readonly #options: ResolvedCodemodeBackendOptions;
   readonly #header: string;
 
   constructor(options: CodemodeBackendOptions) {
     this.id = options.id ?? "codemode";
+    this.detachable = options.onDetachedExit !== undefined;
     if (options.egress !== undefined && options.globalOutbound !== undefined) {
       throw new Error("CodemodeBackend cannot use globalOutbound together with egress.");
     }
@@ -488,6 +507,9 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #running = new Map<string, number>();
   readonly #recoveryQueue: Array<() => void> = [];
   readonly #recovering = new Set<string>();
+  // Detached execs whose exit is being handed to `onDetachedExit`, so
+  // a second delivery pass leaves them alone.
+  readonly #delivering = new Set<string>();
   #keepAlive: ReturnType<typeof setInterval> | undefined;
   // Zero when the timer is off or can't keep this object in memory.
   readonly #keepAliveIntervalMs: number;
@@ -558,6 +580,17 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       "INTEGER NOT NULL DEFAULT 0",
     );
     addColumnIfMissing(host, "workspace_runtime_executions", "finished_at", "INTEGER");
+    // The run's metadata, as JSON, so its exit can report it for a run
+    // that saved no start to resume from.
+    addColumnIfMissing(host, "workspace_runtime_executions", "metadata", "TEXT");
+    // Set once nothing waits on the run, so its exit goes to the
+    // backend's `onDetachedExit`.
+    addColumnIfMissing(
+      host,
+      "workspace_runtime_executions",
+      "detached",
+      "INTEGER NOT NULL DEFAULT 0",
+    );
     host.db.run(
       `UPDATE workspace_runtime_executions
        SET finished_at = ?
@@ -575,6 +608,15 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       )
     `);
     createResumeTables(host.db);
+    // Detached execs that exited, until `onDetachedExit` takes them.
+    host.db.run(`
+      CREATE TABLE IF NOT EXISTS workspace_runtime_detached_exits (
+        backend TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (backend, execution_id)
+      )
+    `);
     this.#prune();
     const interrupted = host.db.all<{ id: string }>(
       `SELECT id FROM workspace_runtime_executions WHERE backend = ? AND status = 'running'`,
@@ -582,11 +624,116 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     );
     for (const { id } of interrupted) this.#resumeInterrupted(id);
     this.#drainRecoveries();
+    void this.#deliverExits();
   }
 
-  // Recovery runs when the backend connects, so there's nothing left to
-  // do by the time the runtime asks.
-  async recover(): Promise<void> {}
+  // Interrupted runs resume when the backend connects, so all that's
+  // left is handing on detached execs' exits that haven't been taken.
+  async recover(): Promise<void> {
+    await this.#deliverExits();
+  }
+
+  // Mark the run detached, unless it has already ended. One transaction,
+  // so the run can't end between the check and the mark: either its
+  // exit goes to `onDetachedExit`, or the caller reads its result.
+  async detachExec(input: { id: string }): Promise<boolean> {
+    assertExecutionId(input.id);
+    if (this.#options.onDetachedExit === undefined) {
+      throw new Error(`Backend ${this.#backendId} can't detach execs without onDetachedExit.`);
+    }
+    const record = this.#recordFor(input.id);
+    if (record === undefined) {
+      throw runtimeError("ENOENT", `no such execution: ${input.id}`);
+    }
+    if (record.status !== "running") return false;
+    return this.#host.db.transactionSync(() => {
+      const row = this.#host.db.one<{ status: string }>(
+        `SELECT status FROM workspace_runtime_executions WHERE backend = ? AND id = ?`,
+        this.#backendId,
+        input.id,
+      );
+      if (row?.status !== "running") return false;
+      this.#host.db.run(
+        `UPDATE workspace_runtime_executions SET detached = 1 WHERE backend = ? AND id = ?`,
+        this.#backendId,
+        input.id,
+      );
+      return true;
+    });
+  }
+
+  #isDetached(id: string): boolean {
+    try {
+      return (
+        this.#host.db.one<{ detached: number }>(
+          `SELECT detached FROM workspace_runtime_executions WHERE backend = ? AND id = ?`,
+          this.#backendId,
+          id,
+        )?.detached === 1
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // Hand `onDetachedExit` every saved exit it hasn't taken yet, and
+  // delete each one it takes. One it throws on stays for the next pass.
+  async #deliverExits(): Promise<void> {
+    const { onDetachedExit } = this.#options;
+    if (onDetachedExit === undefined) return;
+    let rows: Array<{ execution_id: string; data: string }>;
+    try {
+      rows = this.#host.db.all<{ execution_id: string; data: string }>(
+        `SELECT execution_id, data FROM workspace_runtime_detached_exits WHERE backend = ?`,
+        this.#backendId,
+      );
+    } catch {
+      return;
+    }
+    await Promise.all(
+      rows
+        .filter((row) => !this.#delivering.has(row.execution_id))
+        .map(async ({ execution_id: id, data }) => {
+          this.#delivering.add(id);
+          try {
+            // After the current call, so a slow hook can't hold up the
+            // run that just ended.
+            await Promise.resolve();
+            await onDetachedExit(JSON.parse(data) as WorkspaceRuntimeExecExit);
+            this.#host.db.run(
+              `DELETE FROM workspace_runtime_detached_exits WHERE backend = ? AND execution_id = ?`,
+              this.#backendId,
+              id,
+            );
+          } catch (error) {
+            console.error({ message: "onDetachedExit failed", id, error: String(error) });
+          } finally {
+            this.#delivering.delete(id);
+          }
+        }),
+    );
+  }
+
+  // What `onDetachedExit` hears about a run that ended with these events.
+  #execExit(
+    record: ExecutionRecord,
+    status: Exclude<ExecutionRecord["status"], "running">,
+    events: readonly WorkspaceRuntimeEvent[],
+  ): WorkspaceRuntimeExecExit {
+    const all = [...record.events, ...events];
+    const exit = all.filter((event) => event.name === "exit").at(-1);
+    return {
+      id: record.id,
+      backend: this.#backendId,
+      status,
+      exitCode: exit?.name === "exit" ? exit.code : 1,
+      ...(exit?.name === "exit" && exit.result !== undefined ? { result: exit.result } : {}),
+      metadata: this.#metadataOf(record.id),
+      stdout: outputTail(all, "stdout"),
+      stderr: outputTail(all, "stderr"),
+      exitedAt: Date.now(),
+    };
+  }
 
   // Start a run the restart interrupted again, if it asked for that and
   // still can, or settle it as failed.
@@ -836,18 +983,27 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     }));
   }
 
-  // A waiting run's metadata. Every running record is in memory with its
-  // execution, so the saved start is only read for a run that isn't.
+  // A run's metadata. A running record in memory has it with its
+  // execution. Otherwise it's read from the run's row, or, for a run
+  // saved before the row kept it, from its saved start.
   #metadataOf(id: string): WorkspaceExecutionMetadata {
     const known = this.#records.get(id)?.execution;
     if (known !== undefined) return known.metadata;
-    let saved: ReturnType<typeof loadResume>;
+    let metadata: Record<string, string> | undefined;
     try {
-      saved = loadResume(this.#host.db, this.#backendId, id);
+      const row = this.#host.db.one<{ metadata: string | null }>(
+        `SELECT metadata FROM workspace_runtime_executions WHERE backend = ? AND id = ?`,
+        this.#backendId,
+        id,
+      );
+      metadata =
+        typeof row?.metadata === "string"
+          ? (JSON.parse(row.metadata) as Record<string, string>)
+          : loadResume(this.#host.db, this.#backendId, id)?.start.metadata;
     } catch {
-      saved = undefined;
+      metadata = undefined;
     }
-    return this.#execution(id, saved?.start.metadata).metadata;
+    return this.#execution(id, metadata).metadata;
   }
 
   // What host module calls of a run are told about it, frozen so one
@@ -1072,11 +1228,12 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       try {
         this.#host.db.run(
           `INSERT INTO workspace_runtime_executions
-             (backend, id, status, created_at, finished_at)
-           VALUES (?, ?, 'running', ?, NULL)`,
+             (backend, id, status, created_at, finished_at, metadata)
+           VALUES (?, ?, 'running', ?, NULL, ?)`,
           this.#backendId,
           id,
           Date.now(),
+          input.metadata === undefined ? null : JSON.stringify(input.metadata),
         );
       } catch (error) {
         const durable = this.#recordFor(id);
@@ -1606,8 +1763,25 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     record.persistenceFailed = false;
     let settledStatus = status;
     let settledEvents = events;
+    // Only a detached run's exit is saved for `onDetachedExit`: whoever
+    // waits on any other run hears its result from the run itself. Read
+    // before the transaction clears the run's saved start, which is
+    // where a resumed run's metadata may come from.
+    const exit =
+      this.#options.onDetachedExit !== undefined && this.#isDetached(record.id)
+        ? this.#execExit(record, status, events)
+        : undefined;
     try {
       this.#host.db.transactionSync(() => {
+        if (exit !== undefined) {
+          this.#host.db.run(
+            `INSERT OR REPLACE INTO workspace_runtime_detached_exits (backend, execution_id, data)
+             VALUES (?, ?, ?)`,
+            this.#backendId,
+            record.id,
+            JSON.stringify(exit),
+          );
+        }
         this.#host.db.run(
           `UPDATE workspace_runtime_executions
            SET status = ?, finished_at = ?
@@ -1649,6 +1823,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       } catch {
         // Retention cleanup is retried on the next operation.
       }
+      if (exit !== undefined) void this.#deliverExits();
     }
   }
 
@@ -2355,6 +2530,16 @@ function recordedOutput(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+const SETTLED_OUTPUT_BYTES = 16 * 1024;
+
+// The end of one of a run's streams, as text, for a detached run's exit.
+function outputTail(events: readonly WorkspaceRuntimeEvent[], name: "stdout" | "stderr"): string {
+  const bytes = recordedOutput(events, name);
+  return new TextDecoder().decode(
+    bytes.subarray(Math.max(0, bytes.byteLength - SETTLED_OUTPUT_BYTES)),
+  );
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

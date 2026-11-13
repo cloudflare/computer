@@ -360,6 +360,45 @@ describe("createTanStackTools", () => {
     await workspace.close();
   });
 
+  it("returns a detached reply rather than emitting it as a running snapshot", async () => {
+    const workspace = {
+      fs: {},
+      runtime: {
+        async exec() {
+          return {
+            id: "run-1",
+            async *[Symbol.asyncIterator]() {
+              yield { name: "stdout" as const, value: "started\n" };
+              await new Promise(() => undefined);
+            },
+            result: () => new Promise<never>(() => undefined),
+          };
+        },
+        pending: async () => [],
+        detachExec: async () => true,
+        backends: () => [
+          { id: "codemode", protocol: "module" as const, callable: true, detachable: true },
+        ],
+      },
+    };
+    const tools = createTanStackTools({
+      workspace: workspace as never,
+      exec: { detach: { afterMs: 150 } },
+      streamEventName: "exec-progress",
+      format: "object",
+    });
+    const events: Array<Record<string, unknown>> = [];
+
+    const result = await tools.exec.execute({ command: "research()" } as never, {
+      toolCallId: "call-1",
+      emitCustomEvent: (_name, value) => events.push(value),
+    });
+
+    expect(result).toMatchObject({ executionId: "run-1", status: "running" });
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events.every((event) => !("status" in (event.snapshot as object)))).toBe(true);
+  });
+
   it("emits a running snapshot before the command produces more output", async () => {
     const quiet = quietCommandBackend();
     const workspace = new Workspace({

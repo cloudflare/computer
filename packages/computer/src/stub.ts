@@ -473,6 +473,10 @@ export class WorkspaceRuntimeStub extends RpcTarget {
     return this.#ws.runtime.disposeExec(id, options);
   }
 
+  detachExec(id: string, options: { backend?: string } = {}): Promise<boolean> {
+    return this.#ws.runtime.detachExec(id, options);
+  }
+
   // Plain data both ways, so nothing here needs disposing.
   pending(): Promise<WorkspaceRuntimePendingCall[]> {
     return this.#ws.runtime.pending();

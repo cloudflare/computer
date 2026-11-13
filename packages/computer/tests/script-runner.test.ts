@@ -1037,6 +1037,7 @@ describe("durable executions", () => {
       onInterrupt?: string;
       network?: boolean;
       metadata?: Record<string, string>;
+      detach?: boolean;
     },
   ) {
     const response = await SELF.fetch("https://example.test/durable-start", {
@@ -1078,6 +1079,23 @@ describe("durable executions", () => {
     // The first tick came from the journal. The gate was in flight, so
     // it ran again.
     expect(await calls()).toEqual({ work: 2, gate: 2 });
+  });
+
+  it("hands onDetachedExit the metadata of a detached run that failed because it was interrupted", async () => {
+    await start("exit-fail-metadata", {
+      source,
+      onInterrupt: "fail",
+      metadata: { conversation: "c2" },
+      detach: true,
+    });
+    expect(await result("exit-fail-metadata")).toMatchObject({ status: "failed" });
+    let heard: Array<{ status: string; metadata: Record<string, string> }> = [];
+    for (let attempt = 0; attempt < 200 && heard.length === 0; attempt += 1) {
+      const response = await SELF.fetch("https://example.test/exits?id=exit-fail-metadata");
+      heard = (await response.json()) as typeof heard;
+      if (heard.length === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(heard).toMatchObject([{ status: "failed", metadata: { conversation: "c2" } }]);
   });
 
   it("replays the clock a run read before it was interrupted", async () => {
@@ -1970,6 +1988,133 @@ describe("interrupts", () => {
     expect(settled.status).toBe("failed");
     // The test backend keeps 64 bytes of standard error.
     expect(settled.stderr).toContain("ctx.interrupt() needs a replayable run");
+  });
+
+  type Exit = {
+    id: string;
+    backend: string;
+    status: string;
+    exitCode: number;
+    result?: unknown;
+    metadata: Record<string, string>;
+    stdout: string;
+    stderr: string;
+    exitedAt: number;
+  };
+
+  async function exits(id: string): Promise<Exit[]> {
+    const response = await SELF.fetch(`https://example.test/exits?id=${encodeURIComponent(id)}`);
+    return (await response.json()) as Exit[];
+  }
+
+  // What onDetachedExit was handed for an exec, once it has anything.
+  async function exited(id: string): Promise<Exit[]> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const heard = await exits(id);
+      if (heard.length > 0) return heard;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`onDetachedExit never heard about ${id}`);
+  }
+
+  async function detach(id: string): Promise<{ detached?: boolean; error?: string }> {
+    const response = await SELF.fetch(`https://example.test/detach?id=${encodeURIComponent(id)}`, {
+      method: "POST",
+    });
+    return (await response.json()) as { detached?: boolean; error?: string };
+  }
+
+  it("hands onDetachedExit how a detached run ended, once, after its answer", async () => {
+    await start("exit-answer", approval, { metadata: { conversation: "c1" } });
+    const call = await waitingCall("exit-answer");
+    expect(await detach("exit-answer")).toEqual({ detached: true });
+    expect(await exits("exit-answer")).toEqual([]);
+    await respond("exit-answer", call.callId, { ok: true });
+    expect(await result("exit-answer")).toMatchObject({ status: "completed" });
+    const [heard, ...rest] = await exited("exit-answer");
+    expect(rest).toEqual([]);
+    expect(heard).toMatchObject({
+      id: "exit-answer",
+      backend: "codemode",
+      status: "completed",
+      exitCode: 0,
+      result: { ok: true },
+      metadata: { conversation: "c1" },
+    });
+    expect(heard?.stdout).toContain("after true");
+    expect(heard?.exitedAt).toBeGreaterThanOrEqual(call.since);
+  });
+
+  it("hands onDetachedExit nothing for a run nothing detached", async () => {
+    await start("exit-attached", approval);
+    const call = await waitingCall("exit-attached");
+    await respond("exit-attached", call.callId, { ok: true });
+    expect(await result("exit-attached")).toMatchObject({ status: "completed" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await exits("exit-attached")).toEqual([]);
+    expect(await detach("exit-attached")).toEqual({ detached: false });
+  });
+
+  it("hands onDetachedExit a detached run killed while it waits", async () => {
+    await start("exit-kill", approval);
+    await waitingCall("exit-kill");
+    await detach("exit-kill");
+    await SELF.fetch("https://example.test/runtime-kill?id=exit-kill", { method: "POST" });
+    expect(await exited("exit-kill")).toMatchObject([
+      { id: "exit-kill", status: "cancelled", exitCode: 130 },
+    ]);
+  });
+
+  it("hands onDetachedExit an exit again from recover() when the hook threw", async () => {
+    await SELF.fetch("https://example.test/refuse-exit?id=exit-retry", { method: "POST" });
+    await start("exit-retry", approval);
+    const call = await waitingCall("exit-retry");
+    await detach("exit-retry");
+    await respond("exit-retry", call.callId, { ok: true });
+    expect(await result("exit-retry")).toMatchObject({ status: "completed" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await exits("exit-retry")).toEqual([]);
+    await SELF.fetch("https://example.test/durable-recover", { method: "POST" });
+    expect(await exits("exit-retry")).toMatchObject([{ status: "completed" }]);
+  });
+
+  it("lets the exec tool detach from a run once it waits, and hears how it ended later", async () => {
+    const response = await SELF.fetch("https://example.test/exec-detached", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: approval, metadata: { conversation: "c3" } }),
+    });
+    const reply = (await response.json()) as {
+      executionId: string;
+      status: string;
+      waiting: Array<{ callId: string; payload: unknown }>;
+    };
+    expect(reply).toMatchObject({
+      backend: "codemode-replay",
+      status: "waiting",
+      waiting: [{ payload: { kind: "approval", action: "deploy" } }],
+    });
+    // The tool came back, and the run waits on without it.
+    const call = await waitingCall(reply.executionId);
+    expect(call).toMatchObject({ backend: "codemode-replay", metadata: { conversation: "c3" } });
+    expect(await exits(reply.executionId)).toEqual([]);
+    await respond(reply.executionId, call.callId, { ok: true });
+    expect(await exited(reply.executionId)).toMatchObject([
+      { status: "completed", result: { ok: true }, metadata: { conversation: "c3" } },
+    ]);
+  });
+
+  it("hands onDetachedExit an exit after a restart when the hook missed it", async () => {
+    await SELF.fetch("https://example.test/refuse-exit?id=exit-restart", { method: "POST" });
+    await start("exit-restart", approval);
+    const call = await waitingCall("exit-restart");
+    await detach("exit-restart");
+    await respond("exit-restart", call.callId, { ok: true });
+    expect(await result("exit-restart")).toMatchObject({ status: "completed" });
+    await SELF.fetch("https://example.test/durable-restart", { method: "POST" });
+    // Any call reconnects the backend, which delivers what it still holds.
+    await pending("exit-restart");
+    expect(await exited("exit-restart")).toMatchObject([{ status: "completed" }]);
   });
 });
 

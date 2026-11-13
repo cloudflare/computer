@@ -167,4 +167,35 @@ Module backends use host capability calls against the authoritative Workspace an
 
 `worker-shell` intentionally preserves one-call, buffered-result behavior in this release. It does not retain executions for later reattachment or disposal. `timeoutMs` and a concurrent `killExec()` for a caller-supplied execution ID cooperatively abort just-bash at statement boundaries; by the time an ordinary `exec()` promise returns, the command has already settled. Use the Container or JavaScript isolate when detached execution and retained lifecycle are required.
 
+## Detaching
+
+Whoever starts an exec usually waits on it for its result. Sometimes that's the wrong thing to do: an exec waiting for a person in [`ctx.interrupt()`](./17_isolate_javascript.md#waiting-for-an-answer) can take hours, and an agent waiting on it can't tell anyone what's happening. Detaching an exec says that nothing waits on it any more. The exec keeps going, and when it exits, its backend hands how it ended to `onDetachedExit`. Only `CodemodeBackend` can detach so far, and only when it has `onDetachedExit`. Detaching is experimental.
+
+```ts
+const workspace = new Workspace({
+  storage: ctx.storage,
+  backends: [
+    new CodemodeBackend({
+      loader: env.LOADER,
+      onInterrupt: "replay",
+      onDetachedExit: async (exec) => {
+        // exec: { id, backend, status, exitCode, result?, metadata, stdout, stderr, exitedAt }
+        await conversations.get(exec.metadata.conversation).execEnded(exec);
+      },
+    }),
+  ],
+});
+
+const exec = await workspace.runtime.exec(source, { metadata: { conversation: "c1" } });
+if (!(await workspace.runtime.detachExec(exec.id))) {
+  // It had already exited: read its result as usual.
+}
+```
+
+`detachExec()` returns `false`, and changes nothing, if the exec has already exited. It checks and marks the exec in one step, so every exec ends up either attached, with its result going to whoever reads it, or detached, with its exit going to `onDetachedExit`, never both and never neither. The [`exec` tool](./09_tool_interface.md#detaching) detaches this way when it's built with `detach`. `detachExec()` throws for an exec on a backend that can't detach, and `runtime.backends()` lists which backends can, as `detachable`.
+
+`status` is `"completed"`, `"failed"` or `"cancelled"`, and `stdout` and `stderr` hold the last 16 KiB of each. The backend saves this in the same transaction that ends the exec, and deletes it once `onDetachedExit` returns. If `onDetachedExit` throws, or the object restarts before it returns, it's called again the next time the backend connects or `runtime.recover()` runs. So `onDetachedExit` may hear about an exec more than once, and should treat its `id` as the key. A quick `onDetachedExit` that saves the exit to the app's own storage, and acts on it from there, keeps the window for a repeat small. Execs that were never detached save nothing.
+
+Nothing wakes a Durable Object after a deploy, so an app with detached execs should call `recover()` from an alarm while it has some it hasn't heard back from.
+
 See [16. Execution runtime architecture](./16_code_execution.md) and [17. Isolate JavaScript](./17_isolate_javascript.md).
