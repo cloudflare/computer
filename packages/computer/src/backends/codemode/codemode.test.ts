@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createGitModule } from "../../modules/git";
 import { createCodemodeModule, type WorkspaceModuleScopeEnd } from "../../runtime/codemode-module";
-import type { WorkspaceModule, WorkspaceRuntimeLoader } from "../../runtime/types";
+import type {
+  WorkspaceModule,
+  WorkspaceRuntimeExecExit,
+  WorkspaceRuntimeLoader,
+} from "../../runtime/types";
 import { Workspace } from "../../workspace";
 import { runtimeCode, CodemodeBackend } from "./codemode";
 import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
@@ -231,6 +235,108 @@ describe("CodemodeBackend", () => {
     });
     expect(entrypointDisposals).toBe(1);
     expect(workerDisposals).toBe(1);
+  });
+
+  describe("detaching", () => {
+    // A loader whose runs return `value` once `release` is called, so a
+    // test can act while the run is still going.
+    function gatedLoader(value: unknown) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
+        getEntrypoint() {
+          return {
+            evaluate: async (
+              _input: unknown,
+              host: {
+                assertResult(value: unknown): Promise<void>;
+                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+              },
+            ) => {
+              await gate;
+              await evaluateResult(host, value);
+            },
+          };
+        },
+      }));
+      return { load, release: () => release() };
+    }
+
+    async function detachedWorkspace(value: unknown, detachable = true) {
+      const storage = new SQLiteTestStorage();
+      const exits: WorkspaceRuntimeExecExit[] = [];
+      const { load, release } = gatedLoader(value);
+      const workspace = new Workspace({
+        storage,
+        backends: [
+          new CodemodeBackend({
+            loader: { load },
+            ...(detachable ? { onDetachedExit: (exec) => void exits.push(exec) } : {}),
+          }),
+        ],
+      });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      const savedExits = () =>
+        new Database(storage).scalar<number>(
+          "SELECT COUNT(*) FROM workspace_runtime_detached_exits",
+        );
+      return { workspace, exits, release, savedExits };
+    }
+
+    it("hands onDetachedExit a detached exec's exit, and keeps nothing once it returns", async () => {
+      const { workspace, exits, release, savedExits } = await detachedWorkspace({ answer: 42 });
+
+      const handle = await workspace.runtime.exec("export default null", {
+        metadata: { who: "a" },
+      });
+      expect(await workspace.runtime.detachExec(handle.id)).toBe(true);
+      release();
+      await handle.result();
+      await vi.waitFor(() => expect(exits).toHaveLength(1));
+
+      expect(exits[0]).toMatchObject({
+        id: handle.id,
+        backend: "codemode",
+        status: "completed",
+        exitCode: 0,
+        result: { answer: 42 },
+        metadata: { who: "a" },
+      });
+      await vi.waitFor(() => expect(savedExits()).toBe(0));
+    });
+
+    it("keeps no exit for an exec nothing detached", async () => {
+      const { workspace, exits, release, savedExits } = await detachedWorkspace(null);
+
+      const handle = await workspace.runtime.exec("export default null");
+      release();
+      await handle.result();
+
+      expect(exits).toEqual([]);
+      expect(savedExits()).toBe(0);
+    });
+
+    it("won't detach an exec that has already exited", async () => {
+      const { workspace, exits, release } = await detachedWorkspace(null);
+
+      const handle = await workspace.runtime.exec("export default null");
+      release();
+      await handle.result();
+
+      expect(await workspace.runtime.detachExec(handle.id)).toBe(false);
+      expect(exits).toEqual([]);
+    });
+
+    it("refuses to detach without onDetachedExit", async () => {
+      const { workspace, release } = await detachedWorkspace(null, false);
+
+      const handle = await workspace.runtime.exec("export default null");
+
+      await expect(workspace.runtime.detachExec(handle.id)).rejects.toThrow(/onDetachedExit/);
+      expect(workspace.runtime.backends()[0]?.detachable).toBe(false);
+      release();
+      await handle.result();
+    });
   });
 
   it("migrates the legacy execution journal schema", async () => {
