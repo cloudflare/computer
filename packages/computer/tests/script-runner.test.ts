@@ -2078,6 +2078,32 @@ describe("interrupts", () => {
     expect(await exits("exit-retry")).toMatchObject([{ status: "completed" }]);
   });
 
+  it("lets the exec tool detach from a run once it waits, and hears how it ended later", async () => {
+    const response = await SELF.fetch("https://example.test/exec-detached", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: approval, metadata: { conversation: "c3" } }),
+    });
+    const reply = (await response.json()) as {
+      executionId: string;
+      status: string;
+      waiting: Array<{ callId: string; payload: unknown }>;
+    };
+    expect(reply).toMatchObject({
+      backend: "codemode-replay",
+      status: "waiting",
+      waiting: [{ payload: { kind: "approval", action: "deploy" } }],
+    });
+    // The tool came back, and the run waits on without it.
+    const call = await waitingCall(reply.executionId);
+    expect(call).toMatchObject({ backend: "codemode-replay", metadata: { conversation: "c3" } });
+    expect(await exits(reply.executionId)).toEqual([]);
+    await respond(reply.executionId, call.callId, { ok: true });
+    expect(await exited(reply.executionId)).toMatchObject([
+      { status: "completed", result: { ok: true }, metadata: { conversation: "c3" } },
+    ]);
+  });
+
   it("hands onDetachedExit an exit after a restart when the hook missed it", async () => {
     await SELF.fetch("https://example.test/refuse-exit?id=exit-restart", { method: "POST" });
     await start("exit-restart", approval);
