@@ -231,7 +231,7 @@ Once none of its calls are waiting, the run replays to the call and the function
 
 ### Detaching a run that waits
 
-Whoever started a run can await its result, but a run that waits for a person can outlive them: an agent's tool call may want to move on, or a deploy may end the request that started it. Give `CodemodeBackend` an `onDetachedExit` and its runs can detach, so `onDetachedExit` hears how they end instead, even across deploys: see [Detaching](./05_runtime_interface.md#detaching).
+Whoever started a run can await its result, but a run that waits for a person can outlive them: an agent's tool call may want to move on, or a deploy may end the request that started it. Give `CodemodeBackend` an `onDetachedExit` and its runs can detach, so `onDetachedExit` hears how they end instead, even across deploys: see [Detaching](./05_runtime_interface.md#detaching). The `exec` tool detaches a run once it waits, when it's built with `detach`: see [Detaching](./09_tool_interface.md#detaching).
 
 ### Limits
 

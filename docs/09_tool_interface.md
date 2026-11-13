@@ -400,6 +400,24 @@ const tools = createAITools({
 
 A pi caller runs each call itself, so it can instead pass the metadata with the call: `execute(call, { metadata })`. Metadata passed with a call wins over `exec: { metadata }`. A caller of `defineExec` passes `metadata` or `toolCallId` on each `execute` the same way.
 
+### Detaching
+
+By default, `exec` returns when its run ends. A run that waits for a person in [`ctx.interrupt()`](./17_isolate_javascript.md#waiting-for-an-answer), such as for an approval, can take hours, and the agent's turn waits with it: the agent can't tell anyone what it's doing until the answer comes. `detach` lets the tool return early and leave the run going on its own. It's experimental, and needs a backend that can [detach](./05_runtime_interface.md#detaching), such as a `CodemodeBackend` with `onDetachedExit`, which is where the run's exit goes.
+
+```ts
+const tools = createAITools({
+  workspace,
+  exec: {
+    metadata: ({ toolCallId }) => ({ conversation: this.name, toolCall: toolCallId }),
+    detach: true, // or { afterMs: 60_000 } to also detach a run still going after a minute
+  },
+});
+```
+
+With `detach`, the tool returns once a call in the run waits for an answer, and, with `afterMs`, once the run has gone on that long. Either way it detaches the run through `runtime.detachExec()` and replies `{ executionId, status, stdout, stderr, note }`, with a `status` of `"waiting"` or `"running"` and, when waiting, the `waiting` calls' `callId`s and payloads. The tool description and the reply's `note` tell the model the run carries on and its outcome arrives later. Aborting the model turn kills a run that hasn't detached, but leaves one that has alone. A run that ends before it detaches returns as usual, and its exit doesn't go to `onDetachedExit`. Runs on a backend that can't detach, such as shell and container backends, stay attached. A tool with no backend that can detach refuses `detach` when it's built.
+
+The tool doesn't deliver the outcome itself. The backend's `onDetachedExit` hears it, and the app finds the conversation through the run's `metadata` and gives the agent a new message with it. `detach` needs a runtime with `pending()` and `detachExec()`, which a `Workspace` and `workspace.stub()` have.
+
 Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: { backends: {} }` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
 
 ## `publish`

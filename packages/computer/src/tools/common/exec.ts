@@ -42,6 +42,9 @@ export type ExecStreamEvent =
 // chunks by iterating the handle when it is async-iterable, and
 // falls back to draining result() when it is not.
 export interface ExecRuntimeHandle extends Partial<AsyncIterable<ExecStreamEvent>> {
+  // The execution's id. A detached run reports it, and `pending()`
+  // lists the run's waiting calls under it.
+  readonly id?: string;
   result(): Promise<{
     exitCode: number;
     stdout: string;
@@ -69,6 +72,12 @@ export interface ExecWorkspaceLike {
         output?: { maxBytes: number; maxLines: number };
       },
     ): Promise<ExecRuntimeHandle>;
+    // Calls waiting in ctx.interrupt(), by execution id, and noting
+    // that nothing waits on a run any more. Needed to detach.
+    pending?(): Promise<
+      ReadonlyArray<{ readonly id: string; readonly callId: string; readonly payload: unknown }>
+    >;
+    detachExec?(id: string, options?: { backend?: string }): Promise<boolean>;
     // What each registered backend says about itself: whether it takes
     // structured `input`, and its description for the model. Used to
     // build the tool, to offer every backend when the caller picks none,
@@ -101,6 +110,15 @@ export type ExecMetadata =
   | Record<string, string>
   | ((call: { toolCallId: string }) => Record<string, string>);
 
+/**
+ * Whether the exec tool may return before a run ends, leaving it
+ * running. `true` detaches a run once it waits for an answer in
+ * `ctx.interrupt()`, such as for an approval. `{ afterMs }` also
+ * detaches a run that is still going after that many milliseconds.
+ * Experimental: it may change in any release.
+ */
+export type ExecDetachOptions = true | { readonly afterMs?: number };
+
 export interface ExecToolOptions {
   workspace: ExecWorkspaceLike;
   // Omit to offer every backend the Workspace has. With one backend
@@ -124,6 +142,16 @@ export interface ExecToolOptions {
    * belongs to. Metadata a call passes itself, as a pi caller can, wins.
    */
   metadata?: ExecMetadata;
+  /**
+   * Return before a run ends, and leave it running, so the agent can
+   * carry on. The reply has the run's `executionId`, a `status` of
+   * `"waiting"` or `"running"`, and its output so far. Aborting the
+   * model turn doesn't kill a run once it has detached. The run's exit
+   * goes to its backend's `onDetachedExit`, which tells the agent. Needs
+   * a backend that can detach, such as a `CodemodeBackend` with
+   * `onDetachedExit`.
+   */
+  detach?: ExecDetachOptions;
   // Clock backing the running-snapshot coalescing floor. Defaults to
   // Date.now; injectable so tests can drive the interval deterministically.
   now?: () => number;
@@ -147,6 +175,19 @@ export type ExecToolOutput =
       stdout: string;
       stderr: string;
       result?: unknown;
+    }
+  | {
+      command: string;
+      cwd: string | null;
+      backend: string;
+      // The run is still going: it detached, as `ExecToolOptions.detach` asked.
+      executionId: string;
+      status: "waiting" | "running";
+      stdout: string;
+      stderr: string;
+      // The calls waiting for an answer, when the run is waiting.
+      waiting?: Array<{ callId: string; payload: unknown }>;
+      note: string;
     }
   | { command: string; cwd: string | null; backend: string; error: string };
 
@@ -194,6 +235,11 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
   );
   const now = options.now ?? Date.now;
   const runtime = options.workspace.runtime;
+  const detach = options.detach;
+  const afterMs = typeof detach === "object" ? detach.afterMs : undefined;
+  if (afterMs !== undefined && (!Number.isFinite(afterMs) || afterMs < 0)) {
+    throw new Error("createExecTool: detach.afterMs must be a finite number of milliseconds");
+  }
   // Read the backends once, so selection and descriptions agree.
   const known = runtime.backends?.();
   const selected = selectBackends(options.backends, known);
@@ -208,10 +254,34 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     const text =
       [guidance, own].filter((part) => part !== undefined && part !== "").join("\n\n") ||
       (callable ? "Runs `command` as module source." : "Runs shell commands.");
-    return { id, text, callable };
+    return { id, text, callable, detachable: info?.detachable === true };
   });
   const callableBackendIds = new Set(backends.filter((b) => b.callable).map((b) => b.id));
-  const description = describeTool(backends, limits);
+  // Only runs on a backend that can detach do: their exit goes to the
+  // backend's `onDetachedExit`. Runs elsewhere stay attached.
+  const detachable = new Set(
+    detach === undefined ? [] : backends.filter((b) => b.detachable).map((b) => b.id),
+  );
+  const detachExec = runtime.detachExec;
+  const pending = runtime.pending;
+  if (detach !== undefined) {
+    if (detachExec === undefined || pending === undefined) {
+      throw new Error("createExecTool: detach needs a runtime with detachExec() and pending()");
+    }
+    if (detachable.size === 0) {
+      throw new Error(
+        "createExecTool: detach needs a backend that can detach, such as a CodemodeBackend with onDetachedExit",
+      );
+    }
+  }
+  const description = [
+    describeTool(backends, limits),
+    detach === undefined
+      ? ""
+      : detachHint(afterMs, detachable.size === backends.length ? undefined : [...detachable]),
+  ]
+    .filter((part) => part !== "")
+    .join("\n\n");
   // Offer only the fields that can work: `backend` when there is a
   // choice, `input` when some backend accepts it.
   const shape: Record<string, z.ZodType> = {
@@ -244,6 +314,76 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
   }
   // SAFETY: Every field in `shape` has the type ExecInput gives it, and the fields left out are optional there.
   const inputSchema = z.object(shape) as unknown as z.ZodType<ExecInput>;
+
+  // Settles when the run should detach, as `detach` asks, and never
+  // otherwise. Stop it once the tool is done with the run. The run is
+  // marked detached before this settles; if it ended first, this never
+  // settles and the tool reads its result as usual.
+  function watchDetach(
+    handle: ExecRuntimeHandle,
+    backend: string,
+  ): {
+    promise: Promise<DetachReason>;
+    // Before the tool returns a result: whether a detach already under
+    // way went through. If it did, the run's exit goes to the Workspace,
+    // so the tool must reply as detached rather than with the result.
+    settle(): Promise<DetachReason | undefined>;
+    stop(): void;
+  } {
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    let stopped = false;
+    let inFlight: Promise<DetachReason | undefined> | undefined;
+    const promise = new Promise<DetachReason>((resolve) => {
+      const id = handle.id;
+      if (!detachable.has(backend) || id === undefined) return;
+      if (detachExec === undefined || pending === undefined) return;
+      // Detach once, if the run hasn't ended. A run that can't detach
+      // stays attached rather than losing its result.
+      const tryDetach = async (reason: DetachReason) => {
+        if (inFlight !== undefined || stopped) return;
+        inFlight = detachExec
+          .call(runtime, id, { backend })
+          .catch((error: unknown) => {
+            console.error({ message: "exec: detach failed", id, error: String(error) });
+            return false;
+          })
+          .then((detached) => (detached ? reason : undefined));
+        const detached = await inFlight;
+        if (detached !== undefined) resolve(detached);
+        else stop();
+      };
+      if (afterMs !== undefined) {
+        timers.push(setTimeout(() => void tryDetach({ status: "running" }), afterMs));
+      }
+      const poll = async () => {
+        if (stopped || inFlight !== undefined) return;
+        const waiting = await pending.call(runtime).catch(() => []);
+        const own = waiting.filter((call) => call.id === id);
+        if (own.length > 0) {
+          await tryDetach({
+            status: "waiting",
+            waiting: own.map((call) => ({ callId: call.callId, payload: call.payload })),
+          });
+          return;
+        }
+        if (!stopped) timers.push(setTimeout(() => void poll(), WAIT_POLL_MS));
+      };
+      void poll();
+    });
+    function stop() {
+      stopped = true;
+      for (const timer of timers) clearTimeout(timer);
+    }
+    return {
+      promise,
+      async settle() {
+        const reason = await inFlight;
+        stop();
+        return reason;
+      },
+      stop,
+    };
+  }
 
   return {
     description,
@@ -290,13 +430,32 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       // Aborting the model turn kills the backend execution so it does
       // not run on unobserved after the tool stops iterating. The run
       // then emits its terminal event and the stream closes normally.
+      // A run that detached is meant to run on, so it's left alone.
       const onAbort = () => void handle.kill?.().catch(() => undefined);
       if (abortSignal?.aborted) onAbort();
       else abortSignal?.addEventListener("abort", onAbort, { once: true });
+      const detaching = watchDetach(handle, selectedBackend);
       try {
         yield* runExecution();
       } finally {
+        detaching.stop();
         abortSignal?.removeEventListener("abort", onAbort);
+      }
+
+      // The snapshot of a run that detached, which carries on without the tool.
+      function detached(reason: DetachReason, stdout: string, stderr: string): ExecToolOutput {
+        return {
+          ...base,
+          executionId: handle.id ?? "",
+          status: reason.status,
+          stdout,
+          stderr,
+          ...(reason.status === "waiting" ? { waiting: reason.waiting } : {}),
+          note:
+            reason.status === "waiting"
+              ? "The run is still going. It is waiting for an answer to the calls in `waiting`, and carries on by itself once they are answered. Don't run it again: you'll get a message with its outcome when it ends."
+              : "The run is still going in the background. Don't run it again: you'll get a message with its outcome when it ends.",
+        };
       }
 
       // Produce the run's snapshots. Streams the raw events when the
@@ -317,8 +476,25 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           // chatty command would otherwise yield a full-buffer snapshot
           // per chunk; the terminal snapshot below always fires.
           let lastSnapshot = 0;
+          const iterator = (handle as AsyncIterable<ExecStreamEvent>)[Symbol.asyncIterator]();
           try {
-            for await (const event of handle as AsyncIterable<ExecStreamEvent>) {
+            while (true) {
+              const next = iterator.next();
+              const step = await Promise.race([
+                next.then((value) => ({ kind: "event" as const, value })),
+                detaching.promise.then((reason) => ({ kind: "detach" as const, reason })),
+              ]);
+              if (step.kind === "detach") {
+                // Stop listening without stopping the run. The read in
+                // flight settles whenever the run next prints or ends.
+                next.catch(() => undefined);
+                void iterator.return?.()?.catch(() => undefined);
+                abortSignal?.removeEventListener("abort", onAbort);
+                yield detached(step.reason, stdout.render(), stderr.render());
+                return;
+              }
+              if (step.value.done === true) break;
+              const event = step.value.value;
               if (event.name === "stdout") stdout.push(event.value);
               else if (event.name === "stderr") stderr.push(event.value);
               else {
@@ -344,6 +520,12 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
             yield { ...base, error: errorMessage(err) };
             return;
           }
+          const late = await detaching.settle();
+          if (late !== undefined) {
+            abortSignal?.removeEventListener("abort", onAbort);
+            yield detached(late, stdout.render(), stderr.render());
+            return;
+          }
           yield {
             ...base,
             exitCode,
@@ -356,7 +538,23 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
 
         // Non-streaming handle: drain the aggregate result.
         try {
-          const result = await handle.result();
+          const settled = handle.result();
+          const step = await Promise.race([
+            settled.then((value) => ({ kind: "result" as const, value })),
+            detaching.promise.then((reason) => ({ kind: "detach" as const, reason })),
+          ]);
+          if (step.kind === "detach") {
+            settled.catch(() => undefined);
+            abortSignal?.removeEventListener("abort", onAbort);
+            yield detached(step.reason, "", "");
+            return;
+          }
+          const result = step.value;
+          const late = await detaching.settle();
+          if (late !== undefined) {
+            yield detached(late, "", "");
+            return;
+          }
           yield {
             ...base,
             exitCode: result.exitCode,
@@ -370,6 +568,29 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       }
     },
   };
+}
+
+// How often a run that may detach on a wait checks for one.
+const WAIT_POLL_MS = 250;
+
+type DetachReason =
+  | { status: "running" }
+  | { status: "waiting"; waiting: Array<{ callId: string; payload: unknown }> };
+
+function detachHint(
+  afterMs: number | undefined,
+  // The backends whose runs detach, when not every one does.
+  only: readonly string[] | undefined,
+): string {
+  const when = [
+    "waits for an answer, such as an approval",
+    ...(afterMs === undefined
+      ? []
+      : [`is still going after ${Math.round(afterMs / 1000)} seconds`]),
+  ];
+  const where =
+    only === undefined ? "" : ` on ${only.map((id) => JSON.stringify(id)).join(" or ")}`;
+  return `A run${where} that ${when.join(" or ")} comes back early with its \`executionId\`, a \`status\` of "waiting" or "running", and its output so far, and keeps going on its own. Tell the user what is happening and carry on; don't run it again. Its outcome arrives in a later message.`;
 }
 
 const FILE_TOOLS_HINT = "Prefer the dedicated read, write, and edit tools for file operations.";

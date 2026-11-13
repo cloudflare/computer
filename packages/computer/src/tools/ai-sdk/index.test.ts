@@ -2327,6 +2327,44 @@ describe("createAITools exec metadata", () => {
   });
 });
 
+describe("createAITools exec detach", () => {
+  // A codemode run that prints once and doesn't end on its own.
+  const workspace = {
+    runtime: {
+      async exec() {
+        return {
+          id: "run-1",
+          async *[Symbol.asyncIterator]() {
+            yield { name: "stdout" as const, value: "started\n" };
+            await new Promise(() => undefined);
+          },
+          result: () => new Promise<never>(() => undefined),
+        };
+      },
+      pending: async () => [],
+      detachExec: async () => true,
+      backends: () => [
+        { id: "codemode", protocol: "module" as const, callable: true, detachable: true },
+      ],
+    },
+  };
+
+  it("takes detach on the tool set, and says so in the description", async () => {
+    const tools = createAITools({
+      // SAFETY: The test only runs exec, which reads nothing but the runtime.
+      workspace: workspace as unknown as Parameters<typeof createAITools>[0]["workspace"],
+      exec: { detach: { afterMs: 20 } },
+    });
+
+    expect(tools.exec?.description).toContain("comes back early");
+    expect(await executeTool(tools.exec, { command: "research()" })).toMatchObject({
+      executionId: "run-1",
+      status: "running",
+      stdout: "started\n",
+    });
+  });
+});
+
 describe("createAITools publish tool", () => {
   it("adds publish by default when assets are configured", async () => {
     const calls: Array<{ path: string; expiresAfter: number; prefix?: string }> = [];

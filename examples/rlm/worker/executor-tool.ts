@@ -42,7 +42,9 @@ export function createExecutorTool(
 
 export function sanitizeExecutorOutput(output: ExecToolOutput): ExecToolOutput {
   const base = { command: output.command, cwd: output.cwd, backend: output.backend };
-  if ("error" in output) return { ...base, error: "Generated execution failed." };
+  // The executor never detaches, so a reply without an exit code is a
+  // failure as far as the model is concerned.
+  if (!("exitCode" in output)) return { ...base, error: "Generated execution failed." };
 
   return {
     ...base,

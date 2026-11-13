@@ -192,7 +192,7 @@ if (!(await workspace.runtime.detachExec(exec.id))) {
 }
 ```
 
-`detachExec()` returns `false`, and changes nothing, if the exec has already exited. It checks and marks the exec in one step, so every exec ends up either attached, with its result going to whoever reads it, or detached, with its exit going to `onDetachedExit`, never both and never neither. `detachExec()` throws for an exec on a backend that can't detach, and `runtime.backends()` lists which backends can, as `detachable`.
+`detachExec()` returns `false`, and changes nothing, if the exec has already exited. It checks and marks the exec in one step, so every exec ends up either attached, with its result going to whoever reads it, or detached, with its exit going to `onDetachedExit`, never both and never neither. The [`exec` tool](./09_tool_interface.md#detaching) detaches this way when it's built with `detach`. `detachExec()` throws for an exec on a backend that can't detach, and `runtime.backends()` lists which backends can, as `detachable`.
 
 `status` is `"completed"`, `"failed"` or `"cancelled"`, and `stdout` and `stderr` hold the last 16 KiB of each. The backend saves this in the same transaction that ends the exec, and deletes it once `onDetachedExit` returns. If `onDetachedExit` throws, or the object restarts before it returns, it's called again the next time the backend connects or `runtime.recover()` runs. So `onDetachedExit` may hear about an exec more than once, and should treat its `id` as the key. A quick `onDetachedExit` that saves the exit to the app's own storage, and acts on it from there, keeps the window for a repeat small. Execs that were never detached save nothing.
 
