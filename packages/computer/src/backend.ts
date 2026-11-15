@@ -26,14 +26,17 @@ import type { WorkspaceRPC } from "@cloudflare/computer-rpc";
 // them in, so a backend cannot capture them at its own
 // construction time. `connect(host)` is how the Workspace hands
 // over the storage-layer handles once they exist. Backends that
-// reach the host through their own transport ignore the bag;
-// in-process backends use it.
+// reach the host through their own transport ignore the bag; the
+// in-process module and Kitebuild backends use it.
 export interface WorkspaceBackendHost {
   readonly db: import("@cloudflare/dofs").Database;
   readonly fs: import("@cloudflare/dofs").WorkspaceFilesystem;
   readonly git: import("./git/index").GitClient;
   readonly artifacts: import("./artifacts/index").ArtifactClient;
   readonly assets?: import("./assets/index").AssetsClient;
+  // The Workspace's `defaultGitIdentity`, for a backend whose own git
+  // commits in the Workspace's name when the command sets no identity.
+  readonly defaultGitIdentity?: import("./git/index").GitIdentity;
 }
 
 export interface WorkspaceBackend {

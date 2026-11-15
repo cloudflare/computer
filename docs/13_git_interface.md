@@ -30,6 +30,10 @@ durable object's `workspace.git.cli(...)`. Running `git ...`
 inside `bash.exec` reaches the same dispatcher and the same
 underlying methods.
 
+The Kitebuild backend's shell has its own `git` by default, and uses
+this client only with `git: "workspace"`. See
+[20. Kitebuild backend](./21_kitebuild_backend.md#git).
+
 ## Scope
 
 Supported subcommands today:

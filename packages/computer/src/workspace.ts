@@ -1085,6 +1085,9 @@ export class Workspace {
           artifacts: this.#artifacts,
           runtime: this.runtime,
           ...(this.#assets === undefined ? {} : { assets: this.#assets }),
+          ...(this.#defaultGitIdentity === undefined
+            ? {}
+            : { defaultGitIdentity: this.#defaultGitIdentity }),
         }),
     )
       .then(async (handle) => {
@@ -1137,6 +1140,9 @@ export class Workspace {
               git: this.#gitFactory ? this.git : DISABLED_GIT_CLIENT,
               artifacts: this.#artifacts,
               ...(this.#assets === undefined ? {} : { assets: this.#assets }),
+              ...(this.#defaultGitIdentity === undefined
+                ? {}
+                : { defaultGitIdentity: this.#defaultGitIdentity }),
             }),
         );
         if (generation !== this.#connectionGeneration) {

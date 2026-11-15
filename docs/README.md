@@ -268,6 +268,7 @@ rather than an API.
 | [18. Runtime migration](./18_runtime_migration.md) | Reference | Breaking preview-API mappings from public shell and script-execution surfaces to `workspace.runtime`. |
 | [19. Performance](./19_performance.md) | Reference | Filesystem benchmarks: `fs-bench` numbers, an `npm install` comparison, and how to reproduce them. |
 | [20. Remote exec](./20_remote_exec.md) | Experimental | `codemode:exec`: run commands in any container Durable Object, with Workspace files pushed in and pulled back, and the `remote-exec` binary that runs them. |
+| [21. Kitebuild backend](./21_kitebuild_backend.md) | Experimental | Shell commands on a BusyBox Linux userland in the Workspace's Durable Object, with the Workspace store mounted directly. |
 
 ## High-level API
 
