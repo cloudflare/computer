@@ -351,7 +351,8 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
   the Workspace's own Durable Object, and streams output as it is
   written. It mounts the Workspace store directly, so there's no second
   store. Its `git` is `@cloudflare/kitebuild-git`, and packages
-  such as `@cloudflare/kitebuild-cli-tools` add programs. See [`docs/21_kitebuild_backend.md`](../../docs/21_kitebuild_backend.md).
+  such as `@cloudflare/kitebuild-cli-tools` add programs. See [`docs/21_kitebuild_backend.md`](../../docs/21_kitebuild_backend.md)
+  and [`examples/kitebuild`](../../examples/kitebuild).
 
 You can register several backends on one Workspace and route each call
 to a named one — see [Multiple backends](#multiple-backends).
@@ -729,6 +730,8 @@ An adapter for the Cloudflare runtime lives at
   No container.
 - [`examples/codemode`](../../examples/codemode) — the
   same shape, running ECMAScript modules instead of shell commands.
+- [`examples/kitebuild`](../../examples/kitebuild) — the same shape on
+  the experimental Kitebuild backend, with BusyBox and `git`.
 - [`examples/container`](../../examples/container) — the container
   backend running `computerd`.
 - [`examples/container-legacy`](../../examples/container-legacy) — the

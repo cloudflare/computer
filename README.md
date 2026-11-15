@@ -62,6 +62,10 @@ public surface. Each is a Worker workspace with its own README.
 - [`examples/worker-shell`](examples/worker-shell) — same HTTP surface as the
   container example, but the shell runs [just-bash](https://github.com/vercel-labs/just-bash)
   in a Dynamic Worker loaded through `env.LOADER`. No container.
+- [`examples/kitebuild`](examples/kitebuild) — same HTTP surface as
+  `worker-shell`, but commands run on a Kitebuild machine: BusyBox with
+  real processes and `git`, in the Workspace's own Durable Object.
+  Output can stream. Experimental.
 - [`examples/codemode`](examples/codemode) — mirrors
   `worker-shell`, but `exec` evaluates an ECMAScript module in a Dynamic
   Worker instead of running a shell command.
