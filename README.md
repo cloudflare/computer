@@ -66,6 +66,11 @@ public surface. Each is a Worker workspace with its own README.
   `worker-shell`, but commands run on a Kitebuild machine: BusyBox with
   real processes and `git`, in the Workspace's own Durable Object.
   Output can stream. Experimental.
+- [`examples/kitebuild-agent`](examples/kitebuild-agent) — one
+  Kitebuild backend with Kitebuild's toolchain: shell commands,
+  Node.js scripts run with `node`, files shipped with a Vite-built
+  Worker, and a pi agent that clones, builds, tests and pushes projects.
+  Experimental.
 - [`examples/codemode`](examples/codemode) — mirrors
   `worker-shell`, but `exec` evaluates an ECMAScript module in a Dynamic
   Worker instead of running a shell command.

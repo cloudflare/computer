@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kitebuild agent</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Kitebuild agent</h1>
+      <label>
+        Workspace
+        <input id="workspace" value="demo" spellcheck="false" />
+      </label>
+    </header>
+    <main>
+      <section class="agent">
+        <form id="task-form">
+          <textarea
+            id="task"
+            rows="3"
+            placeholder="Clone https://github.com/honojs/starter, list the templates, and write them to NOTES.md."
+          ></textarea>
+          <button id="run" type="submit">Run</button>
+        </form>
+        <ol id="log"></ol>
+        <p class="note">The conversation is not kept: a reload starts a new one. The Workspace's files stay.</p>
+      </section>
+      <section class="shell">
+        <h2>Simple Shell</h2>
+        <div id="terminal"></div>
+      </section>
+    </main>
+    <script type="module" src="/ui/main.ts"></script>
+  </body>
+</html>

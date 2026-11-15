@@ -732,6 +732,9 @@ An adapter for the Cloudflare runtime lives at
   same shape, running ECMAScript modules instead of shell commands.
 - [`examples/kitebuild`](../../examples/kitebuild) — the same shape on
   the experimental Kitebuild backend, with BusyBox and `git`.
+- [`examples/kitebuild-agent`](../../examples/kitebuild-agent) — shell
+  commands, Node.js scripts and a Vite-built Worker on one Kitebuild
+  backend with Kitebuild's toolchain, and a pi agent on top.
 - [`examples/container`](../../examples/container) — the container
   backend running `computerd`.
 - [`examples/container-legacy`](../../examples/container-legacy) — the

@@ -1,0 +1,121 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1d1d1b;
+  background: #f7f7f5;
+}
+body {
+  margin: 0;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid #ddd;
+}
+h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+main {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  height: calc(100vh - 6rem);
+}
+section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+textarea,
+input {
+  font: inherit;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+#task-form {
+  display: flex;
+  gap: 0.5rem;
+}
+#task {
+  flex: 1;
+  resize: vertical;
+}
+button {
+  font: inherit;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: 6px;
+  background: #f6821f;
+  color: white;
+  cursor: pointer;
+}
+#run {
+  min-width: 7rem;
+}
+button:disabled {
+  background: #bbb;
+  cursor: progress;
+}
+#log {
+  flex: 1;
+  overflow: auto;
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+#log li {
+  margin: 0 0 0.5rem;
+  white-space: pre-wrap;
+}
+#log .task {
+  font-weight: 600;
+}
+#log .reply {
+  padding: 0.75rem;
+  background: white;
+  border-radius: 6px;
+}
+#log .error {
+  color: #b3261e;
+}
+#log summary {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+#log details:not(.finished) summary::after {
+  content: " …";
+}
+#log details.failed summary {
+  color: #b3261e;
+}
+pre {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  background: #1d1d1b;
+  color: #eee;
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 20rem;
+  white-space: pre-wrap;
+}
+#terminal {
+  flex: 1;
+  min-height: 0;
+  padding: 0.5rem;
+  background: #1d1d1b;
+  border-radius: 6px;
+}
+.note {
+  font-size: 0.8rem;
+  color: #666;
+}
