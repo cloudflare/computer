@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { Database } from "../storage";
-import { deleteNode, dropChunks, linkChunk, replaceChunk, setNodeManifest } from "./refs";
+import {
+  deleteNode,
+  dropChunks,
+  linkChunk,
+  openReapDeferral,
+  reapsDeferred,
+  replaceChunk,
+  setNodeManifest,
+} from "./refs";
 import { withDB } from "./with-db";
 
 function hashOf(byte: number): Uint8Array {
@@ -118,6 +126,31 @@ describe("node manifest helpers", () => {
       const inode = fileNode(db);
       db.transactionSync(() => deleteNode(db, inode));
       expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_nodes WHERE inode = ?", inode)).toBe(0);
+    });
+  });
+});
+
+describe("reap deferral", () => {
+  it("stays open until every scope that opened it closes", async () => {
+    await withDB((db) => {
+      expect(reapsDeferred(db)).toBe(false);
+      const outer = openReapDeferral(db);
+      const inner = openReapDeferral(db);
+      inner.close();
+      expect(reapsDeferred(db)).toBe(true);
+      outer.close();
+      expect(reapsDeferred(db)).toBe(false);
+    });
+  });
+
+  it("ignores a second close of the same scope", async () => {
+    await withDB((db) => {
+      const outer = openReapDeferral(db);
+      const inner = openReapDeferral(db);
+      inner.close();
+      inner.close();
+      expect(reapsDeferred(db)).toBe(true);
+      outer.close();
     });
   });
 });

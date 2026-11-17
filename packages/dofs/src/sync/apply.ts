@@ -1,5 +1,6 @@
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
+import { openReapDeferral } from "../fs/refs";
 import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
 import { invalidateResolveSubtree } from "../fs/resolveCache";
 import { rm } from "../fs/rm";
@@ -283,11 +284,30 @@ function ensureParentDirectories(
 // `objects` is a hash-keyed map of chunk bytes the sender shipped
 // via pushObjects / fetchObjects. File entries reassemble their
 // chunks from this map; missing entries throw.
+//
+// Unreferenced content is not reclaimed until the call ends. Entries
+// apply in separate transactions, and a removal early in the stream
+// may drop the last reference to content a later entry links. See
+// openReapDeferral.
 export async function applyChanges(
   db: Database,
   entries: Iterable<ChangeEntry> | AsyncIterable<ChangeEntry>,
   objects: Map<string, Uint8Array>,
   options: ApplyOptions = {},
+): Promise<ApplyResult> {
+  const deferral = openReapDeferral(db);
+  try {
+    return await applyEntries(db, entries, objects, options);
+  } finally {
+    deferral.close();
+  }
+}
+
+async function applyEntries(
+  db: Database,
+  entries: Iterable<ChangeEntry> | AsyncIterable<ChangeEntry>,
+  objects: Map<string, Uint8Array>,
+  options: ApplyOptions,
 ): Promise<ApplyResult> {
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
@@ -442,6 +462,20 @@ export function applyChangesSync(
   entries: readonly ChangeEntry[],
   objects: Map<string, Uint8Array>,
   options: ApplyOptions = {},
+): ApplyResult {
+  const deferral = openReapDeferral(db);
+  try {
+    return applyEntriesSync(db, entries, objects, options);
+  } finally {
+    deferral.close();
+  }
+}
+
+function applyEntriesSync(
+  db: Database,
+  entries: readonly ChangeEntry[],
+  objects: Map<string, Uint8Array>,
+  options: ApplyOptions,
 ): ApplyResult {
   const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
   const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;

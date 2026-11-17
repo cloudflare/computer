@@ -63,7 +63,7 @@ const STAGING_CALLERS: Record<string, string> = {
   "dofs:sync/blobs.ts": "defines stageBlob",
   "dofs:sync/fetch.ts": "defines hasObjects, which pins what it reports present",
   "dofs:fs/writeFile.ts": "streaming writeFile pins each staged window until it links",
-  "dofs:sync/apply.ts": "applyFileEntry stages and links in the same apply call",
+  "dofs:sync/apply.ts": "applyFileEntry stages and links inside the reap deferral scope",
   // A blob lost between staging and the link fails the link-time
   // check, and the sync engine retries the block.
   "rpc:interface.ts": "declares the peer method",

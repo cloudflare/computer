@@ -7,6 +7,7 @@ import { mkdir } from "../fs/mkdir";
 import { invalidateReadOnlyMountCache } from "../fs/mount-guard";
 import { readFile } from "../fs/readFile";
 import { readlink } from "../fs/readlink";
+import { reapsDeferred } from "../fs/refs";
 import { rename } from "../fs/rename";
 import { resolveInode } from "../fs/resolve";
 import { rm } from "../fs/rm";
@@ -1594,5 +1595,81 @@ describe("applyChanges mtime propagation (auto_cache contract)", () => {
         expect(await readFile(b, "/sync.txt", "utf8")).toBe("SECOND");
       },
     );
+  });
+});
+
+describe("applyChanges reap deferral", () => {
+  // A removal in one entry and a link of the same content in a later
+  // entry run in separate transactions. Reaps wait for the whole call,
+  // so the removal cannot reclaim bytes the link is about to use.
+  function fileEntry(path: string, text: string, rev: number): ChangeEntry {
+    const bytes = new TextEncoder().encode(text);
+    const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
+    return {
+      kind: "file",
+      rev,
+      path,
+      mode: 0o644,
+      mtime: 1,
+      size: bytes.byteLength,
+      chunks: [{ hash, size: bytes.byteLength }],
+    };
+  }
+
+  it("defers reaps for the whole of an async apply", async () => {
+    await withDB(async (db) => {
+      const seen: boolean[] = [];
+      async function* entries(): AsyncIterable<ChangeEntry> {
+        seen.push(reapsDeferred(db));
+        yield { kind: "dir", rev: 1, path: "/d", mode: 0o755, mtime: 1 };
+        seen.push(reapsDeferred(db));
+      }
+
+      await applyChanges(db, entries(), new Map());
+
+      expect(seen).toEqual([true, true]);
+      expect(reapsDeferred(db)).toBe(false);
+    });
+  });
+
+  it("closes the deferral when an async apply fails", async () => {
+    await withDB(async (db) => {
+      await expect(
+        applyChanges(db, [fileEntry("/missing.txt", "nowhere", 1)], new Map()),
+      ).rejects.toThrow("missing object");
+      expect(reapsDeferred(db)).toBe(false);
+    });
+  });
+
+  it("defers reaps for the whole of a sync apply", async () => {
+    await withDB((db) => {
+      const seen: boolean[] = [];
+      const entries: ChangeEntry[] = [
+        { kind: "dir", rev: 1, path: "/d", mode: 0o755, mtime: 1 },
+        { kind: "dir", rev: 2, path: "/e", mode: 0o755, mtime: 1 },
+      ];
+      const watched = Object.assign([...entries], {
+        *[Symbol.iterator]() {
+          for (const entry of entries) {
+            seen.push(reapsDeferred(db));
+            yield entry;
+          }
+        },
+      });
+
+      applyChangesSync(db, watched, new Map());
+
+      expect(seen).toEqual([true, true]);
+      expect(reapsDeferred(db)).toBe(false);
+    });
+  });
+
+  it("closes the deferral when a sync apply fails", async () => {
+    await withDB((db) => {
+      expect(() =>
+        applyChangesSync(db, [fileEntry("/missing.txt", "nowhere", 1)], new Map()),
+      ).toThrow("missing object");
+      expect(reapsDeferred(db)).toBe(false);
+    });
   });
 });

@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
+import { stageBlob } from "../sync/blobs";
 import { mkdir } from "./mkdir";
 import { resolveInode } from "./resolve";
 import { symlink } from "./symlink";
 import { withDB } from "./with-db";
-import { CHUNK_SIZE, writeFile, writeFileRangesSync, writeFileSync } from "./writeFile";
+import {
+  CHUNK_SIZE,
+  linkStagedChunksSync,
+  writeFile,
+  writeFileRangesSync,
+  writeFileSync,
+} from "./writeFile";
 
 // Reassemble a file's bytes by stitching its chunk rows together.
 // A deliberately minimal helper so writeFile tests can stand alone
@@ -618,6 +625,49 @@ describe("writeFile", () => {
         node?.inode,
       );
       expect(chunkCount).toBe(2);
+    });
+  });
+});
+
+describe("linkStagedChunksSync", () => {
+  function hashOf(byte: number): Uint8Array {
+    return new Uint8Array(32).fill(byte);
+  }
+
+  it("links chunks whose bytes are staged", async () => {
+    await withDB((db) => {
+      const bytes = new TextEncoder().encode("staged");
+      stageBlob(db, hashOf(1), bytes, 0);
+      linkStagedChunksSync(
+        db,
+        "/a.txt",
+        ["a.txt"],
+        [{ hash: hashOf(1), size: bytes.byteLength }],
+        {},
+        0,
+      );
+      expect(new TextDecoder().decode(readBack(db, "/a.txt"))).toBe("staged");
+    });
+  });
+
+  it("refuses to link a chunk whose bytes are missing, so it can be staged again", async () => {
+    await withDB((db) => {
+      expect(() =>
+        linkStagedChunksSync(db, "/a.txt", ["a.txt"], [{ hash: hashOf(2), size: 4 }], {}, 0),
+      ).toThrowError(expect.objectContaining({ code: "EUNKNOWN_HASH" }));
+      expect(resolveInode(db, "/a.txt")).toBeNull();
+    });
+  });
+
+  it("refuses a blob row without its bytes and leaves the old content in place", async () => {
+    await withDB(async (db) => {
+      await writeFile(db, "/a.txt", "old", {}, () => 0);
+      db.run("INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, 4, 0)", hashOf(3));
+
+      expect(() =>
+        linkStagedChunksSync(db, "/a.txt", ["a.txt"], [{ hash: hashOf(3), size: 4 }], {}, 0),
+      ).toThrowError(expect.objectContaining({ code: "EUNKNOWN_HASH" }));
+      expect(new TextDecoder().decode(readBack(db, "/a.txt"))).toBe("old");
     });
   });
 });
