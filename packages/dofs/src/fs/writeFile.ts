@@ -7,7 +7,7 @@ import type { Database } from "../storage";
 import { stageBlob } from "../sync/blobs";
 import { buildManifest } from "../sync/manifests";
 import { pathOf } from "../sync/paths";
-import { getBlobBytes } from "./blobCache";
+import { getBlobBytes, hashKey } from "./blobCache";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
 import { pinHashes } from "./pins";
@@ -444,6 +444,11 @@ export function assertChunkWindows(chunkRefs: ChunkRef[], canonical: string): vo
 // the guards every other write path gets from writeFile have to run
 // here too: the read-only mount check, and the fixed-window layout
 // that positional reads depend on.
+//
+// Staging happened before this transaction, possibly in another call,
+// and unreferenced bytes can be reclaimed in between. Linking a chunk
+// whose bytes are gone would commit a file that cannot be read, so it
+// throws EUNKNOWN_HASH instead and the caller stages it again.
 export function linkStagedChunksSync(
   db: Database,
   canonical: string,
@@ -456,6 +461,7 @@ export function linkStagedChunksSync(
   assertChunkWindows(chunkRefs, canonical);
   const mode = (options.mode ?? 0o644) & 0o7777;
   db.transactionSync(() => {
+    assertStagedBytes(db, chunkRefs, canonical);
     const target = resolveWriteTarget(db, parts, canonical, options);
     const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
     if (target.kind === "existing") {
@@ -475,6 +481,28 @@ export function linkStagedChunksSync(
     for (const ref of chunkRefs) totalSize += ref.size;
     setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: totalSize });
   });
+}
+
+function assertStagedBytes(db: Database, chunkRefs: ChunkRef[], canonical: string): void {
+  const checked = new Set<string>();
+  for (const { hash } of chunkRefs) {
+    const key = hashKey(hash);
+    if (checked.has(key)) continue;
+    checked.add(key);
+    if (db.one("SELECT 1 AS present FROM vfs_blob_bytes WHERE hash = ?", hash) !== undefined)
+      continue;
+    throw createWorkspaceError(
+      "EUNKNOWN_HASH",
+      `chunk ${hexOf(hash)} has no staged bytes; stage it and retry: ${canonical}`,
+      canonical,
+    );
+  }
+}
+
+function hexOf(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
+  return out;
 }
 
 // Allocate a fresh file inode row with the supplied mode and mtime,
