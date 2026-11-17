@@ -56,7 +56,7 @@ describe("manifests", () => {
     });
   });
 
-  it("overwriting a file updates manifest_hash and may leave the old manifest orphaned", async () => {
+  it("overwriting a file updates manifest_hash and frees the old manifest", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/x.txt", "first", {}, () => 1);
       const before = db.one<{ manifest_hash: Uint8Array | null }>(
@@ -67,10 +67,9 @@ describe("manifests", () => {
         "SELECT manifest_hash FROM vfs_nodes WHERE type = 'file'",
       );
       expect(after?.manifest_hash).not.toEqual(before?.manifest_hash);
-      // Two manifest rows now exist; the old one is orphaned and will
-      // be reaped by gc().
+      // Nothing else uses the old manifest, so the overwrite deleted it.
       const count = db.scalar<number>("SELECT COUNT(*) AS n FROM vfs_manifests");
-      expect(count).toBe(2);
+      expect(count).toBe(1);
     });
   });
 });
