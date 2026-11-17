@@ -18,6 +18,9 @@
 
 import { NodeSQLiteStorage } from "./node-storage";
 
+// Whether a chunk blob is pinned against reclamation, for tests of code
+// that has to pin what it holds across an await.
+export { isPinned } from "./fs/pins";
 export type { ExecutedStatement } from "./testing-recording";
 export { RecordingStorage } from "./testing-recording";
 

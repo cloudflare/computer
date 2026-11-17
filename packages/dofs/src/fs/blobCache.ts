@@ -42,7 +42,7 @@ function cacheFor(db: Database): Map<string, Uint8Array> {
 // Stringify a 32-byte hash so it can key a JS Map. Latin-1
 // preserves every byte exactly and avoids the allocation cost of
 // hex encoding for what is a very hot path.
-function hashKey(hash: Uint8Array): string {
+export function hashKey(hash: Uint8Array): string {
   let out = "";
   for (let i = 0; i < hash.byteLength; i++) {
     out += String.fromCharCode(hash[i]);

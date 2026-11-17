@@ -5,7 +5,7 @@ import {
   readPushCursor,
   SQLiteWorkspaceProvider,
 } from "@cloudflare/dofs";
-import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
+import { isPinned, SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
 import type { SyncRPC } from "./interface";
@@ -285,6 +285,42 @@ describe("restartable push engine", () => {
 
         expect(readPushCursor(local.db, "container").rev).toBeGreaterThan(0);
         expect(readPushCursor(local.db, "worker")).toEqual({ rev: 0, path: null });
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+  });
+  describe("object lifetime", () => {
+    it("pins the objects a block sends until the block ends", async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        seedLocal(local.db, 2);
+        const sent = local.db
+          .all<{ hash: Uint8Array }>("SELECT hash FROM vfs_chunks")
+          .map((row) => row.hash);
+        expect(sent).toHaveLength(2);
+
+        // The sender reads object bytes lazily, while the receiver
+        // pulls them. Check the pins at the moment the receiver starts.
+        let pinnedWhileSending: boolean[] = [];
+        const watching = new Proxy(remote.rpc as object, {
+          get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver) as unknown;
+            if (prop !== "pushObjects" || typeof value !== "function") return value;
+            return (objects: ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>) => {
+              pinnedWhileSending = sent.map((hash) => isPinned(local.db, hash));
+              return (value as (o: typeof objects) => Promise<void>).call(target, objects);
+            };
+          },
+        }) as SyncRPC;
+
+        await drainPush(local.db, watching);
+
+        expect(pinnedWhileSending).toEqual([true, true]);
+        expect(sent.map((hash) => isPinned(local.db, hash))).toEqual([false, false]);
+        expect(remoteNames(remote.db)).toEqual(["f000.txt", "f001.txt"]);
       } finally {
         local.close();
         remote.close();

@@ -40,6 +40,9 @@ export type { ApplyOptions, ApplyResult, SkippedEntry } from "./sync/apply";
 // to a Database.
 export { applyChanges, applyChangesSync } from "./sync/apply";
 export { stageBlob } from "./sync/blobs";
+// Keeps chunk blobs a sync sender reads lazily from being reclaimed
+// before the peer has pulled them.
+export { pinObjects } from "./fs/pins";
 export type {
   BlockObject,
   ModeDecision,

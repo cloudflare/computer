@@ -1,3 +1,4 @@
+import { HAS_OBJECTS_PIN_MS, pinHashes } from "../fs/pins";
 import type { Database } from "../storage";
 import type { ChangeEntry } from "./changes";
 import { coalesceChanges } from "./coalesce";
@@ -44,6 +45,11 @@ const PROBE_BATCH = 100;
 // Matches the raw hash blobs through an IN (…) list so the lookup
 // rides the primary-key index. Present hashes are returned in input
 // order, preserving any duplicates the caller passed.
+//
+// A caller told a hash is present skips sending it and links it later,
+// so present hashes stay pinned for HAS_OBJECTS_PIN_MS. The pin only
+// saves a round trip: a hash lost anyway fails the link, and the sync
+// engine probes again on retry.
 export function hasObjects(db: Database, hashes: Uint8Array[]): Uint8Array[] {
   if (hashes.length === 0) return [];
   const present = new Set<string>();
@@ -60,5 +66,7 @@ export function hasObjects(db: Database, hashes: Uint8Array[]): Uint8Array[] {
     );
     for (const row of rows) present.add(toHex(row.hash));
   }
-  return hashes.filter((h) => present.has(toHex(h)));
+  const found = hashes.filter((h) => present.has(toHex(h)));
+  if (found.length > 0) pinHashes(db, found, { leaseMs: HAS_OBJECTS_PIN_MS });
+  return found;
 }
