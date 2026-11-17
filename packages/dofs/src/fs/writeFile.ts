@@ -335,8 +335,8 @@ export async function writeFile(
 //
 // Staged windows stay pinned until the final transaction links them,
 // since nothing references them before then. Failure mid-stream leaves
-// blob rows behind; gc() reaps orphans on its next pass since no node
-// references them.
+// blob rows behind, which the incremental sweep in refs.ts reclaims
+// once they are past its grace window.
 async function writeFileStreaming(
   db: Database,
   path: string,
@@ -349,7 +349,7 @@ async function writeFileStreaming(
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
   }
   // Reject before we stage any blob bytes so known failures do not grow
-  // orphan blob rows that gc() then has to reap. Resolve both lexical and
+  // orphan blob rows that the sweep then has to reclaim. Resolve both lexical and
   // effective paths so a symlink cannot defer an EROFS failure until commit.
   resolveWriteTarget(db, parts, canonical, options);
   const mode = (options.mode ?? 0o644) & 0o7777;
@@ -1186,8 +1186,8 @@ export function writeFileSync(
     const target = resolveWriteTarget(db, parts, canonical, options);
     const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
     if (target.kind === "existing") {
-      // Replace the existing representation. Orphaned blobs (if any)
-      // are cleaned up by a later gc() pass.
+      // Replace the existing representation. Blobs nothing else uses
+      // are reclaimed when this transaction commits.
       dropChunks(db, inode);
     } else {
       insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);

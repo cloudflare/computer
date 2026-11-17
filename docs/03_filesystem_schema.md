@@ -333,6 +333,17 @@ later writes. As a last line, `linkStagedChunksSync` refuses to link a
 chunk whose bytes are missing and throws `EUNKNOWN_HASH`, which the sync
 engine retries.
 
+An incremental sweep catches what that misses: deferred hashes lost
+when a process stopped, staging nothing linked (a failed stream, an
+abandoned sync), garbage an older release left, and the backlog in
+stores that predate reclamation. At the end of each write it checks the
+next 8 rows of `vfs_blobs` or `vfs_manifests`, alternating, after an
+in-memory rowid cursor that wraps at the end, and deletes the rows that
+nothing references or pins and whose `last_seen` is more than an hour
+old. Staging refreshes `last_seen`, so the hour is how long staged bytes
+may wait for their link, across calls and restarts. A table of N rows is
+covered every N / 4 writes; there is no migration and no full scan.
+
 Pins are per `Database` object, so all callers of one store share one
 handle. None of this changes the schema, and the library still owns no
 alarm or timer.
