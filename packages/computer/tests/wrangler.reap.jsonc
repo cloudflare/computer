@@ -1,0 +1,22 @@
+{
+  // Test-only worker for the reaping end-to-end tests. Not deployed.
+  //
+  // ReapHost holds a real Workspace; ReapPeer serves a dofs store through
+  // the rpc package's sync server. Both are SQLite-backed Durable Objects.
+  "name": "computer-reap",
+  "main": "./reap-worker.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "HOST", "class_name": "ReapHost" },
+      { "name": "PEER", "class_name": "ReapPeer" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ReapHost", "ReapPeer"]
+    }
+  ]
+}
