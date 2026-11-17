@@ -12,6 +12,14 @@
 //   * What that leaves behind: the number of blob rows and the database
 //     size after the run. A store that reclaims dropped chunks stays at
 //     one version's worth; one that doesn't grows with every save.
+//   * A recursive delete of 2,000 small files with distinct content,
+//     timed and counted in statements, since each file's content is
+//     reaped with it.
+//   * Saves of a 1 KiB file in a store that already holds a backlog of
+//     unreferenced 512 KiB blobs older than the sweep's grace window, as
+//     a store written before reaping would. The sweep works through the
+//     backlog a little on every save, which must not make a small save
+//     slow.
 //   * Read latency (p50 and p99) for a lazy binary readFile stream
 //     drained to the end, a string readFile, and a positional
 //     readRangeSync, so a change to the write path can show it left
@@ -27,13 +35,19 @@
 // runs are easy to diff. Run with:
 //   npm run bench --workspace @cloudflare/dofs
 
+import { createHash } from "node:crypto";
+
 import { env, runInDurableObject } from "cloudflare:test";
 import { it } from "vitest";
 import type { TestBindings } from "../../tests/worker";
+import { mkdir } from "../fs/mkdir";
 import { readFile, readRangeSync } from "../fs/readFile";
+import { rm } from "../fs/rm";
 import { CHUNK_SIZE, writeFileSync } from "../fs/writeFile";
 import { initializeSchema } from "../schema/index";
 import { Database } from "../storage";
+import { stageBlob } from "../sync/blobs";
+import { CountingStorage } from "./counting-storage";
 
 const NOW = (): number => 1000;
 
@@ -54,6 +68,96 @@ async function withRealDb<T>(
     initializeSchema(db, NOW);
     return await fn(db, state.storage.sql as unknown as RealStorage);
   });
+}
+
+async function withCountingDb<T>(fn: (db: Database, counting: CountingStorage) => T): Promise<T> {
+  return runInDurableObject(freshStub(), async (_i: unknown, state: DurableObjectState) => {
+    const counting = new CountingStorage(state.storage);
+    const db = new Database(counting);
+    initializeSchema(db, NOW);
+    return fn(db, counting);
+  });
+}
+
+interface DeleteResult {
+  name: string;
+  files: number;
+  totalMs: number;
+  statements: number;
+}
+
+async function benchRecursiveDelete(files: number): Promise<DeleteResult> {
+  return withCountingDb((db, counting) => {
+    mkdir(db, "/tree", {}, NOW);
+    for (let i = 0; i < files; i++) {
+      writeFileSync(db, `/tree/f${i}`, new TextEncoder().encode(`distinct ${i}`), {}, NOW);
+    }
+    counting.reset();
+    const t0 = performance.now();
+    rm(db, "/tree", { recursive: true });
+    const totalMs = performance.now() - t0;
+    return {
+      name: `recursive-delete(${files} distinct)`,
+      files,
+      totalMs,
+      statements: counting.snapshot().statements,
+    };
+  });
+}
+
+interface BacklogResult {
+  name: string;
+  saves: number;
+  batch: number;
+  p50Ms: number;
+  p99Ms: number;
+  backlogBefore: number;
+  backlogAfter: number;
+}
+
+async function benchBacklog(
+  orphans: number,
+  batches: number,
+  batch: number,
+): Promise<BacklogResult> {
+  return withRealDb((db) => {
+    for (let i = 0; i < orphans; i++) {
+      const bytes = content(CHUNK_SIZE);
+      touchEveryChunk(bytes, i + 1);
+      stageBlob(db, sha256(bytes), bytes);
+    }
+    // Older than the sweep's grace window, as left by an older release.
+    db.run("UPDATE vfs_blobs SET last_seen = ?", Date.now() - 24 * 60 * 60 * 1000);
+    const backlog = (): number =>
+      db.scalar<number>(
+        "SELECT COUNT(*) FROM vfs_blobs b WHERE NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = b.hash)",
+      ) ?? 0;
+    const backlogBefore = backlog();
+    const bytes = content(1024);
+    const samples: number[] = [];
+    let save = 0;
+    for (let b = 0; b < batches; b++) {
+      const t0 = performance.now();
+      for (let i = 0; i < batch; i++) {
+        touchEveryChunk(bytes, ++save);
+        writeFileSync(db, "/small.txt", bytes, {}, NOW);
+      }
+      samples.push((performance.now() - t0) / batch);
+    }
+    return {
+      name: `save 1KiB over ${orphans} x 512KiB backlog`,
+      saves: save,
+      batch,
+      p50Ms: percentile(samples, 50),
+      p99Ms: percentile(samples, 99),
+      backlogBefore,
+      backlogAfter: backlog(),
+    };
+  });
+}
+
+function sha256(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(createHash("sha256").update(bytes).digest());
 }
 
 function percentile(samples: number[], p: number): number {
@@ -178,6 +282,9 @@ it("dofs overwrite and read latency (real DO SqlStorage)", async () => {
     await benchOverwrite("5MiB", 5 * 1024 * 1024, 40, 1),
   ];
 
+  const deletes = [await benchRecursiveDelete(2000)];
+  const backlogs = [await benchBacklog(100, 100, 5)];
+
   const reads = [
     await benchRead("readFile-stream(100KiB)", 100 * 1024, 100, 20, async (db) => {
       await drain(await readFile(db, "/read.bin"));
@@ -209,6 +316,28 @@ it("dofs overwrite and read latency (real DO SqlStorage)", async () => {
     );
   }
   lines.push("");
+  lines.push("RECURSIVE DELETE");
+  lines.push(
+    `${"operation".padEnd(34)}${"total".padStart(11)}${"us/file".padStart(10)}${"stmts".padStart(8)}`,
+  );
+  lines.push("-".repeat(63));
+  for (const d of deletes) {
+    lines.push(
+      `${d.name.padEnd(34)}${ms(d.totalMs).padStart(11)}${((d.totalMs * 1000) / d.files).toFixed(1).padStart(10)}${String(d.statements).padStart(8)}`,
+    );
+  }
+  lines.push("");
+  lines.push("SAVES OVER A BACKLOG");
+  lines.push(
+    `${"operation".padEnd(36)}${"saves".padStart(7)}${"batch".padStart(7)}${"p50".padStart(11)}${"p99".padStart(11)}${"backlog".padStart(9)}${"left".padStart(7)}`,
+  );
+  lines.push("-".repeat(88));
+  for (const b of backlogs) {
+    lines.push(
+      `${b.name.padEnd(36)}${String(b.saves).padStart(7)}${String(b.batch).padStart(7)}${ms(b.p50Ms).padStart(11)}${ms(b.p99Ms).padStart(11)}${String(b.backlogBefore).padStart(9)}${String(b.backlogAfter).padStart(7)}`,
+    );
+  }
+  lines.push("");
   lines.push("READ");
   lines.push(
     `${"operation".padEnd(26)}${"iters".padStart(7)}${"batch".padStart(7)}${"p50".padStart(11)}${"p99".padStart(11)}`,
@@ -221,7 +350,9 @@ it("dofs overwrite and read latency (real DO SqlStorage)", async () => {
   }
   lines.push("");
   lines.push("JSON");
-  lines.push(JSON.stringify({ backend: "durable-object-sqlstorage", overwrites, reads }));
+  lines.push(
+    JSON.stringify({ backend: "durable-object-sqlstorage", overwrites, deletes, backlogs, reads }),
+  );
   lines.push("=".repeat(88));
   console.log(`\n${lines.join("\n")}\n`);
 });
