@@ -85,7 +85,7 @@ describe("incremental sweep", () => {
     });
   });
 
-  it("reclaims a bounded number of rows per write", async () => {
+  it("reaps a bounded number of rows per write", async () => {
     await withDB((db) => {
       const old = Date.now() - 2 * HOUR;
       for (let i = 0; i < 3 * SWEEP_ROWS_PER_WRITE; i++) leaveOrphan(db, String(i), old);
@@ -141,7 +141,7 @@ describe("incremental sweep", () => {
       }
       for (let i = 0; i < 20; i++) write(db);
 
-      // An older release dropped a reference without reclaiming it. The
+      // An older release dropped a reference without reaping it. The
       // blob sits at a low rowid the cursor has already passed.
       const hash = sha256(new TextEncoder().encode("file 0"));
       db.run("DELETE FROM vfs_dirents WHERE parent_inode = 1 AND name = 'f0'");

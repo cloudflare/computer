@@ -9,10 +9,11 @@ type NodeType = "file" | "dir" | "symlink";
 // until the final dirent is gone. Returns true when the inode was
 // reaped, false when other links keep it alive.
 //
-// Callers own rev bumps and tombstones; this helper touches only
-// vfs_dirents, and vfs_chunks and vfs_nodes through fs/refs.ts. It is the single place the
-// refcount-gated reap is implemented — rm, rename, and the sync apply
-// path all funnel through here so the invariant lives once.
+// Callers own rev bumps and tombstones. This helper deletes the
+// vfs_dirents row itself and leaves vfs_chunks and vfs_nodes to
+// fs/refs.ts. It is the single place the refcount-gated removal is
+// implemented: rm, rename, and the sync apply path all funnel through
+// here so the invariant lives once.
 export function unlinkDirent(
   db: Database,
   parentInode: number,

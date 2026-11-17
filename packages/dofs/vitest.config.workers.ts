@@ -30,7 +30,7 @@ export default defineConfig({
     // reporting a module-resolution error. schema/index.test.ts also
     // stages raw, pre-migration databases, which withDB cannot
     // represent. fs/refs.source.test.ts reads the package source from
-    // disk, which workerd cannot. fs/reclaim.nested.test.ts nests
+    // disk, which workerd cannot. fs/reap.nested.test.ts nests
     // transactions, which become SAVEPOINTs that Durable Object storage
     // rejects. All other tests run under both
     // backends; helpers delegate to withDB, which this config aliases
@@ -40,7 +40,7 @@ export default defineConfig({
       "src/testing.test.ts",
       "src/node-storage.test.ts",
       "src/fs/refs.source.test.ts",
-      "src/fs/reclaim.nested.test.ts",
+      "src/fs/reap.nested.test.ts",
     ],
   },
 });

@@ -752,7 +752,7 @@ async function runPushBlock(
   // reference them, so the receiver never sees an entry whose content
   // it cannot resolve. The object stream reads bytes as the receiver
   // pulls them, so pin them for the rest of the block: a local write in
-  // the meantime could otherwise reclaim one the plan still names.
+  // the meantime could otherwise reap one the plan still names.
   const pin = pinObjects(
     db,
     planned.objects.map((o) => o.hash),

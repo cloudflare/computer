@@ -308,41 +308,54 @@ indexer. See [06. Mount Interface](./06_mount_interface.md).
 
 ## Garbage collection
 
-Content is reclaimed when its last reference goes, inside the
-transaction that drops it. Every statement that adds, replaces or drops
-a `vfs_chunks` row, writes `vfs_nodes.manifest_hash`, or deletes a node
-goes through `fs/refs.ts`, which records each hash the transaction
-dropped. Just before the transaction commits, a hash that nothing
-references any more (one probe of `vfs_chunks_by_hash` or
-`vfs_nodes_by_manifest_hash`) loses its `vfs_blobs` and
-`vfs_blob_bytes` rows, or its `vfs_manifests` row. The probe looks
-across every inode, so content shared through dedupe or hardlinks stays
-while any file uses it. A source-scanning test fails when one of those
-statements appears outside `fs/refs.ts`.
+dofs reaps content: it deletes a chunk blob or manifest row once nothing
+references it, inside the transaction that drops the last reference.
+Every statement that adds, replaces or drops a `vfs_chunks` row, writes
+`vfs_nodes.manifest_hash`, or deletes a node goes through `fs/refs.ts`,
+which records each hash the transaction dropped. Just before the
+transaction commits, the hashes nothing references any more lose their
+`vfs_blobs` and `vfs_blob_bytes` rows, or their `vfs_manifests` row,
+up to 100 hashes a statement. The reference check runs across every
+inode through `vfs_chunks_by_hash` and `vfs_nodes_by_manifest_hash`, so
+content shared through dedupe or hardlinks stays while any file uses
+it. A source-scanning test fails when one of those statements, or a
+delete of content rows, appears anywhere in the repository outside
+`fs/refs.ts` and `gc()`.
 
-Two things hold a hash without a row that references it, and both are
-covered. Code that keeps a hash across an await pins it in memory: a
-lazy binary `readFile` stream (until it ends or is cancelled, or after
-five minutes with no pull), a streaming `writeFile` (each staged window
-until the link), the push sender (`pinObjects`, for one block), and
-`hasObjects` (what it reports present, for ten minutes). Sync apply
-removes and links in separate transactions, so `applyChanges` and
-`applyChangesSync` defer reclamation until the call ends. A pinned or
-deferred hash waits in an in-memory set and is retried at the end of
-later writes. As a last line, `linkStagedChunksSync` refuses to link a
-chunk whose bytes are missing and throws `EUNKNOWN_HASH`, which the sync
-engine retries.
+Code that keeps a hash across an await, with no row referencing it in
+between, pins it in memory: a lazy binary `readFile` stream (until it
+ends or is cancelled, or after five minutes with no pull), a streaming
+`writeFile` (each staged window until the link), the push sender
+(`pinObjects`, for one block), and `hasObjects` (what it reports
+present, for ten minutes). A pinned hash goes to an in-memory deferred
+set and later writes retry it.
 
-An incremental sweep catches what that misses: deferred hashes lost
+Sync apply removes and links in separate transactions, and a rename
+arrives as a delete of the old path followed by a file at the new one.
+So each `applyChanges` or `applyChangesSync` call holds what its own
+entries drop, pinned, until it ends, and then reaps it in transactions
+of at most 100 hashes. Only the call's own entries are held: other
+writes on the database reap as usual, including those that run while
+the call waits for its next entry. A call whose entry stream is
+abandoned stops holding after five idle minutes. If a hash is lost
+anyway between staging and its link, `linkStagedChunksSync` refuses to
+link it and throws `EUNKNOWN_HASH`. The sync block fails, and the next
+push or pull plans it again with a fresh probe.
+
+An incremental sweep reaps what all of that misses: deferred hashes lost
 when a process stopped, staging nothing linked (a failed stream, an
 abandoned sync), garbage an older release left, and the backlog in
-stores that predate reclamation. At the end of each write it checks the
-next 8 rows of `vfs_blobs` or `vfs_manifests`, alternating, after an
-in-memory rowid cursor that wraps at the end, and deletes the rows that
-nothing references or pins and whose `last_seen` is more than an hour
-old. Staging refreshes `last_seen`, so the hour is how long staged bytes
-may wait for their link, across calls and restarts. A table of N rows is
-covered every N / 4 writes; there is no migration and no full scan.
+stores that predate reaping. At the end of each write that touches
+chunk references, it checks the next 8 rows of `vfs_blobs` or
+`vfs_manifests`, alternating, after an in-memory rowid cursor that wraps
+at the end, and deletes the rows nothing references or pins whose
+`last_seen` is more than an hour old. `last_seen` is the wall-clock
+time dofs last wrote or staged the row, never a caller's clock, so the
+hour is how long staged bytes may wait for their link, across calls and
+restarts. What a write reaps on behalf of others, deferred retries and
+the sweep together, is capped at 512 KiB, so a small save never pays
+for freeing several large chunks. A table of N rows is covered about
+every N / 4 writes. There is no migration and no full scan.
 
 Pins are per `Database` object, so all callers of one store share one
 handle. None of this changes the schema, and the library still owns no

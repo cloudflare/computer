@@ -5,7 +5,7 @@
 // lazy readFile stream, a streaming writeFile between staging and
 // linking, a push sender between hasObjects and pushObjects, and a
 // peer told by hasObjects that it need not send a blob. A pin marks
-// such a hash as in use, so the code that reclaims unreferenced blobs
+// such a hash as in use, so the code that reaps unreferenced blobs
 // leaves it alone.
 //
 // Pins live in memory, per Database, like the write buffer and blob
@@ -147,7 +147,7 @@ export function pinHashes(
 }
 
 // Pin chunk blobs a sync sender is about to read while a peer pulls
-// them, so a local write cannot reclaim them halfway through. Release
+// them, so a local write cannot reap them halfway through. Release
 // the pin once the transfer is over.
 export function pinObjects(db: Database, hashes: Iterable<Uint8Array>): { release(): void } {
   const pin = pinHashes(db, hashes);
