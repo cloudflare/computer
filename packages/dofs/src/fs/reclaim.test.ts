@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Database } from "../storage";
+import { Database } from "../storage";
 import { applyChanges, applyChangesSync } from "../sync/apply";
 import type { ChangeEntry } from "../sync/changes";
 import { hasObjects } from "../sync/fetch";
@@ -368,6 +368,54 @@ describe("content in use is not reclaimed", () => {
       ).toThrow("abort");
       writeFileSync(db, "/b.txt", encode("other"), {}, NOW);
       expect(await readFile(db, "/a.txt", "utf8")).toBe("survivor");
+      expect(orphansLeft(db)).toEqual({ blobs: 0, manifests: 0 });
+    });
+  });
+});
+
+describe("reaping in batches", () => {
+  // A Database over the same storage that counts the statements that
+  // delete content rows.
+  function counting(db: Database): { db: Database; deletes: () => number } {
+    let deletes = 0;
+    const wrapped = new Database({
+      sql: {
+        exec: (query: string, ...bindings: unknown[]) => {
+          if (/^\s*DELETE\s+FROM\s+vfs_(blobs|blob_bytes|manifests)\b/i.test(query)) deletes++;
+          return db.sql.exec(query, ...bindings);
+        },
+      },
+      transactionSync: (closure) => db.transactionSync(closure),
+    });
+    return { db: wrapped, deletes: () => deletes };
+  }
+
+  it("reaps a recursive delete of many distinct files in a few statements", async () => {
+    await withDB((db) => {
+      mkdir(db, "/tree", {}, NOW);
+      for (let i = 0; i < 250; i++) writeFileSync(db, `/tree/f${i}`, encode(`file ${i}`), {}, NOW);
+      const view = counting(db);
+
+      rm(view.db, "/tree", { recursive: true });
+
+      expect(count(db, "vfs_blobs")).toBe(0);
+      expect(count(db, "vfs_blob_bytes")).toBe(0);
+      expect(count(db, "vfs_manifests")).toBe(0);
+      // Blobs, their bytes and manifests, up to 100 hashes a statement.
+      expect(view.deletes()).toBeLessThanOrEqual(3 * Math.ceil(250 / 100));
+    });
+  });
+
+  it("keeps what is still referenced when a batch mixes both", async () => {
+    await withDB((db) => {
+      mkdir(db, "/tree", {}, NOW);
+      for (let i = 0; i < 150; i++) writeFileSync(db, `/tree/f${i}`, encode(`file ${i}`), {}, NOW);
+      writeFileSync(db, "/kept", encode("file 7"), {}, NOW);
+
+      rm(db, "/tree", { recursive: true });
+
+      expect(count(db, "vfs_blobs")).toBe(1);
+      expect(hasBlob(db, encode("file 7"))).toBe(true);
       expect(orphansLeft(db)).toEqual({ blobs: 0, manifests: 0 });
     });
   });
