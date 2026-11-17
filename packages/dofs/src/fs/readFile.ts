@@ -3,6 +3,7 @@ import { canonicalizePath } from "../path";
 import type { Database } from "../storage";
 import { getBlobBytes } from "./blobCache";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { pinHashes, STREAM_IDLE_LEASE_MS } from "./pins";
 import { resolveInode } from "./resolve";
 import { getWriteBuffer } from "./writeBuffer";
 import { CHUNK_SIZE } from "./writeFile";
@@ -108,15 +109,34 @@ export async function readFile(
   // The row list is captured once when the stream opens. Blob hashes are
   // immutable, so later writes cannot tear the returned range. Pulling stays
   // lazy and preserves backpressure across the RPC stream.
+  //
+  // A later write can drop the last reference to a captured chunk, so the
+  // stream pins them until it ends. A caller that drops the stream without
+  // cancelling it holds the pins only until the idle lease runs out.
   let index = 0;
+  const pin = pinHashes(
+    db,
+    chunks.map((chunk) => chunk.hash),
+    { leaseMs: STREAM_IDLE_LEASE_MS },
+  );
   return new ReadableStream<Uint8Array>({
     pull(controller) {
       if (index >= chunks.length) {
+        pin.release();
         controller.close();
         return;
       }
+      pin.renew();
       const chunk = chunks[index++];
-      controller.enqueue(rangedChunkBytes(db, path, chunk, start, end));
+      try {
+        controller.enqueue(rangedChunkBytes(db, path, chunk, start, end));
+      } catch (error) {
+        pin.release();
+        throw error;
+      }
+    },
+    cancel() {
+      pin.release();
     },
   });
 }
