@@ -1,6 +1,7 @@
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
-import { openReapDeferral } from "../fs/refs";
+import { pinHashes } from "../fs/pins";
+import { openReapDeferral, type ReapDeferral } from "../fs/refs";
 import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
 import { invalidateResolveSubtree } from "../fs/resolveCache";
 import { rm } from "../fs/rm";
@@ -61,11 +62,10 @@ export interface ApplyResult {
 }
 
 export interface ApplyOptions {
-  // Soft cap on bytes written per transactionSync batch. Default 64
-  // MiB; matches docs/02_sync_protocol.md. The cap is advisory: a
-  // single large file is always one batch.
+  // Soft caps on bytes and entries per batch, from
+  // docs/02_sync_protocol.md. Accepted and ignored: every entry
+  // commits in its own transactions, so there is no batch to cap.
   maxBytesPerBatch?: number;
-  // Soft cap on entries per batch. Default 1024 paths.
   maxPathsPerBatch?: number;
   // Where the entries came from. 'local' (default) treats the apply
   // path like any other mutation: writeFile/mkdir/etc bump
@@ -91,9 +91,6 @@ export interface ApplyOptions {
   // this backend has not seen, using its push cursor.
   receivedCursor?: ChangeCursor;
 }
-
-const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
-const DEFAULT_MAX_PATHS = 1024;
 
 type NodeType = "file" | "dir" | "symlink";
 
@@ -272,6 +269,94 @@ function ensureParentDirectories(
   return { path: canonical };
 }
 
+// State one apply call carries from entry to entry.
+interface ApplyRun {
+  readonly objects: Map<string, Uint8Array>;
+  readonly options: ApplyOptions;
+  readonly pulled: PullContext | undefined;
+  readonly deferredDirs: DeleteEntry[];
+  readonly skipped: SkippedEntry[];
+}
+
+// Apply one entry. Returns the bytes it wrote (0 for anything but a
+// file) when it applied, or undefined when it was skipped. Runs inside
+// ReapDeferral.hold, so whatever it drops waits for the end of the call.
+function applyOne(db: Database, entry: ChangeEntry, run: ApplyRun): number | undefined {
+  const { objects, options, pulled, deferredDirs, skipped } = run;
+  // Idempotent skip: if the entry already matches the local
+  // state, drop it on the floor. The check is what stops a
+  // pull from bumping vfs_meta.rev for entries that are
+  // already in place, which in turn stops the next push from
+  // re-shipping them.
+  if (options.source === "upstream" && entry.kind !== "delete") {
+    if (alreadyApplied(db, entry)) return undefined;
+  }
+  // Protect local changes without comparing independent peer rev
+  // spaces. See tombstoneIsStale: a replayed delete must not clobber a
+  // newer local recreation.
+  if (
+    options.source === "upstream" &&
+    entry.kind === "delete" &&
+    tombstoneIsStale(db, entry, options, pulled)
+  ) {
+    deferDirectoryDelete(db, entry, pulled, deferredDirs);
+    return undefined;
+  }
+  // Read-only mount guard. Entries under a registered read-only
+  // mount root are surfaced via the return value and not applied.
+  // The owning workspace's surface (Workspace.pull, exec()) folds
+  // these into its own return so callers see what stayed
+  // authoritative on the mount.
+  const blockingRoot = readOnlyRootFor(db, entry.path);
+  if (blockingRoot !== undefined) {
+    skipped.push({
+      path: entry.path,
+      mountRoot: blockingRoot,
+      op: entry.kind === "delete" ? "delete" : "write",
+      reason: "read-only",
+    });
+    return undefined;
+  }
+  if (entry.kind === "delete") {
+    try {
+      rm(db, entry.path, { recursive: true, force: true });
+    } catch {
+      // Already gone is fine — idempotent apply.
+    }
+    return 0;
+  }
+  if (entry.kind === "dir" || entry.kind === "symlink") {
+    const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
+    if (parentResult.blockingRoot !== undefined) {
+      skipped.push({
+        path: entry.path,
+        mountRoot: parentResult.blockingRoot,
+        op: "write",
+        reason: "read-only",
+      });
+      return undefined;
+    }
+    if (entry.kind === "dir") {
+      applyDirectoryEntry(db, { ...entry, path: parentResult.path });
+    } else {
+      removeReplaceableFinalEntry(db, parentResult.path, "symlink");
+      symlink(db, entry.target, parentResult.path, () => entry.mtime);
+    }
+    return 0;
+  }
+  const fileResult = applyFileEntry(db, entry, objects);
+  if (fileResult.blockingRoot !== undefined) {
+    skipped.push({
+      path: entry.path,
+      mountRoot: fileResult.blockingRoot,
+      op: "write",
+      reason: "read-only",
+    });
+    return undefined;
+  }
+  return fileResult.total;
+}
+
 // Drive a ChangeEntry stream against `db`, batching writes so peak
 // memory stays bounded and a crash mid-apply leaves the DB in a
 // consistent state. Each batch runs inside a single transactionSync
@@ -285,10 +370,10 @@ function ensureParentDirectories(
 // via pushObjects / fetchObjects. File entries reassemble their
 // chunks from this map; missing entries throw.
 //
-// Unreferenced content is not reclaimed until the call ends. Entries
-// apply in separate transactions, and a removal early in the stream
-// may drop the last reference to content a later entry links. See
-// openReapDeferral.
+// What the call's entries drop is reaped when the call ends, not when
+// each entry commits: a removal early in the stream may drop the last
+// reference to content a later entry links. Writes outside the call
+// reap as usual. See openReapDeferral.
 export async function applyChanges(
   db: Database,
   entries: Iterable<ChangeEntry> | AsyncIterable<ChangeEntry>,
@@ -297,133 +382,70 @@ export async function applyChanges(
 ): Promise<ApplyResult> {
   const deferral = openReapDeferral(db);
   try {
-    return await applyEntries(db, entries, objects, options);
+    const run = openRun(db, objects, options);
+    const counts = { applied: 0, minted: 0 };
+    for await (const entry of entries) step(db, entry, run, deferral, counts);
+    return finishRun(db, run, counts);
   } finally {
     deferral.close();
   }
 }
 
-async function applyEntries(
+// Synchronous variant of applyChanges. Same semantics; takes an
+// in-memory entry array instead of an iterable. Used on the push
+// receiver so the whole batch can run inside a single transactionSync
+// and a mid-stream failure rolls back every prior entry.
+//
+// Stays separate from applyChanges so the streaming pull path
+// (which can't hold a sync transaction across network I/O) keeps
+// its async semantics.
+export function applyChangesSync(
   db: Database,
-  entries: Iterable<ChangeEntry> | AsyncIterable<ChangeEntry>,
+  entries: readonly ChangeEntry[],
   objects: Map<string, Uint8Array>,
-  options: ApplyOptions,
-): Promise<ApplyResult> {
-  const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
-  const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
-
-  let bytesInBatch = 0;
-  let pathsInBatch = 0;
-  let applied = 0;
-  const skipped: SkippedEntry[] = [];
-  let minted = 0;
-  const pulled = openPullContext(db, options);
-  const deferredDirs: DeleteEntry[] = [];
-  const flush = () => {
-    bytesInBatch = 0;
-    pathsInBatch = 0;
-  };
-
-  for await (const entry of entries) {
-    const revBefore = currentRev(db);
-    try {
-      // Idempotent skip: if the entry already matches the local
-      // state, drop it on the floor. The check is what stops a
-      // pull from bumping vfs_meta.rev for entries that are
-      // already in place, which in turn stops the next push from
-      // re-shipping them.
-      if (options.source === "upstream" && entry.kind !== "delete") {
-        if (alreadyApplied(db, entry)) continue;
-      }
-      // Protect local changes without comparing independent peer rev spaces.
-      if (
-        options.source === "upstream" &&
-        entry.kind === "delete" &&
-        tombstoneIsStale(db, entry, options, pulled)
-      ) {
-        deferDirectoryDelete(db, entry, pulled, deferredDirs);
-        continue;
-      }
-      // Read-only mount guard. Entries under a registered read-only
-      // mount root are surfaced via the return value and not applied.
-      // The owning workspace's surface (Workspace.pull, exec()) folds
-      // these into its own return so callers see what stayed
-      // authoritative on the mount.
-      const blockingRoot = readOnlyRootFor(db, entry.path);
-      if (blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: blockingRoot,
-          op: entry.kind === "delete" ? "delete" : "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      if (entry.kind === "delete") {
-        try {
-          rm(db, entry.path, { recursive: true, force: true });
-        } catch {
-          // Already gone is fine — idempotent apply.
-        }
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      if (entry.kind === "dir") {
-        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-        if (parentResult.blockingRoot !== undefined) {
-          skipped.push({
-            path: entry.path,
-            mountRoot: parentResult.blockingRoot,
-            op: "write",
-            reason: "read-only",
-          });
-          continue;
-        }
-        applyDirectoryEntry(db, { ...entry, path: parentResult.path });
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      if (entry.kind === "symlink") {
-        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-        if (parentResult.blockingRoot !== undefined) {
-          skipped.push({
-            path: entry.path,
-            mountRoot: parentResult.blockingRoot,
-            op: "write",
-            reason: "read-only",
-          });
-          continue;
-        }
-        removeReplaceableFinalEntry(db, parentResult.path, "symlink");
-        symlink(db, entry.target, parentResult.path, () => entry.mtime);
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      const fileResult = applyFileEntry(db, entry, objects);
-      if (fileResult.blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: fileResult.blockingRoot,
-          op: "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      applied++;
-      bytesInBatch += fileResult.total;
-      pathsInBatch++;
-      if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
-    } finally {
-      minted += notePulledRevs(db, pulled, revBefore);
-    }
+  options: ApplyOptions = {},
+): ApplyResult {
+  const deferral = openReapDeferral(db);
+  try {
+    const run = openRun(db, objects, options);
+    const counts = { applied: 0, minted: 0 };
+    for (const entry of entries) step(db, entry, run, deferral, counts);
+    return finishRun(db, run, counts);
+  } finally {
+    deferral.close();
   }
+}
 
+function openRun(db: Database, objects: Map<string, Uint8Array>, options: ApplyOptions): ApplyRun {
+  return {
+    objects,
+    options,
+    pulled: openPullContext(db, options),
+    deferredDirs: [],
+    skipped: [],
+  };
+}
+
+function step(
+  db: Database,
+  entry: ChangeEntry,
+  run: ApplyRun,
+  deferral: ReapDeferral,
+  counts: { applied: number; minted: number },
+): void {
+  const revBefore = currentRev(db);
+  try {
+    if (deferral.hold(() => applyOne(db, entry, run)) !== undefined) counts.applied++;
+  } finally {
+    counts.minted += notePulledRevs(db, run.pulled, revBefore);
+  }
+}
+
+function finishRun(
+  db: Database,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): ApplyResult {
   // Loopback suppression used to advance pushRev locally after an
   // upstream apply so the next push tick wouldn't re-ship the rev
   // bumps the apply produced. That optimization is unsound: it
@@ -444,154 +466,11 @@ async function applyEntries(
   // Deferred directory removals mint revs too; count them, or a puller
   // would mistake them for a host write and skip its acknowledgment.
   const revBeforeSettle = currentRev(db);
-  applied += settleDeferredDirectories(db, deferredDirs, options, pulled, skipped);
-  minted += currentRev(db) - revBeforeSettle;
-  return { applied, skipped, minted };
-}
-
-// Synchronous variant of applyChanges. Same semantics; takes an
-// in-memory entry array instead of an iterable. Used on the push
-// receiver so the whole batch can run inside a single transactionSync
-// and a mid-stream failure rolls back every prior entry.
-//
-// Stays separate from applyChanges so the streaming pull path
-// (which can't hold a sync transaction across network I/O) keeps
-// its async semantics.
-export function applyChangesSync(
-  db: Database,
-  entries: readonly ChangeEntry[],
-  objects: Map<string, Uint8Array>,
-  options: ApplyOptions = {},
-): ApplyResult {
-  const deferral = openReapDeferral(db);
-  try {
-    return applyEntriesSync(db, entries, objects, options);
-  } finally {
-    deferral.close();
-  }
-}
-
-function applyEntriesSync(
-  db: Database,
-  entries: readonly ChangeEntry[],
-  objects: Map<string, Uint8Array>,
-  options: ApplyOptions,
-): ApplyResult {
-  const maxBytes = options.maxBytesPerBatch ?? DEFAULT_MAX_BYTES;
-  const maxPaths = options.maxPathsPerBatch ?? DEFAULT_MAX_PATHS;
-
-  let bytesInBatch = 0;
-  let pathsInBatch = 0;
-  let applied = 0;
-  const skipped: SkippedEntry[] = [];
-  let minted = 0;
-  const pulled = openPullContext(db, options);
-  const deferredDirs: DeleteEntry[] = [];
-  const flush = () => {
-    bytesInBatch = 0;
-    pathsInBatch = 0;
-  };
-
-  for (const entry of entries) {
-    const revBefore = currentRev(db);
-    try {
-      if (options.source === "upstream" && entry.kind !== "delete") {
-        if (alreadyApplied(db, entry)) continue;
-      }
-      // See tombstoneIsStale: a replayed delete must not clobber a
-      // newer local recreation.
-      if (
-        options.source === "upstream" &&
-        entry.kind === "delete" &&
-        tombstoneIsStale(db, entry, options, pulled)
-      ) {
-        deferDirectoryDelete(db, entry, pulled, deferredDirs);
-        continue;
-      }
-      const blockingRoot = readOnlyRootFor(db, entry.path);
-      if (blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: blockingRoot,
-          op: entry.kind === "delete" ? "delete" : "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      if (entry.kind === "delete") {
-        try {
-          rm(db, entry.path, { recursive: true, force: true });
-        } catch {
-          // Already gone is fine — idempotent apply.
-        }
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      if (entry.kind === "dir") {
-        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-        if (parentResult.blockingRoot !== undefined) {
-          skipped.push({
-            path: entry.path,
-            mountRoot: parentResult.blockingRoot,
-            op: "write",
-            reason: "read-only",
-          });
-          continue;
-        }
-        applyDirectoryEntry(db, { ...entry, path: parentResult.path });
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      if (entry.kind === "symlink") {
-        const parentResult = ensureParentDirectories(db, entry.path, entry.mtime);
-        if (parentResult.blockingRoot !== undefined) {
-          skipped.push({
-            path: entry.path,
-            mountRoot: parentResult.blockingRoot,
-            op: "write",
-            reason: "read-only",
-          });
-          continue;
-        }
-        removeReplaceableFinalEntry(db, parentResult.path, "symlink");
-        symlink(db, entry.target, parentResult.path, () => entry.mtime);
-        applied++;
-        pathsInBatch++;
-        if (pathsInBatch >= maxPaths) flush();
-        continue;
-      }
-      const fileResult = applyFileEntry(db, entry, objects);
-      if (fileResult.blockingRoot !== undefined) {
-        skipped.push({
-          path: entry.path,
-          mountRoot: fileResult.blockingRoot,
-          op: "write",
-          reason: "read-only",
-        });
-        continue;
-      }
-      applied++;
-      bytesInBatch += fileResult.total;
-      pathsInBatch++;
-      if (bytesInBatch >= maxBytes || pathsInBatch >= maxPaths) flush();
-    } finally {
-      minted += notePulledRevs(db, pulled, revBefore);
-    }
-  }
-
-  // See applyChanges() for why pushRev does not advance here, and
-  // where pulled revs are acknowledged instead.
-
-  // Deferred directory removals mint revs too; count them, or a puller
-  // would mistake them for a host write and skip its acknowledgment.
-  const revBeforeSettle = currentRev(db);
-  applied += settleDeferredDirectories(db, deferredDirs, options, pulled, skipped);
-  minted += currentRev(db) - revBeforeSettle;
-  return { applied, skipped, minted };
+  const applied =
+    counts.applied +
+    settleDeferredDirectories(db, run.deferredDirs, run.options, run.pulled, run.skipped);
+  const minted = counts.minted + currentRev(db) - revBeforeSettle;
+  return { applied, skipped: run.skipped, minted };
 }
 
 // Link a file entry to staged chunks without loading payload bytes.
@@ -609,6 +488,24 @@ function applyFileEntry(
   objects: Map<string, Uint8Array>,
 ): { total: number; blockingRoot?: string } {
   assertChunkWindows(entry.chunks, entry.path);
+  // Chunks found already staged may be unreferenced, and the sweep runs
+  // at the end of the writes below. Pin them until the link.
+  const linking = pinHashes(
+    db,
+    entry.chunks.map((c) => c.hash),
+  );
+  try {
+    return linkFileEntry(db, entry, objects);
+  } finally {
+    linking.release();
+  }
+}
+
+function linkFileEntry(
+  db: Database,
+  entry: Extract<ChangeEntry, { kind: "file" }>,
+  objects: Map<string, Uint8Array>,
+): { total: number; blockingRoot?: string } {
   let total = 0;
   for (const c of entry.chunks) {
     total += c.size;
