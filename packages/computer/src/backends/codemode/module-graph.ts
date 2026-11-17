@@ -133,7 +133,7 @@ export interface ParsedModules {
 }
 
 const FILESYSTEM_DESCRIPTION =
-  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, `access`, and `open`. `readFile` refuses a file larger than one capability call carries (1 MiB unless the host set another limit); for a larger one, `open` it and `read(buffer, offset, length, position)` any range, or stream it with the handle's `readableWebStream()` or `createReadStream(path, { start, end })` from `node:fs`, a web ReadableStream of bytes. Async only.";
+  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, `access`, and `open`. `readFile` refuses a file larger than one capability call carries (1 MiB unless the host set another limit); for a larger one, `open` it and `read(buffer, offset, length, position)` any range, iterate its `readLines()` with `for await`, or stream it with the handle's `createReadStream({ start, end })` or `createReadStream(path, { start, end })` from `node:fs`, a web ReadableStream of bytes. Async only.";
 
 /**
  * Parse the backend's `modules` option: split it into bundled source,
@@ -913,24 +913,60 @@ function nodeFsCallSource() {
     // answers with at most what one call carries.
     const STREAM_CHUNK_BYTES = 64 * 1024;
     // A stream of a file's bytes from \`start\`, up to \`end\` (exclusive) if
-    // given, read a range at a time as code reads it. \`advance\` hears how
-    // far each chunk went.
-    function rangeStream(path, start, end, chunkBytes, before, advance) {
+    // given, read a range at a time as code reads it. \`before\` runs before
+    // each read, \`advance\` hears how far each chunk went, and \`finish\` runs
+    // once, when the stream ends, fails or is cancelled.
+    function rangeStream(path, start, end, chunkBytes, { before, advance, finish } = {}) {
       let position = start;
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        finish?.();
+      };
       return new ReadableStream({
         async pull(controller) {
-          before?.();
-          const want = end === undefined ? chunkBytes : Math.min(chunkBytes, end - position);
-          const bytes = want <= 0 ? new Uint8Array() : await invoke("readFileRange", [path, position, want]);
-          if (bytes.byteLength === 0) {
-            controller.close();
-            return;
+          try {
+            before?.();
+            const want = end === undefined ? chunkBytes : Math.min(chunkBytes, end - position);
+            const bytes = want <= 0 ? new Uint8Array() : await invoke("readFileRange", [path, position, want]);
+            if (bytes.byteLength === 0) {
+              done();
+              controller.close();
+              return;
+            }
+            position += bytes.byteLength;
+            advance?.(bytes.byteLength);
+            controller.enqueue(bytes);
+          } catch (error) {
+            done();
+            throw error;
           }
-          position += bytes.byteLength;
-          advance?.(bytes.byteLength);
-          controller.enqueue(bytes);
         },
+        cancel: done,
       }, { highWaterMark: 0 });
+    }
+    // Checks a createReadStream's options, as Node does. \`end\` is
+    // inclusive, as in Node, and comes back exclusive, or undefined for the
+    // end of the file.
+    function streamWindow(options) {
+      const settings = typeof options === "string" ? { encoding: options } : options ?? {};
+      if (settings.encoding !== undefined && settings.encoding !== null) {
+        throw new TypeError("Workspace node:fs createReadStream gives bytes only; decode them with a TextDecoderStream.");
+      }
+      const start = settings.start;
+      if (start !== undefined && (!Number.isSafeInteger(start) || start < 0)) {
+        throw rangeError('The value of "start" is out of range. It must be a non-negative integer. Received ' + String(start));
+      }
+      const end = settings.end ?? Infinity;
+      if (end !== Infinity && (!Number.isSafeInteger(end) || end < (start ?? 0))) {
+        throw rangeError('The value of "end" is out of range. It must be >= ' + (start ?? 0) + ". Received " + String(end));
+      }
+      const chunkBytes = settings.highWaterMark ?? STREAM_CHUNK_BYTES;
+      if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) {
+        throw rangeError('The value of "highWaterMark" is out of range. It must be a positive integer. Received ' + String(chunkBytes));
+      }
+      return { start, end: end === Infinity ? undefined : end + 1, chunkBytes, autoClose: settings.autoClose !== false };
     }
   `;
 }
@@ -1022,15 +1058,37 @@ function nodeFsPromisesModule() {
       let closed = false;
       // Reads without a position take turns, so each starts where the last ended.
       let turn = Promise.resolve();
+      // Set while one of the handle's streams is open, as Node locks one.
+      let locked = false;
       const ensureOpen = (syscall) => {
         if (closed) throw fsError("EBADF", "bad file descriptor", syscall, path);
+      };
+      const ensureReadable = (syscall) => {
+        ensureOpen(syscall);
+        if (locked) {
+          const error = new TypeError("Invalid state: The FileHandle is locked by an open stream.");
+          error.code = "ERR_INVALID_STATE";
+          throw error;
+        }
+      };
+      // A stream from \`start\`, or from the handle's position, moving it on.
+      const handleStream = (start, end, chunkBytes, autoClose) => {
+        locked = true;
+        return rangeStream(path, start ?? position, end, chunkBytes, {
+          before: () => ensureOpen("read"),
+          advance: start === undefined ? (bytes) => { position += bytes; } : undefined,
+          finish: () => {
+            locked = false;
+            if (autoClose) void handle.close();
+          },
+        });
       };
       const handle = {
         fd: nextFd++,
         // read(), read(options), read(buffer, options) or
         // read(buffer, offset, length, position), as in Node.
         async read(bufferOrOptions, offsetOrOptions, length, at) {
-          ensureOpen("read");
+          ensureReadable("read");
           let buffer = bufferOrOptions;
           let offset = offsetOrOptions;
           if (!ArrayBuffer.isView(buffer)) {
@@ -1072,12 +1130,78 @@ function nodeFsPromisesModule() {
           return stats(await invoke("stat", [path]));
         },
         // Reads from the handle's position to the end of the file, moving
-        // the position on as it goes.
+        // the position on, as bytes or, given "utf8", text.
+        async readFile(options) {
+          ensureReadable("read");
+          const requested = encoding(options);
+          if (requested !== undefined && requested !== null && requested !== "utf8" && requested !== "utf-8") {
+            throw new TypeError("Workspace node:fs readFile supports only utf8 encoding");
+          }
+          const chunks = [];
+          let size = 0;
+          for (;;) {
+            const bytes = await invoke("readFileRange", [path, position, STREAM_CHUNK_BYTES]);
+            if (bytes.byteLength === 0) break;
+            chunks.push(bytes);
+            size += bytes.byteLength;
+            position += bytes.byteLength;
+          }
+          const all = new Uint8Array(size);
+          let at = 0;
+          for (const chunk of chunks) {
+            all.set(chunk, at);
+            at += chunk.byteLength;
+          }
+          return requested === undefined || requested === null ? all : new TextDecoder().decode(all);
+        },
+        // The file's lines as an async iterable of strings, split at \\n,
+        // \\r\\n or \\r, as Node's readline does. It takes createReadStream's
+        // options and, like it, closes the handle when it's done unless
+        // \`autoClose\` is false. Not a readline.Interface: use \`for await\`.
+        readLines(options) {
+          const { encoding: lineEncoding, ...rest } = typeof options === "string" ? { encoding: options } : options ?? {};
+          if (lineEncoding !== undefined && lineEncoding !== null && lineEncoding !== "utf8" && lineEncoding !== "utf-8") {
+            throw new TypeError("Workspace node:fs readLines supports only utf8 encoding");
+          }
+          const stream = handle.createReadStream(rest);
+          return (async function* () {
+            const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+            let pending = "";
+            let ended = false;
+            try {
+              while (!ended) {
+                const { value, done } = await reader.read();
+                if (done) ended = true;
+                else pending += value;
+                for (;;) {
+                  const at = pending.search(/[\\r\\n]/);
+                  if (at === -1) break;
+                  // A \\r at the end may be half of a \\r\\n still to come.
+                  if (pending[at] === "\\r" && at === pending.length - 1 && !ended) break;
+                  const width = pending[at] === "\\r" && pending[at + 1] === "\\n" ? 2 : 1;
+                  yield pending.slice(0, at);
+                  pending = pending.slice(at + width);
+                }
+              }
+              if (pending.length > 0) yield pending;
+            } finally {
+              await reader.cancel().catch(() => undefined);
+            }
+          })();
+        },
+        // A web ReadableStream of the file's bytes, from \`start\` or else the
+        // handle's position, which it then moves on. It closes the handle when
+        // it's done unless \`autoClose\` is false.
+        createReadStream(options) {
+          ensureReadable("read");
+          const { start, end, chunkBytes, autoClose } = streamWindow(options);
+          return handleStream(start, end, chunkBytes, autoClose);
+        },
+        // Reads from the handle's position to the end of the file, moving
+        // the position on as it goes. It leaves the handle open.
         readableWebStream() {
-          ensureOpen("read");
-          return rangeStream(path, position, undefined, STREAM_CHUNK_BYTES, () => ensureOpen("read"), (bytes) => {
-            position += bytes;
-          });
+          ensureReadable("read");
+          return handleStream(undefined, undefined, STREAM_CHUNK_BYTES, false);
         },
         async close() {
           closed = true;
@@ -1116,24 +1240,8 @@ function nodeFsModule() {
     import nodeFsPromises from "node:fs/promises";
     export * from "node:fs/promises";
     export const createReadStream = (path, options) => {
-      const settings = typeof options === "string" ? { encoding: options } : options ?? {};
-      if (settings.encoding !== undefined && settings.encoding !== null) {
-        throw new TypeError("Workspace node:fs createReadStream gives bytes only; decode them with a TextDecoderStream.");
-      }
-      const start = settings.start ?? 0;
-      if (!Number.isSafeInteger(start) || start < 0) {
-        throw rangeError('The value of "start" is out of range. It must be a non-negative integer. Received ' + String(start));
-      }
-      const end = settings.end ?? Infinity;
-      if (end !== Infinity && (!Number.isSafeInteger(end) || end < start)) {
-        throw rangeError('The value of "end" is out of range. It must be >= ' + start + ". Received " + String(end));
-      }
-      const chunkBytes = settings.highWaterMark ?? STREAM_CHUNK_BYTES;
-      if (!Number.isSafeInteger(chunkBytes) || chunkBytes < 1) {
-        throw rangeError('The value of "highWaterMark" is out of range. It must be a positive integer. Received ' + String(chunkBytes));
-      }
-      // \`end\` is inclusive, as in Node.
-      return rangeStream(path, start, end === Infinity ? undefined : end + 1, chunkBytes);
+      const { start, end, chunkBytes } = streamWindow(options);
+      return rangeStream(path, start ?? 0, end, chunkBytes);
     };
     export { nodeFsPromises as promises };
     export default { ...nodeFsPromises, promises: nodeFsPromises, createReadStream };

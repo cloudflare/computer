@@ -291,6 +291,161 @@ describe("WorkspaceRuntime", () => {
     expect(result.value.streamed.chunks).toBeGreaterThan(256);
   });
 
+  it("reads the rest of a file, and its lines, through a FileHandle", async () => {
+    // Both are larger than the fixture's 1024-byte calls. The first line
+    // ends with an é whose two bytes straddle the first call's 960.
+    await write("/workspace/rest.txt", "0123456789".repeat(300));
+    await write("/workspace/lines.txt", `${"a".repeat(959)}é\r\nsecond\n\nthird\rfourth\r\nlast`);
+    await write("/workspace/short-lines.txt", "one\ntwo\nthree\n");
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        const code = async (fn) => {
+          try {
+            await fn();
+            return "ok";
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const collect = async (lines) => {
+          const all = [];
+          for await (const line of lines) all.push(line);
+          return all;
+        };
+        export default async () => {
+          const handle = await fs.open("/workspace/rest.txt");
+          await handle.read({ buffer: new Uint8Array(4) });
+          const rest = await handle.readFile();
+          const after = await handle.readFile();
+          await handle.close();
+          const text = await fs.open("/workspace/rest.txt").then(async (h) => {
+            const value = await h.readFile("utf8");
+            await h.close();
+            return value;
+          });
+
+          const lineHandle = await fs.open("/workspace/lines.txt");
+          const lines = await collect(lineHandle.readLines());
+          const short = await fs.open("/workspace/short-lines.txt");
+          const window = await collect(short.readLines({ start: 4, end: 10 }));
+          const early = await fs.open("/workspace/short-lines.txt");
+          let first;
+          for await (const line of early.readLines()) {
+            first = line;
+            break;
+          }
+          return {
+            rest: { length: rest.byteLength, isBytes: rest instanceof Uint8Array, first: String.fromCharCode(rest[0]) },
+            after: after.byteLength,
+            text: { length: text.length, start: text.slice(0, 3) },
+            lines: [lines[0].length, lines[0].endsWith("é"), ...lines.slice(1)],
+            closedAfterLines: { fd: lineHandle.fd, read: await code(() => lineHandle.read({ buffer: new Uint8Array(1) })) },
+            window,
+            first,
+            closedAfterBreak: early.fd,
+          };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: {
+        rest: { length: 2996, isBytes: true, first: "4" },
+        after: 0,
+        text: { length: 3000, start: "012" },
+        lines: [960, true, "second", "", "third", "fourth", "last"],
+        closedAfterLines: { fd: -1, read: "EBADF" },
+        window: ["two", "thr"],
+        first: "one",
+        closedAfterBreak: -1,
+      },
+    });
+  });
+
+  it("streams from a FileHandle's position, and locks the handle while a stream is open", async () => {
+    await write("/workspace/handle-stream.txt", "0123456789".repeat(300));
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        const code = async (fn) => {
+          try {
+            await fn();
+            return "ok";
+          } catch (error) {
+            return error.code;
+          }
+        };
+        const drain = async (stream) => {
+          let text = "";
+          for await (const chunk of stream) text += new TextDecoder().decode(chunk);
+          return text;
+        };
+        export default async () => {
+          const handle = await fs.open("/workspace/handle-stream.txt");
+          await handle.read({ buffer: new Uint8Array(10) });
+          const stream = handle.createReadStream({ autoClose: false });
+          const whileOpen = {
+            read: await code(() => handle.read({ buffer: new Uint8Array(1) })),
+            readFile: await code(() => handle.readFile()),
+            stream: await code(() => handle.createReadStream()),
+            web: await code(() => handle.readableWebStream()),
+          };
+          const streamed = await drain(stream);
+          // The stream moved the handle's position to the end.
+          const afterStream = (await handle.read({ buffer: new Uint8Array(1) })).bytesRead;
+          const stillOpen = handle.fd !== -1;
+          await handle.close();
+
+          const windowed = await fs.open("/workspace/handle-stream.txt");
+          const window = await drain(windowed.createReadStream({ start: 5, end: 9 }));
+          const autoClosed = windowed.fd;
+
+          const web = await fs.open("/workspace/handle-stream.txt");
+          const webStream = web.readableWebStream();
+          const webLocked = await code(() => web.read({ buffer: new Uint8Array(1) }));
+          await webStream.cancel();
+          const afterCancel = new TextDecoder().decode((await web.read({ buffer: new Uint8Array(4) })).buffer);
+          await web.close();
+          return {
+            whileOpen,
+            streamed: { length: streamed.length, start: streamed.slice(0, 3) },
+            afterStream,
+            stillOpen,
+            window,
+            autoClosed,
+            webLocked,
+            afterCancel,
+          };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: {
+        whileOpen: {
+          read: "ERR_INVALID_STATE",
+          readFile: "ERR_INVALID_STATE",
+          stream: "ERR_INVALID_STATE",
+          web: "ERR_INVALID_STATE",
+        },
+        streamed: { length: 2990, start: "012" },
+        afterStream: 0,
+        stillOpen: true,
+        window: "56789",
+        autoClosed: -1,
+        webLocked: "ERR_INVALID_STATE",
+        afterCancel: "0123",
+      },
+    });
+  });
+
   it("caps what a run reads by range at its stream budget, even past the end of a file", async () => {
     // This backend's runs may stream 8 KiB. Each range read costs at
     // least 1 KiB each way, so even reads that find nothing run out.
