@@ -388,7 +388,7 @@ describe("restartable push engine", () => {
 
         const remoteProvider = new SQLiteWorkspaceProvider(remote.db);
         expect(remoteProvider.readFileSync("/f000.txt", "utf8")).toBe("content-0");
-        // Once the block is over, the next local write reclaims it.
+        // Once the block is over, the next local write reaps it.
         provider.writeFileSync("/other.txt", "x");
         expect(local.db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(2);
       } finally {

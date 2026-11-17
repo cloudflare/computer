@@ -122,7 +122,7 @@ function transactionRefs(db: Database): TransactionRefs {
     db,
     TRANSACTION_KEY,
     () => ({ droppedBlobs: new Map(), droppedManifests: new Map() }),
-    (refs) => settle(db, refs),
+    (refs) => reapDropped(db, refs),
   );
 }
 
@@ -146,7 +146,7 @@ function relinkBlob(db: Database, hash: Uint8Array): void {
 // Runs just before a transaction that touched references commits.
 // Manifests are never held: nothing reads a manifest row across an
 // await, and linking a file builds its manifest row again.
-function settle(db: Database, refs: TransactionRefs): void {
+function reapDropped(db: Database, refs: TransactionRefs): void {
   const state = stateFor(db);
   const hold = state.holding;
   const unpinned: Uint8Array[] = [];

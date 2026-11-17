@@ -10,7 +10,7 @@
 //     changes one byte in each chunk, so every chunk gets a new hash and
 //     the previous version becomes garbage in full.
 //   * What that leaves behind: the number of blob rows and the database
-//     size after the run. A store that reclaims dropped chunks stays at
+//     size after the run. A store that reaps dropped chunks stays at
 //     one version's worth; one that doesn't grows with every save.
 //   * A recursive delete of 2,000 small files with distinct content,
 //     timed and counted in statements, since each file's content is

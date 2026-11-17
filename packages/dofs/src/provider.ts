@@ -279,10 +279,11 @@ export class SQLiteWorkspaceProvider {
   }
 
   unlinkSync(path: string): void {
-    // If a buffered create is still pending for this path, commit
-    // it first so rm sees a real inode to unlink (and so its blob is
-    // reclaimed with the unlink, matching the non-buffered shape). The buffer's open handles continue to address bytes
-    // through the inode-keyed cache.
+    // If a buffered create is still pending for this path, commit it
+    // first so rm sees a real inode to unlink, and so its blob is
+    // reaped with the unlink, matching the non-buffered shape. The
+    // buffer's open handles continue to address bytes through the
+    // inode-keyed cache.
     flushPendingUnderNode(this.db, path, this.now);
     flushPendingByPath(this.db, path, this.now);
     // Capture the target inode before rm runs so we can evict its
