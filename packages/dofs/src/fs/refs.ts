@@ -1,6 +1,6 @@
 import type { Database } from "../storage";
 import { evictBlob, hashKey } from "./blobCache";
-import { isKeyPinned } from "./pins";
+import { isKeyPinned, type Pin, pinHashes } from "./pins";
 
 // The only place that adds, replaces or drops a file's references to
 // chunk blobs (vfs_chunks rows) and to its manifest
@@ -18,9 +18,10 @@ import { isKeyPinned } from "./pins";
 // vfs_nodes_by_manifest_hash, and it runs across every inode, so
 // content another file or hardlink still uses stays.
 //
-// A candidate that is pinned (see pins.ts), or dropped while a reap
-// deferral is open, is deferred instead: held in memory and retried at
-// the end of later writes.
+// A candidate that is pinned (see pins.ts) is deferred instead: held in
+// memory and retried at the end of later writes. A candidate dropped by
+// a sync apply entry is held by that apply call until it ends; see
+// openReapDeferral.
 //
 // Whatever that misses, the incremental sweep finds: deferred
 // candidates lost when the process stopped, staging nothing linked
@@ -39,6 +40,15 @@ import { isKeyPinned } from "./pins";
 // stalling one.
 const DEFERRED_RETRIES_PER_WRITE = 16;
 
+// Candidates an apply call reaps per transaction when it ends.
+const HELD_REAPS_PER_TRANSACTION = 100;
+
+// How long an apply call keeps holding what its entries dropped when no
+// new entry arrives. A caller that abandons the entry stream never
+// reaches close(); after this long its content is no longer held and
+// the sweep can take it.
+export const APPLY_IDLE_LEASE_MS = 5 * 60 * 1000;
+
 // Rows of one table the sweep checks at the end of each write.
 export const SWEEP_ROWS_PER_WRITE = 8;
 
@@ -47,13 +57,19 @@ export const SWEEP_ROWS_PER_WRITE = 8;
 // bytes may wait for the link, and matches gc()'s default window.
 export const SWEEP_GRACE_MS = 60 * 60 * 1000;
 
+// What one apply call's entries dropped, held until the call ends. The
+// pin keeps other writes and the sweep off it in the meantime.
+interface ApplyHold {
+  blobs: Map<string, Uint8Array>;
+  pin: Pin;
+}
+
 interface RefState {
-  // Open reap deferral scopes. See openReapDeferral.
-  deferDepth: number;
-  // Candidates waiting for a pin to go or a deferral to close, keyed by
-  // hashKey.
+  // The apply call whose entry is running right now, if any. Entries
+  // apply synchronously, so at most one is running.
+  holding: ApplyHold | undefined;
+  // Candidates waiting for a pin to go, keyed by hashKey.
   deferredBlobs: Map<string, Uint8Array>;
-  deferredManifests: Map<string, Uint8Array>;
   // Sweep position: the last rowid checked in each table, and which
   // table the next write checks.
   sweepBlobsAfter: number;
@@ -77,9 +93,8 @@ function stateFor(db: Database): RefState {
   let state = states.get(db);
   if (state === undefined) {
     state = {
-      deferDepth: 0,
+      holding: undefined,
       deferredBlobs: new Map(),
-      deferredManifests: new Map(),
       sweepBlobsAfter: 0,
       sweepManifestsAfter: 0,
       sweepManifestsNext: false,
@@ -115,24 +130,25 @@ function relinkBlob(db: Database, hash: Uint8Array): void {
 }
 
 // Runs just before a transaction that touched references commits.
+// Manifests are never held: nothing reads a manifest row across an
+// await, and linking a file builds its manifest row again.
 function settle(db: Database, refs: TransactionRefs): void {
   const state = stateFor(db);
-  const deferring = state.deferDepth > 0;
+  const hold = state.holding;
   for (const [key, hash] of refs.droppedBlobs) {
-    if (deferring || isKeyPinned(db, key)) {
+    if (hold !== undefined) {
+      hold.blobs.set(key, hash);
+      hold.pin.add(hash);
+      continue;
+    }
+    if (isKeyPinned(db, key)) {
       state.deferredBlobs.set(key, hash);
       continue;
     }
     reapBlob(db, hash);
   }
-  for (const [key, hash] of refs.droppedManifests) {
-    if (deferring) {
-      state.deferredManifests.set(key, hash);
-      continue;
-    }
-    reapManifest(db, hash);
-  }
-  if (!deferring) retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
+  for (const hash of refs.droppedManifests.values()) reapManifest(db, hash);
+  retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
   sweepStep(db, state);
 }
 
@@ -177,7 +193,6 @@ function sweepStep(db: Database, state: RefState): void {
     if (row.orphan !== 1) continue;
     const key = hashKey(row.hash);
     if (manifests) {
-      state.deferredManifests.delete(key);
       reapManifest(db, row.hash);
       continue;
     }
@@ -187,20 +202,26 @@ function sweepStep(db: Database, state: RefState): void {
   }
 }
 
-// Retry up to `limit` deferred candidates of each kind, oldest first.
-// One still pinned goes to the back of the line.
+// Retry up to `limit` deferred candidates, oldest first. One still
+// pinned goes to the back of the line. Entries leave the set only once
+// they are reaped, so a reap that throws, and fails the write with it,
+// leaves them for the next write.
 function retryDeferred(db: Database, state: RefState, limit: number): void {
-  for (const [key, hash] of firstEntries(state.deferredBlobs, limit)) {
-    state.deferredBlobs.delete(key);
+  const batch = firstEntries(state.deferredBlobs, limit);
+  const reaped: string[] = [];
+  const stillPinned: Array<[string, Uint8Array]> = [];
+  for (const [key, hash] of batch) {
     if (isKeyPinned(db, key)) {
-      state.deferredBlobs.set(key, hash);
+      stillPinned.push([key, hash]);
       continue;
     }
     reapBlob(db, hash);
+    reaped.push(key);
   }
-  for (const [key, hash] of firstEntries(state.deferredManifests, limit)) {
-    state.deferredManifests.delete(key);
-    reapManifest(db, hash);
+  for (const key of reaped) state.deferredBlobs.delete(key);
+  for (const [key, hash] of stillPinned) {
+    state.deferredBlobs.delete(key);
+    state.deferredBlobs.set(key, hash);
   }
 }
 
@@ -240,31 +261,72 @@ function reapManifest(db: Database, hash: Uint8Array): void {
   );
 }
 
-// Hold off reclaiming content until close(). Sync apply removes and
-// links in separate transactions: a rename arrives as a delete of the
-// old path and a file at the new one, so the delete drops the last
-// reference to content the next entry links. Inside the scope every
-// candidate is deferred, and close() on the last open scope retries
-// them all.
-export function openReapDeferral(db: Database): { close(): void } {
+export interface ReapDeferral {
+  // Run one entry of the apply. Whatever its transactions drop is held,
+  // not reaped, until close().
+  hold<T>(step: () => T): T;
+  // Reap what the call's entries dropped and nothing links any more.
+  // Idempotent, and never throws: a batch that fails to reap goes to the
+  // deferred set for later writes to retry.
+  close(): void;
+}
+
+// Hold off reaping what one sync apply call drops until the call ends.
+// Apply runs its entries in separate transactions: a rename arrives as
+// a delete of the old path and a file at the new one, so the delete
+// drops the last reference to content the next entry links. Only the
+// call's own entries are held, each for as long as it runs: other
+// writes on the database, including those that run while the call
+// awaits its next entry, reap as usual, and the sweep keeps going.
+// close() reaps what was held in transactions of a bounded size.
+export function openReapDeferral(db: Database): ReapDeferral {
   const state = stateFor(db);
-  state.deferDepth++;
+  const held: ApplyHold = {
+    blobs: new Map(),
+    pin: pinHashes(db, [], { leaseMs: APPLY_IDLE_LEASE_MS }),
+  };
   let open = true;
   return {
+    hold<T>(step: () => T): T {
+      if (!open) return step();
+      held.pin.renew();
+      const previous = state.holding;
+      state.holding = held;
+      try {
+        return step();
+      } finally {
+        state.holding = previous;
+      }
+    },
     close() {
       if (!open) return;
       open = false;
-      state.deferDepth--;
-      if (state.deferDepth > 0) return;
-      const pending = state.deferredBlobs.size + state.deferredManifests.size;
-      if (pending === 0) return;
-      inTransaction(db, () => retryDeferred(db, state, pending));
+      held.pin.release();
+      reapHeld(db, state, held.blobs);
     },
   };
 }
 
+function reapHeld(db: Database, state: RefState, blobs: Map<string, Uint8Array>): void {
+  const entries = [...blobs];
+  for (let i = 0; i < entries.length; i += HELD_REAPS_PER_TRANSACTION) {
+    const batch = entries.slice(i, i + HELD_REAPS_PER_TRANSACTION);
+    try {
+      inTransaction(db, () => {
+        for (const [key, hash] of batch) {
+          if (isKeyPinned(db, key)) state.deferredBlobs.set(key, hash);
+          else reapBlob(db, hash);
+        }
+      });
+    } catch {
+      for (const [key, hash] of batch) state.deferredBlobs.set(key, hash);
+    }
+  }
+}
+
+// True while an apply entry runs inside ReapDeferral.hold.
 export function reapsDeferred(db: Database): boolean {
-  return (states.get(db)?.deferDepth ?? 0) > 0;
+  return states.get(db)?.holding !== undefined;
 }
 
 /** @internal Whether a dropped blob is waiting in the deferred set. */

@@ -1,19 +1,21 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { link } from "../fs/link";
 import { mkdir } from "../fs/mkdir";
 import { invalidateReadOnlyMountCache } from "../fs/mount-guard";
+import { isPinned } from "../fs/pins";
 import { readFile } from "../fs/readFile";
 import { readlink } from "../fs/readlink";
-import { reapsDeferred } from "../fs/refs";
+import { APPLY_IDLE_LEASE_MS, isDeferred, reapsDeferred, SWEEP_GRACE_MS } from "../fs/refs";
 import { rename } from "../fs/rename";
 import { resolveInode } from "../fs/resolve";
 import { rm } from "../fs/rm";
 import { symlink } from "../fs/symlink";
 import { withDB, withTwoDBs } from "../fs/with-db";
 import { CHUNK_SIZE, writeFile, writeFileSync } from "../fs/writeFile";
+import type { Database } from "../storage";
 import { applyChanges, applyChangesSync } from "./apply";
 import { stageBlob } from "./blobs";
 import type { ChangeEntry } from "./changes";
@@ -1600,23 +1602,33 @@ describe("applyChanges mtime propagation (auto_cache contract)", () => {
 
 describe("applyChanges reap deferral", () => {
   // A removal in one entry and a link of the same content in a later
-  // entry run in separate transactions. Reaps wait for the whole call,
-  // so the removal cannot reclaim bytes the link is about to use.
-  function fileEntry(path: string, text: string, rev: number): ChangeEntry {
-    const bytes = new TextEncoder().encode(text);
-    const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-    return {
-      kind: "file",
-      rev,
-      path,
-      mode: 0o644,
-      mtime: 1,
-      size: bytes.byteLength,
-      chunks: [{ hash, size: bytes.byteLength }],
-    };
+  // entry run in separate transactions, so what each entry drops is held
+  // until the call ends. Only the call's own entries are held: other
+  // writes on the database reap as usual while it waits for the next.
+  const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
+  const sha = (bytes: Uint8Array): Uint8Array =>
+    new Uint8Array(createHash("sha256").update(bytes).digest());
+  const hasBlob = (db: Database, bytes: Uint8Array): boolean =>
+    db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs WHERE hash = ?", sha(bytes)) === 1;
+  const fileEntry = (path: string, bytes: Uint8Array, rev: number): ChangeEntry => ({
+    kind: "file",
+    rev,
+    path,
+    mode: 0o644,
+    mtime: 1,
+    size: bytes.byteLength,
+    chunks: [{ hash: sha(bytes), size: bytes.byteLength }],
+  });
+
+  function fakeClock(): void {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-01T00:00:00Z"));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
   }
 
-  it("defers reaps for the whole of an async apply", async () => {
+  it("defers reaps only while one of its own entries applies", async () => {
     await withDB(async (db) => {
       const seen: boolean[] = [];
       async function* entries(): AsyncIterable<ChangeEntry> {
@@ -1627,48 +1639,105 @@ describe("applyChanges reap deferral", () => {
 
       await applyChanges(db, entries(), new Map());
 
-      expect(seen).toEqual([true, true]);
+      expect(seen).toEqual([false, false]);
       expect(reapsDeferred(db)).toBe(false);
     });
   });
 
-  it("closes the deferral when an async apply fails", async () => {
+  it("lets other writes reap while it waits for its next entry", async () => {
     await withDB(async (db) => {
+      writeFileSync(db, "/mine.txt", encode("held by the apply"), {}, () => 1);
+      writeFileSync(db, "/other.txt", encode("before"), {}, () => 1);
+      const during: boolean[] = [];
+      async function* entries(): AsyncIterable<ChangeEntry> {
+        yield { kind: "delete", rev: 1, path: "/mine.txt" };
+        // Between entries, an unrelated write reaps its own content.
+        writeFileSync(db, "/other.txt", encode("after"), {}, () => 1);
+        during.push(hasBlob(db, encode("before")), hasBlob(db, encode("held by the apply")));
+        yield { kind: "dir", rev: 2, path: "/d", mode: 0o755, mtime: 1 };
+      }
+
+      await applyChanges(db, entries(), new Map());
+
+      expect(during).toEqual([false, true]);
+      expect(hasBlob(db, encode("held by the apply"))).toBe(false);
+    });
+  });
+
+  it("reaps what it held when it fails", async () => {
+    await withDB(async (db) => {
+      writeFileSync(db, "/old.txt", encode("dropped first"), {}, () => 1);
       await expect(
-        applyChanges(db, [fileEntry("/missing.txt", "nowhere", 1)], new Map()),
+        applyChanges(
+          db,
+          [
+            { kind: "delete", rev: 1, path: "/old.txt" },
+            fileEntry("/missing.txt", encode("nowhere"), 1),
+          ],
+          new Map(),
+        ),
       ).rejects.toThrow("missing object");
+      expect(hasBlob(db, encode("dropped first"))).toBe(false);
       expect(reapsDeferred(db)).toBe(false);
     });
   });
 
-  it("defers reaps for the whole of a sync apply", async () => {
-    await withDB((db) => {
-      const seen: boolean[] = [];
-      const entries: ChangeEntry[] = [
-        { kind: "dir", rev: 1, path: "/d", mode: 0o755, mtime: 1 },
-        { kind: "dir", rev: 2, path: "/e", mode: 0o755, mtime: 1 },
-      ];
-      const watched = Object.assign([...entries], {
-        *[Symbol.iterator]() {
-          for (const entry of entries) {
-            seen.push(reapsDeferred(db));
-            yield entry;
-          }
-        },
-      });
+  it("lets go of what an abandoned apply held once its lease runs out", async () => {
+    fakeClock();
+    await withDB(async (db) => {
+      const held = encode("held by an abandoned apply");
+      writeFileSync(db, "/old.txt", held, {}, () => 1);
+      async function* entries(): AsyncIterable<ChangeEntry> {
+        yield { kind: "delete", rev: 1, path: "/old.txt" };
+        // The caller never finishes the stream.
+        await new Promise(() => {});
+      }
+      void applyChanges(db, entries(), new Map());
+      for (let i = 0; i < 20 && resolveInode(db, "/old.txt") !== null; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(resolveInode(db, "/old.txt")).toBeNull();
+      expect(isPinned(db, sha(held))).toBe(true);
 
-      applyChangesSync(db, watched, new Map());
-
-      expect(seen).toEqual([true, true]);
-      expect(reapsDeferred(db)).toBe(false);
+      vi.advanceTimersByTime(APPLY_IDLE_LEASE_MS + SWEEP_GRACE_MS + 1);
+      expect(isPinned(db, sha(held))).toBe(false);
+      for (let i = 0; i < 20; i++) writeFileSync(db, "/busy.txt", encode(`save ${i}`), {}, () => 1);
+      expect(hasBlob(db, held)).toBe(false);
     });
   });
 
-  it("closes the deferral when a sync apply fails", async () => {
+  it("keeps a batch that fails to reap for later writes to retry", async () => {
+    await withDB(async (db) => {
+      const files = Array.from({ length: 250 }, (_, i) => encode(`file ${i}`));
+      for (const [i, bytes] of files.entries()) writeFileSync(db, `/f${i}`, bytes, {}, () => 1);
+      const stuck = hex(sha(files[150]));
+      db.run(
+        `CREATE TRIGGER refuse_reap BEFORE DELETE ON vfs_blobs WHEN OLD.hash = X'${stuck}'
+         BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+      );
+
+      await applyChanges(
+        db,
+        files.map((_, i): ChangeEntry => ({ kind: "delete", rev: 1, path: `/f${i}` })),
+        new Map(),
+      );
+
+      const left = db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs") ?? 0;
+      expect(left).toBeGreaterThan(0);
+      expect(left).toBeLessThan(files.length);
+      expect(isDeferred(db, sha(files[150]))).toBe(true);
+
+      db.run("DROP TRIGGER refuse_reap");
+      for (let i = 0; i < 20; i++) writeFileSync(db, "/busy.txt", encode(`save ${i}`), {}, () => 1);
+      expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(1);
+    });
+  });
+
+  it("reaps what a sync apply held when it ends", async () => {
     await withDB((db) => {
-      expect(() =>
-        applyChangesSync(db, [fileEntry("/missing.txt", "nowhere", 1)], new Map()),
-      ).toThrow("missing object");
+      writeFileSync(db, "/old.txt", encode("sync dropped"), {}, () => 1);
+      applyChangesSync(db, [{ kind: "delete", rev: 1, path: "/old.txt" }], new Map());
+      expect(hasBlob(db, encode("sync dropped"))).toBe(false);
       expect(reapsDeferred(db)).toBe(false);
     });
   });
