@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   Database,
   initializeSchema,
@@ -292,6 +294,75 @@ describe("restartable push engine", () => {
     });
   });
   describe("object lifetime", () => {
+    it("links what the receiver reported present after it dropped its own copy", async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        seedLocal(local.db, 1);
+        const remoteFiles = new SQLiteWorkspaceProvider(remote.db);
+        // The receiver already holds the content under another name.
+        remoteFiles.writeFileSync("/elsewhere.txt", "content-0");
+
+        // It says so, so the sender skips the bytes, and then it
+        // overwrites its only copy before the entry arrives.
+        const racing = new Proxy(remote.rpc as object, {
+          get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver) as unknown;
+            if (prop !== "hasObjects" || typeof value !== "function") return value;
+            return async (hashes: Uint8Array[]) => {
+              const present = await (value as (h: Uint8Array[]) => Promise<Uint8Array[]>).call(
+                target,
+                hashes,
+              );
+              remoteFiles.writeFileSync("/elsewhere.txt", "overwritten");
+              return present;
+            };
+          },
+        }) as SyncRPC;
+
+        await drainPush(local.db, racing);
+
+        expect(remoteFiles.readFileSync("/f000.txt", "utf8")).toBe("content-0");
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
+    it("fails a block whose bytes vanish before the link, and the next push sends them", async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        seedLocal(local.db, 1);
+        const hash = createHash("sha256").update("content-0").digest("hex");
+        // A directory sits where the file goes, and removing it takes the
+        // staged bytes with it: the receiver loses them after its staged
+        // check and before the link.
+        new SQLiteWorkspaceProvider(remote.db).mkdirSync("/f000.txt");
+        remote.db.run(
+          `CREATE TRIGGER lose_bytes AFTER DELETE ON vfs_dirents WHEN OLD.name = 'f000.txt'
+           BEGIN DELETE FROM vfs_blob_bytes WHERE hash = X'${hash}'; END`,
+        );
+
+        await expect(drainPush(local.db, remote.rpc)).rejects.toMatchObject({
+          code: "EUNKNOWN_HASH",
+        });
+        expect(readPushCursor(local.db)).toEqual({ rev: 0, path: null });
+
+        // The failed block rolled back on the receiver. The next push
+        // plans it again, probes again, and lands it.
+        remote.db.run("DROP TRIGGER lose_bytes");
+        await drainPush(local.db, remote.rpc);
+
+        expect(new SQLiteWorkspaceProvider(remote.db).readFileSync("/f000.txt", "utf8")).toBe(
+          "content-0",
+        );
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
     it("sends what it planned even when a local write drops it mid-block", async () => {
       const local = makePeer();
       const remote = makePeer();
