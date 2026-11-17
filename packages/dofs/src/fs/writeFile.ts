@@ -8,6 +8,7 @@ import { stageBlob } from "../sync/blobs";
 import { buildManifest } from "../sync/manifests";
 import { pathOf } from "../sync/paths";
 import { getBlobBytes, hashKey } from "./blobCache";
+import { CHUNK_SIZE } from "./chunk";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
 import { pinHashes } from "./pins";
@@ -26,9 +27,9 @@ import {
   type WriteBufferEntry,
 } from "./writeBuffer";
 
-// Fixed chunk size. Exported so tests can size inputs precisely
+// Fixed chunk size, re-exported so tests can size inputs precisely
 // without hard-coding the magic number twice.
-export const CHUNK_SIZE = 512 * 1024;
+export { CHUNK_SIZE };
 
 export type WriteFileContent = string | Uint8Array | ReadableStream<Uint8Array>;
 
