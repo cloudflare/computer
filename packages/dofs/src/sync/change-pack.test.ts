@@ -81,6 +81,37 @@ async function packWindow(
 }
 
 describe("change pack codec", () => {
+  describe("object lifetime", () => {
+    // Nothing pins the objects a pack carries, so the encoder must read
+    // them all before it hands the stream back. A write that drops and
+    // reaps one afterwards must not change what the stream yields.
+    it("reads every object before the stream is returned", async () => {
+      await withDB(async (db) => {
+        await writeFile(db, "/packed.txt", "packed content", {}, () => 1);
+        const through = { rev: currentRev(db), path: null };
+        const block = await planBlock(db, {
+          after: { rev: 0, path: null },
+          through,
+          profile: MIN_BLOCK_PROFILE,
+        });
+        const stream = encodeChangePack(db, {
+          block,
+          after: { rev: 0, path: null },
+          target: through,
+          generation: "gen-1",
+        });
+
+        rm(db, "/packed.txt", {});
+        expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(0);
+
+        const decoded = await decodeChangePack(stream);
+        expect(
+          [...decoded.objects.values()].map((bytes) => new TextDecoder().decode(bytes)),
+        ).toEqual(["packed content"]);
+      });
+    });
+  });
+
   describe("round trip", () => {
     it("carries file entries and their bytes", async () => {
       await withDB(async (db) => {
