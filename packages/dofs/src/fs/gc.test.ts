@@ -25,7 +25,7 @@ function sha256(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(createHash("sha256").update(bytes).digest());
 }
 
-// Writes reclaim what they drop, so an orphan now comes from staging
+// Writes reap what they drop, so an orphan now comes from staging
 // that nothing links: an abandoned sync, or a streaming write that
 // failed. Stage one blob and build one manifest for it, both unlinked.
 function stageOrphan(db: Database, text: string, lastSeen: number): void {
@@ -132,11 +132,11 @@ describe("gc", () => {
     });
   });
 
-  it("frees a blob whose reclaim was deferred and then forgotten", async () => {
+  it("frees a blob whose reap was deferred and then forgotten", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "unique-content", {}, () => 1000);
       expect(blobCount(db)).toBe(1);
-      // A pin defers the reclaim; dropping it without a later write
+      // A pin defers the reap; dropping it without a later write
       // stands in for a process that stopped before retrying.
       pinHashes(db, [sha256(new TextEncoder().encode("unique-content"))]);
       rm(db, "/a.txt", {});

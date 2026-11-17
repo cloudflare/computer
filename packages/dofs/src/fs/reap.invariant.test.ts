@@ -32,7 +32,7 @@ import {
 // Random sequences of every operation that adds or drops a reference,
 // interleaved with sync applies, staging, hasObjects probes and read
 // streams opened, pulled and abandoned. After every step the store must
-// hold the invariants reclamation promises:
+// hold the invariants reaping promises:
 //
 //   * every chunk and manifest a node references is present;
 //   * what gc() would still free is only what is pinned, deferred, or
@@ -302,13 +302,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("reclamation invariants", () => {
+describe("reaping invariants", () => {
   for (const seed of [1, 2, 3, 4, 5, 6]) {
     it(`holds across a random sequence (seed ${seed})`, async () => {
       await withDB(async (db) => {
         const { staged } = await runSequence(db, seed);
 
-        // Once every pin has lapsed, a few writes reclaim everything that
+        // Once every pin has lapsed, a few writes reap everything that
         // was deferred, leaving only staging nothing linked.
         vi.advanceTimersByTime(HAS_OBJECTS_PIN_MS);
         for (let i = 0; i < 4; i++) scratch(db, i);
@@ -316,7 +316,7 @@ describe("reclamation invariants", () => {
         expect(left.manifests).toBe(0);
         expect(left.blobs.map(hashKey).filter((key) => !staged.has(key))).toEqual([]);
 
-        // Past the staging grace, the sweep reclaims that too, given
+        // Past the staging grace, the sweep reaps that too, given
         // enough writes to go round both tables.
         vi.advanceTimersByTime(SWEEP_GRACE_MS + 1);
         const rows = count(db, "vfs_blobs") + count(db, "vfs_manifests");

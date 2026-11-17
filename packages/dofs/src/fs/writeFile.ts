@@ -335,7 +335,7 @@ export async function writeFile(
 //
 // Staged windows stay pinned until the final transaction links them,
 // since nothing references them before then. Failure mid-stream leaves
-// blob rows behind, which the incremental sweep in refs.ts reclaims
+// blob rows behind, which the incremental sweep in refs.ts reaps
 // once they are past its grace window.
 async function writeFileStreaming(
   db: Database,
@@ -349,7 +349,7 @@ async function writeFileStreaming(
     throw createWorkspaceError("EISDIR", "cannot write to the root directory", canonical);
   }
   // Reject before we stage any blob bytes so known failures do not grow
-  // orphan blob rows that the sweep then has to reclaim. Resolve both lexical and
+  // orphan blob rows that the sweep then has to reap. Resolve both lexical and
   // effective paths so a symlink cannot defer an EROFS failure until commit.
   resolveWriteTarget(db, parts, canonical, options);
   const mode = (options.mode ?? 0o644) & 0o7777;
@@ -446,7 +446,7 @@ export function assertChunkWindows(chunkRefs: ChunkRef[], canonical: string): vo
 // that positional reads depend on.
 //
 // Staging happened before this transaction, possibly in another call,
-// and unreferenced bytes can be reclaimed in between. Linking a chunk
+// and unreferenced bytes can be reaped in between. Linking a chunk
 // whose bytes are gone would commit a file that cannot be read, so it
 // throws EUNKNOWN_HASH instead and the caller stages it again.
 export function linkStagedChunksSync(
@@ -1184,7 +1184,7 @@ export function writeFileSync(
     const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
     if (target.kind === "existing") {
       // Replace the existing representation. Blobs nothing else uses
-      // are reclaimed when this transaction commits.
+      // are reaped when this transaction commits.
       dropChunks(db, inode);
     } else {
       insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);

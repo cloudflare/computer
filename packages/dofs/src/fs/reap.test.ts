@@ -93,7 +93,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("reclaiming dropped content", () => {
+describe("reaping dropped content", () => {
   it("keeps one blob and one manifest however often a file is saved", async () => {
     await withDB(async (db) => {
       for (let save = 0; save < 20; save++) {
@@ -238,7 +238,7 @@ describe("reclaiming dropped content", () => {
   });
 });
 
-describe("content in use is not reclaimed", () => {
+describe("content in use is not reaped", () => {
   it("lets an open read stream finish after its file is overwritten", async () => {
     await withDB(async (db) => {
       const old = twoChunks(5, 6);
@@ -256,7 +256,7 @@ describe("content in use is not reclaimed", () => {
     });
   });
 
-  it("reclaims what a dropped stream held once its lease runs out", async () => {
+  it("reaps what a dropped stream held once its lease runs out", async () => {
     await withDB(async (db) => {
       writeFileSync(db, "/a.txt", encode("abandoned"), {}, NOW);
       await readFile(db, "/a.txt");
@@ -344,7 +344,7 @@ describe("content in use is not reclaimed", () => {
     });
   });
 
-  it("defers a pinned hash and reclaims it on a later write once released", async () => {
+  it("defers a pinned hash and reaps it on a later write once released", async () => {
     await withDB((db) => {
       writeFileSync(db, "/a.txt", encode("held"), {}, NOW);
       const pin = pinHashes(db, [sha256(encode("held"))]);
