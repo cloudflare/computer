@@ -292,6 +292,40 @@ describe("restartable push engine", () => {
     });
   });
   describe("object lifetime", () => {
+    it("sends what it planned even when a local write drops it mid-block", async () => {
+      const local = makePeer();
+      const remote = makePeer();
+      try {
+        seedLocal(local.db, 1);
+        const provider = new SQLiteWorkspaceProvider(local.db);
+
+        // Overwrite the planned file after the receiver says what it
+        // lacks and before it pulls the bytes. That drops the last
+        // reference to the content the block is about to send.
+        const racing = new Proxy(remote.rpc as object, {
+          get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver) as unknown;
+            if (prop !== "pushObjects" || typeof value !== "function") return value;
+            return (objects: ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>) => {
+              provider.writeFileSync("/f000.txt", "rewritten locally");
+              return (value as (o: typeof objects) => Promise<void>).call(target, objects);
+            };
+          },
+        }) as SyncRPC;
+
+        await drainPush(local.db, racing);
+
+        const remoteProvider = new SQLiteWorkspaceProvider(remote.db);
+        expect(remoteProvider.readFileSync("/f000.txt", "utf8")).toBe("content-0");
+        // Once the block is over, the next local write reclaims it.
+        provider.writeFileSync("/other.txt", "x");
+        expect(local.db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(2);
+      } finally {
+        local.close();
+        remote.close();
+      }
+    });
+
     it("pins the objects a block sends until the block ends", async () => {
       const local = makePeer();
       const remote = makePeer();

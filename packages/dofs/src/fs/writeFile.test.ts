@@ -263,12 +263,12 @@ describe("writeFile", () => {
     });
   });
 
-  it("overwriting replaces chunk rows; old content blob remains for GC", async () => {
+  it("overwriting replaces chunk rows and frees the old content blob", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/x.txt", "first", {}, () => 0);
       await writeFile(db, "/x.txt", "second-version", {}, () => 0);
       expect(new TextDecoder().decode(readBack(db, "/x.txt"))).toBe("second-version");
-      expect(countBlobs(db)).toBe(2);
+      expect(countBlobs(db)).toBe(1);
     });
   });
 

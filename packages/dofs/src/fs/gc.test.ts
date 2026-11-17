@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import type { Database } from "../storage";
 import { applyChanges } from "../sync/apply";
 import { stageBlob } from "../sync/blobs";
+import { buildManifest } from "../sync/manifests";
 import { gc } from "./gc";
+import { pinHashes } from "./pins";
 import { readFile } from "./readFile";
 import { rm } from "./rm";
 import { withDB } from "./with-db";
@@ -17,6 +19,20 @@ function blobCount(db: Database): number {
 
 function blobBytesCount(db: Database): number {
   return db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes") ?? 0;
+}
+
+function sha256(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(createHash("sha256").update(bytes).digest());
+}
+
+// Writes reclaim what they drop, so an orphan now comes from staging
+// that nothing links: an abandoned sync, or a streaming write that
+// failed. Stage one blob and build one manifest for it, both unlinked.
+function stageOrphan(db: Database, text: string, lastSeen: number): void {
+  const bytes = new TextEncoder().encode(text);
+  const hash = sha256(bytes);
+  stageBlob(db, hash, bytes, lastSeen);
+  db.transactionSync(() => buildManifest(db, [{ hash, size: bytes.byteLength }], lastSeen));
 }
 
 describe("gc", () => {
@@ -76,11 +92,11 @@ describe("gc", () => {
     });
   });
 
-  it("frees orphan blobs left behind by overwrite", async () => {
+  it("frees orphan blobs that staging left behind", async () => {
     await withDB(async (db) => {
-      await writeFile(db, "/x.txt", "first", {}, () => 1000);
       await writeFile(db, "/x.txt", "second", {}, () => 1000);
-      // Both blobs exist; the 'first' content is orphaned.
+      stageOrphan(db, "first", 1000);
+      // Both blobs exist; the staged 'first' content is orphaned.
       expect(blobCount(db)).toBe(2);
 
       const result = gc(db, { now: () => 2000, safetyWindowMs: 0 });
@@ -96,20 +112,23 @@ describe("gc", () => {
 
   it("cascades the delete to vfs_blob_bytes", async () => {
     await withDB(async (db) => {
-      await writeFile(db, "/x.txt", "first", {}, () => 1000);
       await writeFile(db, "/x.txt", "second", {}, () => 1000);
+      stageOrphan(db, "first", 1000);
       expect(blobBytesCount(db)).toBe(2);
       gc(db, { now: () => 2000, safetyWindowMs: 0 });
       expect(blobBytesCount(db)).toBe(1);
     });
   });
 
-  it("frees orphan blobs left behind by rm", async () => {
+  it("frees a blob whose reclaim was deferred and then forgotten", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "unique-content", {}, () => 1000);
       expect(blobCount(db)).toBe(1);
+      // A pin defers the reclaim; dropping it without a later write
+      // stands in for a process that stopped before retrying.
+      pinHashes(db, [sha256(new TextEncoder().encode("unique-content"))]);
       rm(db, "/a.txt", {});
-      expect(blobCount(db)).toBe(1); // rm doesn't sweep blobs
+      expect(blobCount(db)).toBe(1);
       const result = gc(db, { now: () => 2000, safetyWindowMs: 0 });
       expect(result.blobsFreed).toBe(1);
       expect(blobCount(db)).toBe(0);
@@ -118,8 +137,8 @@ describe("gc", () => {
 
   it("respects the safety window", async () => {
     await withDB(async (db) => {
-      await writeFile(db, "/x.txt", "first", {}, () => 1000);
       await writeFile(db, "/x.txt", "second", {}, () => 1000);
+      stageOrphan(db, "first", 1000);
       // Inside the safety window the orphan stays.
       expect(gc(db, { now: () => 1500, safetyWindowMs: 1_000 })).toEqual({
         blobsFreed: 0,
@@ -137,8 +156,8 @@ describe("gc", () => {
 
   it("uses a conservative default safety window when none is provided", async () => {
     await withDB(async (db) => {
-      await writeFile(db, "/x.txt", "first", {}, () => 1000);
       await writeFile(db, "/x.txt", "second", {}, () => 1000);
+      stageOrphan(db, "first", 1000);
       // The default is conservative enough that a small elapsed time
       // does not sweep anything.
       expect(gc(db, { now: () => 1500 })).toEqual({ blobsFreed: 0, manifestsFreed: 0 });

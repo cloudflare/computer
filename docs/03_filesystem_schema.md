@@ -308,8 +308,38 @@ indexer. See [06. Mount Interface](./06_mount_interface.md).
 
 ## Garbage collection
 
-GC is exposed as a free function from the package's internal `fs/gc.ts`
-module, not as a method on the host workspace class:
+Content is reclaimed when its last reference goes, inside the
+transaction that drops it. Every statement that adds, replaces or drops
+a `vfs_chunks` row, writes `vfs_nodes.manifest_hash`, or deletes a node
+goes through `fs/refs.ts`, which records each hash the transaction
+dropped. Just before the transaction commits, a hash that nothing
+references any more (one probe of `vfs_chunks_by_hash` or
+`vfs_nodes_by_manifest_hash`) loses its `vfs_blobs` and
+`vfs_blob_bytes` rows, or its `vfs_manifests` row. The probe looks
+across every inode, so content shared through dedupe or hardlinks stays
+while any file uses it. A source-scanning test fails when one of those
+statements appears outside `fs/refs.ts`.
+
+Two things hold a hash without a row that references it, and both are
+covered. Code that keeps a hash across an await pins it in memory: a
+lazy binary `readFile` stream (until it ends or is cancelled, or after
+five minutes with no pull), a streaming `writeFile` (each staged window
+until the link), the push sender (`pinObjects`, for one block), and
+`hasObjects` (what it reports present, for ten minutes). Sync apply
+removes and links in separate transactions, so `applyChanges` and
+`applyChangesSync` defer reclamation until the call ends. A pinned or
+deferred hash waits in an in-memory set and is retried at the end of
+later writes. As a last line, `linkStagedChunksSync` refuses to link a
+chunk whose bytes are missing and throws `EUNKNOWN_HASH`, which the sync
+engine retries.
+
+Pins are per `Database` object, so all callers of one store share one
+handle. None of this changes the schema, and the library still owns no
+alarm or timer.
+
+The original sweep is still there as a free function in the package's
+internal `fs/gc.ts` module, not as a method on the host workspace class.
+Tests use it as an oracle:
 
 ```ts
 import { gc } from "./fs/gc";

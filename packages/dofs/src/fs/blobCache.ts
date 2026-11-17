@@ -80,6 +80,12 @@ export function getBlobBytes(db: Database, hash: Uint8Array): Uint8Array | undef
   return row.bytes;
 }
 
+// Drop one payload from the cache, once its blob is gone from the
+// store.
+export function evictBlob(db: Database, hash: Uint8Array): void {
+  caches.get(db)?.delete(hashKey(hash));
+}
+
 // Reset the cache for `db`. Tests use this to keep cache state from
 // leaking between cases that share a Database constructor pattern.
 export function clearBlobCache(db: Database): void {
