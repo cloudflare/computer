@@ -54,7 +54,7 @@ describe("chunk reference helpers", () => {
       db.transactionSync(() => {
         linkChunk(db, inode, 0, hashOf(1), 10);
         linkChunk(db, inode, 1, hashOf(2), 10);
-        replaceChunk(db, inode, 1, hashOf(3), 10, hashOf(2));
+        replaceChunk(db, inode, 1, hashOf(3), 10, { hash: hashOf(2), size: 10 });
       });
       expect(chunkRows(db, inode)).toEqual([
         { idx: 0, first: 1 },
