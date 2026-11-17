@@ -115,7 +115,13 @@ function removeReplaceableFinalEntry(
 // Structural conflict cleanup for upstream applies. This removes
 // the local shape without recording tombstones because the incoming
 // entry is the authoritative state for this path.
+// One transaction for the whole subtree: the removal is atomic, and
+// what it drops is reaped once at the end instead of once per node.
 function removeInodeTreeAtPath(db: Database, path: string, inode: number, type: NodeType): void {
+  db.transactionSync(() => removeInodeTree(db, path, inode, type));
+}
+
+function removeInodeTree(db: Database, path: string, inode: number, type: NodeType): void {
   // Structural subtree removal that bypasses rm() and calls unlinkDirent
   // directly, so it must drop cached resolutions itself. One subtree
   // drop at the root covers every descendant the walk unlinks.
