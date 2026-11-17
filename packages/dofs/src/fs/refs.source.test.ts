@@ -84,7 +84,7 @@ function sourceFiles(dir: string): string[] {
       out.push(...sourceFiles(path));
       continue;
     }
-    if (!/\.(ts|mts|js|mjs)$/.test(entry.name) || /\.test\.ts$/.test(entry.name)) continue;
+    if (!/\.(ts|mts|js|mjs)$/.test(entry.name) || entry.name.endsWith(".test.ts")) continue;
     out.push(path);
   }
   return out;
