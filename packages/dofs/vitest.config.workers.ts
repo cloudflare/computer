@@ -29,9 +29,15 @@ export default defineConfig({
     // workerd and importing it crashes the pool worker instead of
     // reporting a module-resolution error. schema/index.test.ts also
     // stages raw, pre-migration databases, which withDB cannot
-    // represent. All other tests run under both backends; helpers
-    // delegate to withDB, which this config aliases to a DO-backed
-    // implementation.
-    exclude: ["src/schema/index.test.ts", "src/testing.test.ts", "src/node-storage.test.ts"],
+    // represent. fs/refs.source.test.ts reads the package source from
+    // disk, which workerd cannot. All other tests run under both
+    // backends; helpers delegate to withDB, which this config aliases
+    // to a DO-backed implementation.
+    exclude: [
+      "src/schema/index.test.ts",
+      "src/testing.test.ts",
+      "src/node-storage.test.ts",
+      "src/fs/refs.source.test.ts",
+    ],
   },
 });
