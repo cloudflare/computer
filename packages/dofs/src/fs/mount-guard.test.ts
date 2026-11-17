@@ -374,7 +374,7 @@ describe("writeFile under a read-only mount", () => {
 
       const bytes = new TextEncoder().encode("blocked");
       const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-      stageBlob(db, hash, bytes, 0);
+      stageBlob(db, hash, bytes);
 
       expect(() =>
         linkStagedChunksSync(
@@ -397,7 +397,7 @@ describe("writeFile under a read-only mount", () => {
       stageMount(db, "/mnt", "read-only");
       const bytes = new TextEncoder().encode("blocked");
       const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-      stageBlob(db, hash, bytes, 0);
+      stageBlob(db, hash, bytes);
 
       expect(() =>
         linkStagedChunksSync(

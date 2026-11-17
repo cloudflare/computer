@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Database } from "../storage";
 import { applyChanges } from "../sync/apply";
@@ -31,9 +31,21 @@ function sha256(bytes: Uint8Array): Uint8Array {
 function stageOrphan(db: Database, text: string, lastSeen: number): void {
   const bytes = new TextEncoder().encode(text);
   const hash = sha256(bytes);
-  stageBlob(db, hash, bytes, lastSeen);
-  db.transactionSync(() => buildManifest(db, [{ hash, size: bytes.byteLength }], lastSeen));
+  vi.setSystemTime(lastSeen);
+  stageBlob(db, hash, bytes);
+  db.transactionSync(() => buildManifest(db, [{ hash, size: bytes.byteLength }]));
 }
+
+// Writes stamp last_seen with the wall clock. Pin it at 1000 so the
+// safety window arithmetic below stays readable.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1000);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("gc", () => {
   it("returns { blobsFreed: 0, manifestsFreed: 0 } on an empty FS", async () => {
@@ -60,7 +72,7 @@ describe("gc", () => {
       // must protect blobs independently of their staging timestamp.
       const bytes = new TextEncoder().encode("staged content");
       const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-      stageBlob(db, hash, bytes, 1000);
+      stageBlob(db, hash, bytes);
 
       await applyChanges(
         db,

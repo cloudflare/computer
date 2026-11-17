@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gc } from "../fs/gc";
 import { withDB } from "../fs/with-db";
 import { writeFile } from "../fs/writeFile";
@@ -10,12 +10,23 @@ function sha256(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(createHash("sha256").update(bytes).digest());
 }
 
+// last_seen is the wall clock at staging. Fake it so the tests can
+// name the values.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1234);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("stageBlob", () => {
   it("lands a chunk into vfs_blobs + vfs_blob_bytes", async () => {
     await withDB(async (db) => {
       const bytes = new TextEncoder().encode("payload");
       const hash = sha256(bytes);
-      stageBlob(db, hash, bytes, 1234);
+      stageBlob(db, hash, bytes);
       const blob = db.one<{ size: number; last_seen: number }>(
         "SELECT size, last_seen FROM vfs_blobs WHERE hash = ?",
         hash,
@@ -46,7 +57,7 @@ describe("stageBlob", () => {
         transactionSync: (closure) => db.transactionSync(closure),
       });
 
-      expect(() => stageBlob(failingDb, hash, bytes, 1234)).toThrow("injected bytes failure");
+      expect(() => stageBlob(failingDb, hash, bytes)).toThrow("injected bytes failure");
       expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs")).toBe(0);
       expect(db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes")).toBe(0);
     });
@@ -56,8 +67,10 @@ describe("stageBlob", () => {
     await withDB(async (db) => {
       const bytes = new TextEncoder().encode("same");
       const hash = sha256(bytes);
-      stageBlob(db, hash, bytes, 100);
-      stageBlob(db, hash, bytes, 200);
+      vi.setSystemTime(100);
+      stageBlob(db, hash, bytes);
+      vi.setSystemTime(200);
+      stageBlob(db, hash, bytes);
       const blob = db.one<{ last_seen: number }>(
         "SELECT last_seen FROM vfs_blobs WHERE hash = ?",
         hash,
@@ -73,7 +86,8 @@ describe("stageBlob", () => {
     await withDB(async (db) => {
       const bytes = new TextEncoder().encode("orphan");
       const hash = sha256(bytes);
-      stageBlob(db, hash, bytes, 100);
+      vi.setSystemTime(100);
+      stageBlob(db, hash, bytes);
       // Inside the safety window, gc preserves it.
       expect(gc(db, { now: () => 200, safetyWindowMs: 1000 }).blobsFreed).toBe(0);
       // Outside, gc reaps it.
@@ -88,7 +102,8 @@ describe("stageBlob", () => {
       await writeFile(db, "/a.txt", "shared", {}, () => 1);
       // The writeFile path already wrote the blob with that hash.
       const before = db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes");
-      stageBlob(db, hash, bytes, 5000);
+      vi.setSystemTime(5000);
+      stageBlob(db, hash, bytes);
       const after = db.scalar<number>("SELECT COUNT(*) FROM vfs_blob_bytes");
       expect(after).toBe(before);
       // last_seen on the blob row has been bumped.

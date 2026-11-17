@@ -132,8 +132,7 @@ function settle(db: Database, refs: TransactionRefs): void {
     }
     reapManifest(db, hash);
   }
-  if (deferring) return;
-  retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
+  if (!deferring) retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
   sweepStep(db, state);
 }
 

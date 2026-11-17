@@ -360,7 +360,7 @@ async function writeFileStreaming(
   const flush = (chunk: Uint8Array): void => {
     const hash = sha256(chunk);
     staged.add(hash);
-    stageBlob(db, hash, chunk, mtime);
+    stageBlob(db, hash, chunk);
     chunkRefs.push({ hash, size: chunk.byteLength });
   };
 
@@ -475,7 +475,7 @@ export function linkStagedChunksSync(
     }
     // Referenced chunks cannot be collected, so last_seen only protects
     // blobs during the staging window before this transaction.
-    const manifestHash = buildManifest(db, chunkRefs, mtime);
+    const manifestHash = buildManifest(db, chunkRefs);
     const rev = incrementRev(db);
     let totalSize = 0;
     for (const ref of chunkRefs) totalSize += ref.size;
@@ -542,12 +542,14 @@ function insertFileNode(db: Database, mode: number, mtime: number): number {
   return row.inode;
 }
 
-function upsertChunkBlob(db: Database, chunk: PreparedChunk, lastSeen: number): void {
+// last_seen is the wall clock, not the write's mtime: the sweep compares
+// it against Date.now(), so a caller's clock must not move it.
+function upsertChunkBlob(db: Database, chunk: PreparedChunk): void {
   db.run(
     "INSERT INTO vfs_blobs (hash, size, last_seen) VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET last_seen = excluded.last_seen",
     chunk.hash,
     chunk.size,
-    lastSeen,
+    Date.now(),
   );
   db.run(
     "INSERT INTO vfs_blob_bytes (hash, bytes) VALUES (?, ?) ON CONFLICT(hash) DO NOTHING",
@@ -556,18 +558,13 @@ function upsertChunkBlob(db: Database, chunk: PreparedChunk, lastSeen: number): 
   );
 }
 
-function replaceChunkRows(
-  db: Database,
-  inode: number,
-  chunks: ChunkRef[],
-  manifestTime: number,
-): Uint8Array {
+function replaceChunkRows(db: Database, inode: number, chunks: ChunkRef[]): Uint8Array {
   dropChunks(db, inode);
   for (let idx = 0; idx < chunks.length; idx++) {
     const chunk = chunks[idx];
     linkChunk(db, inode, idx, chunk.hash, chunk.size);
   }
-  return buildManifest(db, chunks, manifestTime);
+  return buildManifest(db, chunks);
 }
 
 function rangesOverlap(start: number, end: number, ranges: WriteFileRange[]): boolean {
@@ -695,7 +692,7 @@ function applyChunkedInodeUpdate(
       throw createWorkspaceError("EIO", "chunk builder returned wrong size");
     }
     const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
-    upsertChunkBlob(db, chunk, mtime);
+    upsertChunkBlob(db, chunk);
     replaceChunk(db, inode, idx, chunk.hash, chunk.size, old?.hash);
   }
 
@@ -929,7 +926,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
             bytes: chunkBytes,
             size: chunkBytes.byteLength,
           };
-          upsertChunkBlob(db, chunk, mtime);
+          upsertChunkBlob(db, chunk);
           linkChunk(db, inode, idx, chunk.hash, chunk.size);
         }
       }
@@ -1198,11 +1195,11 @@ export function writeFileSync(
     // Upsert blobs and write the new chunk list.
     for (let idx = 0; idx < chunks.length; idx++) {
       const chunk = chunks[idx];
-      upsertChunkBlob(db, chunk, mtime);
+      upsertChunkBlob(db, chunk);
       linkChunk(db, inode, idx, chunk.hash, chunk.size);
     }
 
-    const manifestHash = buildManifest(db, chunks, mtime);
+    const manifestHash = buildManifest(db, chunks);
     setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: bytes.byteLength });
   });
 }
@@ -1250,11 +1247,11 @@ export function writeFileRangesSync(
         bytes: bytes.subarray(start, end),
         size,
       };
-      upsertChunkBlob(db, chunk, mtime);
+      upsertChunkBlob(db, chunk);
       nextChunks.push({ hash: chunk.hash, size: chunk.size });
     }
 
-    const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
+    const manifestHash = replaceChunkRows(db, inode, nextChunks);
     setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: bytes.byteLength });
   });
 }
