@@ -82,8 +82,9 @@ function memberOp(name: string): { op: MemberOp; member: string } | undefined {
 // Calls that move a stream's bytes. They don't count against the call and byte budgets: a
 // command's output would spend those on its own. In a replayable run, the bytes they journal
 // count against maxStreamBytes instead.
+// A file range read is one too: it is how code reads a file larger than one call carries.
 function isStreamCall(name: string): boolean {
-  if (name === "stream.push") return true;
+  if (name === "stream.push" || name === "fs.readFileRange") return true;
   const op = memberOp(name)?.op;
   return op !== undefined && op !== "await";
 }
@@ -474,6 +475,12 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
             return this.#capability.readFile(String(args[0]));
           case "readFileBytes":
             return this.#capability.readFileBytes(String(args[0]));
+          case "readFileRange":
+            return this.#capability.readFileRange(
+              String(args[0]),
+              Number(args[1]),
+              Number(args[2]),
+            );
           case "stat":
             return this.#capability.stat(String(args[0]));
           case "lstat":

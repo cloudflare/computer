@@ -169,6 +169,10 @@ export interface WorkspaceRuntimeStat {
 export interface WorkspaceRuntimeFilesystem {
   readFile(path: string): Promise<ReadableStream<Uint8Array>>;
   readFile(path: string, encoding: "utf8"): Promise<string>;
+  readFile(
+    path: string,
+    options: { byteOffset?: number; byteLength?: number },
+  ): Promise<ReadableStream<Uint8Array>>;
   stat(path: string): Promise<WorkspaceRuntimeStat>;
   lstat(path: string): Promise<WorkspaceRuntimeStat>;
   readlink(path: string): Promise<string>;

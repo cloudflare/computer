@@ -123,6 +123,141 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("reads ranges of a file larger than the capability limit through a FileHandle", async () => {
+    // 5000 bytes is far over this fixture's 1024-byte capability limit,
+    // so readFile refuses it whole, but a FileHandle reads any range.
+    await write("/workspace/large.txt", "0123456789".repeat(500));
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        const text = (result) => new TextDecoder().decode(result.buffer.subarray(0, result.bytesRead));
+        const digits = (start, length) => Array.from({ length }, (_, i) => String((start + i) % 10)).join("");
+        export default async () => {
+          const whole = await fs.readFile("/workspace/large.txt").then(() => "read", (error) => error.message);
+          const handle = await fs.open("/workspace/large.txt");
+          const at = await handle.read(new Uint8Array(10), 0, 10, 4003);
+          // Longer than one call carries, so it takes several.
+          const big = await handle.read({ buffer: new Uint8Array(3000), position: 1000 });
+          // Without a position, reads go on from the handle's own.
+          const first = await handle.read({ buffer: new Uint8Array(4) });
+          const second = await handle.read(new Uint8Array(4), 0, 4, null);
+          const tail = await handle.read(new Uint8Array(10), 0, 10, 4995);
+          const past = await handle.read(new Uint8Array(10), 0, 10, 6000);
+          const into = new Uint8Array(6).fill(45);
+          const placed = await handle.read(into, 2, 3, 7);
+          const size = (await handle.stat()).size;
+          await handle.close();
+          const closed = await handle.read(new Uint8Array(1), 0, 1, 0).then(() => "read", (error) => error.code);
+          return {
+            whole,
+            at: text(at),
+            big: { bytesRead: big.bytesRead, matches: text(big) === digits(1000, 3000) },
+            first: text(first),
+            second: text(second),
+            tail: text(tail),
+            past: past.bytesRead,
+            placed: { bytesRead: placed.bytesRead, buffer: new TextDecoder().decode(into), same: placed.buffer === into },
+            size,
+            closed,
+          };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: {
+        whole: "Workspace runtime file read exceeds 1024 bytes.",
+        at: "3456789012",
+        big: { bytesRead: 3000, matches: true },
+        first: "0123",
+        second: "4567",
+        tail: "56789",
+        past: 0,
+        placed: { bytesRead: 3, buffer: "--789-", same: true },
+        size: 5000,
+        closed: "EBADF",
+      },
+    });
+  });
+
+  it("refuses to open a missing file, or to open one for writing", async () => {
+    await write("/workspace/present.txt", "here");
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        export default async () => ({
+          missing: await fs.open("/workspace/absent.txt").then(() => "opened", (error) => error.code),
+          writing: await fs.open("/workspace/present.txt", "w").then(() => "opened", (error) => error.message),
+          reading: await fs.open("/workspace/present.txt", "r").then(async (handle) => {
+            await handle.close();
+            return "opened";
+          }),
+        });
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: {
+        missing: "ENOENT",
+        writing: expect.stringContaining('only the "r" flag'),
+        reading: "opened",
+      },
+    });
+  });
+
+  it("streams a file through more chunks than a run's capability call budget", async () => {
+    // At under 1 KiB a call, 300,000 bytes takes over 256 calls, the
+    // budget ordinary capability calls share, so these must not spend it.
+    await write("/workspace/huge.txt", "0123456789".repeat(30_000));
+    const response = await runtime({
+      source: `
+        import { createReadStream } from "node:fs";
+        import fs from "node:fs/promises";
+        const total = async (stream) => {
+          let bytes = 0, sum = 0, chunks = 0;
+          for await (const chunk of stream) {
+            chunks += 1;
+            bytes += chunk.byteLength;
+            for (const byte of chunk) sum += byte - 48;
+          }
+          return { bytes, sum, chunks };
+        };
+        export default async () => {
+          const streamed = await total(createReadStream("/workspace/huge.txt"));
+          const handle = await fs.open("/workspace/huge.txt");
+          const web = await total(handle.readableWebStream());
+          await handle.close();
+          let window = "";
+          for await (const chunk of createReadStream("/workspace/huge.txt", { start: 15, end: 24 })) {
+            window += new TextDecoder().decode(chunk);
+          }
+          const missing = await total(createReadStream("/workspace/nowhere.txt")).then(() => "read", (error) => error.code);
+          return { streamed, web, window, missing };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const result = JSON.parse(text).result;
+    expect(result, text).toMatchObject({
+      status: "completed",
+      value: {
+        streamed: { bytes: 300_000, sum: 1_350_000 },
+        web: { bytes: 300_000, sum: 1_350_000 },
+        window: "5678901234",
+        missing: "ENOENT",
+      },
+    });
+    expect(result.value.streamed.chunks).toBeGreaterThan(256);
+  });
+
   it("round-trips bytes, and plain objects shaped like the old codec, unchanged", async () => {
     const response = await runtime({
       source: `
@@ -1323,6 +1458,32 @@ describe("durable executions", () => {
     const settled = await result("durable-many-fetches", { network: true });
     expect(settled).toMatchObject({ status: "completed", value: "done" });
     expect(await calls()).toEqual({ fetch: 300, gate: 2 });
+  });
+
+  it("replays a run's FileHandle reads from its journal", async () => {
+    await write("/workspace/durable-large.txt", "0123456789".repeat(500));
+    await start("durable-file-handle", {
+      source: `
+        import fs from "node:fs/promises";
+        import { gate } from "codemode:test-host";
+        const text = (result) => new TextDecoder().decode(result.buffer.subarray(0, result.bytesRead));
+        export default async function () {
+          const handle = await fs.open("/workspace/durable-large.txt");
+          const before = await handle.read({ buffer: new Uint8Array(4) });
+          await gate();
+          const after = await handle.read({ buffer: new Uint8Array(4) });
+          const far = await handle.read(new Uint8Array(2000), 0, 2000, 2995);
+          await handle.close();
+          return { before: text(before), after: text(after), far: far.bytesRead };
+        }
+      `,
+      onInterrupt: "replay",
+    });
+    const settled = await result("durable-file-handle");
+    expect(settled).toMatchObject({
+      status: "completed",
+      value: { before: "0123", after: "4567", far: 2000 },
+    });
   });
 
   it("fails a replay that prints different output", async () => {

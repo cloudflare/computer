@@ -77,6 +77,43 @@ describe("WorkspaceRuntimeCapability", () => {
     expect(fs.readFile).not.toHaveBeenCalled();
   });
 
+  it("reads a range of a file larger than the read ceiling, at most one call's bytes", async () => {
+    const fs = fakeFs();
+    vi.mocked(fs.stat).mockResolvedValue({ size: 10_000 } as never);
+    const readFile = vi.mocked(fs.readFile as (path: string, options: object) => Promise<unknown>);
+    readFile.mockImplementation(
+      async (_path, options) =>
+        new ReadableStream({
+          start(controller) {
+            const { byteLength } = options as { byteLength: number };
+            controller.enqueue(new Uint8Array(byteLength - 10).fill(1));
+            controller.enqueue(new Uint8Array(10).fill(2));
+            controller.close();
+          },
+        }),
+    );
+    const workspace = new WorkspaceRuntimeCapability(fs, "/workspace", "read", 1024);
+
+    const bytes = await workspace.readFileRange("large.bin", 5000, 4096);
+    // The ceiling less room for the response's envelope.
+    expect(bytes.byteLength).toBe(960);
+    expect(bytes[949]).toBe(1);
+    expect(bytes[950]).toBe(2);
+    expect(readFile).toHaveBeenCalledWith("/workspace/large.bin", {
+      byteOffset: 5000,
+      byteLength: 960,
+    });
+
+    readFile.mockClear();
+    await expect(workspace.readFileRange("large.bin", 0, 0)).resolves.toEqual(new Uint8Array());
+    expect(readFile).not.toHaveBeenCalled();
+    await expect(workspace.readFileRange("large.bin", -1, 10)).rejects.toThrow(RangeError);
+    await expect(workspace.readFileRange("large.bin", 0, 1.5)).rejects.toThrow(RangeError);
+    await expect(workspace.readFileRange("../escape.bin", 0, 10)).rejects.toThrow(
+      "stay under /workspace",
+    );
+  });
+
   it("bounds directory materialization and returns dirent metadata without follow-up stats", async () => {
     const fs = fakeFs();
     vi.mocked(fs.readdir).mockResolvedValue([

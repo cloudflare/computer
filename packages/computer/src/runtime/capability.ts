@@ -65,6 +65,43 @@ export class WorkspaceRuntimeCapability {
     return bytes;
   }
 
+  /**
+   * Reads up to `byteLength` bytes from `byteOffset`, and at most what one
+   * response carries, so code can read a file of any size a range at a
+   * time. Fewer bytes come back at the end of the file, and none past it.
+   */
+  async readFileRange(path: string, byteOffset: number, byteLength: number) {
+    if (!Number.isSafeInteger(byteOffset) || byteOffset < 0) {
+      throw new RangeError(`Workspace runtime read offset must be a non-negative integer.`);
+    }
+    if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+      throw new RangeError(`Workspace runtime read length must be a non-negative integer.`);
+    }
+    const resolved = await this.#resolveSafe(path);
+    // Leave room for the response's envelope inside the payload limit.
+    const length = Math.min(byteLength, Math.max(1, this.#maxReadBytes - 64));
+    if (length === 0) return new Uint8Array();
+    const stream = await this.#fs.readFile(resolved, { byteOffset, byteLength: length });
+    const reader = stream.getReader();
+    const bytes = new Uint8Array(length);
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (size + value.byteLength > length) {
+          await reader.cancel("Workspace runtime file range exceeded");
+          throw new Error(`Workspace runtime file range read more than ${length} bytes.`);
+        }
+        bytes.set(value, size);
+        size += value.byteLength;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return size === length ? bytes : bytes.slice(0, size);
+  }
+
   async stat(path: string) {
     return this.#fs.stat(await this.#resolveSafe(path));
   }

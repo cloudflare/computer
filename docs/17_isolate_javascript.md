@@ -338,9 +338,32 @@ const text = await fs.readFile("/workspace/input.txt", "utf8");
 await fs.writeFile("/workspace/output.txt", text.toUpperCase());
 ```
 
-Supported promise APIs are `readFile`, `writeFile`, `mkdir`, `rm`, `chmod`, `symlink`, `readlink`, `readdir`, `stat`, `lstat`, and `access`. `readFile` returns bytes when encoding is omitted and supports `"utf8"` / `"utf-8"` for text; other encodings are rejected. `writeFile` supports the default `"w"` flag and exclusive `"wx"`; other Node flags are rejected, and—as in Node—the parent directory must already exist. Relative symlink targets are preserved by `readlink`, while reads and writes through symlinks are rejected by the Workspace confinement boundary. Synchronous and callback-style Node filesystem APIs are intentionally unavailable because every operation crosses the isolate-to-Workspace capability boundary.
+Supported promise APIs are `readFile`, `writeFile`, `mkdir`, `rm`, `chmod`, `symlink`, `readlink`, `readdir`, `stat`, `lstat`, `access`, and `open`. `readFile` returns bytes when encoding is omitted and supports `"utf8"` / `"utf-8"` for text; other encodings are rejected. `writeFile` supports the default `"w"` flag and exclusive `"wx"`; other Node flags are rejected, and—as in Node—the parent directory must already exist. Relative symlink targets are preserved by `readlink`, while reads and writes through symlinks are rejected by the Workspace confinement boundary. Synchronous and callback-style Node filesystem APIs are intentionally unavailable because every operation crosses the isolate-to-Workspace capability boundary.
 
 Path confinement rejects lexical escapes and every symlink component before an operation. These checks are not an atomic inode-style “resolve beneath root” primitive: do not treat one isolate capability as a security boundary against a separate, more privileged principal concurrently replacing paths in the same mutable Workspace. Deployments requiring that adversarial concurrency need a future transactional DOFS primitive or separate Workspace identities.
+
+#### Large files
+
+`readFile` brings the whole file back in one capability call, so it refuses a file larger than the backend's `maxCapabilityBytes` (1 MiB by default). Read a larger file by range or as a stream instead:
+
+```js
+import { createReadStream } from "node:fs";
+import fs from "node:fs/promises";
+
+// Any range, by position.
+const handle = await fs.open("/workspace/big.log");
+const { bytesRead, buffer } = await handle.read(new Uint8Array(4096), 0, 4096, 10_000_000);
+await handle.close();
+
+// The whole file, a chunk at a time.
+for await (const chunk of createReadStream("/workspace/big.log", { start: 0, end: 1_048_575 })) {
+  // chunk is a Uint8Array
+}
+```
+
+`open` takes only the `"r"` flag. Its `FileHandle` has `read` in each of Node's forms (`read()`, `read(options)`, `read(buffer, options)` and `read(buffer, offset, length, position)`), `stat`, `readableWebStream`, `close`, and `Symbol.asyncDispose`. A read without a position goes on from the handle's own, as in Node. `createReadStream`, from `node:fs`, takes `start`, `end` (inclusive, as in Node) and `highWaterMark`, and returns a web `ReadableStream` of bytes rather than a Node stream; decode text with a `TextDecoderStream`.
+
+Each range is one capability call that carries at most `maxCapabilityBytes`, so a large read takes several. They move bytes as a stream does: they don't count against the run's `maxCapabilityCalls` or its capability request and response byte budgets, and a replayable run's journal counts them against `maxStreamBytes` (64 MiB by default) instead. A handle reads the file as it is at each read, as a Node file descriptor does, but it follows the path: a file replaced at that path is the one its next read sees.
 
 ### Source modules
 
