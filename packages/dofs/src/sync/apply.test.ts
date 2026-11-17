@@ -35,6 +35,8 @@ function hex(bytes: Uint8Array): string {
   return s;
 }
 
+const DEEP_TREE_TIMEOUT_MS = 20_000;
+
 function deepChildPath(depth: number): string {
   return `/dst/${Array.from({ length: depth }, () => "d").join("/")}/old.txt`;
 }
@@ -809,32 +811,38 @@ describe("applyChanges", () => {
     });
   });
 
-  it("applies a file over a deeply nested existing directory subtree", async () => {
-    await withDB(async (db) => {
-      const oldPath = deepChildPath(12_000);
-      mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
-      await writeFile(db, oldPath, "old", {}, () => 2);
+  // A 12,000-deep tree takes about 2 s on its own under workerd and has
+  // gone past the 5 s default when the full workers suite runs alongside.
+  it(
+    "applies a file over a deeply nested existing directory subtree",
+    async () => {
+      await withDB(async (db) => {
+        const oldPath = deepChildPath(12_000);
+        mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
+        await writeFile(db, oldPath, "old", {}, () => 2);
 
-      await applyChanges(
-        db,
-        [
-          {
-            kind: "file",
-            rev: 99,
-            path: "/dst",
-            mode: 0o644,
-            mtime: 3,
-            size: 0,
-            chunks: [],
-          },
-        ],
-        new Map(),
-      );
+        await applyChanges(
+          db,
+          [
+            {
+              kind: "file",
+              rev: 99,
+              path: "/dst",
+              mode: 0o644,
+              mtime: 3,
+              size: 0,
+              chunks: [],
+            },
+          ],
+          new Map(),
+        );
 
-      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("file");
-      expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
-    });
-  });
+        expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("file");
+        expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
+      });
+    },
+    DEEP_TREE_TIMEOUT_MS,
+  );
 
   it("applies a symlink over an existing directory subtree", async () => {
     await withDB((db) => {
@@ -934,32 +942,38 @@ describe("applyChanges", () => {
     });
   });
 
-  it("applyChangesSync applies a symlink over a deeply nested existing directory subtree", async () => {
-    await withDB((db) => {
-      const oldPath = deepChildPath(12_000);
-      mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
-      writeFileSync(db, oldPath, new Uint8Array(), {}, () => 2);
+  // A 12,000-deep tree takes about 2 s on its own under workerd and has
+  // gone past the 5 s default when the full workers suite runs alongside.
+  it(
+    "applyChangesSync applies a symlink over a deeply nested existing directory subtree",
+    async () => {
+      await withDB((db) => {
+        const oldPath = deepChildPath(12_000);
+        mkdir(db, oldPath.slice(0, -"/old.txt".length), { recursive: true }, () => 1);
+        writeFileSync(db, oldPath, new Uint8Array(), {}, () => 2);
 
-      applyChangesSync(
-        db,
-        [
-          {
-            kind: "symlink",
-            rev: 99,
-            path: "/dst",
-            mode: 0o777,
-            mtime: 3,
-            target: "/target",
-          },
-        ],
-        new Map(),
-      );
+        applyChangesSync(
+          db,
+          [
+            {
+              kind: "symlink",
+              rev: 99,
+              path: "/dst",
+              mode: 0o777,
+              mtime: 3,
+              target: "/target",
+            },
+          ],
+          new Map(),
+        );
 
-      expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("symlink");
-      expect(readlink(db, "/dst")).toBe("/target");
-      expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
-    });
-  });
+        expect(resolveInode(db, "/dst", { followSymlinks: false })?.type).toBe("symlink");
+        expect(readlink(db, "/dst")).toBe("/target");
+        expect(resolveInode(db, oldPath, { followSymlinks: false })).toBeNull();
+      });
+    },
+    DEEP_TREE_TIMEOUT_MS,
+  );
 
   it("applies a directory over an existing file", async () => {
     await withDB(async (db) => {
