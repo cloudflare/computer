@@ -41,7 +41,9 @@ import {
 //     nothing at all;
 //   * a read stream returns the file as it was when it opened.
 
-const NOW = (): number => 1000;
+// Writes take the wall clock for mtimes, as they do in production. The
+// clock is faked and moves forward during the sequence.
+const NOW = (): number => Date.now();
 const PATHS = ["/a", "/b", "/c", "/d/e"];
 const STEPS = 250;
 const REFUSALS = new Set(["ENOENT", "EISDIR", "ENOTDIR", "EEXIST", "EPERM", "ENOTEMPTY", "EINVAL"]);

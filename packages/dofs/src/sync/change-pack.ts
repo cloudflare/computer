@@ -155,6 +155,10 @@ export function encodeChangePack(
   const { block, after, target, generation } = input;
   const encoder = new TextEncoder();
 
+  // Everything is read and framed in start(), which runs before the
+  // constructor returns. Nothing pins the objects the pack carries, so
+  // reading them later, as the stream is pulled, would race a write that
+  // drops and reaps them. Keep the reads here.
   const raw = new ReadableStream<Uint8Array>({
     start(controller) {
       let digest = 0x811c9dc5;
