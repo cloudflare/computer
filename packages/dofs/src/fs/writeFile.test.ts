@@ -637,7 +637,7 @@ describe("linkStagedChunksSync", () => {
   it("links chunks whose bytes are staged", async () => {
     await withDB((db) => {
       const bytes = new TextEncoder().encode("staged");
-      stageBlob(db, hashOf(1), bytes, 0);
+      stageBlob(db, hashOf(1), bytes);
       linkStagedChunksSync(
         db,
         "/a.txt",

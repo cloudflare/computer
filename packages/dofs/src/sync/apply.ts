@@ -620,7 +620,7 @@ function applyFileEntry(
         throw new Error(`applyChanges: missing object ${k} for ${entry.path}`);
       }
       assertChunkSize(bytes.byteLength, c.size, c.hash, entry.path);
-      stageBlob(db, c.hash, bytes, entry.mtime);
+      stageBlob(db, c.hash, bytes);
       continue;
     }
     assertChunkSize(staged, c.size, c.hash, entry.path);

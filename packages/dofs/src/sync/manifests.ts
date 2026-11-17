@@ -58,8 +58,9 @@ export function computeManifestHash(chunks: ManifestChunk[]): Uint8Array {
 // Build a manifest row for the given chunk list. Idempotent: a
 // second call with the same chunks no-ops on the UNIQUE(hash). The
 // returned hash is what the caller writes onto
-// `vfs_nodes.manifest_hash`.
-export function buildManifest(db: Database, chunks: ManifestChunk[], now: number): Uint8Array {
+// `vfs_nodes.manifest_hash`. last_seen is the wall clock, which is what
+// the sweep compares it against.
+export function buildManifest(db: Database, chunks: ManifestChunk[]): Uint8Array {
   const bytes = encodeManifest(chunks);
   const hash = sha256(bytes);
   const size = chunks.reduce((acc, c) => acc + c.size, 0);
@@ -68,7 +69,7 @@ export function buildManifest(db: Database, chunks: ManifestChunk[], now: number
     hash,
     size,
     bytes,
-    now,
+    Date.now(),
   );
   return hash;
 }

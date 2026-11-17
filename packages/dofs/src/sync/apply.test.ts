@@ -402,7 +402,7 @@ describe("applyChanges", () => {
         for (const chunk of entry.chunks) {
           const bytes = objects.get(hex(chunk.hash));
           if (bytes === undefined) throw new Error("missing chunk bytes");
-          stageBlob(b, chunk.hash, bytes, 2);
+          stageBlob(b, chunk.hash, bytes);
         }
 
         const all = vi.spyOn(b, "all");
@@ -436,7 +436,7 @@ describe("applyChanges", () => {
         for (const chunk of entry.chunks) {
           const bytes = objects.get(hex(chunk.hash));
           if (bytes === undefined) throw new Error("missing chunk bytes");
-          stageBlob(b, chunk.hash, bytes, 2);
+          stageBlob(b, chunk.hash, bytes);
         }
 
         const all = vi.spyOn(b, "all");
@@ -464,7 +464,7 @@ describe("applyChanges", () => {
       const second = new TextEncoder().encode("second");
       const chunks = [first, second].map((bytes) => {
         const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-        stageBlob(db, hash, bytes, 1000);
+        stageBlob(db, hash, bytes);
         return { hash, size: bytes.byteLength };
       });
 
@@ -498,7 +498,7 @@ describe("applyChanges", () => {
       const second = new TextEncoder().encode("second");
       const chunks = [first, second].map((bytes) => {
         const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-        stageBlob(db, hash, bytes, 1000);
+        stageBlob(db, hash, bytes);
         return { hash, size: bytes.byteLength };
       });
 
@@ -528,7 +528,7 @@ describe("applyChanges", () => {
     await withDB(async (db) => {
       const bytes = new Uint8Array(CHUNK_SIZE + 1);
       const hash = new Uint8Array(createHash("sha256").update(bytes).digest());
-      stageBlob(db, hash, bytes, 1000);
+      stageBlob(db, hash, bytes);
 
       await expect(
         applyChanges(

@@ -150,7 +150,7 @@ describe("hasObjects", () => {
       for (let i = 0; i < 101; i++) {
         const bytes = new TextEncoder().encode(`object-${i}`);
         const hash = chunksOf(bytes)[0].hash;
-        stageBlob(limitedDb, hash, bytes, i);
+        stageBlob(limitedDb, hash, bytes);
         hashes.push(hash);
       }
 

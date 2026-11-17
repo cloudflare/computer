@@ -207,7 +207,7 @@ async function runSequence(db: Database, seed: number): Promise<{ staged: Set<st
       // that may reuse the deleted content, as a rename does.
       const bytes = pick(pool);
       const chunks = chunksOf(bytes);
-      for (const chunk of chunks) stageBlob(db, chunk.hash, chunk.bytes, Date.now());
+      for (const chunk of chunks) stageBlob(db, chunk.hash, chunk.bytes);
       const entries: ChangeEntry[] = [
         { kind: "delete", rev: 1, path: pick(PATHS) },
         {
@@ -228,7 +228,7 @@ async function runSequence(db: Database, seed: number): Promise<{ staged: Set<st
       if (db.scalar<number>("SELECT COUNT(*) FROM vfs_blobs WHERE hash = ?", hash) === 0) {
         staged.add(hashKey(hash));
       }
-      stageBlob(db, hash, bytes, Date.now());
+      stageBlob(db, hash, bytes);
     },
     async () => {
       const path = pick(PATHS);

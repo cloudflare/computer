@@ -1429,7 +1429,7 @@ describe("sync driver — push atomicity", () => {
     try {
       const goodBytes = new TextEncoder().encode("good");
       const goodHash = await sha256(goodBytes);
-      stageBlob(b.db, goodHash, goodBytes, 1);
+      stageBlob(b.db, goodHash, goodBytes);
       const bogusHash = new Uint8Array(32);
       bogusHash.fill(0xee);
       const entries: ChangeEntry[] = [

@@ -293,7 +293,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       expectGeneration: input.generation,
     });
     for (const [key, bytes] of decoded.objects) {
-      stageBlob(this.db, hexToBytes(key), bytes, Date.now());
+      stageBlob(this.db, hexToBytes(key), bytes);
     }
     const result = applyChangesSync(this.db, decoded.entries, new Map(), {
       source: "upstream",
@@ -364,7 +364,7 @@ class SyncRPCServer extends RpcTarget implements SyncRPC {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        stageBlob(this.db, value.hash, value.bytes, Date.now());
+        stageBlob(this.db, value.hash, value.bytes);
       }
     } finally {
       reader.releaseLock();

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { mkdir } from "./mkdir";
 import { readFile } from "./readFile";
@@ -156,11 +156,17 @@ describe("readFile", () => {
   });
 
   it("does not modify vfs_blobs.last_seen when chunks are read", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(100);
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     await withDB(async (db) => {
       const bytes = new Uint8Array(CHUNK_SIZE + 1);
       bytes.fill(0x61);
       await writeFile(db, "/x.txt", bytes, {}, () => 100);
       expect(db.scalar<number>("SELECT MIN(last_seen) FROM vfs_blobs")).toBe(100);
+      vi.setSystemTime(200);
 
       // String form reads every chunk and must leave last_seen alone.
       await readFile(db, "/x.txt", "utf8");
