@@ -2512,7 +2512,7 @@ describe("CodemodeBackend interrupted executions", () => {
     // The code the runtime loads into the isolate changed. If a run that
     // started on the old code could replay differently on the new code,
     // bump REPLAY_VERSION in journal.ts. Either way, update this digest.
-    expect(fingerprint(runtimeCode("main.js", 1024, 1024))).toBe("v1:0cctegdu9iq0uczqd4zgnp:55857");
+    expect(fingerprint(runtimeCode("main.js", 1024, 1024))).toBe("v1:04fojzle8h820my0ohof5w:49835");
   });
 
   it("fails a run when the runtime changed under it", async () => {

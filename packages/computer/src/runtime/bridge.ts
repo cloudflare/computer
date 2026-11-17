@@ -79,12 +79,24 @@ function memberOp(name: string): { op: MemberOp; member: string } | undefined {
   return { op: op as MemberOp, member: method.slice(colon + 1) };
 }
 
+// Reads a range of a file. Unlike the other stream calls, which a command or the isolate's own
+// stream paces, the isolate alone decides how many it makes, so every run, replayable or not,
+// counts them against maxStreamBytes, each at least FILE_RANGE_MIN_BYTES.
+const FILE_RANGE_CALL = "fs.readFileRange";
+const FILE_RANGE_MIN_BYTES = 1024;
+
+// What a stream call costs against maxStreamBytes, if it counts in this run.
+function streamCost(name: string, bytes: number, journaled: boolean): number | undefined {
+  if (name === FILE_RANGE_CALL) return Math.max(bytes, FILE_RANGE_MIN_BYTES);
+  return journaled ? bytes : undefined;
+}
+
 // Calls that move a stream's bytes. They don't count against the call and byte budgets: a
 // command's output would spend those on its own. In a replayable run, the bytes they journal
 // count against maxStreamBytes instead.
 // A file range read is one too: it is how code reads a file larger than one call carries.
 function isStreamCall(name: string): boolean {
-  if (name === "stream.push" || name === "fs.readFileRange") return true;
+  if (name === "stream.push" || name === FILE_RANGE_CALL) return true;
   const op = memberOp(name)?.op;
   return op !== undefined && op !== "await";
 }
@@ -382,12 +394,13 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
     }
     if (isStreamCall(name)) {
       // Each is bounded by the payload limit and the concurrency limit above. What a replayable
-      // run journals is bounded too.
-      if (this.#journal !== undefined) {
-        if (this.#streamBytes + requestBytes > this.#maxStreamBytes) {
+      // run journals is bounded too, and so are file range reads in any run.
+      const cost = streamCost(name, requestBytes, this.#journal !== undefined);
+      if (cost !== undefined) {
+        if (this.#streamBytes + cost > this.#maxStreamBytes) {
           return reject(`Workspace execution streams exceed ${this.#maxStreamBytes} bytes.`);
         }
-        this.#streamBytes += requestBytes;
+        this.#streamBytes += cost;
       }
       return this.#dispatch(name, args, reject, false);
     }
@@ -420,7 +433,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
       // that attempt, so it counts again. The budget error wasn't counted.
       if (!isFetch && step.response.uncounted !== true) {
         const bytes = replayedBytes(step.response, this.#maxPayloadBytes);
-        if (isStreamCall(name)) this.#streamBytes += bytes;
+        if (isStreamCall(name)) this.#streamBytes += streamCost(name, bytes, true) ?? 0;
         else this.#responseBytes += bytes;
       }
       return Promise.resolve(
@@ -574,8 +587,9 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
             : response;
         const bytes = "result" in response ? response.bytes : errorBytes(response);
         if (isStreamCall(name)) {
-          if (this.#journal === undefined) return delivered();
-          if (this.#streamBytes + bytes > this.#maxStreamBytes) {
+          const cost = streamCost(name, bytes, this.#journal !== undefined);
+          if (cost === undefined) return delivered();
+          if (this.#streamBytes + cost > this.#maxStreamBytes) {
             return {
               ...boundedError(
                 new Error(`Workspace execution streams exceed ${this.#maxStreamBytes} bytes.`),
@@ -584,7 +598,7 @@ export class WorkspaceRuntimeBridge extends RpcTarget {
               uncounted: true as const,
             };
           }
-          this.#streamBytes += bytes;
+          this.#streamBytes += cost;
           return delivered();
         }
         if (this.#responseBytes + bytes > this.#maxTotalResponseBytes) {

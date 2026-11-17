@@ -83,23 +83,31 @@ export class WorkspaceRuntimeCapability {
     if (length === 0) return new Uint8Array();
     const stream = await this.#fs.readFile(resolved, { byteOffset, byteLength: length });
     const reader = stream.getReader();
-    const bytes = new Uint8Array(length);
+    // Collected as they come, so a read near or past the end doesn't hold a whole window.
+    const chunks: Uint8Array[] = [];
     let size = 0;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (size + value.byteLength > length) {
+        size += value.byteLength;
+        if (size > length) {
           await reader.cancel("Workspace runtime file range exceeded");
           throw new Error(`Workspace runtime file range read more than ${length} bytes.`);
         }
-        bytes.set(value, size);
-        size += value.byteLength;
+        chunks.push(value);
       }
     } finally {
       reader.releaseLock();
     }
-    return size === length ? bytes : bytes.slice(0, size);
+    if (chunks.length === 1) return chunks[0];
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
   }
 
   async stat(path: string) {

@@ -133,7 +133,7 @@ export interface ParsedModules {
 }
 
 const FILESYSTEM_DESCRIPTION =
-  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, `access`, and `open`. `readFile` takes a file that fits in one call; for a larger one, `open` it and `read(buffer, offset, length, position)` any range, or stream it with the handle's `readableWebStream()` or `createReadStream(path, { start, end })` from `node:fs`, a web ReadableStream of bytes. Async only.";
+  "- `node:fs/promises` (also `node:fs`): the workspace's files. `readFile`, `writeFile`, `mkdir`, `rm`, `readdir`, `stat`, `lstat`, `readlink`, `symlink`, `chmod`, `access`, and `open`. `readFile` refuses a file larger than one capability call carries (1 MiB unless the host set another limit); for a larger one, `open` it and `read(buffer, offset, length, position)` any range, or stream it with the handle's `readableWebStream()` or `createReadStream(path, { start, end })` from `node:fs`, a web ReadableStream of bytes. Async only.";
 
 /**
  * Parse the backend's `modules` option: split it into bundled source,
@@ -887,8 +887,9 @@ function hostModule(capabilitiesImport: string, specifier: string, names: readon
   `;
 }
 
-// What node:fs and node:fs/promises share. Each adds its own default export.
-function nodeFsSource() {
+// What both node:fs modules need to make capability calls and read
+// files by range.
+function nodeFsCallSource() {
   return `
     const callKey = Symbol.for("cloudflare.workspace.runtime.call");
     const invoke = (method, args) => {
@@ -896,6 +897,46 @@ function nodeFsSource() {
       if (!call) throw new Error("Workspace filesystem capability is not installed");
       return call("fs", method, args);
     };
+    const fsError = (code, description, syscall, path) => {
+      const error = new Error(code + ": " + description + ", " + syscall + " '" + path + "'");
+      error.code = code;
+      error.syscall = syscall;
+      error.path = path;
+      return error;
+    };
+    const rangeError = (message) => {
+      const error = new RangeError(message);
+      error.code = "ERR_OUT_OF_RANGE";
+      return error;
+    };
+    // How many bytes a stream asks for at a time, as Node's do. The host
+    // answers with at most what one call carries.
+    const STREAM_CHUNK_BYTES = 64 * 1024;
+    // A stream of a file's bytes from \`start\`, up to \`end\` (exclusive) if
+    // given, read a range at a time as code reads it. \`advance\` hears how
+    // far each chunk went.
+    function rangeStream(path, start, end, chunkBytes, before, advance) {
+      let position = start;
+      return new ReadableStream({
+        async pull(controller) {
+          before?.();
+          const want = end === undefined ? chunkBytes : Math.min(chunkBytes, end - position);
+          const bytes = want <= 0 ? new Uint8Array() : await invoke("readFileRange", [path, position, want]);
+          if (bytes.byteLength === 0) {
+            controller.close();
+            return;
+          }
+          position += bytes.byteLength;
+          advance?.(bytes.byteLength);
+          controller.enqueue(bytes);
+        },
+      }, { highWaterMark: 0 });
+    }
+  `;
+}
+
+function nodeFsPromisesModule() {
+  return `${nodeFsCallSource()}
     const encoding = (options) => typeof options === "string" ? options : options?.encoding;
     export const readFile = (path, options) => {
       const requested = encoding(options);
@@ -939,21 +980,6 @@ function nodeFsSource() {
         isSymbolicLink: () => value.isSymbolicLink,
       };
     }
-    const fsError = (code, description, syscall, path) => {
-      const error = new Error(code + ": " + description + ", " + syscall + " '" + path + "'");
-      error.code = code;
-      error.syscall = syscall;
-      error.path = path;
-      return error;
-    };
-    const rangeError = (message) => {
-      const error = new RangeError(message);
-      error.code = "ERR_OUT_OF_RANGE";
-      return error;
-    };
-    // How many bytes a stream asks for at a time, as Node's do. The host
-    // answers with at most what one call carries.
-    const STREAM_CHUNK_BYTES = 64 * 1024;
     // Reads into \`target\` from \`position\` until it's full or the file ends,
     // one range call at a time. Range calls move bytes as a stream does, so
     // they don't spend the run's capability call budget.
@@ -967,26 +993,6 @@ function nodeFsSource() {
       }
       return done;
     }
-    // A stream of a file's bytes from \`start\`, up to \`end\` (exclusive) if
-    // given, read a range at a time as code reads it. \`advance\` hears how
-    // far each chunk went.
-    function rangeStream(path, start, end, chunkBytes, before, advance) {
-      let position = start;
-      return new ReadableStream({
-        async pull(controller) {
-          before?.();
-          const want = end === undefined ? chunkBytes : Math.min(chunkBytes, end - position);
-          const bytes = want <= 0 ? new Uint8Array() : await invoke("readFileRange", [path, position, want]);
-          if (bytes.byteLength === 0) {
-            controller.close();
-            return;
-          }
-          position += bytes.byteLength;
-          advance?.(bytes.byteLength);
-          controller.enqueue(bytes);
-        },
-      }, { highWaterMark: 0 });
-    }
     const asPosition = (value) => {
       if (value === undefined || value === null || value === -1 || value === -1n) return null;
       const number = typeof value === "bigint" ? Number(value) : value;
@@ -995,11 +1001,16 @@ function nodeFsSource() {
       }
       return number;
     };
-    const asBytes = (buffer) => {
-      if (!ArrayBuffer.isView(buffer)) {
-        throw new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.');
-      }
-      return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const isOptions = (value) => {
+      if (value === undefined || value === null) return true;
+      if (typeof value !== "object" || ArrayBuffer.isView(value)) return false;
+      const prototype = Object.getPrototypeOf(value);
+      return prototype === Object.prototype || prototype === null;
+    };
+    const invalidBuffer = () => {
+      const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      return error;
     };
     let nextFd = 3;
     // A read-only handle on a file, read by range. Like a Node file
@@ -1009,28 +1020,31 @@ function nodeFsSource() {
     function fileHandle(path) {
       let position = 0;
       let closed = false;
-      const fd = nextFd++;
+      // Reads without a position take turns, so each starts where the last ended.
+      let turn = Promise.resolve();
       const ensureOpen = (syscall) => {
         if (closed) throw fsError("EBADF", "bad file descriptor", syscall, path);
       };
       const handle = {
-        fd,
+        fd: nextFd++,
         // read(), read(options), read(buffer, options) or
         // read(buffer, offset, length, position), as in Node.
         async read(bufferOrOptions, offsetOrOptions, length, at) {
           ensureOpen("read");
           let buffer = bufferOrOptions;
           let offset = offsetOrOptions;
-          if (buffer === undefined || buffer === null || !ArrayBuffer.isView(buffer)) {
+          if (!ArrayBuffer.isView(buffer)) {
+            if (!isOptions(buffer)) throw invalidBuffer();
             const options = buffer ?? {};
             buffer = options.buffer ?? new Uint8Array(16384);
+            if (!ArrayBuffer.isView(buffer)) throw invalidBuffer();
             offset = options.offset;
             length = options.length;
             at = options.position;
           } else if (offset !== null && typeof offset === "object") {
             ({ offset, length, position: at } = offset);
           }
-          const bytes = asBytes(buffer);
+          const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
           offset ??= 0;
           if (!Number.isSafeInteger(offset) || offset < 0 || offset > bytes.byteLength) {
             throw rangeError('The value of "offset" is out of range. It must be >= 0 && <= ' + bytes.byteLength + ". Received " + String(offset));
@@ -1039,12 +1053,19 @@ function nodeFsSource() {
           if (!Number.isSafeInteger(length) || length < 0 || length > bytes.byteLength - offset) {
             throw rangeError('The value of "length" is out of range. It must be >= 0 && <= ' + (bytes.byteLength - offset) + ". Received " + String(length));
           }
+          const target = bytes.subarray(offset, offset + length);
           const explicit = asPosition(at);
-          const from = explicit ?? position;
-          const bytesRead = length === 0 ? 0 : await readRange(path, bytes.subarray(offset, offset + length), from);
+          if (explicit !== null) {
+            return { bytesRead: length === 0 ? 0 : await readRange(path, target, explicit), buffer };
+          }
           // A read without a position moves the handle's on, as in Node.
-          if (explicit === null) position = from + bytesRead;
-          return { bytesRead, buffer };
+          const read = turn.then(async () => {
+            const bytesRead = length === 0 ? 0 : await readRange(path, target, position);
+            position += bytesRead;
+            return bytesRead;
+          });
+          turn = read.catch(() => undefined);
+          return { bytesRead: await read, buffer };
         },
         async stat() {
           ensureOpen("fstat");
@@ -1060,6 +1081,7 @@ function nodeFsSource() {
         },
         async close() {
           closed = true;
+          handle.fd = -1;
         },
         [Symbol.asyncDispose]() {
           return handle.close();
@@ -1070,8 +1092,11 @@ function nodeFsSource() {
     // Opens a file for reading by range: its handle's \`read\` takes a
     // position, and \`readableWebStream()\` streams it. Neither is bounded by
     // the size \`readFile\` is.
-    export const open = async (path, flags = "r") => {
-      if (flags !== "r" && flags !== undefined && flags !== null) {
+    export const open = async (path, flags = "r", mode) => {
+      if (typeof flags === "function" || typeof mode === "function") {
+        throw new TypeError("Workspace node:fs open returns a promise; it doesn't take a callback.");
+      }
+      if (flags !== "r" && flags !== 0 && flags !== undefined && flags !== null) {
         throw new TypeError('Workspace node:fs open supports only the "r" flag, for reading.');
       }
       const info = await invoke("stat", [path]);
@@ -1079,20 +1104,17 @@ function nodeFsSource() {
       return fileHandle(path);
     };
     const promises = { readFile, writeFile, mkdir, rm, chmod, symlink, readlink, readdir, stat, lstat, access, open };
-  `;
-}
-
-function nodeFsPromisesModule() {
-  return `${nodeFsSource()}
     export default promises;
   `;
 }
 
-// node:fs adds createReadStream. It gives a web ReadableStream of bytes
-// rather than a Node stream: \`for await\` and \`pipeTo\` both read it.
+// node:fs is node:fs/promises plus createReadStream, which gives a web
+// ReadableStream of bytes rather than a Node stream: \`for await\` and
+// \`pipeTo\` both read it.
 function nodeFsModule() {
-  return `${nodeFsSource()}
+  return `${nodeFsCallSource()}
     import nodeFsPromises from "node:fs/promises";
+    export * from "node:fs/promises";
     export const createReadStream = (path, options) => {
       const settings = typeof options === "string" ? { encoding: options } : options ?? {};
       if (settings.encoding !== undefined && settings.encoding !== null) {
@@ -1114,6 +1136,6 @@ function nodeFsModule() {
       return rangeStream(path, start, end === Infinity ? undefined : end + 1, chunkBytes);
     };
     export { nodeFsPromises as promises };
-    export default { ...promises, promises: nodeFsPromises, createReadStream };
+    export default { ...nodeFsPromises, promises: nodeFsPromises, createReadStream };
   `;
 }
