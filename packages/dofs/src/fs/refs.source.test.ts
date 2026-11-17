@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,6 +53,44 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
+// Staging bytes or reporting them present promises them to a link or
+// a peer that comes after an await. An unreferenced blob can be
+// reclaimed in between unless the caller pins it, defers reaps, or can
+// live with a retry, so every caller is listed here with how it copes.
+const RPC_SRC = fileURLToPath(new URL("../../../rpc/src", import.meta.url));
+const STAGING_CALL = /(?<![\w.])(stageBlob|hasObjects)\(/;
+const STAGING_CALLERS: Record<string, string> = {
+  "dofs:sync/blobs.ts": "defines stageBlob",
+  "dofs:sync/fetch.ts": "defines hasObjects, which pins what it reports present",
+  "dofs:fs/writeFile.ts": "streaming writeFile pins each staged window until it links",
+  "dofs:sync/apply.ts": "applyFileEntry stages and links in the same apply call",
+  // A blob lost between staging and the link fails the link-time
+  // check, and the sync engine retries the block.
+  "rpc:interface.ts": "declares the peer method",
+  "rpc:server.ts": "push receiver stages, then a later push links",
+  "rpc:sync-engine.ts": "pull stages before applyChanges",
+  "rpc:sync-driver.ts": "pull stages before applyChanges",
+};
+
+function stagingCallers(): string[] {
+  const found: string[] = [];
+  for (const [label, root] of [
+    ["dofs", SRC],
+    ["rpc", RPC_SRC],
+  ] as const) {
+    if (!existsSync(root)) continue;
+    for (const file of sourceFiles(root)) {
+      const rel = `${label}:${relative(root, file).split("\\").join("/")}`;
+      const code = readFileSync(file, "utf8")
+        .split("\n")
+        .filter((line) => !/^\s*(\/\/|\*)/.test(line))
+        .join("\n");
+      if (STAGING_CALL.test(code)) found.push(rel);
+    }
+  }
+  return found.filter((rel) => STAGING_CALLERS[rel] === undefined);
+}
+
 function offenders(): string[] {
   const found: string[] = [];
   for (const file of sourceFiles(SRC)) {
@@ -91,5 +129,11 @@ describe("reference choke points", () => {
 
   it("keeps every statement that drops a chunk or manifest reference in fs/refs.ts", () => {
     expect(offenders()).toEqual([]);
+  });
+
+  it("lists every caller that stages blobs or reports them present", () => {
+    expect(STAGING_CALL.test("stageBlob(db, hash, bytes, now)")).toBe(true);
+    expect(STAGING_CALL.test("await remote.hasObjects(hashes)")).toBe(false);
+    expect(stagingCallers()).toEqual([]);
   });
 });

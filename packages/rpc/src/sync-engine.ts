@@ -35,6 +35,7 @@ import {
   markBlockStarted,
   openOperation,
   PACK_THRESHOLD_BYTES,
+  pinObjects,
   PACK_THRESHOLD_ENTRIES,
   planBlock,
   pruneSkips,
@@ -749,77 +750,87 @@ async function runPushBlock(
 
   // Ship the bytes the receiver lacks before the entries that
   // reference them, so the receiver never sees an entry whose content
-  // it cannot resolve.
-  let bytes = 0;
-  if (planned.objects.length > 0) {
-    const have = new Set((await remote.hasObjects(planned.objects.map((o) => o.hash))).map(hex));
-    const missing = planned.objects.filter((o) => !have.has(hex(o.hash)));
-    if (missing.length > 0) {
-      const pending = [...missing];
-      const objectStream = new ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>({
-        pull(controller) {
-          const next = pending.shift();
-          if (next === undefined) {
-            controller.close();
-            return;
-          }
-          const row = db.one<{ bytes: Uint8Array }>(
-            "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
-            next.hash,
-          );
-          if (row === undefined) {
-            controller.error(new Error(`sync: missing local blob ${hex(next.hash)}`));
-            return;
-          }
-          bytes += row.bytes.byteLength;
-          controller.enqueue({ hash: next.hash, bytes: row.bytes });
-        },
-      });
-      await remote.pushObjects(objectStream);
+  // it cannot resolve. The object stream reads bytes as the receiver
+  // pulls them, so pin them for the rest of the block: a local write in
+  // the meantime could otherwise reclaim one the plan still names.
+  const pin = pinObjects(
+    db,
+    planned.objects.map((o) => o.hash),
+  );
+  try {
+    let bytes = 0;
+    if (planned.objects.length > 0) {
+      const have = new Set((await remote.hasObjects(planned.objects.map((o) => o.hash))).map(hex));
+      const missing = planned.objects.filter((o) => !have.has(hex(o.hash)));
+      if (missing.length > 0) {
+        const pending = [...missing];
+        const objectStream = new ReadableStream<{ hash: Uint8Array; bytes: Uint8Array }>({
+          pull(controller) {
+            const next = pending.shift();
+            if (next === undefined) {
+              controller.close();
+              return;
+            }
+            const row = db.one<{ bytes: Uint8Array }>(
+              "SELECT bytes FROM vfs_blob_bytes WHERE hash = ?",
+              next.hash,
+            );
+            if (row === undefined) {
+              controller.error(new Error(`sync: missing local blob ${hex(next.hash)}`));
+              return;
+            }
+            bytes += row.bytes.byteLength;
+            controller.enqueue({ hash: next.hash, bytes: row.bytes });
+          },
+        });
+        await remote.pushObjects(objectStream);
+      }
     }
+
+    const entryStream = new ReadableStream<ChangeEntry>({
+      start(controller) {
+        for (const entry of planned.entries) controller.enqueue(entry);
+        controller.close();
+      },
+    });
+
+    const response = await remote.push({
+      senderRev: target.rev,
+      senderCursor: planned.cursor,
+      changes: entryStream,
+    });
+
+    // The receiver's echoed cursor is the authority. assertAppliedPushCursor
+    // refuses an acknowledgment that does not cover what we sent, so a
+    // confused peer cannot advance us past unapplied entries.
+    assertAppliedPushCursor(response.appliedPushCursor, planned.cursor);
+
+    if (compareChangeCursors(planned.cursor, after) > 0) {
+      writePushCursor(db, planned.cursor, backend);
+    }
+    clearBlockMarker(db, backend, "push", operation.generation, now());
+
+    const complete = compareChangeCursors(planned.cursor, target) >= 0;
+    if (complete) {
+      completeOperation(db, backend, "push", operation.generation);
+    }
+
+    return {
+      operationId: operation.generation,
+      generation: operation.generation,
+      backend,
+      direction: "push",
+      mode: operation.mode ?? "entries",
+      cursor: planned.cursor,
+      targetCursor: target,
+      entries: planned.entries.length,
+      bytes,
+      skipped: 0,
+      complete,
+    };
+  } finally {
+    pin.release();
   }
-
-  const entryStream = new ReadableStream<ChangeEntry>({
-    start(controller) {
-      for (const entry of planned.entries) controller.enqueue(entry);
-      controller.close();
-    },
-  });
-
-  const response = await remote.push({
-    senderRev: target.rev,
-    senderCursor: planned.cursor,
-    changes: entryStream,
-  });
-
-  // The receiver's echoed cursor is the authority. assertAppliedPushCursor
-  // refuses an acknowledgment that does not cover what we sent, so a
-  // confused peer cannot advance us past unapplied entries.
-  assertAppliedPushCursor(response.appliedPushCursor, planned.cursor);
-
-  if (compareChangeCursors(planned.cursor, after) > 0) {
-    writePushCursor(db, planned.cursor, backend);
-  }
-  clearBlockMarker(db, backend, "push", operation.generation, now());
-
-  const complete = compareChangeCursors(planned.cursor, target) >= 0;
-  if (complete) {
-    completeOperation(db, backend, "push", operation.generation);
-  }
-
-  return {
-    operationId: operation.generation,
-    generation: operation.generation,
-    backend,
-    direction: "push",
-    mode: operation.mode ?? "entries",
-    cursor: planned.cursor,
-    targetCursor: target,
-    entries: planned.entries.length,
-    bytes,
-    skipped: 0,
-    complete,
-  };
 }
 
 async function nextPushBlock(

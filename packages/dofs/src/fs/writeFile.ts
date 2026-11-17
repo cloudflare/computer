@@ -10,6 +10,7 @@ import { pathOf } from "../sync/paths";
 import { getBlobBytes } from "./blobCache";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { pinHashes } from "./pins";
 import { dropChunks, linkChunk, replaceChunk, setNodeManifest } from "./refs";
 import { resolveInode } from "./resolve";
 import { invalidateResolveExact } from "./resolveCache";
@@ -332,8 +333,10 @@ export async function writeFile(
 // {hash, size} entries that's O(file_size / CHUNK_SIZE) bytes — not
 // O(file_size).
 //
-// Failure mid-stream leaves blob rows behind; gc() reaps orphans on
-// its next pass since no node references them.
+// Staged windows stay pinned until the final transaction links them,
+// since nothing references them before then. Failure mid-stream leaves
+// blob rows behind; gc() reaps orphans on its next pass since no node
+// references them.
 async function writeFileStreaming(
   db: Database,
   path: string,
@@ -353,16 +356,31 @@ async function writeFileStreaming(
   const mtime = now();
 
   const chunkRefs: Array<{ hash: Uint8Array; size: number }> = [];
-  // Carry-over buffer: bytes left over from the previous source chunk
-  // that didn't fill a CHUNK_SIZE window.
-  let carry: Uint8Array | undefined;
-
+  const staged = pinHashes(db, []);
   const flush = (chunk: Uint8Array): void => {
     const hash = sha256(chunk);
+    staged.add(hash);
     stageBlob(db, hash, chunk, mtime);
     chunkRefs.push({ hash, size: chunk.byteLength });
   };
 
+  try {
+    await stageSource(source, flush);
+    linkStagedChunksSync(db, canonical, parts, chunkRefs, { ...options, mode }, mtime);
+  } finally {
+    staged.release();
+  }
+}
+
+// Read `source` and hand it to `flush` in CHUNK_SIZE windows, the last
+// one possibly shorter.
+async function stageSource(
+  source: ReadableStream<Uint8Array>,
+  flush: (chunk: Uint8Array) => void,
+): Promise<void> {
+  // Carry-over buffer: bytes left over from the previous source chunk
+  // that didn't fill a CHUNK_SIZE window.
+  let carry: Uint8Array | undefined;
   const reader = source.getReader();
   try {
     while (true) {
@@ -397,8 +415,6 @@ async function writeFileStreaming(
   if (carry !== undefined && carry.byteLength > 0) {
     flush(carry);
   }
-
-  linkStagedChunksSync(db, canonical, parts, chunkRefs, { ...options, mode }, mtime);
 }
 
 // Reject a chunk list that positional reads could not address.
