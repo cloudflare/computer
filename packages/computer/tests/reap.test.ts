@@ -171,20 +171,14 @@ describe("reaping through a Workspace in a Durable Object", () => {
     expect((await ws.stats()).dangling).toBe(0);
   });
 
-  it("cannot receive a push on a Durable Object, because the receiver nests transactions", async () => {
-    // The rpc receiver wraps applyChangesSync in transactionSync, and
-    // dofs runs the nested transactions inside it as SAVEPOINT
-    // statements, which Durable Object storage rejects. The receiver
-    // runs in computerd in production, never in a Durable Object; this
-    // records the limitation rather than hiding it.
+  it("pushes to a Durable Object whose receiver nests transactions", async () => {
     const ws = host(unique("push"));
     const peerName = unique("receiver");
+    const peer = env.PEER.get(env.PEER.idFromName(peerName));
     await ws.usePeer(peerName);
     await ws.write("/pushed.txt", "to the peer");
 
-    const result = await ws.push();
-
-    if (result.ok) throw new Error("the push unexpectedly succeeded");
-    expect(result.message).toMatch(/SAVEPOINT|state\.storage\.transaction/);
+    await expect(ws.push()).resolves.toEqual({ ok: true });
+    expect(await peer.read("/pushed.txt")).toBe("to the peer");
   });
 });
