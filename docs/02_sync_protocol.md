@@ -493,8 +493,10 @@ edited file) shows up exactly once on the wire. See
 - **Container crash mid-apply.** `push` is atomic from the DO's
   perspective on the receiver: the server wraps the whole batch in a
   single `db.transactionSync` via the synchronous `applyChangesSync`
-  helper. `Database.transactionSync` is reentrant via SQLite SAVEPOINTs
-  so the inner fs writes still get their own per-mutation atomicity
+  helper. `Database.transactionSync` is reentrant: nested calls go to
+  the storage adapter's own `transactionSync`, which runs them as
+  savepoints on Durable Object storage and in `NodeSQLiteStorage`, so
+  the inner fs writes still get their own per-mutation atomicity
   inside the outer transaction. A mid-stream failure (e.g. a missing
   chunk in the assembly step) rolls back every entry the batch had
   applied so far; the receiver never sees a partial push. The pull

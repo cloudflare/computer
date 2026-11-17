@@ -147,9 +147,8 @@ describe("resolve cache + CTE resolve", () => {
 
       // A mutation is (structural write + cache invalidation) inside one
       // transaction. This drives that shape with raw statements at a
-      // single transaction level — the DO backend forbids the nested
-      // savepoints an outer db.transactionSync around an fs op would use,
-      // and the cache's rollback-safety is backend-independent anyway.
+      // single transaction level; the cache's rollback-safety does not
+      // depend on how deep the transaction is nested.
 
       // Rolled-back delete: the invalidation drops the entry mid-txn; the
       // rollback restores the dirent; the recompute finds it alive again

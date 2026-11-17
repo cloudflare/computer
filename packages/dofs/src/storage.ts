@@ -3,20 +3,24 @@ import type { DurableObjectStorageLike, SQLStorageLike } from "./types";
 export class Database {
   readonly sql: SQLStorageLike;
   readonly transactionSync: <T>(closure: () => T) => T;
-  // Depth counter so reentrant transactionSync() calls work. The
-  // outer call uses the storage adapter's transactionSync (or
-  // BEGIN/COMMIT under the hood); nested calls use SAVEPOINTs
-  // through sql.exec directly. SQLite forbids a real BEGIN inside
-  // an active transaction.
+  // Depth counter for transactionSync calls on the stack. Every call,
+  // nested or not, goes to the storage adapter's transactionSync when it
+  // has one: Durable Object storage and NodeSQLiteStorage both run a call
+  // inside another as a savepoint, so an inner throw rolls back only the
+  // inner work. Durable Object storage refuses SAVEPOINT statements
+  // issued through sql.exec, which is why nested calls cannot issue them
+  // here. Only an adapter without transactionSync gets SAVEPOINTs from
+  // this class, since SQLite forbids a real BEGIN inside an active
+  // transaction.
   #txDepth = 0;
 
   constructor(storage: DurableObjectStorageLike) {
     this.sql = storage.sql;
     this.transactionSync = <T>(closure: () => T): T => {
-      if (this.#txDepth > 0) {
-        // Reentrant call: use a savepoint. SQLite's RELEASE on a
-        // savepoint inside an outer transaction commits the inner
-        // work without ending the outer one.
+      if (this.#txDepth > 0 && storage.transactionSync === undefined) {
+        // Reentrant call on an adapter that cannot nest: use a savepoint.
+        // SQLite's RELEASE on a savepoint inside an outer transaction
+        // commits the inner work without ending the outer one.
         const sp = `_t${this.#txDepth}`;
         this.sql.exec(`SAVEPOINT ${sp}`);
         this.#txDepth++;
@@ -32,11 +36,11 @@ export class Database {
           this.#txDepth--;
         }
       }
-      // Outer call: hand off to the storage adapter so the DO
-      // runtime's transaction semantics apply.
       this.#txDepth++;
       try {
         if (storage.transactionSync !== undefined) {
+          // Outer or nested: the adapter's own semantics apply, including
+          // the Durable Object runtime's.
           return storage.transactionSync(closure);
         }
         if (storage.transaction !== undefined) {
