@@ -9,6 +9,44 @@ import type { Database } from "../storage";
 // that question in one place; fs/refs.source.test.ts fails the build
 // when one appears anywhere else.
 
+interface RefState {
+  // Open reap deferral scopes. See openReapDeferral.
+  deferDepth: number;
+}
+
+const states = new WeakMap<Database, RefState>();
+
+function stateFor(db: Database): RefState {
+  let state = states.get(db);
+  if (state === undefined) {
+    state = { deferDepth: 0 };
+    states.set(db, state);
+  }
+  return state;
+}
+
+// Hold off reclaiming content until close(). Sync apply removes and
+// links in separate transactions: a rename arrives as a delete of the
+// old path and a file at the new one, so the delete drops the last
+// reference to content the next entry links. Inside the scope nothing
+// is reclaimed, and close() on the last open scope catches up.
+export function openReapDeferral(db: Database): { close(): void } {
+  const state = stateFor(db);
+  state.deferDepth++;
+  let open = true;
+  return {
+    close() {
+      if (!open) return;
+      open = false;
+      state.deferDepth--;
+    },
+  };
+}
+
+export function reapsDeferred(db: Database): boolean {
+  return (states.get(db)?.deferDepth ?? 0) > 0;
+}
+
 export interface FileNodeFields {
   mode: number;
   mtime: number;
