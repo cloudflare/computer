@@ -252,7 +252,7 @@ async function pullOnceImpl(
               while (true) {
                 const { value, done } = await bytesReader.read();
                 if (done) break;
-                stageBlob(db, value.hash, value.bytes, Date.now());
+                stageBlob(db, value.hash, value.bytes);
               }
             } finally {
               bytesReader.releaseLock();

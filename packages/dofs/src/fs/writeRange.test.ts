@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import type { Database } from "../storage";
 import { link } from "./link";
@@ -145,6 +145,11 @@ describe("direct range writes", () => {
   });
 
   it("skips rewriting untouched chunks on a small range write", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1000);
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     await withDB(async (db) => {
       const original = new Uint8Array(CHUNK_SIZE * 3);
       original.fill(1, 0, CHUNK_SIZE);
@@ -152,13 +157,14 @@ describe("direct range writes", () => {
       original.fill(3, CHUNK_SIZE * 2, CHUNK_SIZE * 3);
       writeFileSync(db, "/large.bin", original, {}, () => 1000);
 
-      // Touch only the middle chunk, at a later mtime.
+      // Touch only the middle chunk, later.
+      vi.setSystemTime(1001);
       writeRangeSync(db, "/large.bin", new Uint8Array([7]), CHUNK_SIZE + 10, {}, () => 1001);
 
       // applyChunkedInodeUpdate skips SQL entirely for unchanged chunks,
       // so their blobs are never re-upserted and keep the original
       // last_seen; only the rewritten middle chunk's blob is stamped with
-      // the new mtime. (vfs_chunks is WITHOUT ROWID, so there is no rowid
+      // the later time. (vfs_chunks is WITHOUT ROWID, so there is no rowid
       // to watch. last_seen is bumped only by upsertChunkBlob, so an
       // unchanged last_seen proves the chunk row was skipped.)
       const rows = chunkRows(db, "/large.bin");

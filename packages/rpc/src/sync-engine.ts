@@ -282,7 +282,7 @@ async function runPullPackBlock(
   // missing bytes.
   let bytes = 0;
   for (const [key, payload] of decoded.objects) {
-    stageBlob(db, hexToBytes(key), payload, now());
+    stageBlob(db, hexToBytes(key), payload);
     bytes += payload.byteLength;
   }
 
@@ -527,7 +527,7 @@ async function runPullBlock(
           if (done) break;
           // Stage before apply so a crash between the two replays as a
           // no-op rather than as a missing object.
-          stageBlob(db, value.hash, value.bytes, now());
+          stageBlob(db, value.hash, value.bytes);
         }
       } finally {
         objectReader.releaseLock();

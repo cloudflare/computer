@@ -10,7 +10,7 @@ import { pinHashes } from "./pins";
 import { readFile } from "./readFile";
 import { openReapDeferral, SWEEP_GRACE_MS, SWEEP_ROWS_PER_WRITE } from "./refs";
 import { withDB } from "./with-db";
-import { writeFileSync } from "./writeFile";
+import { CHUNK_SIZE, writeFile, writeFileSync } from "./writeFile";
 
 const NOW = (): number => 1000;
 const HOUR = 60 * 60 * 1000;
@@ -25,11 +25,16 @@ function count(db: Database, table: string): number {
 
 // Leave an unreferenced blob and manifest behind, the way an abandoned
 // sync, a failed streaming write or an older release did.
+// last_seen is the wall clock at staging, so the clock is set to
+// `lastSeen` for the staging and put back afterwards.
 function leaveOrphan(db: Database, label: string, lastSeen: number): Uint8Array {
   const bytes = new TextEncoder().encode(`orphan ${label}`);
   const hash = sha256(bytes);
-  stageBlob(db, hash, bytes, lastSeen);
-  db.transactionSync(() => buildManifest(db, [{ hash, size: bytes.byteLength }], lastSeen));
+  const now = Date.now();
+  vi.setSystemTime(lastSeen);
+  stageBlob(db, hash, bytes);
+  db.transactionSync(() => buildManifest(db, [{ hash, size: bytes.byteLength }]));
+  vi.setSystemTime(now);
   return hash;
 }
 
@@ -111,16 +116,15 @@ describe("incremental sweep", () => {
     });
   });
 
-  it("does not sweep while reaps are deferred", async () => {
+  it("keeps sweeping while a sync apply is open", async () => {
     await withDB((db) => {
-      const staged = leaveOrphan(db, "about to link", Date.now() - 2 * HOUR);
+      // Staging is stamped with the wall clock, so an apply in progress
+      // does not need the sweep to stand still.
+      const old = leaveOrphan(db, "long abandoned", Date.now() - 2 * HOUR);
       const deferral = openReapDeferral(db);
       for (let i = 0; i < 20; i++) write(db);
-      expect(hasBlob(db, staged)).toBe(true);
+      expect(hasBlob(db, old)).toBe(false);
       deferral.close();
-
-      for (let i = 0; i < 20; i++) write(db);
-      expect(hasBlob(db, staged)).toBe(false);
     });
   });
 
@@ -140,6 +144,65 @@ describe("incremental sweep", () => {
 
       for (let i = 0; i < 20; i++) write(db);
       expect(hasBlob(db, hash)).toBe(false);
+    });
+  });
+});
+
+// A streaming write whose source fails after one full window, leaving
+// that window staged and never linked.
+async function abandonStreamingWrite(
+  db: Database,
+  fill: number,
+  now: () => number,
+): Promise<Uint8Array> {
+  const window = new Uint8Array(CHUNK_SIZE).fill(fill);
+  let sent = 0;
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent++ === 0) controller.enqueue(window);
+      else controller.error(new Error("source broke"));
+    },
+  });
+  await expect(writeFile(db, `/abandoned-${fill}`, source, {}, now)).rejects.toThrow(
+    "source broke",
+  );
+  return sha256(window);
+}
+
+describe("last_seen", () => {
+  it("is the wall clock when dofs wrote the row, whatever clock the write was given", async () => {
+    await withDB((db) => {
+      const bytes = new TextEncoder().encode("stamped");
+      writeFileSync(db, "/a.txt", bytes, {}, () => 1);
+      const staged = new TextEncoder().encode("staged");
+      stageBlob(db, sha256(staged), staged);
+
+      const blobs = db.all<{ last_seen: number }>("SELECT last_seen FROM vfs_blobs");
+      const manifests = db.all<{ last_seen: number }>("SELECT last_seen FROM vfs_manifests");
+      expect(blobs.map((row) => row.last_seen)).toEqual([Date.now(), Date.now()]);
+      expect(manifests.map((row) => row.last_seen)).toEqual([Date.now()]);
+    });
+  });
+
+  it("sweeps abandoned staging from a writer whose clock runs ahead", async () => {
+    await withDB(async (db) => {
+      const tenYears = 10 * 365 * 24 * HOUR;
+      const staged = await abandonStreamingWrite(db, 1, () => Date.now() + tenYears);
+
+      vi.advanceTimersByTime(SWEEP_GRACE_MS + 1);
+      for (let i = 0; i < 20; i++) write(db);
+
+      expect(hasBlob(db, staged)).toBe(false);
+    });
+  });
+
+  it("keeps fresh staging from a writer whose clock runs behind", async () => {
+    await withDB(async (db) => {
+      const staged = await abandonStreamingWrite(db, 2, () => 1);
+
+      for (let i = 0; i < 20; i++) write(db);
+
+      expect(hasBlob(db, staged)).toBe(true);
     });
   });
 });
