@@ -1,0 +1,12 @@
+{
+  // Test-only worker for the rpc push receiver in a Durable Object. Not
+  // deployed.
+  "name": "computer-sync-receiver",
+  "main": "./sync-receiver-worker.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "RECEIVER", "class_name": "Receiver" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Receiver"] }]
+}
