@@ -131,26 +131,22 @@ describe("node manifest helpers", () => {
 });
 
 describe("reap deferral", () => {
-  it("stays open until every scope that opened it closes", async () => {
+  it("defers reaps only inside hold", async () => {
     await withDB((db) => {
+      const deferral = openReapDeferral(db);
       expect(reapsDeferred(db)).toBe(false);
-      const outer = openReapDeferral(db);
-      const inner = openReapDeferral(db);
-      inner.close();
-      expect(reapsDeferred(db)).toBe(true);
-      outer.close();
+      const inside = deferral.hold(() => reapsDeferred(db));
+      expect(inside).toBe(true);
       expect(reapsDeferred(db)).toBe(false);
+      deferral.close();
     });
   });
 
-  it("ignores a second close of the same scope", async () => {
+  it("ignores a second close", async () => {
     await withDB((db) => {
-      const outer = openReapDeferral(db);
-      const inner = openReapDeferral(db);
-      inner.close();
-      inner.close();
-      expect(reapsDeferred(db)).toBe(true);
-      outer.close();
+      const deferral = openReapDeferral(db);
+      deferral.close();
+      expect(() => deferral.close()).not.toThrow();
     });
   });
 });
