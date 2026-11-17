@@ -10,6 +10,7 @@ import { pathOf } from "../sync/paths";
 import { getBlobBytes } from "./blobCache";
 import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
+import { dropChunks, linkChunk, replaceChunk, setNodeManifest } from "./refs";
 import { resolveInode } from "./resolve";
 import { invalidateResolveExact } from "./resolveCache";
 import {
@@ -442,19 +443,13 @@ export function linkStagedChunksSync(
     const target = resolveWriteTarget(db, parts, canonical, options);
     const inode = target.kind === "existing" ? target.inode : insertFileNode(db, mode, mtime);
     if (target.kind === "existing") {
-      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+      dropChunks(db, inode);
     } else {
       insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);
     }
     for (let idx = 0; idx < chunkRefs.length; idx++) {
       const ref = chunkRefs[idx];
-      db.run(
-        "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
-        inode,
-        idx,
-        ref.hash,
-        ref.size,
-      );
+      linkChunk(db, inode, idx, ref.hash, ref.size);
     }
     // Referenced chunks cannot be collected, so last_seen only protects
     // blobs during the staging window before this transaction.
@@ -462,15 +457,7 @@ export function linkStagedChunksSync(
     const rev = incrementRev(db);
     let totalSize = 0;
     for (const ref of chunkRefs) totalSize += ref.size;
-    db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
-      mode,
-      mtime,
-      rev,
-      totalSize,
-      manifestHash,
-      inode,
-    );
+    setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: totalSize });
   });
 }
 
@@ -531,16 +518,10 @@ function replaceChunkRows(
   chunks: ChunkRef[],
   manifestTime: number,
 ): Uint8Array {
-  db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+  dropChunks(db, inode);
   for (let idx = 0; idx < chunks.length; idx++) {
     const chunk = chunks[idx];
-    db.run(
-      "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
-      inode,
-      idx,
-      chunk.hash,
-      chunk.size,
-    );
+    linkChunk(db, inode, idx, chunk.hash, chunk.size);
   }
   return buildManifest(db, chunks, manifestTime);
 }
@@ -671,29 +652,16 @@ function applyChunkedInodeUpdate(
     }
     const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
     upsertChunkBlob(db, chunk, mtime);
-    db.run(
-      "INSERT OR REPLACE INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
-      inode,
-      idx,
-      chunk.hash,
-      chunk.size,
-    );
+    replaceChunk(db, inode, idx, chunk.hash, chunk.size, old?.hash);
   }
 
   // Drop any old chunks past the new end of file (shrink case).
   if (oldChunkCount > chunkCount) {
-    db.run("DELETE FROM vfs_chunks WHERE inode = ? AND idx >= ?", inode, chunkCount);
+    dropChunks(db, inode, chunkCount);
   }
 
   const rev = incrementRev(db);
-  db.run(
-    "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = NULL WHERE inode = ?",
-    mode,
-    mtime,
-    rev,
-    size,
-    inode,
-  );
+  setNodeManifest(db, inode, null, { mode, mtime, rev, size });
 }
 
 export function createFileSync(
@@ -836,15 +804,9 @@ export function releaseWriteBufferSync(db: Database, path: string, now: () => nu
       if (entry.size === 0) {
         // An empty file owns no chunk rows; clear any old ones the
         // buffer would otherwise have replaced and bump metadata.
-        db.run("DELETE FROM vfs_chunks WHERE inode = ?", node.inode);
+        dropChunks(db, node.inode);
         const rev = incrementRev(db);
-        db.run(
-          "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
-          mode,
-          mtime,
-          rev,
-          node.inode,
-        );
+        setNodeManifest(db, node.inode, null, { mode, mtime, rev, size: 0 });
         return;
       }
       applyChunkedInodeUpdate(
@@ -924,13 +886,7 @@ function commitPendingBuffer(db: Database, entry: WriteBufferEntry, now: () => n
             size: chunkBytes.byteLength,
           };
           upsertChunkBlob(db, chunk, mtime);
-          db.run(
-            "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
-            inode,
-            idx,
-            chunk.hash,
-            chunk.size,
-          );
+          linkChunk(db, inode, idx, chunk.hash, chunk.size);
         }
       }
       realInode = row.inode;
@@ -1142,15 +1098,9 @@ export function truncateFileSync(
     if (oldSize === size) return;
 
     if (size === 0) {
-      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+      dropChunks(db, inode);
       const rev = incrementRev(db);
-      db.run(
-        "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = 0, manifest_hash = NULL WHERE inode = ?",
-        mode,
-        mtime,
-        rev,
-        inode,
-      );
+      setNodeManifest(db, inode, null, { mode, mtime, rev, size: 0 });
       return;
     }
 
@@ -1194,7 +1144,7 @@ export function writeFileSync(
     if (target.kind === "existing") {
       // Replace the existing representation. Orphaned blobs (if any)
       // are cleaned up by a later gc() pass.
-      db.run("DELETE FROM vfs_chunks WHERE inode = ?", inode);
+      dropChunks(db, inode);
     } else {
       insertFileDirent(db, target.parentInode, target.leafName, inode, target.canonicalPath);
     }
@@ -1205,25 +1155,11 @@ export function writeFileSync(
     for (let idx = 0; idx < chunks.length; idx++) {
       const chunk = chunks[idx];
       upsertChunkBlob(db, chunk, mtime);
-      db.run(
-        "INSERT INTO vfs_chunks (inode, idx, hash, size) VALUES (?, ?, ?, ?)",
-        inode,
-        idx,
-        chunk.hash,
-        chunk.size,
-      );
+      linkChunk(db, inode, idx, chunk.hash, chunk.size);
     }
 
     const manifestHash = buildManifest(db, chunks, mtime);
-    db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
-      mode,
-      mtime,
-      rev,
-      bytes.byteLength,
-      manifestHash,
-      inode,
-    );
+    setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: bytes.byteLength });
   });
 }
 
@@ -1275,14 +1211,6 @@ export function writeFileRangesSync(
     }
 
     const manifestHash = replaceChunkRows(db, inode, nextChunks, mtime);
-    db.run(
-      "UPDATE vfs_nodes SET mode = ?, mtime = ?, rev = ?, size = ?, manifest_hash = ? WHERE inode = ?",
-      mode,
-      mtime,
-      rev,
-      bytes.byteLength,
-      manifestHash,
-      inode,
-    );
+    setNodeManifest(db, inode, manifestHash, { mode, mtime, rev, size: bytes.byteLength });
   });
 }

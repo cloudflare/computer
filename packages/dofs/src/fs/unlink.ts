@@ -1,4 +1,5 @@
 import type { Database } from "../storage";
+import { deleteNode, dropChunks } from "./refs";
 
 type NodeType = "file" | "dir" | "symlink";
 
@@ -9,7 +10,7 @@ type NodeType = "file" | "dir" | "symlink";
 // reaped, false when other links keep it alive.
 //
 // Callers own rev bumps and tombstones; this helper touches only
-// vfs_dirents, vfs_chunks, and vfs_nodes. It is the single place the
+// vfs_dirents, and vfs_chunks and vfs_nodes through fs/refs.ts. It is the single place the
 // refcount-gated reap is implemented — rm, rename, and the sync apply
 // path all funnel through here so the invariant lives once.
 export function unlinkDirent(
@@ -27,8 +28,8 @@ export function unlinkDirent(
   if ((remaining ?? 0) > 0) return false;
 
   if (type === "file") {
-    db.run("DELETE FROM vfs_chunks WHERE inode = ?", childInode);
+    dropChunks(db, childInode);
   }
-  db.run("DELETE FROM vfs_nodes WHERE inode = ?", childInode);
+  deleteNode(db, childInode);
   return true;
 }
