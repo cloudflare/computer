@@ -51,6 +51,7 @@ function decodeLatin1ToUtf8(b: string): string {
 }
 
 import type { GitCliInput, GitCliResult } from "../../git/index";
+import { runGitCommand } from "../workspace-commands";
 
 /** Structural subset of the host stub the command needs. */
 export interface GitCommandHost {
@@ -81,29 +82,14 @@ export function defineGitCommand(ws: GitCommandHost): CustomCommand {
     const env: Record<string, string> = {};
     for (const [k, v] of ctx.env) env[k] = v;
 
-    try {
-      const result = await ws.git.cli({
-        argv: args,
-        cwd: ctx.cwd,
-        env,
-        // ByteString is structurally a string; the opaque tag is
-        // type-only. Cast through unknown to satisfy the decoder.
-        stdin: decodeLatin1ToUtf8(ctx.stdin as unknown as string),
-      });
-      return {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      };
-    } catch (cause) {
-      // The CLI dispatcher catches its own subcommand failures and
-      // returns them as { exitCode: 1 } results. A throw here means
-      // the RPC itself failed (transport hiccup, host stub gone) —
-      // surface that as exit 1 with the message on stderr so the
-      // shell sees a normal command failure rather than crashing
-      // the whole pipeline.
-      const message = cause instanceof Error ? cause.message : String(cause);
-      return { stdout: "", stderr: `git: ${message}\n`, exitCode: 1 };
-    }
+    // ByteString is structurally a string; the opaque tag is
+    // type-only. Cast through unknown to satisfy the decoder.
+    return runGitCommand(
+      ws.git,
+      args,
+      ctx.cwd,
+      env,
+      decodeLatin1ToUtf8(ctx.stdin as unknown as string),
+    );
   });
 }

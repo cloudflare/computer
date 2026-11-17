@@ -285,7 +285,9 @@ plaintext when it is minted; it is not retrievable afterward.
 The worker backend's shell isolate always exposes an `artifacts`
 command. The command forwards through the `WorkspaceStub` returned by
 `getWorkspace()` and calls `workspace.artifacts.cli(...)`, matching
-the built-in `git` command's `workspace.git.cli(...)` path.
+the built-in `git` command's `workspace.git.cli(...)` path. The
+Kitebuild backend's shell has the same `artifacts` command; see
+[20. Kitebuild backend](./21_kitebuild_backend.md#assets-and-artifacts).
 
 A host durable object wires the command by passing its
 `env.ARTIFACTS` binding to `Workspace`:

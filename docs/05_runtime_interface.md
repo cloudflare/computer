@@ -165,6 +165,8 @@ Module backends use host capability calls against the authoritative Workspace an
 
 `codemode` provides a Workspace-owned execution journal, retained result/events, host cancellation, and explicit disposal. Active Workers cannot be serialized across host restart; orphaned running records are reconciled to failed.
 
-`worker-shell` intentionally preserves one-call, buffered-result behavior in this release. It does not retain executions for later reattachment or disposal. `timeoutMs` and a concurrent `killExec()` for a caller-supplied execution ID cooperatively abort just-bash at statement boundaries; by the time an ordinary `exec()` promise returns, the command has already settled. Use the Container or JavaScript isolate when detached execution and retained lifecycle are required.
+`kitebuild` streams output while a command runs and keeps each execution's events in Workspace SQLite, so `getExec` replays it after the handle is gone or the Durable Object restarts, and `killExec` signals its process group. A command still running when the object restarts is lost with the machine and replays as failed. See [20. Kitebuild backend](./21_kitebuild_backend.md#limits).
+
+`worker-shell` intentionally preserves one-call, buffered-result behavior in this release. It does not retain executions for later reattachment or disposal. `timeoutMs` and a concurrent `killExec()` for a caller-supplied execution ID cooperatively abort just-bash at statement boundaries; by the time an ordinary `exec()` promise returns, the command has already settled. Use the Container, Kitebuild or JavaScript isolate backend when detached execution and retained lifecycle are required.
 
 See [16. Execution runtime architecture](./16_code_execution.md) and [17. Isolate JavaScript](./17_isolate_javascript.md).

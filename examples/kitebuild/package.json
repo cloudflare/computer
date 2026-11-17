@@ -1,0 +1,22 @@
+{
+  "name": "@example/computer-kitebuild",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Worker + Durable Object that runs shell commands on a Kitebuild machine in the Workspace's own Durable Object, via @cloudflare/computer's KitebuildBackend.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "build:types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*",
+    "@cloudflare/kitebuild-core": "^0.0.7",
+    "@cloudflare/kitebuild-git": "^0.0.11"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "wrangler": "^4.148.0"
+  }
+}

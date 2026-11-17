@@ -1,0 +1,52 @@
+{
+  // Example: a Vite-built Worker whose Workspace runs shell commands,
+  // JavaScript modules and Kitebuild's toolchain on a Kitebuild machine,
+  // with a pi agent on top. vite.config.ts builds it; BusyBox, its
+  // initramfs and the tools' wasm reach the Worker as wasm imports.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "computer-kitebuild-agent-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // new_module_registry lets the tools load their wasm on first use.
+  "compatibility_flags": ["nodejs_compat", "new_module_registry"],
+
+  // The page in index.html and ui/, built by Vite. Requests that match
+  // no file, such as /c/<name>/..., go to the Worker.
+  "assets": { "not_found_handling": "none" },
+
+  // Workers AI. Running the agent uses your account's Workers AI quota.
+  "ai": { "binding": "AI" },
+
+  // The toolchain runs package code in Worker Loader isolates.
+  "worker_loaders": [{ "binding": "LOADER" }],
+
+  // The package cache keeps downloaded npm tarballs in the Cache API.
+  "exports": {
+    "PackageCacheOrigin": { "type": "worker", "cache": { "enabled": true } }
+  },
+
+  // KV, R2 and D1 for Vitest specs, which reach this Worker's own
+  // RemoteBindingOrigin. A spec isolate cannot be handed ctx.exports,
+  // so the hop is a declared service binding.
+  "services": [
+    {
+      "binding": "KB_REMOTE",
+      "service": "computer-kitebuild-agent-example",
+      "entrypoint": "RemoteBindingOrigin"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "Agent", "class_name": "Agent" },
+      { "name": "KV_HOST", "class_name": "KvHost" },
+      { "name": "R2_HOST", "class_name": "R2Host" },
+      { "name": "D1_HOST", "class_name": "D1Host" }
+    ]
+  },
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Agent"] },
+    { "tag": "v2", "new_sqlite_classes": ["KvHost", "R2Host", "D1Host"] }
+  ]
+}

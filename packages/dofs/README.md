@@ -54,6 +54,13 @@ export class WorkspaceDO extends DurableObject {
   regular expressions or fixed strings, explicit case handling, and numbered
   context lines.
 - `SQLiteWorkspaceProvider` (the `@platformatic/vfs` adapter) implemented and exported from the package entrypoint; consumed by `@cloudflare/computerd`.
+- `readdirStats` (and `readdirStatsSync` on the provider) lists a
+  directory with each entry's inode, type, mode, size, modification
+  time, link count and symlink target in one statement, for callers
+  that keep their own tree and would otherwise `lstat` every name.
+- `utimes` (and `utimesSync` on the provider) sets a path's
+  modification time, following symlinks. A file with an open write
+  buffer commits that time at release unless written again first.
 - Buffered-write surface for the FUSE driver: `createFileSync`,
   `writeRangeSync`, `truncateFileSync`, `readRangeSync`, `chmodSync`,
   `openWriteBufferSync`, `openWriteBufferForCreateSync`, and

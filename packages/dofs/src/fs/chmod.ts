@@ -4,6 +4,7 @@ import { incrementRev } from "../rev";
 import type { Database } from "../storage";
 import { assertNotReadOnly } from "./mount-guard";
 import { resolveInode } from "./resolve";
+import { getWriteBuffer } from "./writeBuffer";
 
 // Change the file mode bits of a path. Follows symlinks like POSIX
 // chmod — the change lands on the target, not the link. Bumps rev
@@ -30,5 +31,8 @@ export function chmod(db: Database, path: string, mode: number, now: () => numbe
       rev,
       node.inode,
     );
+    // An open buffer commits its own mode at release; keep it in step.
+    const buffer = getWriteBuffer(db, node.inode);
+    if (buffer !== undefined) buffer.mode = mode & 0o7777;
   });
 }

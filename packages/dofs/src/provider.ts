@@ -13,7 +13,13 @@ import { link as linkImpl } from "./fs/link";
 import type { MkdirOptions } from "./fs/mkdir";
 import { mkdir as mkdirImpl } from "./fs/mkdir";
 import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer";
-import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir";
+import {
+  readdir as readdirImpl,
+  readdirEntries,
+  readdirStats as readdirStatsImpl,
+  type WorkspaceDirentEntry,
+  type WorkspaceDirentStats,
+} from "./fs/readdir";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile";
 import { readlink as readlinkImpl } from "./fs/readlink";
 import { rename as renameImpl } from "./fs/rename";
@@ -21,6 +27,7 @@ import { resolveInode } from "./fs/resolve";
 import { rm as rmImpl } from "./fs/rm";
 import { stat as statImpl } from "./fs/stat";
 import { symlink as symlinkImpl } from "./fs/symlink";
+import { utimes as utimesImpl } from "./fs/utimes";
 import {
   createWatchAsyncIterable,
   createWatcher,
@@ -245,6 +252,22 @@ export class SQLiteWorkspaceProvider {
     return entries.map((entry) => entry.name);
   }
 
+  utimes(
+    path: string,
+    atime: number | string | Date,
+    mtime: number | string | Date,
+  ): Promise<void> {
+    this.utimesSync(path, atime, mtime);
+    return Promise.resolve();
+  }
+
+  // Times follow node:fs: a number or numeric string is seconds, a Date
+  // is itself. Only the modification time is stored; dofs keeps no
+  // access time.
+  utimesSync(path: string, _atime: number | string | Date, mtime: number | string | Date): void {
+    utimesImpl(this.db, path, mtime instanceof Date ? mtime.getTime() : Number(mtime) * 1000);
+  }
+
   /**
    * The directory's entries with the type, permission bits and inode an
    * `lstat` of each reports, from one query. Not part of the
@@ -252,6 +275,13 @@ export class SQLiteWorkspaceProvider {
    */
   readdirEntriesSync(path: string): WorkspaceDirentEntry[] {
     return readdirEntries(this.db, path);
+  }
+
+  // Every entry with what lstatSync would report for it, in one
+  // statement. Not part of @platformatic/vfs; for callers that keep
+  // their own tree and would otherwise lstat each name.
+  readdirStatsSync(path: string): WorkspaceDirentStats[] {
+    return readdirStatsImpl(this.db, path);
   }
 
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {
@@ -286,20 +316,12 @@ export class SQLiteWorkspaceProvider {
     // through the inode-keyed cache.
     flushPendingUnderNode(this.db, path, this.now);
     flushPendingByPath(this.db, path, this.now);
-    // Capture the target inode before rm runs so we can evict its
-    // write-buffer cache entry if rm removed the last link. Without
-    // this, a release-after-unlink leaves the buffer dangling on a
-    // dead inode and the eventual commit silently affects no rows.
-    const target = resolveInode(this.db, path, { followSymlinks: false });
-    rmImpl(this.db, path, {});
-    if (target !== null) {
-      const stillAlive = this.db.scalar<number>(
-        "SELECT inode FROM vfs_nodes WHERE inode = ?",
-        target.inode,
-      );
-      if (stillAlive === undefined) {
-        deleteWriteBuffer(this.db, target.inode);
-      }
+    // Evict the write-buffer cache entry when rm removed the last link.
+    // Without this, a release-after-unlink leaves the buffer dangling on
+    // a dead inode and the eventual commit silently affects no rows.
+    const removed = rmImpl(this.db, path, {});
+    if (removed?.reaped) {
+      deleteWriteBuffer(this.db, removed.inode);
     }
   }
 
@@ -495,6 +517,9 @@ export class SQLiteWorkspaceProvider {
       rev,
       node.inode,
     );
+    // An open buffer commits its own mode at release; keep it in step.
+    const buffer = getWriteBuffer(this.db, node.inode);
+    if (buffer !== undefined) buffer.mode = mode & 0o7777;
   }
 
   appendFile(

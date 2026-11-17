@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { invalidateReadOnlyMountCache } from "./fs/mount-guard";
 import { withDB } from "./fs/with-db";
 import { SQLiteWorkspaceProvider } from "./provider";
@@ -229,6 +229,97 @@ describe("SQLiteWorkspaceProvider — implemented methods", () => {
       expect(() => p.accessSync("/missing")).toThrowError(
         expect.objectContaining({ code: "ENOENT" }),
       );
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — statement cost", () => {
+  it("unlinks a nested file resolving its path once", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.mkdirSync("/a/b/c", { recursive: true });
+      p.writeFileSync("/a/b/c/f", "x");
+      const exec = vi.spyOn(db.sql, "exec");
+      p.unlinkSync("/a/b/c/f");
+      // Resolve the parent (root and three components), read the entry,
+      // bump the rev, fingerprint it, remove its dirent, chunks and node,
+      // and record the tombstone.
+      expect(exec).toHaveBeenCalledTimes(12);
+      exec.mockRestore();
+      expect(p.existsSync("/a/b/c/f")).toBe(false);
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — chmod with an open write buffer", () => {
+  it("keeps a chmod made while the buffer is open", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "old");
+      p.openWriteBufferSync("/f");
+      p.writeRangeSync("/f", "new!", 0);
+      p.chmodSync("/f", 0o755);
+      p.releaseWriteBufferSync("/f");
+      expect(p.lstatSync("/f").mode & 0o7777).toBe(0o755);
+      expect(p.readFileSync("/f", "utf8")).toBe("new!");
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — utimesSync", () => {
+  it("sets the modification time from seconds or a Date", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      p.utimesSync("/f", 0, 1_000_000);
+      expect(p.statSync("/f").mtimeMs).toBe(1_000_000_000);
+      p.utimesSync("/f", 0, new Date(42_000));
+      expect(p.statSync("/f").mtimeMs).toBe(42_000);
+      p.utimesSync("/f", 0, "7");
+      expect(p.statSync("/f").mtimeMs).toBe(7_000);
+    });
+  });
+
+  it("rounds fractional seconds to whole milliseconds", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      p.utimesSync("/f", 0, 1.0004);
+      expect(p.statSync("/f").mtimeMs).toBe(1_000);
+    });
+  });
+
+  it("throws EINVAL for a time that is not a number", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.writeFileSync("/f", "x");
+      for (const mtime of ["abc", Number.NaN, Number.POSITIVE_INFINITY, new Date(Number.NaN)]) {
+        expect(() => p.utimesSync("/f", 0, mtime)).toThrowError(
+          expect.objectContaining({ code: "EINVAL" }),
+        );
+      }
+    });
+  });
+});
+
+describe("SQLiteWorkspaceProvider — readdirStatsSync", () => {
+  it("matches lstatSync for every entry", async () => {
+    await withDB((db) => {
+      const p = new SQLiteWorkspaceProvider(db);
+      p.mkdirSync("/d");
+      p.writeFileSync("/d/f", "data");
+      p.chmodSync("/d/f", 0o600);
+      p.symlinkSync("f", "/d/l");
+      p.mkdirSync("/d/sub");
+      for (const entry of p.readdirStatsSync("/d")) {
+        const stat = p.lstatSync(`/d/${entry.name}`);
+        expect(entry.inode).toBe(stat.ino);
+        expect(entry.mode).toBe(stat.mode & 0o7777);
+        expect(entry.size).toBe(stat.size);
+        expect(entry.nlink).toBe(stat.nlink);
+        expect(entry.type === "symlink").toBe(stat.isSymbolicLink());
+        expect(entry.type === "dir").toBe(stat.isDirectory());
+      }
     });
   });
 });

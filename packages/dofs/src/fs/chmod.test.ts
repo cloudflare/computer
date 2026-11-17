@@ -6,7 +6,12 @@ import { invalidateReadOnlyMountCache } from "./mount-guard";
 import { resolveInode } from "./resolve";
 import { symlink } from "./symlink";
 import { withDB } from "./with-db";
-import { writeFileSync } from "./writeFile";
+import {
+  openWriteBufferSync,
+  releaseWriteBufferSync,
+  writeFileSync,
+  writeRangeSync,
+} from "./writeFile";
 
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
@@ -104,6 +109,17 @@ describe("chmod", () => {
       expect(() => chmod(db, "/mnt", 0o755, () => 0)).toThrowError(
         expect.objectContaining({ code: "EROFS" }),
       );
+    });
+  });
+
+  it("survives an open write buffer's release", async () => {
+    await withDB((db) => {
+      writeFileSync(db, "/f", new TextEncoder().encode("old"), {}, () => 0);
+      openWriteBufferSync(db, "/f");
+      writeRangeSync(db, "/f", new TextEncoder().encode("new"), 0, {}, () => 1);
+      chmod(db, "/f", 0o700, () => 2);
+      releaseWriteBufferSync(db, "/f", () => 3);
+      expect(resolveInode(db, "/f")?.mode).toBe(0o700);
     });
   });
 });

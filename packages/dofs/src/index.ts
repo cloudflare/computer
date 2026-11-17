@@ -22,13 +22,19 @@ export {
   invalidateReadOnlyMountCache,
   readOnlyRootFor,
 } from "./fs/mount-guard";
-export type { ReaddirOptions, WorkspaceDirentEntry, WorkspaceDirentResult } from "./fs/readdir";
+export type {
+  ReaddirOptions,
+  WorkspaceDirentEntry,
+  WorkspaceDirentResult,
+  WorkspaceDirentStats,
+} from "./fs/readdir";
 export type { ReadFileOptions } from "./fs/readFile";
 export { readlink } from "./fs/readlink";
 export { rename } from "./fs/rename";
 export type { RmOptions } from "./fs/rm";
 export { lstat, stat, type WorkspaceStatResult } from "./fs/stat";
 export { symlink } from "./fs/symlink";
+export { utimes } from "./fs/utimes";
 export type { WriteFileContent, WriteFileOptions } from "./fs/writeFile";
 export type { SQLiteWorkspaceProviderOptions } from "./provider";
 export { SQLiteWorkspaceProvider } from "./provider";

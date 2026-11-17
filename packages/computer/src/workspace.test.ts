@@ -330,6 +330,22 @@ describe("Workspace backend selection", () => {
     expect(receivedEnv).toEqual({ TOKEN: "secret", EMPTY: "" });
   });
 
+  it("hands command backends the Workspace's assets client", async () => {
+    const assets = { share: async () => "https://example.test/shared" };
+    const seen: unknown[] = [];
+    const backend = (id: string): WorkspaceBackend => ({
+      id,
+      type: "fake",
+      async connect(host) {
+        seen.push(host.assets);
+        return { rpc: composite(fakeRpc()), sync: "none", close: async () => undefined };
+      },
+    });
+    await new Workspace({ storage: makeStorage(), backends: [backend("a")], assets }).ready("a");
+    await new Workspace({ storage: makeStorage(), backends: [backend("b")] }).ready("b");
+    expect(seen).toEqual([assets, undefined]);
+  });
+
   it("flushes incomplete trailing UTF-8 from command execution", async () => {
     const id = "utf8-command";
     const shell: import("@cloudflare/computer-rpc").ShellRPC = {

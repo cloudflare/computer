@@ -1,0 +1,32 @@
+{
+  "name": "@example/computer-kitebuild-agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Example Vite-built Worker whose Kitebuild backend runs shell commands, JavaScript modules and Kitebuild's toolchain, with a pi agent that clones, builds, tests and pushes projects.",
+  "scripts": {
+    "dev": "vite build && vite preview",
+    "build": "vite build",
+    "preview": "vite build && vite preview",
+    "deploy": "vite build && wrangler deploy",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p ui",
+    "build:types": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/computer": "*",
+    "@cloudflare/kitebuild-cli-tools": "^0.0.8",
+    "@cloudflare/kitebuild-core": "^0.0.7",
+    "@cloudflare/kitebuild-git": "^0.0.11",
+    "@cloudflare/kitebuild-toolchain": "^0.1.4",
+    "@earendil-works/pi-ai": "^0.99.2",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.68.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.4",
+    "wrangler": "^4.148.0"
+  }
+}

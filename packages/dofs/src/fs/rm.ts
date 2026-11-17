@@ -6,7 +6,7 @@ import { recordDelete } from "../sync/changes";
 import { versionFingerprint } from "../sync/fingerprint";
 import { pathOf } from "../sync/paths";
 import { assertNotReadOnly } from "./mount-guard";
-import { resolveInode } from "./resolve";
+import { resolveFollowing } from "./resolve";
 import { invalidateResolveExact, invalidateResolveSubtree } from "./resolveCache";
 import { unlinkDirent } from "./unlink";
 
@@ -96,7 +96,14 @@ function* walkPostOrder(
   }
 }
 
-export function rm(db: Database, path: string, options: RmOptions): void {
+// The single entry `rm` removed, and whether its inode went with it. A
+// recursive removal, or a forced removal of nothing, returns undefined.
+export interface RemovedEntry {
+  inode: number;
+  reaped: boolean;
+}
+
+export function rm(db: Database, path: string, options: RmOptions): RemovedEntry | undefined {
   const { parts, path: canonical } = canonicalizePath(path);
 
   if (parts.length === 0) {
@@ -113,10 +120,27 @@ export function rm(db: Database, path: string, options: RmOptions): void {
   const force = options.force === true;
   const recursive = options.recursive === true;
 
-  db.transactionSync(() => {
-    const node = resolveInode(db, canonical, { followSymlinks: false });
-    if (node === null) {
-      if (force) return;
+  return db.transactionSync(() => {
+    // Resolve the parent, following symlinks, and read the entry from
+    // its dirent: the same node a no-follow resolve of the full path
+    // lands on, without walking the path twice. Removing by (parent,
+    // name) rather than by inode keeps a hardlinked file's other names.
+    const name = parts[parts.length - 1];
+    const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
+    const { node: parent, followedSymlink } = resolveFollowing(db, parentPath);
+    const node =
+      parent?.type === "dir"
+        ? db.one<{ inode: number; type: "file" | "dir" | "symlink" }>(
+            `SELECT n.inode AS inode, n.type AS type
+               FROM vfs_dirents d
+               JOIN vfs_nodes n ON n.inode = d.child_inode
+              WHERE d.parent_inode = ? AND d.name = ?`,
+            parent.inode,
+            name,
+          )
+        : undefined;
+    if (parent?.type !== "dir" || node === undefined) {
+      if (force) return undefined;
       throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
     }
 
@@ -130,18 +154,9 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       }
     }
 
-    // Resolve the entry's real path from its parent rather than from
-    // the inode: a hardlinked file has several names, and pathOf would
-    // pick an arbitrary one. Following symlinks on the parent lets a
-    // request through a symlinked directory land on the real container
-    // while still removing exactly the requested name.
-    const name = parts[parts.length - 1];
-    const parentPath = parts.length === 1 ? "/" : `/${parts.slice(0, -1).join("/")}`;
-    const parent = resolveInode(db, parentPath);
-    if (parent?.type !== "dir") {
-      throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
-    }
-    const parentReal = pathOf(db, parent.inode);
+    // Tombstones carry the real path, so a request through a symlinked
+    // directory records the name where it actually lived.
+    const parentReal = followedSymlink ? pathOf(db, parent.inode) : parentPath;
     if (parentReal === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
     }
@@ -160,12 +175,12 @@ export function rm(db: Database, path: string, options: RmOptions): void {
       // the move-aware location.
       // Fingerprint before unlinking: the last link takes the node row.
       const prior = versionFingerprint(db, node.inode);
-      unlinkDirent(db, parent.inode, name, node.inode, node.type);
+      const reaped = unlinkDirent(db, parent.inode, name, node.inode, node.type);
       recordDelete(db, rev, realPath, prior);
       // A single removed entry is a file, symlink, or empty directory:
       // no cached descendants to worry about, so drop it exact.
       invalidateResolveExact(db, realPath);
-      return;
+      return { inode: node.inode, reaped };
     }
 
     // Recursive directory removal. Walk leaves first so each delete
@@ -181,5 +196,6 @@ export function rm(db: Database, path: string, options: RmOptions): void {
     // The whole subtree under realPath is gone; one subtree drop covers
     // every descendant's cached resolution.
     invalidateResolveSubtree(db, realPath);
+    return undefined;
   });
 }

@@ -1,0 +1,14 @@
+{
+  // Test-only worker for the KitebuildBackend integration tests. Not
+  // deployed. HOST is a Durable Object owning a Workspace with a
+  // KitebuildBackend; Gateway stands in for an egress gateway.
+  "name": "computer-kitebuild-backend-tests",
+  "main": "./kitebuild-backend-worker.ts",
+  "compatibility_date": "2026-05-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }],
+  "durable_objects": {
+    "bindings": [{ "name": "HOST", "class_name": "HostDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HostDO"] }]
+}

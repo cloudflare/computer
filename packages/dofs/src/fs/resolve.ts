@@ -36,10 +36,6 @@ interface NodeRow {
   link_target: string | null;
 }
 
-interface ChildRow {
-  child_inode: number;
-}
-
 // Cap the total number of symlinks resolved across a single
 // resolveInode() call. Matches Linux's default SYMLOOP_MAX of 40.
 const MAX_SYMLINK_FOLLOWS = 40;
@@ -74,7 +70,7 @@ export function resolveInode(
   //     mid-transaction anyway (rollback safety).
   // Mutations still invalidate the cache; that is independent of this.
   if (!followFinal || db.inTransaction) {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0).node;
   }
 
   // Repeat reads of the same path are served from the per-Database
@@ -100,10 +96,22 @@ export function resolveInode(
   // reasoned about structurally).
   const cte = resolveViaCte(db, parts);
   if (cte.kind === "symlink") {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0).node;
   }
   storeResolveCache(db, canonical, cte.node === null ? null : cte.node.inode);
   return cte.node;
+}
+
+// Resolve a path component by component, following symlinks, and
+// report whether any were followed. When nothing was followed, the
+// canonical path is already the node's real path and needs no walk
+// back up from the inode.
+export function resolveFollowing(
+  db: Database,
+  path: string,
+): { node: ResolvedInode | null; followedSymlink: boolean } {
+  const { node, follows } = resolveParts(db, canonicalizePath(path).parts, true, 0);
+  return { node, followedSymlink: follows > 0 };
 }
 
 // Resolve a path in one statement without following symlinks in any
@@ -203,10 +211,10 @@ function resolveParts(
   parts: string[],
   followFinal: boolean,
   follows: number,
-): ResolvedInode | null {
+): { node: ResolvedInode | null; follows: number } {
   const root = readNode(db, ROOT_INODE);
   if (root === null) {
-    return null;
+    return { node: null, follows };
   }
 
   const pendingParts = [...parts];
@@ -215,21 +223,22 @@ function resolveParts(
     const name = pendingParts.shift();
     if (name === undefined) continue;
     const current = nodeStack[nodeStack.length - 1];
-    if (current.type !== "dir") return null;
+    if (current.type !== "dir") return { node: null, follows };
     if (name === "" || name === ".") continue;
     if (name === "..") {
       if (nodeStack.length > 1) nodeStack.pop();
       continue;
     }
 
-    const child = db.one<ChildRow>(
-      "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
+    const next = db.one<NodeRow>(
+      `SELECT n.inode, n.type, n.mode, n.mtime, n.size, n.link_target
+         FROM vfs_dirents d
+         JOIN vfs_nodes n ON n.inode = d.child_inode
+        WHERE d.parent_inode = ? AND d.name = ?`,
       current.inode,
       name,
     );
-    if (child === undefined) return null;
-    const next = readNode(db, child.child_inode);
-    if (next === null) return null;
+    if (next === undefined) return { node: null, follows };
 
     // Intermediate symlinks always get followed; final-segment symlinks
     // are only followed when the caller wants. Keep target components in
@@ -247,7 +256,7 @@ function resolveParts(
     nodeStack.push(next);
   }
 
-  return toResolved(nodeStack[nodeStack.length - 1]);
+  return { node: toResolved(nodeStack[nodeStack.length - 1]), follows };
 }
 
 function readNode(db: Database, inode: number): NodeRow | null {

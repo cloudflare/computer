@@ -21,6 +21,13 @@ cd computer
 npm install
 ```
 
+The `@cloudflare/kitebuild-*` packages, which the Kitebuild backend and its examples use, are on Cloudflare's internal npm registry until they are published to npm. `npm install` fetches them from there, so give npm a token for it first:
+
+```bash
+npm config set //registry-gateway.cloudflare-ui.workers.dev/:_authToken \
+  "$(cloudflared access login --no-verbose https://registry.cloudflare-ui.com)"
+```
+
 `npm install` resolves all workspaces in one pass. Do not run `npm install` inside a single package. It creates a nested lockfile and confuses the workspace resolver.
 
 ## Repository layout
