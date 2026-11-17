@@ -248,8 +248,9 @@ describe("content in use is not reclaimed", () => {
       writeFileSync(db, "/big.bin", encode("new"), {}, NOW);
 
       expect(sha256(await drain(stream))).toEqual(sha256(old));
-      // The next write reclaims what the stream held.
+      // Later writes reap what the stream held, one chunk's worth each.
       writeFileSync(db, "/other.txt", encode("x"), {}, NOW);
+      writeFileSync(db, "/other.txt", encode("y"), {}, NOW);
       expect(count(db, "vfs_blobs")).toBe(2);
       expect(orphansLeft(db)).toEqual({ blobs: 0, manifests: 0 });
     });

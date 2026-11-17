@@ -693,7 +693,7 @@ function applyChunkedInodeUpdate(
     }
     const chunk = { hash: sha256(chunkBytes), bytes: chunkBytes, size: chunkBytes.byteLength };
     upsertChunkBlob(db, chunk);
-    replaceChunk(db, inode, idx, chunk.hash, chunk.size, old?.hash);
+    replaceChunk(db, inode, idx, chunk.hash, chunk.size, old);
   }
 
   // Drop any old chunks past the new end of file (shrink case).
