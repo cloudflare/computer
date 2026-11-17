@@ -69,13 +69,13 @@ describe("rm", () => {
     });
   });
 
-  it("leaves orphan blob rows alive for gc()", async () => {
+  it("frees the content of the last name it removes", async () => {
     await withDB(async (db) => {
       await writeFile(db, "/a.txt", "unique-content", {}, () => 0);
       const before = countBlobs(db);
       expect(before).toBe(1);
       rm(db, "/a.txt", {});
-      expect(countBlobs(db)).toBe(1);
+      expect(countBlobs(db)).toBe(0);
     });
   });
 
