@@ -1,5 +1,65 @@
 import type { DurableObjectStorageLike, SQLStorageLike } from "./types";
 
+interface TransactionLocal {
+  value: unknown;
+  beforeCommit: (value: unknown) => void;
+}
+
+// Per-transaction state registered through transactionLocal, keyed by
+// Database and then by owner. An entry exists only while that
+// Database's outermost transactionSync runs. Module-private, so the
+// exported Database class carries no hook API.
+const transactionLocals = new WeakMap<Database, Map<object, TransactionLocal>>();
+
+/**
+ * @internal
+ * State that lives for the current outermost transaction on `db`. The
+ * first call in a transaction creates the value with `create`; later
+ * calls, nested transactions included, return the same value. Just
+ * before the outermost transaction commits, still inside it,
+ * `beforeCommit` runs with the value, so whatever it writes commits or
+ * rolls back with the rest.
+ *
+ * Three things follow. A rollback of the outermost transaction discards
+ * the value without calling `beforeCommit`. A nested transaction is a
+ * savepoint, and rolling one back does not touch the value: whatever was
+ * recorded inside it stays, so `beforeCommit` has to check the database
+ * rather than trust it. A `beforeCommit` that throws fails the whole
+ * transaction, and with it the write that opened it.
+ *
+ * Throws outside a transaction.
+ */
+export function transactionLocal<V>(
+  db: Database,
+  key: object,
+  create: () => V,
+  beforeCommit: (value: V) => void,
+): V {
+  if (!db.inTransaction) {
+    throw new Error("transactionLocal called outside transactionSync");
+  }
+  let locals = transactionLocals.get(db);
+  if (locals === undefined) {
+    locals = new Map();
+    transactionLocals.set(db, locals);
+  }
+  const existing = locals.get(key);
+  if (existing !== undefined) return existing.value as V;
+  const value = create();
+  locals.set(key, { value, beforeCommit: beforeCommit as (value: unknown) => void });
+  return value;
+}
+
+function runBeforeCommit(db: Database): void {
+  const locals = transactionLocals.get(db);
+  if (locals === undefined) return;
+  // A hook may register more state; keep going until none is left.
+  for (const [key, { value, beforeCommit }] of locals) {
+    locals.delete(key);
+    beforeCommit(value);
+  }
+}
+
 export class Database {
   readonly sql: SQLStorageLike;
   readonly transactionSync: <T>(closure: () => T) => T;
@@ -13,9 +73,6 @@ export class Database {
   // this class, since SQLite forbids a real BEGIN inside an active
   // transaction.
   #txDepth = 0;
-  // Per-transaction state registered through transactionLocal, keyed by
-  // its owner. Present only inside the outermost transactionSync.
-  #locals: Map<object, { value: unknown; beforeCommit: (value: unknown) => void }> | undefined;
 
   constructor(storage: DurableObjectStorageLike) {
     this.sql = storage.sql;
@@ -43,7 +100,7 @@ export class Database {
       // runtime's transaction semantics apply.
       const run = (): T => {
         const result = closure();
-        if (this.#txDepth === 1) this.#runBeforeCommit();
+        if (this.#txDepth === 1) runBeforeCommit(this);
         return result;
       };
       this.#txDepth++;
@@ -68,40 +125,9 @@ export class Database {
         return run();
       } finally {
         this.#txDepth--;
-        if (this.#txDepth === 0) this.#locals = undefined;
+        if (this.#txDepth === 0) transactionLocals.delete(this);
       }
     };
-  }
-
-  /**
-   * @internal
-   * State that lives for the current outermost transaction. The first
-   * call in a transaction creates the value with `create`; later calls
-   * return the same value. Just before the transaction commits, still
-   * inside it, `beforeCommit` runs with the value, so whatever it writes
-   * commits or rolls back with the rest. A rollback discards the value
-   * without calling `beforeCommit`. Throws outside a transaction.
-   */
-  transactionLocal<V>(key: object, create: () => V, beforeCommit: (value: V) => void): V {
-    if (this.#txDepth === 0) {
-      throw new Error("transactionLocal called outside transactionSync");
-    }
-    this.#locals ??= new Map();
-    const existing = this.#locals.get(key);
-    if (existing !== undefined) return existing.value as V;
-    const value = create();
-    this.#locals.set(key, { value, beforeCommit: beforeCommit as (value: unknown) => void });
-    return value;
-  }
-
-  #runBeforeCommit(): void {
-    const locals = this.#locals;
-    if (locals === undefined) return;
-    // A hook may register more state; keep going until none is left.
-    for (const [key, { value, beforeCommit }] of locals) {
-      locals.delete(key);
-      beforeCommit(value);
-    }
   }
 
   // True while a transactionSync closure is on the stack. The resolve

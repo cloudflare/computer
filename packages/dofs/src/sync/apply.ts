@@ -118,7 +118,8 @@ function removeReplaceableFinalEntry(
 // One transaction for the whole subtree: the removal is atomic, and
 // what it drops is reaped once at the end instead of once per node.
 function removeInodeTreeAtPath(db: Database, path: string, inode: number, type: NodeType): void {
-  db.transactionSync(() => removeInodeTree(db, path, inode, type));
+  if (db.inTransaction) removeInodeTree(db, path, inode, type);
+  else db.transactionSync(() => removeInodeTree(db, path, inode, type));
 }
 
 function removeInodeTree(db: Database, path: string, inode: number, type: NodeType): void {
@@ -275,6 +276,11 @@ function ensureParentDirectories(
   return { path: canonical };
 }
 
+function isMissingPath(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 // State one apply call carries from entry to entry.
 interface ApplyRun {
   readonly objects: Map<string, Uint8Array>;
@@ -326,8 +332,11 @@ function applyOne(db: Database, entry: ChangeEntry, run: ApplyRun): number | und
   if (entry.kind === "delete") {
     try {
       rm(db, entry.path, { recursive: true, force: true });
-    } catch {
-      // Already gone is fine — idempotent apply.
+    } catch (error) {
+      // Already gone is fine — idempotent apply. Anything else, a reap
+      // that failed and rolled the removal back included, must fail the
+      // call: counting it applied would drop the tombstone silently.
+      if (!isMissingPath(error)) throw error;
     }
     return 0;
   }

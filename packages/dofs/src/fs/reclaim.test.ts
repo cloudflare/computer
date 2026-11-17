@@ -357,6 +357,22 @@ describe("content in use is not reclaimed", () => {
     });
   });
 
+  it("fails the whole write when reaping fails", async () => {
+    await withDB(async (db) => {
+      writeFileSync(db, "/a.txt", encode("first"), {}, NOW);
+      db.run(
+        `CREATE TRIGGER refuse_manifest BEFORE DELETE ON vfs_manifests
+         BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+      );
+
+      expect(() => writeFileSync(db, "/a.txt", encode("second"), {}, NOW)).toThrow("refused");
+
+      expect(await readFile(db, "/a.txt", "utf8")).toBe("first");
+      db.run("DROP TRIGGER refuse_manifest");
+      expect(orphansLeft(db)).toEqual({ blobs: 0, manifests: 0 });
+    });
+  });
+
   it("keeps content when the write that dropped it rolls back", async () => {
     await withDB(async (db) => {
       writeFileSync(db, "/a.txt", encode("survivor"), {}, NOW);

@@ -1733,6 +1733,23 @@ describe("applyChanges reap deferral", () => {
     });
   });
 
+  it("fails instead of counting a delete whose removal failed", async () => {
+    await withDB(async (db) => {
+      writeFileSync(db, "/doomed.txt", encode("still here"), {}, () => 1);
+      // Make reaping the file's manifest fail, and with it the whole
+      // removal: hooks that run before commit fail their write.
+      db.run(
+        `CREATE TRIGGER refuse_manifest BEFORE DELETE ON vfs_manifests
+         BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+      );
+
+      await expect(
+        applyChanges(db, [{ kind: "delete", rev: 1, path: "/doomed.txt" }], new Map()),
+      ).rejects.toThrow("refused");
+      expect(resolveInode(db, "/doomed.txt")).not.toBeNull();
+    });
+  });
+
   it("reaps what a sync apply held when it ends", async () => {
     await withDB((db) => {
       writeFileSync(db, "/old.txt", encode("sync dropped"), {}, () => 1);
