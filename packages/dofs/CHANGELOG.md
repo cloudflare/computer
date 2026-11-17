@@ -1,5 +1,11 @@
 # @cloudflare/dofs
 
+## 0.11.3
+
+### Patch Changes
+
+- [#328](https://github.com/cloudflare/computer/pull/328) Nested `transactionSync` calls on a `Database` now work on Durable Object storage, which rejects the SAVEPOINT statements they used to issue. ([`5094d31`](https://github.com/cloudflare/computer/commit/5094d31dca0a2be907dd2fd569613ac850016f67)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.11.2
 
 ## 0.11.1

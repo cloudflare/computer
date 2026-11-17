@@ -1,5 +1,11 @@
 # @cloudflare/computer
 
+## 0.11.3
+
+### Patch Changes
+
+- [#330](https://github.com/cloudflare/computer/pull/330) Overwriting or removing a file now frees the chunks and manifests nothing else uses, in the same write, so workspace storage no longer grows with every save. ([`965be1b`](https://github.com/cloudflare/computer/commit/965be1b266fd9070121992342faf957ec59bc471)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.11.2
 
 ### Patch Changes
