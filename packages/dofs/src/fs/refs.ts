@@ -1,5 +1,6 @@
 import { type Database, transactionLocal } from "../storage";
 import { evictBlob, hashKey } from "./blobCache";
+import { CHUNK_SIZE } from "./chunk";
 import { isKeyPinned, type Pin, pinHashes } from "./pins";
 
 // The only place that adds, replaces or drops a file's references to
@@ -56,8 +57,7 @@ export const SWEEP_ROWS_PER_WRITE = 8;
 // retries and the sweep together: one full chunk. A write always reaps
 // what it dropped itself; this only keeps a small save from paying for
 // eight 512 KiB blobs someone else left behind.
-// The literal is CHUNK_SIZE from writeFile.ts, which imports this module.
-export const BACKGROUND_REAP_BYTES_PER_WRITE = 512 * 1024;
+export const BACKGROUND_REAP_BYTES_PER_WRITE = CHUNK_SIZE;
 
 // How old an unreferenced row's last_seen must be before the sweep
 // takes it. Staging refreshes last_seen, so this is how long staged
