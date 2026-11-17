@@ -1,4 +1,4 @@
-import type { Database } from "../storage";
+import { type Database, transactionLocal } from "../storage";
 import { evictBlob, hashKey } from "./blobCache";
 import { isKeyPinned, type Pin, pinHashes } from "./pins";
 
@@ -118,7 +118,8 @@ function stateFor(db: Database): RefState {
 }
 
 function transactionRefs(db: Database): TransactionRefs {
-  return db.transactionLocal<TransactionRefs>(
+  return transactionLocal<TransactionRefs>(
+    db,
     TRANSACTION_KEY,
     () => ({ droppedBlobs: new Map(), droppedManifests: new Map() }),
     (refs) => settle(db, refs),
