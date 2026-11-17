@@ -1,6 +1,6 @@
 {
   "name": "@cloudflare/computer-computerd-linux-x64",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "description": "Docker image context for the prebuilt computerd linux-x64 binary.",
   "license": "MIT",
   "private": true

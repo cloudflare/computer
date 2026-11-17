@@ -1,5 +1,12 @@
 # @cloudflare/computer-rpc
 
+## 0.11.3
+
+### Patch Changes
+
+- Updated dependencies [[`5094d31`](https://github.com/cloudflare/computer/commit/5094d31dca0a2be907dd2fd569613ac850016f67)]:
+  - @cloudflare/dofs@0.11.3
+
 ## 0.11.2
 
 ### Patch Changes
