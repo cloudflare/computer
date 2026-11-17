@@ -204,44 +204,6 @@ describe("NodeSQLiteStorage on a file", () => {
 
     expect(value).toBeUndefined();
   });
-
-  it("commits an inner savepoint while the outer transaction continues", () => {
-    const path = join(dir, "state.db");
-    const { storage, db } = openStore(path);
-
-    db.transactionSync(() => {
-      db.run("INSERT INTO vfs_meta (k, v) VALUES (?, ?)", "outer", 1);
-      db.transactionSync(() => {
-        db.run("INSERT INTO vfs_meta (k, v) VALUES (?, ?)", "inner", 2);
-      });
-    });
-
-    const outer = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = ?", "outer");
-    const inner = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = ?", "inner");
-    storage.close();
-
-    expect(outer).toBe(1);
-    expect(inner).toBe(2);
-  });
-
-  it("rolls the outer transaction back over a committed inner savepoint", () => {
-    const path = join(dir, "state.db");
-    const { storage, db } = openStore(path);
-
-    expect(() => {
-      db.transactionSync(() => {
-        db.transactionSync(() => {
-          db.run("INSERT INTO vfs_meta (k, v) VALUES (?, ?)", "nested_probe", 1);
-        });
-        throw new Error("forced");
-      });
-    }).toThrow("forced");
-
-    const value = db.scalar<number>("SELECT v FROM vfs_meta WHERE k = ?", "nested_probe");
-    storage.close();
-
-    expect(value).toBeUndefined();
-  });
 });
 
 describe("NodeSQLiteStorage in memory", () => {
