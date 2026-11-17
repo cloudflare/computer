@@ -279,3 +279,85 @@ describe("NodeSQLiteStorage in memory", () => {
     expect(result.walFrames).toBe(0);
   });
 });
+
+describe("NodeSQLiteStorage.transactionSync nesting", () => {
+  // Database delegates nested transactions to the adapter, so the
+  // adapter has to nest on its own, the way Durable Object storage does.
+  function open(): NodeSQLiteStorage {
+    const storage = new NodeSQLiteStorage({ location: join(dir, "nested.db") });
+    storage.sql.exec("CREATE TABLE t (v INTEGER)");
+    return storage;
+  }
+
+  function rows(storage: NodeSQLiteStorage): number[] {
+    return storage.sql
+      .exec("SELECT v FROM t ORDER BY v")
+      .toArray()
+      .map((row) => Number((row as { v: number }).v));
+  }
+
+  it("commits nested transactions with the outer one", () => {
+    const storage = open();
+    const result = storage.transactionSync(() => {
+      storage.sql.exec("INSERT INTO t VALUES (1)");
+      return storage.transactionSync(() => {
+        storage.sql.exec("INSERT INTO t VALUES (2)");
+        return "inner";
+      });
+    });
+    expect(result).toBe("inner");
+    expect(rows(storage)).toEqual([1, 2]);
+    storage.close();
+  });
+
+  it("rolls back only the inner work when an inner transaction throws", () => {
+    const storage = open();
+    storage.transactionSync(() => {
+      storage.sql.exec("INSERT INTO t VALUES (1)");
+      expect(() =>
+        storage.transactionSync(() => {
+          storage.sql.exec("INSERT INTO t VALUES (2)");
+          throw new Error("inner");
+        }),
+      ).toThrow("inner");
+      storage.sql.exec("INSERT INTO t VALUES (3)");
+    });
+    expect(rows(storage)).toEqual([1, 3]);
+    storage.close();
+  });
+
+  it("rolls back everything when the outer transaction throws", () => {
+    const storage = open();
+    expect(() =>
+      storage.transactionSync(() => {
+        storage.transactionSync(() => {
+          storage.sql.exec("INSERT INTO t VALUES (1)");
+        });
+        throw new Error("outer");
+      }),
+    ).toThrow("outer");
+    expect(rows(storage)).toEqual([]);
+    storage.close();
+  });
+
+  it("nests three levels deep", () => {
+    const storage = open();
+    storage.transactionSync(() => {
+      storage.sql.exec("INSERT INTO t VALUES (1)");
+      storage.transactionSync(() => {
+        storage.sql.exec("INSERT INTO t VALUES (2)");
+        expect(() =>
+          storage.transactionSync(() => {
+            storage.sql.exec("INSERT INTO t VALUES (3)");
+            throw new Error("deepest");
+          }),
+        ).toThrow("deepest");
+        storage.transactionSync(() => {
+          storage.sql.exec("INSERT INTO t VALUES (4)");
+        });
+      });
+    });
+    expect(rows(storage)).toEqual([1, 2, 4]);
+    storage.close();
+  });
+});

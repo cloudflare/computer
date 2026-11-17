@@ -65,6 +65,9 @@ export class NodeSQLiteStorage implements DurableObjectStorageLike {
   readonly location: string;
   private readonly db: DatabaseSync;
   private readonly cache = new Map<string, StatementSync>();
+  // How many transactionSync calls are on the stack. Calls inside the
+  // outermost one become savepoints.
+  #transactionDepth = 0;
   readonly sql: {
     exec: <Row extends object>(query: string, ...bindings: unknown[]) => SQLCursorLike<Row>;
   };
@@ -135,8 +138,29 @@ export class NodeSQLiteStorage implements DurableObjectStorageLike {
     }
   }
 
+  // Nests like Durable Object storage's transactionSync: the outermost
+  // call is a real transaction, and each call inside it is a savepoint,
+  // so an inner throw rolls back only the inner work and the outer call
+  // can carry on. Database delegates nested calls here.
   transactionSync<T>(closure: () => T): T {
+    if (this.#transactionDepth > 0) {
+      const savepoint = `nested_${this.#transactionDepth}`;
+      this.db.exec(`SAVEPOINT ${savepoint}`);
+      this.#transactionDepth++;
+      try {
+        const result = closure();
+        this.db.exec(`RELEASE ${savepoint}`);
+        return result;
+      } catch (error) {
+        this.db.exec(`ROLLBACK TO ${savepoint}`);
+        this.db.exec(`RELEASE ${savepoint}`);
+        throw error;
+      } finally {
+        this.#transactionDepth--;
+      }
+    }
     this.db.exec("BEGIN");
+    this.#transactionDepth++;
     try {
       const result = closure();
       this.db.exec("COMMIT");
@@ -144,6 +168,8 @@ export class NodeSQLiteStorage implements DurableObjectStorageLike {
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
+    } finally {
+      this.#transactionDepth--;
     }
   }
 
