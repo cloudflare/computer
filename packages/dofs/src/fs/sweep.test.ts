@@ -8,7 +8,13 @@ import { buildManifest } from "../sync/manifests";
 import { gc } from "./gc";
 import { pinHashes } from "./pins";
 import { readFile } from "./readFile";
-import { openReapDeferral, SWEEP_GRACE_MS, SWEEP_ROWS_PER_WRITE } from "./refs";
+import {
+  BACKGROUND_REAP_BYTES_PER_WRITE,
+  isDeferred,
+  openReapDeferral,
+  SWEEP_GRACE_MS,
+  SWEEP_ROWS_PER_WRITE,
+} from "./refs";
 import { withDB } from "./with-db";
 import { CHUNK_SIZE, writeFile, writeFileSync } from "./writeFile";
 
@@ -203,6 +209,57 @@ describe("last_seen", () => {
       for (let i = 0; i < 20; i++) write(db);
 
       expect(hasBlob(db, staged)).toBe(true);
+    });
+  });
+});
+
+describe("work a write does for earlier writes", () => {
+  // A full chunk of distinct content.
+  function chunk(fill: number): Uint8Array {
+    return new Uint8Array(CHUNK_SIZE).fill(fill);
+  }
+
+  function blobBytes(db: Database): number {
+    return db.scalar<number>("SELECT COALESCE(SUM(size), 0) FROM vfs_blobs") ?? 0;
+  }
+
+  it("sweeps at most one chunk's worth of old staging per write", async () => {
+    await withDB((db) => {
+      const now = Date.now();
+      vi.setSystemTime(now - 2 * HOUR);
+      for (let i = 1; i <= SWEEP_ROWS_PER_WRITE; i++) stageBlob(db, sha256(chunk(i)), chunk(i));
+      vi.setSystemTime(now);
+      const before = blobBytes(db);
+
+      write(db);
+
+      const freed = before - blobBytes(db);
+      expect(freed).toBeGreaterThan(0);
+      expect(freed).toBeLessThanOrEqual(BACKGROUND_REAP_BYTES_PER_WRITE);
+
+      // The rest goes on later writes; the cursor does not skip it.
+      for (let i = 0; i < 4 * SWEEP_ROWS_PER_WRITE; i++) write(db);
+      expect(count(db, "vfs_blobs")).toBe(1);
+    });
+  });
+
+  it("retries at most one chunk's worth of deferred content per write", async () => {
+    await withDB((db) => {
+      const pins = [];
+      for (let i = 1; i <= 4; i++) {
+        writeFileSync(db, `/big${i}`, chunk(i), {}, NOW);
+        pins.push(pinHashes(db, [sha256(chunk(i))]));
+        writeFileSync(db, `/big${i}`, new TextEncoder().encode("small now"), {}, NOW);
+      }
+      for (const pin of pins) pin.release();
+      expect([1, 2, 3, 4].every((i) => isDeferred(db, sha256(chunk(i))))).toBe(true);
+
+      write(db);
+
+      const left = [1, 2, 3, 4].filter((i) => hasBlob(db, sha256(chunk(i))));
+      expect(left.length).toBeGreaterThanOrEqual(3);
+      for (let i = 0; i < 8; i++) write(db);
+      expect([1, 2, 3, 4].some((i) => hasBlob(db, sha256(chunk(i))))).toBe(false);
     });
   });
 });

@@ -52,6 +52,13 @@ export const APPLY_IDLE_LEASE_MS = 5 * 60 * 1000;
 // Rows of one table the sweep checks at the end of each write.
 export const SWEEP_ROWS_PER_WRITE = 8;
 
+// Bytes a write may free on behalf of earlier writes, through deferred
+// retries and the sweep together: one full chunk. A write always reaps
+// what it dropped itself; this only keeps a small save from paying for
+// eight 512 KiB blobs someone else left behind.
+// The literal is CHUNK_SIZE from writeFile.ts, which imports this module.
+export const BACKGROUND_REAP_BYTES_PER_WRITE = 512 * 1024;
+
 // How old an unreferenced row's last_seen must be before the sweep
 // takes it. Staging refreshes last_seen, so this is how long staged
 // bytes may wait for the link, and matches gc()'s default window.
@@ -60,8 +67,14 @@ export const SWEEP_GRACE_MS = 60 * 60 * 1000;
 // What one apply call's entries dropped, held until the call ends. The
 // pin keeps other writes and the sweep off it in the meantime.
 interface ApplyHold {
-  blobs: Map<string, Uint8Array>;
+  blobs: Map<string, DroppedBlob>;
   pin: Pin;
+}
+
+// A blob hash with the size of the chunk that pointed at it.
+interface DroppedBlob {
+  hash: Uint8Array;
+  size: number;
 }
 
 interface RefState {
@@ -69,7 +82,7 @@ interface RefState {
   // apply synchronously, so at most one is running.
   holding: ApplyHold | undefined;
   // Candidates waiting for a pin to go, keyed by hashKey.
-  deferredBlobs: Map<string, Uint8Array>;
+  deferredBlobs: Map<string, DroppedBlob>;
   // Sweep position: the last rowid checked in each table, and which
   // table the next write checks.
   sweepBlobsAfter: number;
@@ -82,7 +95,7 @@ interface RefState {
 // again, and it is still referenced when the transaction commits
 // unless something drops it once more.
 interface TransactionRefs {
-  droppedBlobs: Map<string, Uint8Array>;
+  droppedBlobs: Map<string, DroppedBlob>;
   droppedManifests: Map<string, Uint8Array>;
 }
 
@@ -117,8 +130,8 @@ function inTransaction<T>(db: Database, fn: () => T): T {
   return db.inTransaction ? fn() : db.transactionSync(fn);
 }
 
-function dropBlob(db: Database, hash: Uint8Array): void {
-  transactionRefs(db).droppedBlobs.set(hashKey(hash), hash);
+function dropBlob(db: Database, hash: Uint8Array, size: number): void {
+  transactionRefs(db).droppedBlobs.set(hashKey(hash), { hash, size });
 }
 
 function dropManifest(db: Database, hash: Uint8Array | null): void {
@@ -136,34 +149,35 @@ function settle(db: Database, refs: TransactionRefs): void {
   const state = stateFor(db);
   const hold = state.holding;
   const unpinned: Uint8Array[] = [];
-  for (const [key, hash] of refs.droppedBlobs) {
+  for (const [key, dropped] of refs.droppedBlobs) {
     if (hold !== undefined) {
-      hold.blobs.set(key, hash);
-      hold.pin.add(hash);
+      hold.blobs.set(key, dropped);
+      hold.pin.add(dropped.hash);
       continue;
     }
     if (isKeyPinned(db, key)) {
-      state.deferredBlobs.set(key, hash);
+      state.deferredBlobs.set(key, dropped);
       continue;
     }
-    unpinned.push(hash);
+    unpinned.push(dropped.hash);
   }
   reapBlobs(db, unpinned);
   reapManifests(db, [...refs.droppedManifests.values()]);
-  retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
-  sweepStep(db, state);
+  const budget = { bytes: BACKGROUND_REAP_BYTES_PER_WRITE };
+  retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE, budget);
+  sweepStep(db, state, budget);
 }
 
 // Check the next few rows of one table and delete the unreferenced,
 // unpinned ones past the grace window. The reference probe runs in the
 // same statement, so a write that finds nothing costs one read.
-function sweepStep(db: Database, state: RefState): void {
+function sweepStep(db: Database, state: RefState, budget: { bytes: number }): void {
   const cutoff = Date.now() - SWEEP_GRACE_MS;
   const manifests = state.sweepManifestsNext;
   state.sweepManifestsNext = !manifests;
   const rows = manifests
-    ? db.all<{ id: number; hash: Uint8Array; orphan: number }>(
-        `SELECT rowid AS id, hash,
+    ? db.all<{ id: number; hash: Uint8Array; size: number; orphan: number }>(
+        `SELECT rowid AS id, hash, size,
                 last_seen < ?
                 AND NOT EXISTS (SELECT 1 FROM vfs_nodes n WHERE n.manifest_hash = m.hash) AS orphan
            FROM vfs_manifests m
@@ -174,8 +188,8 @@ function sweepStep(db: Database, state: RefState): void {
         state.sweepManifestsAfter,
         SWEEP_ROWS_PER_WRITE,
       )
-    : db.all<{ id: number; hash: Uint8Array; orphan: number }>(
-        `SELECT rowid AS id, hash,
+    : db.all<{ id: number; hash: Uint8Array; size: number; orphan: number }>(
+        `SELECT rowid AS id, hash, size,
                 last_seen < ?
                 AND NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = b.hash) AS orphan
            FROM vfs_blobs b
@@ -187,12 +201,13 @@ function sweepStep(db: Database, state: RefState): void {
         SWEEP_ROWS_PER_WRITE,
       );
   // A short page means the end of the table: start over next time.
-  const after = rows.length < SWEEP_ROWS_PER_WRITE ? 0 : rows[rows.length - 1].id;
-  if (manifests) state.sweepManifestsAfter = after;
-  else state.sweepBlobsAfter = after;
+  let after = rows.length < SWEEP_ROWS_PER_WRITE ? 0 : rows[rows.length - 1].id;
 
+  // Manifest rows are small and do not count against the byte budget.
+  // A blob that would exceed it stops the step, and the cursor stays
+  // just before it for the next write.
   const orphans: Uint8Array[] = [];
-  for (const row of rows) {
+  for (const [i, row] of rows.entries()) {
     if (row.orphan !== 1) continue;
     if (manifests) {
       orphans.push(row.hash);
@@ -200,33 +215,56 @@ function sweepStep(db: Database, state: RefState): void {
     }
     const key = hashKey(row.hash);
     if (isKeyPinned(db, key)) continue;
+    if (!spend(budget, row.size)) {
+      after = i === 0 ? state.sweepBlobsAfter : rows[i - 1].id;
+      break;
+    }
     state.deferredBlobs.delete(key);
     orphans.push(row.hash);
   }
+  if (manifests) state.sweepManifestsAfter = after;
+  else state.sweepBlobsAfter = after;
   if (manifests) reapManifests(db, orphans);
   else reapBlobs(db, orphans);
+}
+
+// Take `size` bytes from the budget if it has them. The first blob of a
+// write always fits, so the budget can never stop progress outright.
+function spend(budget: { bytes: number }, size: number): boolean {
+  if (size > budget.bytes && budget.bytes < BACKGROUND_REAP_BYTES_PER_WRITE) return false;
+  budget.bytes -= size;
+  return true;
 }
 
 // Retry up to `limit` deferred candidates, oldest first. One still
 // pinned goes to the back of the line. Entries leave the set only once
 // they are reaped, so a reap that throws, and fails the write with it,
 // leaves them for the next write.
-function retryDeferred(db: Database, state: RefState, limit: number): void {
+function retryDeferred(
+  db: Database,
+  state: RefState,
+  limit: number,
+  budget: { bytes: number },
+): void {
   const batch = firstEntries(state.deferredBlobs, limit);
-  const reaped: Array<[string, Uint8Array]> = [];
-  const stillPinned: Array<[string, Uint8Array]> = [];
+  const reaped: Array<[string, DroppedBlob]> = [];
+  const stillPinned: Array<[string, DroppedBlob]> = [];
   for (const entry of batch) {
-    if (isKeyPinned(db, entry[0])) stillPinned.push(entry);
-    else reaped.push(entry);
+    if (isKeyPinned(db, entry[0])) {
+      stillPinned.push(entry);
+      continue;
+    }
+    if (!spend(budget, entry[1].size)) break;
+    reaped.push(entry);
   }
   reapBlobs(
     db,
-    reaped.map(([, hash]) => hash),
+    reaped.map(([, dropped]) => dropped.hash),
   );
   for (const [key] of reaped) state.deferredBlobs.delete(key);
-  for (const [key, hash] of stillPinned) {
+  for (const [key, dropped] of stillPinned) {
     state.deferredBlobs.delete(key);
-    state.deferredBlobs.set(key, hash);
+    state.deferredBlobs.set(key, dropped);
   }
 }
 
@@ -346,21 +384,21 @@ export function openReapDeferral(db: Database): ReapDeferral {
   };
 }
 
-function reapHeld(db: Database, state: RefState, blobs: Map<string, Uint8Array>): void {
+function reapHeld(db: Database, state: RefState, blobs: Map<string, DroppedBlob>): void {
   const entries = [...blobs];
   for (let i = 0; i < entries.length; i += HELD_REAPS_PER_TRANSACTION) {
     const batch = entries.slice(i, i + HELD_REAPS_PER_TRANSACTION);
     try {
       inTransaction(db, () => {
         const unpinned: Uint8Array[] = [];
-        for (const [key, hash] of batch) {
-          if (isKeyPinned(db, key)) state.deferredBlobs.set(key, hash);
-          else unpinned.push(hash);
+        for (const [key, dropped] of batch) {
+          if (isKeyPinned(db, key)) state.deferredBlobs.set(key, dropped);
+          else unpinned.push(dropped.hash);
         }
         reapBlobs(db, unpinned);
       });
     } catch {
-      for (const [key, hash] of batch) state.deferredBlobs.set(key, hash);
+      for (const [key, dropped] of batch) state.deferredBlobs.set(key, dropped);
     }
   }
 }
@@ -403,7 +441,7 @@ export function linkChunk(
 }
 
 // Point chunk `idx` of `inode` at a new blob, replacing whatever was
-// there. `previous` is the hash the caller already loaded for that
+// there. `previous` is the chunk the caller already loaded for that
 // index, or undefined when the index was past the old end of file.
 export function replaceChunk(
   db: Database,
@@ -411,7 +449,7 @@ export function replaceChunk(
   idx: number,
   hash: Uint8Array,
   size: number,
-  previous: Uint8Array | undefined,
+  previous: { hash: Uint8Array; size: number } | undefined,
 ): void {
   inTransaction(db, () => {
     db.run(
@@ -422,7 +460,7 @@ export function replaceChunk(
       size,
     );
     relinkBlob(db, hash);
-    if (previous !== undefined) dropBlob(db, previous);
+    if (previous !== undefined) dropBlob(db, previous.hash, previous.size);
   });
 }
 
@@ -430,15 +468,13 @@ export function replaceChunk(
 // hashes they pointed at.
 export function dropChunks(db: Database, inode: number, fromIdx = 0): Uint8Array[] {
   return inTransaction(db, () => {
-    const hashes = db
-      .all<{ hash: Uint8Array }>(
-        "DELETE FROM vfs_chunks WHERE inode = ? AND idx >= ? RETURNING hash",
-        inode,
-        fromIdx,
-      )
-      .map((row) => row.hash);
-    for (const hash of hashes) dropBlob(db, hash);
-    return hashes;
+    const rows = db.all<{ hash: Uint8Array; size: number }>(
+      "DELETE FROM vfs_chunks WHERE inode = ? AND idx >= ? RETURNING hash, size",
+      inode,
+      fromIdx,
+    );
+    for (const row of rows) dropBlob(db, row.hash, row.size);
+    return rows.map((row) => row.hash);
   });
 }
 
