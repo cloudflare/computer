@@ -20,14 +20,32 @@ import { isKeyPinned } from "./pins";
 //
 // A candidate that is pinned (see pins.ts), or dropped while a reap
 // deferral is open, is deferred instead: held in memory and retried at
-// the end of later writes. If the process stops first, the deferred
-// set is lost, and the content stays behind as garbage that only gc()
-// finds.
+// the end of later writes.
+//
+// Whatever that misses, the incremental sweep finds: deferred
+// candidates lost when the process stopped, staging nothing linked
+// (failed streams, abandoned syncs), garbage an older release left, and
+// the backlog in stores that predate this. At the end of each write it
+// checks the next SWEEP_ROWS_PER_WRITE rows of vfs_blobs or
+// vfs_manifests, alternating, after an in-memory rowid cursor that
+// wraps at the end. A row goes if nothing references it, nothing pins
+// it, and its last_seen is older than SWEEP_GRACE_MS, which covers
+// staging still in flight across calls and restarts. A table of N rows
+// is covered every 2N / SWEEP_ROWS_PER_WRITE writes, at the cost of
+// one short range read per write.
 
 // Deferred candidates retried at the end of each write, so a large
 // backlog of released pins drains over several writes instead of
 // stalling one.
 const DEFERRED_RETRIES_PER_WRITE = 16;
+
+// Rows of one table the sweep checks at the end of each write.
+export const SWEEP_ROWS_PER_WRITE = 8;
+
+// How old an unreferenced row's last_seen must be before the sweep
+// takes it. Staging refreshes last_seen, so this is how long staged
+// bytes may wait for the link, and matches gc()'s default window.
+export const SWEEP_GRACE_MS = 60 * 60 * 1000;
 
 interface RefState {
   // Open reap deferral scopes. See openReapDeferral.
@@ -36,6 +54,11 @@ interface RefState {
   // hashKey.
   deferredBlobs: Map<string, Uint8Array>;
   deferredManifests: Map<string, Uint8Array>;
+  // Sweep position: the last rowid checked in each table, and which
+  // table the next write checks.
+  sweepBlobsAfter: number;
+  sweepManifestsAfter: number;
+  sweepManifestsNext: boolean;
 }
 
 // What one transaction dropped, keyed by hashKey. Linking a hash
@@ -53,7 +76,14 @@ const TRANSACTION_KEY = {};
 function stateFor(db: Database): RefState {
   let state = states.get(db);
   if (state === undefined) {
-    state = { deferDepth: 0, deferredBlobs: new Map(), deferredManifests: new Map() };
+    state = {
+      deferDepth: 0,
+      deferredBlobs: new Map(),
+      deferredManifests: new Map(),
+      sweepBlobsAfter: 0,
+      sweepManifestsAfter: 0,
+      sweepManifestsNext: false,
+    };
     states.set(db, state);
   }
   return state;
@@ -102,7 +132,60 @@ function settle(db: Database, refs: TransactionRefs): void {
     }
     reapManifest(db, hash);
   }
-  if (!deferring) retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
+  if (deferring) return;
+  retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
+  sweepStep(db, state);
+}
+
+// Check the next few rows of one table and delete the unreferenced,
+// unpinned ones past the grace window. The reference probe runs in the
+// same statement, so a write that finds nothing costs one read.
+function sweepStep(db: Database, state: RefState): void {
+  const cutoff = Date.now() - SWEEP_GRACE_MS;
+  const manifests = state.sweepManifestsNext;
+  state.sweepManifestsNext = !manifests;
+  const rows = manifests
+    ? db.all<{ id: number; hash: Uint8Array; orphan: number }>(
+        `SELECT rowid AS id, hash,
+                last_seen < ?
+                AND NOT EXISTS (SELECT 1 FROM vfs_nodes n WHERE n.manifest_hash = m.hash) AS orphan
+           FROM vfs_manifests m
+          WHERE rowid > ?
+          ORDER BY rowid
+          LIMIT ?`,
+        cutoff,
+        state.sweepManifestsAfter,
+        SWEEP_ROWS_PER_WRITE,
+      )
+    : db.all<{ id: number; hash: Uint8Array; orphan: number }>(
+        `SELECT rowid AS id, hash,
+                last_seen < ?
+                AND NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = b.hash) AS orphan
+           FROM vfs_blobs b
+          WHERE rowid > ?
+          ORDER BY rowid
+          LIMIT ?`,
+        cutoff,
+        state.sweepBlobsAfter,
+        SWEEP_ROWS_PER_WRITE,
+      );
+  // A short page means the end of the table: start over next time.
+  const after = rows.length < SWEEP_ROWS_PER_WRITE ? 0 : rows[rows.length - 1].id;
+  if (manifests) state.sweepManifestsAfter = after;
+  else state.sweepBlobsAfter = after;
+
+  for (const row of rows) {
+    if (row.orphan !== 1) continue;
+    const key = hashKey(row.hash);
+    if (manifests) {
+      state.deferredManifests.delete(key);
+      reapManifest(db, row.hash);
+      continue;
+    }
+    if (isKeyPinned(db, key)) continue;
+    state.deferredBlobs.delete(key);
+    reapBlob(db, row.hash);
+  }
 }
 
 // Retry up to `limit` deferred candidates of each kind, oldest first.

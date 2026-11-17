@@ -7,7 +7,8 @@ import type { Database } from "../storage";
 // subsequent applyChanges call can find them by hash.
 //
 // Idempotent: a second call with the same hash refreshes
-// last_seen so the bytes don't get reaped by an interleaved gc.
+// last_seen so the bytes stay inside the sweep's grace window until
+// they are linked.
 // Conflict updates also repair incomplete or size-mismatched rows
 // left by an interrupted or corrupt write.
 //

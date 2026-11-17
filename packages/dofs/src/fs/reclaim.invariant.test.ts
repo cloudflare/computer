@@ -11,9 +11,9 @@ import { hashKey } from "./blobCache";
 import { gc } from "./gc";
 import { link } from "./link";
 import { mkdir } from "./mkdir";
-import { isPinned } from "./pins";
+import { HAS_OBJECTS_PIN_MS, isPinned } from "./pins";
 import { readFile, readRangeSync } from "./readFile";
-import { isDeferred } from "./refs";
+import { isDeferred, SWEEP_GRACE_MS, SWEEP_ROWS_PER_WRITE } from "./refs";
 import { rename } from "./rename";
 import { resolveInode } from "./resolve";
 import { rm } from "./rm";
@@ -37,6 +37,8 @@ import {
 //   * every chunk and manifest a node references is present;
 //   * what gc() would still free is only what is pinned, deferred, or
 //     staged and never linked;
+//   * once nothing is pinned and the sweep has gone round, gc() finds
+//     nothing at all;
 //   * a read stream returns the file as it was when it opened.
 
 const NOW = (): number => 1000;
@@ -97,6 +99,14 @@ function joined(parts: Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return out;
+}
+
+function count(db: Database, table: string): number {
+  return db.scalar<number>(`SELECT COUNT(*) FROM ${table}`) ?? 0;
+}
+
+function scratch(db: Database, i: number): void {
+  writeFileSync(db, "/scratch", new TextEncoder().encode(`scratch ${i}`), {}, NOW);
 }
 
 function assertReferencesPresent(db: Database): void {
@@ -296,18 +306,23 @@ describe("reclamation invariants", () => {
       await withDB(async (db) => {
         const { staged } = await runSequence(db, seed);
 
-        // Once every pin has lapsed, later writes reclaim everything
-        // that was deferred, leaving only staging nothing linked.
-        vi.advanceTimersByTime(60 * 60 * 1000);
-        for (let i = 0; i < 20; i++) {
-          writeFileSync(db, "/scratch", new TextEncoder().encode(`scratch ${i}`), {}, NOW);
-        }
+        // Once every pin has lapsed, a few writes reclaim everything that
+        // was deferred, leaving only staging nothing linked.
+        vi.advanceTimersByTime(HAS_OBJECTS_PIN_MS);
+        for (let i = 0; i < 4; i++) scratch(db, i);
         const left = orphans(db);
         expect(left.manifests).toBe(0);
         expect(left.blobs.map(hashKey).filter((key) => !staged.has(key))).toEqual([]);
-        // gc() agrees: abandoned staging is all it finds.
-        const freed = gc(db, { safetyWindowMs: 0, now: () => Number.MAX_SAFE_INTEGER });
-        expect(freed).toEqual({ blobsFreed: left.blobs.length, manifestsFreed: 0 });
+
+        // Past the staging grace, the sweep reclaims that too, given
+        // enough writes to go round both tables.
+        vi.advanceTimersByTime(SWEEP_GRACE_MS + 1);
+        const rows = count(db, "vfs_blobs") + count(db, "vfs_manifests");
+        for (let i = 0; i < 2 * Math.ceil(rows / SWEEP_ROWS_PER_WRITE) + 2; i++) scratch(db, i);
+        expect(gc(db, { safetyWindowMs: 0, now: () => Number.MAX_SAFE_INTEGER })).toEqual({
+          blobsFreed: 0,
+          manifestsFreed: 0,
+        });
       });
     });
   }
