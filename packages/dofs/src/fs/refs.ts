@@ -135,6 +135,7 @@ function relinkBlob(db: Database, hash: Uint8Array): void {
 function settle(db: Database, refs: TransactionRefs): void {
   const state = stateFor(db);
   const hold = state.holding;
+  const unpinned: Uint8Array[] = [];
   for (const [key, hash] of refs.droppedBlobs) {
     if (hold !== undefined) {
       hold.blobs.set(key, hash);
@@ -145,9 +146,10 @@ function settle(db: Database, refs: TransactionRefs): void {
       state.deferredBlobs.set(key, hash);
       continue;
     }
-    reapBlob(db, hash);
+    unpinned.push(hash);
   }
-  for (const hash of refs.droppedManifests.values()) reapManifest(db, hash);
+  reapBlobs(db, unpinned);
+  reapManifests(db, [...refs.droppedManifests.values()]);
   retryDeferred(db, state, DEFERRED_RETRIES_PER_WRITE);
   sweepStep(db, state);
 }
@@ -189,17 +191,20 @@ function sweepStep(db: Database, state: RefState): void {
   if (manifests) state.sweepManifestsAfter = after;
   else state.sweepBlobsAfter = after;
 
+  const orphans: Uint8Array[] = [];
   for (const row of rows) {
     if (row.orphan !== 1) continue;
-    const key = hashKey(row.hash);
     if (manifests) {
-      reapManifest(db, row.hash);
+      orphans.push(row.hash);
       continue;
     }
+    const key = hashKey(row.hash);
     if (isKeyPinned(db, key)) continue;
     state.deferredBlobs.delete(key);
-    reapBlob(db, row.hash);
+    orphans.push(row.hash);
   }
+  if (manifests) reapManifests(db, orphans);
+  else reapBlobs(db, orphans);
 }
 
 // Retry up to `limit` deferred candidates, oldest first. One still
@@ -208,17 +213,17 @@ function sweepStep(db: Database, state: RefState): void {
 // leaves them for the next write.
 function retryDeferred(db: Database, state: RefState, limit: number): void {
   const batch = firstEntries(state.deferredBlobs, limit);
-  const reaped: string[] = [];
+  const reaped: Array<[string, Uint8Array]> = [];
   const stillPinned: Array<[string, Uint8Array]> = [];
-  for (const [key, hash] of batch) {
-    if (isKeyPinned(db, key)) {
-      stillPinned.push([key, hash]);
-      continue;
-    }
-    reapBlob(db, hash);
-    reaped.push(key);
+  for (const entry of batch) {
+    if (isKeyPinned(db, entry[0])) stillPinned.push(entry);
+    else reaped.push(entry);
   }
-  for (const key of reaped) state.deferredBlobs.delete(key);
+  reapBlobs(
+    db,
+    reaped.map(([, hash]) => hash),
+  );
+  for (const [key] of reaped) state.deferredBlobs.delete(key);
   for (const [key, hash] of stillPinned) {
     state.deferredBlobs.delete(key);
     state.deferredBlobs.set(key, hash);
@@ -234,31 +239,65 @@ function firstEntries<K, V>(map: Map<K, V>, limit: number): Array<[K, V]> {
   return out;
 }
 
-// Delete a blob that no chunk references any more. vfs_blob_bytes is
-// deleted explicitly rather than through its foreign key, which only
-// cascades where foreign keys are enforced.
-function reapBlob(db: Database, hash: Uint8Array): void {
-  const gone = db.one(
-    `DELETE FROM vfs_blobs
-      WHERE hash = ?
-        AND NOT EXISTS (SELECT 1 FROM vfs_chunks WHERE hash = ?)
-      RETURNING hash`,
-    hash,
-    hash,
-  );
-  if (gone === undefined) return;
-  db.run("DELETE FROM vfs_blob_bytes WHERE hash = ?", hash);
-  evictBlob(db, hash);
+// Statements bind at most this many hashes: the Durable Object limit
+// on bound parameters (see PROBE_BATCH in sync/fetch.ts).
+const REAP_BATCH = 100;
+
+// Batches are padded up to one of these sizes, so only a handful of
+// distinct statements reach the prepared-statement cache.
+const REAP_BATCH_SIZES = [1, 8, 32, REAP_BATCH];
+
+// Split hashes into statement-sized batches, padding each with copies
+// of its last hash up to a fixed size. IN ignores the repeats.
+function reapBatches(hashes: Uint8Array[]): Uint8Array[][] {
+  const out: Uint8Array[][] = [];
+  for (let i = 0; i < hashes.length; i += REAP_BATCH) {
+    const batch = hashes.slice(i, i + REAP_BATCH);
+    const size = REAP_BATCH_SIZES.find((s) => s >= batch.length) ?? REAP_BATCH;
+    while (batch.length < size) batch.push(batch[batch.length - 1]);
+    out.push(batch);
+  }
+  return out;
 }
 
-function reapManifest(db: Database, hash: Uint8Array): void {
-  db.run(
-    `DELETE FROM vfs_manifests
-      WHERE hash = ?
-        AND NOT EXISTS (SELECT 1 FROM vfs_nodes WHERE manifest_hash = ?)`,
-    hash,
-    hash,
-  );
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+// Delete the blobs among `hashes` that no chunk references any more,
+// up to REAP_BATCH a statement. vfs_blob_bytes is deleted explicitly
+// rather than through its foreign key, which only cascades where
+// foreign keys are enforced.
+function reapBlobs(db: Database, hashes: Uint8Array[]): void {
+  for (const batch of reapBatches(hashes)) {
+    const gone = db
+      .all<{ hash: Uint8Array }>(
+        `DELETE FROM vfs_blobs
+          WHERE hash IN (${placeholders(batch.length)})
+            AND NOT EXISTS (SELECT 1 FROM vfs_chunks c WHERE c.hash = vfs_blobs.hash)
+          RETURNING hash`,
+        ...batch,
+      )
+      .map((row) => row.hash);
+    for (const bytesBatch of reapBatches(gone)) {
+      db.run(
+        `DELETE FROM vfs_blob_bytes WHERE hash IN (${placeholders(bytesBatch.length)})`,
+        ...bytesBatch,
+      );
+    }
+    for (const hash of gone) evictBlob(db, hash);
+  }
+}
+
+function reapManifests(db: Database, hashes: Uint8Array[]): void {
+  for (const batch of reapBatches(hashes)) {
+    db.run(
+      `DELETE FROM vfs_manifests
+        WHERE hash IN (${placeholders(batch.length)})
+          AND NOT EXISTS (SELECT 1 FROM vfs_nodes n WHERE n.manifest_hash = vfs_manifests.hash)`,
+      ...batch,
+    );
+  }
 }
 
 export interface ReapDeferral {
@@ -313,10 +352,12 @@ function reapHeld(db: Database, state: RefState, blobs: Map<string, Uint8Array>)
     const batch = entries.slice(i, i + HELD_REAPS_PER_TRANSACTION);
     try {
       inTransaction(db, () => {
+        const unpinned: Uint8Array[] = [];
         for (const [key, hash] of batch) {
           if (isKeyPinned(db, key)) state.deferredBlobs.set(key, hash);
-          else reapBlob(db, hash);
+          else unpinned.push(hash);
         }
+        reapBlobs(db, unpinned);
       });
     } catch {
       for (const [key, hash] of batch) state.deferredBlobs.set(key, hash);
