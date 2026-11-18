@@ -268,14 +268,28 @@ interface PassthroughMount {
     mount holds, as a pull does in the store.
   - **A delete of a path the mount no longer has.**
   - **A delete that carries `prior`**, the fingerprint of the version
-    the container removed, of a file whose bytes no longer match it,
-    whatever permission bits the mount reports: a newer file written to
-    the mount is kept. A directory is removed only once it is empty;
-    one with contents is decided again at the end of the pull, after
-    the deletes of what it held.
+    the container removed, of a file whose bytes no longer match it: a
+    newer file written to the mount is kept. The mount may report
+    permission bits of its own, so the fingerprint is tried with the
+    mount's mode and the usual ones (0644, 0755, 0600, 0700, 0664,
+    0775, 0444, 0555); matching none counts as a change. A directory's
+    fingerprint is only its mode, so it isn't compared: a directory is
+    removed once it is empty. One with contents is decided again at the
+    end of the pull, after the deletes of what it held, and one still
+    holding something then is kept and reported in `skipped` with
+    `reason: "kept"`.
 
   A new delete without `prior`, from an older peer or for the source
   of a rename, is applied.
+
+  A row of `_vfs_mount_applied` lives until the backend can't send its
+  entry again: it is deleted when the fetch cursor is committed past
+  its rev, every row of a backend goes when its fetch cursor moves back
+  (the backend's log started over, and its revs with it), and opening a
+  workspace drops the rows under paths that no registered read-write
+  root covers. Every rev a mount write mints during a pull counts as
+  the pull's own, and only those: a host write while a mount call is in
+  flight is still the host's, to be pushed.
 - **Git** reads and writes a worktree under the root through the
   provider's async methods, so `init`, `add`, `commit` and `checkout`
   work there, one mount call per file. Nothing is batched, so this is
