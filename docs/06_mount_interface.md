@@ -32,7 +32,7 @@ construction.
 
 ## Strategies
 
-A mount is either **lazy** or **eager**.
+A mount is **lazy**, **eager** or **passthrough**.
 
 ### Lazy
 
@@ -79,6 +79,96 @@ interface MountWriteApi {
 
 Best when the backing store only produces content as a single transaction
 (a git clone yields the whole working tree at once).
+
+### Passthrough
+
+A passthrough mount stores nothing. Every read at or below its root is
+answered live by the mount, on every call, before any SQL runs:
+`stat`, `lstat`, `readdir`, `readFile` (with `byteOffset`,
+`byteLength` and `"utf8"`), `readlink`, `exists`, `find`, `ls` and
+`grep` on `Workspace.fs` and the stub, the codemode module graph that
+imports workspace `.js` files, and the provider's async methods.
+
+```ts
+import type { PassthroughMount } from "@cloudflare/computer";
+
+interface PassthroughMount extends MountBase {
+  readonly strategy: "passthrough";
+  readonly mode: "read-only";
+  // Paths are relative to the mount root: "" is the root, "a/b.md" a
+  // file below it. null means ENOENT.
+  stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
+  readdir(
+    path: string,
+    options?: { recursive?: boolean; limit?: number; signal?: AbortSignal },
+  ): Promise<PassthroughDirent[] | null>;
+  readFile(
+    path: string,
+    options?: { range?: { offset: number; length?: number }; signal?: AbortSignal },
+  ): Promise<{ stat: PassthroughStat; body: ReadableStream<Uint8Array>; offset: number } | null>;
+}
+
+interface PassthroughStat {
+  type: "file" | "dir";
+  size: number;  // bytes, 0 for directories
+  mtime: number; // ms since the epoch, 0 if unknown
+  mode: number;  // permission bits, such as 0o644
+}
+
+interface PassthroughDirent extends PassthroughStat {
+  name: string;  // relative to the directory read
+}
+```
+
+Passthrough mounts are registered in memory each time a `Workspace` is
+constructed: no `_vfs_mounts` row, no rows for anything under the root,
+no cache. Pass them every time the workspace is opened; a `Workspace`
+opened without one has nothing at its root (`ENOENT`), and one opened
+with it again serves it again. Construction creates the root's missing
+parent directories, such as `/skills` for `/skills/team`, as ordinary
+directories; the root itself is listed as a directory of its parent and
+stats as what the mount's `stat("")` returns, which must be a
+directory. A root at `/` is rejected, and roots nest with no other
+mount, eager or passthrough. Rows that are already in the store under a
+root, from before it was registered, are hidden while it is.
+
+- **Directories.** `readdir` of a file throws `ENOTDIR`, as a
+  `WorkspaceFsError` (`createWorkspaceError` is exported for it), which
+  the filesystem passes through. `find`, `ls` and `grep` walk each
+  mount root they reach with one `readdir(path, { recursive: true,
+  limit })`, whose names may contain `/`, parents listed before their
+  children. The limit is `PASSTHROUGH_WALK_LIMIT` (100,000 entries);
+  whether a mount throws or truncates past it is up to the mount.
+- **Ranges.** `readFile`'s `byteOffset` and `byteLength` become
+  `range`. The returned `offset` is the byte where `body` starts: a
+  mount that can't seek returns 0 and the whole file, and the
+  filesystem skips to the offset and cuts at the length.
+- **Read-only.** `writeFile`, `mkdir`, `rm`, `rename` from or to the
+  root, `chmod`, `symlink`, the provider's writes, and changes pulled
+  from a container or written by git under the root fail with `EROFS`
+  without calling the mount. `rm` and `rename` of a directory above
+  the root, and `mkdir` of one, fail as they do above a read-only
+  eager mount.
+- **Errors.** A `WorkspaceFsError` a mount throws passes through. Any
+  other error fails that one operation with `EIO`, carrying the
+  error's message cut to 1 KiB. So does a malformed reply: an entry
+  name that is empty, `.` or `..` in any segment, absolute, or
+  contains a backslash or NUL; a stat with a bad type, size, mtime or
+  mode; an entry below a file or without its parent; a root that
+  isn't a directory; and a body that delivers more or fewer bytes than
+  its stat's size.
+- **Synchronous reads.** They can't wait for a mount: the provider's
+  `*Sync` methods, and anything else that resolves a path under the
+  root synchronously, fail with `ENOTSUP`.
+- **Paths, not links.** A path is routed by its canonical form. A
+  symbolic link elsewhere in the store that points into a root is not
+  followed into the mount.
+- **Not synced.** Nothing under the root is pushed to a container
+  backend; only commands that read through `Workspace.fs`, such as the
+  codemode and worker-shell backends, see the mount's files.
+
+Best when the files must never be stored in the workspace, or change
+often enough that a copy would be stale.
 
 ## Factories
 
