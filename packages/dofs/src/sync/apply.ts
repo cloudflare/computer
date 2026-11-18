@@ -557,13 +557,37 @@ async function writeThrough(
   run: ApplyRun,
   counts: { applied: number; minted: number },
 ): Promise<void> {
+  // A file's chunks may be another stored file's too, and a host write
+  // while the mount reads them could drop the last reference to one:
+  // pinned, they stay until the body is read or abandoned.
+  const pin =
+    entry.kind === "file"
+      ? pinHashes(
+          db,
+          entry.chunks.map((c) => c.hash),
+        )
+      : undefined;
+  try {
+    await writeThroughPinned(db, entry, target, run, counts);
+  } finally {
+    pin?.release();
+  }
+}
+
+async function writeThroughPinned(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
   const body = entry.kind === "file" ? chunkBody(db, entry, run.objects) : undefined;
   const pulled = run.options.source === "upstream";
   let rev: number | undefined;
   try {
     const absorbed = pulled ? await mountAbsorbs(db, entry, target, run) : "apply";
-    if (absorbed !== "apply") {
-      await body?.cancel();
+    if (absorbed === "absorbed" || absorbed === "deferred") {
+      await body?.stream.cancel();
       if (absorbed === "absorbed") noteMountApplied(db, run, entry, target);
       return;
     }
@@ -571,7 +595,7 @@ async function writeThrough(
       rev = await writeFileToMount(
         db,
         target,
-        body as ReadableStream<Uint8Array>,
+        (body as ChunkBody).stream,
         { mode: entry.mode },
         entry.size,
       );
@@ -579,10 +603,22 @@ async function writeThrough(
       rev = await mkdirInMount(db, target, { recursive: true, mode: entry.mode });
     } else if (entry.kind === "symlink") {
       throw unsupportedWrite(target);
+    } else if (absorbed === "remove-empty-dir") {
+      // Not recursive: whatever arrived in the directory since it was
+      // seen empty makes the mount refuse, and stays.
+      rev = await rmInMount(db, target, { force: true });
     } else {
       rev = await rmInMount(db, target, { recursive: true, force: true });
     }
   } catch (error) {
+    // Chunks that went missing make the entry itself wrong, as in the
+    // store: the call fails, and the pull retries it.
+    const missing = body?.missing();
+    if (missing !== undefined) throw missing;
+    if (entry.kind === "delete" && isNotEmpty(error)) {
+      reportKept(run, entry, target);
+      return;
+    }
     reportMountError(run, entry, target, error);
     return;
   }
@@ -666,6 +702,23 @@ function recordMountApplied(
   );
 }
 
+// A pulled directory delete that left the directory, which holds what
+// the pull didn't delete. The entry is reported, unrecorded, so a
+// replay once the directory is empty can still remove it.
+function reportKept(run: ApplyRun, entry: ChangeEntry, target: PassthroughTarget): void {
+  run.skipped.push({
+    path: entry.path,
+    mountRoot: target.root,
+    op: "delete",
+    reason: "kept",
+    error: "ENOTEMPTY: the directory holds entries this pull didn't delete",
+  });
+}
+
+function isNotEmpty(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "ENOTEMPTY";
+}
+
 function reportMountError(
   run: ApplyRun,
   entry: ChangeEntry,
@@ -707,7 +760,7 @@ async function mountAbsorbs(
   entry: ChangeEntry,
   target: PassthroughTarget,
   run: ApplyRun,
-): Promise<"absorbed" | "deferred" | "apply"> {
+): Promise<"absorbed" | "deferred" | "remove-empty-dir" | "apply"> {
   if (mountAppliedBefore(db, run, entry, target)) return "absorbed";
   if (entry.kind === "dir" || entry.kind === "symlink") return "apply";
   const held = await mountVersion(target);
@@ -719,7 +772,7 @@ async function mountAbsorbs(
   if (held === undefined) return "absorbed";
   if (entry.prior === undefined) return "apply";
   if (held.type === "dir") {
-    if (await mountDirectoryEmpty(db, entry.path)) return "apply";
+    if (await mountDirectoryEmpty(db, entry.path)) return "remove-empty-dir";
     run.deferredMountDirs.push({ entry, target });
     return "deferred";
   }
@@ -747,21 +800,13 @@ async function settleMountDirectories(
         continue;
       }
       if (!(await mountDirectoryEmpty(db, entry.path))) {
-        // What is left wasn't removed by this pull: the directory stays,
-        // and the entry is reported, unrecorded, so a replay once the
-        // directory is empty can still remove it.
-        run.skipped.push({
-          path: entry.path,
-          mountRoot: target.root,
-          op: "delete",
-          reason: "kept",
-          error: "ENOTEMPTY: the directory holds entries this pull didn't delete",
-        });
+        reportKept(run, entry, target);
         continue;
       }
       rev = await rmInMount(db, target, { force: true });
     } catch (error) {
-      reportMountError(run, entry, target, error);
+      if (isNotEmpty(error)) reportKept(run, entry, target);
+      else reportMountError(run, entry, target, error);
       continue;
     }
     noteMintedRev(run, counts, rev);
@@ -833,12 +878,18 @@ function matchesUsualMode(prior: string, manifest: Uint8Array, mode: number): bo
 
 // A file entry's bytes, chunk by chunk, from the call's objects or the
 // staged blobs, without staging any. Every chunk is checked before the
-// mount is called.
+// mount is called. `missing` is the error a chunk that went missing
+// while the mount read the body stopped it with.
+interface ChunkBody {
+  stream: ReadableStream<Uint8Array>;
+  missing(): Error | undefined;
+}
+
 function chunkBody(
   db: Database,
   entry: Extract<ChangeEntry, { kind: "file" }>,
   objects: Map<string, Uint8Array>,
-): ReadableStream<Uint8Array> {
+): ChunkBody {
   assertChunkWindows(entry.chunks, entry.path);
   for (const c of entry.chunks) {
     const bytes = objects.get(hex(c.hash));
@@ -849,7 +900,8 @@ function chunkBody(
     assertChunkSize(size, c.size, c.hash, entry.path);
   }
   let index = 0;
-  return new ReadableStream<Uint8Array>({
+  let missing: Error | undefined;
+  const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
       const chunk = entry.chunks[index++];
       if (chunk === undefined) {
@@ -858,14 +910,14 @@ function chunkBody(
       }
       const bytes = objects.get(hex(chunk.hash)) ?? getBlobBytes(db, chunk.hash);
       if (bytes === undefined) {
-        controller.error(
-          new Error(`applyChanges: missing object ${hex(chunk.hash)} for ${entry.path}`),
-        );
+        missing = new Error(`applyChanges: missing object ${hex(chunk.hash)} for ${entry.path}`);
+        controller.error(missing);
         return;
       }
       controller.enqueue(bytes);
     },
   });
+  return { stream, missing: () => missing };
 }
 
 function describeError(error: unknown): string {

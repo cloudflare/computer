@@ -19,6 +19,8 @@ import { Workspace } from "../workspace";
 import type { PassthroughDirent, PassthroughMount, PassthroughStat } from "./types";
 
 const ROOT = "/skills/team";
+// The store's chunk size (dofs fs/chunk.ts).
+const CHUNK_SIZE = 512 * 1024;
 
 type Method = "writeFile" | "mkdir" | "rm" | "rename" | "chmod";
 
@@ -939,5 +941,94 @@ describe("read-write passthrough mounts and the sync protocol", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// A gate a fake mount's method waits on, so a test can act while the
+// mount call is in flight.
+function gated() {
+  let started!: () => void;
+  let release!: () => void;
+  const inFlight = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const open = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { inFlight, started: () => started(), wait: () => open, release: () => release() };
+}
+
+describe("read-write passthrough mounts against concurrent writes", () => {
+  it("keeps a pulled file's stored chunks while the mount reads them", async () => {
+    const mount = writableMount();
+    const gate = gated();
+    const write = mount.writeFile?.bind(mount);
+    mount.writeFile = async (path, body, options) => {
+      gate.started();
+      await gate.wait();
+      return write?.(path, body, options);
+    };
+    const ws = open({ [ROOT]: mount });
+    // The only stored file whose chunks the pulled file shares. A body
+    // holds its first chunks ready, and reads the last ones only when
+    // the mount asks for them.
+    const bytes = new Uint8Array(CHUNK_SIZE * 3 + 5);
+    for (let index = 0; index < bytes.byteLength; index += 1) {
+      bytes[index] = Math.floor(index / CHUNK_SIZE) + 1;
+    }
+    await ws.fs.writeFile("/host.bin", bytes);
+    const chunks = [];
+    for (let offset = 0; offset < bytes.byteLength; offset += CHUNK_SIZE) {
+      const slice = bytes.subarray(offset, Math.min(offset + CHUNK_SIZE, bytes.byteLength));
+      const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", slice));
+      chunks.push({ hash, size: slice.byteLength });
+    }
+    const entry: ChangeEntry = {
+      kind: "file",
+      rev: 90,
+      path: `${ROOT}/large.bin`,
+      mode: 0o644,
+      mtime: 1,
+      size: bytes.byteLength,
+      chunks,
+    };
+
+    const applying = applyChanges(ws.db, [entry], new Map(), pull);
+    await gate.inFlight;
+    await ws.fs.rm("/host.bin");
+    gate.release();
+    const result = await applying;
+
+    expect(result).toMatchObject({ applied: 1, skipped: [] });
+    expect(mount.files.get("large.bin")?.bytes).toEqual(bytes);
+  });
+
+  it("removes a pulled directory without its contents, keeping a file added meanwhile", async () => {
+    const mount = writableMount();
+    await mount.mkdir?.("cache", { recursive: false });
+    mount.calls.length = 0;
+    const rm = mount.rm?.bind(mount);
+    mount.rm = async (path, options) => {
+      // The agent writes into the directory after the pull saw it empty.
+      mount.files.set("cache/new.txt", { bytes: encoder.encode("agent's\n"), mode: 0o644 });
+      return rm?.(path, options);
+    };
+    const ws = open({ [ROOT]: mount });
+    const scratch = new Workspace({ storage: new SQLiteTestStorage() });
+    await scratch.fs.mkdir("/d");
+    await scratch.fs.rm("/d");
+    const tombstone = materialiseChange(scratch.db, "/d") as ChangeEntry & { kind: "delete" };
+
+    const result = await applyChanges(
+      ws.db,
+      [{ kind: "delete", rev: 91, path: `${ROOT}/cache`, prior: tombstone.prior }],
+      new Map(),
+      pull,
+    );
+    expect(text(mount, "cache/new.txt")).toBe("agent's\n");
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ path: `${ROOT}/cache`, op: "delete", reason: "kept" }),
+    ]);
+    expect(ws.db.all("SELECT path FROM _vfs_mount_applied")).toEqual([]);
   });
 });

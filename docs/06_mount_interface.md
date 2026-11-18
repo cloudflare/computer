@@ -249,7 +249,8 @@ interface PassthroughMount {
   `skipped` with `reason: "mount-error"` and the error, and the rest of
   the pull applies. An entry that is wrong in itself, such as a file
   whose chunks didn't arrive, fails the pull, which retries it, as in
-  the store. A synchronous apply reports every entry under the root as
+  the store. A file's chunks are pinned while the mount reads them, so
+  a host write that drops another file sharing them can't take them. A synchronous apply reports every entry under the root as
   a `mount-error`.
 
   A pull replays a batch whose acknowledgment was lost, so each entry
@@ -277,7 +278,8 @@ interface PassthroughMount {
     that reports a different one leaves the file in place, even when the
     bytes match.
   - **A directory delete ignores `prior`**, a directory's fingerprint
-    being only its mode: an empty directory is removed. One with
+    being only its mode: an empty directory is removed, and only it, so
+    a file written into it meanwhile makes the mount refuse. One with
     contents is decided again at the end of the pull, after the deletes
     of what it held, and one still holding something then is kept and
     reported in `skipped` with `reason: "kept"`.
