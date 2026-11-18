@@ -1,5 +1,6 @@
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
+import { isPassthroughUnsupported, redirectOf } from "../fs/passthrough-registry";
 import { pinHashes } from "../fs/pins";
 import { openReapDeferral, type ReapDeferral } from "../fs/refs";
 import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
@@ -282,6 +283,13 @@ function isMissingPath(error: unknown): boolean {
 }
 
 // State one apply call carries from entry to entry.
+// The passthrough root an entry's path ran into, when that is why
+// applying it failed.
+function passthroughRootReached(error: unknown): string | undefined {
+  if (!isPassthroughUnsupported(error)) return undefined;
+  return redirectOf(error)?.root ?? error.path ?? "";
+}
+
 interface ApplyRun {
   readonly objects: Map<string, Uint8Array>;
   readonly options: ApplyOptions;
@@ -450,7 +458,22 @@ function step(
 ): void {
   const revBefore = currentRev(db);
   try {
-    if (deferral.hold(() => applyOne(db, entry, run)) !== undefined) counts.applied++;
+    try {
+      if (deferral.hold(() => applyOne(db, entry, run)) !== undefined) counts.applied++;
+    } catch (error) {
+      // A path that reaches a passthrough root through a symbolic link
+      // is under a read-only mount like one that names the root. The
+      // resolve that finds the root runs before the entry writes
+      // anything, so skipping it leaves the batch as it was.
+      const passthroughRoot = passthroughRootReached(error);
+      if (passthroughRoot === undefined) throw error;
+      run.skipped.push({
+        path: entry.path,
+        mountRoot: passthroughRoot,
+        op: entry.kind === "delete" ? "delete" : "write",
+        reason: "read-only",
+      });
+    }
   } finally {
     counts.minted += notePulledRevs(db, run.pulled, revBefore);
   }

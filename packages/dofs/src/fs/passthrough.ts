@@ -953,29 +953,37 @@ function emptyStream(): ReadableStream<Uint8Array> {
   });
 }
 
-// Read an opened file whole, holding no more than the bytes it says it
-// delivers, whatever the mount sends.
+// Read an opened file whole. Memory grows with the bytes the mount
+// actually sends, never with the size it states, and the read fails
+// with EIO once it sends more than the window.
 async function collectBytes(opened: OpenedFile, path: string): Promise<Uint8Array> {
-  const out = new Uint8Array(opened.length);
-  const reader = opened.stream.getReader();
+  const chunks: Uint8Array[] = [];
   let size = 0;
+  const reader = opened.stream.getReader();
   try {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (size + value.byteLength > out.byteLength) {
+      if (size + value.byteLength > opened.length) {
         await reader.cancel();
         throw createWorkspaceError(
           "EIO",
-          `read more than the ${out.byteLength} bytes expected`,
+          `read more than the ${opened.length} bytes expected`,
           path,
         );
       }
-      out.set(value, size);
+      chunks.push(value);
       size += value.byteLength;
     }
   } finally {
     reader.releaseLock();
   }
-  return size === out.byteLength ? out : out.subarray(0, size);
+  if (chunks.length === 1) return chunks[0];
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }

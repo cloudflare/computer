@@ -152,8 +152,9 @@ mount, eager or passthrough.
   `range`. The returned `offset` is the byte where `body` starts: a
   mount that can't seek returns 0 and the whole file, and the
   filesystem skips to the offset and cuts at the length. A window at or
-  past the end, by the stat, cancels the body unread. No more than the
-  window's bytes are ever held.
+  past the end, by the stat, cancels the body unread. A read holds
+  only the bytes the mount sends, never memory for the size it states,
+  and fails with `EIO` past the window.
 - **Signals.** Every mount call gets an `AbortSignal`, aborted when the
   operation no longer needs the call: a `find` or `grep` that reached
   its limit, a file stream its reader cancelled, a body read past the

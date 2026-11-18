@@ -682,6 +682,62 @@ describe("passthrough mounts in walks, links and syncs", () => {
     expect(names).not.toContain("from-container.md");
   });
 
+  it("skips changes pulled through a store link into a root", async () => {
+    const ws = open(fakePassthrough(FILES));
+    await ws.fs.symlink(ROOT, "/dirlink");
+    await ws.fs.symlink("/skills", "/skillslink");
+    const file = (path: string) => ({
+      kind: "file" as const,
+      rev: 100,
+      path,
+      mode: 0o644,
+      mtime: 1,
+      size: 0,
+      chunks: [],
+    });
+    const result = await applyChanges(
+      ws.db,
+      [
+        file("/dirlink/from-container.md"),
+        { kind: "dir", rev: 101, path: "/dirlink/sub", mode: 0o755, mtime: 1 },
+        { kind: "symlink", rev: 102, path: "/skillslink/team/l", target: "/x", mtime: 1 },
+        { kind: "delete", rev: 103, path: "/dirlink/README.md" },
+        file("/beside.md"),
+      ],
+      new Map(),
+      { source: "upstream" },
+    );
+    expect(result.skipped).toEqual([
+      { path: "/dirlink/from-container.md", mountRoot: ROOT, op: "write", reason: "read-only" },
+      { path: "/dirlink/sub", mountRoot: ROOT, op: "write", reason: "read-only" },
+      { path: "/skillslink/team/l", mountRoot: ROOT, op: "write", reason: "read-only" },
+      { path: "/dirlink/README.md", mountRoot: ROOT, op: "delete", reason: "read-only" },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(await ws.fs.readFile("/beside.md", "utf8")).toBe("");
+    expect(await ws.fs.readFile("/dirlink/README.md", "utf8")).toBe(FILES["README.md"]);
+    const names = ws.db.all<{ name: string }>("SELECT name FROM vfs_dirents").map((r) => r.name);
+    expect(names).not.toContain("from-container.md");
+  });
+
+  it("holds only the bytes a mount sends, whatever size it states", async () => {
+    const huge = 3 * 2 ** 30;
+    const ws = open(
+      fakePassthrough(FILES, {
+        readFile: async () => ({
+          stat: { type: "file", size: huge, mtime: 0, mode: 0o644 },
+          offset: 0,
+          body: streamOf(new TextEncoder().encode("abc")),
+        }),
+      }),
+    );
+    const path = `${ROOT}/README.md`;
+    await expect(ws.fs.readFile(path, "utf8")).rejects.toMatchObject({ code: "EIO" });
+    await expect(ws.provider().readFile(path)).rejects.toMatchObject({ code: "EIO" });
+    expect(await ws.fs.readFile(path, { encoding: "utf8", byteLength: 2 })).toBe("ab");
+    expect((await ws.fs.stat(path)).size).toBe(FILES["README.md"].length);
+  });
+
   it("fails a walk with EIO when a mount lists more than the limit", async () => {
     const entries = Array.from({ length: PASSTHROUGH_WALK_LIMIT + 1 }, (_, index) => ({
       name: `f${index}`,
