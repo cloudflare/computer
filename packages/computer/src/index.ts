@@ -64,6 +64,7 @@ export type {
   PassthroughDirent,
   PassthroughMount,
   PassthroughStat,
+  PassthroughWriteOptions,
 } from "./mounts/types";
 export {
   createSyncLogger,

@@ -1,6 +1,19 @@
+import { getBlobBytes } from "../fs/blobCache";
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
-import { isPassthroughUnsupported, redirectOf } from "../fs/passthrough-registry";
+import {
+  mkdirInMount,
+  rmInMount,
+  unsupportedWrite,
+  writeFileToMount,
+  writeTarget,
+} from "../fs/passthrough";
+import {
+  isPassthroughUnsupported,
+  isWritableSource,
+  type PassthroughTarget,
+  redirectOf,
+} from "../fs/passthrough-registry";
 import { pinHashes } from "../fs/pins";
 import { openReapDeferral, type ReapDeferral } from "../fs/refs";
 import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
@@ -41,8 +54,11 @@ export interface SkippedEntry {
   // decide messaging.
   op: "write" | "delete";
   // Open shape: future skip reasons can join this union without
-  // breaking callers that match on 'read-only' today.
-  reason: "read-only";
+  // breaking callers that match on 'read-only' today. 'mount-error' is
+  // a write under a read-write passthrough mount that the mount
+  // refused or failed; `error` says why.
+  reason: "read-only" | "mount-error";
+  error?: string;
 }
 
 // Return shape of applyChanges / applyChangesSync. Existing callers
@@ -407,7 +423,13 @@ export async function applyChanges(
   try {
     const run = openRun(db, objects, options);
     const counts = { applied: 0, minted: 0 };
-    for await (const entry of entries) step(db, entry, run, deferral, counts);
+    for await (const entry of entries) {
+      // Under a read-write passthrough root the entry is the mount's to
+      // apply, one call at a time; nothing of it reaches the store.
+      const target = writableTargetOf(db, entry.path);
+      if (target !== undefined) await writeThrough(db, entry, target, run, counts);
+      else step(db, entry, run, deferral, counts);
+    }
     return finishRun(db, run, counts);
   } finally {
     deferral.close();
@@ -467,6 +489,18 @@ function step(
       // anything, so skipping it leaves the batch as it was.
       const passthroughRoot = passthroughRootReached(error);
       if (passthroughRoot === undefined) throw error;
+      const writable = redirectOf(error)?.source;
+      if (writable !== undefined && isWritableSource(writable)) {
+        // A synchronous apply can't wait for the mount.
+        run.skipped.push({
+          path: entry.path,
+          mountRoot: passthroughRoot,
+          op: entry.kind === "delete" ? "delete" : "write",
+          reason: "mount-error",
+          error: describeError(error),
+        });
+        return;
+      }
       run.skipped.push({
         path: entry.path,
         mountRoot: passthroughRoot,
@@ -477,6 +511,88 @@ function step(
   } finally {
     counts.minted += notePulledRevs(db, run.pulled, revBefore);
   }
+}
+
+function writableTargetOf(db: Database, path: string): PassthroughTarget | undefined {
+  const target = writeTarget(db, path, false);
+  return target !== undefined && isWritableSource(target.source) ? target : undefined;
+}
+
+// Apply one entry to the read-write mount it lands in: a file with the
+// mount's writeFile, a directory with mkdir, a delete with rm. A link
+// can't be. An entry the mount refuses or fails is reported, and the
+// rest of the call goes on.
+async function writeThrough(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
+  try {
+    if (entry.kind === "file") {
+      const body = chunkBody(db, entry, run.objects);
+      await writeFileToMount(target, body, { mode: entry.mode }, entry.size);
+    } else if (entry.kind === "dir") {
+      await mkdirInMount(target, { recursive: true, mode: entry.mode });
+    } else if (entry.kind === "symlink") {
+      throw unsupportedWrite(target);
+    } else {
+      await rmInMount(target, { recursive: true, force: true });
+    }
+    counts.applied++;
+  } catch (error) {
+    run.skipped.push({
+      path: entry.path,
+      mountRoot: target.root,
+      op: entry.kind === "delete" ? "delete" : "write",
+      reason: "mount-error",
+      error: describeError(error),
+    });
+  }
+}
+
+// A file entry's bytes, chunk by chunk, from the call's objects or the
+// staged blobs, without staging any. Every chunk is checked before the
+// mount is called.
+function chunkBody(
+  db: Database,
+  entry: Extract<ChangeEntry, { kind: "file" }>,
+  objects: Map<string, Uint8Array>,
+): ReadableStream<Uint8Array> {
+  assertChunkWindows(entry.chunks, entry.path);
+  for (const c of entry.chunks) {
+    const bytes = objects.get(hex(c.hash));
+    const size = bytes?.byteLength ?? stagedBlobSize(db, c.hash);
+    if (size === undefined) {
+      throw new Error(`applyChanges: missing object ${hex(c.hash)} for ${entry.path}`);
+    }
+    assertChunkSize(size, c.size, c.hash, entry.path);
+  }
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = entry.chunks[index++];
+      if (chunk === undefined) {
+        controller.close();
+        return;
+      }
+      const bytes = objects.get(hex(chunk.hash)) ?? getBlobBytes(db, chunk.hash);
+      if (bytes === undefined) {
+        controller.error(
+          new Error(`applyChanges: missing object ${hex(chunk.hash)} for ${entry.path}`),
+        );
+        return;
+      }
+      controller.enqueue(bytes);
+    },
+  });
+}
+
+function describeError(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  const message = error instanceof Error ? error.message : String(error);
+  return typeof code === "string" ? `${code}: ${message}` : message;
 }
 
 function finishRun(

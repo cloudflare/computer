@@ -10,6 +10,9 @@ export type WorkspaceErrorCode =
   | "EROFS"
   | "ENOSYS"
   | "ENOTSUP"
+  | "EBUSY"
+  | "EXDEV"
+  | "ENOSPC"
   | "EBADF"
   | "ELOOP"
   | "EUNKNOWN_HASH"
@@ -27,6 +30,9 @@ const WORKSPACE_ERROR_CODES: ReadonlySet<string> = new Set<WorkspaceErrorCode>([
   "EROFS",
   "ENOSYS",
   "ENOTSUP",
+  "EBUSY",
+  "EXDEV",
+  "ENOSPC",
   "EBADF",
   "ELOOP",
   "EUNKNOWN_HASH",

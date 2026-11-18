@@ -24,13 +24,20 @@ import type { FindOptions, WorkspaceFoundEntry } from "./find";
 import type { GrepOptions, WorkspaceGrepMatch } from "./grep";
 import { type MkdirOptions, mkdir } from "./mkdir";
 import {
+  chmodInMount,
   findWithPassthrough,
   grepWithPassthrough,
   lsWithPassthrough,
+  mkdirInMount,
   readdirWithPassthrough,
   readFileWithPassthrough,
   readlinkWithPassthrough,
+  renameWithMount,
+  rmInMount,
   statWithPassthrough,
+  unsupportedWrite,
+  writeFileToMount,
+  writeTarget,
 } from "./passthrough";
 import { asReadOnly } from "./passthrough-registry";
 import type { ReaddirOptions, WorkspaceDirentResult } from "./readdir";
@@ -121,16 +128,19 @@ export class WorkspaceFilesystem {
   }
 
   // --- Mutations ---------------------------------------------------
-
   //
-  // A write that reaches a passthrough root through a symbolic link
-  // fails with EROFS, as one by name does.
+  // A write that lands under a read-write passthrough root, by name or
+  // through a symbolic link, goes to the mount before any SQL; under a
+  // read-only one it fails with EROFS, as the free functions' guard
+  // makes every write there fail.
 
   async writeFile(
     path: string,
     content: WriteFileContent,
     options: WriteFileOptions = {},
   ): Promise<void> {
+    const target = writeTarget(this.db, path, true);
+    if (target !== undefined) return writeFileToMount(target, content, options);
     try {
       await writeFile(this.db, path, content, options, this.now);
     } catch (error) {
@@ -139,6 +149,8 @@ export class WorkspaceFilesystem {
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) return mkdirInMount(target, options);
     try {
       mkdir(this.db, path, options, this.now);
     } catch (error) {
@@ -147,6 +159,8 @@ export class WorkspaceFilesystem {
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) return rmInMount(target, options);
     try {
       rm(this.db, path, options);
     } catch (error) {
@@ -164,8 +178,14 @@ export class WorkspaceFilesystem {
   // non-empty directory, EISDIR when a non-directory would replace a
   // directory, ENOTDIR when a directory would replace a
   // non-directory, EINVAL for the root at either end or a directory
-  // moved into itself, and EROFS under a read-only mount.
+  // moved into itself, EROFS under a read-only mount, and EXDEV
+  // between the store and a passthrough mount or two of them.
   async rename(oldPath: string, newPath: string): Promise<void> {
+    const from = writeTarget(this.db, oldPath, false);
+    const to = writeTarget(this.db, newPath, false);
+    if (from !== undefined || to !== undefined) {
+      return renameWithMount(from, to, oldPath, newPath);
+    }
     try {
       rename(this.db, oldPath, newPath);
     } catch (error) {
@@ -177,6 +197,8 @@ export class WorkspaceFilesystem {
   // POSIX chmod — the change lands on the target, not the link.
   // The supplied mode is masked to twelve bits.
   async chmod(path: string, mode: number): Promise<void> {
+    const target = writeTarget(this.db, path, true);
+    if (target !== undefined) return chmodInMount(target, mode);
     try {
       chmod(this.db, path, mode, this.now);
     } catch (error) {
@@ -186,8 +208,10 @@ export class WorkspaceFilesystem {
 
   // Create a symbolic link at `path` pointing at `target`. The
   // target is stored verbatim; it can be relative or absolute and
-  // is allowed to dangle.
+  // is allowed to dangle. A passthrough mount holds no links.
   async symlink(target: string, path: string): Promise<void> {
+    const mount = writeTarget(this.db, path, false);
+    if (mount !== undefined) throw unsupportedWrite(mount);
     try {
       symlink(this.db, target, path, this.now);
     } catch (error) {

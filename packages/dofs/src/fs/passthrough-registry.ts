@@ -46,6 +46,10 @@ export interface PassthroughReadResult {
 // entries, or throws. Every call gets a signal, aborted when the
 // operation no longer needs its result.
 export interface PassthroughSource {
+  // "read-write" routes writes under the root to the write methods
+  // below; anything else is read-only, and every write fails with
+  // EROFS without calling the source.
+  readonly mode?: "read-only" | "read-write";
   stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
   readdir(
     path: string,
@@ -55,6 +59,37 @@ export interface PassthroughSource {
     path: string,
     options?: { range?: { offset: number; length?: number }; signal?: AbortSignal },
   ): Promise<PassthroughReadResult | null>;
+
+  // The writes of a read-write source, each optional: one it lacks
+  // fails with EROFS. Paths are relative to the root, as for reads.
+  writeFile?(
+    path: string,
+    body: ReadableStream<Uint8Array>,
+    options: PassthroughWriteOptions,
+    // oxlint-disable-next-line typescript/no-invalid-void-type -- a mount may resolve to nothing
+  ): Promise<PassthroughStat | void>;
+  mkdir?(
+    path: string,
+    options: { recursive?: boolean; mode?: number; signal?: AbortSignal },
+  ): Promise<void>;
+  rm?(path: string, options: { recursive?: boolean; signal?: AbortSignal }): Promise<void>;
+  // Both paths are in this source.
+  rename?(from: string, to: string, options: { signal?: AbortSignal }): Promise<void>;
+  chmod?(path: string, mode: number, options: { signal?: AbortSignal }): Promise<void>;
+}
+
+export interface PassthroughWriteOptions {
+  // The body's length, when the writer knows it.
+  size?: number;
+  // Permission bits, such as 0o644.
+  mode?: number;
+  // Fail with EEXIST when the path exists, as O_EXCL does.
+  exclusive?: boolean;
+  signal?: AbortSignal;
+}
+
+export function isWritableSource(source: PassthroughSource): boolean {
+  return source.mode === "read-write";
 }
 
 // A path at or below a passthrough root, and where it lands.
@@ -96,6 +131,24 @@ export function hasPassthroughMounts(db: Database): boolean {
 
 export function passthroughRoots(db: Database): readonly string[] {
   return registries.get(db)?.roots ?? [];
+}
+
+// Roots whose writes fail with EROFS, and roots whose writes go to the
+// source.
+export function readOnlyPassthroughRoots(db: Database): readonly string[] {
+  const registry = registries.get(db);
+  if (registry === undefined) return [];
+  return registry.roots.filter(
+    (root) => !isWritableSource(registry.sources.get(root) as PassthroughSource),
+  );
+}
+
+export function writablePassthroughRoots(db: Database): readonly string[] {
+  const registry = registries.get(db);
+  if (registry === undefined) return [];
+  return registry.roots.filter((root) =>
+    isWritableSource(registry.sources.get(root) as PassthroughSource),
+  );
 }
 
 // The passthrough mount serving a canonical path, if any.
@@ -159,12 +212,9 @@ export function passthroughUnsupported(
   path: string,
   root: string,
   target?: PassthroughTarget,
+  message = `passthrough mount at ${root} can't be read synchronously`,
 ): WorkspaceFsError {
-  const error = createWorkspaceError(
-    "ENOTSUP",
-    `passthrough mount at ${root} can't be read synchronously`,
-    path,
-  );
+  const error = createWorkspaceError("ENOTSUP", message, path);
   unsupported.set(error, target ?? null);
   return error;
 }
@@ -179,12 +229,30 @@ export function redirectOf(error: unknown): PassthroughTarget | undefined {
   return unsupported.get(error) ?? undefined;
 }
 
-// A write that ran into a passthrough root, through a link the guard
-// couldn't see, fails as a write there does: with EROFS. Other errors
-// are returned as they are.
+// A write that ran into a read-only passthrough root, through a link
+// the guard couldn't see, fails as a write there does: with EROFS. One
+// that ran into a read-write root where the caller can't reach the
+// source keeps its ENOTSUP. Other errors are returned as they are.
 export function asReadOnly(error: unknown): unknown {
   if (!isPassthroughUnsupported(error)) return error;
   const target = redirectOf(error);
+  if (target !== undefined && isWritableSource(target.source)) return error;
   const root = target?.root ?? "a passthrough mount";
   return createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, error.path);
+}
+
+// A write under a read-write passthrough root that can't reach its
+// source: a synchronous one, or one the source has no method for, such
+// as a link or a write at an offset.
+export function passthroughWriteUnsupported(
+  path: string,
+  root: string,
+  target?: PassthroughTarget,
+): WorkspaceFsError {
+  return passthroughUnsupported(
+    path,
+    root,
+    target,
+    `passthrough mount at ${root} takes only whole-file writes, mkdir, rm, rename and chmod, made asynchronously`,
+  );
 }

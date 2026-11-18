@@ -9,9 +9,14 @@
 // roots and resolves factories lives in registry.ts; the index pass
 // that drives materialize() lives in index.ts.
 
-import type { PassthroughDirent, PassthroughStat, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+import type {
+  PassthroughDirent,
+  PassthroughStat,
+  PassthroughWriteOptions,
+  SQLiteWorkspaceProvider,
+} from "@cloudflare/dofs";
 
-export type { PassthroughDirent, PassthroughStat };
+export type { PassthroughDirent, PassthroughStat, PassthroughWriteOptions };
 
 // Common base for every concrete mount. The `kind` string is for
 // diagnostics and the _vfs_mounts table; it is not interpreted.
@@ -62,8 +67,12 @@ export interface EagerMount extends MountBase {
 // root is answered live by the mount, on every call. They are
 // registered in memory each time a Workspace is constructed, with no
 // _vfs_mounts row and no cache, so a Workspace opened without one has
-// no files under its root. Writes under the root fail with EROFS
-// without calling the mount.
+// no files under its root. Under a "read-only" mount every write fails
+// with EROFS without calling the mount. Under a "read-write" one,
+// whole-file writes, mkdir, rm, rename within the mount and chmod go
+// to the write methods below, and nothing is stored either; a method
+// the mount lacks fails with EROFS, and writes it can't take (links,
+// writes at an offset, synchronous ones) with ENOTSUP.
 //
 // Paths are relative to the mount root: "" is the root itself,
 // "a/b.md" a file below it. null means the path does not exist. A
@@ -77,7 +86,7 @@ export interface EagerMount extends MountBase {
 // docs/06_mount_interface.md.
 export interface PassthroughMount extends MountBase {
   readonly strategy: "passthrough";
-  readonly mode: "read-only";
+  readonly mode: "read-only" | "read-write";
   stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
   // A file throws ENOTDIR. With `recursive`, every entry below `path`,
   // parents before children, names relative to `path`; find, ls and
@@ -96,6 +105,24 @@ export interface PassthroughMount extends MountBase {
     path: string,
     options?: { range?: { offset: number; length?: number }; signal?: AbortSignal },
   ): Promise<{ stat: PassthroughStat; body: ReadableStream<Uint8Array>; offset: number } | null>;
+
+  // Consulted only when mode is "read-write". Paths are relative to the
+  // root, as for reads; every call gets { signal }.
+  writeFile?(
+    path: string,
+    body: ReadableStream<Uint8Array>,
+    options: PassthroughWriteOptions,
+    // oxlint-disable-next-line typescript/no-invalid-void-type -- a mount may resolve to nothing
+  ): Promise<PassthroughStat | void>;
+  mkdir?(
+    path: string,
+    options: { recursive?: boolean; mode?: number; signal?: AbortSignal },
+  ): Promise<void>;
+  rm?(path: string, options: { recursive?: boolean; signal?: AbortSignal }): Promise<void>;
+  // Both paths are in this mount: a rename between it and the store,
+  // or another mount, is EXDEV without calling it.
+  rename?(from: string, to: string, options: { signal?: AbortSignal }): Promise<void>;
+  chmod?(path: string, mode: number, options: { signal?: AbortSignal }): Promise<void>;
 }
 
 // Union of every supported mount strategy.

@@ -13,8 +13,14 @@ import { link as linkImpl } from "./fs/link";
 import type { MkdirOptions } from "./fs/mkdir";
 import { mkdir as mkdirImpl } from "./fs/mkdir";
 import {
+  mkdirInMount,
   passthroughRootListedBy,
   passthroughTarget,
+  renameWithMount,
+  rmInMount,
+  unsupportedWrite,
+  writeFileToMount,
+  writeTarget,
   readdirWithPassthrough,
   readlinkWithPassthrough,
   readPassthroughFile,
@@ -23,6 +29,7 @@ import {
 import {
   asReadOnly,
   isPassthroughUnsupported,
+  isWritableSource,
   passthroughUnsupported,
   type PassthroughTarget,
   realPathOf,
@@ -298,7 +305,13 @@ export class SQLiteWorkspaceProvider {
     return readdirEntries(this.db, path);
   }
 
+  // The async writes send one that lands under a read-write
+  // passthrough root to its mount; their sync twins, and the writes a
+  // mount can't take (links, writes at an offset), fail with ENOTSUP
+  // there.
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) return mkdirInMount(target, options).then(() => undefined);
     return Promise.resolve(this.mkdirSync(path, options));
   }
 
@@ -311,6 +324,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   rmdir(path: string): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) {
+      return this.#removeFromMount(path, target, "dir");
+    }
     this.rmdirSync(path);
     return Promise.resolve();
   }
@@ -324,6 +341,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   unlink(path: string): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) {
+      return this.#removeFromMount(path, target, "file");
+    }
     this.unlinkSync(path);
     return Promise.resolve();
   }
@@ -357,6 +378,8 @@ export class SQLiteWorkspaceProvider {
   }
 
   link(existingPath: string, newPath: string): Promise<void> {
+    const target = writeTarget(this.db, newPath, false) ?? writeTarget(this.db, existingPath, true);
+    if (target !== undefined) return Promise.reject(unsupportedWrite(target));
     this.linkSync(existingPath, newPath);
     return Promise.resolve();
   }
@@ -378,6 +401,11 @@ export class SQLiteWorkspaceProvider {
   }
 
   rename(oldPath: string, newPath: string): Promise<void> {
+    const from = writeTarget(this.db, oldPath, false);
+    const to = writeTarget(this.db, newPath, false);
+    if (from !== undefined || to !== undefined) {
+      return renameWithMount(from, to, oldPath, newPath);
+    }
     this.renameSync(oldPath, newPath);
     return Promise.resolve();
   }
@@ -480,6 +508,15 @@ export class SQLiteWorkspaceProvider {
     data: string | Buffer,
     options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
   ): Promise<void> {
+    const target = writeTarget(this.db, path, true);
+    if (target !== undefined) {
+      const mode = typeof options === "string" ? undefined : options?.mode;
+      const bytes =
+        typeof data === "string"
+          ? data
+          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      return writeFileToMount(target, bytes, mode === undefined ? {} : { mode });
+    }
     this.writeFileSync(path, data, options);
     return Promise.resolve();
   }
@@ -791,13 +828,27 @@ export class SQLiteWorkspaceProvider {
   // resolves the path, which would fail with ENOTSUP instead.
   #rejectPassthroughWrite(path: string): void {
     const passthrough = passthroughTarget(this.db, path);
-    if (passthrough !== undefined) {
-      throw createWorkspaceError(
-        "EROFS",
-        `read-only mount at ${passthrough.root}: cannot modify`,
-        passthrough.path,
-      );
+    if (passthrough !== undefined) throw unsupportedWrite(passthrough);
+  }
+
+  // rmdir and unlink under a read-write root: the mount's rm, after
+  // checking the path is the kind the call removes, as the store's
+  // calls do.
+  async #removeFromMount(
+    path: string,
+    target: PassthroughTarget,
+    kind: "file" | "dir",
+  ): Promise<void> {
+    if (isWritableSource(target.source) && target.rel !== "") {
+      const found = await statWithPassthrough(this.db, path, false);
+      if (kind === "dir" && !found.isDirectory) {
+        throw createWorkspaceError("ENOTDIR", `not a directory: ${target.path}`, target.path);
+      }
+      if (kind === "file" && found.isDirectory) {
+        throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
+      }
     }
+    await rmInMount(target, {});
   }
 
   #fdOrThrow(fd: number): FdState {
@@ -822,6 +873,8 @@ export class SQLiteWorkspaceProvider {
   }
 
   symlink(target: string, path: string, _type?: string): Promise<void> {
+    const mount = writeTarget(this.db, path, false);
+    if (mount !== undefined) return Promise.reject(unsupportedWrite(mount));
     this.symlinkSync(target, path);
     return Promise.resolve();
   }

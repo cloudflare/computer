@@ -22,10 +22,16 @@
 // reached its limit, a file stream its reader cancelled, a body read
 // past the window it was asked for.
 //
-// Writes need nothing here: the roots are read-only mount roots to the
-// guard in mount-guard.ts, which rejects writes at or below them, and
-// recursive removal or renaming of a directory above them, with EROFS.
-// Synchronous reads can't wait for a mount; they fail with ENOTSUP.
+// A read-only mount's root is a read-only mount root to the guard in
+// mount-guard.ts, which rejects writes at or below it, and recursive
+// removal or renaming of a directory above it, with EROFS. A
+// read-write mount takes whole-file writes, mkdir, rm, rename and
+// chmod: the async entry points find where a write lands, through
+// links too, and send one under such a root to the mount's method
+// before any SQL (see "Writes" below). Every other write there, and
+// every synchronous one, fails with ENOTSUP; the guard stops whatever
+// reaches the store. Synchronous reads can't wait for a mount either;
+// they fail with ENOTSUP.
 
 import { createWorkspaceError, isWorkspaceError, type WorkspaceFsError } from "../errors";
 import { canonicalizePath } from "../path";
@@ -49,11 +55,13 @@ import { mkdirForSyncParents } from "./mkdir";
 import { invalidateReadOnlyMountCache } from "./mount-guard";
 import {
   hasPassthroughMounts,
+  isWritableSource,
   type PassthroughSource,
   type PassthroughStat,
   type PassthroughTarget,
   passthroughRootsBelow,
   passthroughTargetOf,
+  passthroughWriteUnsupported,
   redirectOf,
   setPassthroughSources,
 } from "./passthrough-registry";
@@ -62,6 +70,7 @@ import { type ReadFileOptions, readFile, readWindow, validateReadWindow } from "
 import { readlink } from "./readlink";
 import { resolveInode } from "./resolve";
 import { lstat, stat, type WorkspaceStatResult } from "./stat";
+import type { WriteFileContent, WriteFileOptions } from "./writeFile";
 
 // Most entries one recursive readdir may return. A longer reply fails
 // the operation with EIO; a mount whose tree is bigger than it will
@@ -1049,4 +1058,178 @@ async function collectBytes(opened: OpenedFile, path: string): Promise<Uint8Arra
     offset += chunk.byteLength;
   }
   return out;
+}
+
+// --- Writes -------------------------------------------------------
+
+// The passthrough mount a write at `path` lands in, by name or through
+// the links on its way; `followFinal` follows a link at the path
+// itself, as writeFile and chmod do and mkdir, rm and rename don't.
+// A path above a root, or beside one, is the store's.
+export function writeTarget(
+  db: Database,
+  path: string,
+  followFinal: boolean,
+): PassthroughTarget | undefined {
+  if (!hasPassthroughMounts(db)) return undefined;
+  const { path: canonical } = canonicalizePath(path);
+  const named = passthroughTargetOf(db, canonical);
+  if (named !== undefined) return named;
+  try {
+    resolveInode(db, canonical, { followSymlinks: followFinal });
+  } catch (error) {
+    // Anything but a passthrough root is the store write's to report.
+    return redirectOf(error);
+  }
+  return undefined;
+}
+
+// A write the target's mount can't take: EROFS for a read-only mount,
+// ENOTSUP for a read-write one (a link, or a write at an offset).
+export function unsupportedWrite(target: PassthroughTarget): WorkspaceFsError {
+  if (!isWritableSource(target.source)) return readOnly(target);
+  return passthroughWriteUnsupported(target.path, target.root, target);
+}
+
+export async function writeFileToMount(
+  target: PassthroughTarget,
+  content: WriteFileContent,
+  options: WriteFileOptions = {},
+  knownSize?: number,
+): Promise<void> {
+  const write = writeMethod(target, "writeFile");
+  if (target.rel === "") {
+    throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
+  }
+  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  const body = bytes instanceof Uint8Array ? bytesStream(bytes) : bytes;
+  const size = bytes instanceof Uint8Array ? bytes.byteLength : knownSize;
+  const signal = idleSignal();
+  await ask(target, "writeFile", () =>
+    write.call(target.source, target.rel, body, {
+      ...(size === undefined ? {} : { size }),
+      ...(options.mode === undefined ? {} : { mode: options.mode & 0o7777 }),
+      ...(options.exclusive ? { exclusive: true } : {}),
+      signal,
+    }),
+  );
+}
+
+export async function mkdirInMount(
+  target: PassthroughTarget,
+  options: { recursive?: boolean; mode?: number } = {},
+): Promise<void> {
+  if (!isWritableSource(target.source)) throw readOnly(target);
+  if (target.rel === "") {
+    // The root is there, as a directory, whatever methods the mount has.
+    if (options.recursive) return;
+    throw createWorkspaceError("EEXIST", `path exists: ${target.path}`, target.path);
+  }
+  const mkdir = writeMethod(target, "mkdir");
+  const signal = idleSignal();
+  await ask(target, "mkdir", () =>
+    mkdir.call(target.source, target.rel, {
+      ...(options.recursive ? { recursive: true } : {}),
+      ...(options.mode === undefined ? {} : { mode: options.mode & 0o7777 }),
+      signal,
+    }),
+  );
+}
+
+export async function rmInMount(
+  target: PassthroughTarget,
+  options: { recursive?: boolean; force?: boolean } = {},
+): Promise<void> {
+  const rm = writeMethod(target, "rm");
+  if (target.rel === "") throw busy(target);
+  const signal = idleSignal();
+  try {
+    await ask(target, "rm", () =>
+      rm.call(target.source, target.rel, {
+        ...(options.recursive ? { recursive: true } : {}),
+        signal,
+      }),
+    );
+  } catch (error) {
+    // -f: what isn't there is already removed.
+    if (options.force && (error as { code?: unknown }).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+export async function chmodInMount(target: PassthroughTarget, mode: number): Promise<void> {
+  const chmod = writeMethod(target, "chmod");
+  const signal = idleSignal();
+  await ask(target, "chmod", () =>
+    chmod.call(target.source, target.rel, mode & 0o7777, { signal }),
+  );
+}
+
+// A rename with a passthrough mount at either end. Within one
+// read-write mount it is the mount's; between the store and a mount,
+// or two mounts, it crosses filesystems and fails with EXDEV, and the
+// caller copies and removes. A read-only mount at either end is EROFS.
+export async function renameWithMount(
+  from: PassthroughTarget | undefined,
+  to: PassthroughTarget | undefined,
+  fromPath: string,
+  toPath: string,
+): Promise<void> {
+  for (const end of [from, to]) {
+    if (end !== undefined && !isWritableSource(end.source)) throw readOnly(end);
+  }
+  for (const end of [from, to]) {
+    if (end?.rel === "") throw busy(end);
+  }
+  if (from === undefined || to === undefined || from.root !== to.root) {
+    throw createWorkspaceError(
+      "EXDEV",
+      `cannot rename across filesystems: ${fromPath} to ${toPath}`,
+      fromPath,
+    );
+  }
+  const rename = writeMethod(from, "rename");
+  const signal = idleSignal();
+  await ask(from, "rename", () => rename.call(from.source, from.rel, to.rel, { signal }));
+}
+
+type WriteMethod = "writeFile" | "mkdir" | "rm" | "rename" | "chmod";
+
+// The method a write needs: EROFS when the mount is read-only or lacks
+// it.
+function writeMethod<M extends WriteMethod>(
+  target: PassthroughTarget,
+  method: M,
+): NonNullable<PassthroughSource[M]> {
+  const found = target.source[method];
+  if (!isWritableSource(target.source) || typeof found !== "function") {
+    throw readOnly(target, isWritableSource(target.source) ? method : undefined);
+  }
+  return found as NonNullable<PassthroughSource[M]>;
+}
+
+function readOnly(target: PassthroughTarget, missing?: string): WorkspaceFsError {
+  const why = missing === undefined ? "cannot modify" : `has no ${missing}`;
+  return createWorkspaceError(
+    "EROFS",
+    `${missing === undefined ? "read-only mount" : "passthrough mount"} at ${target.root}: ${why}`,
+    target.path,
+  );
+}
+
+function busy(target: PassthroughTarget): WorkspaceFsError {
+  return createWorkspaceError(
+    "EBUSY",
+    `passthrough mount root can't be removed or renamed: ${target.root}`,
+    target.path,
+  );
+}
+
+function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }

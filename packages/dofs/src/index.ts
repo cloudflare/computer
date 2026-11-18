@@ -30,6 +30,7 @@ export type {
   PassthroughReadResult,
   PassthroughSource,
   PassthroughStat,
+  PassthroughWriteOptions,
 } from "./fs/passthrough-registry";
 export type { ReaddirOptions, WorkspaceDirentEntry, WorkspaceDirentResult } from "./fs/readdir";
 export type { ReadFileOptions } from "./fs/readFile";
