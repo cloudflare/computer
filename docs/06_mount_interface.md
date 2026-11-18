@@ -292,8 +292,8 @@ interface PassthroughMount {
   its rev, every row of a backend goes when its fetch cursor moves back
   (the backend's log started over, and its revs with it), and opening a
   workspace drops the rows under paths that no registered read-write
-  root covers. Opening one without a read-write mount registered so
-  clears that mount's rows: until it is registered again and pulls
+  root covers, all of them when it registers none. Opening one without
+  a read-write mount registered so clears that mount's rows: until it is registered again and pulls
   refill them, a replay into it is caught only by the content checks
   above. Every rev a mount write mints during a pull counts as
   the pull's own, and only those: a host write while a mount call is in

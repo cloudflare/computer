@@ -325,9 +325,9 @@ export class Workspace {
     // are checked against the eager ones where each really is, since a
     // link on a parent path can put two differently named roots in
     // one place.
-    if (passthrough.size > 0) {
-      registerPassthroughMounts(this.#db, passthrough, this.#now, eager.keys());
-    }
+    // Registered when there are none too, so what was recorded for
+    // pulls into a mount no longer passed goes with it.
+    registerPassthroughMounts(this.#db, passthrough, this.#now, eager.keys());
     this.#mountIndex = new MountIndex({
       db: this.#db,
       fs: this.#fs,

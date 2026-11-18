@@ -119,6 +119,14 @@ export function registerPassthroughMounts(
   now: () => number,
   otherRoots: Iterable<string> = [],
 ): void {
+  if (mounts.size === 0) {
+    // Nothing to route; what was recorded for mounts no longer
+    // registered goes all the same.
+    setPassthroughSources(db, new Map());
+    invalidateReadOnlyMountCache(db);
+    forgetUnmounted(db, []);
+    return;
+  }
   const roots = [...mounts.keys()];
   for (const root of roots) {
     if (!root.startsWith("/") || canonicalizePath(root).path !== root) {
@@ -167,14 +175,19 @@ function overlaps(a: string, b: string): boolean {
 // Drop what _vfs_mount_applied remembers of pulls into paths no
 // read-write root registered now covers: the mount it was for is gone.
 function forgetUnmounted(db: Database, writableRoots: string[]): void {
+  // Most stores record nothing: don't write to find that out.
+  if (db.one("SELECT 1 AS present FROM _vfs_mount_applied LIMIT 1") === undefined) return;
   if (writableRoots.length === 0) {
     db.run("DELETE FROM _vfs_mount_applied");
     return;
   }
-  const covered = writableRoots.map(() => "(path = ? OR substr(path, 1, ?) = ?)").join(" OR ");
+  // A path below a root is one in [root + "/", root + "0"): "0" follows
+  // "/" in byte order, and SQLite compares text as UTF-8 bytes, so
+  // this holds for any character, with no LIKE wildcards to escape.
+  const covered = writableRoots.map(() => "(path = ? OR (path >= ? AND path < ?))").join(" OR ");
   db.run(
     `DELETE FROM _vfs_mount_applied WHERE NOT (${covered})`,
-    ...writableRoots.flatMap((root) => [root, root.length + 1, `${root}/`]),
+    ...writableRoots.flatMap((root) => [root, `${root}/`, `${root}0`]),
   );
 }
 

@@ -1031,4 +1031,47 @@ describe("read-write passthrough mounts against concurrent writes", () => {
     ]);
     expect(ws.db.all("SELECT path FROM _vfs_mount_applied")).toEqual([]);
   });
+
+  it("forgets replays of a mount when a workspace opens without any", async () => {
+    const storage = new SQLiteTestStorage();
+    const mount = writableMount();
+    const first = open({ [ROOT]: mount }, storage);
+    const { entry, objects } = await fileEntry(`${ROOT}/a.txt`, "a\n", 11);
+    await applyChanges(first.db, [entry], objects, pull);
+    expect(first.db.all("SELECT path FROM _vfs_mount_applied")).toHaveLength(1);
+
+    const without = new Workspace({ storage });
+    expect(without.db.all("SELECT path FROM _vfs_mount_applied")).toEqual([]);
+
+    // The source lost the file while the mount was away; the replay
+    // writes it again.
+    mount.files.delete("a.txt");
+    const again = open({ [ROOT]: mount }, storage);
+    expect((await applyChanges(again.db, [entry], objects, pull)).applied).toBe(1);
+    expect(text(mount, "a.txt")).toBe("a\n");
+  });
+
+  it("keeps replay records under a root named with supplementary characters", async () => {
+    const storage = new SQLiteTestStorage();
+    const root = "/\u{1F4C1}/team_%";
+    const mount = writableMount();
+    const first = open({ [root]: mount }, storage);
+    const { entry, objects } = await fileEntry(`${root}/a.txt`, "container\n", 12);
+    await applyChanges(first.db, [entry], objects, pull);
+    await first.fs.writeFile(`${root}/a.txt`, "agent\n");
+
+    const again = open({ [root]: mount }, storage);
+    expect(again.db.all("SELECT path FROM _vfs_mount_applied")).toHaveLength(1);
+    await applyChanges(again.db, [entry], objects, pull);
+    expect(text(mount, "a.txt")).toBe("agent\n");
+    // A sibling whose name merely starts like the root is not covered.
+    again.db.run(
+      "INSERT INTO _vfs_mount_applied (backend, path, rev, digest) VALUES ('default', ?, 1, 'x')",
+      "/\u{1F4C1}/team_%x/b.txt",
+    );
+    open({ [root]: mount }, storage);
+    expect(
+      again.db.all<{ path: string }>("SELECT path FROM _vfs_mount_applied").map((row) => row.path),
+    ).toEqual([`${root}/a.txt`]);
+  });
 });
