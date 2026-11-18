@@ -176,6 +176,11 @@ export function passthroughRootListedBy(db: Database, path: string): string | un
 }
 
 // --- Entry points -------------------------------------------------
+//
+// These use `return await` for the promises they hand back. An async
+// function that returns a promise which has already rejected attaches
+// its handler a microtask later, and workerd reports the rejection as
+// unhandled in between, even though the caller handles it.
 
 export async function statWithPassthrough(
   db: Database,
@@ -184,12 +189,12 @@ export async function statWithPassthrough(
 ): Promise<WorkspaceStatResult> {
   const fromStore = () => (followSymlinks ? stat(db, path) : lstat(db, path));
   if (!hasPassthroughMounts(db)) return fromStore();
-  return orMount(fromStore, (target) => statMount(target, idleSignal()));
+  return await orMount(fromStore, (target) => statMount(target, idleSignal()));
 }
 
 export async function readlinkWithPassthrough(db: Database, path: string): Promise<string> {
   if (!hasPassthroughMounts(db)) return readlink(db, path);
-  return orMount(
+  return await orMount(
     () => readlink(db, path),
     async (target) => {
       await statMount(target, idleSignal());
@@ -235,12 +240,14 @@ export async function readFileWithPassthrough(
   optionsOrEncoding?: "utf8" | ReadFileOptions,
   signal?: AbortSignal,
 ): Promise<string | ReadableStream<Uint8Array>> {
-  if (!hasPassthroughMounts(db)) return readFile(db, path, optionsOrEncoding as ReadFileOptions);
+  if (!hasPassthroughMounts(db)) {
+    return await readFile(db, path, optionsOrEncoding as ReadFileOptions);
+  }
   const options = typeof optionsOrEncoding === "object" ? optionsOrEncoding : undefined;
   const wantString = optionsOrEncoding === "utf8" || options?.encoding === "utf8";
   const byteOffset = options?.byteOffset ?? 0;
   const byteLength = options?.byteLength;
-  return orMount(
+  return await orMount(
     () => readFile(db, path, optionsOrEncoding as ReadFileOptions),
     async (target) => {
       validateReadWindow(path, byteOffset, byteLength);
@@ -309,7 +316,7 @@ export async function lsWithPassthrough(db: Database, prefix: string): Promise<s
   // ls does not follow symbolic links, so roots are found by name.
   const { path: canonical } = canonicalizePath(prefix);
   const target = passthroughTargetOf(db, canonical);
-  if (target !== undefined) return mountFiles(target, idleSignal());
+  if (target !== undefined) return await mountFiles(target, idleSignal());
   const below = passthroughRootsBelow(db, canonical).map(({ root, source }): RootBelow => ({
     root,
     path: root,
@@ -337,7 +344,7 @@ export async function grepWithPassthrough(
   path: string,
   options: GrepOptions = {},
 ): Promise<WorkspaceGrepMatch[]> {
-  if (!hasPassthroughMounts(db)) return grep(db, pattern, path, options);
+  if (!hasPassthroughMounts(db)) return await grep(db, pattern, path, options);
   const { path: canonical } = canonicalizePath(path);
   const plan = planWalk(db, canonical);
   const controller = new AbortController();
@@ -350,7 +357,7 @@ export async function grepWithPassthrough(
           foundEntries(db, canonical, plan, options.include, options.exclude, controller.signal),
         );
   } else {
-    if (plan.roots.length === 0) return grep(db, pattern, path, options);
+    if (plan.roots.length === 0) return await grep(db, pattern, path, options);
     files = filesOf(
       foundEntries(db, canonical, plan, options.include, options.exclude, controller.signal),
     );
@@ -571,7 +578,7 @@ async function orMount<T>(
   } catch (error) {
     const target = redirectOf(error);
     if (target === undefined) throw error;
-    return fromMount(target);
+    return await fromMount(target);
   }
 }
 

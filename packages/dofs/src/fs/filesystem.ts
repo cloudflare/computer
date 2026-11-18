@@ -79,8 +79,11 @@ export class WorkspaceFilesystem {
     return readFileWithPassthrough(this.db, path, optionsOrEncoding);
   }
 
+  // The async reads below `return await` for the reason given above the
+  // entry points in passthrough.ts: a returned rejected promise is
+  // reported as unhandled by workerd before the caller sees it.
   async stat(path: string): Promise<WorkspaceStatResult> {
-    return statWithPassthrough(this.db, path, true);
+    return await statWithPassthrough(this.db, path, true);
   }
 
   // POSIX lstat — like stat, but doesn't follow a trailing symlink.
@@ -88,17 +91,17 @@ export class WorkspaceFilesystem {
   // / unlink under a Node-style fs surface, or just-bash's adapter
   // routing lstat through to the workspace.
   async lstat(path: string): Promise<WorkspaceStatResult> {
-    return statWithPassthrough(this.db, path, false);
+    return await statWithPassthrough(this.db, path, false);
   }
 
   // Return the stored target of a symlink. EINVAL when path is
   // not a symlink; ENOENT when path is missing.
   async readlink(path: string): Promise<string> {
-    return readlinkWithPassthrough(this.db, path);
+    return await readlinkWithPassthrough(this.db, path);
   }
 
   async readdir(path: string, options: ReaddirOptions = {}): Promise<WorkspaceDirentResult[]> {
-    return readdirWithPassthrough(this.db, path, options);
+    return await readdirWithPassthrough(this.db, path, options);
   }
 
   async find(
@@ -106,11 +109,11 @@ export class WorkspaceFilesystem {
     pattern?: string,
     options: FindOptions = {},
   ): Promise<WorkspaceFoundEntry[]> {
-    return findWithPassthrough(this.db, directory, pattern, options);
+    return await findWithPassthrough(this.db, directory, pattern, options);
   }
 
   async ls(prefix: string): Promise<string[]> {
-    return lsWithPassthrough(this.db, prefix);
+    return await lsWithPassthrough(this.db, prefix);
   }
 
   grep(pattern: string, path: string, options: GrepOptions = {}): Promise<WorkspaceGrepMatch[]> {
