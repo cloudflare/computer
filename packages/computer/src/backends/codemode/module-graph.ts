@@ -917,7 +917,12 @@ function nodeFsCallSource() {
     // each read, \`advance\` hears how far each chunk went, and \`finish\` runs
     // once, when the stream ends, fails or is cancelled.
     function rangeStream(path, start, end, chunkBytes, { before, advance, finish } = {}) {
-      let position = start;
+      // \`start\` may be a promise, for a stream that starts where reads still
+      // running leave off.
+      let position;
+      const begun = Promise.resolve(start).then((at) => {
+        position = at;
+      });
       let finished = false;
       const done = () => {
         if (finished) return;
@@ -927,6 +932,7 @@ function nodeFsCallSource() {
       return new ReadableStream({
         async pull(controller) {
           try {
+            await begun;
             before?.();
             const want = end === undefined ? chunkBytes : Math.min(chunkBytes, end - position);
             const bytes = want <= 0 ? new Uint8Array() : await invoke("readFileRange", [path, position, want]);
@@ -1056,8 +1062,15 @@ function nodeFsPromisesModule() {
     function fileHandle(path) {
       let position = 0;
       let closed = false;
-      // Reads without a position take turns, so each starts where the last ended.
+      // Everything that reads from the handle's position takes turns: reads
+      // without a position, readFile, and the start of a stream. Each starts
+      // where the last left off.
       let turn = Promise.resolve();
+      const inTurn = (work) => {
+        const run = turn.then(work);
+        turn = run.catch(() => undefined);
+        return run;
+      };
       // Set while one of the handle's streams is open, as Node locks one.
       let locked = false;
       const ensureOpen = (syscall) => {
@@ -1074,7 +1087,8 @@ function nodeFsPromisesModule() {
       // A stream from \`start\`, or from the handle's position, moving it on.
       const handleStream = (start, end, chunkBytes, autoClose) => {
         locked = true;
-        return rangeStream(path, start ?? position, end, chunkBytes, {
+        // Once it's made, the lock keeps other reads out until it's done.
+        return rangeStream(path, start ?? inTurn(() => position), end, chunkBytes, {
           before: () => ensureOpen("read"),
           advance: start === undefined ? (bytes) => { position += bytes; } : undefined,
           finish: () => {
@@ -1117,13 +1131,12 @@ function nodeFsPromisesModule() {
             return { bytesRead: length === 0 ? 0 : await readRange(path, target, explicit), buffer };
           }
           // A read without a position moves the handle's on, as in Node.
-          const read = turn.then(async () => {
-            const bytesRead = length === 0 ? 0 : await readRange(path, target, position);
-            position += bytesRead;
-            return bytesRead;
+          const bytesRead = await inTurn(async () => {
+            const read = length === 0 ? 0 : await readRange(path, target, position);
+            position += read;
+            return read;
           });
-          turn = read.catch(() => undefined);
-          return { bytesRead: await read, buffer };
+          return { bytesRead, buffer };
         },
         async stat() {
           ensureOpen("fstat");
@@ -1139,13 +1152,15 @@ function nodeFsPromisesModule() {
           }
           const chunks = [];
           let size = 0;
-          for (;;) {
-            const bytes = await invoke("readFileRange", [path, position, STREAM_CHUNK_BYTES]);
-            if (bytes.byteLength === 0) break;
-            chunks.push(bytes);
-            size += bytes.byteLength;
-            position += bytes.byteLength;
-          }
+          await inTurn(async () => {
+            for (;;) {
+              const bytes = await invoke("readFileRange", [path, position, STREAM_CHUNK_BYTES]);
+              if (bytes.byteLength === 0) break;
+              chunks.push(bytes);
+              size += bytes.byteLength;
+              position += bytes.byteLength;
+            }
+          });
           const all = new Uint8Array(size);
           let at = 0;
           for (const chunk of chunks) {

@@ -446,6 +446,71 @@ describe("WorkspaceRuntime", () => {
     });
   });
 
+  it("keeps a FileHandle's position in order across concurrent reads and streams", async () => {
+    // 3000 bytes takes several of the fixture's calls, so a read that
+    // didn't wait its turn would overlap another.
+    await write("/workspace/concurrent.txt", "0123456789".repeat(300));
+    const response = await runtime({
+      source: `
+        import fs from "node:fs/promises";
+        const decode = (bytes) => new TextDecoder().decode(bytes);
+        const digits = (start, length) => Array.from({ length }, (_, i) => String((start + i) % 10)).join("");
+        const drain = async (stream) => {
+          let text = "";
+          for await (const chunk of stream) text += decode(chunk);
+          return text;
+        };
+        const open = () => fs.open("/workspace/concurrent.txt");
+        export default async () => {
+          const a = await open();
+          const [first, rest] = await Promise.all([a.read({ buffer: new Uint8Array(4) }), a.readFile()]);
+          await a.close();
+
+          const b = await open();
+          const [whole, after] = await Promise.all([b.readFile(), b.read({ buffer: new Uint8Array(4) })]);
+          await b.close();
+
+          const c = await open();
+          const pending = c.read({ buffer: new Uint8Array(4) });
+          const streamed = await drain(c.createReadStream({ autoClose: false }));
+          const beforeStream = decode((await pending).buffer);
+          await c.close();
+
+          const d = await open();
+          const pendingLine = d.read({ buffer: new Uint8Array(4) });
+          const lines = [];
+          for await (const line of d.readLines()) lines.push(line);
+          await pendingLine;
+
+          return {
+            first: decode(first.buffer),
+            rest: rest.byteLength === 2996 && decode(rest) === digits(4, 2996),
+            whole: whole.byteLength,
+            after: after.bytesRead,
+            beforeStream,
+            streamed: streamed === digits(4, 2996),
+            lines: lines.length === 1 && lines[0] === digits(4, 2996),
+          };
+        };
+      `,
+      cwd: "/workspace",
+    });
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    expect(JSON.parse(text).result, text).toMatchObject({
+      status: "completed",
+      value: {
+        first: "0123",
+        rest: true,
+        whole: 3000,
+        after: 0,
+        beforeStream: "0123",
+        streamed: true,
+        lines: true,
+      },
+    });
+  });
+
   it("caps what a run reads by range at its stream budget, even past the end of a file", async () => {
     // This backend's runs may stream 8 KiB. Each range read costs at
     // least 1 KiB each way, so even reads that find nothing run out.
