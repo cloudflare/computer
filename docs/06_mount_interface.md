@@ -160,13 +160,13 @@ mount, eager or passthrough.
   its limit, a file stream its reader cancelled, a body read past the
   window asked for. The filesystem sets no timeouts; a mount that wants
   one adds its own.
-- **Read-only.** Under a `"read-only"` mount, `writeFile`, `mkdir`, `rm`, `rename` from or to the
-  root, `chmod`, `symlink`, the provider's writes, and changes pulled
-  from a container or written by git under the root fail with `EROFS`
-  without calling the mount, by name or through a symbolic link, with
-  or without rows in the store there. `rm`
-  and `rename` of a directory above the root, and `mkdir` of one, fail
-  as they do above a read-only eager mount.
+- **Read-only.** Under a `"read-only"` mount, `writeFile`, `mkdir`,
+  `rm`, `rename` from or to the root, `chmod`, `symlink`, the
+  provider's writes, and changes pulled from a container or written by
+  git under the root fail with `EROFS` without calling the mount, by
+  name or through a symbolic link, with or without rows in the store
+  there. `rm` and `rename` of a directory above the root, and `mkdir`
+  of one, fail as they do above a read-only eager mount.
 - **Errors.** A `WorkspaceFsError` a mount throws keeps its code, with
   its message cut to 1 KiB and its path replaced by the one asked for.
   Any other error fails that one operation with `EIO`, carrying its
@@ -247,14 +247,46 @@ interface PassthroughMount {
   `writeFile`, a directory with `mkdir -p`, a delete with `rm -r`. An
   entry the mount refuses, a link among them, is reported in
   `skipped` with `reason: "mount-error"` and the error, and the rest of
-  the pull applies. A synchronous apply reports every entry under the
-  root that way.
+  the pull applies. An entry that is wrong in itself, such as a file
+  whose chunks didn't arrive, fails the pull, which retries it, as in
+  the store. A synchronous apply reports every entry under the root as
+  a `mount-error`.
+
+  A pull replays a batch whose acknowledgment was lost, so each entry
+  is checked first, and left alone when the mount already reflects it:
+
+  - **A replay.** The store keeps, per backend and mount path, the
+    sender's rev and a digest of the last pulled entry it applied there
+    (`_vfs_mount_applied`: a file's manifest hash, a delete's `prior`,
+    a directory's mode; never file content). The same entry again is a
+    replay and does nothing, whatever the mount holds now, so a write to
+    the mount since the first apply stands. The mount alone can't show
+    this: a replayed file and a new one look the same to it.
+  - **A file the mount already holds**, the same size and the same
+    manifest hash of its bytes (read and hashed when the sizes agree).
+    A new entry with other content is written, replacing what the
+    mount holds, as a pull does in the store.
+  - **A delete of a path the mount no longer has.**
+  - **A delete that carries `prior`**, the fingerprint of the version
+    the container removed, of a file whose bytes no longer match it,
+    whatever permission bits the mount reports: a newer file written to
+    the mount is kept. A directory is removed only once it is empty;
+    one with contents is decided again at the end of the pull, after
+    the deletes of what it held.
+
+  A new delete without `prior`, from an older peer or for the source
+  of a rename, is applied.
 - **Git** reads and writes a worktree under the root through the
   provider's async methods, so `init`, `add`, `commit` and `checkout`
   work there, one mount call per file. Nothing is batched, so this is
   slow for big trees.
 - **Nothing is cached.** A read after a write asks the mount again, and
-  a walk sees what the mount lists when it reaches the root.
+  a walk sees what the mount lists when it reaches the root. Every
+  write the mount takes moves the store's revision, `vfs_meta`'s `rev`
+  (`SELECT v FROM vfs_meta WHERE k = 'rev'`, or `currentRev(db)` from
+  `@cloudflare/dofs`), so a consumer that rescans when the revision
+  moves sees mount writes too; the store records nothing else about
+  them, so `watch()` reports no path for them.
 
 Best when the files must never be stored in the workspace, or change
 often enough that a copy would be stale.
