@@ -301,13 +301,15 @@ const testStreams = streamsModule.module({
 // the new module registry, so the same backend runs on both.
 const NEW_REGISTRY_BACKEND = "codemode-new-registry";
 const NETWORK_BACKEND = "codemode-network";
+// A backend whose runs may stream only 8 KiB.
+const SMALL_STREAMS_BACKEND = "codemode-small-streams";
 
 function codemodeBackend(
   env: Env,
   overrides: Partial<
     Pick<
       CodemodeBackendOptions,
-      "id" | "compatibilityFlags" | "loader" | "egress" | "maxStdioBytes"
+      "id" | "compatibilityFlags" | "loader" | "egress" | "maxStdioBytes" | "maxStreamBytes"
     >
   > = {},
 ) {
@@ -455,6 +457,7 @@ export class HostDO extends DurableObject<Env> {
           egress: { mode: "http-gateway", gateway: ctx.exports.TestGateway },
           maxStdioBytes: 4096,
         }),
+        codemodeBackend(env, { id: SMALL_STREAMS_BACKEND, maxStreamBytes: 8192 }),
         fakeContainerBackend(),
       ],
     });
