@@ -1,6 +1,11 @@
-import { createWorkspaceError, readOnlyRootFor } from "@cloudflare/dofs";
+import {
+  applyChanges,
+  createWorkspaceError,
+  PASSTHROUGH_WALK_LIMIT,
+  readOnlyRootFor,
+} from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildModuleGraph } from "../backends/codemode/module-graph";
 import { WorkspaceFsAdapter } from "../backends/worker-shell/adapter";
@@ -209,15 +214,17 @@ describe("passthrough mounts", () => {
       "ef",
     );
     expect(await ws.fs.readFile(path, { encoding: "utf8", byteOffset: 40 })).toBe("");
-    expect(
-      mount.calls.filter((call) => call.method === "readFile").map((call) => call.options),
-    ).toEqual([
+    const reads = mount.calls.filter((call) => call.method === "readFile");
+    for (const call of reads) {
+      expect((call.options as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
+    }
+    expect(reads.map((call) => (call.options as { range?: unknown }).range)).toEqual([
       undefined,
       undefined,
-      { range: { offset: 4, length: 5 } },
-      { range: { offset: 10 } },
-      { range: { offset: 14, length: 10 } },
-      { range: { offset: 40 } },
+      { offset: 4, length: 5 },
+      { offset: 10 },
+      { offset: 14, length: 10 },
+      { offset: 40 },
     ]);
 
     await expect(ws.fs.readFile(`${ROOT}/nope`)).rejects.toMatchObject({ code: "ENOENT" });
@@ -243,7 +250,11 @@ describe("passthrough mounts", () => {
       {
         method: "readdir",
         path: "",
-        options: { recursive: true, limit: expect.any(Number) },
+        options: {
+          recursive: true,
+          limit: PASSTHROUGH_WALK_LIMIT,
+          signal: expect.any(AbortSignal),
+        },
       },
     ]);
 
@@ -573,5 +584,329 @@ describe("passthrough mounts", () => {
           mounts: { "/": fakePassthrough(FILES) },
         }),
     ).toThrow(/can't be at \//);
+  });
+});
+
+describe("passthrough mounts in walks, links and syncs", () => {
+  it("reads a root through symbolic links, never the rows under it", async () => {
+    const storage = new SQLiteTestStorage();
+    // Rows left under the root from before it was a passthrough mount.
+    const before = open(undefined, storage);
+    await before.fs.mkdir(`${ROOT}/pdf`, { recursive: true });
+    await before.fs.writeFile(`${ROOT}/README.md`, "STALE\n");
+    await before.fs.writeFile(`${ROOT}/stale.md`, "STALE\n");
+    await before.fs.symlink(ROOT, "/dirlink");
+    await before.fs.symlink(`${ROOT}/README.md`, "/filelink");
+    await before.fs.symlink("/skills", "/skillslink");
+    await before.fs.symlink("dirlink/pdf/../README.md", "/dotlink");
+
+    const ws = open(fakePassthrough(FILES), storage);
+    expect(await ws.fs.readFile("/filelink", "utf8")).toBe(FILES["README.md"]);
+    expect(await ws.fs.readFile("/dirlink/pdf/SKILL.md", "utf8")).toBe(FILES["pdf/SKILL.md"]);
+    expect(await ws.fs.readFile("/dotlink", "utf8")).toBe(FILES["README.md"]);
+    expect(await ws.fs.stat("/dirlink")).toMatchObject({ name: "dirlink", isDirectory: true });
+    expect(await ws.fs.lstat("/dirlink")).toMatchObject({ isSymbolicLink: true });
+    expect(await ws.fs.readlink("/dirlink")).toBe(ROOT);
+    await expect(ws.fs.readFile("/dirlink/stale.md")).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await ws.fs.readdir("/dirlink")).map((entry) => entry.name)).toEqual([
+      "README.md",
+      "pdf",
+    ]);
+    expect((await ws.fs.readdir("/skillslink")).map((entry) => entry.name)).toEqual(["team"]);
+    expect((await ws.fs.find("/dirlink", "**/*.md")).map((entry) => entry.path)).toEqual([
+      "/dirlink/README.md",
+      "/dirlink/pdf/SKILL.md",
+    ]);
+    expect((await ws.fs.find("/skillslink", "**/*.md")).map((entry) => entry.path)).toEqual([
+      "/skillslink/team/README.md",
+      "/skillslink/team/pdf/SKILL.md",
+    ]);
+    const grepped = await ws.fs.grep("STALE|care", "/", { regex: true });
+    expect(grepped.map((match) => match.path)).toEqual([`${ROOT}/pdf/SKILL.md`]);
+    expect(await ws.provider().readFile("/filelink", "utf8")).toBe(FILES["README.md"]);
+    expect(() => ws.provider().statSync("/filelink")).toThrow(
+      expect.objectContaining({ code: "ENOTSUP" }),
+    );
+
+    const writes: Array<[string, () => Promise<unknown>]> = [
+      ["writeFile into", () => ws.fs.writeFile("/dirlink/new.md", "x")],
+      ["writeFile over", () => ws.fs.writeFile("/filelink", "x")],
+      ["mkdir", () => ws.fs.mkdir("/dirlink/d")],
+      ["rm", () => ws.fs.rm("/dirlink/README.md")],
+      ["rename from", () => ws.fs.rename("/dirlink/README.md", "/moved.md")],
+      ["rename to", () => ws.fs.rename("/dotlink", "/dirlink/moved.md")],
+      ["chmod", () => ws.fs.chmod("/filelink", 0o600)],
+      ["provider writeFileSync", async () => ws.provider().writeFileSync("/filelink", "x")],
+      ["provider unlinkSync", async () => ws.provider().unlinkSync("/dirlink/README.md")],
+    ];
+    for (const [name, attempt] of writes) {
+      await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
+    }
+    // The store doesn't create a link through a link at all.
+    await expect(ws.fs.symlink("/x", "/dirlink/l")).rejects.toMatchObject({ code: "ENOTDIR" });
+    // The links themselves are ordinary files of the store.
+    await ws.fs.rm("/filelink");
+  });
+
+  it("skips changes pulled from a container under a root or above it", async () => {
+    const ws = open(fakePassthrough(FILES));
+    const file = (path: string) => ({
+      kind: "file" as const,
+      rev: 100,
+      path,
+      mode: 0o644,
+      mtime: 1,
+      size: 0,
+      chunks: [],
+    });
+    const result = await applyChanges(
+      ws.db,
+      [
+        file(`${ROOT}/from-container.md`),
+        file("/skills/beside.md"),
+        { kind: "delete", rev: 101, path: `${ROOT}/README.md` },
+        { kind: "delete", rev: 102, path: "/skills" },
+      ],
+      new Map(),
+    );
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: `${ROOT}/from-container.md`, mountRoot: ROOT }),
+        expect.objectContaining({ path: `${ROOT}/README.md`, mountRoot: ROOT, op: "delete" }),
+        expect.objectContaining({ path: "/skills", mountRoot: ROOT, op: "delete" }),
+      ]),
+    );
+    expect(await ws.fs.readFile("/skills/beside.md", "utf8")).toBe("");
+    expect(await ws.fs.readFile(`${ROOT}/README.md`, "utf8")).toBe(FILES["README.md"]);
+    const names = ws.db.all<{ name: string }>("SELECT name FROM vfs_dirents").map((r) => r.name);
+    expect(names).not.toContain("from-container.md");
+  });
+
+  it("fails a walk with EIO when a mount lists more than the limit", async () => {
+    const entries = Array.from({ length: PASSTHROUGH_WALK_LIMIT + 1 }, (_, index) => ({
+      name: `f${index}`,
+      type: "file" as const,
+      size: 0,
+      mtime: 0,
+      mode: 0o644,
+    }));
+    const ws = open(
+      fakePassthrough(FILES, {
+        readdir: async (_path, opts) => (opts?.recursive ? entries : []),
+      }),
+    );
+    await expect(ws.fs.find(ROOT)).rejects.toMatchObject({ code: "EIO" });
+    await expect(ws.fs.ls(ROOT)).rejects.toMatchObject({ code: "EIO" });
+    expect(await ws.fs.readdir(ROOT)).toEqual([]);
+  });
+
+  it("stops find and grep at their limits without walking a mount it doesn't reach", async () => {
+    const mount = fakePassthrough(FILES);
+    const ws = open(mount);
+    await ws.fs.writeFile("/a.md", "care first\ncare again\n");
+
+    expect(await ws.fs.find("/", undefined, { limit: 1 })).toEqual([
+      { path: "/a.md", type: "file" },
+    ]);
+    expect(await ws.fs.find(ROOT, undefined, { limit: 0 })).toEqual([]);
+    expect(await ws.fs.grep("care", "/", { limit: 1 })).toEqual([
+      { path: "/a.md", line: 1, text: "care first" },
+    ]);
+    // A glob whose literal start rules the mount out.
+    expect(await ws.fs.find("/", "a*/**")).toEqual([]);
+    expect(await ws.fs.find("/", "skills/other/**")).toEqual([]);
+    expect(await ws.fs.find("/", "*/t?am2/**")).toEqual([]);
+    expect(await ws.fs.find("/", "skills")).toEqual([{ path: "/skills", type: "dir" }]);
+    expect(mount.calls).toEqual([]);
+
+    // A walk that stops after the mount's first entry aborts its call.
+    expect(await ws.fs.find("/skills", undefined, { limit: 1 })).toEqual([
+      { path: ROOT, type: "dir" },
+    ]);
+    const [walk] = readdirCalls(mount);
+    expect((walk.options as { signal: AbortSignal }).signal.aborted).toBe(true);
+    // One that runs to its end doesn't.
+    mount.calls.length = 0;
+    await ws.fs.find("/skills", "**/*.md");
+    expect((readdirCalls(mount)[0].options as { signal: AbortSignal }).signal.aborted).toBe(false);
+  });
+
+  it("cancels the body and aborts the read when grep stops early", async () => {
+    const line = new TextEncoder().encode("care\n");
+    const lines = 1_000;
+    let pulled = 0;
+    let cancelled = false;
+    let signal: AbortSignal | undefined;
+    const ws = open(
+      fakePassthrough(FILES, {
+        readFile: async (_path, opts) => {
+          signal = opts?.signal;
+          return {
+            stat: { type: "file", size: line.byteLength * lines, mtime: 0, mode: 0o644 },
+            offset: 0,
+            body: new ReadableStream<Uint8Array>({
+              pull(controller) {
+                pulled += 1;
+                controller.enqueue(line);
+                if (pulled === lines) controller.close();
+              },
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          };
+        },
+      }),
+    );
+
+    expect(await ws.fs.grep("care", `${ROOT}/README.md`, { limit: 2 })).toHaveLength(2);
+    expect(cancelled).toBe(true);
+    expect(signal?.aborted).toBe(true);
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("reads nothing at or past the end of a file a mount can't seek in", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const ws = open(
+      fakePassthrough(FILES, {
+        readFile: async () => ({
+          stat: { type: "file", size: 6, mtime: 0, mode: 0o644 },
+          offset: 0,
+          body: new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulled += 1;
+              controller.enqueue(new TextEncoder().encode("abcdef"));
+              controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        }),
+      }),
+    );
+    expect(await ws.fs.readFile(`${ROOT}/README.md`, { encoding: "utf8", byteOffset: 6 })).toBe("");
+    expect(await ws.fs.readFile(`${ROOT}/README.md`, { encoding: "utf8", byteOffset: 60 })).toBe(
+      "",
+    );
+    expect(pulled).toBeLessThanOrEqual(2);
+    expect(cancelled).toBe(true);
+  });
+
+  it("leaves a broken mount out of walks above it and fails walks inside it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const broken = fakePassthrough(FILES, {
+        readdir: async () => {
+          throw new Error("upstream down");
+        },
+      });
+      const ws = new Workspace({
+        storage: new SQLiteTestStorage(),
+        mounts: { [ROOT]: fakePassthrough(FILES), "/skills/broken": broken },
+      });
+
+      const found = (await ws.fs.find("/")).map((entry) => entry.path);
+      expect(found).toContain(`${ROOT}/pdf/SKILL.md`);
+      expect(found.some((path) => path.startsWith("/skills/broken"))).toBe(false);
+      expect(await ws.fs.ls("/skills")).toContain(`${ROOT}/README.md`);
+      expect((await ws.fs.grep("care", "/")).map((match) => match.path)).toEqual([
+        `${ROOT}/pdf/SKILL.md`,
+      ]);
+      expect((await ws.fs.readdir("/skills")).map((entry) => entry.name)).toEqual([
+        "broken",
+        "team",
+      ]);
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ root: "/skills/broken" }));
+
+      await expect(ws.fs.find("/skills/broken")).rejects.toMatchObject({ code: "EIO" });
+      await expect(ws.fs.grep("care", "/skills/broken")).rejects.toMatchObject({ code: "EIO" });
+      await expect(ws.fs.ls("/skills/broken")).rejects.toMatchObject({ code: "EIO" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("merges roots at several depths in find's order", async () => {
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      mounts: {
+        "/top": fakePassthrough({ "t.md": "t" }),
+        "/a/b/c/deep": fakePassthrough({ "d.md": "d", "sub/e.md": "e" }),
+        [ROOT]: fakePassthrough({ "s.md": "s" }),
+      },
+    });
+    await ws.fs.writeFile("/a/b/x.md", "x");
+    await ws.fs.writeFile("/a/b/c/z.md", "z");
+    await ws.fs.writeFile("/m.md", "m");
+
+    expect((await ws.fs.find("/")).map((entry) => entry.path)).toEqual([
+      "/a",
+      "/a/b",
+      "/a/b/c",
+      "/a/b/c/deep",
+      "/a/b/c/deep/d.md",
+      "/a/b/c/deep/sub",
+      "/a/b/c/deep/sub/e.md",
+      "/a/b/c/z.md",
+      "/a/b/x.md",
+      "/m.md",
+      "/skills",
+      ROOT,
+      `${ROOT}/s.md`,
+      "/top",
+      "/top/t.md",
+    ]);
+    expect(await ws.fs.find("/", "**/*.md", { offset: 2, limit: 3 })).toEqual([
+      { path: "/a/b/c/z.md", type: "file" },
+      { path: "/a/b/x.md", type: "file" },
+      { path: "/m.md", type: "file" },
+    ]);
+    expect(await ws.fs.ls("/a")).toEqual([
+      "/a/b/c/deep/d.md",
+      "/a/b/c/deep/sub/e.md",
+      "/a/b/c/z.md",
+      "/a/b/x.md",
+    ]);
+    expect((await ws.fs.readdir("/")).map((entry) => entry.name)).toEqual([
+      "a",
+      "m.md",
+      "skills",
+      "top",
+    ]);
+  });
+
+  it("lists a root's parent asynchronously, and refuses to synchronously", async () => {
+    const ws = open(fakePassthrough(FILES));
+    const provider = ws.provider();
+    expect(() => provider.readdirSync("/skills")).toThrow(
+      expect.objectContaining({ code: "ENOTSUP" }),
+    );
+    expect(() => provider.readdirEntriesSync("/skills")).toThrow(
+      expect.objectContaining({ code: "ENOTSUP" }),
+    );
+    const dirents = (await provider.readdir("/skills", { withFileTypes: true })) as Array<{
+      name: string;
+      isDirectory(): boolean;
+    }>;
+    expect(dirents.map((entry) => [entry.name, entry.isDirectory()])).toEqual([["team", true]]);
+    // A directory that lists no root still lists synchronously.
+    await ws.fs.mkdir("/other");
+    expect(provider.readdirSync("/other")).toEqual([]);
+  });
+
+  it("rebuilds a mount's WorkspaceFsError with a cut message and the path asked for", async () => {
+    const ws = open(
+      fakePassthrough(FILES, {
+        stat: async () => {
+          throw createWorkspaceError("EACCES", `denied ${"x".repeat(5_000)}`, "relative/elsewhere");
+        },
+      }),
+    );
+    const error = await ws.fs.stat(`${ROOT}/secret.md`).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "EACCES", path: `${ROOT}/secret.md` });
+    expect((error as Error).message.length).toBeLessThan(1_200);
+    expect((error as Error).message).toMatch(/^denied x+…/);
   });
 });

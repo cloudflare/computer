@@ -81,7 +81,7 @@ export async function grep(
 // rest of a walk unread.
 export async function grepFiles(
   pattern: string,
-  filePaths: Iterable<string>,
+  filePaths: Iterable<string> | AsyncIterable<string>,
   options: GrepOptions,
   open: (path: string) => Promise<ReadableStream<Uint8Array>>,
 ): Promise<WorkspaceGrepMatch[]> {
@@ -93,7 +93,7 @@ export async function grepFiles(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  for (const filePath of filePaths) {
+  for await (const filePath of filePaths) {
     const complete = await scanFile(
       open,
       filePath,

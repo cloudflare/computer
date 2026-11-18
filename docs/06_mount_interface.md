@@ -129,43 +129,70 @@ parent directories, such as `/skills` for `/skills/team`, as ordinary
 directories; the root itself is listed as a directory of its parent and
 stats as what the mount's `stat("")` returns, which must be a
 directory. A root at `/` is rejected, and roots nest with no other
-mount, eager or passthrough. Rows that are already in the store under a
-root, from before it was registered, are hidden while it is.
+mount, eager or passthrough.
 
 - **Directories.** `readdir` of a file throws `ENOTDIR`, as a
-  `WorkspaceFsError` (`createWorkspaceError` is exported for it), which
-  the filesystem passes through. `find`, `ls` and `grep` walk each
-  mount root they reach with one `readdir(path, { recursive: true,
-  limit })`, whose names may contain `/`, parents listed before their
-  children. The limit is `PASSTHROUGH_WALK_LIMIT` (100,000 entries);
-  whether a mount throws or truncates past it is up to the mount.
+  `WorkspaceFsError` (`createWorkspaceError` is exported for it).
+  `find`, `ls` and `grep` walk each mount root they reach with one
+  `readdir(path, { recursive: true, limit })`, whose names may contain
+  `/`, parents listed before their children. The reply must hold at
+  most `limit` entries, `PASSTHROUGH_WALK_LIMIT` (100,000): a longer
+  one fails the operation with `EIO`, and a mount whose tree is bigger
+  than it will list throws, which fails the operation too. Nothing is
+  truncated silently.
+- **Walks stop early.** `find` and `grep` over a directory above a root
+  merge the mount's walk into the store's where the root falls, and
+  stop at their `limit`: a mount the walk doesn't reach, or whose root
+  the glob can't match, is never called, and `grep` reads no file past
+  its last match. A mount below the directory asked for whose walk
+  fails is left out, with a `console.warn`, so the rest still answers,
+  as `readdir` of its parent still lists it; a `find`, `ls` or `grep`
+  at or under its root fails with `EIO`.
 - **Ranges.** `readFile`'s `byteOffset` and `byteLength` become
   `range`. The returned `offset` is the byte where `body` starts: a
   mount that can't seek returns 0 and the whole file, and the
-  filesystem skips to the offset and cuts at the length.
+  filesystem skips to the offset and cuts at the length. A window at or
+  past the end, by the stat, cancels the body unread. No more than the
+  window's bytes are ever held.
+- **Signals.** Every mount call gets an `AbortSignal`, aborted when the
+  operation no longer needs the call: a `find` or `grep` that reached
+  its limit, a file stream its reader cancelled, a body read past the
+  window asked for. The filesystem sets no timeouts; a mount that wants
+  one adds its own.
 - **Read-only.** `writeFile`, `mkdir`, `rm`, `rename` from or to the
   root, `chmod`, `symlink`, the provider's writes, and changes pulled
   from a container or written by git under the root fail with `EROFS`
-  without calling the mount. `rm` and `rename` of a directory above
-  the root, and `mkdir` of one, fail as they do above a read-only
-  eager mount.
-- **Errors.** A `WorkspaceFsError` a mount throws passes through. Any
-  other error fails that one operation with `EIO`, carrying the
-  error's message cut to 1 KiB. So does a malformed reply: an entry
-  name that is empty, `.` or `..` in any segment, absolute, or
-  contains a backslash or NUL; a stat with a bad type, size, mtime or
-  mode; an entry below a file or without its parent; a root that
-  isn't a directory; and a body that delivers more or fewer bytes than
-  its stat's size.
+  without calling the mount, by name or through a symbolic link. `rm`
+  and `rename` of a directory above the root, and `mkdir` of one, fail
+  as they do above a read-only eager mount.
+- **Errors.** A `WorkspaceFsError` a mount throws keeps its code, with
+  its message cut to 1 KiB and its path replaced by the one asked for.
+  Any other error fails that one operation with `EIO`, carrying its
+  message cut the same way. So does a malformed reply: an entry name
+  that is empty, `.` or `..` in any segment, absolute, or contains a
+  backslash or NUL; a stat with a bad type, size, mtime or mode; an
+  entry below a file or without its parent; a walk longer than its
+  limit; a root that isn't a directory; and a body that delivers more
+  or fewer bytes than its stat's size.
 - **Synchronous reads.** They can't wait for a mount: the provider's
-  `*Sync` methods, and anything else that resolves a path under the
-  root synchronously, fail with `ENOTSUP`.
-- **Paths, not links.** A path is routed by its canonical form. A
-  symbolic link elsewhere in the store that points into a root is not
-  followed into the mount.
+  `*Sync` methods, a synchronous listing of a root's parent included,
+  and anything else that resolves a path under a root synchronously
+  fail with `ENOTSUP`.
+- **Symbolic links.** A link that resolves into a root, at any point of
+  a path, reads the mount: `/link/a.md` with `/link -> /skills/team`
+  reads the mount's `a.md`, and results are named under `/link`. `ls`
+  follows no links, here as anywhere in the store.
+- **Rows already there.** Rows under a root from before it was
+  registered, such as an earlier eager mount's, are hidden while it is:
+  no read, walk or link reaches them. They are not deleted: a push to
+  a container backend still carries any it hasn't, and a container
+  that has them keeps them.
 - **Not synced.** Nothing under the root is pushed to a container
   backend; only commands that read through `Workspace.fs`, such as the
   codemode and worker-shell backends, see the mount's files.
+- **Git.** git reads a worktree through the filesystem, so `git add` in
+  a worktree that contains a root copies the mount's files into git
+  objects, which are stored.
 
 Best when the files must never be stored in the workspace, or change
 often enough that a copy would be stale.

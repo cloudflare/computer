@@ -10,6 +10,7 @@
 // Nothing here is persisted: a Database opened without the mounts has
 // none, and the paths under their roots are gone with them.
 
+import { createWorkspaceError, type WorkspaceFsError } from "../errors";
 import type { Database } from "../storage";
 
 // What a passthrough mount reports for one path.
@@ -40,8 +41,10 @@ export interface PassthroughReadResult {
 // The read surface of a passthrough mount. Paths are relative to the
 // mount root: "" is the root, "a/b.md" a file below it. null means the
 // path does not exist. A thrown WorkspaceFsError (ENOTDIR from readdir
-// of a file, say) reaches the caller as it is; anything else thrown
-// becomes EIO.
+// of a file, say) reaches the caller with its code; anything else
+// thrown becomes EIO. A recursive readdir returns at most `limit`
+// entries, or throws. Every call gets a signal, aborted when the
+// operation no longer needs its result.
 export interface PassthroughSource {
   stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
   readdir(
@@ -54,9 +57,10 @@ export interface PassthroughSource {
   ): Promise<PassthroughReadResult | null>;
 }
 
-// A canonical path at or below a passthrough root, and where it lands.
+// A path at or below a passthrough root, and where it lands.
 export interface PassthroughTarget {
-  // The canonical absolute path asked for.
+  // The canonical absolute path asked for. Through a symbolic link it
+  // is not below `root`; results and errors are named after it.
   path: string;
   root: string;
   // `path` relative to `root`; "" for the root itself.
@@ -138,4 +142,49 @@ export function passthroughRootsBelow(
     }
   }
   return out;
+}
+
+// The path below a target's root that it lands on.
+export function realPathOf(target: PassthroughTarget): string {
+  return target.rel === "" ? target.root : `${target.root}/${target.rel}`;
+}
+
+// Errors raised because a path needs a passthrough mount that a
+// synchronous caller can't wait for, mapped to the mount target when
+// there is one. The async entry points catch them and ask the mount;
+// writers turn them into EROFS.
+const unsupported = new WeakMap<object, PassthroughTarget | null>();
+
+export function passthroughUnsupported(
+  path: string,
+  root: string,
+  target?: PassthroughTarget,
+): WorkspaceFsError {
+  const error = createWorkspaceError(
+    "ENOTSUP",
+    `passthrough mount at ${root} can't be read synchronously`,
+    path,
+  );
+  unsupported.set(error, target ?? null);
+  return error;
+}
+
+export function isPassthroughUnsupported(error: unknown): error is WorkspaceFsError {
+  return typeof error === "object" && error !== null && unsupported.has(error);
+}
+
+// The mount target a passthroughUnsupported error was raised for.
+export function redirectOf(error: unknown): PassthroughTarget | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  return unsupported.get(error) ?? undefined;
+}
+
+// A write that ran into a passthrough root, through a link the guard
+// couldn't see, fails as a write there does: with EROFS. Other errors
+// are returned as they are.
+export function asReadOnly(error: unknown): unknown {
+  if (!isPassthroughUnsupported(error)) return error;
+  const target = redirectOf(error);
+  const root = target?.root ?? "a passthrough mount";
+  return createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, error.path);
 }

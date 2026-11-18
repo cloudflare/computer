@@ -32,6 +32,7 @@ import {
   readlinkWithPassthrough,
   statWithPassthrough,
 } from "./passthrough";
+import { asReadOnly } from "./passthrough-registry";
 import type { ReaddirOptions, WorkspaceDirentResult } from "./readdir";
 import type { ReadFileOptions } from "./readFile";
 import { rename } from "./rename";
@@ -118,20 +119,36 @@ export class WorkspaceFilesystem {
 
   // --- Mutations ---------------------------------------------------
 
-  writeFile(
+  //
+  // A write that reaches a passthrough root through a symbolic link
+  // fails with EROFS, as one by name does.
+
+  async writeFile(
     path: string,
     content: WriteFileContent,
     options: WriteFileOptions = {},
   ): Promise<void> {
-    return writeFile(this.db, path, content, options, this.now);
+    try {
+      await writeFile(this.db, path, content, options, this.now);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-    mkdir(this.db, path, options, this.now);
+    try {
+      mkdir(this.db, path, options, this.now);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
-    rm(this.db, path, options);
+    try {
+      rm(this.db, path, options);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 
   // Move a file, directory or symbolic link in one transaction. An
@@ -146,20 +163,32 @@ export class WorkspaceFilesystem {
   // non-directory, EINVAL for the root at either end or a directory
   // moved into itself, and EROFS under a read-only mount.
   async rename(oldPath: string, newPath: string): Promise<void> {
-    rename(this.db, oldPath, newPath);
+    try {
+      rename(this.db, oldPath, newPath);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 
   // Change the permission bits on a path. Follows symlinks like
   // POSIX chmod — the change lands on the target, not the link.
   // The supplied mode is masked to twelve bits.
   async chmod(path: string, mode: number): Promise<void> {
-    chmod(this.db, path, mode, this.now);
+    try {
+      chmod(this.db, path, mode, this.now);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 
   // Create a symbolic link at `path` pointing at `target`. The
   // target is stored verbatim; it can be relative or absolute and
   // is allowed to dangle.
   async symlink(target: string, path: string): Promise<void> {
-    symlink(this.db, target, path, this.now);
+    try {
+      symlink(this.db, target, path, this.now);
+    } catch (error) {
+      throw asReadOnly(error);
+    }
   }
 }

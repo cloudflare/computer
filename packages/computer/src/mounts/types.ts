@@ -68,16 +68,22 @@ export interface EagerMount extends MountBase {
 // Paths are relative to the mount root: "" is the root itself,
 // "a/b.md" a file below it. null means the path does not exist. A
 // thrown WorkspaceFsError (ENOTDIR from readdir of a file, say) reaches
-// the caller as it is; anything else thrown fails that one operation
-// with EIO. See docs/06_mount_interface.md.
+// the caller with its code, its message cut to 1 KiB and the path asked
+// for; anything else thrown fails that one operation with EIO.
+//
+// Every call gets a `signal`, aborted when the operation stops needing
+// the result: a find or grep that reached its limit, a file stream its
+// reader cancelled. Computer sets no timeouts. See
+// docs/06_mount_interface.md.
 export interface PassthroughMount extends MountBase {
   readonly strategy: "passthrough";
   readonly mode: "read-only";
   stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
   // A file throws ENOTDIR. With `recursive`, every entry below `path`,
   // parents before children, names relative to `path`; find, ls and
-  // grep walk a mount with one such call and pass a `limit`, past
-  // which the mount may throw or truncate.
+  // grep walk a mount with one such call. The reply must hold at most
+  // `limit` entries (a longer one is EIO); a mount whose tree is bigger
+  // than it will list throws.
   readdir(
     path: string,
     options?: { recursive?: boolean; limit?: number; signal?: AbortSignal },
