@@ -11,7 +11,13 @@ import { buildModuleGraph } from "../backends/codemode/module-graph";
 import { WorkspaceFsAdapter } from "../backends/worker-shell/adapter";
 import { WorkspaceRuntimeCapability } from "../runtime/capability";
 import { Workspace } from "../workspace";
-import type { PassthroughDirent, PassthroughMount, PassthroughStat } from "./types";
+import type {
+  EagerMount,
+  Mount,
+  PassthroughDirent,
+  PassthroughMount,
+  PassthroughStat,
+} from "./types";
 
 const ROOT = "/skills/team";
 
@@ -1017,6 +1023,64 @@ describe("passthrough mounts and the store's symbolic links", () => {
           mounts: { "/alias/m": fakePassthrough(FILES), "/real/m": fakePassthrough(FILES) },
         }),
     ).toThrow(/must not nest/);
+  });
+
+  it("refuses passthrough and eager roots that meet through a link", async () => {
+    const storage = new SQLiteTestStorage();
+    const before = open(undefined, storage);
+    await before.fs.mkdir("/real");
+    await before.fs.symlink("/real", "/alias");
+    const eager = (files: Record<string, string> = {}): EagerMount => ({
+      kind: "fake-eager",
+      mode: "read-only",
+      strategy: "eager",
+      async materialize(api) {
+        for (const [path, text] of Object.entries(files)) {
+          await api.writeFile(`${api.root}/${path}`, new Response(text).body as ReadableStream);
+        }
+      },
+    });
+
+    const overlapping: Array<[string, Record<string, Mount>]> = [
+      [
+        "eager around a passthrough under a link",
+        { "/real": eager(), "/alias/m": fakePassthrough(FILES) },
+      ],
+      [
+        "eager under a passthrough under a link",
+        { "/alias/m": fakePassthrough(FILES), "/real/m/sub": eager() },
+      ],
+      [
+        "passthrough under an eager under a link",
+        { "/alias/e": eager(), "/real/e/p": fakePassthrough(FILES) },
+      ],
+      [
+        "eager under a link under a passthrough",
+        { "/real/m": fakePassthrough(FILES), "/alias/m/x": eager() },
+      ],
+      ["one directory by two names", { "/alias/m": eager(), "/real/m": fakePassthrough(FILES) }],
+      [
+        "a parent not made yet",
+        { "/alias/new/e": eager(), "/real/new/e/p": fakePassthrough(FILES) },
+      ],
+    ];
+    for (const [name, mounts] of overlapping) {
+      expect(() => new Workspace({ storage, mounts }), name).toThrow(/must not nest/);
+    }
+    // A refused configuration creates nothing.
+    await expect(open(undefined, storage).fs.stat("/real/new")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    // Side by side through the link, both kinds work.
+    const ws = new Workspace({
+      storage,
+      mounts: { "/real/a": eager({ "e.md": "eager" }), "/alias/b": fakePassthrough(FILES) },
+    });
+    await ws.ensureMountsIndexed();
+    expect(await ws.fs.readFile("/alias/a/e.md", "utf8")).toBe("eager");
+    expect(await ws.fs.readFile("/real/b/README.md", "utf8")).toBe(FILES["README.md"]);
+    expect((await ws.fs.readdir("/real")).map((entry) => entry.name)).toEqual(["a", "b"]);
   });
 
   it("fails every write through a link into a root with EROFS, rows or none", async () => {

@@ -92,8 +92,9 @@ type WalkPlan =
 
 // Register the passthrough mounts of one Database, replacing any
 // registered before. Roots must be canonical absolute paths other than
-// "/", none inside another; the caller checks them against its other
-// mounts. Each root's parent directory is created when missing, so the
+// "/", none inside another or inside or around one of `otherRoots`,
+// the roots of the caller's other mounts, compared where each really
+// is after the links on its parent path. Each root's parent directory is created when missing, so the
 // root has somewhere to be listed; the root itself never gets a row.
 //
 // A root is registered where it really is: when its parent is reached
@@ -105,6 +106,7 @@ export function registerPassthroughMounts(
   db: Database,
   mounts: ReadonlyMap<string, PassthroughSource>,
   now: () => number,
+  otherRoots: Iterable<string> = [],
 ): void {
   const roots = [...mounts.keys()];
   for (const root of roots) {
@@ -124,19 +126,44 @@ export function registerPassthroughMounts(
   }
   setPassthroughSources(db, new Map());
   invalidateReadOnlyMountCache(db);
-  const registered = new Map<string, PassthroughSource>();
-  for (const [root, source] of mounts) {
-    const real = realRootOf(db, root, now);
-    const same = [...registered.keys()].find(
-      (other) => other === real || other.startsWith(`${real}/`) || real.startsWith(`${other}/`),
-    );
-    if (same !== undefined) {
-      throw new Error(`mount roots must not nest: ${root} is at ${real}, which meets ${same}`);
+  // Check every pair where the roots really are before anything is
+  // created: two names can be one directory, or one inside the other.
+  const planned = roots.map((root) => ({ root, real: resolvedRootOf(db, root) }));
+  const others = [...otherRoots].map((root) => ({ root, real: resolvedRootOf(db, root) }));
+  for (const [index, mount] of planned.entries()) {
+    for (const other of [...planned.slice(index + 1), ...others]) {
+      if (overlaps(mount.real, other.real)) {
+        throw new Error(
+          `mount roots must not nest: ${mount.root} (at ${mount.real}) and ${other.root} (at ${other.real})`,
+        );
+      }
     }
-    registered.set(real, source);
   }
+  const registered = new Map<string, PassthroughSource>();
+  for (const [root, source] of mounts) registered.set(realRootOf(db, root, now), source);
   setPassthroughSources(db, registered);
   invalidateReadOnlyMountCache(db);
+}
+
+function overlaps(a: string, b: string): boolean {
+  return a === b || a.startsWith(prefixOf(b)) || b.startsWith(prefixOf(a));
+}
+
+// Where a root would be, without creating anything: its name in the
+// directory its parent path resolves to, or, for a parent still
+// missing, below the deepest ancestor that resolves, as creating the
+// parent would put it. A root's own name is not followed: a mount
+// replaces whatever is there.
+function resolvedRootOf(db: Database, root: string): string {
+  const { parts } = canonicalizePath(root);
+  for (let depth = parts.length - 1; depth >= 0; depth -= 1) {
+    const node = resolveInode(db, `/${parts.slice(0, depth).join("/")}`);
+    if (node?.type !== "dir") continue;
+    const real = pathOf(db, node.inode) ?? "/";
+    const rest = parts.slice(depth).join("/");
+    return real === "/" ? `/${rest}` : `${real}/${rest}`;
+  }
+  return root;
 }
 
 // Where a root really is: its name in the directory its parent path

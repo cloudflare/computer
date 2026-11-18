@@ -321,8 +321,13 @@ export class Workspace {
       else eager.set(root, mount);
     }
     // Passthrough mounts have nothing to index: the store routes reads
-    // under their roots to them and refuses writes there.
-    if (passthrough.size > 0) registerPassthroughMounts(this.#db, passthrough, this.#now);
+    // under their roots to them and refuses writes there. Their roots
+    // are checked against the eager ones where each really is, since a
+    // link on a parent path can put two differently named roots in
+    // one place.
+    if (passthrough.size > 0) {
+      registerPassthroughMounts(this.#db, passthrough, this.#now, eager.keys());
+    }
     this.#mountIndex = new MountIndex({
       db: this.#db,
       fs: this.#fs,

@@ -187,7 +187,9 @@ mount, eager or passthrough.
   path goes through a link is registered where the link leads:
   `/alias/mount` with `/alias -> /real` is the mount at `/real/mount`,
   listed, found and read under both names, and its errors name
-  `/real/mount`. Two roots that land on one directory are rejected.
+  `/real/mount`. Roots are compared with every other mount's, eager or
+  passthrough, where each really is: two that land on one directory, or
+  one inside the other, through a link are rejected.
 - **Rows already there.** Rows under a root from before it was
   registered, such as an earlier eager mount's, are hidden while it is:
   no read, walk or link reaches them. They are not deleted: a push to
