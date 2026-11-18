@@ -94,7 +94,7 @@ import type { PassthroughMount } from "@cloudflare/computer";
 
 interface PassthroughMount extends MountBase {
   readonly strategy: "passthrough";
-  readonly mode: "read-only";
+  readonly mode: "read-only" | "read-write"; // see Passthrough: read-write
   // Paths are relative to the mount root: "" is the root, "a/b.md" a
   // file below it. null means ENOENT.
   stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
@@ -160,7 +160,7 @@ mount, eager or passthrough.
   its limit, a file stream its reader cancelled, a body read past the
   window asked for. The filesystem sets no timeouts; a mount that wants
   one adds its own.
-- **Read-only.** `writeFile`, `mkdir`, `rm`, `rename` from or to the
+- **Read-only.** Under a `"read-only"` mount, `writeFile`, `mkdir`, `rm`, `rename` from or to the
   root, `chmod`, `symlink`, the provider's writes, and changes pulled
   from a container or written by git under the root fail with `EROFS`
   without calling the mount, by name or through a symbolic link, with
@@ -201,6 +201,60 @@ mount, eager or passthrough.
 - **Git.** git reads a worktree through the filesystem, so `git add` in
   a worktree that contains a root copies the mount's files into git
   objects, which are stored.
+
+#### Passthrough: read-write
+
+A passthrough mount with `mode: "read-write"` takes writes too, and
+stores none of them: each one at or under its root goes to the mount,
+before any SQL, by name or through a symbolic link into the root.
+
+```ts
+interface PassthroughMount {
+  // ...the read methods above, and:
+  readonly mode: "read-only" | "read-write";
+  writeFile?(path: string, body: ReadableStream<Uint8Array>, options: {
+    size?: number;       // the body's length, when the writer knows it
+    mode?: number;       // permission bits
+    exclusive?: boolean; // O_EXCL: fail EEXIST if it exists
+    signal?: AbortSignal;
+  }): Promise<PassthroughStat | void>;
+  mkdir?(path: string, options: { recursive?: boolean; mode?: number; signal?: AbortSignal }): Promise<void>;
+  rm?(path: string, options: { recursive?: boolean; signal?: AbortSignal }): Promise<void>;
+  rename?(from: string, to: string, options: { signal?: AbortSignal }): Promise<void>;
+  chmod?(path: string, mode: number, options: { signal?: AbortSignal }): Promise<void>;
+}
+```
+
+- **What goes to the mount.** `writeFile` (a string, bytes or a
+  stream), `mkdir`, `rm` (`force` swallows the mount's `ENOENT`),
+  `rename` within the mount and `chmod`, from `Workspace.fs`, the stub,
+  the worker shell and codemode, and the provider's async `writeFile`,
+  `mkdir`, `rmdir`, `unlink` and `rename`. A method the mount lacks
+  fails that write with `EROFS`.
+- **What doesn't.** Under a read-write root, links (`symlink`, `link`),
+  writes at an offset or in pieces (`writeRangeSync`, `truncateSync`,
+  append, opening a file for writing) and every synchronous write fail
+  with `ENOTSUP`. A caller that needs to append reads and rewrites.
+- **Across the boundary.** A `rename` between the store and a mount, or
+  between two mounts, fails with `EXDEV`; copy and remove instead. The
+  root itself can't be removed or renamed (`EBUSY`), and `rm`, `rename`
+  and `mkdir` of a directory above it fail with `EROFS`, as above a
+  read-only mount.
+- **Errors.** A `WorkspaceFsError` from the mount, such as `EEXIST`,
+  `ENOENT`, `ENOTEMPTY`, `EACCES` or `ENOSPC`, keeps its code, with its
+  message cut to 1 KiB and the path asked for; anything else is `EIO`.
+- **Container pulls** write through, one entry at a time: a file with
+  `writeFile`, a directory with `mkdir -p`, a delete with `rm -r`. An
+  entry the mount refuses, a link among them, is reported in
+  `skipped` with `reason: "mount-error"` and the error, and the rest of
+  the pull applies. A synchronous apply reports every entry under the
+  root that way.
+- **Git** reads and writes a worktree under the root through the
+  provider's async methods, so `init`, `add`, `commit` and `checkout`
+  work there, one mount call per file. Nothing is batched, so this is
+  slow for big trees.
+- **Nothing is cached.** A read after a write asks the mount again, and
+  a walk sees what the mount lists when it reaches the root.
 
 Best when the files must never be stored in the workspace, or change
 often enough that a copy would be stale.
