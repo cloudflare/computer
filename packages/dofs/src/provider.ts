@@ -12,6 +12,15 @@ import { getBlobBytes } from "./fs/blobCache";
 import { link as linkImpl } from "./fs/link";
 import type { MkdirOptions } from "./fs/mkdir";
 import { mkdir as mkdirImpl } from "./fs/mkdir";
+import {
+  collectBytes,
+  passthroughTarget,
+  readdirWithPassthrough,
+  readFileWithPassthrough,
+  readlinkWithPassthrough,
+  statWithPassthrough,
+  touchesPassthrough,
+} from "./fs/passthrough";
 import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer";
 import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile";
@@ -19,7 +28,7 @@ import { readlink as readlinkImpl } from "./fs/readlink";
 import { rename as renameImpl } from "./fs/rename";
 import { resolveInode } from "./fs/resolve";
 import { rm as rmImpl } from "./fs/rm";
-import { stat as statImpl } from "./fs/stat";
+import { stat as statImpl, type WorkspaceStatResult } from "./fs/stat";
 import { symlink as symlinkImpl } from "./fs/symlink";
 import {
   createWatchAsyncIterable,
@@ -138,6 +147,7 @@ export class SQLiteWorkspaceProvider {
 
   openSync(path: string, flags: string = "r", _mode?: number): number {
     const { read, write, truncate, append, create, exclusive } = parseFlags(flags);
+    if (write || truncate || create) this.#rejectPassthroughWrite(path);
     const existing = resolveInode(this.db, path);
 
     if (existing === null) {
@@ -169,7 +179,13 @@ export class SQLiteWorkspaceProvider {
     return fd;
   }
 
+  // The async reads serve a path under a passthrough mount from its
+  // mount (see fs/passthrough.ts); their sync twins reject one with
+  // ENOTSUP, and every write under one fails with EROFS.
   stat(path: string, options?: { bigint?: boolean }): Promise<VirtualStatsLike> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      return statWithPassthrough(this.db, path, true).then(passthroughStats);
+    }
     return Promise.resolve(this.statSync(path, options));
   }
 
@@ -191,6 +207,9 @@ export class SQLiteWorkspaceProvider {
   }
 
   lstat(path: string, options?: { bigint?: boolean }): Promise<VirtualStatsLike> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      return statWithPassthrough(this.db, path, false).then(passthroughStats);
+    }
     return Promise.resolve(this.lstatSync(path, options));
   }
 
@@ -234,6 +253,13 @@ export class SQLiteWorkspaceProvider {
     path: string,
     options?: { withFileTypes?: boolean },
   ): Promise<string[] | VirtualDirentLike[]> {
+    if (touchesPassthrough(this.db, path)) {
+      return readdirWithPassthrough(this.db, path).then((entries) =>
+        options?.withFileTypes === true
+          ? entries.map((entry) => wrapDirent(entry))
+          : entries.map((entry) => entry.name),
+      );
+    }
     return Promise.resolve(this.readdirSync(path, options));
   }
 
@@ -259,6 +285,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   mkdirSync(path: string, options?: MkdirOptions): string | undefined {
+    this.#rejectPassthroughWrite(path);
     mkdirImpl(this.db, path, options ?? {}, this.now);
     return undefined;
   }
@@ -269,6 +296,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   rmdirSync(path: string): void {
+    this.#rejectPassthroughWrite(path);
     flushPendingUnderNode(this.db, path, this.now);
     rmImpl(this.db, path, {});
   }
@@ -279,6 +307,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   unlinkSync(path: string): void {
+    this.#rejectPassthroughWrite(path);
     // If a buffered create is still pending for this path, commit it
     // first so rm sees a real inode to unlink, and so its blob is
     // reaped with the unlink, matching the non-buffered shape. The
@@ -309,6 +338,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   linkSync(existingPath: string, newPath: string): void {
+    this.#rejectPassthroughWrite(newPath);
     // Commit a still-pending source before adding the second dirent,
     // otherwise link has nothing real to point at. Also commit a
     // still-pending destination: link's existence check looks at
@@ -327,6 +357,8 @@ export class SQLiteWorkspaceProvider {
   }
 
   renameSync(oldPath: string, newPath: string): void {
+    this.#rejectPassthroughWrite(oldPath);
+    this.#rejectPassthroughWrite(newPath);
     // Commit any still-pending creates at either end before the rename
     // touches dirents: the source needs a real inode to move, and a
     // pending buffer at the destination would otherwise slip past
@@ -358,6 +390,15 @@ export class SQLiteWorkspaceProvider {
     path: string,
     options?: BufferEncoding | { encoding?: BufferEncoding | null } | null,
   ): Promise<Buffer | string> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      const encoding = typeof options === "string" ? options : options?.encoding;
+      return readFileWithPassthrough(this.db, path)
+        .then((stream) => collectBytes(stream as ReadableStream<Uint8Array>))
+        .then((bytes) => {
+          const out = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          return encoding ? out.toString(encoding) : out;
+        });
+    }
     return Promise.resolve(this.readFileSync(path, options));
   }
 
@@ -477,6 +518,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   chmodSync(path: string, mode: number): void {
+    this.#rejectPassthroughWrite(path);
     const pending = findPendingWriteBuffer(this.db, path);
     if (pending !== undefined) {
       // Pending-create files don't have a row yet; stash the mode on
@@ -514,10 +556,26 @@ export class SQLiteWorkspaceProvider {
   }
 
   exists(path: string): Promise<boolean> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      return statWithPassthrough(this.db, path, true).then(
+        () => true,
+        () => false,
+      );
+    }
     return Promise.resolve(this.existsSync(path));
   }
 
   existsSync(path: string): boolean {
+    // existsSync answers false for any failure, which would hide a
+    // passthrough path's ENOTSUP behind a wrong answer.
+    const passthrough = passthroughTarget(this.db, path);
+    if (passthrough !== undefined) {
+      throw createWorkspaceError(
+        "ENOTSUP",
+        `passthrough mount at ${passthrough.root} can't be read synchronously`,
+        passthrough.path,
+      );
+    }
     try {
       if (findPendingWriteBuffer(this.db, path) !== undefined) return true;
       return resolveInode(this.db, path) !== null;
@@ -542,6 +600,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   realpath(path: string, _options?: { encoding?: BufferEncoding }): Promise<string> {
+    const passthrough = passthroughTarget(this.db, path);
+    if (passthrough !== undefined) {
+      return statWithPassthrough(this.db, path, true).then(() => passthrough.path);
+    }
     return Promise.resolve(this.realpathSync(path));
   }
 
@@ -554,6 +616,9 @@ export class SQLiteWorkspaceProvider {
   }
 
   access(path: string, _mode?: number): Promise<void> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      return statWithPassthrough(this.db, path, true).then(() => undefined);
+    }
     this.accessSync(path);
     return Promise.resolve();
   }
@@ -642,6 +707,7 @@ export class SQLiteWorkspaceProvider {
   }
 
   truncateSync(path: string, len: number): void {
+    this.#rejectPassthroughWrite(path);
     const node = resolveInode(this.db, path);
     if (node === null) {
       throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
@@ -657,6 +723,19 @@ export class SQLiteWorkspaceProvider {
     this.truncateSync(state.path, len);
   }
 
+  // Writes under a passthrough root fail with EROFS before anything
+  // resolves the path, which would fail with ENOTSUP instead.
+  #rejectPassthroughWrite(path: string): void {
+    const passthrough = passthroughTarget(this.db, path);
+    if (passthrough !== undefined) {
+      throw createWorkspaceError(
+        "EROFS",
+        `read-only mount at ${passthrough.root}: cannot modify`,
+        passthrough.path,
+      );
+    }
+  }
+
   #fdOrThrow(fd: number): FdState {
     const state = this.#fds.get(fd);
     if (state === undefined) {
@@ -668,6 +747,9 @@ export class SQLiteWorkspaceProvider {
   // -- Symlinks ------------------------------------------------------
 
   readlink(path: string, _options?: { encoding?: BufferEncoding }): Promise<string> {
+    if (passthroughTarget(this.db, path) !== undefined) {
+      return readlinkWithPassthrough(this.db, path);
+    }
     return Promise.resolve(this.readlinkSync(path));
   }
 
@@ -727,6 +809,19 @@ export class SQLiteWorkspaceProvider {
   ): void {
     throw notImplemented("unwatchFile");
   }
+}
+
+function passthroughStats(stat: WorkspaceStatResult): VirtualStatsLike {
+  return wrapStats({
+    mode: stat.mode,
+    size: stat.size,
+    mtimeMs: stat.mtime,
+    ino: 0,
+    isFile: stat.isFile,
+    isDirectory: stat.isDirectory,
+    isSymbolicLink: false,
+    nlink: 1,
+  });
 }
 
 function notImplemented(method: string) {

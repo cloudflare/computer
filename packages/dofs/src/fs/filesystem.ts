@@ -11,20 +11,32 @@
 // apply paths in sync/* operate on a Database directly, and the
 // in-package tests skip the class wrapper when they only need a
 // single op.
+//
+// Reads go through passthrough.ts, which sends a path under a
+// passthrough mount to its mount and every other path to the free
+// function. Writes need no routing: the mount guard the free
+// functions run rejects them under a passthrough root.
 
 import type { Database } from "../storage";
 
 import { chmod } from "./chmod";
-import { type FindOptions, find, type WorkspaceFoundEntry } from "./find";
-import { type GrepOptions, grep, type WorkspaceGrepMatch } from "./grep";
-import { ls } from "./ls";
+import type { FindOptions, WorkspaceFoundEntry } from "./find";
+import type { GrepOptions, WorkspaceGrepMatch } from "./grep";
 import { type MkdirOptions, mkdir } from "./mkdir";
-import { type ReaddirOptions, readdir, type WorkspaceDirentResult } from "./readdir";
-import { type ReadFileOptions, readFile } from "./readFile";
-import { readlink } from "./readlink";
+import {
+  findWithPassthrough,
+  grepWithPassthrough,
+  lsWithPassthrough,
+  readdirWithPassthrough,
+  readFileWithPassthrough,
+  readlinkWithPassthrough,
+  statWithPassthrough,
+} from "./passthrough";
+import type { ReaddirOptions, WorkspaceDirentResult } from "./readdir";
+import type { ReadFileOptions } from "./readFile";
 import { rename } from "./rename";
 import { type RmOptions, rm } from "./rm";
-import { lstat, stat, type WorkspaceStatResult } from "./stat";
+import type { WorkspaceStatResult } from "./stat";
 import { symlink } from "./symlink";
 import { type WriteFileContent, type WriteFileOptions, writeFile } from "./writeFile";
 
@@ -63,11 +75,11 @@ export class WorkspaceFilesystem {
     // Cast through the union overload of the free function;
     // the class's overloads above carry the precise return type
     // for each input shape back to the caller.
-    return readFile(this.db, path, optionsOrEncoding as ReadFileOptions);
+    return readFileWithPassthrough(this.db, path, optionsOrEncoding);
   }
 
   async stat(path: string): Promise<WorkspaceStatResult> {
-    return stat(this.db, path);
+    return statWithPassthrough(this.db, path, true);
   }
 
   // POSIX lstat — like stat, but doesn't follow a trailing symlink.
@@ -75,17 +87,17 @@ export class WorkspaceFilesystem {
   // / unlink under a Node-style fs surface, or just-bash's adapter
   // routing lstat through to the workspace.
   async lstat(path: string): Promise<WorkspaceStatResult> {
-    return lstat(this.db, path);
+    return statWithPassthrough(this.db, path, false);
   }
 
   // Return the stored target of a symlink. EINVAL when path is
   // not a symlink; ENOENT when path is missing.
   async readlink(path: string): Promise<string> {
-    return readlink(this.db, path);
+    return readlinkWithPassthrough(this.db, path);
   }
 
   async readdir(path: string, options: ReaddirOptions = {}): Promise<WorkspaceDirentResult[]> {
-    return readdir(this.db, path, options);
+    return readdirWithPassthrough(this.db, path, options);
   }
 
   async find(
@@ -93,15 +105,15 @@ export class WorkspaceFilesystem {
     pattern?: string,
     options: FindOptions = {},
   ): Promise<WorkspaceFoundEntry[]> {
-    return find(this.db, directory, pattern, options);
+    return findWithPassthrough(this.db, directory, pattern, options);
   }
 
   async ls(prefix: string): Promise<string[]> {
-    return ls(this.db, prefix);
+    return lsWithPassthrough(this.db, prefix);
   }
 
   grep(pattern: string, path: string, options: GrepOptions = {}): Promise<WorkspaceGrepMatch[]> {
-    return grep(this.db, pattern, path, options);
+    return grepWithPassthrough(this.db, pattern, path, options);
   }
 
   // --- Mutations ---------------------------------------------------

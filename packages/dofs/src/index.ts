@@ -4,7 +4,7 @@
 // serve the experimental sync with computerd.
 
 export type { WorkspaceErrorCode, WorkspaceFsError } from "./errors";
-export { createWorkspaceError } from "./errors";
+export { createWorkspaceError, isWorkspaceError } from "./errors";
 export { chmod } from "./fs/chmod";
 export { WorkspaceFilesystem, type WorkspaceFilesystemOptions } from "./fs/filesystem";
 export type { FindOptions, WorkspaceFoundEntry } from "./fs/find";
@@ -22,6 +22,15 @@ export {
   invalidateReadOnlyMountCache,
   readOnlyRootFor,
 } from "./fs/mount-guard";
+// Passthrough mounts: subtrees served live by an object registered in
+// memory per Database, never stored. See fs/passthrough.ts.
+export { PASSTHROUGH_WALK_LIMIT, registerPassthroughMounts } from "./fs/passthrough";
+export type {
+  PassthroughDirent,
+  PassthroughReadResult,
+  PassthroughSource,
+  PassthroughStat,
+} from "./fs/passthrough-registry";
 export type { ReaddirOptions, WorkspaceDirentEntry, WorkspaceDirentResult } from "./fs/readdir";
 export type { ReadFileOptions } from "./fs/readFile";
 export { readlink } from "./fs/readlink";

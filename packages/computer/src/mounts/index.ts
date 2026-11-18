@@ -19,13 +19,14 @@
 import type { Database, WorkspaceFilesystem } from "@cloudflare/dofs";
 import { invalidateReadOnlyMountCache, ROOT_INODE } from "@cloudflare/dofs";
 
-import type { Mount, MountWriteAPI } from "./types";
+import type { EagerMount, MountWriteAPI } from "./types";
 
 export interface IndexerOptions {
   db: Database;
   fs: WorkspaceFilesystem;
-  // The resolved registry keyed by absolute mount root.
-  mounts: Map<string, Mount>;
+  // The eager mounts of the registry, keyed by absolute mount root.
+  // Passthrough mounts have nothing to index.
+  mounts: Map<string, EagerMount>;
 }
 
 // Materialize every registered mount whose _vfs_mounts row is not
@@ -242,7 +243,7 @@ function stampMountProvenance(db: Database, root: string): void {
 interface WriteAPIOptions {
   fs: WorkspaceFilesystem;
   root: string;
-  mount: Mount;
+  mount: EagerMount;
 }
 
 function createWriteAPI(opts: WriteAPIOptions): MountWriteAPI {
@@ -345,7 +346,7 @@ function createWriteAPI(opts: WriteAPIOptions): MountWriteAPI {
 export class MountIndex {
   readonly #db: Database;
   readonly #fs: WorkspaceFilesystem;
-  readonly #mounts: Map<string, Mount>;
+  readonly #mounts: Map<string, EagerMount>;
   #inFlight: Promise<void> | undefined;
   #done = false;
 

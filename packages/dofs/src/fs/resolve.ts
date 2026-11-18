@@ -2,6 +2,7 @@ import { createWorkspaceError } from "../errors";
 import { canonicalizePath } from "../path";
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
+import { passthroughTargetOf } from "./passthrough-registry";
 import { lookupResolveCache, storeResolveCache } from "./resolveCache";
 
 export interface ResolvedInode {
@@ -60,6 +61,17 @@ export function resolveInode(
 ): ResolvedInode | null {
   const followFinal = options.followSymlinks !== false;
   const { parts, path: canonical } = canonicalizePath(path);
+  // Paths under a passthrough mount have no rows; their mount answers
+  // them, asynchronously. The async entry points route there before
+  // they get here, so whatever reaches this is a synchronous read.
+  const passthrough = passthroughTargetOf(db, canonical);
+  if (passthrough !== undefined) {
+    throw createWorkspaceError(
+      "ENOTSUP",
+      `passthrough mount at ${passthrough.root} can't be read synchronously`,
+      canonical,
+    );
+  }
 
   // Cache + single-statement CTE serve only cache-eligible reads:
   // follow-symlinks resolutions outside a transaction. Everything else

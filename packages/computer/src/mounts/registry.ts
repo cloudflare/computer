@@ -65,12 +65,13 @@ export function buildMountRegistry(
 
   for (const root of roots) {
     const value = mounts[root];
-    if (typeof value === "function") {
-      const ctx: MountContext = { sessionId, root, vfs: vfs() };
-      out.set(root, value(ctx));
-    } else {
-      out.set(root, value);
+    const mount = typeof value === "function" ? value({ sessionId, root, vfs: vfs() }) : value;
+    // A passthrough mount at / would leave nothing to the store, not
+    // even the directories other features write to.
+    if (mount.strategy === "passthrough" && root === "/") {
+      throw new Error("a passthrough mount can't be at /: it would hide the whole workspace");
     }
+    out.set(root, mount);
   }
   return out;
 }

@@ -16,6 +16,7 @@
 
 import { createWorkspaceError } from "../errors";
 import type { Database } from "../storage";
+import { passthroughRoots } from "./passthrough-registry";
 
 // undefined sentinel = "not loaded yet"; an empty array means
 // "loaded, no read-only mounts registered". The two are not the
@@ -29,9 +30,15 @@ export function invalidateReadOnlyMountCache(db: Database): void {
   cache.delete(db);
 }
 
+// Passthrough mounts are read-only and live only in memory, so their
+// roots join the ones _vfs_mounts records. Registering them drops the
+// cache.
 function loadReadOnlyRoots(db: Database): readonly string[] {
   const rows = db.all<{ root: string }>("SELECT root FROM _vfs_mounts WHERE mode = 'read-only'");
   const roots = rows.map((r) => r.root);
+  for (const root of passthroughRoots(db)) {
+    if (!roots.includes(root)) roots.push(root);
+  }
   cache.set(db, roots);
   return roots;
 }

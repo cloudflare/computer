@@ -9,7 +9,9 @@
 // roots and resolves factories lives in registry.ts; the index pass
 // that drives materialize() lives in index.ts.
 
-import type { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+import type { PassthroughDirent, PassthroughStat, SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+
+export type { PassthroughDirent, PassthroughStat };
 
 // Common base for every concrete mount. The `kind` string is for
 // diagnostics and the _vfs_mounts table; it is not interpreted.
@@ -56,9 +58,42 @@ export interface EagerMount extends MountBase {
   materialize(api: MountWriteAPI): Promise<void>;
 }
 
-// Union of every supported mount strategy. Today only "eager"; the
-// shape is open so adding "lazy" later is purely additive.
-export type Mount = EagerMount;
+// Passthrough mounts store nothing: every read at or below the mount
+// root is answered live by the mount, on every call. They are
+// registered in memory each time a Workspace is constructed, with no
+// _vfs_mounts row and no cache, so a Workspace opened without one has
+// no files under its root. Writes under the root fail with EROFS
+// without calling the mount.
+//
+// Paths are relative to the mount root: "" is the root itself,
+// "a/b.md" a file below it. null means the path does not exist. A
+// thrown WorkspaceFsError (ENOTDIR from readdir of a file, say) reaches
+// the caller as it is; anything else thrown fails that one operation
+// with EIO. See docs/06_mount_interface.md.
+export interface PassthroughMount extends MountBase {
+  readonly strategy: "passthrough";
+  readonly mode: "read-only";
+  stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
+  // A file throws ENOTDIR. With `recursive`, every entry below `path`,
+  // parents before children, names relative to `path`; find, ls and
+  // grep walk a mount with one such call and pass a `limit`, past
+  // which the mount may throw or truncate.
+  readdir(
+    path: string,
+    options?: { recursive?: boolean; limit?: number; signal?: AbortSignal },
+  ): Promise<PassthroughDirent[] | null>;
+  // `range` comes from readFile's byteOffset and byteLength. The
+  // returned `offset` is the byte of the file where `body` starts: a
+  // mount that can't seek returns 0 and the whole file, and the reader
+  // skips and cuts. The bytes delivered must match `stat.size`.
+  readFile(
+    path: string,
+    options?: { range?: { offset: number; length?: number }; signal?: AbortSignal },
+  ): Promise<{ stat: PassthroughStat; body: ReadableStream<Uint8Array>; offset: number } | null>;
+}
+
+// Union of every supported mount strategy.
+export type Mount = EagerMount | PassthroughMount;
 
 // Factories let callers derive a mount from per-session context
 // (sessionId, root) without threading the values themselves. A bare
