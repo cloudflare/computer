@@ -5,9 +5,12 @@ import {
   createWorkspaceError,
   currentRev,
   materialiseChange,
+  readPushCursor,
+  writeFetchCursor,
+  writePushCursor,
 } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { WorkspaceFsAdapter } from "../backends/worker-shell/adapter";
 import { createGitClient } from "../git/index";
@@ -793,5 +796,148 @@ describe("read-write passthrough mounts and their writers", () => {
       await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
     }
     expect(readOnly.calls).toEqual([]);
+  });
+});
+
+describe("read-write passthrough mounts and the sync protocol", () => {
+  it("counts only the pull's own revs when the host writes while a mount call is in flight", async () => {
+    const mount = writableMount();
+    let started!: () => void;
+    const inFlight = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const write = mount.writeFile?.bind(mount);
+    mount.writeFile = async (path, body, options) => {
+      started();
+      await gate;
+      return write?.(path, body, options);
+    };
+    const ws = open({ [ROOT]: mount });
+    await ws.fs.writeFile("/host.txt", "old\n");
+    // Everything so far has reached the container: the pull starts clean.
+    writePushCursor(ws.db, { rev: currentRev(ws.db), path: null });
+    const startRev = currentRev(ws.db);
+
+    const { entry, objects } = await fileEntry(`${ROOT}/a.md`, "pulled\n", 50);
+    const applying = applyChanges(
+      ws.db,
+      [entry, { kind: "delete", rev: 51, path: "/host.txt" }],
+      objects,
+      pull,
+    );
+    await inFlight;
+    await ws.fs.writeFile("/host.txt", "written while the mount call waited\n");
+    release();
+    const result = await applying;
+
+    // One rev came from the pull, one from the host: acknowledgePulledRevs
+    // compares the two and leaves this window unacknowledged.
+    expect(result.minted).toBe(1);
+    expect(currentRev(ws.db) - startRev).toBe(2);
+    // The host's write was not mistaken for the pull's: the pulled
+    // delete yields to it, and it is still to be pushed.
+    expect(await ws.fs.readFile("/host.txt", "utf8")).toBe("written while the mount call waited\n");
+    const host = materialiseChange(ws.db, "/host.txt");
+    expect(host?.rev).toBeGreaterThan(readPushCursor(ws.db).rev);
+    expect(text(mount, "a.md")).toBe("pulled\n");
+  });
+
+  it("reports a pulled directory delete it keeps, and records it only once removed", async () => {
+    const mount = writableMount({ "d/agent.md": "agent's\n" });
+    const ws = open({ [ROOT]: mount });
+    const scratch = new Workspace({ storage: new SQLiteTestStorage() });
+    await scratch.fs.mkdir("/d");
+    await scratch.fs.rm("/d");
+    const tombstone = materialiseChange(scratch.db, "/d") as ChangeEntry & { kind: "delete" };
+    const remove: ChangeEntry = {
+      kind: "delete",
+      rev: 60,
+      path: `${ROOT}/d`,
+      prior: tombstone.prior,
+    };
+
+    const first = await applyChanges(ws.db, [remove], new Map(), pull);
+    expect(first.skipped).toEqual([
+      expect.objectContaining({ path: `${ROOT}/d`, op: "delete", reason: "kept" }),
+    ]);
+    expect(mount.files.has("d/agent.md")).toBe(true);
+    expect(ws.db.all("SELECT path FROM _vfs_mount_applied")).toEqual([]);
+
+    await ws.fs.rm(`${ROOT}/d/agent.md`);
+    const replay = await applyChanges(ws.db, [remove], new Map(), pull);
+    expect(replay).toMatchObject({ applied: 1, skipped: [] });
+    expect(mount.dirs.has("d")).toBe(false);
+  });
+
+  it("forgets what it applied once the fetch cursor passes it, the log restarts or the mount goes", async () => {
+    const storage = new SQLiteTestStorage();
+    const mount = writableMount();
+    const ws = open({ [ROOT]: mount }, storage);
+    const rows = () =>
+      ws.db.all<{ path: string; rev: number }>(
+        "SELECT path, rev FROM _vfs_mount_applied ORDER BY rev",
+      );
+    const pulled = async (name: string, rev: number) => {
+      const { entry, objects } = await fileEntry(`${ROOT}/${name}`, name, rev);
+      await applyChanges(ws.db, [entry], objects, pull);
+    };
+    await pulled("a.md", 70);
+    await pulled("b.md", 71);
+    await pulled("c.md", 72);
+    expect(rows().map((row) => row.rev)).toEqual([70, 71, 72]);
+
+    writeFetchCursor(ws.db, { rev: 71, path: null });
+    expect(rows().map((row) => row.rev)).toEqual([72]);
+    writeFetchCursor(ws.db, { rev: 72, path: `${ROOT}/a.md` });
+    expect(rows().map((row) => row.rev)).toEqual([72]);
+    // The backend's log started over.
+    writeFetchCursor(ws.db, { rev: 0, path: null });
+    expect(rows()).toEqual([]);
+
+    await pulled("d.md", 3);
+    expect(rows()).toHaveLength(1);
+    // Opened again without that mount, among others, its rows go.
+    const again = open({ "/other": writableMount() }, storage);
+    expect(again.db.all("SELECT path FROM _vfs_mount_applied")).toEqual([]);
+  });
+
+  it("cancels the caller's body a mount didn't read to its end", async () => {
+    const mount = writableMount();
+    mount.writeFile = async () => undefined;
+    const ws = open({ [ROOT]: mount });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(encoder.encode("more"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await ws.fs.writeFile(`${ROOT}/ignored.md`, body);
+    expect(cancelled).toBe(true);
+  });
+
+  it("keeps an entry the mount took applied when its record can't be written", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const mount = writableMount();
+      const ws = open({ [ROOT]: mount });
+      ws.db.run("DROP TABLE _vfs_mount_applied");
+      ws.db.run(
+        "CREATE TABLE _vfs_mount_applied (backend TEXT, path TEXT, rev INTEGER, digest TEXT, CHECK (rev < 0))",
+      );
+      const { entry, objects } = await fileEntry(`${ROOT}/a.md`, "a\n", 80);
+      const result = await applyChanges(ws.db, [entry], objects, pull);
+      expect(result).toMatchObject({ applied: 1, skipped: [] });
+      expect(text(mount, "a.md")).toBe("a\n");
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ path: `${ROOT}/a.md` }));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

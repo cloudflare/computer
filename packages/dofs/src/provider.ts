@@ -404,7 +404,7 @@ export class SQLiteWorkspaceProvider {
     const from = writeTarget(this.db, oldPath, false);
     const to = writeTarget(this.db, newPath, false);
     if (from !== undefined || to !== undefined) {
-      return renameWithMount(this.db, from, to, oldPath, newPath);
+      return renameWithMount(this.db, from, to, oldPath, newPath).then(() => undefined);
     }
     this.renameSync(oldPath, newPath);
     return Promise.resolve();
@@ -515,7 +515,9 @@ export class SQLiteWorkspaceProvider {
         typeof data === "string"
           ? data
           : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-      return writeFileToMount(this.db, target, bytes, mode === undefined ? {} : { mode });
+      return writeFileToMount(this.db, target, bytes, mode === undefined ? {} : { mode }).then(
+        () => undefined,
+      );
     }
     this.writeFileSync(path, data, options);
     return Promise.resolve();
