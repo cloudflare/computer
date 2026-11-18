@@ -230,7 +230,9 @@ interface PassthroughMount {
   `rename` within the mount and `chmod`, from `Workspace.fs`, the stub,
   the worker shell and codemode, and the provider's async `writeFile`,
   `mkdir`, `rmdir`, `unlink` and `rename`. A method the mount lacks
-  fails that write with `EROFS`.
+  fails that write with `EROFS`. An exclusive `writeFile` at a path
+  that is a stored link fails with `EEXIST`, as in the store, even
+  when the link leads into the mount to nothing.
 - **What doesn't.** Under a read-write root, links (`symlink`, `link`),
   writes at an offset or in pieces (`writeRangeSync`, `truncateSync`,
   append, opening a file for writing) and every synchronous write fail

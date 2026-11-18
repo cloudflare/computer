@@ -1130,6 +1130,19 @@ export function writeTarget(
   return undefined;
 }
 
+// An exclusive write fails with EEXIST when the path itself names
+// something, a link to a path in a mount that doesn't exist yet
+// included, as an exclusive write in the store does.
+export function existingLinkAt(db: Database, path: string): boolean {
+  try {
+    return resolveInode(db, path, { followSymlinks: false })?.type === "symlink";
+  } catch {
+    // In a mount, by name or through a link: the mount's writeFile
+    // decides whether the path exists.
+    return false;
+  }
+}
+
 // A write the target's mount can't take: EROFS for a read-only mount,
 // ENOTSUP for a read-write one (a link, or a write at an offset).
 export function unsupportedWrite(target: PassthroughTarget): WorkspaceFsError {

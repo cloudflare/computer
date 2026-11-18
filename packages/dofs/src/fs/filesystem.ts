@@ -17,6 +17,7 @@
 // function. Writes need no routing: the mount guard the free
 // functions run rejects them under a passthrough root.
 
+import { createWorkspaceError } from "../errors";
 import type { Database } from "../storage";
 
 import { chmod } from "./chmod";
@@ -25,6 +26,7 @@ import type { GrepOptions, WorkspaceGrepMatch } from "./grep";
 import { type MkdirOptions, mkdir } from "./mkdir";
 import {
   chmodInMount,
+  existingLinkAt,
   findWithPassthrough,
   grepWithPassthrough,
   lsWithPassthrough,
@@ -141,6 +143,9 @@ export class WorkspaceFilesystem {
   ): Promise<void> {
     const target = writeTarget(this.db, path, true);
     if (target !== undefined) {
+      if (options.exclusive && existingLinkAt(this.db, path)) {
+        throw createWorkspaceError("EEXIST", `path exists: ${path}`, path);
+      }
       await writeFileToMount(this.db, target, content, options);
       return;
     }

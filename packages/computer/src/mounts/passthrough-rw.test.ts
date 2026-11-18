@@ -1074,4 +1074,23 @@ describe("read-write passthrough mounts against concurrent writes", () => {
       again.db.all<{ path: string }>("SELECT path FROM _vfs_mount_applied").map((row) => row.path),
     ).toEqual([`${root}/a.txt`]);
   });
+
+  it("fails an exclusive write at an existing link with EEXIST, into the mount or not", async () => {
+    const mount = writableMount();
+    const ws = open({ [ROOT]: mount });
+    await ws.fs.symlink(`${ROOT}/new.txt`, "/shortcut");
+    await expect(ws.fs.writeFile("/shortcut", "x", { exclusive: true })).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(mount.files.has("new.txt")).toBe(false);
+    expect(mount.calls).toEqual([]);
+    // As the store does for a link to a missing stored file.
+    await ws.fs.symlink("/missing.txt", "/stored-shortcut");
+    await expect(
+      ws.fs.writeFile("/stored-shortcut", "x", { exclusive: true }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    // Without exclusive, the write follows the link into the mount.
+    await ws.fs.writeFile("/shortcut", "x");
+    expect(text(mount, "new.txt")).toBe("x");
+  });
 });
