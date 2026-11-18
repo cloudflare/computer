@@ -163,7 +163,8 @@ mount, eager or passthrough.
 - **Read-only.** `writeFile`, `mkdir`, `rm`, `rename` from or to the
   root, `chmod`, `symlink`, the provider's writes, and changes pulled
   from a container or written by git under the root fail with `EROFS`
-  without calling the mount, by name or through a symbolic link. `rm`
+  without calling the mount, by name or through a symbolic link, with
+  or without rows in the store there. `rm`
   and `rename` of a directory above the root, and `mkdir` of one, fail
   as they do above a read-only eager mount.
 - **Errors.** A `WorkspaceFsError` a mount throws keeps its code, with
@@ -182,7 +183,11 @@ mount, eager or passthrough.
 - **Symbolic links.** A link that resolves into a root, at any point of
   a path, reads the mount: `/link/a.md` with `/link -> /skills/team`
   reads the mount's `a.md`, and results are named under `/link`. `ls`
-  follows no links, here as anywhere in the store.
+  follows no links, here as anywhere in the store. A root whose parent
+  path goes through a link is registered where the link leads:
+  `/alias/mount` with `/alias -> /real` is the mount at `/real/mount`,
+  listed, found and read under both names, and its errors name
+  `/real/mount`. Two roots that land on one directory are rejected.
 - **Rows already there.** Rows under a root from before it was
   registered, such as an earlier eager mount's, are hidden while it is:
   no read, walk or link reaches them. They are not deleted: a push to

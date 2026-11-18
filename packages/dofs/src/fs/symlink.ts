@@ -4,6 +4,7 @@ import { incrementRev } from "../rev";
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
 import { assertNotReadOnly } from "./mount-guard";
+import { assertParentNotInPassthrough } from "./passthrough-writes";
 import { invalidateResolveSubtree } from "./resolveCache";
 
 // Create a symlink node. The target is stored as-is — it can be a
@@ -15,6 +16,7 @@ export function symlink(db: Database, target: string, path: string, now: () => n
     throw createWorkspaceError("EEXIST", "cannot symlink onto root", canonical);
   }
   assertNotReadOnly(db, canonical);
+  assertParentNotInPassthrough(db, canonicalizePath(path).parentPath ?? "/");
 
   db.transactionSync(() => {
     // Walk to the parent dirent. Intermediate segments must be real

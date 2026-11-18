@@ -642,8 +642,8 @@ describe("passthrough mounts in walks, links and syncs", () => {
     for (const [name, attempt] of writes) {
       await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
     }
-    // The store doesn't create a link through a link at all.
-    await expect(ws.fs.symlink("/x", "/dirlink/l")).rejects.toMatchObject({ code: "ENOTDIR" });
+    // A link created through a link into a root is a write into it.
+    await expect(ws.fs.symlink("/x", "/dirlink/l")).rejects.toMatchObject({ code: "EROFS" });
     // The links themselves are ordinary files of the store.
     await ws.fs.rm("/filelink");
   });
@@ -964,5 +964,139 @@ describe("passthrough mounts in walks, links and syncs", () => {
     expect(error).toMatchObject({ code: "EACCES", path: `${ROOT}/secret.md` });
     expect((error as Error).message.length).toBeLessThan(1_200);
     expect((error as Error).message).toMatch(/^denied x+…/);
+  });
+});
+
+describe("passthrough mounts and the store's symbolic links", () => {
+  it("registers a root under a linked parent where the link leads", async () => {
+    const storage = new SQLiteTestStorage();
+    const before = open(undefined, storage);
+    await before.fs.mkdir("/real");
+    await before.fs.symlink("/real", "/alias");
+
+    const ws = new Workspace({
+      storage,
+      mounts: { "/alias/mount": fakePassthrough({ x: "x!\n" }) },
+    });
+    expect(await ws.fs.readFile("/alias/mount/x", "utf8")).toBe("x!\n");
+    expect(await ws.fs.readFile("/real/mount/x", "utf8")).toBe("x!\n");
+    for (const parent of ["/alias", "/real"]) {
+      expect((await ws.fs.readdir(parent)).map((entry) => [entry.name, entry.isDirectory])).toEqual(
+        [["mount", true]],
+      );
+      expect(await ws.fs.find(parent)).toEqual([
+        { path: `${parent}/mount`, type: "dir" },
+        { path: `${parent}/mount/x`, type: "file" },
+      ]);
+      expect((await ws.fs.grep("x!", parent)).map((match) => match.path)).toEqual([
+        `${parent}/mount/x`,
+      ]);
+      expect(() => ws.provider().readdirSync(parent)).toThrow(
+        expect.objectContaining({ code: "ENOTSUP" }),
+      );
+      expect(await ws.provider().readdir(parent)).toEqual(["mount"]);
+      await expect(ws.fs.writeFile(`${parent}/mount/y`, "y")).rejects.toMatchObject({
+        code: "EROFS",
+      });
+    }
+    expect(await ws.fs.ls("/real")).toEqual(["/real/mount/x"]);
+    // ls follows no links, here as anywhere in the store.
+    expect(await ws.fs.ls("/alias")).toEqual([]);
+    await expect(ws.fs.rm("/real", { recursive: true, force: true })).rejects.toMatchObject({
+      code: "EROFS",
+    });
+    const names = ws.db.all<{ name: string }>("SELECT name FROM vfs_dirents").map((r) => r.name);
+    expect(names).not.toContain("mount");
+    expect(names).not.toContain("x");
+
+    // Two names for one directory are one root.
+    expect(
+      () =>
+        new Workspace({
+          storage,
+          mounts: { "/alias/m": fakePassthrough(FILES), "/real/m": fakePassthrough(FILES) },
+        }),
+    ).toThrow(/must not nest/);
+  });
+
+  it("fails every write through a link into a root with EROFS, rows or none", async () => {
+    const mount = fakePassthrough(FILES);
+    const ws = open(mount);
+    await ws.fs.symlink(ROOT, "/link");
+    await ws.fs.symlink("/skills", "/up");
+    await ws.fs.writeFile("/x", "x");
+    const provider = ws.provider();
+
+    const writes: Array<[string, () => Promise<unknown>]> = [
+      ["mkdir", () => ws.fs.mkdir("/link/d")],
+      ["mkdir -p", () => ws.fs.mkdir("/link/a/b", { recursive: true })],
+      ["mkdir above", () => ws.fs.mkdir("/up/team/d")],
+      ["mkdir -p above", () => ws.fs.mkdir("/up/team/a/b", { recursive: true })],
+      ["writeFile", () => ws.fs.writeFile("/link/new.md", "x")],
+      ["writeFile above", () => ws.fs.writeFile("/up/team/new.md", "x")],
+      ["symlink", () => ws.fs.symlink("/t", "/link/l")],
+      ["symlink above", () => ws.fs.symlink("/t", "/up/team/l")],
+      ["rename", () => ws.fs.rename("/x", "/link/x")],
+      ["provider mkdirSync", async () => provider.mkdirSync("/link/p")],
+      ["provider mkdirSync -p", async () => provider.mkdirSync("/link/p/q", { recursive: true })],
+      ["provider symlinkSync", async () => provider.symlinkSync("/t", "/link/l2")],
+      ["provider linkSync", async () => provider.linkSync("/x", "/link/h")],
+      ["provider linkSync above", async () => provider.linkSync("/x", "/up/team/h")],
+      ["provider writeFileSync", async () => provider.writeFileSync("/up/team/w", "w")],
+    ];
+    for (const [name, attempt] of writes) {
+      await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
+    }
+    expect(mount.calls).toEqual([]);
+    const names = ws.db.all<{ name: string }>("SELECT name FROM vfs_dirents").map((r) => r.name);
+    expect(names).toEqual(expect.arrayContaining(["skills", "link", "up", "x"]));
+    for (const name of ["team", "d", "a", "new.md", "l", "p", "l2", "h", "w"]) {
+      expect(names, name).not.toContain(name);
+    }
+    // Beside the root, through the same link, writes still land.
+    await ws.fs.mkdir("/up/other");
+    await ws.fs.writeFile("/up/beside.md", "beside");
+    // A link is still only created in a stored directory, as anywhere.
+    await expect(ws.fs.symlink("/t", "/up/other-link")).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+  });
+
+  it("lists, finds and greps inside a mount in the store's order", async () => {
+    const tree = { "a/x": "hit 1\n", "a.txt": "hit 2\n", "b-": "hit 3\n", "b/c": "hit 4\n" };
+    const ws = open(fakePassthrough(tree));
+    for (const [path, text] of Object.entries(tree)) {
+      await ws.fs.mkdir(`/copy/${path}`.slice(0, `/copy/${path}`.lastIndexOf("/")), {
+        recursive: true,
+      });
+      await ws.fs.writeFile(`/copy/${path}`, text);
+    }
+    const relative = (base: string, paths: string[]) => paths.map((p) => p.slice(base.length));
+
+    const lsMount = relative(ROOT, await ws.fs.ls(ROOT));
+    expect(lsMount).toEqual(["/a.txt", "/a/x", "/b-", "/b/c"]);
+    expect(lsMount).toEqual(relative("/copy", await ws.fs.ls("/copy")));
+    expect(relative("/skills/team", await ws.fs.ls("/skills").then((all) => all))).toEqual(lsMount);
+
+    const findMount = relative(
+      ROOT,
+      (await ws.fs.find(ROOT)).map((entry) => entry.path),
+    );
+    expect(findMount).toEqual(
+      relative(
+        "/copy",
+        (await ws.fs.find("/copy")).map((entry) => entry.path),
+      ),
+    );
+    const grepMount = relative(
+      ROOT,
+      (await ws.fs.grep("hit", ROOT)).map((match) => match.path),
+    );
+    expect(grepMount).toEqual(
+      relative(
+        "/copy",
+        (await ws.fs.grep("hit", "/copy")).map((match) => match.path),
+      ),
+    );
   });
 });

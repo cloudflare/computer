@@ -16,7 +16,11 @@
 
 import { createWorkspaceError } from "../errors";
 import type { Database } from "../storage";
-import { passthroughRoots } from "./passthrough-registry";
+import {
+  hasPassthroughMounts,
+  passthroughRoots,
+  passthroughTargetOf,
+} from "./passthrough-registry";
 
 // undefined sentinel = "not loaded yet"; an empty array means
 // "loaded, no read-only mounts registered". The two are not the
@@ -102,4 +106,20 @@ export function readOnlyRootFor(db: Database, path: string): string | undefined 
     if (overlapsRoot(path, root)) return root;
   }
   return undefined;
+}
+
+// For a write's own walk of a path, which follows links itself: reject
+// stepping into a passthrough root, at `realParts` after the links it
+// followed, with EROFS. The guards above compare the path as written,
+// which a link can carry into a root unseen.
+export function assertNotEnteringPassthrough(
+  db: Database,
+  realParts: string[],
+  path: string,
+): void {
+  if (!hasPassthroughMounts(db)) return;
+  const entered = passthroughTargetOf(db, `/${realParts.join("/")}`);
+  if (entered !== undefined) {
+    throw createWorkspaceError("EROFS", `read-only mount at ${entered.root}: cannot modify`, path);
+  }
 }

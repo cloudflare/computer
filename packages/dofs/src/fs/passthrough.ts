@@ -95,6 +95,12 @@ type WalkPlan =
 // "/", none inside another; the caller checks them against its other
 // mounts. Each root's parent directory is created when missing, so the
 // root has somewhere to be listed; the root itself never gets a row.
+//
+// A root is registered where it really is: when its parent is reached
+// through a symbolic link, the root sits in the directory the link
+// leads to, and a path through the link reaches it as any path through
+// a link does. One name per root keeps every check that compares paths
+// with roots exact.
 export function registerPassthroughMounts(
   db: Database,
   mounts: ReadonlyMap<string, PassthroughSource>,
@@ -118,22 +124,41 @@ export function registerPassthroughMounts(
   }
   setPassthroughSources(db, new Map());
   invalidateReadOnlyMountCache(db);
-  for (const root of roots) {
-    const parent = canonicalizePath(root).parentPath ?? "/";
-    if (parent === "/") continue;
-    const node = resolveInode(db, parent);
-    if (node === null) {
-      mkdirForSyncParents(db, parent, { recursive: true }, now);
-    } else if (node.type !== "dir") {
-      throw createWorkspaceError(
-        "ENOTDIR",
-        `passthrough mount at ${root}: parent is not a directory`,
-        parent,
-      );
+  const registered = new Map<string, PassthroughSource>();
+  for (const [root, source] of mounts) {
+    const real = realRootOf(db, root, now);
+    const same = [...registered.keys()].find(
+      (other) => other === real || other.startsWith(`${real}/`) || real.startsWith(`${other}/`),
+    );
+    if (same !== undefined) {
+      throw new Error(`mount roots must not nest: ${root} is at ${real}, which meets ${same}`);
     }
+    registered.set(real, source);
   }
-  setPassthroughSources(db, mounts);
+  setPassthroughSources(db, registered);
   invalidateReadOnlyMountCache(db);
+}
+
+// Where a root really is: its name in the directory its parent path
+// resolves to, which is created when missing.
+function realRootOf(db: Database, root: string, now: () => number): string {
+  const { parentPath, name } = canonicalizePath(root);
+  const parent = parentPath ?? "/";
+  if (parent === "/") return root;
+  let node = resolveInode(db, parent);
+  if (node === null) {
+    mkdirForSyncParents(db, parent, { recursive: true }, now);
+    node = resolveInode(db, parent);
+  }
+  if (node?.type !== "dir") {
+    throw createWorkspaceError(
+      "ENOTDIR",
+      `passthrough mount at ${root}: parent is not a directory`,
+      parent,
+    );
+  }
+  const realParent = pathOf(db, node.inode) ?? parent;
+  return realParent === "/" ? `/${name}` : `${realParent}/${name}`;
 }
 
 // The passthrough mount serving `path` by name, if any. Throws EINVAL
@@ -674,7 +699,11 @@ async function mountFiles(target: PassthroughTarget, signal: AbortSignal): Promi
     if ((error as { code?: unknown }).code !== "ENOTDIR") throw error;
     return (await statMount(target, signal)).isFile ? [target.path] : [];
   }
-  return (walk ?? []).filter((entry) => entry.type === "file").map((entry) => entry.path);
+  // ls lists by full path, as the store does, not in a walk's order.
+  return (walk ?? [])
+    .filter((entry) => entry.type === "file")
+    .map((entry) => entry.path)
+    .sort(compareBytes);
 }
 
 interface OpenedFile {

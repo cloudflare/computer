@@ -9,7 +9,11 @@ import { buildManifest } from "../sync/manifests";
 import { pathOf } from "../sync/paths";
 import { getBlobBytes, hashKey } from "./blobCache";
 import { CHUNK_SIZE } from "./chunk";
-import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
+import {
+  assertNotEnteringPassthrough,
+  assertNotInReadOnlyMount,
+  assertNotReadOnly,
+} from "./mount-guard";
 import { findPendingWriteBuffer } from "./pendingWriteBuffer";
 import { pinHashes } from "./pins";
 import { dropChunks, linkChunk, replaceChunk, setNodeManifest } from "./refs";
@@ -79,6 +83,9 @@ function resolveParent(
       continue;
     }
 
+    // A link that leads into a passthrough root leads into a read-only
+    // mount, whether or not the store has rows there.
+    assertNotEnteringPassthrough(db, [...realParts, name], canonical);
     const parentInode = inodeStack[inodeStack.length - 1];
     const child = db.one<{ child_inode: number }>(
       "SELECT child_inode FROM vfs_dirents WHERE parent_inode = ? AND name = ?",
