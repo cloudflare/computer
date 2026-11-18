@@ -272,12 +272,15 @@ interface PassthroughMount {
     newer file written to the mount is kept. The mount may report
     permission bits of its own, so the fingerprint is tried with the
     mount's mode and the usual ones (0644, 0755, 0600, 0700, 0664,
-    0775, 0444, 0555); matching none counts as a change. A directory's
-    fingerprint is only its mode, so it isn't compared: a directory is
-    removed once it is empty. One with contents is decided again at the
-    end of the pull, after the deletes of what it held, and one still
-    holding something then is kept and reported in `skipped` with
-    `reason: "kept"`.
+    0775, 0444, 0555); matching none counts as a change. So a delete
+    whose `prior` was taken with another mode, such as 0640, on a mount
+    that reports a different one leaves the file in place, even when the
+    bytes match.
+  - **A directory delete ignores `prior`**, a directory's fingerprint
+    being only its mode: an empty directory is removed. One with
+    contents is decided again at the end of the pull, after the deletes
+    of what it held, and one still holding something then is kept and
+    reported in `skipped` with `reason: "kept"`.
 
   A new delete without `prior`, from an older peer or for the source
   of a rename, is applied.
@@ -287,7 +290,10 @@ interface PassthroughMount {
   its rev, every row of a backend goes when its fetch cursor moves back
   (the backend's log started over, and its revs with it), and opening a
   workspace drops the rows under paths that no registered read-write
-  root covers. Every rev a mount write mints during a pull counts as
+  root covers. Opening one without a read-write mount registered so
+  clears that mount's rows: until it is registered again and pulls
+  refill them, a replay into it is caught only by the content checks
+  above. Every rev a mount write mints during a pull counts as
   the pull's own, and only those: a host write while a mount call is in
   flight is still the host's, to be pushed.
 - **Git** reads and writes a worktree under the root through the
