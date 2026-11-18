@@ -3,12 +3,15 @@ import {
   applyChangesSync,
   type ChangeEntry,
   createWorkspaceError,
+  currentRev,
+  materialiseChange,
 } from "@cloudflare/dofs";
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it } from "vitest";
 
 import { WorkspaceFsAdapter } from "../backends/worker-shell/adapter";
 import { createGitClient } from "../git/index";
+import { WorkspaceRuntimeCapability } from "../runtime/capability";
 import { Workspace } from "../workspace";
 import type { PassthroughDirent, PassthroughMount, PassthroughStat } from "./types";
 
@@ -507,6 +510,285 @@ describe("read-write passthrough mounts", () => {
       ["chmod", () => ws.fs.chmod("/ro/r.md", 0o600)],
       ["provider writeFile", () => ws.provider().writeFile("/ro/x.md", "x")],
       ["provider writeFileSync", async () => ws.provider().writeFileSync("/ro/x.md", "x")],
+    ] as const) {
+      await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
+    }
+    expect(readOnly.calls).toEqual([]);
+  });
+});
+
+async function fileEntry(path: string, content: string, rev: number) {
+  const bytes = encoder.encode(content);
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const hex = [...hash].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const entry: ChangeEntry = {
+    kind: "file",
+    rev,
+    path,
+    mode: 0o644,
+    mtime: 1,
+    size: bytes.byteLength,
+    chunks: bytes.byteLength === 0 ? [] : [{ hash, size: bytes.byteLength }],
+  };
+  return { entry, objects: new Map([[hex, bytes]]) };
+}
+
+// The delete a container sends after removing `content`: its prior is
+// the fingerprint of that version.
+async function deleteEntry(path: string, content: string, rev: number): Promise<ChangeEntry> {
+  const scratch = new Workspace({ storage: new SQLiteTestStorage() });
+  await scratch.fs.writeFile("/f", content);
+  await scratch.fs.rm("/f");
+  const tombstone = materialiseChange(scratch.db, "/f");
+  if (tombstone?.kind !== "delete" || tombstone.prior === undefined) {
+    throw new Error("expected a fingerprinted tombstone");
+  }
+  return { kind: "delete", rev, path, prior: tombstone.prior };
+}
+
+const pull = { source: "upstream" as const };
+
+describe("read-write passthrough mounts under container pulls", () => {
+  it("absorbs a replayed file entry after the agent wrote", async () => {
+    const mount = writableMount();
+    const ws = open({ [ROOT]: mount });
+    const { entry, objects } = await fileEntry(`${ROOT}/a.md`, "container\n", 11);
+
+    expect((await applyChanges(ws.db, [entry], objects, pull)).applied).toBe(1);
+    await ws.fs.writeFile(`${ROOT}/a.md`, "agent\n");
+    mount.calls.length = 0;
+    const replay = await applyChanges(ws.db, [entry], objects, pull);
+    expect(replay).toMatchObject({ applied: 0, skipped: [] });
+    expect(text(mount, "a.md")).toBe("agent\n");
+    expect(mount.calls.filter((call) => call.method === "writeFile")).toEqual([]);
+
+    // A new change to the same path, with a later sender rev, still lands.
+    const next = await fileEntry(`${ROOT}/a.md`, "container, again\n", 12);
+    expect((await applyChanges(ws.db, [next.entry], next.objects, pull)).applied).toBe(1);
+    expect(text(mount, "a.md")).toBe("container, again\n");
+  });
+
+  it("leaves a file the mount already holds byte for byte alone", async () => {
+    const mount = writableMount({ "same.md": "same\n" });
+    const ws = open({ [ROOT]: mount });
+    const { entry, objects } = await fileEntry(`${ROOT}/same.md`, "same\n", 5);
+    expect(await applyChanges(ws.db, [entry], objects, pull)).toMatchObject({ skipped: [] });
+    expect(mount.calls).toEqual([]);
+  });
+
+  it("absorbs a replayed delete after the agent wrote the path again", async () => {
+    const mount = writableMount({ "a.md": "v1\n" });
+    const ws = open({ [ROOT]: mount });
+    const remove = await deleteEntry(`${ROOT}/a.md`, "v1\n", 20);
+
+    expect((await applyChanges(ws.db, [remove], new Map(), pull)).applied).toBe(1);
+    expect(mount.files.has("a.md")).toBe(false);
+    await ws.fs.writeFile(`${ROOT}/a.md`, "agent\n");
+    await applyChanges(ws.db, [remove], new Map(), pull);
+    expect(text(mount, "a.md")).toBe("agent\n");
+
+    // Without bookkeeping to go on, prior alone keeps a newer file.
+    const fresh = writableMount({ "b.md": "agent's\n" });
+    const other = open({ [ROOT]: fresh });
+    await applyChanges(other.db, [await deleteEntry(`${ROOT}/b.md`, "v1\n", 21)], new Map(), pull);
+    expect(text(fresh, "b.md")).toBe("agent's\n");
+    // Whatever mode the mount reports, matching bytes are removed.
+    fresh.files.set("c.md", { bytes: encoder.encode("v1\n"), mode: 0o600 });
+    await applyChanges(other.db, [await deleteEntry(`${ROOT}/c.md`, "v1\n", 22)], new Map(), pull);
+    expect(fresh.files.has("c.md")).toBe(false);
+  });
+
+  it("removes a pulled directory once the deletes of its contents have run", async () => {
+    const mount = writableMount({ "d/x.md": "x\n" });
+    const ws = open({ [ROOT]: mount });
+    const scratch = new Workspace({ storage: new SQLiteTestStorage() });
+    await scratch.fs.mkdir("/d");
+    await scratch.fs.rm("/d");
+    const dirTombstone = materialiseChange(scratch.db, "/d") as ChangeEntry & { kind: "delete" };
+    const result = await applyChanges(
+      ws.db,
+      [
+        { kind: "delete", rev: 30, path: `${ROOT}/d`, prior: dirTombstone.prior },
+        await deleteEntry(`${ROOT}/d/x.md`, "x\n", 30),
+      ],
+      new Map(),
+      pull,
+    );
+    expect(result.skipped).toEqual([]);
+    expect(mount.dirs.has("d")).toBe(false);
+  });
+
+  it("fails the pull when a file's chunks are missing, without calling the mount", async () => {
+    const mount = writableMount();
+    const ws = open({ [ROOT]: mount });
+    const { entry } = await fileEntry(`${ROOT}/a.md`, "lost\n", 40);
+    await expect(applyChanges(ws.db, [entry], new Map(), pull)).rejects.toThrow(/missing object/);
+    const wrong = await fileEntry(`${ROOT}/a.md`, "lost\n", 41);
+    const [key] = [...wrong.objects.keys()];
+    await expect(
+      applyChanges(
+        ws.db,
+        [wrong.entry],
+        new Map([[key, encoder.encode("not the size it says")]]),
+        pull,
+      ),
+    ).rejects.toThrow(/declares \d+ bytes but holds/);
+    expect(mount.calls).toEqual([]);
+  });
+});
+
+describe("read-write passthrough mounts and their writers", () => {
+  it("moves the store's revision on every write the mount takes", async () => {
+    const mount = writableMount({ "a.md": "a" });
+    const ws = open({ [ROOT]: mount });
+    const revs = [currentRev(ws.db)];
+    await ws.fs.writeFile(`${ROOT}/b.md`, "b");
+    revs.push(currentRev(ws.db));
+    await ws.fs.mkdir(`${ROOT}/d`);
+    revs.push(currentRev(ws.db));
+    await ws.fs.rename(`${ROOT}/b.md`, `${ROOT}/d/b.md`);
+    revs.push(currentRev(ws.db));
+    await ws.fs.chmod(`${ROOT}/a.md`, 0o600);
+    revs.push(currentRev(ws.db));
+    await ws.fs.rm(`${ROOT}/d`, { recursive: true });
+    revs.push(currentRev(ws.db));
+    expect(new Set(revs).size).toBe(revs.length);
+    expect(revs).toEqual([...revs].sort((a, b) => a - b));
+    const before = currentRev(ws.db);
+    await expect(ws.fs.rm(`${ROOT}/missing`)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(currentRev(ws.db)).toBe(before);
+    const stored = ws.db.one<{ v: number }>("SELECT v FROM vfs_meta WHERE k = 'rev'");
+    expect(stored?.v).toBe(before);
+  });
+
+  it("aborts the write's signal when the caller's body fails, and cancels one never read", async () => {
+    let signal: AbortSignal | undefined;
+    const mount = writableMount();
+    const reading = mount.writeFile?.bind(mount);
+    mount.writeFile = async (path, body, options) => {
+      signal = options.signal;
+      if (path === "refused.md") throw fail("EACCES", path);
+      return reading?.(path, body, options);
+    };
+    const ws = open({ [ROOT]: mount });
+
+    const broken = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.error(new Error("caller's stream broke"));
+      },
+    });
+    await expect(ws.fs.writeFile(`${ROOT}/a.md`, broken)).rejects.toBeDefined();
+    expect(signal?.aborted).toBe(true);
+
+    let cancelled = false;
+    const unread = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(ws.fs.writeFile(`${ROOT}/refused.md`, unread)).rejects.toMatchObject({
+      code: "EACCES",
+    });
+    expect(cancelled).toBe(true);
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("treats a missing parent as gone for rm -f, as the store does", async () => {
+    const mount = writableMount({ "file.md": "f" });
+    mount.rm = async (path) => {
+      throw fail("ENOTDIR", path);
+    };
+    const ws = open({ [ROOT]: mount });
+    await ws.fs.rm(`${ROOT}/file.md/below`, { force: true });
+    await expect(ws.fs.rm(`${ROOT}/file.md/below`)).rejects.toMatchObject({ code: "ENOTDIR" });
+  });
+
+  it("moves files into and out of the mount from the worker shell", async () => {
+    const mount = writableMount({ "out.md": "out\n", "outdir/x.md": "x\n" });
+    const ws = open({ [ROOT]: mount });
+    const shell = new WorkspaceFsAdapter(ws.stub().fs);
+    await ws.fs.writeFile("/in.md", "in\n");
+    await ws.fs.mkdir("/indir/sub", { recursive: true });
+    await ws.fs.writeFile("/indir/sub/y.md", "y\n");
+
+    await shell.mv("/in.md", `${ROOT}/in.md`);
+    await shell.mv("/indir", `${ROOT}/indir`);
+    await shell.mv(`${ROOT}/out.md`, "/out.md");
+    await shell.mv(`${ROOT}/outdir`, "/outdir");
+
+    expect(text(mount, "in.md")).toBe("in\n");
+    expect(text(mount, "indir/sub/y.md")).toBe("y\n");
+    expect(mount.files.has("out.md")).toBe(false);
+    expect(mount.dirs.has("outdir")).toBe(false);
+    expect(await ws.fs.readFile("/out.md", "utf8")).toBe("out\n");
+    expect(await ws.fs.readFile("/outdir/x.md", "utf8")).toBe("x\n");
+    await expect(ws.fs.stat("/in.md")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(ws.fs.stat("/indir")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("takes codemode's file writes", async () => {
+    const mount = writableMount();
+    const ws = open({ [ROOT]: mount });
+    const code = new WorkspaceRuntimeCapability(ws.fs, "/", "read-write");
+    await code.writeFile(`${ROOT}/notes/a.md`, "from code\n");
+    await code.writeFileNode(`${ROOT}/b.md`, "node:fs\n", { flag: "wx" });
+    await expect(code.writeFileNode(`${ROOT}/b.md`, "again", { flag: "wx" })).rejects.toMatchObject(
+      { code: "EEXIST" },
+    );
+    await code.mkdir(`${ROOT}/made`);
+    await code.rm(`${ROOT}/notes`, { recursive: true });
+    expect(text(mount, "b.md")).toBe("node:fs\n");
+    expect(mount.dirs.has("made")).toBe(true);
+    expect(mount.dirs.has("notes")).toBe(false);
+    expect(storedNames(ws)).not.toContain("b.md");
+  });
+
+  it("lets git track a mount inside a stored worktree", async () => {
+    const mount = writableMount();
+    const ws = new Workspace({
+      storage: new SQLiteTestStorage(),
+      mounts: { "/proj/kb": mount },
+      git: createGitClient(),
+      defaultGitIdentity: { name: "Test", email: "test@example.com" },
+    });
+    await ws.git.init({ dir: "/proj" });
+    await ws.fs.writeFile("/proj/a.md", "stored\n");
+    await ws.fs.writeFile("/proj/kb/k.md", "mounted\n");
+    await ws.git.add({ dir: "/proj", paths: ["a.md", "kb/k.md"] });
+    await ws.git.commit({ dir: "/proj", message: "one" });
+    await ws.git.branch({ dir: "/proj", name: "two", checkout: true });
+    await ws.fs.writeFile("/proj/kb/k.md", "mounted, changed\n");
+    await ws.git.add({ dir: "/proj", paths: ["kb/k.md"] });
+    await ws.git.commit({ dir: "/proj", message: "two" });
+
+    await ws.git.checkout({ dir: "/proj", ref: "main" });
+    expect(text(mount, "k.md")).toBe("mounted\n");
+    await ws.git.checkout({ dir: "/proj", ref: "two" });
+    expect(text(mount, "k.md")).toBe("mounted, changed\n");
+    // The repository is the store's; only the worktree files under the
+    // root are the mount's.
+    expect([...mount.files.keys()]).toEqual(["k.md"]);
+    expect(storedNames(ws)).toContain(".git");
+  });
+
+  it("keeps read-only mounts read-only through links", async () => {
+    const readOnly = { ...writableMount({ "r.md": "r" }), mode: "read-only" as const };
+    const ws = open({ "/ro": readOnly });
+    await ws.fs.symlink("/ro", "/rolink");
+    await ws.fs.symlink("/ro/r.md", "/rofile");
+    const provider = ws.provider();
+    for (const [name, attempt] of [
+      ["writeFile", () => ws.fs.writeFile("/rolink/x.md", "x")],
+      ["writeFile over", () => ws.fs.writeFile("/rofile", "x")],
+      ["mkdir", () => ws.fs.mkdir("/rolink/d")],
+      ["rm", () => ws.fs.rm("/rolink/r.md")],
+      ["rename", () => ws.fs.rename("/rolink/r.md", "/rolink/s.md")],
+      ["chmod", () => ws.fs.chmod("/rofile", 0o600)],
+      ["symlink", () => ws.fs.symlink("/x", "/rolink/l")],
+      ["provider writeFile", () => provider.writeFile("/rolink/x.md", "x")],
+      ["provider mkdir", () => provider.mkdir("/rolink/d")],
+      ["provider unlink", () => provider.unlink("/rolink/r.md")],
+      ["provider rename", () => provider.rename("/rolink/r.md", "/x.md")],
     ] as const) {
       await expect(attempt(), name).rejects.toMatchObject({ code: "EROFS" });
     }

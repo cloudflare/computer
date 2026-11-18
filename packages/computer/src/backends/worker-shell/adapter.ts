@@ -229,13 +229,17 @@ export class WorkspaceFsAdapter {
     // copied. A destination that rename refuses to replace — a
     // non-empty directory, or a directory and a non-directory in
     // either order — still falls back to copy-then-delete, which is
-    // what the shell's own `mv` expects when it merges a tree.
+    // what the shell's own `mv` expects when it merges a tree. So does a
+    // move across filesystems (EXDEV), into or out of a passthrough
+    // mount, as `mv` does between devices.
     try {
       await this.#fs.rename(src, dest);
       return;
     } catch (err) {
       const code = (err as { code?: string }).code;
-      if (code !== "ENOTEMPTY" && code !== "EISDIR" && code !== "ENOTDIR") throw err;
+      if (code !== "ENOTEMPTY" && code !== "EISDIR" && code !== "ENOTDIR" && code !== "EXDEV") {
+        throw err;
+      }
     }
     await this.cp(src, dest, { recursive: true });
     await this.#fs.rm(src, { recursive: true });

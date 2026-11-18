@@ -140,7 +140,7 @@ export class WorkspaceFilesystem {
     options: WriteFileOptions = {},
   ): Promise<void> {
     const target = writeTarget(this.db, path, true);
-    if (target !== undefined) return writeFileToMount(target, content, options);
+    if (target !== undefined) return writeFileToMount(this.db, target, content, options);
     try {
       await writeFile(this.db, path, content, options, this.now);
     } catch (error) {
@@ -150,7 +150,7 @@ export class WorkspaceFilesystem {
 
   async mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
     const target = writeTarget(this.db, path, false);
-    if (target !== undefined) return mkdirInMount(target, options);
+    if (target !== undefined) return mkdirInMount(this.db, target, options);
     try {
       mkdir(this.db, path, options, this.now);
     } catch (error) {
@@ -160,7 +160,7 @@ export class WorkspaceFilesystem {
 
   async rm(path: string, options: RmOptions = {}): Promise<void> {
     const target = writeTarget(this.db, path, false);
-    if (target !== undefined) return rmInMount(target, options);
+    if (target !== undefined) return rmInMount(this.db, target, options);
     try {
       rm(this.db, path, options);
     } catch (error) {
@@ -184,7 +184,7 @@ export class WorkspaceFilesystem {
     const from = writeTarget(this.db, oldPath, false);
     const to = writeTarget(this.db, newPath, false);
     if (from !== undefined || to !== undefined) {
-      return renameWithMount(from, to, oldPath, newPath);
+      return renameWithMount(this.db, from, to, oldPath, newPath);
     }
     try {
       rename(this.db, oldPath, newPath);
@@ -198,7 +198,7 @@ export class WorkspaceFilesystem {
   // The supplied mode is masked to twelve bits.
   async chmod(path: string, mode: number): Promise<void> {
     const target = writeTarget(this.db, path, true);
-    if (target !== undefined) return chmodInMount(target, mode);
+    if (target !== undefined) return chmodInMount(this.db, target, mode);
     try {
       chmod(this.db, path, mode, this.now);
     } catch (error) {

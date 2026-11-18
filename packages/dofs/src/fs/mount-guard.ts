@@ -122,6 +122,11 @@ export function assertNotInReadOnlyMount(db: Database, path: string): void {
 // and want to reject a single descendant during a recursive walk
 // (rm's walkPostOrder). Returns the matching root or undefined; the
 // caller decides whether to throw, log, or skip.
+//
+// Despite the name, the root it returns may be a read-write
+// passthrough root: one below `path` blocks a store write at `path`
+// as a read-only root does. A path at or below a read-write root gets
+// undefined, since its writes belong to the mount, not the store.
 export function readOnlyRootFor(db: Database, path: string): string | undefined {
   const roots = getReadOnlyMountRoots(db);
   for (const root of roots) {

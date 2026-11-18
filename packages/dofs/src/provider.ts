@@ -311,7 +311,7 @@ export class SQLiteWorkspaceProvider {
   // there.
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {
     const target = writeTarget(this.db, path, false);
-    if (target !== undefined) return mkdirInMount(target, options).then(() => undefined);
+    if (target !== undefined) return mkdirInMount(this.db, target, options).then(() => undefined);
     return Promise.resolve(this.mkdirSync(path, options));
   }
 
@@ -404,7 +404,7 @@ export class SQLiteWorkspaceProvider {
     const from = writeTarget(this.db, oldPath, false);
     const to = writeTarget(this.db, newPath, false);
     if (from !== undefined || to !== undefined) {
-      return renameWithMount(from, to, oldPath, newPath);
+      return renameWithMount(this.db, from, to, oldPath, newPath);
     }
     this.renameSync(oldPath, newPath);
     return Promise.resolve();
@@ -515,7 +515,7 @@ export class SQLiteWorkspaceProvider {
         typeof data === "string"
           ? data
           : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-      return writeFileToMount(target, bytes, mode === undefined ? {} : { mode });
+      return writeFileToMount(this.db, target, bytes, mode === undefined ? {} : { mode });
     }
     this.writeFileSync(path, data, options);
     return Promise.resolve();
@@ -848,7 +848,7 @@ export class SQLiteWorkspaceProvider {
         throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
       }
     }
-    await rmInMount(target, {});
+    await rmInMount(this.db, target, {});
   }
 
   #fdOrThrow(fd: number): FdState {

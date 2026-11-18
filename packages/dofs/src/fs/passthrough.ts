@@ -35,6 +35,7 @@
 
 import { createWorkspaceError, isWorkspaceError, type WorkspaceFsError } from "../errors";
 import { canonicalizePath } from "../path";
+import { incrementRev } from "../rev";
 import type { Database } from "../storage";
 import { pathOf } from "../sync/paths";
 import {
@@ -103,8 +104,9 @@ type WalkPlan =
 // registered before. Roots must be canonical absolute paths other than
 // "/", none inside another or inside or around one of `otherRoots`,
 // the roots of the caller's other mounts, compared where each really
-// is after the links on its parent path. Each root's parent directory is created when missing, so the
-// root has somewhere to be listed; the root itself never gets a row.
+// is after the links on its parent path. Each root's parent directory
+// is created when missing, so the root has somewhere to be listed; the
+// root itself never gets a row.
 //
 // A root is registered where it really is: when its parent is reached
 // through a symbolic link, the root sits in the directory the link
@@ -292,6 +294,11 @@ export async function readFileWithPassthrough(
       return new TextDecoder().decode(await collectBytes(opened, target.path));
     },
   );
+}
+
+// What a passthrough mount reports for its target.
+export function statPassthroughTarget(target: PassthroughTarget): Promise<WorkspaceStatResult> {
+  return statMount(target, idleSignal());
 }
 
 // The bytes of a file served by a passthrough mount.
@@ -1091,37 +1098,64 @@ export function unsupportedWrite(target: PassthroughTarget): WorkspaceFsError {
   return passthroughWriteUnsupported(target.path, target.root, target);
 }
 
+// A successful write to a mount moves the store's revision, the
+// `vfs_meta` rev that currentRev reads, so whatever waits on that
+// counter sees it. The store keeps no record of the write itself: the
+// rev is all there is, and watch() reports no path for it.
+function noteMountWrite(db: Database): void {
+  db.transactionSync(() => incrementRev(db));
+}
+
 export async function writeFileToMount(
+  db: Database,
   target: PassthroughTarget,
   content: WriteFileContent,
   options: WriteFileOptions = {},
   knownSize?: number,
 ): Promise<void> {
-  const write = writeMethod(target, "writeFile");
-  if (target.rel === "") {
-    throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
+  const source = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  const caller = source instanceof Uint8Array ? undefined : source;
+  let write: NonNullable<PassthroughSource["writeFile"]>;
+  try {
+    write = writeMethod(target, "writeFile");
+    if (target.rel === "") {
+      throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
+    }
+  } catch (error) {
+    discardBody(caller, error);
+    throw error;
   }
-  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
-  const body = bytes instanceof Uint8Array ? bytesStream(bytes) : bytes;
-  const size = bytes instanceof Uint8Array ? bytes.byteLength : knownSize;
-  const signal = idleSignal();
-  await ask(target, "writeFile", () =>
-    write.call(target.source, target.rel, body, {
-      ...(size === undefined ? {} : { size }),
-      ...(options.mode === undefined ? {} : { mode: options.mode & 0o7777 }),
-      ...(options.exclusive ? { exclusive: true } : {}),
-      signal,
-    }),
-  );
+  const controller = new AbortController();
+  const size = source instanceof Uint8Array ? source.byteLength : knownSize;
+  const body = source instanceof Uint8Array ? bytesStream(source) : watchedBody(source, controller);
+  try {
+    await ask(target, "writeFile", () =>
+      write.call(target.source, target.rel, body, {
+        ...(size === undefined ? {} : { size }),
+        ...(options.mode === undefined ? {} : { mode: options.mode & 0o7777 }),
+        ...(options.exclusive ? { exclusive: true } : {}),
+        signal: controller.signal,
+      }),
+    );
+  } catch (error) {
+    // Whatever the mount left unread of the caller's stream is
+    // abandoned with the write.
+    controller.abort(error);
+    if (caller !== undefined) discardBody(body, error);
+    throw error;
+  }
+  noteMountWrite(db);
 }
 
 export async function mkdirInMount(
+  db: Database,
   target: PassthroughTarget,
   options: { recursive?: boolean; mode?: number } = {},
 ): Promise<void> {
   if (!isWritableSource(target.source)) throw readOnly(target);
   if (target.rel === "") {
-    // The root is there, as a directory, whatever methods the mount has.
+    // The root is there, as a directory, whatever methods the mount
+    // has.
     if (options.recursive) return;
     throw createWorkspaceError("EEXIST", `path exists: ${target.path}`, target.path);
   }
@@ -1134,9 +1168,11 @@ export async function mkdirInMount(
       signal,
     }),
   );
+  noteMountWrite(db);
 }
 
 export async function rmInMount(
+  db: Database,
   target: PassthroughTarget,
   options: { recursive?: boolean; force?: boolean } = {},
 ): Promise<void> {
@@ -1151,18 +1187,25 @@ export async function rmInMount(
       }),
     );
   } catch (error) {
-    // -f: what isn't there is already removed.
-    if (options.force && (error as { code?: unknown }).code === "ENOENT") return;
+    // -f: what isn't there is already removed, as for the store.
+    const code = (error as { code?: unknown }).code;
+    if (options.force && (code === "ENOENT" || code === "ENOTDIR")) return;
     throw error;
   }
+  noteMountWrite(db);
 }
 
-export async function chmodInMount(target: PassthroughTarget, mode: number): Promise<void> {
+export async function chmodInMount(
+  db: Database,
+  target: PassthroughTarget,
+  mode: number,
+): Promise<void> {
   const chmod = writeMethod(target, "chmod");
   const signal = idleSignal();
   await ask(target, "chmod", () =>
     chmod.call(target.source, target.rel, mode & 0o7777, { signal }),
   );
+  noteMountWrite(db);
 }
 
 // A rename with a passthrough mount at either end. Within one
@@ -1170,6 +1213,7 @@ export async function chmodInMount(target: PassthroughTarget, mode: number): Pro
 // or two mounts, it crosses filesystems and fails with EXDEV, and the
 // caller copies and removes. A read-only mount at either end is EROFS.
 export async function renameWithMount(
+  db: Database,
   from: PassthroughTarget | undefined,
   to: PassthroughTarget | undefined,
   fromPath: string,
@@ -1191,6 +1235,44 @@ export async function renameWithMount(
   const rename = writeMethod(from, "rename");
   const signal = idleSignal();
   await ask(from, "rename", () => rename.call(from.source, from.rel, to.rel, { signal }));
+  noteMountWrite(db);
+}
+
+// The caller's body as the mount reads it. The write's signal is
+// aborted when the caller's stream fails, or the mount cancels the
+// read, so a mount waiting on either can stop.
+function watchedBody(
+  source: ReadableStream<Uint8Array>,
+  controller: AbortController,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(stream) {
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (failure) {
+        controller.abort(failure);
+        throw failure;
+      }
+      if (chunk.done) stream.close();
+      else stream.enqueue(chunk.value);
+    },
+    cancel(reason) {
+      controller.abort(reason);
+      return reader.cancel(reason);
+    },
+  });
+}
+
+// Cancel a caller's stream the write never got to read.
+function discardBody(body: ReadableStream<Uint8Array> | undefined, reason: unknown): void {
+  if (body === undefined) return;
+  try {
+    body.cancel(reason).catch(() => {});
+  } catch {
+    // Locked by the mount's own reader: the mount releases it.
+  }
 }
 
 type WriteMethod = "writeFile" | "mkdir" | "rm" | "rename" | "chmod";

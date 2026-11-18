@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
+
 import { getBlobBytes } from "../fs/blobCache";
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
 import {
   mkdirInMount,
+  readdirWithPassthrough,
+  readPassthroughFile,
   rmInMount,
+  statPassthroughTarget,
   unsupportedWrite,
   writeFileToMount,
   writeTarget,
@@ -21,13 +26,13 @@ import { invalidateResolveSubtree } from "../fs/resolveCache";
 import { rm } from "../fs/rm";
 import { symlink } from "../fs/symlink";
 import { unlinkDirent } from "../fs/unlink";
-import { assertChunkWindows, linkStagedChunksSync } from "../fs/writeFile";
+import { assertChunkWindows, CHUNK_SIZE, linkStagedChunksSync } from "../fs/writeFile";
 import { canonicalizePath } from "../path";
 import { incrementRev } from "../rev";
 import type { Database } from "../storage";
 import { stageBlob } from "./blobs";
 import type { ChangeEntry } from "./changes";
-import { versionFingerprint } from "./fingerprint";
+import { fingerprintVersion, versionFingerprint } from "./fingerprint";
 import { computeManifestHash } from "./manifests";
 import { pathOf } from "./paths";
 import {
@@ -311,6 +316,9 @@ interface ApplyRun {
   readonly options: ApplyOptions;
   readonly pulled: PullContext | undefined;
   readonly deferredDirs: DeleteEntry[];
+  // Pulled deletes of mount directories that still held something,
+  // decided again once the rest of the call has run.
+  readonly deferredMountDirs: Array<{ entry: DeleteEntry; target: PassthroughTarget }>;
   readonly skipped: SkippedEntry[];
 }
 
@@ -425,11 +433,23 @@ export async function applyChanges(
     const counts = { applied: 0, minted: 0 };
     for await (const entry of entries) {
       // Under a read-write passthrough root the entry is the mount's to
-      // apply, one call at a time; nothing of it reaches the store.
+      // apply, one call at a time; nothing of it reaches the store but
+      // the revision each mount write moves.
       const target = writableTargetOf(db, entry.path);
-      if (target !== undefined) await writeThrough(db, entry, target, run, counts);
-      else step(db, entry, run, deferral, counts);
+      if (target === undefined) {
+        step(db, entry, run, deferral, counts);
+        continue;
+      }
+      const revBefore = currentRev(db);
+      try {
+        await writeThrough(db, entry, target, run, counts);
+      } finally {
+        counts.minted += notePulledRevs(db, run.pulled, revBefore);
+      }
     }
+    const revBefore = currentRev(db);
+    await settleMountDirectories(db, run, counts);
+    counts.minted += notePulledRevs(db, run.pulled, revBefore);
     return finishRun(db, run, counts);
   } finally {
     deferral.close();
@@ -467,6 +487,7 @@ function openRun(db: Database, objects: Map<string, Uint8Array>, options: ApplyO
     options,
     pulled: openPullContext(db, options),
     deferredDirs: [],
+    deferredMountDirs: [],
     skipped: [],
   };
 }
@@ -521,7 +542,15 @@ function writableTargetOf(db: Database, path: string): PassthroughTarget | undef
 // Apply one entry to the read-write mount it lands in: a file with the
 // mount's writeFile, a directory with mkdir, a delete with rm. A link
 // can't be. An entry the mount refuses or fails is reported, and the
-// rest of the call goes on.
+// rest of the call goes on; an entry that is wrong in itself, such as
+// a file whose chunks didn't arrive, fails the call as in the store,
+// so the pull retries it.
+//
+// A pull replays a batch whose acknowledgment was lost, so an entry
+// may arrive again after the mount moved on. As in the store, a file
+// the mount already holds byte for byte is left alone, and a delete
+// that carries the fingerprint of what it removed only removes what
+// still matches it: see mountAbsorbs.
 async function writeThrough(
   db: Database,
   entry: ChangeEntry,
@@ -529,27 +558,201 @@ async function writeThrough(
   run: ApplyRun,
   counts: { applied: number; minted: number },
 ): Promise<void> {
+  const body = entry.kind === "file" ? chunkBody(db, entry, run.objects) : undefined;
+  const pulled = run.options.source === "upstream";
   try {
+    if (pulled && (await mountAbsorbs(db, entry, target, run))) {
+      await body?.cancel();
+      noteMountApplied(db, run, entry);
+      return;
+    }
     if (entry.kind === "file") {
-      const body = chunkBody(db, entry, run.objects);
-      await writeFileToMount(target, body, { mode: entry.mode }, entry.size);
+      await writeFileToMount(
+        db,
+        target,
+        body as ReadableStream<Uint8Array>,
+        { mode: entry.mode },
+        entry.size,
+      );
     } else if (entry.kind === "dir") {
-      await mkdirInMount(target, { recursive: true, mode: entry.mode });
+      await mkdirInMount(db, target, { recursive: true, mode: entry.mode });
     } else if (entry.kind === "symlink") {
       throw unsupportedWrite(target);
     } else {
-      await rmInMount(target, { recursive: true, force: true });
+      await rmInMount(db, target, { recursive: true, force: true });
     }
+    if (pulled) noteMountApplied(db, run, entry);
     counts.applied++;
   } catch (error) {
-    run.skipped.push({
-      path: entry.path,
-      mountRoot: target.root,
-      op: entry.kind === "delete" ? "delete" : "write",
-      reason: "mount-error",
-      error: describeError(error),
+    reportMountError(run, entry, target, error);
+  }
+}
+
+// What an entry did, for _vfs_mount_applied.
+function entryDigest(entry: ChangeEntry): string {
+  if (entry.kind === "file") return `file:${hex(computeManifestHash(entry.chunks))}`;
+  if (entry.kind === "dir") return `dir:${entry.mode & 0o7777}`;
+  if (entry.kind === "symlink") return `symlink:${entry.target}`;
+  return `delete:${entry.prior ?? ""}`;
+}
+
+function mountBackend(run: ApplyRun): string {
+  return run.pulled?.backend ?? run.options.backend ?? DEFAULT_BACKEND_ID;
+}
+
+// The same entry, sender rev and all, was applied to the mount before:
+// this one is a replay.
+function mountAppliedBefore(db: Database, run: ApplyRun, entry: ChangeEntry): boolean {
+  const row = db.one<{ rev: number; digest: string }>(
+    "SELECT rev, digest FROM _vfs_mount_applied WHERE backend = ? AND path = ?",
+    mountBackend(run),
+    entry.path,
+  );
+  return row !== undefined && row.rev === entry.rev && row.digest === entryDigest(entry);
+}
+
+function noteMountApplied(db: Database, run: ApplyRun, entry: ChangeEntry): void {
+  db.run(
+    `INSERT INTO _vfs_mount_applied (backend, path, rev, digest) VALUES (?, ?, ?, ?)
+       ON CONFLICT (backend, path) DO UPDATE SET rev = excluded.rev, digest = excluded.digest`,
+    mountBackend(run),
+    entry.path,
+    entry.rev,
+    entryDigest(entry),
+  );
+}
+
+function reportMountError(
+  run: ApplyRun,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  error: unknown,
+): void {
+  run.skipped.push({
+    path: entry.path,
+    mountRoot: target.root,
+    op: entry.kind === "delete" ? "delete" : "write",
+    reason: "mount-error",
+    error: describeError(error),
+  });
+}
+
+// Whether the mount already reflects a pulled entry, so applying it
+// again would undo what happened since:
+//
+//   - the very entry, by path, sender rev and what it did, was applied
+//     before (_vfs_mount_applied): a replay, whatever the mount holds
+//     now, so a write to the mount since the first apply stands;
+//   - a file entry whose content, by size and then by the manifest hash
+//     of the mount's bytes, is what the mount holds;
+//   - a delete of something the mount no longer has;
+//   - a delete with a `prior` fingerprint whose file doesn't match it
+//     any more, by content: the mount reports permission bits of its
+//     own, so any mode is accepted. A directory matches once it is
+//     empty; until then the delete waits for the end of the call, when
+//     the deletes of its contents have run.
+//
+// A delete without `prior` (from an older peer, or a rename) can't be
+// told from a replay and is applied, as the store applies one that no
+// local write since the last push stands in the way of.
+async function mountAbsorbs(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+): Promise<boolean> {
+  if (mountAppliedBefore(db, run, entry)) return true;
+  if (entry.kind === "dir" || entry.kind === "symlink") return false;
+  const held = await mountVersion(target);
+  if (entry.kind === "file") {
+    if (held?.type !== "file" || held.size !== entry.size) return false;
+    return uint8Equal(await mountManifest(target), computeManifestHash(entry.chunks));
+  }
+  if (held === undefined) return true;
+  if (entry.prior === undefined) return false;
+  if (held.type === "dir") {
+    if (!matchesAnyMode(entry.prior, { type: "dir" }, held.mode)) return true;
+    if (!(await mountDirectoryEmpty(db, entry.path))) {
+      run.deferredMountDirs.push({ entry, target });
+      return true;
+    }
+    return false;
+  }
+  const manifest = await mountManifest(target);
+  return !matchesAnyMode(entry.prior, { type: "file", manifest }, held.mode);
+}
+
+// Decide the mount directory deletes held back for their contents,
+// deepest first: one that is empty now, and still the directory the
+// delete names, is removed.
+async function settleMountDirectories(
+  db: Database,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
+  const ordered = [...run.deferredMountDirs].sort(
+    (a, b) => b.entry.path.length - a.entry.path.length,
+  );
+  for (const { entry, target } of ordered) {
+    try {
+      const held = await mountVersion(target);
+      if (held?.type !== "dir" || entry.prior === undefined) continue;
+      if (!matchesAnyMode(entry.prior, { type: "dir" }, held.mode)) continue;
+      if (!(await mountDirectoryEmpty(db, entry.path))) continue;
+      await rmInMount(db, target, { force: true });
+      noteMountApplied(db, run, entry);
+      counts.applied++;
+    } catch (error) {
+      reportMountError(run, entry, target, error);
+    }
+  }
+}
+
+async function mountVersion(
+  target: PassthroughTarget,
+): Promise<{ type: "file" | "dir"; size: number; mode: number } | undefined> {
+  if (target.rel === "") return { type: "dir", size: 0, mode: 0o755 };
+  try {
+    const found = await statPassthroughTarget(target);
+    return { type: found.isDirectory ? "dir" : "file", size: found.size, mode: found.mode };
+  } catch (error) {
+    if (isMissingPath(error)) return undefined;
+    throw error;
+  }
+}
+
+async function mountDirectoryEmpty(db: Database, path: string): Promise<boolean> {
+  return (await readdirWithPassthrough(db, path, { limit: 1 })).length === 0;
+}
+
+// The manifest hash of the mount's bytes, chunked as the store chunks.
+async function mountManifest(target: PassthroughTarget): Promise<Uint8Array> {
+  const bytes = await readPassthroughFile(target);
+  const chunks: Array<{ hash: Uint8Array; size: number }> = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += CHUNK_SIZE) {
+    const slice = bytes.subarray(offset, Math.min(offset + CHUNK_SIZE, bytes.byteLength));
+    chunks.push({
+      hash: new Uint8Array(createHash("sha256").update(slice).digest()),
+      size: slice.byteLength,
     });
   }
+  return computeManifestHash(chunks);
+}
+
+// Whether `prior` fingerprints this content with some permission bits:
+// the mount's own first, then every other mode.
+function matchesAnyMode(
+  prior: string,
+  shape: { type: "dir" } | { type: "file"; manifest: Uint8Array },
+  mode: number,
+): boolean {
+  const matches = (candidate: number) =>
+    fingerprintVersion({ ...shape, mode: candidate }) === prior;
+  if (matches(mode & 0o7777)) return true;
+  for (let candidate = 0; candidate <= 0o7777; candidate += 1) {
+    if (matches(candidate)) return true;
+  }
+  return false;
 }
 
 // A file entry's bytes, chunk by chunk, from the call's objects or the
