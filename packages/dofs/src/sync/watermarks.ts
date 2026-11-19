@@ -137,9 +137,33 @@ export function writeFetchCursor(
   backend: string = DEFAULT_BACKEND_ID,
 ): void {
   db.transactionSync(() => {
+    const previous = readFetchCursor(db, backend);
     writeWatermarkValue(db, "fetchRev", cursor.rev, backend);
     writeFetchCursorPath(db, cursor.path, backend);
+    pruneMountApplied(db, backend, previous, cursor);
   });
+}
+
+// _vfs_mount_applied remembers pulled entries applied to read-write
+// passthrough mounts so a replay of them is told apart. Once the fetch
+// cursor is past an entry, the backend never sends it again, so its row
+// goes. A cursor that moves back means the backend's log started over,
+// its revs with it: every row for it goes, or a new entry reusing an
+// old rev would pass for a replay.
+function pruneMountApplied(
+  db: Database,
+  backend: string,
+  previous: ChangeCursor,
+  cursor: ChangeCursor,
+): void {
+  if (compareChangeCursors(cursor, previous) < 0) {
+    db.run("DELETE FROM _vfs_mount_applied WHERE backend = ?", backend);
+    return;
+  }
+  // A cursor with a path is part way through its rev; that rev's rows
+  // stay until it is done.
+  const done = cursor.path === null ? cursor.rev : cursor.rev - 1;
+  db.run("DELETE FROM _vfs_mount_applied WHERE backend = ? AND rev <= ?", backend, done);
 }
 
 export function compareChangeCursors(a: ChangeCursor, b: ChangeCursor): number {

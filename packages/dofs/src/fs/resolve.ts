@@ -2,6 +2,11 @@ import { createWorkspaceError } from "../errors";
 import { canonicalizePath } from "../path";
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
+import {
+  hasPassthroughMounts,
+  passthroughTargetOf,
+  passthroughUnsupported,
+} from "./passthrough-registry";
 import { lookupResolveCache, storeResolveCache } from "./resolveCache";
 
 export interface ResolvedInode {
@@ -60,6 +65,13 @@ export function resolveInode(
 ): ResolvedInode | null {
   const followFinal = options.followSymlinks !== false;
   const { parts, path: canonical } = canonicalizePath(path);
+  // Paths under a passthrough mount have no rows; their mount answers
+  // them, asynchronously. The async entry points catch this error and
+  // ask the mount, so whatever fails with it is a synchronous read.
+  const passthrough = passthroughTargetOf(db, canonical);
+  if (passthrough !== undefined) {
+    throw passthroughUnsupported(canonical, passthrough.root, passthrough);
+  }
 
   // Cache + single-statement CTE serve only cache-eligible reads:
   // follow-symlinks resolutions outside a transaction. Everything else
@@ -74,7 +86,7 @@ export function resolveInode(
   //     mid-transaction anyway (rollback safety).
   // Mutations still invalidate the cache; that is independent of this.
   if (!followFinal || db.inTransaction) {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0, canonical);
   }
 
   // Repeat reads of the same path are served from the per-Database
@@ -100,7 +112,7 @@ export function resolveInode(
   // reasoned about structurally).
   const cte = resolveViaCte(db, parts);
   if (cte.kind === "symlink") {
-    return resolveParts(db, parts, followFinal, 0);
+    return resolveParts(db, parts, followFinal, 0, canonical);
   }
   storeResolveCache(db, canonical, cte.node === null ? null : cte.node.inode);
   return cte.node;
@@ -203,6 +215,7 @@ function resolveParts(
   parts: string[],
   followFinal: boolean,
   follows: number,
+  canonical: string,
 ): ResolvedInode | null {
   const root = readNode(db, ROOT_INODE);
   if (root === null) {
@@ -211,6 +224,10 @@ function resolveParts(
 
   const pendingParts = [...parts];
   const nodeStack: NodeRow[] = [root];
+  // The names of nodeStack below the root: where the walk really is,
+  // after the links it followed.
+  const realParts: string[] = [];
+  const routed = hasPassthroughMounts(db);
   while (pendingParts.length > 0) {
     const name = pendingParts.shift();
     if (name === undefined) continue;
@@ -218,8 +235,29 @@ function resolveParts(
     if (current.type !== "dir") return null;
     if (name === "" || name === ".") continue;
     if (name === "..") {
-      if (nodeStack.length > 1) nodeStack.pop();
+      if (nodeStack.length > 1) {
+        nodeStack.pop();
+        realParts.pop();
+      }
       continue;
+    }
+    // A link that leads into a passthrough root leads to its mount.
+    if (routed) {
+      const entered = passthroughTargetOf(db, `/${[...realParts, name].join("/")}`);
+      if (entered !== undefined) {
+        const inside = mountParts(pendingParts);
+        if (inside !== undefined) {
+          throw passthroughUnsupported(canonical, entered.root, {
+            ...entered,
+            path: canonical,
+            rel: inside.join("/"),
+          });
+        }
+        // The rest climbs back out of the root with "..": carry on from
+        // its parent, where the walk is now.
+        pendingParts.splice(0, leaveIndex(pendingParts) + 1);
+        continue;
+      }
     }
 
     const child = db.one<ChildRow>(
@@ -240,14 +278,51 @@ function resolveParts(
         throw createWorkspaceError("ELOOP", "too many symlinks resolving path");
       }
       const target = next.link_target ?? "";
-      if (target.startsWith("/")) nodeStack.splice(1);
+      if (target.startsWith("/")) {
+        nodeStack.splice(1);
+        realParts.length = 0;
+      }
       pendingParts.unshift(...target.split("/"));
       continue;
     }
     nodeStack.push(next);
+    realParts.push(name);
   }
 
   return toResolved(nodeStack[nodeStack.length - 1]);
+}
+
+// The segments below a passthrough root that `rest` names, or
+// undefined when a ".." in it climbs back out of the root. A mount has
+// no symbolic links, so the rest is resolved by name alone.
+function mountParts(rest: string[]): string[] | undefined {
+  const inside: string[] = [];
+  for (const part of rest) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (inside.length === 0) return undefined;
+      inside.pop();
+      continue;
+    }
+    inside.push(part);
+  }
+  return inside;
+}
+
+// Index of the ".." in `rest` that climbs out of the root mountParts
+// left.
+function leaveIndex(rest: string[]): number {
+  let depth = 0;
+  for (const [index, part] of rest.entries()) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (depth === 0) return index;
+      depth -= 1;
+    } else {
+      depth += 1;
+    }
+  }
+  return rest.length;
 }
 
 function readNode(db: Database, inode: number): NodeRow | null {

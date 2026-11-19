@@ -277,6 +277,12 @@ mounts: { "/workspace/.agents/skills": WorkerBundle("skills") }
 See [Mount Interface](../../docs/06_mount_interface.md#workerbundlesource-options)
 for the options, types, and how refresh works.
 
+A passthrough mount stores nothing: every read under its root is
+answered live by an object you pass with `strategy: "passthrough"`,
+which implements `stat`, `readdir` and `readFile`. Pass it each time you
+construct the `Workspace`. See
+[Passthrough](../../docs/06_mount_interface.md#passthrough).
+
 ## Running commands and code
 
 `workspace.runtime.exec(source, options)` is the single execution entry

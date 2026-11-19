@@ -67,6 +67,24 @@ export async function grep(
     throw createWorkspaceError("ENOENT", `no such path: ${canonical}`, canonical);
   }
 
+  // Grepping a single file has no traversal to prune, so `exclude` does not
+  // apply to it: the caller named the file explicitly.
+  const filePaths =
+    node.type === "file"
+      ? [canonical]
+      : filesUnder(db, canonical, options.include, options.exclude);
+  return grepFiles(pattern, filePaths, options, (filePath) => readFile(db, filePath));
+}
+
+// Search the files named, in order, opening each with `open`. The
+// file list is consumed lazily, so a limit reached early leaves the
+// rest of a walk unread.
+export async function grepFiles(
+  pattern: string,
+  filePaths: Iterable<string> | AsyncIterable<string>,
+  options: GrepOptions,
+  open: (path: string) => Promise<ReadableStream<Uint8Array>>,
+): Promise<WorkspaceGrepMatch[]> {
   const settings = normalizeOptions(options);
   if (settings.limit === 0) return [];
   const matcher = compileMatcher(pattern, {
@@ -75,15 +93,9 @@ export async function grep(
   });
   const matches: WorkspaceGrepMatch[] = [];
   const state: ScanState = { seen: 0, accepted: 0 };
-  // Grepping a single file has no traversal to prune, so `exclude` does not
-  // apply to it: the caller named the file explicitly.
-  const filePaths =
-    node.type === "file"
-      ? [canonical]
-      : filesUnder(db, canonical, options.include, options.exclude);
-  for (const filePath of filePaths) {
+  for await (const filePath of filePaths) {
     const complete = await scanFile(
-      db,
+      open,
       filePath,
       matcher,
       settings.context,
@@ -151,7 +163,7 @@ function compileMatcher(pattern: string, options: { regex: boolean; ignoreCase: 
 }
 
 async function scanFile(
-  db: Database,
+  open: (path: string) => Promise<ReadableStream<Uint8Array>>,
   path: string,
   matcher: RegExp,
   context: number,
@@ -163,7 +175,7 @@ async function scanFile(
   const before: WorkspaceGrepContextLine[] = [];
   const pending: PendingMatch[] = [];
 
-  for await (const current of readLines(db, path)) {
+  for await (const current of readLines(open, path)) {
     const isMatch = matcher.test(current.text);
     const contextLine = { ...current, isMatch };
     for (const item of pending) {
@@ -204,8 +216,11 @@ function flushReady(pending: PendingMatch[], out: WorkspaceGrepMatch[]): void {
   }
 }
 
-async function* readLines(db: Database, path: string): AsyncIterable<NumberedLine> {
-  const stream = await readFile(db, path);
+async function* readLines(
+  open: (path: string) => Promise<ReadableStream<Uint8Array>>,
+  path: string,
+): AsyncIterable<NumberedLine> {
+  const stream = await open(path);
   const reader = stream.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let tail = "";

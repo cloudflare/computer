@@ -141,7 +141,7 @@ export async function readFile(
   });
 }
 
-function validateReadWindow(
+export function validateReadWindow(
   path: string,
   byteOffset: number,
   byteLength: number | undefined,
@@ -154,7 +154,7 @@ function validateReadWindow(
   }
 }
 
-function readWindow(
+export function readWindow(
   size: number,
   byteOffset: number,
   byteLength: number | undefined,

@@ -130,6 +130,20 @@ export const SYNC_STATEMENTS = [
   // `schema/migrations.ts` owns the ALTERs for existing databases. Keep the CHECK
   // constraint here aligned with the migration's CHECK so fresh
   // installs and upgrades enforce the same allowed set.
+  // The last pulled entry applied to a read-write passthrough mount,
+  // per backend and path: its sender rev and a digest of what it did
+  // (a file's manifest hash, a delete's prior fingerprint, a
+  // directory's mode). Sync metadata only, never file content. A pull
+  // that replays a batch sends the same entries again; this is how the
+  // apply tells one from a new change after the mount moved on, which
+  // the mount alone can't show. See sync/apply.ts, mountAbsorbs.
+  `CREATE TABLE IF NOT EXISTS _vfs_mount_applied (
+     backend TEXT NOT NULL,
+     path TEXT NOT NULL,
+     rev INTEGER NOT NULL,
+     digest TEXT NOT NULL,
+     PRIMARY KEY (backend, path)
+   )`,
   `CREATE TABLE IF NOT EXISTS _vfs_mounts (
     root    TEXT PRIMARY KEY,
     kind    TEXT NOT NULL,

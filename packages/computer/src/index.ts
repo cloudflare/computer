@@ -27,6 +27,10 @@ export type {
   SQLiteWorkspaceProviderOptions,
 } from "@cloudflare/dofs";
 export { SQLiteWorkspaceProvider } from "@cloudflare/dofs";
+// For mounts that report errors the filesystem passes through, such as
+// ENOTDIR from a passthrough mount's readdir of a file.
+export type { WorkspaceErrorCode, WorkspaceFsError } from "@cloudflare/dofs";
+export { createWorkspaceError, isWorkspaceError, PASSTHROUGH_WALK_LIMIT } from "@cloudflare/dofs";
 export type { BackendHandle, WorkspaceBackend } from "./backend";
 export { TestBackend, type TestBackendOptions } from "./backends/test";
 export {
@@ -57,6 +61,10 @@ export type {
   MountContext,
   MountFactory,
   MountWriteAPI,
+  PassthroughDirent,
+  PassthroughMount,
+  PassthroughStat,
+  PassthroughWriteOptions,
 } from "./mounts/types";
 export {
   createSyncLogger,

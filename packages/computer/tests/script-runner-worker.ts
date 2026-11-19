@@ -311,13 +311,21 @@ const NETWORK_BACKEND = "codemode-network";
 // A backend whose runs replay by default, as the exec tool's runs need
 // to wait for an answer: the tool doesn't choose a run's policy.
 const REPLAY_BACKEND = "codemode-replay";
+// A backend whose runs may stream only 8 KiB.
+const SMALL_STREAMS_BACKEND = "codemode-small-streams";
 
 function codemodeBackend(
   env: Env,
   overrides: Partial<
     Pick<
       CodemodeBackendOptions,
-      "id" | "compatibilityFlags" | "loader" | "egress" | "maxStdioBytes" | "onInterrupt"
+      | "id"
+      | "compatibilityFlags"
+      | "loader"
+      | "egress"
+      | "maxStdioBytes"
+      | "onInterrupt"
+      | "maxStreamBytes"
     >
   > = {},
 ) {
@@ -470,6 +478,7 @@ export class HostDO extends DurableObject<Env> {
           egress: { mode: "http-gateway", gateway: ctx.exports.TestGateway },
           maxStdioBytes: 4096,
         }),
+        codemodeBackend(env, { id: SMALL_STREAMS_BACKEND, maxStreamBytes: 8192 }),
         fakeContainerBackend(),
       ],
     });

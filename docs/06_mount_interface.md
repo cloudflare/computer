@@ -32,7 +32,7 @@ construction.
 
 ## Strategies
 
-A mount is either **lazy** or **eager**.
+A mount is **lazy**, **eager** or **passthrough**.
 
 ### Lazy
 
@@ -79,6 +79,241 @@ interface MountWriteApi {
 
 Best when the backing store only produces content as a single transaction
 (a git clone yields the whole working tree at once).
+
+### Passthrough
+
+A passthrough mount stores nothing. Every read at or below its root is
+answered live by the mount, on every call, before any SQL runs:
+`stat`, `lstat`, `readdir`, `readFile` (with `byteOffset`,
+`byteLength` and `"utf8"`), `readlink`, `exists`, `find`, `ls` and
+`grep` on `Workspace.fs` and the stub, the codemode module graph that
+imports workspace `.js` files, and the provider's async methods.
+
+```ts
+import type { PassthroughMount } from "@cloudflare/computer";
+
+interface PassthroughMount extends MountBase {
+  readonly strategy: "passthrough";
+  readonly mode: "read-only" | "read-write"; // see Passthrough: read-write
+  // Paths are relative to the mount root: "" is the root, "a/b.md" a
+  // file below it. null means ENOENT.
+  stat(path: string, options?: { signal?: AbortSignal }): Promise<PassthroughStat | null>;
+  readdir(
+    path: string,
+    options?: { recursive?: boolean; limit?: number; signal?: AbortSignal },
+  ): Promise<PassthroughDirent[] | null>;
+  readFile(
+    path: string,
+    options?: { range?: { offset: number; length?: number }; signal?: AbortSignal },
+  ): Promise<{ stat: PassthroughStat; body: ReadableStream<Uint8Array>; offset: number } | null>;
+}
+
+interface PassthroughStat {
+  type: "file" | "dir";
+  size: number;  // bytes, 0 for directories
+  mtime: number; // ms since the epoch, 0 if unknown
+  mode: number;  // permission bits, such as 0o644
+}
+
+interface PassthroughDirent extends PassthroughStat {
+  name: string;  // relative to the directory read
+}
+```
+
+Passthrough mounts are registered in memory each time a `Workspace` is
+constructed: no `_vfs_mounts` row, no rows for anything under the root,
+no cache. Pass them every time the workspace is opened; a `Workspace`
+opened without one has nothing at its root (`ENOENT`), and one opened
+with it again serves it again. Construction creates the root's missing
+parent directories, such as `/skills` for `/skills/team`, as ordinary
+directories; the root itself is listed as a directory of its parent and
+stats as what the mount's `stat("")` returns, which must be a
+directory. A root at `/` is rejected, and roots nest with no other
+mount, eager or passthrough.
+
+- **Directories.** `readdir` of a file throws `ENOTDIR`, as a
+  `WorkspaceFsError` (`createWorkspaceError` is exported for it).
+  `find`, `ls` and `grep` walk each mount root they reach with one
+  `readdir(path, { recursive: true, limit })`, whose names may contain
+  `/`, parents listed before their children. The reply must hold at
+  most `limit` entries, `PASSTHROUGH_WALK_LIMIT` (100,000): a longer
+  one fails the operation with `EIO`, and a mount whose tree is bigger
+  than it will list throws, which fails the operation too. Nothing is
+  truncated silently.
+- **Walks stop early.** `find` and `grep` over a directory above a root
+  merge the mount's walk into the store's where the root falls, and
+  stop at their `limit`: a mount the walk doesn't reach, or whose root
+  the glob can't match, is never called, and `grep` reads no file past
+  its last match. A mount below the directory asked for whose walk
+  fails is left out, with a `console.warn`, so the rest still answers,
+  as `readdir` of its parent still lists it; a `find`, `ls` or `grep`
+  at or under its root fails with `EIO`.
+- **Ranges.** `readFile`'s `byteOffset` and `byteLength` become
+  `range`. The returned `offset` is the byte where `body` starts: a
+  mount that can't seek returns 0 and the whole file, and the
+  filesystem skips to the offset and cuts at the length. A window at or
+  past the end, by the stat, cancels the body unread. A read holds
+  only the bytes the mount sends, never memory for the size it states,
+  and fails with `EIO` past the window.
+- **Signals.** Every mount call gets an `AbortSignal`, aborted when the
+  operation no longer needs the call: a `find` or `grep` that reached
+  its limit, a file stream its reader cancelled, a body read past the
+  window asked for. The filesystem sets no timeouts; a mount that wants
+  one adds its own.
+- **Read-only.** Under a `"read-only"` mount, `writeFile`, `mkdir`,
+  `rm`, `rename` from or to the root, `chmod`, `symlink`, the
+  provider's writes, and changes pulled from a container or written by
+  git under the root fail with `EROFS` without calling the mount, by
+  name or through a symbolic link, with or without rows in the store
+  there. `rm` and `rename` of a directory above the root, and `mkdir`
+  of one, fail as they do above a read-only eager mount.
+- **Errors.** A `WorkspaceFsError` a mount throws keeps its code, with
+  its message cut to 1 KiB and its path replaced by the one asked for.
+  Any other error fails that one operation with `EIO`, carrying its
+  message cut the same way. So does a malformed reply: an entry name
+  that is empty, `.` or `..` in any segment, absolute, or contains a
+  backslash or NUL; a stat with a bad type, size, mtime or mode; an
+  entry below a file or without its parent; a walk longer than its
+  limit; a root that isn't a directory; and a body that delivers more
+  or fewer bytes than its stat's size.
+- **Synchronous reads.** They can't wait for a mount: the provider's
+  `*Sync` methods, a synchronous listing of a root's parent included,
+  and anything else that resolves a path under a root synchronously
+  fail with `ENOTSUP`.
+- **Symbolic links.** A link that resolves into a root, at any point of
+  a path, reads the mount: `/link/a.md` with `/link -> /skills/team`
+  reads the mount's `a.md`, and results are named under `/link`. `ls`
+  follows no links, here as anywhere in the store. A root whose parent
+  path goes through a link is registered where the link leads:
+  `/alias/mount` with `/alias -> /real` is the mount at `/real/mount`,
+  listed, found and read under both names, and its errors name
+  `/real/mount`. Roots are compared with every other mount's, eager or
+  passthrough, where each really is: two that land on one directory, or
+  one inside the other, through a link are rejected.
+- **Rows already there.** Rows under a root from before it was
+  registered, such as an earlier eager mount's, are hidden while it is:
+  no read, walk or link reaches them. They are not deleted: a push to
+  a container backend still carries any it hasn't, and a container
+  that has them keeps them.
+- **Not synced.** Nothing under the root is pushed to a container
+  backend; only commands that read through `Workspace.fs`, such as the
+  codemode and worker-shell backends, see the mount's files.
+- **Git.** git reads a worktree through the filesystem, so `git add` in
+  a worktree that contains a root copies the mount's files into git
+  objects, which are stored.
+
+#### Passthrough: read-write
+
+A passthrough mount with `mode: "read-write"` takes writes too, and
+stores none of them: each one at or under its root goes to the mount,
+before any SQL, by name or through a symbolic link into the root.
+
+```ts
+interface PassthroughMount {
+  // ...the read methods above, and:
+  readonly mode: "read-only" | "read-write";
+  writeFile?(path: string, body: ReadableStream<Uint8Array>, options: {
+    size?: number;       // the body's length, when the writer knows it
+    mode?: number;       // permission bits
+    exclusive?: boolean; // O_EXCL: fail EEXIST if it exists
+    signal?: AbortSignal;
+  }): Promise<PassthroughStat | void>;
+  mkdir?(path: string, options: { recursive?: boolean; mode?: number; signal?: AbortSignal }): Promise<void>;
+  rm?(path: string, options: { recursive?: boolean; signal?: AbortSignal }): Promise<void>;
+  rename?(from: string, to: string, options: { signal?: AbortSignal }): Promise<void>;
+  chmod?(path: string, mode: number, options: { signal?: AbortSignal }): Promise<void>;
+}
+```
+
+- **What goes to the mount.** `writeFile` (a string, bytes or a
+  stream), `mkdir`, `rm` (`force` swallows the mount's `ENOENT`),
+  `rename` within the mount and `chmod`, from `Workspace.fs`, the stub,
+  the worker shell and codemode, and the provider's async `writeFile`,
+  `mkdir`, `rmdir`, `unlink` and `rename`. A method the mount lacks
+  fails that write with `EROFS`. An exclusive `writeFile` at a path
+  that is a stored link fails with `EEXIST`, as in the store, even
+  when the link leads into the mount to nothing.
+- **What doesn't.** Under a read-write root, links (`symlink`, `link`),
+  writes at an offset or in pieces (`writeRangeSync`, `truncateSync`,
+  append, opening a file for writing) and every synchronous write fail
+  with `ENOTSUP`. A caller that needs to append reads and rewrites.
+- **Across the boundary.** A `rename` between the store and a mount, or
+  between two mounts, fails with `EXDEV`; copy and remove instead. The
+  root itself can't be removed or renamed (`EBUSY`), and `rm`, `rename`
+  and `mkdir` of a directory above it fail with `EROFS`, as above a
+  read-only mount.
+- **Errors.** A `WorkspaceFsError` from the mount, such as `EEXIST`,
+  `ENOENT`, `ENOTEMPTY`, `EACCES` or `ENOSPC`, keeps its code, with its
+  message cut to 1 KiB and the path asked for; anything else is `EIO`.
+- **Container pulls** write through, one entry at a time: a file with
+  `writeFile`, a directory with `mkdir -p`, a delete with `rm -r`. An
+  entry the mount refuses, a link among them, is reported in
+  `skipped` with `reason: "mount-error"` and the error, and the rest of
+  the pull applies. An entry that is wrong in itself, such as a file
+  whose chunks didn't arrive, fails the pull, which retries it, as in
+  the store. A file's chunks are pinned while the mount reads them, so
+  a host write that drops another file sharing them can't take them. A synchronous apply reports every entry under the root as
+  a `mount-error`.
+
+  A pull replays a batch whose acknowledgment was lost, so each entry
+  is checked first, and left alone when the mount already reflects it:
+
+  - **A replay.** The store keeps, per backend and mount path, the
+    sender's rev and a digest of the last pulled entry it applied there
+    (`_vfs_mount_applied`: a file's manifest hash, a delete's `prior`,
+    a directory's mode; never file content). The same entry again is a
+    replay and does nothing, whatever the mount holds now, so a write to
+    the mount since the first apply stands. The mount alone can't show
+    this: a replayed file and a new one look the same to it.
+  - **A file the mount already holds**, the same size and the same
+    manifest hash of its bytes (read and hashed when the sizes agree).
+    A new entry with other content is written, replacing what the
+    mount holds, as a pull does in the store.
+  - **A delete of a path the mount no longer has.**
+  - **A delete that carries `prior`**, the fingerprint of the version
+    the container removed, of a file whose bytes no longer match it: a
+    newer file written to the mount is kept. The mount may report
+    permission bits of its own, so the fingerprint is tried with the
+    mount's mode and the usual ones (0644, 0755, 0600, 0700, 0664,
+    0775, 0444, 0555); matching none counts as a change. So a delete
+    whose `prior` was taken with another mode, such as 0640, on a mount
+    that reports a different one leaves the file in place, even when the
+    bytes match.
+  - **A directory delete ignores `prior`**, a directory's fingerprint
+    being only its mode: an empty directory is removed, and only it, so
+    a file written into it meanwhile makes the mount refuse. One with
+    contents is decided again at the end of the pull, after the deletes
+    of what it held, and one still holding something then is kept and
+    reported in `skipped` with `reason: "kept"`.
+
+  A new delete without `prior`, from an older peer or for the source
+  of a rename, is applied.
+
+  A row of `_vfs_mount_applied` lives until the backend can't send its
+  entry again: it is deleted when the fetch cursor is committed past
+  its rev, every row of a backend goes when its fetch cursor moves back
+  (the backend's log started over, and its revs with it), and opening a
+  workspace drops the rows under paths that no registered read-write
+  root covers, all of them when it registers none. Opening one without
+  a read-write mount registered so clears that mount's rows: until it is registered again and pulls
+  refill them, a replay into it is caught only by the content checks
+  above. Every rev a mount write mints during a pull counts as
+  the pull's own, and only those: a host write while a mount call is in
+  flight is still the host's, to be pushed.
+- **Git** reads and writes a worktree under the root through the
+  provider's async methods, so `init`, `add`, `commit` and `checkout`
+  work there, one mount call per file. Nothing is batched, so this is
+  slow for big trees.
+- **Nothing is cached.** A read after a write asks the mount again, and
+  a walk sees what the mount lists when it reaches the root. Every
+  write the mount takes moves the store's revision, `vfs_meta`'s `rev`
+  (`SELECT v FROM vfs_meta WHERE k = 'rev'`, or `currentRev(db)` from
+  `@cloudflare/dofs`), so a consumer that rescans when the revision
+  moves sees mount writes too; the store records nothing else about
+  them, so `watch()` reports no path for them.
+
+Best when the files must never be stored in the workspace, or change
+often enough that a copy would be stale.
 
 ## Factories
 

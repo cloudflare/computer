@@ -1,5 +1,25 @@
+import { createHash } from "node:crypto";
+
+import { getBlobBytes } from "../fs/blobCache";
 import { mkdir, mkdirForSyncParents } from "../fs/mkdir";
 import { readOnlyRootFor } from "../fs/mount-guard";
+import {
+  mkdirInMount,
+  readdirWithPassthrough,
+  passthroughFileStream,
+  rmInMount,
+  statPassthroughTarget,
+  unsupportedWrite,
+  writeFileToMount,
+  writeTarget,
+} from "../fs/passthrough";
+import {
+  isPassthroughUnsupported,
+  isWritableSource,
+  type PassthroughTarget,
+  realPathOf,
+  redirectOf,
+} from "../fs/passthrough-registry";
 import { pinHashes } from "../fs/pins";
 import { openReapDeferral, type ReapDeferral } from "../fs/refs";
 import { resolveInode, resolveInodeWithoutSymlinks } from "../fs/resolve";
@@ -7,13 +27,13 @@ import { invalidateResolveSubtree } from "../fs/resolveCache";
 import { rm } from "../fs/rm";
 import { symlink } from "../fs/symlink";
 import { unlinkDirent } from "../fs/unlink";
-import { assertChunkWindows, linkStagedChunksSync } from "../fs/writeFile";
+import { assertChunkWindows, CHUNK_SIZE, linkStagedChunksSync } from "../fs/writeFile";
 import { canonicalizePath } from "../path";
 import { incrementRev } from "../rev";
 import type { Database } from "../storage";
 import { stageBlob } from "./blobs";
 import type { ChangeEntry } from "./changes";
-import { versionFingerprint } from "./fingerprint";
+import { fingerprintVersion, versionFingerprint } from "./fingerprint";
 import { computeManifestHash } from "./manifests";
 import { pathOf } from "./paths";
 import {
@@ -40,8 +60,13 @@ export interface SkippedEntry {
   // decide messaging.
   op: "write" | "delete";
   // Open shape: future skip reasons can join this union without
-  // breaking callers that match on 'read-only' today.
-  reason: "read-only";
+  // breaking callers that match on 'read-only' today. 'mount-error' is
+  // a write under a read-write passthrough mount that the mount
+  // refused or failed; `error` says why.
+  // 'kept' is a pulled directory delete under such a mount that left
+  // the directory, which still held what the pull didn't delete.
+  reason: "read-only" | "mount-error" | "kept";
+  error?: string;
 }
 
 // Return shape of applyChanges / applyChangesSync. Existing callers
@@ -282,11 +307,21 @@ function isMissingPath(error: unknown): boolean {
 }
 
 // State one apply call carries from entry to entry.
+// The passthrough root an entry's path ran into, when that is why
+// applying it failed.
+function passthroughRootReached(error: unknown): string | undefined {
+  if (!isPassthroughUnsupported(error)) return undefined;
+  return redirectOf(error)?.root ?? error.path ?? "";
+}
+
 interface ApplyRun {
   readonly objects: Map<string, Uint8Array>;
   readonly options: ApplyOptions;
   readonly pulled: PullContext | undefined;
   readonly deferredDirs: DeleteEntry[];
+  // Pulled deletes of mount directories that still held something,
+  // decided again once the rest of the call has run.
+  readonly deferredMountDirs: Array<{ entry: DeleteEntry; target: PassthroughTarget }>;
   readonly skipped: SkippedEntry[];
 }
 
@@ -399,7 +434,21 @@ export async function applyChanges(
   try {
     const run = openRun(db, objects, options);
     const counts = { applied: 0, minted: 0 };
-    for await (const entry of entries) step(db, entry, run, deferral, counts);
+    for await (const entry of entries) {
+      // Under a read-write passthrough root the entry is the mount's to
+      // apply, one call at a time; nothing of it reaches the store but
+      // the revision each mount write moves.
+      const target = writableTargetOf(db, entry.path);
+      if (target === undefined) {
+        step(db, entry, run, deferral, counts);
+        continue;
+      }
+      // Counted rev by rev, not by currentRev before and after: a host
+      // write while the mount call is in flight mints a rev that isn't
+      // the pull's.
+      await writeThrough(db, entry, target, run, counts);
+    }
+    await settleMountDirectories(db, run, counts);
     return finishRun(db, run, counts);
   } finally {
     deferral.close();
@@ -437,6 +486,7 @@ function openRun(db: Database, objects: Map<string, Uint8Array>, options: ApplyO
     options,
     pulled: openPullContext(db, options),
     deferredDirs: [],
+    deferredMountDirs: [],
     skipped: [],
   };
 }
@@ -450,10 +500,430 @@ function step(
 ): void {
   const revBefore = currentRev(db);
   try {
-    if (deferral.hold(() => applyOne(db, entry, run)) !== undefined) counts.applied++;
+    try {
+      if (deferral.hold(() => applyOne(db, entry, run)) !== undefined) counts.applied++;
+    } catch (error) {
+      // A path that reaches a passthrough root through a symbolic link
+      // is under a read-only mount like one that names the root. The
+      // resolve that finds the root runs before the entry writes
+      // anything, so skipping it leaves the batch as it was.
+      const passthroughRoot = passthroughRootReached(error);
+      if (passthroughRoot === undefined) throw error;
+      const writable = redirectOf(error)?.source;
+      if (writable !== undefined && isWritableSource(writable)) {
+        // A synchronous apply can't wait for the mount.
+        run.skipped.push({
+          path: entry.path,
+          mountRoot: passthroughRoot,
+          op: entry.kind === "delete" ? "delete" : "write",
+          reason: "mount-error",
+          error: describeError(error),
+        });
+        return;
+      }
+      run.skipped.push({
+        path: entry.path,
+        mountRoot: passthroughRoot,
+        op: entry.kind === "delete" ? "delete" : "write",
+        reason: "read-only",
+      });
+    }
   } finally {
     counts.minted += notePulledRevs(db, run.pulled, revBefore);
   }
+}
+
+function writableTargetOf(db: Database, path: string): PassthroughTarget | undefined {
+  const target = writeTarget(db, path, false);
+  return target !== undefined && isWritableSource(target.source) ? target : undefined;
+}
+
+// Apply one entry to the read-write mount it lands in: a file with the
+// mount's writeFile, a directory with mkdir, a delete with rm. A link
+// can't be. An entry the mount refuses or fails is reported, and the
+// rest of the call goes on; an entry that is wrong in itself, such as
+// a file whose chunks didn't arrive, fails the call as in the store,
+// so the pull retries it.
+//
+// A pull replays a batch whose acknowledgment was lost, so an entry
+// may arrive again after the mount moved on. As in the store, a file
+// the mount already holds byte for byte is left alone, and a delete
+// that carries the fingerprint of what it removed only removes what
+// still matches it: see mountAbsorbs.
+async function writeThrough(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
+  // A file's chunks may be another stored file's too, and a host write
+  // while the mount reads them could drop the last reference to one:
+  // pinned, they stay until the body is read or abandoned.
+  const pin =
+    entry.kind === "file"
+      ? pinHashes(
+          db,
+          entry.chunks.map((c) => c.hash),
+        )
+      : undefined;
+  try {
+    await writeThroughPinned(db, entry, target, run, counts);
+  } finally {
+    pin?.release();
+  }
+}
+
+async function writeThroughPinned(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
+  const body = entry.kind === "file" ? chunkBody(db, entry, run.objects) : undefined;
+  const pulled = run.options.source === "upstream";
+  let rev: number | undefined;
+  try {
+    const absorbed = pulled ? await mountAbsorbs(db, entry, target, run) : "apply";
+    if (absorbed === "absorbed" || absorbed === "deferred") {
+      await body?.stream.cancel();
+      if (absorbed === "absorbed") noteMountApplied(db, run, entry, target);
+      return;
+    }
+    if (entry.kind === "file") {
+      rev = await writeFileToMount(
+        db,
+        target,
+        (body as ChunkBody).stream,
+        { mode: entry.mode },
+        entry.size,
+      );
+    } else if (entry.kind === "dir") {
+      rev = await mkdirInMount(db, target, { recursive: true, mode: entry.mode });
+    } else if (entry.kind === "symlink") {
+      throw unsupportedWrite(target);
+    } else if (absorbed === "remove-empty-dir") {
+      // Not recursive: whatever arrived in the directory since it was
+      // seen empty makes the mount refuse, and stays.
+      rev = await rmInMount(db, target, { force: true });
+    } else {
+      rev = await rmInMount(db, target, { recursive: true, force: true });
+    }
+  } catch (error) {
+    // Chunks that went missing make the entry itself wrong, as in the
+    // store: the call fails, and the pull retries it.
+    const missing = body?.missing();
+    if (missing !== undefined) throw missing;
+    if (entry.kind === "delete" && isNotEmpty(error)) {
+      reportKept(run, entry, target);
+      return;
+    }
+    reportMountError(run, entry, target, error);
+    return;
+  }
+  noteMintedRev(run, counts, rev);
+  counts.applied++;
+  if (pulled) noteMountApplied(db, run, entry, target);
+}
+
+// A rev a mount write minted for this pull: counted in `minted`, and
+// among the pull's own revs.
+function noteMintedRev(
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+  rev: number | undefined,
+): void {
+  if (rev === undefined) return;
+  counts.minted += 1;
+  if (run.pulled?.clean === true) run.pulled.revs.add(rev);
+}
+
+// What an entry did, for _vfs_mount_applied.
+function entryDigest(entry: ChangeEntry): string {
+  if (entry.kind === "file") return `file:${hex(computeManifestHash(entry.chunks))}`;
+  if (entry.kind === "dir") return `dir:${entry.mode & 0o7777}`;
+  if (entry.kind === "symlink") return `symlink:${entry.target}`;
+  return `delete:${entry.prior ?? ""}`;
+}
+
+function mountBackend(run: ApplyRun): string {
+  return run.pulled?.backend ?? run.options.backend ?? DEFAULT_BACKEND_ID;
+}
+
+// The same entry, sender rev and all, was applied to the mount before:
+// this one is a replay.
+function mountAppliedBefore(
+  db: Database,
+  run: ApplyRun,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+): boolean {
+  const row = db.one<{ rev: number; digest: string }>(
+    "SELECT rev, digest FROM _vfs_mount_applied WHERE backend = ? AND path = ?",
+    mountBackend(run),
+    realPathOf(target),
+  );
+  return row !== undefined && row.rev === entry.rev && row.digest === entryDigest(entry);
+}
+
+// Recording is bookkeeping: an entry the mount took stays applied if
+// the record can't be written, which only weakens a later replay check.
+function noteMountApplied(
+  db: Database,
+  run: ApplyRun,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+): void {
+  try {
+    recordMountApplied(db, run, entry, target);
+  } catch (error) {
+    console.warn({
+      message: "Could not record a pulled entry applied to a passthrough mount",
+      path: entry.path,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function recordMountApplied(
+  db: Database,
+  run: ApplyRun,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+): void {
+  db.run(
+    `INSERT INTO _vfs_mount_applied (backend, path, rev, digest) VALUES (?, ?, ?, ?)
+       ON CONFLICT (backend, path) DO UPDATE SET rev = excluded.rev, digest = excluded.digest`,
+    mountBackend(run),
+    realPathOf(target),
+    entry.rev,
+    entryDigest(entry),
+  );
+}
+
+// A pulled directory delete that left the directory, which holds what
+// the pull didn't delete. The entry is reported, unrecorded, so a
+// replay once the directory is empty can still remove it.
+function reportKept(run: ApplyRun, entry: ChangeEntry, target: PassthroughTarget): void {
+  run.skipped.push({
+    path: entry.path,
+    mountRoot: target.root,
+    op: "delete",
+    reason: "kept",
+    error: "ENOTEMPTY: the directory holds entries this pull didn't delete",
+  });
+}
+
+function isNotEmpty(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "ENOTEMPTY";
+}
+
+function reportMountError(
+  run: ApplyRun,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  error: unknown,
+): void {
+  run.skipped.push({
+    path: entry.path,
+    mountRoot: target.root,
+    op: entry.kind === "delete" ? "delete" : "write",
+    reason: "mount-error",
+    error: describeError(error),
+  });
+}
+
+// Whether the mount already reflects a pulled entry, so applying it
+// again would undo what happened since ("absorbed"), whether it waits
+// for the end of the call ("deferred"), or whether it applies:
+//
+//   - the very entry, by path, sender rev and what it did, was applied
+//     before (_vfs_mount_applied): a replay, whatever the mount holds
+//     now, so a write to the mount since the first apply stands;
+//   - a file entry whose content, by size and then by the manifest hash
+//     of the mount's bytes, is what the mount holds;
+//   - a delete of something the mount no longer has;
+//   - a delete with a `prior` fingerprint of a file whose bytes no
+//     longer match it. The mount reports permission bits of its own, so
+//     its mode and the usual ones are tried; no match is a change.
+//   - a delete with `prior` of a directory that still holds something
+//     waits for the end of the call, when the deletes of its contents
+//     have run. A directory's fingerprint is its mode alone, which the
+//     mount may not keep, so it isn't compared.
+//
+// A delete without `prior` (from an older peer, or a rename) can't be
+// told from a replay and is applied, as the store applies one that no
+// local write since the last push stands in the way of.
+async function mountAbsorbs(
+  db: Database,
+  entry: ChangeEntry,
+  target: PassthroughTarget,
+  run: ApplyRun,
+): Promise<"absorbed" | "deferred" | "remove-empty-dir" | "apply"> {
+  if (mountAppliedBefore(db, run, entry, target)) return "absorbed";
+  if (entry.kind === "dir" || entry.kind === "symlink") return "apply";
+  const held = await mountVersion(target);
+  if (entry.kind === "file") {
+    if (held?.type !== "file" || held.size !== entry.size) return "apply";
+    const same = uint8Equal(await mountManifest(target), computeManifestHash(entry.chunks));
+    return same ? "absorbed" : "apply";
+  }
+  if (held === undefined) return "absorbed";
+  if (entry.prior === undefined) return "apply";
+  if (held.type === "dir") {
+    if (await mountDirectoryEmpty(db, entry.path)) return "remove-empty-dir";
+    run.deferredMountDirs.push({ entry, target });
+    return "deferred";
+  }
+  const manifest = await mountManifest(target);
+  return matchesUsualMode(entry.prior, manifest, held.mode) ? "apply" : "absorbed";
+}
+
+// Decide the mount directory deletes held back for their contents,
+// deepest first: one that is empty now, and still the directory the
+// delete names, is removed.
+async function settleMountDirectories(
+  db: Database,
+  run: ApplyRun,
+  counts: { applied: number; minted: number },
+): Promise<void> {
+  const ordered = [...run.deferredMountDirs].sort(
+    (a, b) => b.entry.path.length - a.entry.path.length,
+  );
+  for (const { entry, target } of ordered) {
+    let rev: number | undefined;
+    try {
+      const held = await mountVersion(target);
+      if (held?.type !== "dir") {
+        noteMountApplied(db, run, entry, target);
+        continue;
+      }
+      if (!(await mountDirectoryEmpty(db, entry.path))) {
+        reportKept(run, entry, target);
+        continue;
+      }
+      rev = await rmInMount(db, target, { force: true });
+    } catch (error) {
+      if (isNotEmpty(error)) reportKept(run, entry, target);
+      else reportMountError(run, entry, target, error);
+      continue;
+    }
+    noteMintedRev(run, counts, rev);
+    counts.applied++;
+    noteMountApplied(db, run, entry, target);
+  }
+}
+
+async function mountVersion(
+  target: PassthroughTarget,
+): Promise<{ type: "file" | "dir"; size: number; mode: number } | undefined> {
+  if (target.rel === "") return { type: "dir", size: 0, mode: 0o755 };
+  try {
+    const found = await statPassthroughTarget(target);
+    return { type: found.isDirectory ? "dir" : "file", size: found.size, mode: found.mode };
+  } catch (error) {
+    if (isMissingPath(error)) return undefined;
+    throw error;
+  }
+}
+
+async function mountDirectoryEmpty(db: Database, path: string): Promise<boolean> {
+  return (await readdirWithPassthrough(db, path, { limit: 1 })).length === 0;
+}
+
+// The manifest hash of the mount's bytes, chunked as the store chunks,
+// read as a stream and hashed a chunk at a time.
+async function mountManifest(target: PassthroughTarget): Promise<Uint8Array> {
+  const reader = (await passthroughFileStream(target)).getReader();
+  const chunks: Array<{ hash: Uint8Array; size: number }> = [];
+  let hash = createHash("sha256");
+  let filled = 0;
+  const finishChunk = () => {
+    chunks.push({ hash: new Uint8Array(hash.digest()), size: filled });
+    hash = createHash("sha256");
+    filled = 0;
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const take = Math.min(CHUNK_SIZE - filled, value.byteLength - offset);
+        hash.update(value.subarray(offset, offset + take));
+        filled += take;
+        offset += take;
+        if (filled === CHUNK_SIZE) finishChunk();
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (filled > 0) finishChunk();
+  return computeManifestHash(chunks);
+}
+
+// Permission bits a mount may report for a file a container wrote with
+// others: its own, then the usual ones.
+const USUAL_FILE_MODES = [0o644, 0o755, 0o600, 0o700, 0o664, 0o775, 0o444, 0o555];
+
+// Whether `prior` fingerprints a file with this content.
+function matchesUsualMode(prior: string, manifest: Uint8Array, mode: number): boolean {
+  for (const candidate of [mode & 0o7777, ...USUAL_FILE_MODES]) {
+    if (fingerprintVersion({ type: "file", mode: candidate, manifest }) === prior) return true;
+  }
+  return false;
+}
+
+// A file entry's bytes, chunk by chunk, from the call's objects or the
+// staged blobs, without staging any. Every chunk is checked before the
+// mount is called. `missing` is the error a chunk that went missing
+// while the mount read the body stopped it with.
+interface ChunkBody {
+  stream: ReadableStream<Uint8Array>;
+  missing(): Error | undefined;
+}
+
+function chunkBody(
+  db: Database,
+  entry: Extract<ChangeEntry, { kind: "file" }>,
+  objects: Map<string, Uint8Array>,
+): ChunkBody {
+  assertChunkWindows(entry.chunks, entry.path);
+  for (const c of entry.chunks) {
+    const bytes = objects.get(hex(c.hash));
+    const size = bytes?.byteLength ?? stagedBlobSize(db, c.hash);
+    if (size === undefined) {
+      throw new Error(`applyChanges: missing object ${hex(c.hash)} for ${entry.path}`);
+    }
+    assertChunkSize(size, c.size, c.hash, entry.path);
+  }
+  let index = 0;
+  let missing: Error | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = entry.chunks[index++];
+      if (chunk === undefined) {
+        controller.close();
+        return;
+      }
+      const bytes = objects.get(hex(chunk.hash)) ?? getBlobBytes(db, chunk.hash);
+      if (bytes === undefined) {
+        missing = new Error(`applyChanges: missing object ${hex(chunk.hash)} for ${entry.path}`);
+        controller.error(missing);
+        return;
+      }
+      controller.enqueue(bytes);
+    },
+  });
+  return { stream, missing: () => missing };
+}
+
+function describeError(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  const message = error instanceof Error ? error.message : String(error);
+  return typeof code === "string" ? `${code}: ${message}` : message;
 }
 
 function finishRun(
