@@ -38,6 +38,7 @@ import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
   WorkspaceRuntimeOutputOptions,
+  WorkspaceRuntimePendingCall,
   WorkspaceRuntimeResult,
   WorkspaceRuntimeValue,
 } from "./runtime/types";
@@ -214,6 +215,13 @@ export interface WorkspaceRuntimeClient {
   ): Promise<WorkspaceRuntimeExecHandle<ExecEncoding>>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
+  /**
+   * Leave an exec running with nothing waiting on it; see
+   * `WorkspaceRuntime.detachExec`. Experimental.
+   */
+  detachExec(id: string, options?: { backend?: string }): Promise<boolean>;
+  /** Calls waiting in `ctx.interrupt()`; see `WorkspaceRuntime.pending`. Experimental. */
+  pending(): Promise<WorkspaceRuntimePendingCall[]>;
   /** What each backend says about itself, as of when the client was created. */
   backends(): readonly WorkspaceBackendInfo[];
 }
@@ -263,6 +271,8 @@ interface UnderlyingRuntime {
   getExec(id: string, options?: Record<string, unknown>): Promise<any>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
+  detachExec(id: string, options?: { backend?: string }): Promise<boolean>;
+  pending(): Promise<WorkspaceRuntimePendingCall[]>;
 }
 
 type RuntimeHandleMetadata = { id?: string; backend?: string };
@@ -313,6 +323,11 @@ function makeRuntimeClient(
   const killExec = (id: string, options?: RuntimeKillOptions) => runtime.killExec(id, options);
   const disposeExec = (id: string, options?: { backend?: string }) =>
     runtime.disposeExec(id, options);
+  // Plain data both ways, so these need no rehydrating. The exec tool
+  // needs both to detach.
+  const detachExec = (id: string, options?: { backend?: string }) =>
+    runtime.detachExec(id, options);
+  const pending = () => runtime.pending();
   // Frozen so a caller that edits the list cannot change what later
   // tool sets see.
   const snapshot: readonly WorkspaceBackendInfo[] = Object.freeze(
@@ -323,6 +338,8 @@ function makeRuntimeClient(
     getExec,
     killExec,
     disposeExec,
+    detachExec,
+    pending,
     backends: () => snapshot,
   } as WorkspaceRuntimeClient;
 }

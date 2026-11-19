@@ -32,6 +32,8 @@ removed in a future release; each one names its replacement.
 | `ContainerBackend` and `withWorkspaceContainer` | `@cloudflare/computer/backends/container` | Experimental |
 | `LegacyContainerBackend` and `withLegacyWorkspaceContainer` | `@cloudflare/computer/backends/container-legacy` | Deprecated: use `ContainerBackend` |
 | Resuming interrupted isolate JavaScript: `onInterrupt: "restart"` and `"replay"`, `workspace.runtime.recover()`, `unsafeToRepeat()`, and waiting for answers with `ctx.interrupt()`, `pending()` and `respond()` | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
+| Detaching execs: `CodemodeBackend`'s `onDetachedExit` and `workspace.runtime.detachExec()` | `@cloudflare/computer`, `@cloudflare/computer/backends/codemode` | Experimental |
+| Detaching the `exec` tool from a run that waits, with `exec: { detach }` | `@cloudflare/computer/tools/*` | Experimental |
 | `WorkerShellBackend` and the shell command groups | `@cloudflare/computer/backends/worker-shell`, `@cloudflare/computer/shell/*` | Experimental |
 | The `codemode:container` host module | `@cloudflare/computer/modules/container` | Experimental |
 | The `codemode:browser` host module | `@cloudflare/computer/modules/browser` | Experimental |

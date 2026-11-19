@@ -76,6 +76,14 @@ function fakeRuntime(promisedProperties = false) {
         calls.push({ command: `dispose:${id}`, options });
         return Promise.resolve();
       },
+      detachExec(id: string, options?: Record<string, unknown>) {
+        calls.push({ command: `detach:${id}`, options });
+        return Promise.resolve(true);
+      },
+      pending() {
+        calls.push({ command: "pending", options: undefined });
+        return Promise.resolve([]);
+      },
       backends() {
         return promisedProperties ? Promise.resolve([]) : [];
       },
@@ -286,10 +294,14 @@ describe("getWorkspace — remote dispatch", () => {
     expect(handle.backend).toBe("test");
     await ws.runtime.killExec("run-1", { signal: "SIGINT" });
     await ws.runtime.disposeExec("run-1", { backend: "container-shell" });
+    expect(await ws.runtime.detachExec("run-1", { backend: "codemode" })).toBe(true);
+    expect(await ws.runtime.pending()).toEqual([]);
     expect(calls).toEqual([
       { command: "get:run-1", options: { resume: "tail" } },
       { command: "kill:run-1", options: { signal: "SIGINT" } },
       { command: "dispose:run-1", options: { backend: "container-shell" } },
+      { command: "detach:run-1", options: { backend: "codemode" } },
+      { command: "pending", options: undefined },
     ]);
   });
 
@@ -563,6 +575,25 @@ describe("getWorkspace — backend information", () => {
       expect(others).toEqual([]);
       expect(backend).toMatchObject({ id: "codemode", callable: true });
       expect(backend?.description).toContain("`codemode:weather`: exports");
+    });
+
+    it(`builds an exec tool that detaches from a ${path} client`, async () => {
+      const client = await connect(
+        new Workspace({
+          storage: new SQLiteTestStorage(),
+          backends: [
+            new CodemodeBackend({
+              loader: { load: () => ({ getEntrypoint: () => ({}) }) },
+              onDetachedExit: () => undefined,
+            }),
+          ],
+        }),
+      );
+
+      const tools = createAITools({ workspace: client, exec: { detach: true } });
+
+      expect(client.runtime.backends()[0]?.detachable).toBe(true);
+      expect(tools.exec?.description).toContain("comes back early");
     });
 
     it(`builds a callable exec tool from a ${path} client`, async () => {
