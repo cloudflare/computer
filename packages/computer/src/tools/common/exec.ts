@@ -7,6 +7,7 @@ import {
   type OutputLimits,
   OutputWindow,
 } from "../../runtime/output-tail";
+import { DEFAULT_OUTPUT_DIR } from "../../runtime/output-files";
 import type { WorkspaceBackendInfo } from "../../runtime/runtime";
 import { notCallableMessage } from "../../runtime/runtime";
 import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types";
@@ -75,6 +76,12 @@ export interface ExecWorkspaceLike {
     // and to reject an unknown id up front. Without it, every backend
     // must be named and is treated as a shell.
     backends?(): readonly WorkspaceBackendInfo[];
+  };
+  // Where a return value too large for the model is saved. Without it
+  // such a value is cut to a preview with no file to point to.
+  fs?: {
+    mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+    writeFile(path: string, content: Uint8Array): Promise<void>;
   };
 }
 
@@ -299,6 +306,40 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         abortSignal?.removeEventListener("abort", onAbort);
       }
 
+      // A callable backend's return value as the model sees it: whole
+      // while its JSON fits `maxBytes`, otherwise a note with a
+      // preview and the file holding the full value.
+      async function boundResult(value: unknown, toolCallId: string | undefined): Promise<unknown> {
+        let json: string | undefined;
+        try {
+          json = JSON.stringify(value);
+        } catch {
+          return value;
+        }
+        if (json === undefined) return value;
+        const bytes = encoder.encode(json);
+        if (bytes.length <= limits.maxBytes) return value;
+        const preview = decoder.decode(bytes.slice(0, Math.min(limits.maxBytes, 8192)));
+        const shown = { truncated: true, totalBytes: bytes.length, preview };
+        const fs = options.workspace.fs;
+        if (fs === undefined) {
+          return { ...shown, note: "Full result was not saved: the workspace has no filesystem." };
+        }
+        const name = `${toolCallId || crypto.randomUUID()}`.replace(/[^A-Za-z0-9._-]/g, "_");
+        const path = `${DEFAULT_OUTPUT_DIR}/${name}.result.json`;
+        try {
+          await fs.mkdir(DEFAULT_OUTPUT_DIR, { recursive: true });
+          await fs.writeFile(path, bytes);
+        } catch (err) {
+          return { ...shown, note: `Full result was not saved: ${errorMessage(err)}` };
+        }
+        return {
+          ...shown,
+          path,
+          note: `Result is ${bytes.length} bytes of JSON, too long to show. The full value is in ${path}; read or grep it.`,
+        };
+      }
+
       // Produce the run's snapshots. Streams the raw events when the
       // handle is iterable; otherwise drains the aggregate result.
       async function* runExecution(): AsyncGenerator<ExecToolOutput> {
@@ -349,7 +390,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
             exitCode,
             stdout: stdout.render(truncated?.stdout ?? "unsaved"),
             stderr: stderr.render(truncated?.stderr ?? "unsaved"),
-            ...(hasValue ? { result: value } : {}),
+            ...(hasValue ? { result: await boundResult(value, context.toolCallId) } : {}),
           };
           return;
         }
@@ -362,7 +403,9 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
             exitCode: result.exitCode,
             stdout: showResult(result.stdout, result.truncated?.stdout, limits),
             stderr: showResult(result.stderr, result.truncated?.stderr, limits),
-            ...(result.value === undefined ? {} : { result: result.value }),
+            ...(result.value === undefined
+              ? {}
+              : { result: await boundResult(result.value, context.toolCallId) }),
           };
         } catch (err) {
           yield { ...base, error: errorMessage(err) };
@@ -380,7 +423,7 @@ function outputHint(limits: OutputLimits): string {
 }
 const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
 const CALLABLE_HINT =
-  "Pass an `input` object to hand the module structured values, and read its return value back from the `result` field.";
+  "Pass an `input` object to hand the module structured values, and read its return value back from the `result` field. A return value over the output limit is saved to a file and `result` holds its path and a preview, so write large data to a file instead of returning it.";
 
 interface DescribedBackend {
   readonly id: string;
