@@ -1,5 +1,15 @@
 # @cloudflare/computer
 
+## 0.11.4
+
+### Patch Changes
+
+- [#332](https://github.com/cloudflare/computer/pull/332) Let Codemode scripts read large files incrementally with `fs.open()` and read streams. ([`3636ffb`](https://github.com/cloudflare/computer/commit/3636ffb1555fc17a5898914f6e8698c716970bc7)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
+- [#336](https://github.com/cloudflare/computer/pull/336) Bound the `exec` tool's `result` for the model. A callable backend's return value past the output limit is saved to a file in the Workspace output directory, and `result` carries its path, size and a preview. ([`258ecaf`](https://github.com/cloudflare/computer/commit/258ecaf5ca4a25caac024163838e6362b604f92c)) - Thanks [@github-actions](https://github.com/apps/github-actions)
+
+- [#333](https://github.com/cloudflare/computer/pull/333) Added passthrough mounts, which serve files straight from your own source without storing them in the workspace. See [Passthrough](https://github.com/cloudflare/computer/blob/main/docs/06_mount_interface.md#passthrough). ([`7792b12`](https://github.com/cloudflare/computer/commit/7792b12b2d4d2bcb6aba3a6ec29dafc720467122)) - Thanks [@aron-cf](https://github.com/aron-cf)
+
 ## 0.11.3
 
 ### Patch Changes
