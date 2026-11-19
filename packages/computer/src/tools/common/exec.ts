@@ -7,8 +7,7 @@ import {
   type OutputLimits,
   OutputWindow,
 } from "../../runtime/output-tail";
-import { DEFAULT_OUTPUT_DIR } from "../../runtime/output-files";
-import type { WorkspaceBackendInfo } from "../../runtime/runtime";
+import type { WorkspaceBackendInfo, WorkspaceRuntimeSaveResult } from "../../runtime/runtime";
 import { notCallableMessage } from "../../runtime/runtime";
 import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types";
 
@@ -76,12 +75,10 @@ export interface ExecWorkspaceLike {
     // and to reject an unknown id up front. Without it, every backend
     // must be named and is treated as a shell.
     backends?(): readonly WorkspaceBackendInfo[];
-  };
-  // Where a return value too large for the model is saved. Without it
-  // such a value is cut to a preview with no file to point to.
-  fs?: {
-    mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-    writeFile(path: string, content: Uint8Array): Promise<void>;
+    // Save a return value too large for the model in the Workspace's
+    // output directory, under its `keep`. Without it such a value is
+    // cut to a preview with no file to point to.
+    saveResult?(name: string, content: Uint8Array): Promise<WorkspaceRuntimeSaveResult>;
   };
 }
 
@@ -321,18 +318,18 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         if (bytes.length <= limits.maxBytes) return value;
         const preview = decoder.decode(bytes.slice(0, Math.min(limits.maxBytes, 8192)));
         const shown = { truncated: true, totalBytes: bytes.length, preview };
-        const fs = options.workspace.fs;
-        if (fs === undefined) {
-          return { ...shown, note: "Full result was not saved: the workspace has no filesystem." };
+        const runtime = options.workspace.runtime;
+        if (runtime.saveResult === undefined) {
+          return { ...shown, note: "Full result was not saved: the workspace cannot save output." };
         }
-        const name = `${toolCallId || crypto.randomUUID()}`.replace(/[^A-Za-z0-9._-]/g, "_");
-        const path = `${DEFAULT_OUTPUT_DIR}/${name}.result.json`;
+        let saved: WorkspaceRuntimeSaveResult;
         try {
-          await fs.mkdir(DEFAULT_OUTPUT_DIR, { recursive: true });
-          await fs.writeFile(path, bytes);
+          saved = await runtime.saveResult(toolCallId || crypto.randomUUID(), bytes);
         } catch (err) {
-          return { ...shown, note: `Full result was not saved: ${errorMessage(err)}` };
+          saved = { saved: false, reason: errorMessage(err) };
         }
+        if (!saved.saved) return { ...shown, note: `Full result was not saved: ${saved.reason}` };
+        const path = saved.path;
         return {
           ...shown,
           path,

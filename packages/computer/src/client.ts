@@ -33,7 +33,7 @@
 // over RPC.
 
 import type { WorkspaceFilesystem } from "@cloudflare/dofs";
-import type { WorkspaceBackendInfo } from "./runtime/runtime";
+import type { WorkspaceBackendInfo, WorkspaceRuntimeSaveResult } from "./runtime/runtime";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -216,6 +216,8 @@ export interface WorkspaceRuntimeClient {
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
   /** What each backend says about itself, as of when the client was created. */
   backends(): readonly WorkspaceBackendInfo[];
+  /** Save a value too large to show; see `WorkspaceRuntime.saveResult`. */
+  saveResult(name: string, content: Uint8Array): Promise<WorkspaceRuntimeSaveResult>;
 }
 
 // Options accepted by the plain `exec` form, common to both paths.
@@ -263,6 +265,7 @@ interface UnderlyingRuntime {
   getExec(id: string, options?: Record<string, unknown>): Promise<any>;
   killExec(id: string, options?: RuntimeKillOptions): Promise<void>;
   disposeExec(id: string, options?: { backend?: string }): Promise<void>;
+  saveResult(name: string, content: Uint8Array): Promise<WorkspaceRuntimeSaveResult>;
 }
 
 type RuntimeHandleMetadata = { id?: string; backend?: string };
@@ -323,6 +326,7 @@ function makeRuntimeClient(
     getExec,
     killExec,
     disposeExec,
+    saveResult: (name: string, content: Uint8Array) => runtime.saveResult(name, content),
     backends: () => snapshot,
   } as WorkspaceRuntimeClient;
 }

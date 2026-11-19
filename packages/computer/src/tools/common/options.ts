@@ -117,7 +117,7 @@ function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
   if (Object.keys(selected.backends).length === 0) return undefined;
   const { output, metadata } = options.exec ?? {};
   return {
-    workspace: { runtime, fs: options.workspace.fs },
+    workspace: { runtime },
     ...selected,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),

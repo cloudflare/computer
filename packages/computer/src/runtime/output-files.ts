@@ -57,7 +57,7 @@ const QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
 
 // The names this class gives files, so cleanup leaves anything else in
 // the directory alone.
-const OUTPUT_FILE = /\.(stdout|stderr)\.log$/;
+const OUTPUT_FILE = /\.(stdout\.log|stderr\.log|result\.json)$/;
 
 /**
  * Save command output to files in a Workspace directory, keeping only
