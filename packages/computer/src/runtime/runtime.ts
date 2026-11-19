@@ -55,6 +55,11 @@ export interface WorkspaceBackendInfo {
   readonly description?: string;
 }
 
+/** Where `saveResult` put a value, or why it could not. */
+export type WorkspaceRuntimeSaveResult =
+  | { readonly saved: true; readonly path: string }
+  | { readonly saved: false; readonly reason: string };
+
 export class WorkspaceRuntime {
   readonly #options: WorkspaceRuntimeRouterOptions;
 
@@ -249,6 +254,28 @@ export class WorkspaceRuntime {
       stdout: new OutputSpool(limits, output.files, `${name}.stdout.log`),
       stderr: new OutputSpool(limits, output.files, `${name}.stderr.log`),
     });
+  }
+
+  /**
+   * Save a value too large to show, such as the exec tool's oversized
+   * `result`, beside saved command output. It goes in the Workspace's
+   * output directory and counts toward its `keep`.
+   *
+   * @param name - A name unique to the value, such as the tool call id.
+   * @param content - The bytes to save.
+   * @returns Where it was saved, or why it was not.
+   */
+  async saveResult(name: string, content: Uint8Array): Promise<WorkspaceRuntimeSaveResult> {
+    const output = this.#options.output;
+    if (output === undefined) {
+      return { saved: false, reason: "the Workspace saves no output" };
+    }
+    const file = output.files.open(`${fileNamePart(name)}.result.json`);
+    await file.write(content);
+    const closed = await file.close();
+    return closed._tag === "ok"
+      ? { saved: true, path: file.path }
+      : { saved: false, reason: closed.error.message };
   }
 
   #backend(requested: string | undefined): string {

@@ -68,7 +68,7 @@ import type {
 import type { ShareOptions } from "./assets/index";
 import type { GitCliInput, GitCliResult } from "./git/index";
 import { withSpan } from "./observe";
-import type { WorkspaceBackendInfo } from "./runtime/runtime";
+import type { WorkspaceBackendInfo, WorkspaceRuntimeSaveResult } from "./runtime/runtime";
 import type {
   WorkspaceRuntimeEvent,
   WorkspaceRuntimeExecHandle,
@@ -414,6 +414,11 @@ export class WorkspaceRuntimeStub extends RpcTarget {
   /** What each backend says about itself. A client snapshots this when it is created. */
   backends(): WorkspaceBackendInfo[] {
     return this.#ws.runtime.backends();
+  }
+
+  /** Save a value too large to show; see `WorkspaceRuntime.saveResult`. */
+  saveResult(name: string, content: Uint8Array): Promise<WorkspaceRuntimeSaveResult> {
+    return this.#ws.runtime.saveResult(name, content);
   }
 
   exec(source: string): Promise<WorkspaceRuntimeExecHandleStub<undefined>>;
