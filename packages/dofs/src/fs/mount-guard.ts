@@ -16,6 +16,14 @@
 
 import { createWorkspaceError } from "../errors";
 import type { Database } from "../storage";
+import {
+  hasPassthroughMounts,
+  isWritableSource,
+  passthroughTargetOf,
+  passthroughWriteUnsupported,
+  readOnlyPassthroughRoots,
+  writablePassthroughRoots,
+} from "./passthrough-registry";
 
 // undefined sentinel = "not loaded yet"; an empty array means
 // "loaded, no read-only mounts registered". The two are not the
@@ -29,9 +37,16 @@ export function invalidateReadOnlyMountCache(db: Database): void {
   cache.delete(db);
 }
 
+// Read-only passthrough mounts live only in memory, so their roots
+// join the ones _vfs_mounts records. Registering them drops the cache.
+// A read-write passthrough root is guarded apart: see
+// writablePassthroughGuard.
 function loadReadOnlyRoots(db: Database): readonly string[] {
   const rows = db.all<{ root: string }>("SELECT root FROM _vfs_mounts WHERE mode = 'read-only'");
   const roots = rows.map((r) => r.root);
+  for (const root of readOnlyPassthroughRoots(db)) {
+    if (!roots.includes(root)) roots.push(root);
+  }
   cache.set(db, roots);
   return roots;
 }
@@ -65,10 +80,27 @@ function overlapsRoot(path: string, root: string): boolean {
 // surface callers see a normal WorkspaceFsError.
 export function assertNotReadOnly(db: Database, path: string): void {
   const roots = getReadOnlyMountRoots(db);
-  if (roots.length === 0) return;
   for (const root of roots) {
     if (overlapsRoot(path, root)) {
       throw createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, path);
+    }
+  }
+  writablePassthroughGuard(db, path, true);
+}
+
+// The store holds nothing under a read-write passthrough root, so a
+// store write there can't happen: it fails with a passthrough ENOTSUP
+// naming the root, which the async entry points route to the source
+// before they get here. A recursive removal or rename of a directory
+// above the root fails with EROFS, as above a read-only mount.
+function writablePassthroughGuard(db: Database, path: string, ancestors: boolean): void {
+  if (!hasPassthroughMounts(db)) return;
+  for (const root of writablePassthroughRoots(db)) {
+    if (isAtOrBelowRoot(path, root)) {
+      throw passthroughWriteUnsupported(path, root, passthroughTargetOf(db, path));
+    }
+    if (ancestors && root.startsWith(`${path === "/" ? "" : path}/`)) {
+      throw createWorkspaceError("EROFS", `passthrough mount at ${root}: cannot modify`, path);
     }
   }
 }
@@ -83,16 +115,45 @@ export function assertNotInReadOnlyMount(db: Database, path: string): void {
       throw createWorkspaceError("EROFS", `read-only mount at ${root}: cannot modify`, path);
     }
   }
+  writablePassthroughGuard(db, path, false);
 }
 
 // Variant for callers that already know the path is canonicalised
 // and want to reject a single descendant during a recursive walk
 // (rm's walkPostOrder). Returns the matching root or undefined; the
 // caller decides whether to throw, log, or skip.
+//
+// Despite the name, the root it returns may be a read-write
+// passthrough root: one below `path` blocks a store write at `path`
+// as a read-only root does. A path at or below a read-write root gets
+// undefined, since its writes belong to the mount, not the store.
 export function readOnlyRootFor(db: Database, path: string): string | undefined {
   const roots = getReadOnlyMountRoots(db);
   for (const root of roots) {
     if (overlapsRoot(path, root)) return root;
   }
+  // Above a read-write passthrough root the store's directories stay
+  // as they are; at or below it, the caller writes to the source.
+  for (const root of writablePassthroughRoots(db)) {
+    if (root.startsWith(`${path === "/" ? "" : path}/`)) return root;
+  }
   return undefined;
+}
+
+// For a write's own walk of a path, which follows links itself: reject
+// stepping into a passthrough root, at `realParts` after the links it
+// followed, with EROFS. The guards above compare the path as written,
+// which a link can carry into a root unseen.
+export function assertNotEnteringPassthrough(
+  db: Database,
+  realParts: string[],
+  path: string,
+): void {
+  if (!hasPassthroughMounts(db)) return;
+  const entered = passthroughTargetOf(db, `/${realParts.join("/")}`);
+  if (entered === undefined) return;
+  if (isWritableSource(entered.source)) {
+    throw passthroughWriteUnsupported(path, entered.root, { ...entered, path });
+  }
+  throw createWorkspaceError("EROFS", `read-only mount at ${entered.root}: cannot modify`, path);
 }

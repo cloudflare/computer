@@ -12,6 +12,29 @@ import { getBlobBytes } from "./fs/blobCache";
 import { link as linkImpl } from "./fs/link";
 import type { MkdirOptions } from "./fs/mkdir";
 import { mkdir as mkdirImpl } from "./fs/mkdir";
+import {
+  mkdirInMount,
+  passthroughRootListedBy,
+  passthroughTarget,
+  renameWithMount,
+  rmInMount,
+  unsupportedWrite,
+  writeFileToMount,
+  writeTarget,
+  readdirWithPassthrough,
+  readlinkWithPassthrough,
+  readPassthroughFile,
+  statWithPassthrough,
+} from "./fs/passthrough";
+import {
+  asReadOnly,
+  isPassthroughUnsupported,
+  isWritableSource,
+  passthroughUnsupported,
+  type PassthroughTarget,
+  realPathOf,
+  redirectOf,
+} from "./fs/passthrough-registry";
 import { findPendingWriteBuffer } from "./fs/pendingWriteBuffer";
 import { readdir as readdirImpl, readdirEntries, type WorkspaceDirentEntry } from "./fs/readdir";
 import { readRangeSync as readRangeSyncImpl } from "./fs/readFile";
@@ -19,7 +42,7 @@ import { readlink as readlinkImpl } from "./fs/readlink";
 import { rename as renameImpl } from "./fs/rename";
 import { resolveInode } from "./fs/resolve";
 import { rm as rmImpl } from "./fs/rm";
-import { stat as statImpl } from "./fs/stat";
+import { stat as statImpl, type WorkspaceStatResult } from "./fs/stat";
 import { symlink as symlinkImpl } from "./fs/symlink";
 import {
   createWatchAsyncIterable,
@@ -137,7 +160,16 @@ export class SQLiteWorkspaceProvider {
   }
 
   openSync(path: string, flags: string = "r", _mode?: number): number {
-    const { read, write, truncate, append, create, exclusive } = parseFlags(flags);
+    const parsed = parseFlags(flags);
+    // Opening for reading under a passthrough root fails as a sync read
+    // does, with ENOTSUP; opening for writing, as a write does.
+    if (!(parsed.write || parsed.truncate || parsed.create)) return this.#open(path, parsed);
+    this.#rejectPassthroughWrite(path);
+    return this.#write(() => this.#open(path, parsed));
+  }
+
+  #open(path: string, flags: ParsedFlags): number {
+    const { read, write, truncate, append, create, exclusive } = flags;
     const existing = resolveInode(this.db, path);
 
     if (existing === null) {
@@ -169,8 +201,14 @@ export class SQLiteWorkspaceProvider {
     return fd;
   }
 
+  // The async reads serve a path under a passthrough mount from its
+  // mount (see fs/passthrough.ts); their sync twins reject one with
+  // ENOTSUP, and every write under one fails with EROFS.
   stat(path: string, options?: { bigint?: boolean }): Promise<VirtualStatsLike> {
-    return Promise.resolve(this.statSync(path, options));
+    return this.#orMount(
+      () => this.statSync(path, options),
+      () => statWithPassthrough(this.db, path, true).then(passthroughStats),
+    );
   }
 
   statSync(path: string, _options?: { bigint?: boolean }): VirtualStatsLike {
@@ -191,7 +229,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   lstat(path: string, options?: { bigint?: boolean }): Promise<VirtualStatsLike> {
-    return Promise.resolve(this.lstatSync(path, options));
+    return this.#orMount(
+      () => this.lstatSync(path, options),
+      () => statWithPassthrough(this.db, path, false).then(passthroughStats),
+    );
   }
 
   lstatSync(path: string, _options?: { bigint?: boolean }): VirtualStatsLike {
@@ -234,10 +275,19 @@ export class SQLiteWorkspaceProvider {
     path: string,
     options?: { withFileTypes?: boolean },
   ): Promise<string[] | VirtualDirentLike[]> {
-    return Promise.resolve(this.readdirSync(path, options));
+    return this.#orMount(
+      () => this.readdirSync(path, options),
+      () =>
+        readdirWithPassthrough(this.db, path).then((entries) =>
+          options?.withFileTypes === true
+            ? entries.map((entry) => wrapDirent(entry))
+            : entries.map((entry) => entry.name),
+        ),
+    );
   }
 
   readdirSync(path: string, options?: { withFileTypes?: boolean }): string[] | VirtualDirentLike[] {
+    this.#rejectListedRoot(path);
     const entries = readdirImpl(this.db, path);
     if (options?.withFileTypes === true) {
       return entries.map((entry) => wrapDirent(entry));
@@ -251,105 +301,143 @@ export class SQLiteWorkspaceProvider {
    * `@platformatic/vfs` provider surface.
    */
   readdirEntriesSync(path: string): WorkspaceDirentEntry[] {
+    this.#rejectListedRoot(path);
     return readdirEntries(this.db, path);
   }
 
+  // The async writes send one that lands under a read-write
+  // passthrough root to its mount; their sync twins, and the writes a
+  // mount can't take (links, writes at an offset), fail with ENOTSUP
+  // there.
   mkdir(path: string, options?: MkdirOptions): Promise<string | undefined> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) return mkdirInMount(this.db, target, options).then(() => undefined);
     return Promise.resolve(this.mkdirSync(path, options));
   }
 
   mkdirSync(path: string, options?: MkdirOptions): string | undefined {
-    mkdirImpl(this.db, path, options ?? {}, this.now);
-    return undefined;
+    return this.#write(() => {
+      this.#rejectPassthroughWrite(path);
+      mkdirImpl(this.db, path, options ?? {}, this.now);
+      return undefined;
+    });
   }
 
   rmdir(path: string): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) {
+      return this.#removeFromMount(path, target, "dir");
+    }
     this.rmdirSync(path);
     return Promise.resolve();
   }
 
   rmdirSync(path: string): void {
-    flushPendingUnderNode(this.db, path, this.now);
-    rmImpl(this.db, path, {});
+    this.#write(() => {
+      this.#rejectPassthroughWrite(path);
+      flushPendingUnderNode(this.db, path, this.now);
+      rmImpl(this.db, path, {});
+    });
   }
 
   unlink(path: string): Promise<void> {
+    const target = writeTarget(this.db, path, false);
+    if (target !== undefined) {
+      return this.#removeFromMount(path, target, "file");
+    }
     this.unlinkSync(path);
     return Promise.resolve();
   }
 
   unlinkSync(path: string): void {
-    // If a buffered create is still pending for this path, commit it
-    // first so rm sees a real inode to unlink, and so its blob is
-    // reaped with the unlink, matching the non-buffered shape. The
-    // buffer's open handles continue to address bytes through the
-    // inode-keyed cache.
-    flushPendingUnderNode(this.db, path, this.now);
-    flushPendingByPath(this.db, path, this.now);
-    // Capture the target inode before rm runs so we can evict its
-    // write-buffer cache entry if rm removed the last link. Without
-    // this, a release-after-unlink leaves the buffer dangling on a
-    // dead inode and the eventual commit silently affects no rows.
-    const target = resolveInode(this.db, path, { followSymlinks: false });
-    rmImpl(this.db, path, {});
-    if (target !== null) {
-      const stillAlive = this.db.scalar<number>(
-        "SELECT inode FROM vfs_nodes WHERE inode = ?",
-        target.inode,
-      );
-      if (stillAlive === undefined) {
-        deleteWriteBuffer(this.db, target.inode);
+    this.#write(() => {
+      this.#rejectPassthroughWrite(path);
+      // If a buffered create is still pending for this path, commit it
+      // first so rm sees a real inode to unlink, and so its blob is
+      // reaped with the unlink, matching the non-buffered shape. The
+      // buffer's open handles continue to address bytes through the
+      // inode-keyed cache.
+      flushPendingUnderNode(this.db, path, this.now);
+      flushPendingByPath(this.db, path, this.now);
+      // Capture the target inode before rm runs so we can evict its
+      // write-buffer cache entry if rm removed the last link. Without
+      // this, a release-after-unlink leaves the buffer dangling on a
+      // dead inode and the eventual commit silently affects no rows.
+      const target = resolveInode(this.db, path, { followSymlinks: false });
+      rmImpl(this.db, path, {});
+      if (target !== null) {
+        const stillAlive = this.db.scalar<number>(
+          "SELECT inode FROM vfs_nodes WHERE inode = ?",
+          target.inode,
+        );
+        if (stillAlive === undefined) {
+          deleteWriteBuffer(this.db, target.inode);
+        }
       }
-    }
+    });
   }
 
   link(existingPath: string, newPath: string): Promise<void> {
+    const target = writeTarget(this.db, newPath, false) ?? writeTarget(this.db, existingPath, true);
+    if (target !== undefined) return Promise.reject(unsupportedWrite(target));
     this.linkSync(existingPath, newPath);
     return Promise.resolve();
   }
 
   linkSync(existingPath: string, newPath: string): void {
-    // Commit a still-pending source before adding the second dirent,
-    // otherwise link has nothing real to point at. Also commit a
-    // still-pending destination: link's existence check looks at
-    // dirents, so a pending buffer at newPath wouldn't trip it, and
-    // the eventual release on that pending buffer would re-check the
-    // dirent in commitPendingBuffer, throw EEXIST, drop the entry,
-    // and silently lose the user's bytes.
-    flushPendingByPath(this.db, existingPath, this.now);
-    flushPendingByPath(this.db, newPath, this.now);
-    linkImpl(this.db, existingPath, newPath);
+    this.#write(() => {
+      this.#rejectPassthroughWrite(newPath);
+      // Commit a still-pending source before adding the second dirent,
+      // otherwise link has nothing real to point at. Also commit a
+      // still-pending destination: link's existence check looks at
+      // dirents, so a pending buffer at newPath wouldn't trip it, and
+      // the eventual release on that pending buffer would re-check the
+      // dirent in commitPendingBuffer, throw EEXIST, drop the entry,
+      // and silently lose the user's bytes.
+      flushPendingByPath(this.db, existingPath, this.now);
+      flushPendingByPath(this.db, newPath, this.now);
+      linkImpl(this.db, existingPath, newPath);
+    });
   }
 
   rename(oldPath: string, newPath: string): Promise<void> {
+    const from = writeTarget(this.db, oldPath, false);
+    const to = writeTarget(this.db, newPath, false);
+    if (from !== undefined || to !== undefined) {
+      return renameWithMount(this.db, from, to, oldPath, newPath).then(() => undefined);
+    }
     this.renameSync(oldPath, newPath);
     return Promise.resolve();
   }
 
   renameSync(oldPath: string, newPath: string): void {
-    // Commit any still-pending creates at either end before the rename
-    // touches dirents: the source needs a real inode to move, and a
-    // pending buffer at the destination would otherwise slip past
-    // rename's dirent-based existence check and lose bytes on release.
-    flushPendingUnderNode(this.db, oldPath, this.now);
-    flushPendingUnderNode(this.db, newPath, this.now);
-    flushPendingByPath(this.db, oldPath, this.now);
-    flushPendingByPath(this.db, newPath, this.now);
-    // Capture the destination inode before the rename so we can evict
-    // its write-buffer cache entry if the rename displaced and reaped
-    // it. Without this, a release on an open destination would commit
-    // chunks against a dead inode (0-row UPDATE, silent data loss).
-    const displaced = resolveInode(this.db, newPath, { followSymlinks: false });
-    renameImpl(this.db, oldPath, newPath);
-    if (displaced !== null) {
-      const stillAlive = this.db.scalar<number>(
-        "SELECT inode FROM vfs_nodes WHERE inode = ?",
-        displaced.inode,
-      );
-      if (stillAlive === undefined) {
-        deleteWriteBuffer(this.db, displaced.inode);
+    this.#write(() => {
+      this.#rejectPassthroughWrite(oldPath);
+      this.#rejectPassthroughWrite(newPath);
+      // Commit any still-pending creates at either end before the rename
+      // touches dirents: the source needs a real inode to move, and a
+      // pending buffer at the destination would otherwise slip past
+      // rename's dirent-based existence check and lose bytes on release.
+      flushPendingUnderNode(this.db, oldPath, this.now);
+      flushPendingUnderNode(this.db, newPath, this.now);
+      flushPendingByPath(this.db, oldPath, this.now);
+      flushPendingByPath(this.db, newPath, this.now);
+      // Capture the destination inode before the rename so we can evict
+      // its write-buffer cache entry if the rename displaced and reaped
+      // it. Without this, a release on an open destination would commit
+      // chunks against a dead inode (0-row UPDATE, silent data loss).
+      const displaced = resolveInode(this.db, newPath, { followSymlinks: false });
+      renameImpl(this.db, oldPath, newPath);
+      if (displaced !== null) {
+        const stillAlive = this.db.scalar<number>(
+          "SELECT inode FROM vfs_nodes WHERE inode = ?",
+          displaced.inode,
+        );
+        if (stillAlive === undefined) {
+          deleteWriteBuffer(this.db, displaced.inode);
+        }
       }
-    }
+    });
   }
 
   // -- Default implementations ---------------------------------------
@@ -358,7 +446,16 @@ export class SQLiteWorkspaceProvider {
     path: string,
     options?: BufferEncoding | { encoding?: BufferEncoding | null } | null,
   ): Promise<Buffer | string> {
-    return Promise.resolve(this.readFileSync(path, options));
+    const encoding = typeof options === "string" ? options : options?.encoding;
+    return this.#orMount(
+      () => this.readFileSync(path, options),
+      async (target, error) => {
+        if (target === undefined) throw error;
+        const bytes = await readPassthroughFile(target);
+        const out = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return encoding ? out.toString(encoding) : out;
+      },
+    );
   }
 
   readFileSync(
@@ -411,6 +508,17 @@ export class SQLiteWorkspaceProvider {
     data: string | Buffer,
     options?: { encoding?: BufferEncoding; mode?: number } | BufferEncoding,
   ): Promise<void> {
+    const target = writeTarget(this.db, path, true);
+    if (target !== undefined) {
+      const mode = typeof options === "string" ? undefined : options?.mode;
+      const bytes =
+        typeof data === "string"
+          ? data
+          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      return writeFileToMount(this.db, target, bytes, mode === undefined ? {} : { mode }).then(
+        () => undefined,
+      );
+    }
     this.writeFileSync(path, data, options);
     return Promise.resolve();
   }
@@ -477,24 +585,27 @@ export class SQLiteWorkspaceProvider {
   }
 
   chmodSync(path: string, mode: number): void {
-    const pending = findPendingWriteBuffer(this.db, path);
-    if (pending !== undefined) {
-      // Pending-create files don't have a row yet; stash the mode on
-      // the buffer so the eventual INSERT picks it up.
-      pending.mode = mode & 0o7777;
-      return;
-    }
-    const node = resolveInode(this.db, path, { followSymlinks: false });
-    if (node === null) {
-      throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
-    }
-    const rev = incrementRev(this.db);
-    this.db.run(
-      "UPDATE vfs_nodes SET mode = ?, rev = ? WHERE inode = ?",
-      mode & 0o7777,
-      rev,
-      node.inode,
-    );
+    this.#write(() => {
+      this.#rejectPassthroughWrite(path);
+      const pending = findPendingWriteBuffer(this.db, path);
+      if (pending !== undefined) {
+        // Pending-create files don't have a row yet; stash the mode on
+        // the buffer so the eventual INSERT picks it up.
+        pending.mode = mode & 0o7777;
+        return;
+      }
+      const node = resolveInode(this.db, path, { followSymlinks: false });
+      if (node === null) {
+        throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
+      }
+      const rev = incrementRev(this.db);
+      this.db.run(
+        "UPDATE vfs_nodes SET mode = ?, rev = ? WHERE inode = ?",
+        mode & 0o7777,
+        rev,
+        node.inode,
+      );
+    });
   }
 
   appendFile(
@@ -514,14 +625,24 @@ export class SQLiteWorkspaceProvider {
   }
 
   exists(path: string): Promise<boolean> {
-    return Promise.resolve(this.existsSync(path));
+    return this.#orMount(
+      () => this.existsSync(path),
+      () =>
+        statWithPassthrough(this.db, path, true).then(
+          () => true,
+          () => false,
+        ),
+    );
   }
 
   existsSync(path: string): boolean {
+    // existsSync answers false for a failure, which would hide a
+    // passthrough path's ENOTSUP behind a wrong answer.
     try {
       if (findPendingWriteBuffer(this.db, path) !== undefined) return true;
       return resolveInode(this.db, path) !== null;
-    } catch {
+    } catch (error) {
+      if (isPassthroughUnsupported(error)) throw error;
       return false;
     }
   }
@@ -542,7 +663,14 @@ export class SQLiteWorkspaceProvider {
   }
 
   realpath(path: string, _options?: { encoding?: BufferEncoding }): Promise<string> {
-    return Promise.resolve(this.realpathSync(path));
+    return this.#orMount(
+      () => this.realpathSync(path),
+      async (target, error) => {
+        if (target === undefined) throw error;
+        await statWithPassthrough(this.db, path, true);
+        return realPathOf(target);
+      },
+    );
   }
 
   realpathSync(path: string, _options?: { encoding?: BufferEncoding }): string {
@@ -554,8 +682,10 @@ export class SQLiteWorkspaceProvider {
   }
 
   access(path: string, _mode?: number): Promise<void> {
-    this.accessSync(path);
-    return Promise.resolve();
+    return this.#orMount(
+      () => this.accessSync(path),
+      () => statWithPassthrough(this.db, path, true).then(() => undefined),
+    );
   }
 
   accessSync(path: string, _mode?: number): void {
@@ -642,19 +772,85 @@ export class SQLiteWorkspaceProvider {
   }
 
   truncateSync(path: string, len: number): void {
-    const node = resolveInode(this.db, path);
-    if (node === null) {
-      throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
-    }
-    if (node.type !== "file") {
-      throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
-    }
-    truncateFileSyncImpl(this.db, path, len, this.now);
+    this.#write(() => {
+      this.#rejectPassthroughWrite(path);
+      const node = resolveInode(this.db, path);
+      if (node === null) {
+        throw createWorkspaceError("ENOENT", `no such path: ${path}`, path);
+      }
+      if (node.type !== "file") {
+        throw createWorkspaceError("EISDIR", `path is a directory: ${path}`, path);
+      }
+      truncateFileSyncImpl(this.db, path, len, this.now);
+    });
   }
 
   ftruncateSync(fd: number, len: number): void {
     const state = this.#fdOrThrow(fd);
     this.truncateSync(state.path, len);
+  }
+
+  // Run a synchronous read; when it needs a passthrough mount, by name
+  // or through a link, ask the mount instead. Other failures surface as
+  // the synchronous read raised them.
+  // A listing that includes a root fails with no target: its mount
+  // calls are the listing's own.
+  #orMount<T>(
+    read: () => T,
+    fromMount: (target: PassthroughTarget | undefined, error: unknown) => Promise<T>,
+  ): Promise<T> {
+    let value: T;
+    try {
+      value = read();
+    } catch (error) {
+      if (!isPassthroughUnsupported(error)) throw error;
+      return fromMount(redirectOf(error), error);
+    }
+    return Promise.resolve(value);
+  }
+
+  // A listing that would include a passthrough root can't stat it
+  // synchronously; fail rather than leave the root out.
+  #rejectListedRoot(path: string): void {
+    const root = passthroughRootListedBy(this.db, path);
+    if (root !== undefined) throw passthroughUnsupported(path, root);
+  }
+
+  // Run a write, failing with EROFS when it reaches a passthrough root
+  // through a link.
+  #write<T>(write: () => T): T {
+    try {
+      return write();
+    } catch (error) {
+      throw asReadOnly(error);
+    }
+  }
+
+  // Writes under a passthrough root fail with EROFS before anything
+  // resolves the path, which would fail with ENOTSUP instead.
+  #rejectPassthroughWrite(path: string): void {
+    const passthrough = passthroughTarget(this.db, path);
+    if (passthrough !== undefined) throw unsupportedWrite(passthrough);
+  }
+
+  // rmdir and unlink under a read-write root: the mount's rm, after
+  // checking the path is the kind the call removes, as the store's
+  // calls do.
+  async #removeFromMount(
+    path: string,
+    target: PassthroughTarget,
+    kind: "file" | "dir",
+  ): Promise<void> {
+    if (isWritableSource(target.source) && target.rel !== "") {
+      const found = await statWithPassthrough(this.db, path, false);
+      if (kind === "dir" && !found.isDirectory) {
+        throw createWorkspaceError("ENOTDIR", `not a directory: ${target.path}`, target.path);
+      }
+      if (kind === "file" && found.isDirectory) {
+        throw createWorkspaceError("EISDIR", `path is a directory: ${target.path}`, target.path);
+      }
+    }
+    await rmInMount(this.db, target, {});
   }
 
   #fdOrThrow(fd: number): FdState {
@@ -668,7 +864,10 @@ export class SQLiteWorkspaceProvider {
   // -- Symlinks ------------------------------------------------------
 
   readlink(path: string, _options?: { encoding?: BufferEncoding }): Promise<string> {
-    return Promise.resolve(this.readlinkSync(path));
+    return this.#orMount(
+      () => this.readlinkSync(path),
+      () => readlinkWithPassthrough(this.db, path),
+    );
   }
 
   readlinkSync(path: string, _options?: { encoding?: BufferEncoding }): string {
@@ -676,12 +875,16 @@ export class SQLiteWorkspaceProvider {
   }
 
   symlink(target: string, path: string, _type?: string): Promise<void> {
+    const mount = writeTarget(this.db, path, false);
+    if (mount !== undefined) return Promise.reject(unsupportedWrite(mount));
     this.symlinkSync(target, path);
     return Promise.resolve();
   }
 
   symlinkSync(target: string, path: string, _type?: string): void {
-    symlinkImpl(this.db, target, path, this.now);
+    this.#write(() => {
+      symlinkImpl(this.db, target, path, this.now);
+    });
   }
 
   // -- Watch ----------------------------------------------------------
@@ -727,6 +930,19 @@ export class SQLiteWorkspaceProvider {
   ): void {
     throw notImplemented("unwatchFile");
   }
+}
+
+function passthroughStats(stat: WorkspaceStatResult): VirtualStatsLike {
+  return wrapStats({
+    mode: stat.mode,
+    size: stat.size,
+    mtimeMs: stat.mtime,
+    ino: 0,
+    isFile: stat.isFile,
+    isDirectory: stat.isDirectory,
+    isSymbolicLink: false,
+    nlink: 1,
+  });
 }
 
 function notImplemented(method: string) {

@@ -3,7 +3,11 @@ import { canonicalizePath } from "../path";
 import { incrementRev } from "../rev";
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
-import { assertNotInReadOnlyMount, assertNotReadOnly } from "./mount-guard";
+import {
+  assertNotEnteringPassthrough,
+  assertNotInReadOnlyMount,
+  assertNotReadOnly,
+} from "./mount-guard";
 import { invalidateResolveExact } from "./resolveCache";
 
 export interface MkdirOptions {
@@ -133,6 +137,10 @@ function resolveMkdirParent(
       continue;
     }
 
+    // A link that leads into a passthrough root leads into a read-only
+    // mount, where nothing can be created, whether or not the store has
+    // rows there.
+    assertNotEnteringPassthrough(db, [...realParts, name], canonical);
     const parentInode = inodeStack[inodeStack.length - 1];
     const existing = lookupChild(db, parentInode, name);
     if (existing === undefined) {

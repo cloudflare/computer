@@ -4,6 +4,7 @@ import { incrementRev } from "../rev";
 import { ROOT_INODE } from "../schema/index";
 import type { Database } from "../storage";
 import { assertNotReadOnly } from "./mount-guard";
+import { assertParentNotInPassthrough } from "./passthrough-writes";
 import { resolveInode } from "./resolve";
 import { invalidateResolveExact } from "./resolveCache";
 
@@ -44,6 +45,7 @@ export function link(db: Database, existingPath: string, newPath: string): void 
   }
 
   assertNotReadOnly(db, canonicalNew);
+  assertParentNotInPassthrough(db, canonicalizePath(newPath).parentPath ?? "/");
 
   db.transactionSync(() => {
     const source = resolveInode(db, existingPath);

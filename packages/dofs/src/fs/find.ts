@@ -28,12 +28,16 @@ interface ChildRow {
   type: "file" | "dir";
 }
 
-interface WalkStart {
+// The inclusion glob and exclusions of one find, compiled.
+export interface FindFilters {
+  regex: RegExp | undefined;
+  excludes: Exclusion[];
+}
+
+interface WalkStart extends FindFilters {
   inode: number;
   path: string;
   prefix: string;
-  regex: RegExp | undefined;
-  excludes: Exclusion[];
 }
 
 interface Exclusion {
@@ -97,6 +101,18 @@ function prepareWalk(
     throw createWorkspaceError("ENOTDIR", `not a directory: ${canonical}`, canonical);
   }
 
+  return {
+    inode: node.inode,
+    path: canonical,
+    prefix: canonical === "/" ? "/" : `${canonical}/`,
+    ...compileFindFilters(pattern, exclude),
+  };
+}
+
+export function compileFindFilters(
+  pattern: string | undefined,
+  exclude: string[] | undefined,
+): FindFilters {
   // An empty pattern is equivalent to no pattern: walk and return
   // everything rather than compiling it into `^$`, which would match
   // only empty relative paths and yield no results.
@@ -111,13 +127,46 @@ function prepareWalk(
       if (!glob.endsWith("/**") || glob.length <= 3) return [own];
       return [own, { regex: compileGlob(glob.slice(0, -3)), directoryOnly: true }];
     });
-  return {
-    inode: node.inode,
-    path: canonical,
-    prefix: canonical === "/" ? "/" : `${canonical}/`,
-    regex,
-    excludes,
-  };
+  return { regex, excludes };
+}
+
+// Whether an entry, by its path relative to the searched directory,
+// is excluded. An excluded directory takes its subtree with it.
+export function isExcluded(
+  filters: FindFilters,
+  relativePath: string,
+  type: "file" | "dir",
+): boolean {
+  return filters.excludes.some(
+    (excluded) => (!excluded.directoryOnly || type === "dir") && excluded.regex.test(relativePath),
+  );
+}
+
+const pathEncoder = new TextEncoder();
+
+// The order find's walk yields entries in: depth first, each
+// directory's children by name in byte order, a directory before what
+// it contains.
+export function compareFoundPaths(a: string, b: string): number {
+  const left = a.split("/");
+  const right = b.split("/");
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] === right[index]) continue;
+    return compareBytes(left[index], right[index]);
+  }
+  return left.length - right.length;
+}
+
+// Byte order of the UTF-8 encodings, which is how SQLite sorts names.
+export function compareBytes(a: string, b: string): number {
+  const left = pathEncoder.encode(a);
+  const right = pathEncoder.encode(b);
+  const length = Math.min(left.byteLength, right.byteLength);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return left.byteLength - right.byteLength;
 }
 
 function* walk(
@@ -126,7 +175,7 @@ function* walk(
   parentPath: string,
   start: WalkStart,
 ): IterableIterator<WorkspaceFoundEntry> {
-  const { prefix, regex, excludes } = start;
+  const { prefix, regex } = start;
   let afterName = "";
   while (true) {
     const children = readChildren(db, parentInode, afterName);
@@ -138,12 +187,7 @@ function* walk(
       // Exclusion is decided before inclusion, and before any child
       // query: an excluded directory takes its whole subtree with it,
       // so the walker never reads below it.
-      if (
-        excludes.some(
-          (excluded) =>
-            (!excluded.directoryOnly || child.type === "dir") && excluded.regex.test(relativePath),
-        )
-      ) {
+      if (isExcluded(start, relativePath, child.type)) {
         continue;
       }
       if (regex === undefined || regex.test(relativePath)) {
@@ -181,7 +225,7 @@ function readChildren(db: Database, parentInode: number, afterName: string): Chi
 //         no top-level comma or no closing brace is a literal
 // Anything else is a literal. Regex metacharacters in literals are
 // escaped so '.' in '*.ts' doesn't match an arbitrary character.
-function compileGlob(pattern: string): RegExp {
+export function compileGlob(pattern: string): RegExp {
   return new RegExp(`^${globSource(pattern)}$`);
 }
 

@@ -27,6 +27,7 @@ import {
   failOperation,
   initializeSchema,
   readOperation,
+  registerPassthroughMounts,
   SQLiteWorkspaceProvider,
   WorkspaceFilesystem,
 } from "@cloudflare/dofs";
@@ -43,7 +44,7 @@ import { ExecutionRuntimeTracker, SqlExecutionRuntimeStore } from "./execution-r
 import type { GitClient, GitClientFactory, GitIdentity } from "./git/index";
 import { MountIndex } from "./mounts/index";
 import { buildMountRegistry, type MountValue } from "./mounts/registry";
-import type { Mount } from "./mounts/types";
+import type { EagerMount, Mount, PassthroughMount } from "./mounts/types";
 import { noopObserver, safeErrorMessage, type WorkspaceObserver, withSpan } from "./observe";
 import { createSyncLogger, type SyncLogger } from "./observe/sync-telemetry";
 import { PendingSyncFences } from "./pending-sync-fence";
@@ -103,6 +104,11 @@ export interface WorkspaceOptions {
   // mount roots (no trailing slash, no nesting). Values are either
   // bare Mount objects or factories that take a MountContext and
   // return one. Factories are called once at construction.
+  //
+  // Passthrough mounts live only in this Workspace's memory: pass
+  // them every time the workspace is opened, or the files under their
+  // roots are gone. Opening one creates its root's missing parent
+  // directories as ordinary directories.
   mounts?: Record<string, MountValue>;
 
   // Observer that receives one span per workspace operation: a
@@ -308,10 +314,24 @@ export class Workspace {
       sessionId: options.sessionId,
       vfs: () => this.provider(),
     });
+    const eager = new Map<string, EagerMount>();
+    const passthrough = new Map<string, PassthroughMount>();
+    for (const [root, mount] of this.#mounts) {
+      if (mount.strategy === "passthrough") passthrough.set(root, mount);
+      else eager.set(root, mount);
+    }
+    // Passthrough mounts have nothing to index: the store routes reads
+    // under their roots to them and refuses writes there. Their roots
+    // are checked against the eager ones where each really is, since a
+    // link on a parent path can put two differently named roots in
+    // one place.
+    // Registered when there are none too, so what was recorded for
+    // pulls into a mount no longer passed goes with it.
+    registerPassthroughMounts(this.#db, passthrough, this.#now, eager.keys());
     this.#mountIndex = new MountIndex({
       db: this.#db,
       fs: this.#fs,
-      mounts: this.#mounts,
+      mounts: eager,
     });
     this.#assets = typeof options.assets === "function" ? options.assets(this) : options.assets;
   }
@@ -351,7 +371,8 @@ export class Workspace {
   // Read-only mount enforcement lives at the data layer in
   // @cloudflare/dofs: writeFile / mkdir / rm consult the registered
   // mount roots and reject EROFS without needing a workspace-side
-  // wrapper. The same check fires on the apply path used by
+  // wrapper. Reads under a passthrough mount's root go to the mount
+  // the same way, inside the filesystem. The same check fires on the apply path used by
   // pullOnce, so container-side writes under a read-only mount are
   // also rejected (and surfaced via Workspace.pull's skipped[]).
   get fs(): WorkspaceFilesystem {
