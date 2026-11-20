@@ -94,7 +94,7 @@ const DEFAULT_TOOLS_SPECIFIER = "codemode:tools";
 const workspaceRules = (specifier: string, toolsSpecifier: string) => [
   `Import the module as a namespace, \`import * as browser from ${JSON.stringify(specifier)}\`, and call \`browser.<name>({ ... })\` as above.`,
   "Notices about the browser (it restarted, your tab was closed, the page opened tabs) are written to stderr after the run ends.",
-  'To look at a page, save a screenshot and open the file with `read`: `const { data } = await browser.cdp({ method: "Page.captureScreenshot", sessionId: "active" })`, then `await fs.writeFile(path, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))` with `node:fs/promises`.',
+  'To look at a page, save a screenshot and open the file with `read`. Take it as a JPEG and name the file `.jpg`, since a PNG of a whole window is often over the 1 MiB one call can return: `const { data } = await browser.cdp({ method: "Page.captureScreenshot", params: { format: "jpeg", quality: 80 }, sessionId: "active" })`, then `await fs.writeFile(path, Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))` with `node:fs/promises`.',
   "One call returns at most 1 MiB, and a run's calls share 8 MiB each way, so take about eight screenshots per run at most, and print PDFs in a run of their own.",
   "Runs that use the browser take turns, even when started together: a run waits until the runs ahead of it end. To work on several pages, do it in one run: open a tab per page with Target.createTarget and drive them with Promise.all.",
   `Don't call the browser tool from code through \`${toolsSpecifier}\`: it waits for this run's turn, which only ends when this run does.`,

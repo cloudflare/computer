@@ -203,6 +203,11 @@ describe("createBrowserModule", () => {
     expect(module.description).toContain('import * as browser from "codemode:browser"');
     expect(module.description).toContain("written to stderr after the run ends");
     expect(module.description).toContain("open the file with `read`");
+    // A PNG of a whole window is often over what one call returns, so the example takes a JPEG.
+    expect(module.description).toContain(
+      'browser.cdp({ method: "Page.captureScreenshot", params: { format: "jpeg", quality: 80 }, sessionId: "active" })',
+    );
+    expect(module.description).toContain("Take it as a JPEG and name the file `.jpg`");
     expect(module.description).toContain("about eight screenshots per run");
     expect(module.description).toContain("Target.createTarget");
     expect(module.description).toContain("Don't call the browser tool from code");
