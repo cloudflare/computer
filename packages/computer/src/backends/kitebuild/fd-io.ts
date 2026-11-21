@@ -1,7 +1,7 @@
 // Reading and writing a Kitebuild program's descriptors in full, waiting
 // on pipes and stopping when the process is told to.
 
-import { type FdEntry, type JsProgramCtx, writeFdBytes } from "@cloudflare/kitebuild-core";
+import { type FdEntry, type JsProgramCtx, writeFdBytes } from "@cloudflare/kitebuild-runtime";
 
 export const EPIPE = 32;
 

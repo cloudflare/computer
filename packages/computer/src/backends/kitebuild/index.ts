@@ -6,8 +6,9 @@
 // Runs shell commands on a Kitebuild machine: busyworker's BusyBox
 // userland, executed in the Workspace's own Durable Object with the
 // Workspace store mounted directly. Requires the optional peer
-// dependency @cloudflare/kitebuild-core; further programs come from
-// toolsets such as @cloudflare/kitebuild-git.
+// dependencies @cloudflare/kitebuild-runtime and
+// @cloudflare/kitebuild-toolchain; further programs come from toolsets
+// such as the toolchain's.
 //
 // Imported via:
 //

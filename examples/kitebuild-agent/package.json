@@ -14,10 +14,8 @@
   },
   "dependencies": {
     "@cloudflare/computer": "*",
-    "@cloudflare/kitebuild-cli-tools": "^0.0.8",
-    "@cloudflare/kitebuild-core": "^0.0.7",
-    "@cloudflare/kitebuild-git": "^0.0.11",
-    "@cloudflare/kitebuild-toolchain": "^0.1.4",
+    "@cloudflare/kitebuild-runtime": "^0.1.0",
+    "@cloudflare/kitebuild-toolchain": "^0.3.0",
     "@earendil-works/pi-ai": "^0.99.2",
     "zod": "^4.6.6"
   },

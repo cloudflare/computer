@@ -5,7 +5,7 @@
 // the call changed to the mounts afterwards.
 
 import { currentRev } from "@cloudflare/dofs";
-import type { JsProgramCtx, ProgramSpec } from "@cloudflare/kitebuild-core";
+import type { JsProgramCtx, ProgramSpec } from "@cloudflare/kitebuild-runtime";
 
 import type { WorkspaceBackendHost } from "../../backend";
 import {

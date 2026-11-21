@@ -1,11 +1,11 @@
-import type { JsProgramCtx } from "@cloudflare/kitebuild-core";
+import type { JsProgramCtx } from "@cloudflare/kitebuild-runtime";
 import { describe, expect, it, vi } from "vitest";
 
 import { readAll } from "./fd-io";
 
 // The package's main entry needs the Workers runtime, and readAll uses
 // none of it.
-vi.mock("@cloudflare/kitebuild-core", () => ({ writeFdBytes: () => -1 }));
+vi.mock("@cloudflare/kitebuild-runtime", () => ({ writeFdBytes: () => -1 }));
 
 // A program context whose descriptor 0 reads `bytes` as a redirected file,
 // counting the bytes its body copies.

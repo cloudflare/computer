@@ -9,8 +9,8 @@ import {
   type ConformanceBackend,
   type ConformanceCase,
   conformanceCases,
-} from "@cloudflare/kitebuild-core/conformance";
-import { Vfs } from "@cloudflare/kitebuild-core/vfs";
+} from "@cloudflare/kitebuild-runtime/conformance";
+import { Vfs } from "@cloudflare/kitebuild-runtime/vfs";
 import { describe, expect, it } from "vitest";
 
 import { mountWorkspace } from "./workspace-mount";

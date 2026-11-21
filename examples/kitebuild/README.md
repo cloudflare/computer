@@ -48,7 +48,7 @@ client ─► Worker /c/<name>/{file,exec}
    passing a `KitebuildBackend` from
    `@cloudflare/computer/backends/kitebuild`. When the Workspace
    starts the backend, the backend creates a Kitebuild `Machine` from
-   `@cloudflare/kitebuild-core` in the same Durable Object. There is
+   `@cloudflare/kitebuild-runtime` in the same Durable Object. There is
    no kernel or virtual machine underneath: BusyBox is compiled to
    wasm against a patched musl, and its Linux system calls land in a
    kernel written in TypeScript. That kernel keeps the process table,
@@ -90,7 +90,7 @@ commands run at once by default.
 ## What the shell has
 
 - BusyBox: `sh`, `sort`, `sed`, `awk`, `tar`, `gzip`, `find` and the rest.
-- `git`, Kitebuild's own (`@cloudflare/kitebuild-git`). It commits as
+- `git`, Kitebuild's own (`@cloudflare/kitebuild-toolchain/git`). It commits as
   the Workspace's `defaultGitIdentity` when a command sets no identity.
 - No network. The backend's default egress is `none`, so `git clone`
   and `wget` are refused. See the backend docs to allow hosts through a
@@ -114,7 +114,7 @@ curl -X POST -H 'content-type: application/json' \
 
 ## Packages
 
-`@cloudflare/kitebuild-core` and `@cloudflare/kitebuild-git` are not
+`@cloudflare/kitebuild-runtime` and `@cloudflare/kitebuild-toolchain` are not
 on public npm yet. Until they are,
 `npm install` fetches them from Cloudflare's internal npm registry; see
 [`COLLABORATORS.md`](../../COLLABORATORS.md#setup) for the token it

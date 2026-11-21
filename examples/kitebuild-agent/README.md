@@ -78,7 +78,7 @@ new KitebuildBackend({
 ```
 
 `commands` lists what the shell has beyond BusyBox and `git`. `rg()` and
-`jq()` come from `@cloudflare/kitebuild-cli-tools`: the upstream tools,
+`jq()` come from `@cloudflare/kitebuild-toolchain/cli-tools`: the upstream tools,
 compiled to wasm. `toolchain()`, from
 `@cloudflare/kitebuild-toolchain/toolset`, turns the program groups you
 pick into one entry and fills in what they need: the Worker Loader

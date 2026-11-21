@@ -26,7 +26,7 @@ import {
   nextGeneration,
   Vfs,
   type VfsPersistence,
-} from "@cloudflare/kitebuild-core/vfs";
+} from "@cloudflare/kitebuild-runtime/vfs";
 
 export interface WorkspaceMountOptions {
   /** Most file bodies kept in memory for reads, in bytes. */

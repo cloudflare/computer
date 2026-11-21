@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@cloudflare/computer": "*",
-    "@cloudflare/kitebuild-core": "^0.0.7",
-    "@cloudflare/kitebuild-git": "^0.0.11"
+    "@cloudflare/kitebuild-runtime": "^0.1.0",
+    "@cloudflare/kitebuild-toolchain": "^0.3.0"
   },
   "devDependencies": {
     "typescript": "^6.0.3",

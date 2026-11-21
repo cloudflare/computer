@@ -26,10 +26,10 @@ import {
   Machine,
   ProgramRegistry,
   type Toolset,
-} from "@cloudflare/kitebuild-core";
-import BUSYBOX from "@cloudflare/kitebuild-core/artifacts/busybox.wasm";
-import INITRAMFS from "@cloudflare/kitebuild-core/artifacts/initramfs.wasm";
-import { git as kitebuildGit } from "@cloudflare/kitebuild-git";
+} from "@cloudflare/kitebuild-runtime";
+import BUSYBOX from "@cloudflare/kitebuild-runtime/artifacts/busybox.wasm";
+import INITRAMFS from "@cloudflare/kitebuild-runtime/artifacts/initramfs.wasm";
+import { git as kitebuildGit } from "@cloudflare/kitebuild-toolchain/git";
 
 import type { BackendHandle, WorkspaceBackend, WorkspaceBackendHost } from "../../backend";
 import type { WorkspaceEgressPolicy } from "../../runtime/egress";
@@ -61,7 +61,7 @@ export interface KitebuildBackendOptions {
   maxExecs?: number;
   /**
    * Which `git` the shell has. "kitebuild" (the default) is Kitebuild's
-   * git (@cloudflare/kitebuild-git), run on the machine's own files. Its
+   * git (@cloudflare/kitebuild-toolchain/git), run on the machine's own files. Its
    * HTTP follows `egress` like every other command, which Kitebuild checks
    * for every request and redirect: refused under "none", sent directly
    * under "direct", and handed to the gateway under "http-gateway".

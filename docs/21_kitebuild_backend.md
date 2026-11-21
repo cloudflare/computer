@@ -9,7 +9,7 @@ It sits between the Worker shell, which starts fast but runs a fixed command set
 
 ## Setup
 
-`@cloudflare/kitebuild-core` and `@cloudflare/kitebuild-git` are optional peer dependencies of `@cloudflare/computer`, needed by this backend. Install them next to it:
+`@cloudflare/kitebuild-runtime` and `@cloudflare/kitebuild-toolchain` are optional peer dependencies of `@cloudflare/computer`, needed by this backend. Install them next to it:
 
 ```ts
 import { DurableObject } from "cloudflare:workers";
@@ -52,12 +52,12 @@ for await (const event of run) {
 Commands beyond BusyBox come from packages the caller installs and passes in `commands`. Each package exports toolsets, Kitebuild's name for a set of programs on the machine's `PATH`. These are shell commands; the tools an agent calls, such as `read` and `exec`, come from [`@cloudflare/computer/tools`](./09_tool_interface.md).
 
 ```ts
-import { rg, jq } from "@cloudflare/kitebuild-cli-tools";
+import { rg, jq } from "@cloudflare/kitebuild-toolchain/cli-tools";
 
 new KitebuildBackend({ commands: [rg(), jq()] });
 ```
 
-Commands come in two kinds, and it helps to know which is which. Some are upstream programs built for WebAssembly, such as BusyBox, and `rg` and `jq` from `@cloudflare/kitebuild-cli-tools`; they behave as they do anywhere. Others are Kitebuild's own implementations in JavaScript, such as `node`, `npm`, `tsc`, `vite`, `vitest` and `git`, which cover what builds and tests use rather than every flag; their coverage grows with each Kitebuild release. When one of those meets something it doesn't support, it stops before doing any work, with exit code 3 and a `kitebuild: unsupported: <feature>: <reason>` line on stderr; `KITEBUILD_UNSUPPORTED=warn` in the command's environment keeps going with a warning instead. Each package's README says what its commands cover.
+Commands come in two kinds, and it helps to know which is which. Some are upstream programs built for WebAssembly, such as BusyBox, and `rg` and `jq` from `@cloudflare/kitebuild-toolchain/cli-tools`; they behave as they do anywhere. Others are Kitebuild's own implementations in JavaScript, such as `node`, `npm`, `tsc`, `vite`, `vitest` and `git`, which cover what builds and tests use rather than every flag; their coverage grows with each Kitebuild release. When one of those meets something it doesn't support, it stops before doing any work, with exit code 3 and a `kitebuild: unsupported: <feature>: <reason>` line on stderr; `KITEBUILD_UNSUPPORTED=warn` in the command's environment keeps going with a warning instead. Each package's README says what its commands cover.
 
 Some commands load their wasm only when first run, through `import.source()`, which needs the `new_module_registry` compatibility flag; each package's README says which. The wasm still counts toward the Worker's upload, so import only the commands you use.
 
@@ -69,7 +69,7 @@ This backend has `rg` and `jq`, a second mounted directory, a shared environment
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Workspace } from "@cloudflare/computer";
 import { KitebuildBackend } from "@cloudflare/computer/backends/kitebuild";
-import { jq, rg } from "@cloudflare/kitebuild-cli-tools";
+import { jq, rg } from "@cloudflare/kitebuild-toolchain/cli-tools";
 
 export class EgressGateway extends WorkerEntrypoint<Env> {
   override async fetch(request: Request) {
@@ -118,7 +118,7 @@ Each command's environment is built in three layers: `HOME=/root`, `PATH=/usr/bi
 
 ### git
 
-`git` is Kitebuild's git (`@cloudflare/kitebuild-git`) by default: isomorphic-git working on the machine's own files, with busyworker's patches for large clones and checkouts. It covers `init`, `clone`, `status`, `log`, `add`, `commit`, `branch`, `checkout`, `remote`, `config`, `fetch`, `pull`, `push`, `apply`, `reset`, `cherry-pick`, `revert`, `blame` and more, and refuses options it does not support by name.
+`git` is Kitebuild's git (`@cloudflare/kitebuild-toolchain/git`) by default: isomorphic-git working on the machine's own files, with busyworker's patches for large clones and checkouts. It covers `init`, `clone`, `status`, `log`, `add`, `commit`, `branch`, `checkout`, `remote`, `config`, `fetch`, `pull`, `push`, `apply`, `reset`, `cherry-pick`, `revert`, `blame` and more, and refuses options it does not support by name.
 
 `git push [-u] [-f] [<remote> [<src>[:<dst>]]]` is allowed, with credentials from the environment (for example `GITHUB_TOKEN`) or from your fetch.
 

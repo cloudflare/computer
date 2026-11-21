@@ -20,7 +20,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { getWorkspace, WorkerBundle, withWorkspace } from "@cloudflare/computer";
 import { KitebuildBackend } from "@cloudflare/computer/backends/kitebuild";
 import { createPiTools } from "@cloudflare/computer/tools/pi-ai";
-import { jq, rg } from "@cloudflare/kitebuild-cli-tools";
+import { jq, rg } from "@cloudflare/kitebuild-toolchain/cli-tools";
 // Each group from its own subpath, so the Worker uploads only the wasm
 // these commands need. essentials is curl and git; node is node, npm,
 // npx, pnpm, bun and bunx; typescript is tsc; vite is vite and Tailwind; vitest is

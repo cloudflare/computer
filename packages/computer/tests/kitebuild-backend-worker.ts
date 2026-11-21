@@ -8,8 +8,8 @@
 // calls HostDO's methods directly through its stub.
 
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
-import { writeFdBytes } from "@cloudflare/kitebuild-core";
-import type { JsProgramCtx, Toolset } from "@cloudflare/kitebuild-core";
+import { writeFdBytes } from "@cloudflare/kitebuild-runtime";
+import type { JsProgramCtx, Toolset } from "@cloudflare/kitebuild-runtime";
 
 import type { ArtifactsCLIInput, ArtifactsCLIResult } from "../src/artifacts/index";
 import type { WorkspaceBackend } from "../src/backend";

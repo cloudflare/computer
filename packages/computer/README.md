@@ -93,7 +93,7 @@ feature: `just-bash` for `@cloudflare/computer/backends/worker-shell`,
 `zod` for every tools entry point, `ai` for
 `@cloudflare/computer/tools` and `@cloudflare/computer/tools/ai-sdk`,
 `@platformatic/vfs` for the Node-side VFS provider, and
-`@cloudflare/kitebuild-core` and `@cloudflare/kitebuild-git` for
+`@cloudflare/kitebuild-runtime` and `@cloudflare/kitebuild-toolchain` for
 `@cloudflare/computer/backends/kitebuild`. The pi and TanStack
 AI entry points need nothing beyond `zod`; your agent brings its own
 library.
@@ -324,7 +324,7 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 | **Container (legacy)** | Deprecated | `@cloudflare/computer/backends/container-legacy` | The same | A Cloudflare Container the platform schedules and sizes from the `containers` block |
 | **Worker shell** | Experimental | `@cloudflare/computer/backends/worker-shell` | Shell commands via [just-bash](https://github.com/vercel-labs/just-bash) in a Dynamic Worker | A Worker Loader binding; `experimental` flag; the `just-bash` package |
 | **Codemode** | Stable | `@cloudflare/computer/backends/codemode` | ECMAScript modules in a fresh Dynamic Worker | A Worker Loader binding |
-| **Kitebuild** | Experimental | `@cloudflare/computer/backends/kitebuild` | Shell commands in a BusyBox Linux userland, with optional toolsets | The `@cloudflare/kitebuild-core` and `@cloudflare/kitebuild-git` packages |
+| **Kitebuild** | Experimental | `@cloudflare/computer/backends/kitebuild` | Shell commands in a BusyBox Linux userland, with optional toolsets | The `@cloudflare/kitebuild-runtime` and `@cloudflare/kitebuild-toolchain` packages |
 
 - **Container** cold-starts more slowly but gives you a real Linux
   environment. The container owns its own SQLite-backed VFS and this
@@ -350,8 +350,8 @@ Alongside `exec`, the runtime exposes `getExec`, `killExec`, and
 - **Kitebuild** runs BusyBox with real processes, pipes and signals in
   the Workspace's own Durable Object, and streams output as it is
   written. It mounts the Workspace store directly, so there's no second
-  store. Its `git` is `@cloudflare/kitebuild-git`, and packages
-  such as `@cloudflare/kitebuild-cli-tools` add programs. See [`docs/21_kitebuild_backend.md`](../../docs/21_kitebuild_backend.md)
+  store. Its `git` comes from `@cloudflare/kitebuild-toolchain`, and toolsets
+  such as the toolchain's `rg` and `jq` add programs. See [`docs/21_kitebuild_backend.md`](../../docs/21_kitebuild_backend.md)
   and [`examples/kitebuild`](../../examples/kitebuild).
 
 You can register several backends on one Workspace and route each call
@@ -620,7 +620,7 @@ on a computerd instance.
 | `@cloudflare/computer/backends/container-legacy` | Deprecated. `LegacyContainerBackend` and `withLegacyWorkspaceContainer`; use `@cloudflare/computer/backends/container` instead. |
 | `@cloudflare/computer/backends/worker-shell` | `WorkerShellBackend` and the bundled just-bash runtime. |
 | `@cloudflare/computer/backends/codemode` | `CodemodeBackend`, configured libraries, durable imports, `node:fs/promises`, and host modules. |
-| `@cloudflare/computer/backends/kitebuild` | Experimental. `KitebuildBackend`: shell commands on a Kitebuild machine, with the Workspace store mounted. Needs `@cloudflare/kitebuild-core` and `@cloudflare/kitebuild-git`. |
+| `@cloudflare/computer/backends/kitebuild` | Experimental. `KitebuildBackend`: shell commands on a Kitebuild machine, with the Workspace store mounted. Needs `@cloudflare/kitebuild-runtime` and `@cloudflare/kitebuild-toolchain`. |
 | `@cloudflare/computer/modules/container` | `createContainerModule()` for `codemode:container`: run container commands from isolate JavaScript. |
 | `@cloudflare/computer/modules/git` | `createGitModule()` for `codemode:git`: confined Git from isolate JavaScript. |
 | `@cloudflare/computer/modules/artifacts` | `createArtifactsModule()` for `codemode:artifacts`: Artifacts and git tokens from isolate JavaScript. |
