@@ -1,4 +1,10 @@
-import type { ExecBackends, ExecMetadata, ExecToolOptions, ExecWorkspaceLike } from "./exec";
+import type {
+  ExecBackends,
+  ExecDetachOptions,
+  ExecMetadata,
+  ExecToolOptions,
+  ExecWorkspaceLike,
+} from "./exec";
 import { confineWorkspace } from "./fs/confine";
 import type { EditToolOptions } from "./fs/edit";
 import type { ReadToolOptions } from "./fs/read";
@@ -20,8 +26,8 @@ export interface CreateToolsOptions {
   /**
    * Options for the `exec` tool. Omit `exec` or its `backends` to offer
    * every backend the Workspace has; `{ backends: {} }` means no exec
-   * tool. `exec: {}` and keys other than `backends`, `output`, and
-   * `metadata`, such as a backend map from before `exec.backends`,
+   * tool. `exec: {}` and keys other than `backends`, `output`,
+   * `metadata` and `detach`, such as a backend map from before `exec.backends`,
    * throw.
    */
   exec?: ExecToolSetOptions;
@@ -50,6 +56,12 @@ export interface ExecToolSetOptions {
    * sees it.
    */
   metadata?: ExecMetadata;
+  /**
+   * Return before a run ends and leave it running, once it waits for an
+   * answer or, with `afterMs`, has gone on that long. Its exit goes to
+   * the backend's `onDetachedExit`. Experimental.
+   */
+  detach?: ExecDetachOptions;
 }
 
 interface LegacyShellOptions extends Omit<ExecToolOptions, "workspace" | "backends"> {
@@ -90,7 +102,7 @@ export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOpt
   };
 }
 
-const EXEC_KEYS = new Set(["backends", "output", "metadata"]);
+const EXEC_KEYS = new Set(["backends", "output", "metadata", "detach"]);
 
 // Reject the shapes `exec` had before it took `{ backends, output,
 // metadata }`, rather than offering every backend for them.
@@ -99,7 +111,7 @@ function checkExec(exec: ExecToolSetOptions | undefined): void {
   const keys = Object.keys(exec);
   if (keys.some((key) => !EXEC_KEYS.has(key))) {
     throw new TypeError(
-      "exec takes `{ backends, output, metadata }`; move backend options under `exec.backends`",
+      "exec takes `{ backends, output, metadata, detach }`; move backend options under `exec.backends`",
     );
   }
   if (keys.length === 0) {
@@ -115,13 +127,14 @@ function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
   if (runtime === undefined) return undefined;
   const selected = selectExec(options, runtime);
   if (Object.keys(selected.backends).length === 0) return undefined;
-  const { output, metadata } = options.exec ?? {};
+  const { output, metadata, detach } = options.exec ?? {};
   return {
     workspace: { runtime },
     ...selected,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
     ...(metadata === undefined ? {} : { metadata }),
+    ...(detach === undefined ? {} : { detach }),
   };
 }
 
