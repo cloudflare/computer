@@ -448,8 +448,13 @@ export class ContainerExec<Egress = undefined> implements ExecTarget {
       await this.#admit(egress);
       try {
         // exec() waits for a container that's still starting.
+        const routed = this.#route?.kind === "egress";
         process = await this.#get().exec(cmd, {
           ...options,
+          // The start's env reaches only the entrypoint, so a routed command needs the CA itself.
+          ...(routed
+            ? { env: { ...(options?.env as Record<string, string> | undefined), ...CA_ENV } }
+            : {}),
           user: options?.user ?? this.#options.user ?? ROOT,
         });
       } catch (error) {
