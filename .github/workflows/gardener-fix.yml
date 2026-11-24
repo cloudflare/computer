@@ -39,7 +39,7 @@ jobs:
       issues: write
       pull-requests: write
       statuses: read
-    uses: scuffi/gardener/.github/workflows/gardener-task.yml@b94c5b6356ec7dee4b9e7ceb5768c80a88863310
+    uses: scuffi/gardener/.github/workflows/gardener-task.yml@8044c9e4adf72afbef21020b261c48516774468c
     with:
       runtime-url: ${{ vars.GARDENER_RUNTIME_URL }}
       task-id: "fix"
