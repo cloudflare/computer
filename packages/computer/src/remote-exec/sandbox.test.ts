@@ -90,6 +90,7 @@ function interceptingContainer(
   trust: { exitCode: number; stderr: string } = { exitCode: 0, stderr: "" },
 ) {
   const { container, log } = fakeContainer(false);
+  const execOptions: unknown[] = [];
   const intercepting = Object.assign(container, {
     interceptAllOutboundHttp: async (binding: Fetcher) => {
       log.push(`intercept http ${(binding as unknown as { name: string }).name}`);
@@ -99,6 +100,7 @@ function interceptingContainer(
     },
     exec: async (cmd: string[], options?: unknown) => {
       const script = cmd[2] === TRUST_CA_SCRIPT;
+      if (!script) execOptions.push(options);
       log.push(script ? `trust ${JSON.stringify(options)}` : `exec ${cmd.join(" ")}`);
       return script
         ? fakeProcess({
@@ -108,7 +110,7 @@ function interceptingContainer(
         : fakeProcess();
     },
   });
-  return { container: intercepting, log };
+  return { container: intercepting, log, execOptions };
 }
 
 interface Egress {
@@ -261,6 +263,23 @@ describe("ContainerExec (what ExecSandbox delegates to)", () => {
       "exec b",
       "exec c",
     ]);
+  });
+
+  it("gives each command routed through an egress the CA's env, over its own", async () => {
+    const { container, execOptions } = interceptingContainer();
+    const target = egressing(container);
+    await target.exec(["a"], { env: { A: "1", SSL_CERT_FILE: "/mine" } }, EGRESS);
+    await target.exec(["b"], undefined, EGRESS);
+    expect(execOptions).toEqual([
+      { env: { A: "1", ...CA_ENV }, user: "0:0" },
+      { env: CA_ENV, user: "0:0" },
+    ]);
+  });
+
+  it("leaves the env of a command with no egress alone", async () => {
+    const { container, execOptions } = interceptingContainer();
+    await egressing(container).exec(["a"], { env: { A: "1" } });
+    expect(execOptions).toEqual([{ env: { A: "1" }, user: "0:0" }]);
   });
 
   it("lets the start options turn the internet on, and keeps their env under the CA's", async () => {
