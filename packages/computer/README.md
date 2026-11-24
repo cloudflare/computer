@@ -388,7 +388,7 @@ your image from the image of the same version, also at
 `registry.cloudflare.com/library/computer-remote-exec`:
 
 ```dockerfile
-FROM ghcr.io/cloudflare/computer-remote-exec:0.11.4 AS remote-exec
+FROM ghcr.io/cloudflare/computer-remote-exec:0.11.5 AS remote-exec
 FROM debian:stable-slim
 COPY --from=remote-exec /usr/local/bin/remote-exec /usr/local/bin/remote-exec
 CMD ["sleep", "infinity"]

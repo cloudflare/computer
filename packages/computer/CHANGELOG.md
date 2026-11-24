@@ -1,5 +1,15 @@
 # @cloudflare/computer
 
+## 0.11.5
+
+### Patch Changes
+
+- [#337](https://github.com/cloudflare/computer/pull/337) Show `codemode:browser`'s screenshot example as a JPEG, since a PNG of a whole window is often over the 1 MiB one call can return. ([`62f23d7`](https://github.com/cloudflare/computer/commit/62f23d7eb5678c29b40311dc579c72e5d8a57694)) - Thanks [@ben-reitz](https://github.com/ben-reitz)
+
+- [#322](https://github.com/cloudflare/computer/pull/322) `CodemodeBackend` takes an experimental `onDetachedExit`, and `workspace.runtime.detachExec(id)` leaves an exec running with nothing waiting on it, so its exit goes to `onDetachedExit`, saved with the exit and delivered again after a restart or from `runtime.recover()`; see [Detaching](https://github.com/cloudflare/computer/blob/main/docs/05_runtime_interface.md#detaching). ([`018545e`](https://github.com/cloudflare/computer/commit/018545e5e800f7e3ba2b47308ec32a56404ebf4c)) - Thanks [@scuffi](https://github.com/scuffi)
+
+- [#322](https://github.com/cloudflare/computer/pull/322) The `exec` tool takes an experimental `detach: true`, or `{ afterMs }`, that returns once a run waits for an answer, or has gone on that long, with its `executionId` and output so far, and leaves it running for its backend's `onDetachedExit`; see [Detaching](https://github.com/cloudflare/computer/blob/main/docs/09_tool_interface.md#detaching). ([`018545e`](https://github.com/cloudflare/computer/commit/018545e5e800f7e3ba2b47308ec32a56404ebf4c)) - Thanks [@scuffi](https://github.com/scuffi)
+
 ## 0.11.4
 
 ### Patch Changes
