@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertRuntimeValue } from "../../runtime/capability";
 import type { TruncatedOutput } from "../../runtime/output-spool";
 import {
   DEFAULT_OUTPUT_MAX_BYTES,
@@ -11,22 +12,19 @@ import type { WorkspaceBackendInfo, WorkspaceRuntimeSaveResult } from "../../run
 import { notCallableMessage } from "../../runtime/runtime";
 import type { WorkspaceRuntimeTruncation, WorkspaceRuntimeValue } from "../../runtime/types";
 
-// A finite JSON value: what a callable backend accepts as `input` and
-// returns as `result`. Declared as a concrete recursive schema rather
-// than z.unknown() so the tool validates `input` at its own boundary
-// and the generated JSON Schema describes a real shape (z.unknown()
-// serializes to an empty schema that some providers reject under
-// strict function calling).
-const jsonValueSchema: z.ZodType<WorkspaceRuntimeValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
-  ]),
-);
+// What a callable backend accepts as `input`: an object of finite JSON
+// values. The values are checked here, as the backend checks them,
+// rather than declared: a recursive schema serializes to a `$ref` into
+// a definitions section, which some providers reject. The object itself
+// stays declared, since some providers reject an empty schema under
+// strict function calling.
+const inputObjectSchema = z.record(z.string(), z.unknown()).superRefine((value, context) => {
+  try {
+    assertRuntimeValue(value);
+  } catch (error) {
+    context.addIssue({ code: "custom", message: errorMessage(error) });
+  }
+});
 
 // One event drained from a running execution. stdout / stderr carry
 // output chunks as they arrive; exit carries the process exit code and,
@@ -307,8 +305,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       );
   }
   if (callableBackendIds.size > 0) {
-    shape.input = z
-      .record(z.string(), jsonValueSchema)
+    shape.input = inputObjectSchema
       .optional()
       .describe(
         single
@@ -316,7 +313,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           : "Input object handed to a callable backend's module. Other backends reject it.",
       );
   }
-  // SAFETY: Every field in `shape` has the type ExecInput gives it, and the fields left out are optional there.
+  // SAFETY: Every field in `shape` has the type ExecInput gives it, `input`'s through its check, and the fields left out are optional there.
   const inputSchema = z.object(shape) as unknown as z.ZodType<ExecInput>;
 
   // Settles when the run should detach, as `detach` asks, and never
