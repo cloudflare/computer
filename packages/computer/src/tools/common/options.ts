@@ -1,6 +1,7 @@
 import type {
   ExecBackends,
   ExecDetachOptions,
+  ExecId,
   ExecMetadata,
   ExecToolOptions,
   ExecWorkspaceLike,
@@ -27,7 +28,7 @@ export interface CreateToolsOptions {
    * Options for the `exec` tool. Omit `exec` or its `backends` to offer
    * every backend the Workspace has; `{ backends: {} }` means no exec
    * tool. `exec: {}` and keys other than `backends`, `output`,
-   * `metadata` and `detach`, such as a backend map from before `exec.backends`,
+   * `metadata`, `id` and `detach`, such as a backend map from before `exec.backends`,
    * throw.
    */
   exec?: ExecToolSetOptions;
@@ -56,6 +57,11 @@ export interface ExecToolSetOptions {
    * sees it.
    */
   metadata?: ExecMetadata;
+  /**
+   * Each `exec` run's id, picked from its tool call's id, so a call made
+   * again attaches to the run it started; see `ExecToolOptions.id`.
+   */
+  id?: ExecId;
   /**
    * Return before a run ends and leave it running, once it waits for an
    * answer or, with `afterMs`, has gone on that long. Its exit goes to
@@ -102,7 +108,7 @@ export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOpt
   };
 }
 
-const EXEC_KEYS = new Set(["backends", "output", "metadata", "detach"]);
+const EXEC_KEYS = new Set(["backends", "output", "metadata", "id", "detach"]);
 
 // Reject the shapes `exec` had before it took `{ backends, output,
 // metadata }`, rather than offering every backend for them.
@@ -111,7 +117,7 @@ function checkExec(exec: ExecToolSetOptions | undefined): void {
   const keys = Object.keys(exec);
   if (keys.some((key) => !EXEC_KEYS.has(key))) {
     throw new TypeError(
-      "exec takes `{ backends, output, metadata, detach }`; move backend options under `exec.backends`",
+      "exec takes `{ backends, output, metadata, id, detach }`; move backend options under `exec.backends`",
     );
   }
   if (keys.length === 0) {
@@ -127,13 +133,14 @@ function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
   if (runtime === undefined) return undefined;
   const selected = selectExec(options, runtime);
   if (Object.keys(selected.backends).length === 0) return undefined;
-  const { output, metadata, detach } = options.exec ?? {};
+  const { output, metadata, id, detach } = options.exec ?? {};
   return {
     workspace: { runtime },
     ...selected,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
     ...(metadata === undefined ? {} : { metadata }),
+    ...(id === undefined ? {} : { id }),
     ...(detach === undefined ? {} : { detach }),
   };
 }

@@ -94,6 +94,105 @@ describe("defineExec metadata", () => {
   });
 });
 
+describe("defineExec id", () => {
+  // A runtime whose runs are taken once started: starting one again
+  // fails as the runtime does, and getExec() reads it back.
+  function runsById(fail?: Error) {
+    const started: Array<{ id: string | undefined; command: string }> = [];
+    const attached: Array<{ id: string; options: unknown }> = [];
+    const outcome = (id: string) => ({
+      id,
+      result: async () => ({ exitCode: 0, stdout: `ran ${id}\n`, stderr: "" }),
+    });
+    const workspace: ExecWorkspaceLike = {
+      runtime: {
+        async exec(command, options) {
+          if (fail !== undefined) throw fail;
+          if (options.id !== undefined && started.some((run) => run.id === options.id)) {
+            throw Object.assign(new Error(`execution ${options.id} already exists`), {
+              code: "EEXEC_EXISTS",
+            });
+          }
+          started.push({ id: options.id, command });
+          return outcome(options.id ?? "random");
+        },
+        async getExec(id, options) {
+          attached.push({ id, options });
+          return outcome(id);
+        },
+        backends: () => [{ id: "js", protocol: "module", callable: true }],
+      },
+    };
+    return { workspace, started, attached };
+  }
+
+  it("starts each run with the id it picks from the tool call's id", async () => {
+    const { workspace, started } = runsById();
+    const exec = defineExec({ workspace, id: ({ toolCallId }) => `agent-1:${toolCallId}` });
+
+    await last(exec.execute({ command: "a" }, { toolCallId: "call-1" }));
+    await last(exec.execute({ command: "b" }, { toolCallId: "call-2" }));
+
+    expect(started).toEqual([
+      { id: "agent-1:call-1", command: "a" },
+      { id: "agent-1:call-2", command: "b" },
+    ]);
+  });
+
+  it("starts a run of its own for a call with no tool call id", async () => {
+    const { workspace, started } = runsById();
+    const exec = defineExec({ workspace, id: ({ toolCallId }) => `agent-1:${toolCallId}` });
+
+    await last(exec.execute({ command: "a" }));
+    await last(exec.execute({ command: "a" }));
+
+    expect(started).toEqual([
+      { id: undefined, command: "a" },
+      { id: undefined, command: "a" },
+    ]);
+  });
+
+  it("attaches a call made again to the run it started, from the start", async () => {
+    const { workspace, started, attached } = runsById();
+    const exec = defineExec({ workspace, id: ({ toolCallId }) => toolCallId, maxLines: 10 });
+
+    const first = await last(exec.execute({ command: "a" }, { toolCallId: "call-1" }));
+    const again = await last(exec.execute({ command: "a" }, { toolCallId: "call-1" }));
+
+    expect(started).toHaveLength(1);
+    expect(attached).toEqual([
+      {
+        id: "call-1",
+        options: {
+          backend: "js",
+          encoding: "utf8",
+          resume: "full",
+          output: expect.objectContaining({ maxLines: 10 }),
+        },
+      },
+    ]);
+    expect(again).toEqual(first);
+    expect(again).toMatchObject({ exitCode: 0, stdout: "ran call-1\n" });
+  });
+
+  it("reports any other failure to start as the call's error", async () => {
+    const { workspace, attached } = runsById(new Error("no room"));
+    const exec = defineExec({ workspace, id: ({ toolCallId }) => toolCallId });
+
+    const output = await last(exec.execute({ command: "a" }, { toolCallId: "call-1" }));
+
+    expect(output).toMatchObject({ error: "no room" });
+    expect(attached).toEqual([]);
+  });
+
+  it("needs a runtime that can find a run by id", () => {
+    const { workspace } = recordingWorkspace();
+    expect(() => defineExec({ workspace, id: ({ toolCallId }) => toolCallId })).toThrow(
+      /id needs a runtime with getExec\(\)/,
+    );
+  });
+});
+
 describe("defineExec result bound", () => {
   it("saves a return value past the output limit to a file", async () => {
     const written: Array<{ path: string; size: number }> = [];
