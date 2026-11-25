@@ -51,6 +51,22 @@ async function evaluateResult(
 }
 
 describe("CodemodeBackend", () => {
+  it("reports its access through runtime.backends()", () => {
+    const loader = { load: vi.fn<WorkspaceRuntimeLoader["load"]>() };
+    const workspace = new Workspace({
+      storage: new SQLiteTestStorage(),
+      backends: [
+        new CodemodeBackend({ id: "reads", loader, access: "read" }),
+        new CodemodeBackend({ id: "writes", loader }),
+      ],
+    });
+
+    expect(workspace.runtime.backends().map(({ id, access }) => ({ id, access }))).toEqual([
+      { id: "reads", access: "read" },
+      { id: "writes", access: "read-write" },
+    ]);
+  });
+
   it("blocks ambient egress by default", async () => {
     const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
       getEntrypoint() {

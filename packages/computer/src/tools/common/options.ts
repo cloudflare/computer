@@ -15,7 +15,11 @@ import type { PublishWorkspaceLike } from "./publish";
 /** Options every tool set takes: `createAITools`, `createPiTools`, and `createTanStackTools`. */
 export interface CreateToolsOptions {
   workspace: FileWorkspaceLike & Partial<ExecWorkspaceLike> & Partial<PublishWorkspaceLike>;
-  /** Omit `write`, `edit`, `delete`, `exec`, and `publish`. */
+  /**
+   * Omit `write`, `edit`, `delete`, and `publish`, and offer `exec` only
+   * on backends that can't change the Workspace, such as a
+   * `CodemodeBackend` with `access: "read"`.
+   */
   readonly?: boolean;
   root?: string;
   /** Set `false` to omit `publish` even when assets are configured. */
@@ -74,7 +78,10 @@ export interface ResolvedToolOptions {
   write: WriteToolOptions;
   edit: EditToolOptions;
   delete: { store: WorkspaceFileStore };
-  /** Absent when the set is read-only, the Workspace has no runtime, or no backend is selected. */
+  /**
+   * Absent when the Workspace has no runtime or no backend is selected,
+   * which for a read-only set means none that only reads.
+   */
   exec?: ExecToolOptions;
   publish: boolean;
   readonly: boolean;
@@ -95,7 +102,7 @@ export function resolveToolOptions(options: CreateToolsOptions): ResolvedToolOpt
     write: { store, ...options.write },
     edit: { store, ...options.edit },
     delete: { store },
-    exec: readonly ? undefined : execOptions(options),
+    exec: execOptions(options, readonly),
     publish: !readonly && options.assets !== false && workspace.assets !== undefined,
     readonly,
     workspace,
@@ -122,20 +129,34 @@ function checkExec(exec: ExecToolSetOptions | undefined): void {
 }
 
 // Turn `exec`, or the deprecated `shell`, into exec tool options.
-function execOptions(options: CreateToolsOptions): ExecToolOptions | undefined {
+function execOptions(options: CreateToolsOptions, readonly: boolean): ExecToolOptions | undefined {
   const runtime = options.workspace.runtime;
   if (runtime === undefined) return undefined;
   const selected = selectExec(options, runtime);
-  if (Object.keys(selected.backends).length === 0) return undefined;
+  const backends = readonly ? readOnlyBackends(selected.backends, runtime) : selected.backends;
+  if (Object.keys(backends).length === 0) return undefined;
   const { output, metadata, detach } = options.exec ?? {};
   return {
     workspace: { runtime },
     ...selected,
+    backends,
     ...(output?.maxBytes === undefined ? {} : { maxBytes: output.maxBytes }),
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
     ...(metadata === undefined ? {} : { metadata }),
     ...(detach === undefined ? {} : { detach }),
   };
+}
+
+// A read-only set's exec runs only on backends that can't change the
+// Workspace. The backend enforces it, so exec can't write either.
+function readOnlyBackends(
+  backends: ExecBackends,
+  runtime: ExecWorkspaceLike["runtime"],
+): ExecBackends {
+  const reading = new Set(
+    (runtime.backends?.() ?? []).filter((info) => info.access === "read").map((info) => info.id),
+  );
+  return Object.fromEntries(Object.entries(backends).filter(([id]) => reading.has(id)));
 }
 
 function selectExec(

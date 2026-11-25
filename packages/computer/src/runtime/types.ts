@@ -457,6 +457,11 @@ export interface WorkspaceModuleBackend {
    * backend supports it and has somewhere to send their exits.
    */
   readonly detachable?: boolean;
+  /**
+   * What its execs may do to the Workspace: `"read"` when they can't
+   * change it. Missing means they can.
+   */
+  readonly access?: WorkspaceRuntimeAccess;
   connect(host: WorkspaceModuleBackendHost): Promise<WorkspaceModuleBackendHandle>;
 }
 

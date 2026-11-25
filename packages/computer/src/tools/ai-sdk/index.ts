@@ -50,11 +50,11 @@ export function createAITools(options: CreateAIToolsOptions): ToolSet {
     grep: createGrepTool({ workspace }),
   };
 
-  if (resolved.readonly) return tools;
-
-  tools.write = createWriteTool(resolved.write);
-  tools.edit = createEditTool(resolved.edit);
-  tools.delete = createDeleteTool(resolved.delete);
+  if (!resolved.readonly) {
+    tools.write = createWriteTool(resolved.write);
+    tools.edit = createEditTool(resolved.edit);
+    tools.delete = createDeleteTool(resolved.delete);
+  }
 
   if (resolved.exec !== undefined) {
     tools.exec = createExecTool(resolved.exec);

@@ -136,6 +136,17 @@ describe("createTanStackTools", () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
+  it("keeps exec when readonly and a backend only reads", () => {
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).backends = () => [
+      { id: "codemode-readonly", protocol: "module", callable: true, access: "read" },
+    ];
+
+    const tools = createTanStackTools({ workspace, readonly: true });
+
+    expect(tools.map((tool) => tool.name).sort()).toEqual(["exec", "find", "grep", "ls", "read"]);
+  });
+
   it("passes the Zod schema through untouched for standard-schema validation", () => {
     const tools = createTanStackTools({ workspace: makeWorkspace(), format: "object" });
 

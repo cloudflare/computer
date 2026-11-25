@@ -8,6 +8,7 @@ import {
   type ModuleExecutionEnvelope,
   type WorkspaceModuleBackendHandle,
   type WorkspaceRegisteredBackend,
+  type WorkspaceRuntimeAccess,
   type WorkspaceRuntimeDisposeOptions,
   type WorkspaceRuntimeEvent,
   type WorkspaceRuntimeExecHandle,
@@ -59,6 +60,12 @@ export interface WorkspaceBackendInfo {
    * can't.
    */
   readonly detachable?: boolean;
+  /**
+   * What its execs may do to the Workspace: `"read"` when they can't
+   * change it, such as a `CodemodeBackend` with `access: "read"`.
+   * Missing means they can.
+   */
+  readonly access?: WorkspaceRuntimeAccess;
 }
 
 /** Where `saveResult` put a value, or why it could not. */
@@ -92,6 +99,7 @@ export class WorkspaceRuntime {
       callable: backend.callable === true,
       ...(backend.description === undefined ? {} : { description: backend.description }),
       detachable: this.#detachable(backend),
+      access: isModuleBackend(backend) ? (backend.access ?? "read-write") : "read-write",
     }));
   }
 

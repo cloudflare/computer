@@ -106,6 +106,33 @@ describe("createPiTools declarations", () => {
     expect(() => createPiTools({ workspace, exec: oldMap })).toThrow(/under `exec.backends`/);
   });
 
+  it("keeps exec in a read-only set on the backends that only read", async () => {
+    const ran: unknown[] = [];
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).exec = async (
+      _command: string,
+      options: { backend?: string },
+    ) => {
+      ran.push(options.backend);
+      return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    };
+    fakeBackends(workspace, [
+      { id: "codemode-readonly", protocol: "module", callable: true, access: "read" },
+      { id: "codemode", protocol: "module", callable: true, access: "read-write" },
+      { id: "sh", protocol: "command", callable: false },
+    ]);
+    const names = (exec?: { backends: Record<string, object> }) =>
+      createPiTools({ workspace, readonly: true, exec }).tools.map((tool) => tool.name);
+
+    expect(names()).toEqual(["read", "ls", "find", "grep", "exec"]);
+    const tools = createPiTools({ workspace, readonly: true });
+    expect(declaration(tools, "exec").parameters.properties).not.toHaveProperty("backend");
+    await tools.execute({ id: "1", name: "exec", arguments: { command: "export default 1" } });
+    expect(ran).toEqual(["codemode-readonly"]);
+    expect(names({ backends: { "codemode-readonly": {} } })).toContain("exec");
+    expect(names({ backends: { codemode: {}, sh: {} } })).not.toContain("exec");
+  });
+
   it("leaves exec out for `exec: { backends: {} }` and for a read-only set", () => {
     const workspace = makeWorkspace();
     fakeBackends(workspace, [{ id: "worker-shell", callable: false }]);

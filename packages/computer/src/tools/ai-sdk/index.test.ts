@@ -356,6 +356,17 @@ describe("createAITools filesystem tools", () => {
     expect(Object.keys(tools).sort()).toEqual(["find", "grep", "ls", "read"]);
   });
 
+  it("keeps exec when readonly and a backend only reads", () => {
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).backends = () => [
+      { id: "codemode-readonly", protocol: "module", callable: true, access: "read" },
+    ];
+
+    const tools = createAITools({ workspace, readonly: true });
+
+    expect(Object.keys(tools).sort()).toEqual(["exec", "find", "grep", "ls", "read"]);
+  });
+
   it("reads, lists, writes, and edits workspace files", async () => {
     const workspace = makeWorkspace();
     const tools = createAITools({ workspace });
