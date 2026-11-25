@@ -373,7 +373,7 @@ The tool offers only the arguments that can work:
 
 A `backend` value the model sends anyway is dropped when only one backend is configured. The output still names the backend that ran.
 
-`input` is an object of JSON values, described to the model as an input object. Offered any JSON value, some models send the object they mean as a string of JSON. A string that parses to an object is replaced by that object before validation, through the definition's `prepareArguments`; `createPiTools` applies it, and a caller of `defineExec` should too.
+`input` is an object of JSON values, described to the model as an input object. The declaration says only that it is an object, and the values are checked as JSON when a call is validated: declaring them would take a recursive schema, which serializes to a `$ref` that some providers reject. Offered any JSON value, some models send the object they mean as a string of JSON. A string that parses to an object is replaced by that object before validation, through the definition's `prepareArguments`; `createPiTools` applies it, and a caller of `defineExec` should too.
 
 Long output follows pi's bash tool. Each of stdout and stderr shows its last `maxLines` lines (2000) or `maxBytes` (64 KiB), whichever is hit first. Set them with `exec: { output }` on a tool set, or on `createExecTool` directly. The tool passes the same limits to the runtime, which saves the full output to a Workspace file (see [Long output](./05_runtime_interface.md#long-output)), and the reply ends with a note naming it:
 

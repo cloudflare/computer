@@ -1,5 +1,6 @@
 import { SQLiteTestStorage } from "@cloudflare/dofs/testing";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import type { WorkspaceModuleBackend } from "../../runtime/types";
 import { Workspace } from "../../workspace";
@@ -91,6 +92,37 @@ describe("defineExec metadata", () => {
       error: "no conversation",
     });
     expect(metadata).toEqual([]);
+  });
+});
+
+describe("defineExec input", () => {
+  const callable: ExecWorkspaceLike = {
+    runtime: {
+      exec: async () => ({ result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) }),
+      backends: () => [{ id: "js", protocol: "module", callable: true }],
+    },
+  };
+
+  it("declares input as an object, with no definitions to point into", () => {
+    const json = z.toJSONSchema(defineExec({ workspace: callable }).inputSchema, {
+      target: "draft-7",
+      io: "input",
+    });
+
+    expect(JSON.stringify(json)).not.toContain("$ref");
+    expect(json).not.toHaveProperty("definitions");
+    expect(json.properties?.input).toMatchObject({ type: "object" });
+  });
+
+  it("accepts nested JSON, and refuses values JSON can't carry", () => {
+    const { inputSchema } = defineExec({ workspace: callable });
+    const parse = (input: unknown) => inputSchema.safeParse({ command: "x", input }).success;
+
+    expect(parse({ a: [1, "two", { three: null }], b: true })).toBe(true);
+    expect(parse({ a: Number.NaN })).toBe(false);
+    expect(parse({ a: new Date(0) })).toBe(false);
+    expect(parse({ a: () => 1 })).toBe(false);
+    expect(parse([1, 2])).toBe(false);
   });
 });
 
