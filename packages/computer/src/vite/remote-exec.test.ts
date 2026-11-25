@@ -242,6 +242,38 @@ describe("remoteExec vite plugin", () => {
     }
   });
 
+  it("takes the builds whose SHA-256 `sha256` pins", async () => {
+    const pins = { x86_64: sha256(builds.x86_64), aarch64: sha256(builds.aarch64) };
+    const out = await build(project(), { arch: ["x86_64", "aarch64"], sha256: pins });
+    expect(readFileSync(join(out, "remote-exec-linux-x86_64.bin"))).toEqual(builds.x86_64);
+    expect(readFileSync(join(out, "remote-exec-linux-aarch64.bin"))).toEqual(builds.aarch64);
+  });
+
+  it("refuses a build `sha256` doesn't pin, downloaded, cached or local", async () => {
+    const wrong = { sha256: { x86_64: "0".repeat(64) } };
+    const refused = /remote-exec-linux-x86_64 has SHA-256 [0-9a-f]{64}, but `sha256` pins 0{64}/;
+    const cache = mkdtempSync(join(tmpdir(), "computer-remote-exec-cache-"));
+    tempDirs.push(cache);
+    await expect(build(project(), wrong, cache)).rejects.toThrow(refused);
+    // The release's own bytes are cached, but a pin that doesn't match still refuses them.
+    requests.length = 0;
+    await expect(build(project(), wrong, cache)).rejects.toThrow(refused);
+    expect(requests).toEqual([]);
+
+    const dir = mkdtempSync(join(tmpdir(), "computer-remote-exec-builds-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, "remote-exec-linux-x86_64"), randomBytes(1000));
+    await expect(build(project(), { ...wrong, builds: dir })).rejects.toThrow(refused);
+  });
+
+  it("needs a pin for every architecture it carries", () => {
+    const sha256 = { x86_64: "0".repeat(64) };
+    expect(() => remoteExec({ arch: ["x86_64", "aarch64"], sha256 })).toThrow(
+      /`sha256` needs a SHA-256 in hex for aarch64/,
+    );
+    expect(() => remoteExec({ sha256: { x86_64: "not a hash" } })).toThrow(/for x86_64/);
+  });
+
   it("says what to do when there's no such release", async () => {
     await expect(build(project(), { version: "0.0.1" })).rejects.toThrow(
       /404.*Pass `version` to take the builds from another release, or `builds` to use local ones/,

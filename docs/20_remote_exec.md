@@ -121,7 +121,20 @@ own, and the Worker streams it from `/bundle` with `node:fs` (it needs `nodejs_c
 chunk at a time to hash it and to copy it in, so the build is never held in memory whole. `vite
 dev` doesn't put files under `/bundle`, so there the Worker imports the build instead. The plugin
 takes `arch` for the architectures to carry (`x86_64` by default), `version` for another release,
-and `builds` for a directory of local builds. For TypeScript, add
+and `builds` for a directory of local builds.
+
+`SHA256SUMS` comes from the same release as the builds, so it catches a broken download but not a
+release changed after it was published. To rule that out, pin the hashes in your repository with
+`sha256`, copied from the release's `SHA256SUMS` when you install or bump `@cloudflare/computer`.
+A build that doesn't match them fails the build, whether downloaded, cached or local:
+
+```ts
+remoteExec({
+  sha256: { x86_64: "<remote-exec-linux-x86_64's hash in SHA256SUMS>" },
+});
+```
+
+For TypeScript, add
 `"@cloudflare/computer/vite/client"` to `compilerOptions.types`. The plugin needs
 `@cloudflare/vite-plugin` 1.68.0 or later, whose workerd keeps a container's `exec()` streams open
 until they finish.

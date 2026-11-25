@@ -7,7 +7,9 @@
 // It takes the builds from the @cloudflare/computer GitHub release that
 // matches the installed package, checks them against the release's
 // SHA256SUMS, and keeps them in Vite's cache directory, so only the first
-// build downloads them.
+// build downloads them. SHA256SUMS comes from the same release as the
+// builds, so it catches a broken download but not a replaced release;
+// `sha256` pins the hashes in the consumer's own repository instead.
 //
 // `vite build` emits each build as `remote-exec-linux-<arch>.bin` beside
 // the Worker. Nothing imports it: the output wrangler.json has `no_bundle`,
@@ -45,6 +47,13 @@ export interface RemoteExecPluginOptions {
   builds?: string;
   /** Where releases are downloaded from, for tests. The release's tag is appended. */
   releases?: string;
+  /**
+   * The SHA-256 each build must have, by architecture, in hex: the release's `SHA256SUMS`, pinned
+   * in your repository when you install or bump `@cloudflare/computer`. With it, a build that
+   * doesn't match fails, downloaded, cached or local, so a release changed after you pinned it
+   * can't reach your Worker. Pin every architecture in `arch`.
+   */
+  sha256?: Partial<Record<RemoteExecArch, string>>;
 }
 
 const SPECIFIER = "computer:remote-exec";
@@ -63,6 +72,13 @@ const carried = (arch: RemoteExecArch) => `${released(arch)}.bin`;
 
 export function remoteExec(options: RemoteExecPluginOptions = {}): Plugin {
   const arches = [...new Set([options.arch ?? "x86_64"].flat())];
+  const pinned = options.sha256;
+  if (pinned !== undefined) {
+    for (const arch of arches) {
+      if (!/^[0-9a-f]{64}$/.test(pinned[arch] ?? ""))
+        throw new Error(`remoteExec: \`sha256\` needs a SHA-256 in hex for ${arch}`);
+    }
+  }
   let root = "";
   let cacheDir = "";
   let serving = false;
@@ -72,10 +88,20 @@ export function remoteExec(options: RemoteExecPluginOptions = {}): Plugin {
 
   const prepare = () => {
     builds ??= (async () => {
-      if (options.builds !== undefined)
-        return local(resolve(root, options.builds), cacheDir, arches);
-      const version = options.version ?? (await installedVersion());
-      return download(options.releases ?? RELEASES, version, join(cacheDir, version), arches);
+      let files: Build[];
+      if (options.builds !== undefined) {
+        files = await local(resolve(root, options.builds), cacheDir, arches);
+      } else {
+        const version = options.version ?? (await installedVersion());
+        files = await download(
+          options.releases ?? RELEASES,
+          version,
+          join(cacheDir, version),
+          arches,
+        );
+      }
+      if (pinned !== undefined) await checkPinned(files, pinned);
+      return files;
     })();
     // A failure (offline, say) is tried again by the next build rather than remembered.
     builds.catch(() => (builds = undefined));
@@ -180,6 +206,23 @@ async function local(dir: string, cacheDir: string, arches: RemoteExecArch[]): P
     files.push({ arch, path: copy });
   }
   return files;
+}
+
+// Every build, wherever it came from, against the hashes the consumer pinned.
+async function checkPinned(
+  files: Build[],
+  pinned: Partial<Record<RemoteExecArch, string>>,
+): Promise<void> {
+  for (const { arch, path } of files) {
+    const sha256 = createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex");
+    if (sha256 !== pinned[arch])
+      throw new Error(
+        `remoteExec: ${released(arch)} has SHA-256 ${sha256}, but \`sha256\` pins ${pinned[arch]}. ` +
+          "Pin the hashes in the SHA256SUMS of the @cloudflare/computer release you use.",
+      );
+  }
 }
 
 async function get(url: string): Promise<Uint8Array> {
