@@ -603,7 +603,8 @@ import { clone, push } from "codemode:git";
 export default async function () {
   const { remote } = await get("site");
   const { plaintext } = await createToken("site", "write", "15m");
-  const headers = { Authorization: `Bearer ${plaintext}` };
+  // The plaintext ends in an `?expires=` hint that isn't part of the token.
+  const headers = { Authorization: `Bearer ${plaintext.split("?expires=")[0]}` };
   await clone({ url: remote, dir: "site", headers });
   // ...change and commit files...
   return push({ dir: "site", ref: "main", headers });

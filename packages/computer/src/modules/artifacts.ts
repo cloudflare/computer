@@ -95,7 +95,7 @@ export function createArtifactsModule(
     },
   });
   return Object.assign(create, {
-    description: `Git repositories stored in Cloudflare Artifacts: \`create(name)\`, \`get(name)\`, \`list()\`, \`importArtifact(name, source)\`, and \`deleteArtifact(name)\`.${allowNetwork ? "" : " Importing from a remote URL is not allowed."} \`createToken(name, scope?, ttl?)\` mints a git token ("read" by default). \`share(name, { scope?, ttl? })\` returns a clone-ready URL with a token embedded; it is a credential, so never print or return it. \`ttl\` is seconds or a duration like "15m".`,
+    description: `Git repositories stored in Cloudflare Artifacts: \`create(name)\`, \`get(name)\`, \`list()\`, \`importArtifact(name, source)\`, and \`deleteArtifact(name)\`.${allowNetwork ? "" : " Importing from a remote URL is not allowed."} \`createToken(name, scope?, ttl?)\` mints a git token ("read" by default): to clone or push with the git module, pass \`get(name)\`'s \`remote\` as the URL and the token in \`headers: { Authorization: "Bearer <token>" }\`, not in the URL, which git saves in \`.git/config\`. The token is \`plaintext\` up to its \`?expires=\` hint, which isn't part of it: \`plaintext.split("?expires=")[0]\`. \`share(name, { scope?, ttl? })\` returns the remote URL with a token embedded, for git in a shell command: pass it in \`env\`, not in the command text. Tokens and shared URLs are credentials, so never print or return them. \`ttl\` is seconds or a duration like "15m".`,
   });
 }
 

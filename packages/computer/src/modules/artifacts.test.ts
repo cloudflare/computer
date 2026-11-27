@@ -150,4 +150,12 @@ describe("createArtifactsModule share", () => {
     expect(description).toContain("createToken(name");
     expect(description).toContain("share(name");
   });
+
+  it("tells code to send a token in a header, not in the URL", () => {
+    const description = createArtifactsModule().description ?? "";
+    expect(description).toContain('headers: { Authorization: "Bearer <token>" }');
+    expect(description).toContain('plaintext.split("?expires=")[0]');
+    expect(description).toContain(".git/config");
+    expect(description).not.toContain("clone-ready");
+  });
 });
