@@ -69,7 +69,7 @@ export interface ExecWorkspaceLike {
         env?: Record<string, string>;
         input?: WorkspaceRuntimeValue;
         metadata?: Record<string, string>;
-        output?: { maxBytes: number; maxLines: number };
+        output?: { maxBytes: number; maxLines: number } | false;
       },
     ): Promise<ExecRuntimeHandle>;
     // Calls waiting in ctx.interrupt(), by execution id, and noting
@@ -156,6 +156,13 @@ export interface ExecToolOptions {
    * `onDetachedExit`.
    */
   detach?: ExecDetachOptions;
+  /**
+   * Save output too long to show, and return values too large to show,
+   * to files in the Workspace, which the reply names. Defaults to
+   * `true`. With `false` the model sees them cut, and nothing is
+   * written: a read-only tool set turns it off.
+   */
+  saveOutput?: boolean;
   // Clock backing the running-snapshot coalescing floor. Defaults to
   // Date.now; injectable so tests can drive the interval deterministically.
   now?: () => number;
@@ -238,6 +245,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     "createExecTool",
   );
   const now = options.now ?? Date.now;
+  const saveOutput = options.saveOutput ?? true;
   const runtime = options.workspace.runtime;
   const detach = options.detach;
   const afterMs = typeof detach === "object" ? detach.afterMs : undefined;
@@ -279,7 +287,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     }
   }
   const description = [
-    describeTool(backends, limits),
+    describeTool(backends, limits, saveOutput),
     detach === undefined
       ? ""
       : detachHint(afterMs, detachable.size === backends.length ? undefined : [...detachable]),
@@ -424,7 +432,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
           ...(metadata === undefined ? {} : { metadata }),
           // The runtime cuts and saves by the same limits the tool
           // shows, so whatever the model does not see is in the file.
-          output: limits,
+          output: saveOutput ? limits : false,
         });
       } catch (err) {
         yield { ...base, error: errorMessage(err) };
@@ -467,6 +475,9 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         const preview = decoder.decode(bytes.slice(0, Math.min(limits.maxBytes, 8192)));
         const shown = { truncated: true, totalBytes: bytes.length, preview };
         const runtime = options.workspace.runtime;
+        if (!saveOutput) {
+          return { ...shown, note: "Full result was not saved: this tool doesn't write files." };
+        }
         if (runtime.saveResult === undefined) {
           return { ...shown, note: "Full result was not saved: the workspace cannot save output." };
         }
@@ -651,12 +662,19 @@ function detachHint(
 const FILE_TOOLS_HINT = "Prefer the dedicated read, write, and edit tools for file operations.";
 
 // How the reply cuts long output, and where the rest goes.
-function outputHint(limits: OutputLimits): string {
-  return `Each of stdout and stderr is cut to its last ${limits.maxLines} lines or ${formatSize(limits.maxBytes)}, whichever is hit first; when it is, the full output is saved to a file the reply names, which the read and grep tools can open.`;
+function outputHint(limits: OutputLimits, saved: boolean): string {
+  const cut = `Each of stdout and stderr is cut to its last ${limits.maxLines} lines or ${formatSize(limits.maxBytes)}, whichever is hit first`;
+  return saved
+    ? `${cut}; when it is, the full output is saved to a file the reply names, which the read and grep tools can open.`
+    : `${cut}, and the rest isn't kept, so print only what you need.`;
 }
 const SHELL_HINT = "Use for builds, test runs, typechecks, formatters, and git plumbing.";
-const CALLABLE_HINT =
-  "Pass an `input` object to hand the module structured values, and read its return value back from the `result` field. A return value over the output limit is saved to a file and `result` holds its path and a preview, so write large data to a file instead of returning it.";
+const callableHint = (saved: boolean) =>
+  `Pass an \`input\` object to hand the module structured values, and read its return value back from the \`result\` field. ${
+    saved
+      ? "A return value over the output limit is saved to a file and `result` holds its path and a preview, so write large data to a file instead of returning it."
+      : "A return value over the output limit comes back as a preview only, so return only what you need."
+  }`;
 
 interface DescribedBackend {
   readonly id: string;
@@ -666,8 +684,12 @@ interface DescribedBackend {
 
 // With one backend the description is about what it does. With several
 // it lists them and explains how to choose.
-function describeTool(backends: readonly DescribedBackend[], limits: OutputLimits): string {
-  const output = outputHint(limits);
+function describeTool(
+  backends: readonly DescribedBackend[],
+  limits: OutputLimits,
+  saved: boolean,
+): string {
+  const output = outputHint(limits, saved);
   const [only, ...others] = backends;
   if (only !== undefined && others.length === 0) {
     return only.callable
@@ -676,7 +698,7 @@ function describeTool(backends: readonly DescribedBackend[], limits: OutputLimit
           "",
           only.text,
           "",
-          CALLABLE_HINT,
+          callableHint(saved),
           `${FILE_TOOLS_HINT} ${output}`,
         ].join("\n")
       : [
@@ -703,7 +725,7 @@ function describeTool(backends: readonly DescribedBackend[], limits: OutputLimit
       ? []
       : [
           "",
-          `Callable backends (${callable.join(", ")}) run \`command\` as module source rather than a shell command. ${CALLABLE_HINT} Other backends reject \`input\`.`,
+          `Callable backends (${callable.join(", ")}) run \`command\` as module source rather than a shell command. ${callableHint(saved)} Other backends reject \`input\`.`,
         ]),
   ].join("\n");
 }

@@ -140,6 +140,7 @@ workspace.runtime.backends();
 - `protocol` says what `exec` source means there: a shell command (`"command"`) or module source (`"module"`).
 - `callable` says whether the backend takes structured `input` and returns a `value`.
 - `description`, when present, is what the backend tells a model about itself. `CodemodeBackend` lists its source language and every module code can import, and `WorkerShellBackend` and `ContainerBackend` describe what they can run. The `exec` tool builds its description from these.
+- `access` is `"read"` when the backend's execs can't change the Workspace, such as a `CodemodeBackend` with `access: "read"`, and `"read-write"` otherwise. A read-only tool set offers `exec` only on backends with `"read"`.
 
 The list is fixed when the Workspace is constructed. A client from `getWorkspace()` takes a copy of it when the client loads, so once awaited the answer is the same locally and over RPC. Before then, the client reports no backends.
 

@@ -355,6 +355,7 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
   readonly callable = true;
   // Execs detach only when their exits have somewhere to go.
   readonly detachable: boolean;
+  readonly access: WorkspaceRuntimeAccess;
   readonly id: string;
   readonly #options: ResolvedCodemodeBackendOptions;
   readonly #header: string;
@@ -362,6 +363,7 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
   constructor(options: CodemodeBackendOptions) {
     this.id = options.id ?? "codemode";
     this.detachable = options.onDetachedExit !== undefined;
+    this.access = options.access ?? "read-write";
     if (options.egress !== undefined && options.globalOutbound !== undefined) {
       throw new Error("CodemodeBackend cannot use globalOutbound together with egress.");
     }
@@ -435,7 +437,7 @@ export class CodemodeBackend implements WorkspaceModuleBackend {
       modules: parseModules(options.modules ?? {}, scheme),
       scheme,
       root: options.root ?? WORKSPACE_ROOT,
-      access: options.access ?? "read-write",
+      access: this.access,
       defaultTimeoutMs,
       maxTimeoutMs,
       maxCpuMs,

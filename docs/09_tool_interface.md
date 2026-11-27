@@ -182,7 +182,7 @@ createAITools({
 | Option | Default | Notes |
 | --- | --- | --- |
 | `workspace` | required | A `Workspace` or structural equivalent. |
-| `readonly` | `false` | Omit `write`, `edit`, `delete`, `exec`, and `publish`. Search remains available. |
+| `readonly` | `false` | Omit `write`, `edit`, `delete`, and `publish`, and offer `exec` only on backends that can't change the Workspace. Search remains available. |
 | `root` | none | Confine the file tools and `publish` to one directory. See [Root](#root). |
 | `assets` | `true` | Set to `false` to omit `publish`. |
 | `read` | default caps | Options passed to `createReadTool`. |
@@ -418,7 +418,7 @@ With `detach`, the tool returns once a call in the run waits for an answer, and,
 
 The tool doesn't deliver the outcome itself. The backend's `onDetachedExit` hears it, and the app finds the conversation through the run's `metadata` and gives the agent a new message with it. `detach` needs a runtime with `pending()` and `detachExec()`, which a `Workspace`, `workspace.stub()` and a `getWorkspace()` client have.
 
-Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: { backends: {} }` or `readonly: true` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly.
+Wire this tool carefully: it executes arbitrary shell commands inside the configured backend. Treat its output as untrusted text when including it in later model input. Pass `exec: { backends: {} }` when command execution is not part of the agent's job, and list backends explicitly when the Workspace has one the model should not use directly. A `readonly: true` set offers `exec` only on backends whose `runtime.backends()` entry has `access: "read"`, such as a `CodemodeBackend` built with `access: "read"`, whose code can read the Workspace but not change it; with none, it has no `exec`. Its `exec` saves nothing either: long output and large return values come back cut, with no file, because the runtime writes those files from the host, past the backend's guard. `createExecTool({ saveOutput: false })` does the same for any exec tool. A read-only set keeps `exec.detach` only if a backend it kept can detach.
 
 ## `publish`
 

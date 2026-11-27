@@ -175,39 +175,40 @@ export function createTanStackTools<Format extends TanStackToolFormat = "array">
       mutates: true,
       run: async (input: never) => plain(await deleteFromStore(resolved.delete, input)),
     });
+  }
 
-    if (resolved.exec !== undefined) {
-      const exec = defineExec(resolved.exec);
-      add({
-        name: "exec",
-        description: exec.description,
-        inputSchema: exec.inputSchema,
-        mutates: true,
-        streams: true,
-        run: async (input: never, context?: TanStackToolExecutionContext) => {
-          const returned = exec.execute(input, {
-            abortSignal: context?.abortSignal,
-            toolCallId: context?.toolCallId,
-          });
-          const output = options.streamEventName
-            ? await settleWithEvents(returned, options.streamEventName, context)
-            : await settle(returned);
-          return plain(output);
-        },
-      });
-    }
+  if (resolved.exec !== undefined) {
+    const exec = defineExec(resolved.exec);
+    add({
+      name: "exec",
+      description: exec.description,
+      inputSchema: exec.inputSchema,
+      // Read-only, it runs on backends that can't write and saves no output.
+      mutates: !resolved.readonly,
+      streams: true,
+      run: async (input: never, context?: TanStackToolExecutionContext) => {
+        const returned = exec.execute(input, {
+          abortSignal: context?.abortSignal,
+          toolCallId: context?.toolCallId,
+        });
+        const output = options.streamEventName
+          ? await settleWithEvents(returned, options.streamEventName, context)
+          : await settle(returned);
+        return plain(output);
+      },
+    });
+  }
 
-    if (resolved.publish) {
-      const executor = createPublishExecutor(workspace as PublishWorkspaceLike);
-      add({
-        name: "publish",
-        description: publishDescription,
-        inputSchema: publishInputSchema,
-        outputSchema: publishOutputSchema,
-        mutates: true,
-        run: async (input: never) => plain(await executor(input)),
-      });
-    }
+  if (resolved.publish) {
+    const executor = createPublishExecutor(workspace as PublishWorkspaceLike);
+    add({
+      name: "publish",
+      description: publishDescription,
+      inputSchema: publishInputSchema,
+      outputSchema: publishOutputSchema,
+      mutates: true,
+      run: async (input: never) => plain(await executor(input)),
+    });
   }
 
   if (options.format === "object") {

@@ -146,34 +146,35 @@ function piToolEntries(options: CreateToolsOptions): PiToolEntry[] {
     } as PiToolEntry,
   ];
 
-  // These four are the tools a readonly set keeps. bindings.ts marks the
-  // same names read-only for codemode:tools, so keep the two lists in step.
-  if (resolved.readonly) return entries;
-
-  entries.push(
-    {
-      name: "write",
-      description: writeDescription,
-      inputSchema: writeInputSchema,
-      // The whole file body travels as one string argument.
-      strictArguments: true,
-      execute: (input) => writeToStore(resolved.write, input),
-    } as PiToolEntry,
-    {
-      name: "edit",
-      description: editDescription,
-      inputSchema: editInputSchema,
-      // A nested array of exact-match strings is easy to malform.
-      strictArguments: true,
-      execute: (input) => editInStore(resolved.edit, input),
-    } as PiToolEntry,
-    {
-      name: "delete",
-      description: deleteDescription,
-      inputSchema: deleteInputSchema,
-      execute: (input) => deleteFromStore(resolved.delete, input),
-    } as PiToolEntry,
-  );
+  // These four are the file tools a readonly set keeps. bindings.ts marks
+  // the same names read-only for codemode:tools, so keep the two lists in
+  // step.
+  if (!resolved.readonly) {
+    entries.push(
+      {
+        name: "write",
+        description: writeDescription,
+        inputSchema: writeInputSchema,
+        // The whole file body travels as one string argument.
+        strictArguments: true,
+        execute: (input) => writeToStore(resolved.write, input),
+      } as PiToolEntry,
+      {
+        name: "edit",
+        description: editDescription,
+        inputSchema: editInputSchema,
+        // A nested array of exact-match strings is easy to malform.
+        strictArguments: true,
+        execute: (input) => editInStore(resolved.edit, input),
+      } as PiToolEntry,
+      {
+        name: "delete",
+        description: deleteDescription,
+        inputSchema: deleteInputSchema,
+        execute: (input) => deleteFromStore(resolved.delete, input),
+      } as PiToolEntry,
+    );
+  }
 
   if (resolved.exec !== undefined) {
     const exec = defineExec(resolved.exec);
