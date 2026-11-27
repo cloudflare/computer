@@ -428,7 +428,8 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     startOptions: Parameters<ExecWorkspaceLike["runtime"]["exec"]>[1],
     id: string | undefined,
   ): Promise<{ handle: ExecRuntimeHandle; attached: boolean }> {
-    if (id === undefined) return { handle: await runtime.exec(command, startOptions), attached: false };
+    if (id === undefined)
+      return { handle: await runtime.exec(command, startOptions), attached: false };
     try {
       return { handle: await runtime.exec(command, { ...startOptions, id }), attached: false };
     } catch (error) {
