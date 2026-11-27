@@ -107,13 +107,13 @@ describe("createPiTools declarations", () => {
   });
 
   it("keeps exec in a read-only set on the backends that only read", async () => {
-    const ran: unknown[] = [];
+    const ran: Array<{ backend?: string; output?: unknown }> = [];
     const workspace = makeWorkspace();
     (workspace.runtime as unknown as Record<string, unknown>).exec = async (
       _command: string,
-      options: { backend?: string },
+      options: { backend?: string; output?: unknown },
     ) => {
-      ran.push(options.backend);
+      ran.push({ backend: options.backend, output: options.output });
       return { result: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
     };
     fakeBackends(workspace, [
@@ -128,9 +128,25 @@ describe("createPiTools declarations", () => {
     const tools = createPiTools({ workspace, readonly: true });
     expect(declaration(tools, "exec").parameters.properties).not.toHaveProperty("backend");
     await tools.execute({ id: "1", name: "exec", arguments: { command: "export default 1" } });
-    expect(ran).toEqual(["codemode-readonly"]);
+    // The runtime would save long output from the host, past the
+    // backend's guard, so a read-only set saves none.
+    expect(ran).toEqual([{ backend: "codemode-readonly", output: false }]);
     expect(names({ backends: { "codemode-readonly": {} } })).toContain("exec");
     expect(names({ backends: { codemode: {}, sh: {} } })).not.toContain("exec");
+  });
+
+  it("keeps a read-only set's exec, without detach, when no backend it keeps can detach", () => {
+    const workspace = makeWorkspace();
+    (workspace.runtime as unknown as Record<string, unknown>).pending = async () => [];
+    (workspace.runtime as unknown as Record<string, unknown>).detachExec = async () => true;
+    fakeBackends(workspace, [
+      { id: "codemode-readonly", protocol: "module", callable: true, access: "read" },
+      { id: "codemode", protocol: "module", callable: true, detachable: true },
+    ]);
+
+    const tools = createPiTools({ workspace, readonly: true, exec: { detach: true } });
+
+    expect(declaration(tools, "exec").description).not.toContain("comes back early");
   });
 
   it("leaves exec out for `exec: { backends: {} }` and for a read-only set", () => {

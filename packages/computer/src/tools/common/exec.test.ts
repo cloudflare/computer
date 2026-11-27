@@ -94,6 +94,39 @@ describe("defineExec metadata", () => {
   });
 });
 
+describe("defineExec saveOutput", () => {
+  it("saves nothing to the Workspace when turned off", async () => {
+    const outputs: unknown[] = [];
+    const saved: string[] = [];
+    const workspace: ExecWorkspaceLike = {
+      runtime: {
+        async exec(_command, options) {
+          outputs.push(options.output);
+          return {
+            result: async () => ({ exitCode: 0, stdout: "", stderr: "", value: "x".repeat(200) }),
+          };
+        },
+        async saveResult(name) {
+          saved.push(name);
+          return { saved: true, path: `/out/${name}` };
+        },
+        backends: () => [{ id: "js", protocol: "module", callable: true }],
+      },
+    };
+    const exec = defineExec({ workspace, maxBytes: 100, saveOutput: false });
+
+    const output = await last(exec.execute({ command: "x" }, { toolCallId: "c1" }));
+
+    expect(exec.description).toContain("the rest isn't kept");
+    expect(exec.description).not.toContain("saved to a file");
+    expect(outputs).toEqual([false]);
+    expect(saved).toEqual([]);
+    expect(output).toMatchObject({
+      result: { truncated: true, note: expect.stringContaining("not saved") },
+    });
+  });
+});
+
 describe("defineExec result bound", () => {
   it("saves a return value past the output limit to a file", async () => {
     const written: Array<{ path: string; size: number }> = [];

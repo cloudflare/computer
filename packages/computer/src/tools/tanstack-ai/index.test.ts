@@ -145,6 +145,14 @@ describe("createTanStackTools", () => {
     const tools = createTanStackTools({ workspace, readonly: true });
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(["exec", "find", "grep", "ls", "read"]);
+    // It can't change anything, so "mutating" doesn't gate it.
+    const gated = createTanStackTools({
+      workspace,
+      readonly: true,
+      approve: "mutating",
+      format: "object",
+    });
+    expect(gated.exec.needsApproval).toBeUndefined();
   });
 
   it("passes the Zod schema through untouched for standard-schema validation", () => {

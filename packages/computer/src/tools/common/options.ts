@@ -135,7 +135,10 @@ function execOptions(options: CreateToolsOptions, readonly: boolean): ExecToolOp
   const selected = selectExec(options, runtime);
   const backends = readonly ? readOnlyBackends(selected.backends, runtime) : selected.backends;
   if (Object.keys(backends).length === 0) return undefined;
-  const { output, metadata, detach } = options.exec ?? {};
+  const { output, metadata } = options.exec ?? {};
+  // A read-only set keeps `detach` only if a backend it kept can
+  // detach, as it would have left out exec, detach and all, before.
+  const detach = readonly && !canDetach(backends, runtime) ? undefined : options.exec?.detach;
   return {
     workspace: { runtime },
     ...selected,
@@ -144,7 +147,16 @@ function execOptions(options: CreateToolsOptions, readonly: boolean): ExecToolOp
     ...(output?.maxLines === undefined ? {} : { maxLines: output.maxLines }),
     ...(metadata === undefined ? {} : { metadata }),
     ...(detach === undefined ? {} : { detach }),
+    // The runtime writes saved output from the host, past the backend's
+    // read-only guard, so a read-only set saves none.
+    ...(readonly ? { saveOutput: false } : {}),
   };
+}
+
+function canDetach(backends: ExecBackends, runtime: ExecWorkspaceLike["runtime"]): boolean {
+  return (runtime.backends?.() ?? []).some(
+    (info) => info.detachable === true && info.id in backends,
+  );
 }
 
 // A read-only set's exec runs only on backends that can't change the

@@ -183,7 +183,8 @@ export function createTanStackTools<Format extends TanStackToolFormat = "array">
       name: "exec",
       description: exec.description,
       inputSchema: exec.inputSchema,
-      mutates: true,
+      // Read-only, it runs on backends that can't write and saves no output.
+      mutates: !resolved.readonly,
       streams: true,
       run: async (input: never, context?: TanStackToolExecutionContext) => {
         const returned = exec.execute(input, {
