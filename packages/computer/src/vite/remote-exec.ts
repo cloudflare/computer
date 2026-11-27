@@ -72,13 +72,7 @@ const carried = (arch: RemoteExecArch) => `${released(arch)}.bin`;
 
 export function remoteExec(options: RemoteExecPluginOptions = {}): Plugin {
   const arches = [...new Set([options.arch ?? "x86_64"].flat())];
-  const pinned = options.sha256;
-  if (pinned !== undefined) {
-    for (const arch of arches) {
-      if (!/^[0-9a-f]{64}$/.test(pinned[arch] ?? ""))
-        throw new Error(`remoteExec: \`sha256\` needs a SHA-256 in hex for ${arch}`);
-    }
-  }
+  const pinned = pins(options.sha256, arches);
   let root = "";
   let cacheDir = "";
   let serving = false;
@@ -98,10 +92,10 @@ export function remoteExec(options: RemoteExecPluginOptions = {}): Plugin {
           version,
           join(cacheDir, version),
           arches,
+          pinned,
         );
       }
-      if (pinned !== undefined) await checkPinned(files, pinned);
-      return files;
+      return pinned === undefined ? files : await checkPinned(files, pinned, cacheDir);
     })();
     // A failure (offline, say) is tried again by the next build rather than remembered.
     builds.catch(() => (builds = undefined));
@@ -208,21 +202,51 @@ async function local(dir: string, cacheDir: string, arches: RemoteExecArch[]): P
   return files;
 }
 
-// Every build, wherever it came from, against the hashes the consumer pinned.
+// The pins, lowercased, with one for every architecture carried.
+function pins(
+  given: Partial<Record<RemoteExecArch, string>> | undefined,
+  arches: RemoteExecArch[],
+): Partial<Record<RemoteExecArch, string>> | undefined {
+  if (given === undefined) return undefined;
+  const pinned: Partial<Record<RemoteExecArch, string>> = {};
+  for (const arch of arches) {
+    const hash = given[arch];
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash))
+      throw new Error(`remoteExec: \`sha256\` needs a SHA-256 in hex for ${arch}`);
+    pinned[arch] = hash.toLowerCase();
+  }
+  return pinned;
+}
+
+async function sha256Of(path: string): Promise<string> {
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
+}
+
+// Every build, wherever it came from, against the hashes the consumer
+// pinned. A build that matches is kept under its hash, and served from
+// there: another build sharing the cache can replace the file it came
+// from, but never what's at that path.
 async function checkPinned(
   files: Build[],
   pinned: Partial<Record<RemoteExecArch, string>>,
-): Promise<void> {
+  cacheDir: string,
+): Promise<Build[]> {
+  const checked: Build[] = [];
   for (const { arch, path } of files) {
-    const sha256 = createHash("sha256")
-      .update(await readFile(path))
-      .digest("hex");
+    const bytes = await readFile(path);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
     if (sha256 !== pinned[arch])
       throw new Error(
         `remoteExec: ${released(arch)} has SHA-256 ${sha256}, but \`sha256\` pins ${pinned[arch]}. ` +
           "Pin the hashes in the SHA256SUMS of the @cloudflare/computer release you use.",
       );
+    const kept = join(cacheDir, "sha256", sha256, carried(arch));
+    if (!(await exists(kept))) await writeAtomically(kept, bytes);
+    checked.push({ arch, path: kept });
   }
+  return checked;
 }
 
 async function get(url: string): Promise<Uint8Array> {
@@ -242,10 +266,18 @@ async function download(
   version: string,
   dir: string,
   arches: RemoteExecArch[],
+  pinned: Partial<Record<RemoteExecArch, string>> | undefined,
 ): Promise<Build[]> {
   const files: Build[] = arches.map((arch) => ({ arch, path: join(dir, carried(arch)) }));
   const missing: Build[] = [];
-  for (const file of files) if (!(await exists(file.path))) missing.push(file);
+  // A cached build that doesn't match its pin is downloaded again: the
+  // release may have been replaced since it was cached, and the pin
+  // updated to match.
+  for (const file of files) {
+    const cached = await exists(file.path);
+    if (!cached || (pinned !== undefined && (await sha256Of(file.path)) !== pinned[file.arch]))
+      missing.push(file);
+  }
   if (missing.length === 0) return files;
 
   const release = `${releases}/${encodeURIComponent(`@cloudflare/computer@${version}`)}`;

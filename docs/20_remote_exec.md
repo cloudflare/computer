@@ -126,7 +126,7 @@ and `builds` for a directory of local builds.
 `SHA256SUMS` comes from the same release as the builds, so it catches a broken download but not a
 release changed after it was published. To rule that out, pin the hashes in your repository with
 `sha256`, copied from the release's `SHA256SUMS` when you install or bump `@cloudflare/computer`.
-A build that doesn't match them fails the build, whether downloaded, cached or local:
+A build that doesn't match them fails the build, whether downloaded, cached or local, and a cached one is downloaded again first, in case the release was replaced and the pin updated to match. Hashes may be in either case:
 
 ```ts
 remoteExec({

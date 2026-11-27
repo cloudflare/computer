@@ -255,15 +255,37 @@ describe("remoteExec vite plugin", () => {
     const cache = mkdtempSync(join(tmpdir(), "computer-remote-exec-cache-"));
     tempDirs.push(cache);
     await expect(build(project(), wrong, cache)).rejects.toThrow(refused);
-    // The release's own bytes are cached, but a pin that doesn't match still refuses them.
+    // The cached build doesn't match the pin either, so it's downloaded again, and refused again.
     requests.length = 0;
     await expect(build(project(), wrong, cache)).rejects.toThrow(refused);
-    expect(requests).toEqual([]);
+    expect(requests).toEqual([`/${TAG}/SHA256SUMS`, `/${TAG}/remote-exec-linux-x86_64`]);
 
     const dir = mkdtempSync(join(tmpdir(), "computer-remote-exec-builds-"));
     tempDirs.push(dir);
     writeFileSync(join(dir, "remote-exec-linux-x86_64"), randomBytes(1000));
     await expect(build(project(), { ...wrong, builds: dir })).rejects.toThrow(refused);
+  });
+
+  it("downloads again a cached build its pin doesn't match, as after a release is replaced", async () => {
+    const cache = mkdtempSync(join(tmpdir(), "computer-remote-exec-cache-"));
+    tempDirs.push(cache);
+    await build(project(), undefined, cache);
+    const saved = { bytes: builds.x86_64, sums };
+    const replaced = randomBytes(1000);
+    builds.x86_64 = replaced;
+    sums = sums.replace(sha256(saved.bytes), sha256(replaced));
+    try {
+      const out = await build(project(), { sha256: { x86_64: sha256(replaced) } }, cache);
+      expect(readFileSync(join(out, "remote-exec-linux-x86_64.bin"))).toEqual(replaced);
+    } finally {
+      builds.x86_64 = saved.bytes;
+      sums = saved.sums;
+    }
+  });
+
+  it("takes a pin in upper case", async () => {
+    const out = await build(project(), { sha256: { x86_64: sha256(builds.x86_64).toUpperCase() } });
+    expect(readFileSync(join(out, "remote-exec-linux-x86_64.bin"))).toEqual(builds.x86_64);
   });
 
   it("needs a pin for every architecture it carries", () => {

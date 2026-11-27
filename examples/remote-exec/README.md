@@ -60,7 +60,9 @@ Worker carries the build and copies it into the container on first use. The cont
 `linux/amd64`, as Cloudflare runs it and `vite dev` builds it, so that's just the x86_64 build.
 
 `remoteExec()` in `vite.config.ts` gets it from the `@cloudflare/computer` GitHub release matching
-the installed package, checks it against the release's `SHA256SUMS`, and caches it. The Worker
+the installed package, checks it against the release's `SHA256SUMS`, and caches it. To check it
+against hashes pinned in your own repository as well, pass `sha256`; see
+[the remote exec docs](../../docs/20_remote_exec.md). The Worker
 imports it as `computer:remote-exec`. Built with `vite build`, it streams the build from
 `/bundle` with `node:fs`, a chunk at a time, so it never holds the 1.5 MB build in memory. Under
 `vite dev`, which doesn't put files under `/bundle`, it imports the build instead.
