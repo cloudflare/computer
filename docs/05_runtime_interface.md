@@ -48,6 +48,18 @@ interface WorkspaceRuntimeExecHandle extends ReadableStream<WorkspaceRuntimeEven
 
 `input` is accepted by callable backends and rejected by the rest; it carries a structured value that the callable backend returns a structured value for. `env` is accepted everywhere: command backends inherit it for the spawned command, and the JavaScript module backend exposes it through `process.env`. Its values apply to that execution only and do not change later executions. `stdin` is the caller-supplied standard input, accepted by backends that model it (the JavaScript module backend reads it through `process.stdin`). `cwd` is the command working directory or the base for durable relative module imports. `metadata` is for host modules: the JavaScript module backend hands it to every host module call as `context.execution.metadata` and keeps it from the run's code, and backends without host modules ignore it. A handle is single-consumer: call `result()` or consume its event stream, not both. Repeated `result()` calls return the same promise. `backend` records the resolved backend needed for later reattachment.
 
+## Execution ids
+
+`exec()` takes an `id`, or makes one up. An id addresses one execution on its backend until the execution is disposed, and the backend refuses to reuse it. `CodemodeBackend`'s errors for ids carry a `code`, so callers can branch on it rather than on the message:
+
+| Code | Meaning |
+| --- | --- |
+| `EEXEC_BUSY` | `exec()` was given the id of an execution that's starting or running, or `disposeExec()` one that's running. |
+| `EEXEC_EXISTS` | `exec()` was given the id of an execution that has ended but hasn't been disposed. |
+| `ENOENT` | `getExec()`, `killExec()`, `detachExec()` or `disposeExec()` was given an id with no execution. |
+
+On `CodemodeBackend`, a call by id waits for an execution with that id that's still starting, so `getExec()` right after a refused `exec()` finds it. The [`exec` tool's `id`](./09_tool_interface.md#run-ids) attaches to a tool call's run this way.
+
 ## Results
 
 ```ts

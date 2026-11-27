@@ -174,7 +174,7 @@ createAITools({
   read?,
   write?,
   edit?,
-  exec?: { backends?, output?, metadata? },
+  exec?: { backends?, output?, metadata?, id?, detach? },
   root?,
 });
 ```
@@ -191,9 +191,10 @@ createAITools({
 | `exec.backends` | every backend | An `ExecBackends` map from backend id to `ExecBackendOptions` (`{ description? }`). `{}` omits `exec`. |
 | `exec.output` | 2000 lines, 64 KiB | `{ maxLines?, maxBytes? }`: how much of each `exec` stream the model sees. See [`exec`](#exec). |
 | `exec.metadata` | none | The `metadata` each `exec` run starts with, or `({ toolCallId }) => metadata` to pick it per call. See [Run metadata](#run-metadata). |
+| `exec.id` | none | `({ toolCallId }) => id`: each `exec` run's id, so a call made again attaches to its run. See [Run ids](#run-ids). |
 | `shell` | omitted | Deprecated, and ignored when `exec` is given. `{ backends }` becomes `exec: { backends }` and its output limits become `exec.output`; `defaultBackend` is ignored. |
 
-`exec` is an `ExecToolSetOptions`, exported from `@cloudflare/computer/tools` with `ExecBackends` and `ExecBackendOptions`. `exec: {}` throws, as does any key other than `backends`, `output`, and `metadata`: pass `exec: { backends: {} }` for no exec tool, or leave `exec` out for every backend.
+`exec` is an `ExecToolSetOptions`, exported from `@cloudflare/computer/tools` with `ExecBackends` and `ExecBackendOptions`. `exec: {}` throws, as does any key other than `backends`, `output`, `metadata`, `id`, and `detach`: pass `exec: { backends: {} }` for no exec tool, or leave `exec` out for every backend.
 
 `createPiTools` and `createTanStackTools` take the same options, plus their own listed above.
 
@@ -399,6 +400,16 @@ const tools = createAITools({
 ```
 
 A pi caller runs each call itself, so it can instead pass the metadata with the call: `execute(call, { metadata })`. Metadata passed with a call wins over `exec: { metadata }`. A caller of `defineExec` passes `metadata` or `toolCallId` on each `execute` the same way.
+
+### Run ids
+
+An agent loop can make a tool call again: a durable one replays a call whose result it hadn't saved when its object restarted. By default the exec tool then starts a second run. `id` on `createExecTool`, or `exec: { id }` on a tool set, picks each run's id from its tool call's id instead, and a call whose run already exists attaches to it: it reads the run from its start, whether it's still going or has ended, and returns its result as the first call would have. A call without a tool call id starts a run of its own. A call made while its run is still starting waits for it, so calls made at the same time share one run. Aborting any of them stops the run, except as below.
+
+```ts
+const tools = createPiTools({ workspace, exec: { id: ({ toolCallId }) => `exec:${toolCallId}` } });
+```
+
+The id must be unique to the tool call: a call attaches to any run with its id, and tool call ids are often unique only within one conversation, so add what tells the conversations apart. The tool attaches when the runtime refuses the id as taken (`EEXEC_EXISTS` or `EEXEC_BUSY`, see [Execution ids](./05_runtime_interface.md#execution-ids)), so `id` needs a runtime with `getExec()`, such as a `Workspace`'s, and a backend that keeps runs by id. `CodemodeBackend` keeps an ended run until it's disposed or pruned: after its `retentionMs` (an hour by default), or once it has more than `maxRetainedExecutions` (100). A call made again after that runs again. On a backend that doesn't keep runs, such as `WorkerShellBackend`, every call starts a run. With `detach`, aborting a call that attached leaves the run going, since the call that started it may have detached it.
 
 ### Detaching
 

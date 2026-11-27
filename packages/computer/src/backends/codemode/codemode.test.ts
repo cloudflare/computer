@@ -9,6 +9,7 @@ import type {
   WorkspaceRuntimeExecExit,
   WorkspaceRuntimeLoader,
 } from "../../runtime/types";
+import { createPiTools } from "../../tools/pi-ai";
 import { Workspace } from "../../workspace";
 import { runtimeCode, CodemodeBackend } from "./codemode";
 import { ExecutionJournal, fingerprint, loadResume, type ResumeStart, saveResume } from "./journal";
@@ -235,6 +236,72 @@ describe("CodemodeBackend", () => {
     });
     expect(entrypointDisposals).toBe(1);
     expect(workerDisposals).toBe(1);
+  });
+
+  describe("execs by id", () => {
+    function workspaceWith(value: unknown) {
+      const load = vi.fn<WorkspaceRuntimeLoader["load"]>(() => ({
+        getEntrypoint() {
+          return {
+            evaluate: (
+              _input: unknown,
+              host: {
+                assertResult(value: unknown): Promise<void>;
+                attachOutput(readable: ReadableStream<Uint8Array>): Promise<void>;
+              },
+            ) => evaluateResult(host, value),
+          };
+        },
+      }));
+      const workspace = new Workspace({
+        storage: new SQLiteTestStorage(),
+        backends: [new CodemodeBackend({ loader: { load } })],
+      });
+      return { workspace, load };
+    }
+
+    it("refuses an id that's starting, running or taken, with a code for each", async () => {
+      const { workspace } = workspaceWith(1);
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const first = workspace.runtime.exec("export default 1", { id: "run-1" });
+      await expect(
+        workspace.runtime.exec("export default 1", { id: "run-1" }),
+      ).rejects.toMatchObject({ code: "EEXEC_BUSY" });
+      await (await first).result();
+      await expect(
+        workspace.runtime.exec("export default 1", { id: "run-1" }),
+      ).rejects.toMatchObject({ code: "EEXEC_EXISTS" });
+      await expect(workspace.runtime.getExec("run-2")).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("finds an exec that's still starting, once it has started", async () => {
+      const { workspace, load } = workspaceWith({ answer: 42 });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+
+      const started = workspace.runtime.exec("export default null", { id: "run-1" });
+      const found = workspace.runtime.getExec("run-1");
+
+      expect((await (await found).result()).value).toEqual({ answer: 42 });
+      await (await started).result();
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it("runs an exec tool call once, however often it's made", async () => {
+      const { workspace, load } = workspaceWith({ answer: 42 });
+      await workspace.fs.mkdir("/workspace", { recursive: true });
+      const tools = createPiTools({ workspace, exec: { id: ({ toolCallId }) => toolCallId } });
+      const call = { id: "call-1", name: "exec", arguments: { command: "export default null" } };
+
+      const together = await Promise.all([tools.execute(call), tools.execute(call)]);
+      const later = await tools.execute(call);
+
+      expect(load).toHaveBeenCalledTimes(1);
+      for (const result of [...together, later]) {
+        expect(result.isError).toBe(false);
+        expect(result.details).toMatchObject({ exitCode: 0, result: { answer: 42 } });
+      }
+    });
   });
 
   describe("detaching", () => {

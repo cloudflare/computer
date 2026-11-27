@@ -497,7 +497,9 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
   readonly #codemodeModules: ReadonlyMap<string, CodemodeModuleRuntime>;
   #sourceModules: Readonly<Record<string, string>> | undefined;
   readonly #records = new Map<string, ExecutionRecord>();
-  readonly #pendingIds = new Set<string>();
+  // Execs that are starting, by id, each settling once its start has
+  // succeeded or failed.
+  readonly #starting = new Map<string, Promise<void>>();
   #closed = false;
   readonly #activeStreams = new Map<string, number>();
   #pendingStarts = 0;
@@ -641,6 +643,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     if (this.#options.onDetachedExit === undefined) {
       throw new Error(`Backend ${this.#backendId} can't detach execs without onDetachedExit.`);
     }
+    await this.#started(input.id);
     const record = this.#recordFor(input.id);
     if (record === undefined) {
       throw runtimeError("ENOENT", `no such execution: ${input.id}`);
@@ -1175,7 +1178,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     const id = input.id ?? crypto.randomUUID();
     assertExecutionId(id);
     this.#prune();
-    if (this.#pendingIds.has(id)) {
+    if (this.#starting.has(id)) {
       throw runtimeError("EEXEC_BUSY", `execution ${id} is already starting`);
     }
     const existing = this.#recordFor(id);
@@ -1217,7 +1220,8 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
     // concurrent Dynamic Workers itself and reports that limit as the
     // execution's error.
     this.#pendingStarts += 1;
-    this.#pendingIds.add(id);
+    let started = () => {};
+    this.#starting.set(id, new Promise<void>((resolve) => (started = resolve)));
     try {
       if (this.#options.access === "read-write")
         await ensureDirectory(this.#host.fs, this.#options.root);
@@ -1312,7 +1316,8 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       });
       return { id, events: this.#stream(record) };
     } finally {
-      this.#pendingIds.delete(id);
+      this.#starting.delete(id);
+      started();
       this.#pendingStarts -= 1;
       if (this.#pendingStarts === 0) {
         for (const resolve of this.#pendingStartWaiters) resolve();
@@ -1435,6 +1440,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
 
   async getExec(input: { id: string; after?: number | "tail" }): Promise<ModuleExecutionEnvelope> {
     assertExecutionId(input.id);
+    await this.#started(input.id);
     this.#prune();
     const record = this.#recordFor(input.id);
     if (!record) throw runtimeError("ENOENT", `no such execution: ${input.id}`);
@@ -1443,6 +1449,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
 
   async killExec(input: { id: string }): Promise<void> {
     assertExecutionId(input.id);
+    await this.#started(input.id);
     const record = this.#recordFor(input.id);
     if (!record) throw runtimeError("ENOENT", `no such execution: ${input.id}`);
     await this.#cancel(record, "Execution cancelled.\n");
@@ -1450,6 +1457,7 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
 
   async disposeExec(input: { id: string }): Promise<void> {
     assertExecutionId(input.id);
+    await this.#started(input.id);
     const record = this.#recordFor(input.id);
     if (!record) throw runtimeError("ENOENT", `no such execution: ${input.id}`);
     if (record.status === "running") {
@@ -1468,6 +1476,12 @@ class CodemodeBackendHandle implements WorkspaceModuleBackendHandle {
       );
     });
     this.#records.delete(input.id);
+  }
+
+  // A call by id waits for an exec with that id that is starting, so it
+  // finds the exec once it exists rather than missing it.
+  async #started(id: string): Promise<void> {
+    await this.#starting.get(id);
   }
 
   async close(): Promise<void> {
