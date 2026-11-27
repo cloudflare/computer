@@ -167,8 +167,11 @@ export interface ExecToolOptions {
   /**
    * Each run's id, from its tool call's. A call made again, as when a
    * restart replays it, attaches to the run it started rather than
-   * starting another, and reads it from the start. A call with no tool
-   * call id starts a run of its own. Needs a runtime with `getExec()`.
+   * starting another, and reads it from the start, while the backend
+   * keeps the run: `CodemodeBackend` keeps ended runs for its
+   * `retentionMs` (an hour by default), at most `maxRetainedExecutions`
+   * of them. A call with no tool call id starts a run of its own. Needs
+   * a runtime with `getExec()`.
    */
   id?: ExecId;
   /**
@@ -424,19 +427,20 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
     command: string,
     startOptions: Parameters<ExecWorkspaceLike["runtime"]["exec"]>[1],
     id: string | undefined,
-  ): Promise<ExecRuntimeHandle> {
-    if (id === undefined) return runtime.exec(command, startOptions);
+  ): Promise<{ handle: ExecRuntimeHandle; attached: boolean }> {
+    if (id === undefined) return { handle: await runtime.exec(command, startOptions), attached: false };
     try {
-      return await runtime.exec(command, { ...startOptions, id });
+      return { handle: await runtime.exec(command, { ...startOptions, id }), attached: false };
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if ((code !== "EEXEC_EXISTS" && code !== "EEXEC_BUSY") || getExec === undefined) throw error;
-      return getExec.call(runtime, id, {
+      const handle = await getExec.call(runtime, id, {
         backend: startOptions.backend,
         encoding: "utf8",
         resume: "full",
         output: startOptions.output,
       });
+      return { handle, attached: true };
     }
   }
 
@@ -460,6 +464,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         return;
       }
       let handle: ExecRuntimeHandle;
+      let attached = false;
       try {
         const metadata =
           context.metadata ??
@@ -469,7 +474,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
         // A call with no tool call id has nothing to be made again by.
         const toolCallId = context.toolCallId;
         const id = toolCallId === undefined ? undefined : options.id?.({ toolCallId });
-        handle = await start(
+        ({ handle, attached } = await start(
           command,
           {
             cwd,
@@ -483,7 +488,7 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
             output: limits,
           },
           id,
-        );
+        ));
       } catch (err) {
         yield { ...base, error: errorMessage(err) };
         return;
@@ -494,11 +499,16 @@ export function defineExec(options: ExecToolOptions): ExecDefinition {
       // not run on unobserved after the tool stops iterating. The run
       // then emits its terminal event and the stream closes normally.
       // A run that detached is meant to run on, so it's left alone,
-      // including one whose detach went through as the turn aborted.
+      // including one whose detach went through as the turn aborted. So
+      // is a run this call attached to when the tool detaches: the call
+      // that started it may have detached it already.
+      const keepRunning = attached && detach !== undefined;
       const onAbort = () =>
         void detaching
           .settle()
-          .then((detached) => (detached === undefined ? handle.kill?.() : undefined))
+          .then((detached) =>
+            detached === undefined && !keepRunning ? handle.kill?.() : undefined,
+          )
           .catch(() => undefined);
       if (abortSignal?.aborted) onAbort();
       else abortSignal?.addEventListener("abort", onAbort, { once: true });

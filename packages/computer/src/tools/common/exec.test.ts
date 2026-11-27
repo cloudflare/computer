@@ -185,6 +185,46 @@ describe("defineExec id", () => {
     expect(attached).toEqual([]);
   });
 
+  it("leaves a run it attached to going when aborted, if the tool detaches", async () => {
+    const kills: string[] = [];
+    let finish = () => {};
+    const done = new Promise<void>((resolve) => (finish = resolve));
+    const running = (id: string) => ({
+      id,
+      result: async () => {
+        await done;
+        return { exitCode: 0, stdout: "", stderr: "" };
+      },
+      kill: async () => void kills.push(id),
+    });
+    const workspace: ExecWorkspaceLike = {
+      runtime: {
+        async exec() {
+          throw Object.assign(new Error("execution call-1 is already running"), {
+            code: "EEXEC_BUSY",
+          });
+        },
+        getExec: async (id) => running(id),
+        pending: async () => [],
+        detachExec: async () => false,
+        backends: () => [{ id: "js", protocol: "module", callable: true, detachable: true }],
+      },
+    };
+    const exec = defineExec({ workspace, id: ({ toolCallId }) => toolCallId, detach: true });
+    const abort = new AbortController();
+
+    const call = last(
+      exec.execute({ command: "a" }, { toolCallId: "call-1", abortSignal: abort.signal }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    abort.abort();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    finish();
+    await call;
+
+    expect(kills).toEqual([]);
+  });
+
   it("needs a runtime that can find a run by id", () => {
     const { workspace } = recordingWorkspace();
     expect(() => defineExec({ workspace, id: ({ toolCallId }) => toolCallId })).toThrow(
